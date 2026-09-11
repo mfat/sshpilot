@@ -729,17 +729,18 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self._notify_parent_session_type_changed()
 
     def _notify_parent_session_type_changed(self):
-        """Notify the dialog when the Advanced SessionType entry changes."""
-        try:
-            callback = getattr(
-                self.parent_dialog,
-                '_sync_session_type_toggle_from_advanced',
-                None,
-            )
-            if callable(callback):
-                callback()
-        except Exception:
-            logger.debug("Failed to synchronize SessionType toggle", exc_info=True)
+        """Notify the dialog when Advanced SessionType / ExitOnForwardFailure change."""
+        parent = self.parent_dialog
+        for name in (
+            '_sync_session_type_toggle_from_advanced',
+            '_sync_exit_on_forward_failure_toggle_from_advanced',
+        ):
+            try:
+                callback = getattr(parent, name, None)
+                if callable(callback):
+                    callback()
+            except Exception:
+                logger.debug("Failed to synchronize %s", name, exc_info=True)
         
     def on_value_entry_activate(self, entry, row_grid):
         """Handle Enter key press in value entry - move to next row or add new one"""
@@ -1859,6 +1860,7 @@ class ConnectionDialog(
 
         self._loading_connection_data = False
         self._session_type_syncing = False
+        self._exit_on_forward_failure_syncing = False
         self._active_key_path: Optional[str] = None
 
         # Daemon editor-snapshot state.  A daemon edit is gated on the
@@ -1967,6 +1969,7 @@ class ConnectionDialog(
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
         self._wire_session_type_toggle()
+        self._wire_exit_on_forward_failure_toggle()
 
         # Wake on LAN on its own page (built by build_connection_groups above).
         wol_page = _page_box()
@@ -1988,6 +1991,27 @@ class ConnectionDialog(
         )
         self._sync_session_type_toggle_from_advanced()
 
+    def _wire_exit_on_forward_failure_toggle(self):
+        """Connect the ExitOnForwardFailure switch to Advanced SSH options."""
+        self.exit_on_forward_failure_row.connect(
+            "notify::active", self._on_exit_on_forward_failure_toggle_changed
+        )
+        self._sync_exit_on_forward_failure_toggle_from_advanced()
+
+    def _begin_port_forwarding_ssh_option_sync(self):
+        """Suppress both convenience toggles while rewriting Advanced options.
+
+        ``set_option`` / ``remove_option`` rebuild the Advanced entry list and
+        notify on every intermediate remove; without both guards, the sibling
+        toggle can briefly see a missing option and flip off.
+        """
+        self._session_type_syncing = True
+        self._exit_on_forward_failure_syncing = True
+
+    def _end_port_forwarding_ssh_option_sync(self):
+        self._session_type_syncing = False
+        self._exit_on_forward_failure_syncing = False
+
     def _sync_session_type_toggle_from_advanced(self):
         """Reflect Advanced ``SessionType none`` in the forwarding switch."""
         if getattr(self, '_session_type_syncing', False):
@@ -2006,6 +2030,24 @@ class ConnectionDialog(
         finally:
             self._session_type_syncing = False
 
+    def _sync_exit_on_forward_failure_toggle_from_advanced(self):
+        """Reflect Advanced ``ExitOnForwardFailure yes`` in the switch."""
+        if getattr(self, '_exit_on_forward_failure_syncing', False):
+            return
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        toggle = getattr(self, 'exit_on_forward_failure_row', None)
+        if advanced_tab is None or toggle is None:
+            return
+
+        value = advanced_tab.get_option('ExitOnForwardFailure')
+        active = isinstance(value, str) and value.strip().lower() == 'yes'
+        self._exit_on_forward_failure_syncing = True
+        try:
+            if toggle.get_active() != active:
+                toggle.set_active(active)
+        finally:
+            self._exit_on_forward_failure_syncing = False
+
     def _on_session_type_toggle_changed(self, row, pspec=None):
         """Write/remove only ``SessionType none`` when the switch changes."""
         if getattr(self, '_session_type_syncing', False):
@@ -2014,7 +2056,7 @@ class ConnectionDialog(
         if advanced_tab is None:
             return
 
-        self._session_type_syncing = True
+        self._begin_port_forwarding_ssh_option_sync()
         try:
             if row.get_active():
                 advanced_tab.set_option('SessionType', 'none')
@@ -2023,7 +2065,26 @@ class ConnectionDialog(
                 if isinstance(value, str) and value.strip().lower() == 'none':
                     advanced_tab.remove_option('SessionType', 'none')
         finally:
-            self._session_type_syncing = False
+            self._end_port_forwarding_ssh_option_sync()
+
+    def _on_exit_on_forward_failure_toggle_changed(self, row, pspec=None):
+        """Write/remove only ``ExitOnForwardFailure yes`` when the switch changes."""
+        if getattr(self, '_exit_on_forward_failure_syncing', False):
+            return
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        if advanced_tab is None:
+            return
+
+        self._begin_port_forwarding_ssh_option_sync()
+        try:
+            if row.get_active():
+                advanced_tab.set_option('ExitOnForwardFailure', 'yes')
+            else:
+                value = advanced_tab.get_option('ExitOnForwardFailure')
+                if isinstance(value, str) and value.strip().lower() == 'yes':
+                    advanced_tab.remove_option('ExitOnForwardFailure', 'yes')
+        finally:
+            self._end_port_forwarding_ssh_option_sync()
 
     # Wider than Adw.PreferencesPage's 600 so the dialog doesn't feel empty;
     # only reins in content on very wide windows.
@@ -3878,16 +3939,22 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # SessionType none / ssh -N is exposed here as a convenience, while
         # remaining stored in the shared Advanced SSH option list.
         self.port_forwarding_only_row = Adw.SwitchRow(
-            title=_("Don't execute any remote command (ssh -N flag)"),
-            subtitle=_("Do not start a remote shell or command (SessionType none)"),
+            title=_("Do not start a remote shell (ssh -N flag)"),
         )
-        forwarding_only_group = Adw.PreferencesGroup(
-            title=_("Session"),
-            description=_(
-                "Keep the connection open for port forwarding without starting a session"
-            ),
-        )
+        forwarding_only_group = Adw.PreferencesGroup(title=_("Session"))
         forwarding_only_group.add(self.port_forwarding_only_row)
+
+        # ExitOnForwardFailure=yes is a separate convenience toggle over the
+        # Advanced SSH option list / ssh_config — not daemon-backed forwards,
+        # and not part of the Session group above.
+        self.exit_on_forward_failure_row = Adw.SwitchRow(
+            title=_("Exit if port forwarding fails"),
+            subtitle=_("Terminate the connection when a requested forward cannot be set up (ExitOnForwardFailure=yes)"),
+        )
+        exit_on_forward_failure_group = Adw.PreferencesGroup(
+            title=_("Forward Failure"),
+        )
+        exit_on_forward_failure_group.add(self.exit_on_forward_failure_row)
         
         # Port Forwarding Rules Group
         rules_group = Adw.PreferencesGroup(
@@ -3945,14 +4012,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("About Port Forwarding"),
             description=_(
                 "Port forwarding allows you to securely tunnel network connections.\n\n"
-                "• <b>Local Forwarding</b>: Forward a remote port to your local machine\n"
-                "• <b>Remote Forwarding</b>: Forward a local port to the remote machine\n"
-                "• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
+                "• <b>Local Forwarding</b>: A port on the local machine is forwarded to the specified host and port from the remote machine.\n"
+                "• <b>Remote Forwarding</b>: A port on the remote machine is forwarded to a specified host and port from the local machine.\n"
+                "• <b>Dynamic Forwarding</b>: Starts a SOCKS proxy on the local machine listening on the specified port."
             )
         )
 
         # Return groups for PreferencesPage: Port forwarding first, about, X11 last
-        return [rules_group, forwarding_only_group, about_group, x11_group]
+        return [
+            rules_group,
+            forwarding_only_group,
+            exit_on_forward_failure_group,
+            about_group,
+            x11_group,
+        ]
 
     def build_commands_group(self):
         """Build PreferencesGroup for configuring connection commands"""

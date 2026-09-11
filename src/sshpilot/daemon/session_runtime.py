@@ -56,7 +56,10 @@ from sshpilot.api.models.terminal import (
     TerminalOutput,
 )
 from sshpilot.api.session_identity import new_session_id
-from sshpilot.core.connection_evidence import classify_connection_evidence
+from sshpilot.core.connection_evidence import (
+    classify_connection_evidence,
+    post_auth_exit_failure_reason,
+)
 from sshpilot.core.ssh_diagnostics import SshDiagnosticResult, SshDiagnosticState
 from sshpilot.logging_support import log_context
 
@@ -811,7 +814,9 @@ class SessionRuntime:
                         deferred_callbacks = tuple(
                             self._terminal_callbacks.values()
                         )
-                        finish_readiness = diagnostic_gated
+                        # Keep diagnostics open after auth (ExitOnForwardFailure
+                        # lines arrive on -E after Authenticated to).
+                        finish_readiness = False
                 elif record.state is SessionState.CLOSING:
                     record.process_handle = handle
                     record.deferred_live_output.clear()
@@ -948,7 +953,12 @@ class SessionRuntime:
                 else:
                     record.diagnostic_result = result
         if not parked:
-            self._finish_readiness(session_id)
+            # Keep the -E watch open after AUTHENTICATED / MUX_SESSION_OPENED:
+            # ExitOnForwardFailure lines are written after Authenticated to and
+            # never appear on the PTY when diagnostics own the verbose stream.
+            # Release the lease on FAILED (startup) or when the session exits.
+            if result.state is SshDiagnosticState.FAILED:
+                self._finish_readiness(session_id)
         self._publish(events)
         if notify_authenticated and self._authenticated_callback is not None:
             self._authenticated_callback(session_id)
@@ -2016,6 +2026,29 @@ class SessionRuntime:
                         )
                         or "The session did not complete authentication"
                     ),
+                )
+                events.append(self._transition_locked(record, SessionState.FAILED))
+        elif (
+            record.state is SessionState.RUNNING
+            and record.failure is None
+            and exit_info.exit_code not in {None, 0}
+        ):
+            # Post-auth failures (ExitOnForwardFailure, dropped link with an
+            # OpenSSH diagnostic still in the PTY, …) previously left
+            # failure=None and became a generic EXITED/255. Classify from
+            # replay so frontends can show the real reason in the banner.
+            failure_reason = None
+            if record.diagnostic_failure_detail:
+                failure_reason = record.diagnostic_failure_detail
+            else:
+                failure_reason = post_auth_exit_failure_reason(
+                    self._recent_terminal_text_locked(record),
+                    exit_code=exit_info.exit_code,
+                )
+            if failure_reason is not None:
+                record.failure = SessionFailure(
+                    code=ErrorCode.SESSION_STARTUP_FAILED.value,
+                    message=failure_reason,
                 )
                 events.append(self._transition_locked(record, SessionState.FAILED))
         record.process_handle = None

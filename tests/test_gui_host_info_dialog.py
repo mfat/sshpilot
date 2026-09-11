@@ -541,17 +541,29 @@ def test_the_system_tab_reports_what_the_host_exposes():
         os_version_id="23.05.5",
         architecture="mips",
         listening_ports=(
-            ListeningPort(port=22, process="sshd"),
-            ListeningPort(port=8080, process="uhttpd"),
+            ListeningPort(port=22, process="sshd", address="0.0.0.0"),
+            ListeningPort(port=8080, process="uhttpd", address="0.0.0.0"),
         ),
         failed_units=(FailedUnit(name="logrotate.service", description="Rotate logs"),),
         host_keys=(
             HostKeyFingerprint(algorithm="ED25519", fingerprint="SHA256:abc", bits=256),
         ),
     )
-    texts = _texts(_dialog(snapshot)._build_system())
+    dialog = _dialog(snapshot)
+    page = dialog._build_system()
+    texts = _texts(page)
+    assert "Running services" in texts
     assert "openwrt 23.05.5" in texts and "mips" in texts
-    assert "8080/tcp" in texts and "uhttpd" in texts
+    assert "8080/tcp" in texts
+    assert any("uhttpd" in text for text in texts)
+    web_ui_buttons = [
+        widget
+        for widget in _walk(page)
+        if isinstance(widget, Gtk.Button)
+        and widget.get_tooltip_text()
+        and "system browser" in widget.get_tooltip_text()
+    ]
+    assert web_ui_buttons, "well-known HTTP port gets a browser action"
     assert "logrotate.service" in texts
     assert "SHA256:abc" in texts and "ED25519" in texts
 
@@ -574,6 +586,35 @@ def test_a_multi_threaded_process_may_exceed_one_hundred_percent():
     )
     texts = _texts(_dialog(snapshot)._build_resources())
     assert "457.0%" in texts
+
+
+def test_long_process_commands_ellipsize_instead_of_widening_the_table():
+    """Command lines can be argv soups; they must clip, with the full text
+    still available on hover."""
+
+    from gi.repository import Pango
+
+    command = (
+        "/usr/sbin/openvpn --syslog openvpn(protonAludp) "
+        "--status /var/run/openvpn.protonAludp.status "
+        "--cd /etc/openvpn --config protonAludp.ovpn "
+        "--up /usr/libexec/openvpn-hotplug up protonAludp "
+        "--down /usr/libexec/openvpn-hotplug down protonAludp"
+    )
+    snapshot = _snapshot(
+        processes=(ProcessUsage(command=command, cpu_percent=1.0, memory_percent=2.0),)
+    )
+    labels = [
+        widget
+        for widget in _walk(_dialog(snapshot)._build_resources())
+        if isinstance(widget, Gtk.Label) and widget.get_text() == command
+    ]
+    assert labels, "top-process command is rendered as a label"
+    label = labels[0]
+    assert label.get_ellipsize() == Pango.EllipsizeMode.END
+    assert label.get_width_chars() == 1
+    assert label.get_hexpand()
+    assert label.get_tooltip_text() == command
 
 
 def test_a_process_without_a_memory_reading_shows_na_not_zero():

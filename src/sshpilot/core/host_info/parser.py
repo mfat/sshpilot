@@ -561,16 +561,17 @@ def _is_netstat(text: str) -> bool:
     )
 
 
-def parse_listening_ports(text: str) -> Dict[int, str]:
-    """Map each listening TCP port to the process name serving it.
+def parse_listening_ports(text: str) -> Dict[int, Tuple[str, str]]:
+    """Map each listening TCP port to ``(bind_address, process_name)``.
 
     ``ss -tlnp`` prints ``users:(("sshd",pid=…))``; ``netstat -tlnp`` prints
     ``1234/sshd``.  Process names are only visible to root, so an empty name
-    is normal and must not discard the port.
+    is normal and must not discard the port.  When the same port appears on
+    several addresses, the first wins.
     """
 
     netstat = _is_netstat(text)
-    ports: Dict[int, str] = {}
+    ports: Dict[int, Tuple[str, str]] = {}
     for line in text.splitlines():
         parts = line.split()
         if not parts or parts[0] in ("Netid", "State", "Proto", "Active"):
@@ -592,8 +593,10 @@ def parse_listening_ports(text: str) -> Dict[int, str]:
                 match = re.search(r'users:\(\("([^"]+)"', " ".join(parts[5:]))
                 process = match.group(1) if match else ""
         port = _port_or_none(local)
-        if port is not None:
-            ports.setdefault(port, process)
+        if port is None:
+            continue
+        address = _strip_port(local).strip("[]")
+        ports.setdefault(port, (address, process))
     return ports
 
 
@@ -995,7 +998,7 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
     ssh_ports = [session_port] if session_port is not None else []
     ssh_ports.extend(
         port
-        for port, process in sorted(listening.items())
+        for port, (_address, process) in sorted(listening.items())
         if process == "sshd" and port != session_port
     )
     sockets = parse_sockets(sections.get("SS_ESTAB", ""), tuple(listening))
@@ -1058,7 +1061,9 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         default_gateway_interface=gateway_interface,
         dns_servers=parse_dns_servers(sections.get("DNS", "")),
         ssh_port=ssh_ports[0] if ssh_ports else None,
-        ssh_process=listening.get(ssh_ports[0], "") if ssh_ports else "",
+        ssh_process=(
+            listening.get(ssh_ports[0], ("", ""))[1] if ssh_ports else ""
+        ),
         os_id=os_release.get("ID", ""),
         os_version_id=os_release.get("VERSION_ID", ""),
         architecture=parse_architecture(uname),
@@ -1066,8 +1071,8 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         # arrived through: what else is exposed is the question an operator
         # actually opens this dialog with.
         listening_ports=tuple(
-            ListeningPort(port=port, process=process)
-            for port, process in sorted(listening.items())
+            ListeningPort(port=port, process=process, address=address)
+            for port, (address, process) in sorted(listening.items())
         ),
         processes=processes,
         failed_units=parse_failed_units(sections.get("SYSTEMD_FAILED", "")),

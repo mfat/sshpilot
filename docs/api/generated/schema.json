@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.57",
+  "api_implementation_version": "0.58",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -5714,6 +5714,13 @@
         {
           "default": "",
           "name": "process",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "address",
           "required": false,
           "sensitive": false,
           "type": "str"

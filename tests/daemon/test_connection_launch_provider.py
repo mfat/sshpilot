@@ -320,6 +320,137 @@ def test_require_master_overrides_authored_controlmaster_no(provider):
     assert any(token.startswith("ControlPath=") and "/%C" in token for token in tokens)
 
 
+def test_remote_command_overrides_authored_session_type_none(provider):
+    """Host Info must run a command even when the Host is forwarding-only.
+
+    ``SessionType none`` (ssh -N) makes OpenSSH ignore the remote command and
+    exit 0 with empty stdout — Host Info then "succeeds" with a blank
+    snapshot. Forced ``SessionType=default`` is first-value-wins before the
+    authored Advanced-tab option.
+    """
+    prov, records = provider
+    records["web"] = _record(
+        data={
+            "__authored_directives": ["hostname", "user"],
+            "hostname": "example.com",
+            "username": "alice",
+            "extra_ssh_config": "SessionType none",
+        }
+    )
+    command, _environment = prov.prepare_remote_command_launch("web", "uptime")
+    tokens = [str(token) for token in command]
+    forced = tokens.index("SessionType=default")
+    authored_none = tokens.index("SessionType=none")
+    assert tokens[forced - 1] == "-o"
+    assert forced < authored_none
+    assert forced < len(tokens) - 2
+    assert tokens[-2]  # destination alias / host
+    assert tokens[-1] == "uptime"
+
+
+def test_terminal_forwarding_only_disables_preference_multiplex(provider):
+    """SessionType none terminal launches must not inherit ControlMaster=auto.
+
+    Preference multiplexing injects ControlMaster=auto + ControlPersist via
+    ssh_overrides (last). Combined with SessionType none, OpenSSH backgrounds
+    the master and the watched process exits 0 — the tab closes as a clean
+    exit. Forced ControlMaster=no is first-value-wins before those overrides.
+    """
+    from types import SimpleNamespace
+
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    prov, records = provider
+    records["web"] = _record(
+        data={
+            "__authored_directives": ["hostname", "user"],
+            "hostname": "example.com",
+            "username": "alice",
+            "extra_ssh_config": "SessionType none",
+        }
+    )
+    multiplexed = DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+    command, _environment = multiplexed.prepare_terminal_launch(
+        "web", interaction_policy="none"
+    )
+    tokens = [str(token) for token in command]
+    forced_no = tokens.index("ControlMaster=no")
+    assert tokens[forced_no - 1] == "-o"
+    # Preference auto may still appear later; first value wins.
+    if "ControlMaster=auto" in tokens:
+        assert forced_no < tokens.index("ControlMaster=auto")
+    assert forced_no < len(tokens) - 1
+    assert tokens[-1]  # destination host / alias
+
+
+def test_terminal_shell_host_keeps_preference_multiplex(provider):
+    """Ordinary shell tabs still receive ControlMaster=auto when preferred."""
+    from types import SimpleNamespace
+
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    prov, _records = provider
+    multiplexed = DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+    command, _environment = multiplexed.prepare_terminal_launch(
+        "web", interaction_policy="none"
+    )
+    tokens = [str(token) for token in command]
+    assert "ControlMaster=auto" in tokens
+    assert "ControlMaster=no" not in tokens
+    assert "ControlPersist=60" in tokens
+
+
+def test_forward_launch_disables_preference_multiplex(provider):
+    """Daemon ``ssh -N`` forwards must not inherit ControlMaster=auto.
+
+    Preference multiplexing injects ControlMaster=auto + ControlPersist via
+    ssh_overrides (last). Combined with ``ssh -N``, OpenSSH backgrounds the
+    master and the watched process exits 0 — Host Info web-UI opens fail with
+    ``forward_not_active``. Forced ControlMaster=no is first-value-wins before
+    those overrides.
+    """
+    from types import SimpleNamespace
+
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    prov, _records = provider
+    multiplexed = DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+    command, _environment = multiplexed.prepare_forward_launch(
+        "web",
+        forward_type="local",
+        bind_host="127.0.0.1",
+        bind_port=18080,
+        destination_host="127.0.0.1",
+        destination_port=80,
+    )
+    tokens = [str(token) for token in command]
+    forced_no = tokens.index("ControlMaster=no")
+    assert tokens[forced_no - 1] == "-o"
+    if "ControlMaster=auto" in tokens:
+        assert forced_no < tokens.index("ControlMaster=auto")
+    assert "-N" in tokens
+    assert "ExitOnForwardFailure=yes" in tokens
+    assert forced_no < tokens.index("-N")
+
+
 @pytest.mark.parametrize(
     ("term", "expected"),
     [

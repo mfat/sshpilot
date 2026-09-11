@@ -1482,6 +1482,20 @@ class WindowTabsMixin:
         except Exception:
             logger.debug('File manager tab teardown on detach failed', exc_info=True)
 
+        # Stop host-info probes as soon as the tab leaves the view so a closed
+        # tab cannot keep LIVE sampling the remote host.
+        try:
+            child = page.get_child() if page is not None and hasattr(page, 'get_child') else None
+            from .host_info_tab import HostInfoTab
+            if isinstance(child, HostInfoTab):
+                child.cleanup()
+            else:
+                info = getattr(child, '_sshpilot_machine_info', None)
+                if info is not None:
+                    info.cleanup()
+        except Exception:
+            logger.debug('Host info tab teardown on detach failed', exc_info=True)
+
         # Cleanup terminal-to-connection maps when a page is detached
         detached_connection = None
         try:
@@ -1921,15 +1935,25 @@ class WindowTabsMixin:
 
     def _update_tab_titles(self):
         """Update tab titles"""
+        from .forwarding_only_ui import forwarding_only_tab_title
+
         for page in self.tab_view.get_pages():
             if self._is_start_tab_page(page):
                 continue
+            if getattr(page, "custom_tab_title", None):
+                continue
             child = page.get_child()
             if hasattr(child, 'connection'):
-                page.set_title(
+                name = (
                     getattr(child.connection, "display_name", None)
                     or child.connection.nickname
                 )
+                if getattr(child, "is_forwarding_only_session", None) and (
+                    child.is_forwarding_only_session()
+                ):
+                    page.set_title(forwarding_only_tab_title(str(name)))
+                else:
+                    page.set_title(name)
 
 
 def _is_terminal_widget(widget) -> bool:

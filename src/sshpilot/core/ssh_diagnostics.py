@@ -10,14 +10,13 @@ ever exposing the diagnostics to the user terminal:
 * ``MUX_SESSION_OPENED`` — a ControlMaster client session was handed off::
     ``... master session id: <integer>``
 * ``FAILED`` — OpenSSH gave up (``Permission denied``, ``Connection refused``,
-  ``Host key verification failed``, ...).
+  ``Host key verification failed``, ExitOnForwardFailure bind errors, ...).
 * ``PENDING`` — no decisive marker yet (prompts, KEX, retries).
 
-The parser is stateful and feeds incrementally: a decisive result latches and
-is reported exactly once; later input is ignored.  Retriable password
-attempts (``Permission denied, please try again.``) deliberately stay
-``PENDING`` so a 30 s MFA flow or a wrong first password never kills a session
-that would otherwise authenticate.
+The parser is stateful and feeds incrementally.  Authentication success is
+reported once; after that the parser keeps reading so post-auth fatals that
+OpenSSH writes only to ``-E`` (notably ExitOnForwardFailure) can still become
+``FAILED``.  A ``FAILED`` verdict is terminal.
 """
 
 from __future__ import annotations
@@ -47,6 +46,13 @@ _TERMINAL_PERMISSION_DENIED_RE = re.compile(
 # terminal; OpenSSH keeps prompting until NumberOfPasswordPrompts is spent.
 _RETRIABLE_PERMISSION_DENIED_RE = re.compile(
     r"permission denied,?\s+please try again\.?"
+)
+
+_AUTH_SUCCESS_STATES = frozenset(
+    {
+        "authenticated",
+        "mux_session_opened",
+    }
 )
 
 
@@ -92,58 +98,95 @@ class SshDiagnosticParser:
     """Incremental parser for one session's ``-v -E`` diagnostic stream.
 
     Feed raw bytes as they are appended; partial lines are retained across
-    calls.  The first decisive verdict is returned exactly once and the
-    parser latches, so late process noise cannot change the outcome.
+    calls.  Authentication success is returned once; further input is still
+    scanned for post-auth ``FAILED`` lines (ExitOnForwardFailure).  ``FAILED``
+    latches permanently.
     """
 
     def __init__(self) -> None:
         self._buffer = bytearray()
         self._latched: Optional[SshDiagnosticResult] = None
+        self._pending_emit: Optional[SshDiagnosticResult] = None
 
     def feed(self, data: bytes) -> Optional[SshDiagnosticResult]:
-        """Consume *data* and return the first decisive result (or ``None``)."""
-        if self._latched is not None or not data:
+        """Consume *data* and return a newly observed decisive result."""
+        if (
+            self._latched is not None
+            and self._latched.state is SshDiagnosticState.FAILED
+        ):
             return None
-        self._buffer.extend(data)
+        if data:
+            self._buffer.extend(data)
         while b"\n" in self._buffer:
             line = self._buffer.partition(b"\n")[0]
             del self._buffer[: len(line) + 1]
-            if self._latched is not None:
+            if (
+                self._latched is not None
+                and self._latched.state is SshDiagnosticState.FAILED
+            ):
                 break
             self._consume_line(line.decode("utf-8", errors="replace"))
-        return self._latched
+            # One decisive event per feed() so AUTHENTICATED is not skipped
+            # when ExitOnForwardFailure lines arrive in the same read chunk.
+            if self._pending_emit is not None:
+                break
+        return self._take_pending()
 
     def close(self) -> Optional[SshDiagnosticResult]:
-        """Flush a trailing unterminated line and return any decisive result."""
-        if self._latched is not None:
+        """Flush a trailing unterminated line and return any new result."""
+        if (
+            self._latched is not None
+            and self._latched.state is SshDiagnosticState.FAILED
+        ):
             return None
         if self._buffer:
             line = bytes(self._buffer)
             self._buffer.clear()
             self._consume_line(line.decode("utf-8", errors="replace"))
-        return self._latched
+        return self._take_pending()
 
     @property
     def pending(self) -> bool:
         return self._latched is None
 
+    def _take_pending(self) -> Optional[SshDiagnosticResult]:
+        result = self._pending_emit
+        self._pending_emit = None
+        return result
+
+    def _emit(self, result: SshDiagnosticResult) -> None:
+        self._latched = result
+        self._pending_emit = result
+
     def _consume_line(self, line: str) -> None:
         if not line:
             return
+        if (
+            self._latched is not None
+            and self._latched.state.value in _AUTH_SUCCESS_STATES
+        ):
+            # Auth already proven. OpenSSH still writes ExitOnForwardFailure
+            # lines to -E after Authenticated to; keep scanning for those.
+            if _DEBUG_LINE_RE.match(line):
+                return
+            detail = _terminal_failure_detail(line)
+            if detail is not None:
+                self._emit(SshDiagnosticResult(SshDiagnosticState.FAILED, detail))
+            return
         if _AUTHENTICATED_RE.search(line):
-            self._latched = SshDiagnosticResult(
-                SshDiagnosticState.AUTHENTICATED, line.strip()
+            self._emit(
+                SshDiagnosticResult(SshDiagnosticState.AUTHENTICATED, line.strip())
             )
             return
         if _MUX_SESSION_RE.search(line):
-            self._latched = SshDiagnosticResult(
-                SshDiagnosticState.MUX_SESSION_OPENED, line.strip()
+            self._emit(
+                SshDiagnosticResult(
+                    SshDiagnosticState.MUX_SESSION_OPENED, line.strip()
+                )
             )
             return
         if _DEBUG_LINE_RE.match(line):
             return
         detail = _terminal_failure_detail(line)
         if detail is not None:
-            self._latched = SshDiagnosticResult(
-                SshDiagnosticState.FAILED, detail
-            )
+            self._emit(SshDiagnosticResult(SshDiagnosticState.FAILED, detail))

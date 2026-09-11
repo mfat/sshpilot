@@ -41,6 +41,7 @@ src/sshpilot/machine_info_dialog.py
 src/sshpilot/macos_menubar.py
 src/sshpilot/main.py
 src/sshpilot/omni_search.py
+src/sshpilot/overflow_toolbar.py
 src/sshpilot/plugins/builtin/docker_manager/__init__.py
 src/sshpilot/plugins/builtin/docker_manager/dialogs.py
 src/sshpilot/plugins/builtin/docker_manager/page.py

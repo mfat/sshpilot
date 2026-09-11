@@ -508,13 +508,20 @@ class TerminalManager:
             terminal._pty_autofill = (pty_prompt, pty_response)
 
         from sshpilot import icon_utils
+        from .forwarding_only_ui import (
+            connection_forwarding_only,
+            forwarding_only_tab_title,
+        )
 
         page = window.tab_view.append(terminal)
-        page.set_title(
+        default_title = (
             tab_title
             or getattr(connection, "display_name", None)
             or connection.nickname
         )
+        if tab_title is None and connection_forwarding_only(connection) is True:
+            default_title = forwarding_only_tab_title(str(default_title))
+        page.set_title(default_title)
         page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
         if group_name:
             setattr(terminal, "group_name", group_name)
@@ -525,6 +532,16 @@ class TerminalManager:
         window.active_terminals[connection] = terminal
         window.show_tab_view()
         window.tab_view.set_selected_page(page)
+        try:
+            terminal.ensure_forwarding_only_context(
+                getattr(window, "client", None),
+                getattr(window, "client_bridge", None),
+            )
+        except Exception:
+            logger.debug(
+                "Failed to resolve forwarding-only context for new tab",
+                exc_info=True,
+            )
         return terminal, page
 
     def _unregister_terminal(self, connection, terminal) -> None:
@@ -1382,6 +1399,17 @@ class TerminalManager:
         page = self.window._page_for_child(terminal)
         if page:
             if getattr(page, "custom_tab_title", None):
+                return
+            if getattr(terminal, "is_forwarding_only_session", None) and (
+                terminal.is_forwarding_only_session()
+            ):
+                from .forwarding_only_ui import forwarding_only_tab_title
+
+                name = (
+                    getattr(terminal.connection, "display_name", None)
+                    or terminal.connection.nickname
+                )
+                page.set_title(forwarding_only_tab_title(str(name)))
                 return
             if title and title != terminal.connection.nickname:
                 page.set_title(

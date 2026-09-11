@@ -4395,10 +4395,12 @@ def _build_sidebar_header(window, sidebar_box):
     """Build the sidebar action header (add/search/filter/sort/…)."""
     from sshpilot.overflow_toolbar import OverflowToolbar
 
-    # Priority order (kept visible longest first). Excess actions move into
-    # the trailing "…" popover as the pane narrows.
+    # Gaps shrink toward zero before any action moves into the "…" menu;
+    # visible icons share the row width equally (homogeneous).
     header = OverflowToolbar(
         spacing=6,
+        min_spacing=0,
+        fill_width=True,
         primary_count=1,
         accessible_name=_('Connection list actions'),
     )
@@ -4806,7 +4808,7 @@ def _attach_connection_list_context_menu(window):
                         menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: window.on_duplicate_connection_action(None, None)),
                         menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()),
                         menu.add_item('utilities-terminal-symbolic', _('Copy SSH Command'), lambda: window.on_copy_ssh_command_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
-                        menu.add_item('info-outline-symbolic', _('Host Info…'), lambda: window.on_machine_info_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
+                        menu.add_item('info-outline-symbolic', _('Dashboard…'), lambda: window.on_machine_info_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                     )
 
                 def _has_wol_mac(c):

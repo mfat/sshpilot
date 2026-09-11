@@ -596,6 +596,48 @@ def test_exited_then_closed_notifies_once(active_session):
     on_state_changed.assert_called_once()
 
 
+def test_exited_then_closed_with_failure_reports_failure(active_session):
+    """SESSION_EXITED racing ahead of CLOSED-with-failure must still surface it."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.errors import ErrorCode
+    from sshpilot.api.models.sessions import (
+        SessionExitInfo,
+        SessionFailure,
+        SessionState,
+        SessionSummary,
+    )
+
+    controller, on_event, on_state_changed = active_session
+    errors = []
+    controller._on_error = errors.append
+
+    info = SessionExitInfo(exit_code=255, reason="process_exit")
+    on_event(_session_event(EventType.SESSION_EXITED, info, controller.tab_state.session_id))
+    assert controller.state == TerminalSessionState.CLOSED
+
+    on_event(
+        _session_event(
+            EventType.SESSION_CLOSED,
+            SessionSummary(
+                id=controller.tab_state.session_id,
+                connection_id=ConnectionId("test-connection"),
+                state=SessionState.CLOSED,
+                exit_info=info,
+                failure=SessionFailure(
+                    ErrorCode.SESSION_STARTUP_FAILED.value,
+                    "Error: remote port forwarding failed for listen port 2222.",
+                ),
+            ),
+            controller.tab_state.session_id,
+        )
+    )
+
+    assert len(errors) == 1
+    assert "port forwarding failed" in str(errors[0])
+    # EXITED notified once; CLOSED-with-failure re-notifies to refresh UI.
+    assert on_state_changed.call_count == 2
+
+
 def test_session_events_after_close_ignored(active_session):
     """User-initiated close must not be overwritten by late daemon events."""
     from sshpilot.api.events import EventType

@@ -1155,8 +1155,11 @@ class PluginContext:
         from ..api.capabilities import Capability as ApiCapability
         from ..api.daemon_client import DaemonClient
         from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
-        from ..extended_service_policy import daemon_forward_unavailable_message
-        from ..port_utils import find_available_port
+        from ..extended_service_policy import (
+            daemon_forward_unavailable_message,
+            format_forward_failure_detail,
+        )
+        from ..port_utils import allocate_ephemeral_local_port, find_available_port
 
         client = self._daemon_client_for_forwards()
         if not isinstance(client, DaemonClient):
@@ -1197,13 +1200,14 @@ class PluginContext:
                     detail="connection has no ID"
                 )
             )
-        local_port = find_available_port(
-            remote_port if remote_port >= 1024 else 8000 + remote_port
-        )
+        local_port = allocate_ephemeral_local_port("127.0.0.1")
+        if not local_port:
+            local_port = find_available_port(49152)
         if not local_port:
             raise RuntimeError(
                 daemon_forward_unavailable_message(detail="no free local port")
             )
+
         try:
             summary = client.open_forward(
                 OpenForwardRequest(
@@ -1216,22 +1220,14 @@ class PluginContext:
                 )
             )
         except Exception as exc:
-            raise RuntimeError(
-                daemon_forward_unavailable_message(
-                    detail=f"open_forward failed ({type(exc).__name__})"
-                )
-            ) from exc
+            raise RuntimeError(f"open_forward failed: {exc}") from exc
         deadline = time.monotonic() + max(1.0, float(timeout))
         forward_id = summary.id
         while time.monotonic() < deadline:
             try:
                 current = client.get_forward(forward_id)
             except Exception as exc:
-                raise RuntimeError(
-                    daemon_forward_unavailable_message(
-                        detail=f"get_forward failed ({type(exc).__name__})"
-                    )
-                ) from exc
+                raise RuntimeError(f"get_forward failed: {exc}") from exc
             if current.state is ForwardState.ACTIVE:
                 with _FORWARDS_LOCK:
                     _FORWARDS[(getattr(connection, "nickname", ""), int(remote_port))] = _Forward(
@@ -1239,14 +1235,11 @@ class PluginContext:
                     )
                 return int(current.bind_port or local_port)
             if current.state in {ForwardState.FAILED, ForwardState.CLOSED}:
-                raise RuntimeError(
-                    daemon_forward_unavailable_message(
-                        detail=f"forward ended in state {current.state.value}"
-                    )
-                )
+                raise RuntimeError(format_forward_failure_detail(current))
             time.sleep(0.1)
         raise RuntimeError(
-            daemon_forward_unavailable_message(detail="timed out waiting for ACTIVE")
+            f"timed out waiting for forward {forward_id} to become ACTIVE "
+            f"(local {local_port} -> 127.0.0.1:{remote_port})"
         )
 
     def ensure_local_forward(self, nickname: str, remote_port: int, *,

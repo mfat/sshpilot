@@ -4,6 +4,10 @@ Used by the connection sidebar's top and bottom chrome so the pane can shrink
 below the full button-row width without clipping mid-icon: excess actions stay
 reachable from a ``view-more-symbolic`` menu.
 
+The header can run in *fill* mode: icon buttons share the row width equally,
+and inter-icon spacing shrinks toward a minimum before any action is moved into
+the popover.
+
 GTK4 layout is owned by ``Gtk.LayoutManager``, so a plain ``Gtk.Box`` cannot
 override measure/allocate with ``do_measure``. This widget uses a small custom
 layout manager that reports a low horizontal minimum (primary controls + the
@@ -30,6 +34,28 @@ logger = logging.getLogger(__name__)
 _FALLBACK_ITEM_WIDTH = 36
 
 
+def _parts_width(parts: Sequence[int], spacing: int) -> int:
+    if not parts:
+        return 0
+    return int(sum(parts) + spacing * (len(parts) - 1))
+
+
+def _max_fitting_spacing(
+    widths: Sequence[int],
+    available: int,
+    *,
+    min_spacing: int,
+    preferred_spacing: int,
+) -> int:
+    """Largest spacing in ``[min_spacing, preferred_spacing]`` that still fits."""
+    if _parts_width(widths, preferred_spacing) <= available:
+        return preferred_spacing
+    for spacing in range(preferred_spacing - 1, min_spacing - 1, -1):
+        if _parts_width(widths, spacing) <= available:
+            return spacing
+    return min_spacing
+
+
 def choose_overflow(
     widths: Sequence[int],
     available: int,
@@ -50,20 +76,56 @@ def choose_overflow(
     if available < 0:
         available = 0
 
-    def _row_width(parts: Sequence[int]) -> int:
-        if not parts:
-            return 0
-        return int(sum(parts) + spacing * (len(parts) - 1))
-
-    full = _row_width(widths)
+    full = _parts_width(widths, spacing)
     if full <= available:
         return n, False
 
     for k in range(n - 1, -1, -1):
         parts = list(widths[:k]) + [overflow_width]
-        if _row_width(parts) <= available:
+        if _parts_width(parts, spacing) <= available:
             return k, True
     return 0, True
+
+
+def choose_fill_pack(
+    widths: Sequence[int],
+    available: int,
+    *,
+    preferred_spacing: int = 6,
+    min_spacing: int = 0,
+    overflow_width: int = _FALLBACK_ITEM_WIDTH,
+) -> tuple[int, bool, int]:
+    """Pack a fill-width toolbar: tighten gaps before overflowing.
+
+    Returns ``(visible_count, show_overflow_button, spacing)``. All items stay
+    visible while they fit at ``min_spacing``; spacing is kept as close to
+    ``preferred_spacing`` as possible so leftover width can expand the icon
+    buttons themselves (homogeneous). Only when even ``min_spacing`` is too
+    tight do trailing items move into the overflow button.
+    """
+    n = len(widths)
+    if n == 0:
+        return 0, False, max(0, int(preferred_spacing))
+    if available < 0:
+        available = 0
+    min_spacing = max(0, int(min_spacing))
+    preferred_spacing = max(min_spacing, int(preferred_spacing))
+
+    if _parts_width(widths, min_spacing) <= available:
+        return n, False, _max_fitting_spacing(
+            widths,
+            available,
+            min_spacing=min_spacing,
+            preferred_spacing=preferred_spacing,
+        )
+
+    visible, show = choose_overflow(
+        widths,
+        available,
+        spacing=min_spacing,
+        overflow_width=overflow_width,
+    )
+    return visible, show, min_spacing
 
 
 def _widget_label(widget: Gtk.Widget) -> str:
@@ -192,6 +254,8 @@ class OverflowToolbar(Gtk.Widget):
         self,
         *,
         spacing: int = 6,
+        min_spacing: int = 0,
+        fill_width: bool = False,
         primary_count: int = 2,
         accessible_name: Optional[str] = None,
     ) -> None:
@@ -202,12 +266,17 @@ class OverflowToolbar(Gtk.Widget):
         if accessible_name:
             set_accessible_name(self, accessible_name)
 
-        self._spacing = spacing
+        self._spacing = max(0, int(spacing))
+        self._min_spacing = max(0, int(min_spacing))
+        if self._min_spacing > self._spacing:
+            self._min_spacing = self._spacing
+        self._fill_width = bool(fill_width)
         self._primary_count = max(1, int(primary_count))
         self._items: list[Gtk.Widget] = []
         self._last_visible = -1
         self._last_overflow = False
         self._last_available = -1
+        self._last_spacing = -1
         self._last_overflowed_ids: tuple = ()
         self._applying = False
         # When True, freeze the row at natural width and let a parent clip
@@ -219,10 +288,10 @@ class OverflowToolbar(Gtk.Widget):
 
         self._box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=spacing,
+            spacing=self._spacing,
         )
         self._box.set_hexpand(True)
-        self._box.set_homogeneous(False)
+        self._box.set_homogeneous(bool(self._fill_width))
         self._box.set_parent(self)
 
         self._overflow_btn = Gtk.MenuButton()
@@ -263,8 +332,8 @@ class OverflowToolbar(Gtk.Widget):
 
     def add_item(self, widget: Gtk.Widget) -> None:
         """Append a control in priority order (first = kept visible longest)."""
-        widget.set_hexpand(False)
-        widget.set_halign(Gtk.Align.CENTER)
+        widget.set_hexpand(bool(self._fill_width))
+        widget.set_halign(Gtk.Align.FILL if self._fill_width else Gtk.Align.CENTER)
         prev = self._items[-1] if self._items else None
         self._items.append(widget)
         self._box.append(widget)
@@ -308,10 +377,15 @@ class OverflowToolbar(Gtk.Widget):
     def _candidates(self) -> list[Gtk.Widget]:
         return [w for w in self._items if self._item_wants_visible(w)]
 
-    def _row_width(self, parts: Sequence[int]) -> int:
-        if not parts:
-            return 0
-        return int(sum(parts) + self._spacing * (len(parts) - 1))
+    def _row_width(
+        self, parts: Sequence[int], *, spacing: Optional[int] = None
+    ) -> int:
+        sp = self._spacing if spacing is None else spacing
+        return _parts_width(parts, sp)
+
+    def _pack_spacing(self) -> int:
+        """Spacing used when deciding how many items still fit."""
+        return self._min_spacing if self._fill_width else self._spacing
 
     def _ensure_width_cache(self) -> None:
         """Measure every candidate once while still visible (first layout)."""
@@ -343,7 +417,7 @@ class OverflowToolbar(Gtk.Widget):
         primary = candidates[: self._primary_count]
         widths = [self._item_width(w) for w in primary]
         widths.append(self._item_width(self._overflow_btn))
-        return self._row_width(widths)
+        return self._row_width(widths, spacing=self._pack_spacing())
 
     def _preferred_width(self) -> int:
         self._ensure_width_cache()
@@ -408,10 +482,17 @@ class OverflowToolbar(Gtk.Widget):
                     except Exception:
                         pass
             self._overflow_btn.set_visible(False)
+            try:
+                self._box.set_spacing(self._spacing)
+                if self._fill_width:
+                    self._box.set_homogeneous(True)
+            except Exception:
+                pass
             # Invalidate overflow cache so leaving clip-reveal recomputes.
             self._last_visible = -1
             self._last_overflow = False
             self._last_available = -1
+            self._last_spacing = -1
             self._last_overflowed_ids = ()
         finally:
             self._applying = False
@@ -443,26 +524,49 @@ class OverflowToolbar(Gtk.Widget):
         candidates = self._candidates()
         widths = [self._item_width(w) for w in candidates]
         overflow_w = self._item_width(self._overflow_btn)
-        visible_count, show_overflow = choose_overflow(
-            widths,
-            available,
-            spacing=self._spacing,
-            overflow_width=overflow_w,
-        )
+        if self._fill_width:
+            visible_count, show_overflow, spacing = choose_fill_pack(
+                widths,
+                available,
+                preferred_spacing=self._spacing,
+                min_spacing=self._min_spacing,
+                overflow_width=overflow_w,
+            )
+        else:
+            visible_count, show_overflow = choose_overflow(
+                widths,
+                available,
+                spacing=self._spacing,
+                overflow_width=overflow_w,
+            )
+            spacing = self._spacing
         if (
             visible_count == self._last_visible
             and show_overflow == self._last_overflow
             and available == self._last_available
+            and spacing == self._last_spacing
         ):
             return
 
         self._applying = True
         try:
+            try:
+                self._box.set_spacing(int(spacing))
+                if self._fill_width:
+                    # Equal shares make the visible icons (and the "…" control)
+                    # span the row; spacing only absorbs as much as packing needs.
+                    self._box.set_homogeneous(True)
+                    self._overflow_btn.set_hexpand(True)
+            except Exception:
+                pass
             overflowed: list[Gtk.Widget] = []
             for index, widget in enumerate(candidates):
                 show = index < visible_count
                 try:
                     widget.set_visible(show)
+                    if self._fill_width:
+                        widget.set_hexpand(True)
+                        widget.set_halign(Gtk.Align.FILL)
                 except Exception:
                     pass
                 if not show:
@@ -484,6 +588,7 @@ class OverflowToolbar(Gtk.Widget):
             self._last_visible = visible_count
             self._last_overflow = show_overflow
             self._last_available = available
+            self._last_spacing = int(spacing)
         finally:
             self._applying = False
 
@@ -536,6 +641,7 @@ class OverflowToolbar(Gtk.Widget):
         """Recompute visibility (e.g. after an item’s force-hidden flag changes)."""
         self._last_visible = -1
         self._last_available = -1
+        self._last_spacing = -1
         self._last_overflowed_ids = ()
         self.queue_resize()
         self.queue_allocate()

@@ -99,6 +99,7 @@ _ICON_RESOURCE_MAP = {
     'preferences-desktop-keyboard-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-desktop-keyboard-symbolic.svg',
     'help-browser-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/help-browser-symbolic.svg',
     'help-about-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/help-about-symbolic.svg',
+    'web-browser-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/web-browser-symbolic.svg',
     'pan-end-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/pan-end-symbolic.svg',
     'pan-down-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/pan-down-symbolic.svg',
     'computer-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/computer-symbolic.svg',

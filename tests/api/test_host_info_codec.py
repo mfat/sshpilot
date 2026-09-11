@@ -128,8 +128,8 @@ def _snapshot() -> HostInfoSnapshot:
         os_version_id="23.05.5",
         architecture="mips",
         listening_ports=(
-            ListeningPort(port=22, process="sshd"),
-            ListeningPort(port=53, process=""),
+            ListeningPort(port=22, process="sshd", address="0.0.0.0"),
+            ListeningPort(port=53, process="", address="127.0.0.1"),
         ),
         processes=(
             ProcessUsage(command="hostapd", cpu_percent=137.5, memory_percent=1.5),
@@ -259,6 +259,14 @@ def test_a_partial_pressure_reading_is_rejected():
     wire["io_pressure_some"]["avg60"] = None
     with pytest.raises(ValueError):
         host_info_snapshot_from_wire(wire)
+
+
+def test_listening_port_address_defaults_when_absent_on_wire():
+    wire = host_info_snapshot_to_wire(_snapshot())
+    for item in wire["listening_ports"]:
+        item.pop("address", None)
+    restored = host_info_snapshot_from_wire(wire)
+    assert all(item.address == "" for item in restored.listening_ports)
 
 
 def test_models_reject_impossible_host_information():

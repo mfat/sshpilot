@@ -1,4 +1,4 @@
-"""Host Info dialog — renders daemon-owned remote host information.
+"""Host Info UI — renders daemon-owned remote host information.
 
 This module is presentation only.  It holds no probe text and no parsing: the
 daemon runs the probe and returns typed DTOs
@@ -6,6 +6,10 @@ daemon runs the probe and returns typed DTOs
 :class:`~sshpilot.gtk.host_info_controller.HostInfoController` starts probes
 and delivers their results without polling.  Everything here turns values into
 pixels and localized text.
+
+The same presenter can open as an ``Adw.Dialog`` or as a notebook tab
+(``as_tab=True`` / :func:`open_machine_info_tab`). The main window prefers
+this GTK tab and falls back to the WebKit HTML shell when needed.
 
 Two presentation rules keep the tabs consistent with each other:
 
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from collections import deque
 from gettext import gettext as _, ngettext
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -39,6 +44,15 @@ from .api.models.host_info import (
 )
 from .core.host_info.rates import cpu_utilization_by_name, interface_rates
 from .gtk.host_info_controller import HostInfoController, HostInfoProbeBusy
+from .host_info_web_uis import (
+    WebUiMatch,
+    browser_url,
+    classify_listening_port,
+    ensure_daemon_local_forward,
+    needs_local_forward,
+)
+from . import icon_utils
+from .web_tab import open_url_in_browser
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +352,36 @@ def _card() -> Gtk.Box:
     return box
 
 
+def _tile_flow(*, max_per_line: int = 3) -> Gtk.FlowBox:
+    """Equal-width cards that wrap from N columns down to 1 as space shrinks."""
+
+    flow = Gtk.FlowBox()
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_homogeneous(True)
+    flow.set_max_children_per_line(max_per_line)
+    flow.set_min_children_per_line(1)
+    flow.set_column_spacing(12)
+    flow.set_row_spacing(12)
+    flow.set_hexpand(True)
+    flow.set_valign(Gtk.Align.START)
+    return flow
+
+
+def _insert_tile(
+    flow: Gtk.FlowBox, widget: Gtk.Widget, *, min_width: int = 200
+) -> None:
+    """Insert a tile with a floor width so FlowBox wraps before crushing it."""
+
+    widget.set_hexpand(True)
+    widget.set_halign(Gtk.Align.FILL)
+    widget.set_size_request(min_width, -1)
+    flow.insert(widget, -1)
+    child = widget.get_parent()
+    if child is not None:
+        child.set_hexpand(True)
+        child.set_halign(Gtk.Align.FILL)
+
+
 def _section_label(text: str) -> Gtk.Label:
     label = Gtk.Label(label=text)
     label.set_xalign(0)
@@ -411,15 +455,19 @@ def _key_value_rows(card: Gtk.Box, rows: Sequence[Tuple[str, str, bool]]) -> Non
 class _Table:
     """A card-hosted grid whose header and rows share real column widths.
 
-    Columns are grid columns rather than labels padded with a minimum size
-    request, so a long mount point or device name widens its column instead of
-    silently overflowing into the next one.
+    Non-expanding columns size to their contents so a long mount point or
+    device name widens its own column instead of overflowing into the next.
+    Expanding columns take leftover width; labels in them collapse their
+    natural width and ellipsize rather than stretching the card past its
+    parent (top-process command lines are the usual offender).
     """
 
     def __init__(self, columns: Sequence[Tuple[str, float, bool]]) -> None:
         self.widget = _card()
+        self.widget.set_hexpand(True)
         self._columns = columns
         self._grid = Gtk.Grid()
+        self._grid.set_hexpand(True)
         self._grid.set_column_spacing(16)
         self._grid.set_margin_start(16)
         self._grid.set_margin_end(16)
@@ -435,6 +483,11 @@ class _Table:
             label.add_css_class("heading")
             label.set_opacity(0.6)
             label.set_hexpand(expand)
+            if expand:
+                # Match body cells: a tiny natural width so the expand column
+                # sizes from leftover space, not from the longest command.
+                label.set_width_chars(1)
+                label.set_halign(Gtk.Align.FILL)
             self._grid.attach(label, column, 0, 1, 1)
         self._row = 1
 
@@ -448,6 +501,18 @@ class _Table:
             _, xalign, expand = self._columns[column]
             if isinstance(cell, Gtk.Label):
                 cell.set_xalign(xalign)
+                if expand:
+                    # Ellipsize alone still reports the full string as natural
+                    # width; collapse that so the allocated column can clip.
+                    cell.set_width_chars(1)
+                    cell.set_halign(Gtk.Align.FILL)
+                    if cell.get_ellipsize() == Pango.EllipsizeMode.NONE:
+                        cell.set_ellipsize(Pango.EllipsizeMode.END)
+                    text = cell.get_text()
+                    if text and not cell.get_tooltip_text():
+                        cell.set_tooltip_text(text)
+            elif expand:
+                cell.set_halign(Gtk.Align.FILL)
             cell.set_hexpand(expand)
             self._grid.attach(cell, column, self._row, 1, 1)
         self._row += 1
@@ -780,12 +845,18 @@ def _page() -> Gtk.Box:
 # ---------------------------------------------------------------------------
 
 class MachineInfoDialog:
-    """Presents one remote host's daemon-reported system information."""
+    """Presents one remote host's daemon-reported system information.
 
-    def __init__(self, window, connection) -> None:
+    ``as_tab=True`` embeds the same UI in a notebook tab instead of an
+    ``Adw.Dialog`` (the default Host Info path from the main window).
+    """
+
+    def __init__(self, window, connection, *, as_tab: bool = False) -> None:
         _ensure_css()
         self._window = window
         self._connection = connection
+        self._as_tab = as_tab
+        self._tab_page = None
         self._snapshot: Optional[HostInfoSnapshot] = None
         self._closed = False
         self._controller: Optional[HostInfoController] = None
@@ -804,22 +875,39 @@ class MachineInfoDialog:
         self._memory_gauge: Optional[_Gauge] = None
         self._cpu_section: Optional[_CpuSection] = None
 
-        self._dialog = Adw.Dialog()
-        self._dialog.set_content_width(900)
-        self._dialog.set_content_height(716)
-
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(self._build_header())
         self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._content.set_vexpand(True)
         toolbar.set_content(self._content)
-        self._dialog.set_child(toolbar)
-        self._dialog.connect("closed", self._on_closed)
+
+        if as_tab:
+            self._dialog = None
+            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root.set_hexpand(True)
+            root.set_vexpand(True)
+            root.append(toolbar)
+            # Looked up on tab detach so LIVE probes stop with the page.
+            root._sshpilot_machine_info = self
+            root.connect("destroy", lambda *_args: self.cleanup())
+            self.widget = root
+        else:
+            self._dialog = Adw.Dialog()
+            self._dialog.set_content_width(900)
+            self._dialog.set_content_height(716)
+            self._dialog.set_child(toolbar)
+            self._dialog.connect("closed", lambda *_args: self.cleanup())
+            self.widget = None
 
         self._show_status(_("Gathering host information…"), spinner=True)
-        self._dialog.present(window)
+        if self._dialog is not None:
+            self._dialog.present(window)
         self._watch_window_focus()
         self._start_probe()
+
+    @property
+    def connection(self):
+        return self._connection
 
     # -- header ---------------------------------------------------------
 
@@ -835,7 +923,7 @@ class MachineInfoDialog:
         title_row.append(icon)
 
         title_column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-        title = Gtk.Label(label=_("Host Info"))
+        title = Gtk.Label(label=_("Dashboard"))
         title.add_css_class("title")
         title_column.append(title)
 
@@ -850,7 +938,7 @@ class MachineInfoDialog:
         close_button = Gtk.Button(icon_name="window-close-symbolic")
         close_button.add_css_class("circular")
         close_button.set_tooltip_text(_("Close"))
-        close_button.connect("clicked", lambda _button: self._dialog.close())
+        close_button.connect("clicked", lambda _button: self._request_close())
         header.pack_end(close_button)
 
         self._refresh_button = Gtk.Button(label=_("Refresh"))
@@ -864,6 +952,20 @@ class MachineInfoDialog:
         self._age_label.add_css_class("caption")
         header.pack_end(self._age_label)
         return header
+
+    def _request_close(self) -> None:
+        if self._dialog is not None:
+            self._dialog.close()
+            return
+        if self._tab_page is not None and self._window is not None:
+            tab_view = getattr(self._window, "tab_view", None)
+            if tab_view is not None:
+                try:
+                    tab_view.close_page(self._tab_page)
+                    return
+                except Exception:
+                    logger.debug("Host info tab close failed", exc_info=True)
+        self.cleanup()
 
     def _subtitle(self) -> str:
         nickname = getattr(self._connection, "nickname", "") or ""
@@ -1219,7 +1321,11 @@ class MachineInfoDialog:
 
     # -- teardown -------------------------------------------------------
 
-    def _on_closed(self, *_args) -> None:
+    def cleanup(self) -> None:
+        """Stop timers and the controller; safe to call more than once."""
+
+        if self._closed:
+            return
         self._closed = True
         if self._age_timer_id:
             GLib.source_remove(self._age_timer_id)
@@ -1237,6 +1343,80 @@ class MachineInfoDialog:
         if self._interaction_dialogs is not None:
             self._interaction_dialogs.close()
             self._interaction_dialogs = None
+
+    def _on_closed(self, *_args) -> None:
+        self.cleanup()
+
+    def _toast(self, message: str) -> None:
+        overlay = getattr(self._window, "toast_overlay", None)
+        if overlay is None:
+            return
+        try:
+            from gi.repository import Adw
+
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(4)
+            overlay.add_toast(toast)
+        except Exception:
+            logger.debug("Host info toast failed", exc_info=True)
+
+    def _open_web_ui(self, match: WebUiMatch) -> None:
+        """One-click: forward if needed, then open the system browser."""
+
+        if self._closed:
+            return
+        client = getattr(self._window, "client", None)
+        if client is None:
+            self._toast(_("Daemon connection unavailable."))
+            return
+
+        def work() -> None:
+            try:
+                if needs_local_forward(match.address):
+                    connection_id = connection_id_for(self._connection)
+                    local_port = ensure_daemon_local_forward(
+                        client, connection_id, match.port
+                    )
+                    url = browser_url(
+                        scheme=match.scheme,
+                        address=match.address,
+                        port=match.port,
+                        local_port=local_port,
+                    )
+                else:
+                    url = browser_url(
+                        scheme=match.scheme,
+                        address=match.address,
+                        port=match.port,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Host info web UI open failed for %s: %s",
+                    match.label,
+                    exc,
+                    exc_info=True,
+                )
+                GLib.idle_add(
+                    self._toast,
+                    _("Could not open %(label)s: %(error)s")
+                    % {"label": match.label, "error": str(exc)},
+                )
+                return
+
+            def present() -> bool:
+                if self._closed:
+                    return False
+                if not open_url_in_browser(url):
+                    self._toast(_("Could not open the system browser."))
+                return False
+
+            GLib.idle_add(present)
+
+        threading.Thread(
+            target=work,
+            name="sshpilot-host-info-web-ui",
+            daemon=True,
+        ).start()
 
     # -- tabs -----------------------------------------------------------
 
@@ -1274,6 +1454,16 @@ class MachineInfoDialog:
                 switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
             except Exception:
                 logger.debug("Inline switcher label mode unavailable", exc_info=True)
+            # Prefer ellipsis over overflow when six tabs outgrow a narrow pane;
+            # do not force equal widths so short labels keep breathing room.
+            try:
+                switcher.set_can_shrink(True)
+            except Exception:
+                logger.debug("Inline switcher can-shrink unavailable", exc_info=True)
+            try:
+                switcher.set_homogeneous(False)
+            except Exception:
+                logger.debug("Inline switcher homogeneous unavailable", exc_info=True)
         else:
             switcher = Gtk.StackSwitcher(stack=stack)
             switcher.set_halign(Gtk.Align.CENTER)
@@ -1298,8 +1488,7 @@ class MachineInfoDialog:
         snapshot = self._snapshot
         memory = snapshot.memory
 
-        gauges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        gauges.set_homogeneous(True)
+        gauges = _tile_flow(max_per_line=3)
 
         # CPU utilization is a difference between two /proc/stat readings, and
         # the gather only took the first, so this starts unknown and fills in
@@ -1312,7 +1501,7 @@ class MachineInfoDialog:
             _format_frequency(snapshot.cpu.frequency_mhz),
             self._load_detail(snapshot.load_average),
         )
-        gauges.append(self._cpu_gauge.widget)
+        _insert_tile(gauges, self._cpu_gauge.widget)
 
         self._memory_gauge = _Gauge(_("Memory"), history=True)
         used = memory.used_bytes
@@ -1323,7 +1512,7 @@ class MachineInfoDialog:
             self._swap_detail(memory),
             record=True,
         )
-        gauges.append(self._memory_gauge.widget)
+        _insert_tile(gauges, self._memory_gauge.widget)
 
         root = snapshot.root_filesystem
         root_detail = root_device = ""
@@ -1343,7 +1532,7 @@ class MachineInfoDialog:
         storage.update(
             root.used_fraction if root is not None else None, root_detail, root_device
         )
-        gauges.append(storage.widget)
+        _insert_tile(gauges, storage.widget)
         page.append(gauges)
 
         card = _card()
@@ -1400,8 +1589,7 @@ class MachineInfoDialog:
         page.append(self._cpu_section.widget)
 
         page.append(_section_label(_("Load average")))
-        load_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        load_row.set_homogeneous(True)
+        load_row = _tile_flow(max_per_line=3)
         averages = (
             (_("1 min"), snapshot.load_average.one if snapshot.load_average else None),
             (_("5 min"), snapshot.load_average.five if snapshot.load_average else None),
@@ -1436,7 +1624,7 @@ class MachineInfoDialog:
                 )
             )
             card.append(inner)
-            load_row.append(card)
+            _insert_tile(load_row, card)
         page.append(load_row)
 
         page.append(self._pressure_section())
@@ -1967,8 +2155,7 @@ class MachineInfoDialog:
             item for item in self._snapshot.sockets
             if item.direction is SocketDirection.OUTGOING
         ]
-        columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        columns.set_homogeneous(True)
+        columns = _tile_flow(max_per_line=2)
         for title, sockets in (
             (ngettext("Incoming · %d established", "Incoming · %d established",
                       len(incoming)) % len(incoming), incoming),
@@ -2035,7 +2222,7 @@ class MachineInfoDialog:
                 empty.set_margin_bottom(12)
                 card.append(empty)
             column.append(card)
-            columns.append(column)
+            _insert_tile(columns, column, min_width=280)
         page.append(columns)
         return page
 
@@ -2058,20 +2245,50 @@ class MachineInfoDialog:
         )
         page.append(identity)
 
-        page.append(_section_label(_("Listening services")))
+        page.append(_section_label(_("Running services")))
         listening = _Table(
             (
                 (_("Port"), 0.0, False),
                 (_("Service"), 0.0, True),
+                (_("Web UI"), 1.0, False),
             )
         )
         for entry in snapshot.listening_ports:
             port = _value_label(_("%d/tcp") % entry.port, mono=True)
             port.add_css_class("caption")
-            service = _value_label(_or_na(entry.process), mono=True)
+            match = classify_listening_port(entry)
+            service_text = (
+                match.label
+                if match is not None
+                else _or_na(entry.process)
+            )
+            if match is not None and entry.process and match.label != entry.process:
+                service_text = _("%(label)s (%(process)s)") % {
+                    "label": match.label,
+                    "process": entry.process,
+                }
+            service = _value_label(service_text, mono=True)
             service.add_css_class("caption")
             service.set_opacity(0.75)
-            listening.add_row([port, service])
+            if match is None:
+                action: Gtk.Widget = Gtk.Label(label="—")
+                action.add_css_class("dim-label")
+                action.add_css_class("caption")
+            else:
+                button = icon_utils.new_button_from_icon_name(
+                    "web-browser-symbolic"
+                )
+                button.add_css_class("flat")
+                button.set_tooltip_text(
+                    _("Open %(label)s in the system browser")
+                    % {"label": match.label}
+                )
+                button.connect(
+                    "clicked",
+                    lambda _b, m=match: self._open_web_ui(m),
+                )
+                action = button
+            listening.add_row([port, service, action])
         if not snapshot.listening_ports:
             listening.add_empty(_("No listening services reported"))
         page.append(listening.widget)
@@ -2168,3 +2385,49 @@ class MachineInfoDialog:
             if index < len(sessions) - 1:
                 card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         return card
+
+
+def open_machine_info_tab(window, connection) -> bool:
+    """Open (or focus) a GTK Host Info notebook tab for ``connection``.
+
+    This is the preferred Host Info UI. Returns False only when the window has
+    no tab view.
+    """
+
+    if window is None or connection is None:
+        return False
+    tab_view = getattr(window, "tab_view", None)
+    if tab_view is None:
+        return False
+
+    try:
+        n_pages = tab_view.get_n_pages()
+        for index in range(n_pages):
+            page = tab_view.get_nth_page(index)
+            child = page.get_child() if hasattr(page, "get_child") else None
+            info = getattr(child, "_sshpilot_machine_info", None)
+            if info is not None and info.connection is connection:
+                tab_view.set_selected_page(page)
+                return True
+    except Exception:
+        logger.debug("GTK Host Info tab lookup failed", exc_info=True)
+
+    try:
+        if hasattr(window, "show_tab_view"):
+            window.show_tab_view()
+        presenter = MachineInfoDialog(window, connection, as_tab=True)
+        page = tab_view.append(presenter.widget)
+        presenter._tab_page = page
+        nickname = getattr(connection, "nickname", "") or _("Host")
+        page.set_title(_("%s — Dashboard") % nickname)
+        try:
+            page.set_icon(
+                icon_utils.new_gicon_from_icon_name("info-outline-symbolic")
+            )
+        except Exception:
+            pass
+        tab_view.set_selected_page(page)
+        return True
+    except Exception:
+        logger.exception("Failed to open GTK Host Info tab")
+        return False

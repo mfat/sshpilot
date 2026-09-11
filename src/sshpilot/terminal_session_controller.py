@@ -220,6 +220,7 @@ class DaemonTerminalSessionController:
         self._recovery_input = deque()
         self._recovery_input_bytes = 0
         self._max_recovery_input_bytes = 256 * 1024
+        self._session_failure_reported = False
 
     @property
     def tab_state(self) -> DaemonTerminalTabState:
@@ -300,6 +301,7 @@ class DaemonTerminalSessionController:
         self._tab_state.state = TerminalSessionState.OPENING
         self._tab_state.connection_id = connection_id
         self._restoring_existing = False
+        self._session_failure_reported = False
 
         self._bridge.submit(
             lambda: self._client.open_session(
@@ -449,6 +451,14 @@ class DaemonTerminalSessionController:
     def resize(self, dimensions: TerminalDimensions) -> None:
         """Resize terminal. Requires input ownership (resize authority)."""
         if self._closed or not self._tab_state.input_owner:
+            return
+
+        if self._tab_state.state in {
+            TerminalSessionState.FAILED,
+            TerminalSessionState.CLOSING,
+            TerminalSessionState.CLOSED,
+            TerminalSessionState.DETACHED,
+        }:
             return
 
         if not (self._tab_state.session_id and self._tab_state.attachment_id):
@@ -610,6 +620,21 @@ class DaemonTerminalSessionController:
             except Exception:
                 logger.debug("Daemon session event unsubscription failed", exc_info=True)
 
+    def _apply_session_failure(self, failure) -> bool:
+        """Surface a daemon SessionFailure once. Returns True when reported."""
+        if failure is None or self._session_failure_reported:
+            return False
+        self._session_failure_reported = True
+        code, message = _session_failure_presentation(failure)
+        self._on_error(
+            SshPilotError(
+                code,
+                message,
+                session_id=self._tab_state.session_id,
+            )
+        )
+        return True
+
     def _on_async_session_state(self, summary) -> None:
         """Apply asynchronous daemon session failure/exit to the open tab."""
         if self._closed:
@@ -621,6 +646,9 @@ class DaemonTerminalSessionController:
                 TerminalSessionState.CLOSING,
                 TerminalSessionState.CLOSED,
             }:
+                self._tab_state.attachment_id = None
+                self._tab_state.input_owner = False
+                self._clear_pending_terminal_control()
                 self._tab_state.state = TerminalSessionState.CLOSED
                 self._notify_state_changed()
             return
@@ -631,28 +659,46 @@ class DaemonTerminalSessionController:
                 self._notify_state_changed()
             return
         if state is SessionState.FAILED:
+            previous = self._tab_state.state
             self._tab_state.state = TerminalSessionState.FAILED
+            self._tab_state.attachment_id = None
+            self._tab_state.input_owner = False
+            self._clear_pending_terminal_control()
             failure = getattr(summary, "failure", None)
-            code = ErrorCode.SESSION_STARTUP_FAILED
-            message = "The session process could not be started"
-            if failure is not None:
-                code, message = _session_failure_presentation(failure)
-            self._on_error(
-                SshPilotError(
-                    code,
-                    message,
-                    session_id=self._tab_state.session_id,
+            if not self._apply_session_failure(failure):
+                self._session_failure_reported = True
+                self._on_error(
+                    SshPilotError(
+                        ErrorCode.SESSION_STARTUP_FAILED,
+                        "The session process could not be started",
+                        session_id=self._tab_state.session_id,
+                    )
                 )
-            )
+            # Late FAILED after SESSION_EXITED already closed the tab: refresh
+            # the banner/Details from the structured failure message.
+            if previous is TerminalSessionState.CLOSED:
+                self._tab_state.state = TerminalSessionState.CLOSED
+                self._notify_state_changed()
         elif state in {SessionState.EXITED, SessionState.CLOSED}:
             exit_info = getattr(summary, "exit_info", None)
             if isinstance(exit_info, SessionExitInfo):
                 self._tab_state.exit_info = exit_info
-            if self._tab_state.state not in {
+            failure = getattr(summary, "failure", None)
+            already_closed = self._tab_state.state in {
                 TerminalSessionState.CLOSING,
                 TerminalSessionState.CLOSED,
-            }:
+            }
+            # CLOSED retains SessionFailure after post-auth classification.
+            # Apply even when SESSION_EXITED already raced us to CLOSED —
+            # otherwise Details stays on the generic "Connection lost".
+            reported = self._apply_session_failure(failure)
+            if not already_closed:
+                self._tab_state.attachment_id = None
+                self._tab_state.input_owner = False
+                self._clear_pending_terminal_control()
                 self._tab_state.state = TerminalSessionState.CLOSED
+                self._notify_state_changed()
+            elif reported:
                 self._notify_state_changed()
 
     def _on_session_attached(self, result) -> None:

@@ -59,6 +59,7 @@ def mock_terminal_widget():
             terminal, was_connected
         )
     )
+    terminal._scrape_recent_terminal_text = lambda max_chars=2000: ''
 
     root = Mock()
     page = Mock()
@@ -91,6 +92,54 @@ def test_reboot_exit_shows_reconnect_banner(mock_terminal_widget):
     terminal._root.tab_view.close_page.assert_not_called()
     assert terminal.is_connected is False
     assert terminal.connection_state == ConnectionState.DISCONNECTED
+
+
+def test_forward_failure_exit_prefers_recorded_error_in_banner(mock_terminal_widget):
+    """Daemon SessionFailure (ExitOnForwardFailure) must win over 'Connection lost'."""
+    terminal = mock_terminal_widget
+    terminal.last_error_message = (
+        "Error: remote port forwarding failed for listen port 2222."
+    )
+    terminal._daemon_controller.exit_info = SessionExitInfo(
+        exit_code=255, reason="process_exit"
+    )
+    recorded = []
+    terminal._record_error_detail = (
+        lambda reason, exit_code=None: recorded.append((reason, exit_code))
+    )
+
+    _update(terminal)
+
+    terminal._set_disconnected_banner_visible.assert_called_once()
+    args = terminal._set_disconnected_banner_visible.call_args[0]
+    assert args[0] is True
+    assert "port forwarding failed" in args[1]
+    assert recorded == [
+        (
+            "Error: remote port forwarding failed for listen port 2222.",
+            255,
+        )
+    ]
+    terminal._root.tab_view.close_page.assert_not_called()
+
+
+def test_forward_failure_scraped_from_terminal_classifies_banner(mock_terminal_widget):
+    """When failure was not recorded, scrape VTE for ExitOnForwardFailure text."""
+    terminal = mock_terminal_widget
+    terminal._scrape_recent_terminal_text = lambda max_chars=2000: (
+        "Error: remote port forwarding failed for listen port 2222.\n"
+    )
+    terminal._daemon_controller.exit_info = SessionExitInfo(
+        exit_code=255, reason="process_exit"
+    )
+
+    _update(terminal)
+
+    terminal._set_disconnected_banner_visible.assert_called_once()
+    args = terminal._set_disconnected_banner_visible.call_args[0]
+    assert args[0] is True
+    assert args[1] == "Port forwarding failed"
+    assert terminal.connection_state == ConnectionState.FAILED
 
 
 def test_clean_exit_closes_tab_without_banner(mock_terminal_widget):

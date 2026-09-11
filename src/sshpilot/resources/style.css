@@ -5,9 +5,30 @@
  * CSS (accent-colour overrides, per-group terminal colours, per-widget zoom)
  * stays inline in the widgets that compute it. */
 
-/* Connecting overlay backdrop (terminal.py). */
-.connecting-bg {
-    background-color: #000000;
+/* Session overlay (connecting + forwarding-only; terminal.py).
+   Opaque veil over VTE/PyXterm; bg+fg follow the app light/dark scheme.
+   Color is set explicitly so labels do not inherit terminal palette. */
+.connecting-bg,
+.session-overlay {
+    background-color: @window_bg_color;
+    color: @window_fg_color;
+}
+.session-overlay label {
+    color: @window_fg_color;
+}
+.session-overlay .dim-label {
+    color: alpha(@window_fg_color, 0.55);
+}
+/* Keep Adwaita semantic status colors on the overlay. */
+.session-overlay label.success {
+    color: @success_color;
+}
+.session-overlay label.error {
+    color: @error_color;
+}
+.session-overlay-rule {
+    min-width: 280px;
+    padding: 6px 4px;
 }
 
 /* Key-order badge / key-type pill (connection_dialog.py). */
@@ -52,14 +73,19 @@
 }
 .startpage-recent-row, .startpage-recent-row label { font-weight: normal; }
 .startpage-recent-row {
+    border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+}
+.startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }
+.startpage-recent-row .startpage-recent-connect {
     padding: 9px 2px;
     background: transparent;
     box-shadow: none;
     border-radius: 0;
     min-height: 0;
-    border-bottom: 1px solid alpha(@window_fg_color, 0.08);
 }
-.startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }
+.startpage-recent-row .startpage-recent-connect:hover {
+    background: transparent;
+}
 
 /* Shared welcome/global omni-search (omni_search.py). */
 /* Fine resting outline; focus materializes with an accent ring + soft glow

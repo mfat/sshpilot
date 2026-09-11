@@ -385,15 +385,64 @@ class TerminalWidget(Gtk.Box):
         self.connecting_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.connecting_box.set_halign(Gtk.Align.CENTER)
         self.connecting_box.set_valign(Gtk.Align.CENTER)
+        self.connecting_box.set_hexpand(True)
+        self.connecting_box.set_vexpand(True)
+        if hasattr(self.connecting_box, "add_css_class"):
+            self.connecting_box.add_css_class("session-overlay")
         spinner = Gtk.Spinner()
         spinner.start()
-        label = Gtk.Label()
-        label.set_markup(_('<span color="#FFFFFF">Connecting</span>'))
+        label = Gtk.Label(label=_("Connecting"))
+        label.add_css_class("title-2")
         self.connecting_box.append(spinner)
         self.connecting_box.append(label)
 
+        # Forwarding-only status (SessionType none): same opaque veil as
+        # Connecting, backend-agnostic above VTE / PyXterm.
+        self.forwarding_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=28)
+        self.forwarding_box.set_halign(Gtk.Align.CENTER)
+        self.forwarding_box.set_valign(Gtk.Align.CENTER)
+        self.forwarding_box.set_hexpand(True)
+        self.forwarding_box.set_vexpand(True)
+        self.forwarding_box.set_margin_start(40)
+        self.forwarding_box.set_margin_end(40)
+        self.forwarding_box.set_margin_top(32)
+        self.forwarding_box.set_margin_bottom(32)
+        if hasattr(self.forwarding_box, "add_css_class"):
+            self.forwarding_box.add_css_class("session-overlay")
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        header.set_halign(Gtk.Align.CENTER)
+        self.forwarding_title = Gtk.Label(label=_("Port forwarding"))
+        self.forwarding_title.add_css_class("title-2")
+        self.forwarding_subtitle = Gtk.Label()
+        self.forwarding_subtitle.add_css_class("dim-label")
+        self.forwarding_subtitle.set_wrap(True)
+        self.forwarding_subtitle.set_justify(Gtk.Justification.CENTER)
+        header.append(self.forwarding_title)
+        header.append(self.forwarding_subtitle)
+
+        self.forwarding_rules_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=16
+        )
+        self.forwarding_rules_box.set_halign(Gtk.Align.CENTER)
+        self.forwarding_rules_box.set_size_request(320, -1)
+
+        self.forwarding_hint = Gtk.Label(
+            label=_("Close this tab to disconnect")
+        )
+        self.forwarding_hint.add_css_class("dim-label")
+        self.forwarding_hint.set_margin_top(4)
+
+        self.forwarding_box.append(header)
+        self.forwarding_box.append(self.forwarding_rules_box)
+        self.forwarding_box.append(self.forwarding_hint)
+        self.forwarding_box.set_visible(False)
+        self._overlay_mode = "connecting"
+        self._forwarding_only_known = None
+
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
+        self.overlay.add_overlay(self.forwarding_box)
 
         self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.terminal_stack.set_hexpand(True)
@@ -1105,13 +1154,262 @@ class TerminalWidget(Gtk.Box):
             self._set_disconnected_banner_visible(True, _('Reconnect failed'))
 
     def _set_connecting_overlay_visible(self, visible: bool):
+        """Show Connecting spinner, or clear overlays (not forwarding status)."""
+        if visible:
+            self._set_session_overlay_mode("connecting")
+        else:
+            self._set_session_overlay_mode("none")
+
+    def _set_session_overlay_mode(self, mode: str) -> None:
+        """Overlay modes: ``connecting``, ``forwarding``, or ``none``."""
+        if mode not in ("connecting", "forwarding", "none"):
+            mode = "none"
+        self._overlay_mode = mode
         try:
-            if hasattr(self.connecting_bg, 'set_visible'):
-                self.connecting_bg.set_visible(visible)
-            if hasattr(self.connecting_box, 'set_visible'):
-                self.connecting_box.set_visible(visible)
+            show_bg = mode in ("connecting", "forwarding")
+            if hasattr(self.connecting_bg, "set_visible"):
+                self.connecting_bg.set_visible(show_bg)
+            if hasattr(self.connecting_box, "set_visible"):
+                self.connecting_box.set_visible(mode == "connecting")
+            forwarding_box = getattr(self, "forwarding_box", None)
+            if forwarding_box is not None and hasattr(forwarding_box, "set_visible"):
+                forwarding_box.set_visible(mode == "forwarding")
         except Exception:
             pass
+
+    def is_forwarding_only_session(self) -> bool:
+        """Whether this tab is SessionType none (port forwarding only)."""
+        from .forwarding_only_ui import connection_forwarding_only
+
+        known = getattr(self, "_forwarding_only_known", None)
+        if known is not None:
+            return bool(known)
+        flagged = connection_forwarding_only(getattr(self, "connection", None))
+        if flagged is not None:
+            self._forwarding_only_known = flagged
+            return flagged
+        return False
+
+    def apply_forwarding_only_context(
+        self,
+        *,
+        forwarding_only: bool,
+        rules: Optional[tuple] = None,
+    ) -> None:
+        """Cache SessionType-none + rules from editor details / sidebar."""
+        self._forwarding_only_known = bool(forwarding_only)
+        connection = getattr(self, "connection", None)
+        if connection is not None:
+            try:
+                object.__setattr__(connection, "forwarding_only", bool(forwarding_only))
+            except Exception:
+                try:
+                    setattr(connection, "forwarding_only", bool(forwarding_only))
+                except Exception:
+                    pass
+            if rules is not None:
+                try:
+                    object.__setattr__(connection, "forwarding_rules", tuple(rules))
+                except Exception:
+                    try:
+                        setattr(connection, "forwarding_rules", tuple(rules))
+                    except Exception:
+                        pass
+        if forwarding_only:
+            self._update_forwarding_only_tab_title()
+            if self._has_connected_status_evidence():
+                self._show_post_connect_overlay()
+            elif self._overlay_mode in ("none", "forwarding"):
+                self._set_session_overlay_mode("connecting")
+
+    def ensure_forwarding_only_context(self, client=None, bridge=None) -> None:
+        """Resolve SessionType none + rules if not already known on the connection."""
+        from .forwarding_only_ui import (
+            apply_forwarding_only_flag,
+            connection_forwarding_only,
+        )
+
+        connection = getattr(self, "connection", None)
+        flagged = connection_forwarding_only(connection)
+        if flagged is not None:
+            self._forwarding_only_known = flagged
+            if flagged:
+                self._update_forwarding_only_tab_title()
+            return
+        if client is None or bridge is None or connection is None:
+            return
+        try:
+            from .api.connection_identity import connection_id_for
+            from .api.models.connections import ForwardingRule, forwarding_rule_to_dict
+
+            connection_id = connection_id_for(connection)
+
+            def on_success(details):
+                extra = getattr(details, "extra_ssh_config", None) or ""
+                flag = apply_forwarding_only_flag(connection, extra)
+                raw = getattr(details, "forwarding_rules", None) or ()
+                rules = tuple(
+                    forwarding_rule_to_dict(rule)
+                    for rule in raw
+                    if isinstance(rule, (ForwardingRule, dict))
+                )
+                self.apply_forwarding_only_context(
+                    forwarding_only=flag, rules=rules
+                )
+
+            def on_error(_error):
+                self._forwarding_only_known = False
+
+            bridge.submit(
+                lambda: client.get_connection_editor(connection_id),
+                on_success=on_success,
+                on_error=on_error,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to resolve forwarding-only context", exc_info=True
+            )
+
+    def _update_forwarding_only_tab_title(self) -> None:
+        from .forwarding_only_ui import forwarding_only_tab_title
+
+        connection = getattr(self, "connection", None)
+        name = (
+            getattr(connection, "display_name", None)
+            or getattr(connection, "nickname", None)
+            or _("Connection")
+        )
+        title = forwarding_only_tab_title(str(name))
+        try:
+            self.emit("title-changed", title)
+        except Exception:
+            pass
+        root = self.get_root()
+        page = None
+        try:
+            if root is not None and hasattr(root, "_page_for_child"):
+                page = root._page_for_child(self)
+            if page is not None and not getattr(page, "custom_tab_title", None):
+                page.set_title(title)
+        except Exception:
+            pass
+
+    def _refresh_forwarding_overlay(self, *, connected: bool) -> None:
+        """Rebuild forwarding status rows for the current connection rules."""
+        from .forwarding_only_ui import (
+            connection_forwarding_rules,
+            format_forwarding_rule_rows,
+            forwarding_only_subtitle,
+        )
+
+        connection = getattr(self, "connection", None)
+        name = (
+            getattr(connection, "display_name", None)
+            or getattr(connection, "nickname", None)
+            or _("Connection")
+        )
+        try:
+            self.forwarding_subtitle.set_text(forwarding_only_subtitle(str(name)))
+        except Exception:
+            pass
+
+        status = "active" if connected else "failed"
+        rows = format_forwarding_rule_rows(
+            connection_forwarding_rules(connection), status=status
+        )
+
+        rules_box = self.forwarding_rules_box
+        child = rules_box.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
+            rules_box.remove(child)
+            child = next_child
+
+        if not rows:
+            empty = Gtk.Label(label=_("No forwarding rules configured"))
+            empty.add_css_class("dim-label")
+            empty.set_wrap(True)
+            empty.set_justify(Gtk.Justification.CENTER)
+            rules_box.append(empty)
+            return
+
+        for row in rows:
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+            row_box.set_halign(Gtk.Align.FILL)
+            row_box.set_margin_top(4)
+            row_box.set_margin_bottom(4)
+            if hasattr(row_box, "add_css_class"):
+                row_box.add_css_class("session-overlay-rule")
+            kind = Gtk.Label(label=row["kind"])
+            kind.add_css_class("caption-heading")
+            kind.set_width_chars(2)
+            kind.set_valign(Gtk.Align.START)
+            endpoints = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            endpoints.set_hexpand(True)
+            bind = Gtk.Label(label=row["bind"])
+            bind.set_halign(Gtk.Align.START)
+            bind.set_xalign(0.0)
+            dest = Gtk.Label(label=f"→ {row['destination']}")
+            dest.add_css_class("dim-label")
+            dest.set_halign(Gtk.Align.START)
+            dest.set_xalign(0.0)
+            endpoints.append(bind)
+            endpoints.append(dest)
+            status_label = Gtk.Label(label=row["status"])
+            status_label.set_valign(Gtk.Align.START)
+            if row["status"] == "active":
+                status_label.add_css_class("success")
+            else:
+                status_label.add_css_class("error")
+            row_box.append(kind)
+            row_box.append(endpoints)
+            row_box.append(status_label)
+            rules_box.append(row_box)
+
+        hint = _("Close this tab to disconnect")
+        if not connected:
+            hint = _("Close tab · or reconnect from the error banner")
+        try:
+            self.forwarding_hint.set_text(hint)
+        except Exception:
+            pass
+
+    def _has_connected_status_evidence(self) -> bool:
+        """Same liveness the sidebar status indicator uses for CONNECTED.
+
+        Daemon mode: ``SessionState.RUNNING`` (see
+        ``ConnectionRuntimeStatusStore._is_live`` / ``session_running``).
+        Non-daemon: terminal ``ConnectionState.CONNECTED`` after
+        ``classify_connection_evidence`` / termprops promotion via
+        ``_mark_connected``.
+        """
+        if getattr(self, "_daemon_mode", False) and self._daemon_controller is not None:
+            return bool(getattr(self._daemon_controller, "session_running", False))
+        from .connection_model import ConnectionState
+
+        return self.connection_state == ConnectionState.CONNECTED
+
+    def _show_post_connect_overlay(self) -> None:
+        """After connect evidence: forwarding status for SessionType none, else clear."""
+        from .forwarding_only_ui import connection_forwarding_only
+
+        flagged = getattr(self, "_forwarding_only_known", None)
+        if flagged is None:
+            flagged = connection_forwarding_only(getattr(self, "connection", None))
+        if flagged is True:
+            if not self._has_connected_status_evidence():
+                # Config-backed SessionType none is up only once SSH is
+                # authenticated (RUNNING) — same moment the status icon goes green.
+                self._set_session_overlay_mode("connecting")
+                return
+            self._refresh_forwarding_overlay(connected=True)
+            self._set_session_overlay_mode("forwarding")
+        elif flagged is None:
+            # Editor details still in flight — keep the veil instead of an
+            # empty VTE/PyXterm flash for SessionType-none hosts.
+            self._set_session_overlay_mode("connecting")
+        else:
+            self._set_session_overlay_mode("none")
 
     # Daemon terminal session support
 
@@ -1229,6 +1527,7 @@ class TerminalWidget(Gtk.Box):
             self.connection_state = self.connection_state.__class__.CONNECTING
             self.connection_state_reason = 'Opening daemon session...'
             self._set_connecting_overlay_visible(True)
+            self.ensure_forwarding_only_context(client, bridge)
 
             # Get terminal dimensions from the active backend (VTE or PyXterm).
             dimensions = self._daemon_terminal_dimensions()
@@ -1956,32 +2255,45 @@ class TerminalWidget(Gtk.Box):
                 dialogs.set_session(tab.session_id)
 
             if daemon_state == TerminalSessionState.ACTIVE:
-                self.is_connected = True
-                self.connection_state = self.connection_state.__class__.CONNECTED
-                self.connection_state_reason = 'Connected'
-                self._set_connecting_overlay_visible(False)
+                from .connection_model import ConnectionState
 
-                # Check input ownership and show/hide view-only indicator
-                if not self.has_input_ownership:
-                    self._show_view_only_indicator()
+                forwarding_only = self.is_forwarding_only_session()
+                authenticated = self._has_connected_status_evidence()
+                if forwarding_only and not authenticated:
+                    # Keep CONNECTING until SessionState.RUNNING — the same
+                    # evidence ConnectionRuntimeStatusStore uses for the
+                    # sidebar status indicator (config-backed SessionType none).
+                    self.is_connected = False
+                    self.connection_state = ConnectionState.CONNECTING
+                    self.connection_state_reason = "Connecting"
+                    self._set_session_overlay_mode("connecting")
                 else:
-                    self._hide_view_only_indicator()
-                    if not old_connected:
-                        # Input ownership (required to resize — see
-                        # _on_daemon_size_changed) may only just have been
-                        # granted by this same attach result. The widget can
-                        # already have grown to its real on-screen size while
-                        # ownership was still pending, and every resize
-                        # signal during that window was silently dropped for
-                        # lack of ownership (GH #1164 follow-up) — with no
-                        # catch-up, the remote PTY/tmux stays at whatever
-                        # size the session opened with. Sync now that we may
-                        # actually resize.
-                        self._resync_daemon_terminal_size()
+                    self.is_connected = True
+                    self.connection_state = ConnectionState.CONNECTED
+                    self.connection_state_reason = "Connected"
+                    self._show_post_connect_overlay()
 
-                # Emit connection-established if newly connected
-                if not old_connected:
-                    GLib.idle_add(self.emit, 'connection-established')
+                    # Check input ownership and show/hide view-only indicator
+                    if not self.has_input_ownership:
+                        self._show_view_only_indicator()
+                    else:
+                        self._hide_view_only_indicator()
+                        if not old_connected:
+                            # Input ownership (required to resize — see
+                            # _on_daemon_size_changed) may only just have been
+                            # granted by this same attach result. The widget can
+                            # already have grown to its real on-screen size while
+                            # ownership was still pending, and every resize
+                            # signal during that window was silently dropped for
+                            # lack of ownership (GH #1164 follow-up) — with no
+                            # catch-up, the remote PTY/tmux stays at whatever
+                            # size the session opened with. Sync now that we may
+                            # actually resize.
+                            self._resync_daemon_terminal_size()
+
+                    # Emit connection-established if newly connected
+                    if not old_connected:
+                        GLib.idle_add(self.emit, "connection-established")
 
             elif daemon_state in {
                 TerminalSessionState.OPENING,
@@ -2023,6 +2335,16 @@ class TerminalWidget(Gtk.Box):
         Runs at most once per daemon session.
         """
         if getattr(self, '_daemon_exit_handled', False):
+            # SESSION_EXITED may have raced ahead of a SessionFailure. A later
+            # _on_connection_failed already set last_error_message — refresh
+            # the banner/Details without re-running full exit classification.
+            if self.last_error_message:
+                exit_info = getattr(self._daemon_controller, 'exit_info', None)
+                exit_code = getattr(exit_info, 'exit_code', None) if exit_info else None
+                self._record_error_detail(
+                    self.last_error_message, exit_code=exit_code
+                )
+                self._set_disconnected_banner_visible(True, self.last_error_message)
             return
         self._daemon_exit_handled = True
 
@@ -2065,9 +2387,21 @@ class TerminalWidget(Gtk.Box):
 
             # Unexpected end (remote reboot, killed connection, ...): show the
             # reconnect banner, classified the same way as the legacy path.
-            exit_state, exit_reason = self._classify_exit(exit_code, was_connected, '')
+            # Prefer an error already recorded by the FAILED path (daemon
+            # SessionFailure / ExitOnForwardFailure) over the exit-code-only
+            # classifier, and scrape the VTE when nothing else is available.
+            scraped = (
+                ""
+                if self.last_error_message
+                else self._scrape_recent_terminal_text()
+            )
+            exit_state, exit_reason = self._classify_exit(
+                exit_code, was_connected, scraped
+            )
             self.connection_state = exit_state
-            self.connection_state_reason = exit_reason or 'Session ended'
+            self.connection_state_reason = (
+                self.last_error_message or exit_reason or "Session ended"
+            )
             banner_text = self.last_error_message or exit_reason
             if not banner_text:
                 if exit_code:
@@ -2076,7 +2410,8 @@ class TerminalWidget(Gtk.Box):
                     banner_text = _('Session terminated by signal {sig}').format(sig=signal)
                 else:
                     banner_text = _('Session ended.')
-            self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
+            detail_reason = self.last_error_message or exit_reason or banner_text
+            self._record_error_detail(detail_reason, exit_code=exit_code)
             self._set_disconnected_banner_visible(True, banner_text)
         except Exception as e:
             logger.error(f"Failed to handle daemon session exit: {e}")
@@ -2187,14 +2522,18 @@ class TerminalWidget(Gtk.Box):
                     )
                 self._start_connect_grace()
                 logger.debug(f"Terminal {self.session_id} entered CONNECTING")
+                if self.is_forwarding_only_session():
+                    self._set_session_overlay_mode("connecting")
+                else:
+                    self._set_connecting_overlay_visible(False)
             else:
                 # Local terminal (or no manager): a shell with no auth step, so
                 # a successful spawn is a successful connection.
                 self.connection_state = ConnectionState.CONNECTED
                 self.is_connected = True
                 self.emit('connection-established')
+                self._show_post_connect_overlay()
 
-            self._set_connecting_overlay_visible(False)
             # Ensure any reconnect/disconnected banner is hidden upon successful spawn
             try:
                 self._set_disconnected_banner_visible(False)
@@ -2359,7 +2698,7 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Terminal {self.session_id} promoted to CONNECTED")
 
         self.emit('connection-established')
-        self._set_connecting_overlay_visible(False)
+        self._show_post_connect_overlay()
         try:
             self._set_disconnected_banner_visible(False)
         except Exception:
@@ -2594,6 +2933,24 @@ class TerminalWidget(Gtk.Box):
             if was_connected:
                 return ConnectionState.DISCONNECTED, 'Connection lost'
             return ConnectionState.FAILED, 'Connection timed out'
+        if 'port forwarding failed' in msg:
+            return ConnectionState.FAILED, (
+                self.last_error_message
+                or getattr(self, '_connect_failure_hint', None)
+                or 'Port forwarding failed'
+            )
+        if 'address already in use' in msg:
+            return ConnectionState.FAILED, (
+                self.last_error_message
+                or getattr(self, '_connect_failure_hint', None)
+                or 'Port already in use'
+            )
+        if 'administratively prohibited' in msg or 'channel_setup_failure' in msg:
+            return ConnectionState.FAILED, (
+                self.last_error_message
+                or getattr(self, '_connect_failure_hint', None)
+                or 'Port forwarding failed'
+            )
 
         # ssh's own fatal errors exit with 255. Plugin protocols don't reserve
         # an exit code: any non-zero exit before a session was established is

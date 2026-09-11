@@ -2651,6 +2651,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     ForwardingRule,
                     forwarding_rule_to_dict,
                 )
+                from .forwarding_only_ui import apply_forwarding_only_flag
+
                 raw = getattr(details, 'forwarding_rules', None) or ()
                 rules = tuple(
                     forwarding_rule_to_dict(rule)
@@ -2659,6 +2661,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
                 cache[key] = (generation, rules)
                 self._apply_sidebar_forwarding_rules(connection, rules)
+                apply_forwarding_only_flag(
+                    connection, getattr(details, 'extra_ssh_config', None) or ''
+                )
             except Exception:
                 logger.debug(
                     "Failed to cache forwarding rules for %s", key, exc_info=True
@@ -7661,8 +7666,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             connection = getattr(row, 'connection', None) if row else None
         if connection is None:
             return
-        from .machine_info_dialog import MachineInfoDialog
-        MachineInfoDialog(self, connection)
+        from .host_info_tab import open_host_info_tab
+        from .machine_info_dialog import open_machine_info_tab
+
+        # Prefer the GTK Host Info tab; fall back to the WebKit HTML shell.
+        if open_machine_info_tab(self, connection):
+            return
+        open_host_info_tab(self, connection)
 
     def on_open_in_system_terminal_action(self, action, param=None):
         """Handle open in system terminal action from context menu"""

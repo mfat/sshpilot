@@ -483,6 +483,13 @@ class DaemonConnectionLaunchProvider:
             return self._headless_settings
         return None
 
+    @staticmethod
+    def _connection_is_forwarding_only(connection: HeadlessConnectionView) -> bool:
+        """True when this Host authors ``SessionType none`` (forwarding-only)."""
+        from ..forwarding_only_ui import connection_forwarding_only
+
+        return connection_forwarding_only(connection) is True
+
     def _prepare_ssh_launch(
         self,
         connection: HeadlessConnectionView,
@@ -589,12 +596,23 @@ class DaemonConnectionLaunchProvider:
             return self._prepare_protocol_launch(
                 connection, protocol, interaction_policy=interaction_policy
             )
+        # SessionType none (ssh -N / forwarding-only) must not ride the app
+        # ControlMaster=auto + ControlPersist preference. OpenSSH then
+        # backgrounds the mux master and the watched foreground process exits
+        # 0, which the UI treats as a clean shell exit and destroys the tab.
+        # Force ControlMaster=no first (OpenSSH first-value-wins; preference
+        # overrides are emitted last) so the -N process stays in the
+        # foreground. Normal shell tabs keep multiplexing unchanged.
+        extra_args: Optional[List[str]] = None
+        if self._connection_is_forwarding_only(connection):
+            extra_args = ["-o", "ControlMaster=no"]
         argv, environment = self._prepare_ssh_launch(
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
             remote_command=remote_command,
             force_tty=force_tty,
+            extra_args=extra_args,
         )
         # The daemon PTY is the semantic boundary for interactive SSH
         # terminals.  Authentication helpers intentionally preserve the
@@ -703,6 +721,17 @@ class DaemonConnectionLaunchProvider:
         destination_port: Optional[int] = None,
         interaction_policy: str = "broker",
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
+        """Build argv/env for a daemon-owned ``ssh -N`` forward process.
+
+        Preference ``ControlMaster=auto`` + ``ControlPersist`` must not ride
+        along: OpenSSH then backgrounds the mux master and the watched
+        ``ssh -N`` foreground exits 0 — Host Info / plugin local forwards fail
+        with ``forward_not_active`` while an orphaned master may still hold the
+        bind. Force ``ControlMaster=no`` first (OpenSSH first-value-wins;
+        preference overrides are emitted last) so the dedicated forward child
+        stays in the foreground for the daemon's lifetime tracking.
+        """
+
         record = self._resolve(connection_id)
         connection = HeadlessConnectionView(record)
         if connection.protocol != "ssh":
@@ -723,11 +752,13 @@ class DaemonConnectionLaunchProvider:
                 "The requested forward type is not supported",
                 connection_id=connection_id,
             )
-        return self._prepare_ssh_launch(
+        argv, environment = self._prepare_ssh_launch(
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
             extra_args=[
+                "-o",
+                "ControlMaster=no",
                 "-N",
                 "-T",
                 forward_flag,
@@ -736,6 +767,22 @@ class DaemonConnectionLaunchProvider:
                 "ExitOnForwardFailure=yes",
             ],
         )
+        # Host-level LocalForward/RemoteForward/DynamicForward must not ride
+        # along: they collide with terminal-bound forwards (ExitOnForwardFailure
+        # → exit 255). ClearAllForwardings cannot be used — it clears -L/-R/-D
+        # too — so materialize a stripped -F tree for this launch only.
+        from ..core.ssh_config_forward_strip import (
+            FORWARD_SSH_CONFIG_ROOT_ENV,
+            argv_config_file,
+            argv_with_config_file,
+            materialize_ssh_config_without_port_forwards,
+        )
+
+        source = argv_config_file(argv)
+        stripped = materialize_ssh_config_without_port_forwards(source)
+        environment = dict(environment)
+        environment[FORWARD_SSH_CONFIG_ROOT_ENV] = os.path.dirname(stripped)
+        return argv_with_config_file(argv, stripped), environment
 
     def prepare_remote_command_launch(
         self,
@@ -751,6 +798,13 @@ class DaemonConnectionLaunchProvider:
         the same native launch path as every other OpenSSH child: the saved
         Host alias stays the target so the user's SSH configuration (ProxyJump,
         identities, ports) applies unchanged.
+
+        ``SessionType none`` (the forwarding-only / ``ssh -N`` Host setting)
+        must not ride along: OpenSSH then ignores the remote command and exits
+        successfully with empty stdout, so Host Info "succeeds" with a blank
+        snapshot. ``-o SessionType=default`` is forced into ``extra_args``,
+        which the builder emits before authored Host options, so it beats both
+        the config file and an Advanced-tab ``SessionType none``.
 
         ``require_master`` holds the multiplex master for the connection even
         when multiplexing is otherwise off (Host Info probes): preference
@@ -778,7 +832,7 @@ class DaemonConnectionLaunchProvider:
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
-            extra_args=["-T"],
+            extra_args=["-T", "-o", "SessionType=default"],
             remote_command=remote_command,
             require_master=require_master,
         )

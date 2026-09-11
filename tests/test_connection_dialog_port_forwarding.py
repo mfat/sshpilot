@@ -89,8 +89,20 @@ class _AdvancedState:
 def _session_type_dialog(advanced, active=False):
     dialog = ConnectionDialog.__new__(ConnectionDialog)
     dialog._session_type_syncing = False
+    dialog._exit_on_forward_failure_syncing = False
     dialog.advanced_tab = advanced
     dialog.port_forwarding_only_row = _Switch(active)
+    dialog.exit_on_forward_failure_row = _Switch(False)
+    return dialog
+
+
+def _exit_on_forward_failure_dialog(advanced, active=False):
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog._session_type_syncing = False
+    dialog._exit_on_forward_failure_syncing = False
+    dialog.advanced_tab = advanced
+    dialog.port_forwarding_only_row = _Switch(False)
+    dialog.exit_on_forward_failure_row = _Switch(active)
     return dialog
 
 
@@ -173,6 +185,86 @@ def test_forwarding_only_round_trip_preserves_session_type_none():
 
     assert advanced.entries == [("SessionType", "none")]
     assert dialog.port_forwarding_only_row.get_active() is True
+
+
+def test_existing_exit_on_forward_failure_yes_turns_toggle_on():
+    dialog = _exit_on_forward_failure_dialog(
+        _AdvancedState(("exitonforwardfailure", "YES"))
+    )
+
+    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
+
+    assert dialog.exit_on_forward_failure_row.get_active() is True
+
+
+def test_exit_on_forward_failure_on_writes_yes():
+    advanced = _AdvancedState(("Compression", "yes"), ("exitonforwardfailure", "no"))
+    dialog = _exit_on_forward_failure_dialog(advanced, active=True)
+
+    dialog._on_exit_on_forward_failure_toggle_changed(
+        dialog.exit_on_forward_failure_row
+    )
+
+    assert advanced.entries == [
+        ("Compression", "yes"),
+        ("ExitOnForwardFailure", "yes"),
+    ]
+    assert advanced.set_calls == [("ExitOnForwardFailure", "yes")]
+
+
+def test_exit_on_forward_failure_off_removes_yes_only():
+    advanced = _AdvancedState(("ExitOnForwardFailure", "yes"))
+    dialog = _exit_on_forward_failure_dialog(advanced, active=False)
+
+    dialog._on_exit_on_forward_failure_toggle_changed(
+        dialog.exit_on_forward_failure_row
+    )
+
+    assert advanced.entries == []
+    assert advanced.remove_calls == [("ExitOnForwardFailure", "yes")]
+
+
+def test_non_yes_exit_on_forward_failure_turns_toggle_off_and_survives():
+    advanced = _AdvancedState(("ExitOnForwardFailure", "no"))
+    dialog = _exit_on_forward_failure_dialog(advanced, active=True)
+
+    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
+    dialog._on_exit_on_forward_failure_toggle_changed(
+        dialog.exit_on_forward_failure_row
+    )
+
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+    assert advanced.entries == [("ExitOnForwardFailure", "no")]
+    assert advanced.remove_calls == []
+
+
+def test_exit_on_forward_failure_round_trip_preserves_yes():
+    advanced = _AdvancedState()
+    dialog = _exit_on_forward_failure_dialog(advanced)
+
+    dialog.exit_on_forward_failure_row.set_active(True)
+    dialog._on_exit_on_forward_failure_toggle_changed(
+        dialog.exit_on_forward_failure_row
+    )
+    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
+
+    assert advanced.entries == [("ExitOnForwardFailure", "yes")]
+    assert dialog.exit_on_forward_failure_row.get_active() is True
+
+
+def test_session_type_write_does_not_clear_exit_on_forward_failure_toggle():
+    advanced = _AdvancedState(
+        ("SessionType", "none"),
+        ("ExitOnForwardFailure", "yes"),
+    )
+    dialog = _session_type_dialog(advanced, active=True)
+    dialog.exit_on_forward_failure_row.set_active(True)
+
+    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
+    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
+
+    assert dialog.exit_on_forward_failure_row.get_active() is True
+    assert ("ExitOnForwardFailure", "yes") in advanced.entries
 
 
 def _dialog():

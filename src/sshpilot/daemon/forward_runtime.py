@@ -118,10 +118,13 @@ class _OwnedForwardProcess:
         process: "subprocess.Popen",
         on_exit: ForwardExitCallback,
         unregister: Callable[["_OwnedForwardProcess"], None],
+        *,
+        cleanup_paths: Tuple[str, ...] = (),
     ) -> None:
         self._process = process
         self._on_exit = on_exit
         self._unregister = unregister
+        self._cleanup_paths = tuple(cleanup_paths)
         self._lock = threading.Lock()
         self._notified = False
         self._reaper = threading.Thread(
@@ -140,7 +143,23 @@ class _OwnedForwardProcess:
             self._notified = True
         forget_owned_process(self._process.pid)
         self._unregister(self)
-        self._on_exit(return_code)
+        try:
+            self._on_exit(return_code)
+        finally:
+            self._cleanup()
+
+    def _cleanup(self) -> None:
+        import shutil
+
+        for path in self._cleanup_paths:
+            if not path:
+                continue
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+            except Exception:
+                logger.debug(
+                    "forward config cleanup failed for %s", path, exc_info=True
+                )
 
     def terminate(self) -> None:
         if self._process.poll() is None:
@@ -192,6 +211,8 @@ class SubprocessForwardProcessRunner:
         spec: SessionLaunchSpec,
         on_exit: ForwardExitCallback,
     ) -> ForwardProcessHandle:
+        from sshpilot.core.ssh_config_forward_strip import FORWARD_SSH_CONFIG_ROOT_ENV
+
         argv, environment = self._command_builder(spec)
         argv = tuple(argv)
         if not argv or any(type(item) is not str or not item for item in argv):
@@ -200,19 +221,37 @@ class SubprocessForwardProcessRunner:
                 "The forward launch command is invalid",
                 connection_id=spec.connection_id,
             )
+        env = dict(environment)
+        cleanup_root = env.pop(FORWARD_SSH_CONFIG_ROOT_ENV, None)
         with self._lock:
             if self._closed:
+                if cleanup_root:
+                    import shutil
+
+                    shutil.rmtree(cleanup_root, ignore_errors=True)
                 raise RuntimeError("forward process runner is closed")
-        process = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=dict(environment),
-            close_fds=True,
-        )
+        try:
+            process = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                close_fds=True,
+            )
+        except Exception:
+            if cleanup_root:
+                import shutil
+
+                shutil.rmtree(cleanup_root, ignore_errors=True)
+            raise
         record_owned_process_or_abandon(process, kind=KIND_FORWARD)
-        handle = _OwnedForwardProcess(process, on_exit, self._unregister)
+        handle = _OwnedForwardProcess(
+            process,
+            on_exit,
+            self._unregister,
+            cleanup_paths=((cleanup_root,) if cleanup_root else ()),
+        )
         with self._lock:
             if self._closed:
                 handle.terminate()

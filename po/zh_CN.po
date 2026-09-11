@@ -1965,22 +1965,14 @@ msgid "Forward X11 connections for GUI applications"
 msgstr "为 GUI 应用程序转发 X11 连接"
 
 #: src/sshpilot/connection_dialog.py:3881
-msgid "Don't execute any remote command (ssh -N flag)"
-msgstr "不执行任何远程命令（ssh -N 标志）"
+msgid "Do not start a remote shell (ssh -N flag)"
+msgstr "不启动远程 shell（ssh -N 标志）"
 
-#: src/sshpilot/connection_dialog.py:3882
-msgid "Do not start a remote shell or command (SessionType none)"
-msgstr "不启动远程 shell 或命令 (SessionType none)"
-
-#: src/sshpilot/connection_dialog.py:3885
+#: src/sshpilot/connection_dialog.py:3883
 msgid "Session"
 msgstr "会话"
 
-#: src/sshpilot/connection_dialog.py:3887
-msgid "Keep the connection open for port forwarding without starting a session"
-msgstr "保持连接打开以进行端口转发而不启动会话"
-
-#: src/sshpilot/connection_dialog.py:3894
+#: src/sshpilot/connection_dialog.py:3888
 msgid "Port Forwarding Rules"
 msgstr "端口转发规则"
 
@@ -2017,15 +2009,15 @@ msgstr "关于端口转发"
 msgid ""
 "Port forwarding allows you to securely tunnel network connections.\n"
 "\n"
-"• <b>Local Forwarding</b>: Forward a remote port to your local machine\n"
-"• <b>Remote Forwarding</b>: Forward a local port to the remote machine\n"
-"• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
+"• <b>Local Forwarding</b>: A port on the local machine is forwarded to the specified host and port from the remote machine.\n"
+"• <b>Remote Forwarding</b>: A port on the remote machine is forwarded to a specified host and port from the local machine.\n"
+"• <b>Dynamic Forwarding</b>: Starts a SOCKS proxy on the local machine listening on the specified port."
 msgstr ""
 "端口转发允许您安全地建立网络连接隧道。\n"
 "\n"
-"• <b>本地转发</b>：将远程端口转发到您的本地计算机\n"
-"• <b>远程转发</b>：将本地端口转发到远程计算机\n"
-"• <b>动态转发</b>：在您的本地计算机上创建 SOCKS 代理"
+"• <b>本地转发</b>：将本地机器上的端口转发到远程机器侧指定的主机和端口。\n"
+"• <b>远程转发</b>：将远程机器上的端口转发到本地机器侧指定的主机和端口。\n"
+"• <b>动态转发</b>：在本地机器上启动 SOCKS 代理并监听指定端口。"
 
 #: src/sshpilot/connection_dialog.py:3961
 msgid "Connection Commands"
@@ -4141,9 +4133,15 @@ msgstr ""
 msgid "Gathering host information…"
 msgstr "正在收集主机信息…"
 
-#: src/sshpilot/machine_info_dialog.py:838
-msgid "Host Info"
-msgstr "主机信息"
+#: src/sshpilot/machine_info_dialog.py:896
+msgid "Dashboard"
+msgstr "仪表盘"
+
+#: src/sshpilot/host_info_tab.py:100 src/sshpilot/host_info_tab.py:565
+#: src/sshpilot/machine_info_dialog.py:2385
+#, python-format
+msgid "%s — Dashboard"
+msgstr "%s — 仪表盘"
 
 #: src/sshpilot/machine_info_dialog.py:858
 msgid "Refresh host information"
@@ -4809,6 +4807,14 @@ msgstr "尝试：“{name}” 或 “ssh {target}” 或 “sftp {name2}”"
 #: src/sshpilot/omni_search.py:696
 msgid "Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”"
 msgstr "尝试：“ssh root@203.0.113.7” 或 “sftp” 或 “首选项”"
+
+#: src/sshpilot/overflow_toolbar.py:85
+msgid "Action"
+msgstr "操作"
+
+#: src/sshpilot/overflow_toolbar.py:233 src/sshpilot/overflow_toolbar.py:234
+msgid "More actions"
+msgstr "更多操作"
 
 #. Tools-menu "Docker Console" → sidebar selection, else Local. The page
 #. itself is never opened directly; on_activate handles the click.
@@ -5859,6 +5865,17 @@ msgstr "浅色"
 #: src/sshpilot/window.py:3159
 msgid "Dark"
 msgstr "深色"
+
+#: src/sshpilot/preferences.py:1379
+msgid "Monospace Font"
+msgstr "等宽字体"
+
+#: src/sshpilot/preferences.py:1381
+msgid ""
+"Use a monospace typeface for the whole interface (matches your terminal font "
+"when one is set)"
+msgstr ""
+"在整个界面中使用等宽字体（设置后匹配终端字体）"
 
 #. Color overrides section
 #: src/sshpilot/preferences.py:1301
@@ -7896,9 +7913,9 @@ msgstr "复制地址"
 msgid "Copy SSH Command"
 msgstr "复制 SSH 命令"
 
-#: src/sshpilot/sidebar.py:4455
-msgid "Host Info…"
-msgstr "主机信息…"
+#: src/sshpilot/sidebar.py:4809
+msgid "Dashboard…"
+msgstr "仪表盘…"
 
 #: src/sshpilot/sidebar.py:4474
 msgid "Manage authorized_keys…"
@@ -9096,6 +9113,15 @@ msgstr "导入配置"
 #: src/sshpilot/window.py:3873
 msgid "Import/Export"
 msgstr "导入/导出"
+
+#: src/sshpilot/window.py:4343 src/sshpilot/window_dialogs.py:745
+#: src/sshpilot/window_dialogs.py:750
+msgid "Backup"
+msgstr "备份"
+
+#: src/sshpilot/window.py:4345
+msgid "Backup/Restore"
+msgstr "备份/恢复"
 
 #: src/sshpilot/window.py:3906
 msgid "About"

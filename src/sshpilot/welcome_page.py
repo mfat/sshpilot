@@ -220,8 +220,12 @@ class WelcomePage(Gtk.Overlay):
 
     # --- Shared row/section widgets ---
 
-    def _min_row(self, title, subtitle, on_click):
-        """A single Recent/Pinned row: title left, subtitle (mono) right."""
+    def _min_row(self, title, subtitle, on_click, *, on_info=None):
+        """A single Recent/Pinned row: title left, subtitle (mono) right.
+
+        When ``on_info`` is set, an info button is placed at the end and opens
+        that connection's dashboard without connecting.
+        """
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         name = Gtk.Label(label=title or '', xalign=0)
         name.set_ellipsize(3)
@@ -234,12 +238,34 @@ class WelcomePage(Gtk.Overlay):
             addr.set_ellipsize(3)
             line.append(addr)
 
-        btn = Gtk.Button()
-        btn.set_child(line)
-        btn.add_css_class('startpage-recent-row')
-        btn.set_can_focus(False)
-        btn.connect('clicked', on_click)
-        return btn
+        connect_btn = Gtk.Button()
+        connect_btn.set_child(line)
+        connect_btn.add_css_class('startpage-recent-connect')
+        connect_btn.add_css_class('flat')
+        connect_btn.set_hexpand(True)
+        connect_btn.set_can_focus(False)
+        connect_btn.connect('clicked', on_click)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        row.add_css_class('startpage-recent-row')
+        row.set_hexpand(True)
+        row.append(connect_btn)
+
+        if on_info is not None:
+            info_icon = icon_utils.new_image_from_icon_name('info-outline-symbolic')
+            info_icon.add_css_class('dim-label')
+            info_btn = Gtk.Button()
+            info_btn.set_child(info_icon)
+            info_btn.add_css_class('flat')
+            info_btn.add_css_class('circular')
+            info_btn.add_css_class('dim-label')
+            info_btn.set_valign(Gtk.Align.CENTER)
+            info_btn.set_can_focus(False)
+            info_btn.set_tooltip_text(_('Dashboard'))
+            info_btn.connect('clicked', lambda *_a: on_info())
+            row.append(info_btn)
+
+        return row
 
     def _attach_pinned_context_menu(self, row, conn):
         """Right-click a pinned row for a single label-only "Unpin" action.
@@ -455,7 +481,9 @@ class WelcomePage(Gtk.Overlay):
         rows = [
             self._min_row(
                 conn.nickname, mask_host_display(conn.display_target, hide),
-                lambda _b, c=conn: self._connect_connection_summary(c))
+                lambda _b, c=conn: self._connect_connection_summary(c),
+                on_info=lambda c=conn: self._open_connection_dashboard(c),
+            )
             for conn in recent
         ]
         box.append(self._min_section(_('Recent'), rows))
@@ -549,6 +577,24 @@ class WelcomePage(Gtk.Overlay):
         if connection is not None:
             self.window.terminal_manager.connect_to_host(connection)
 
+    def _open_connection_dashboard(self, connection_or_summary):
+        """Open the Host Info / Dashboard tab for a start-page connection row."""
+
+        nickname = getattr(connection_or_summary, 'nickname', None)
+        connection = connection_or_summary
+        if nickname:
+            resolved = self.connection_manager.find_connection_by_nickname(nickname)
+            if resolved is not None:
+                connection = resolved
+        if connection is None:
+            return
+        from .host_info_tab import open_host_info_tab
+        from .machine_info_dialog import open_machine_info_tab
+
+        if open_machine_info_tab(self.window, connection):
+            return
+        open_host_info_tab(self.window, connection)
+
     @staticmethod
     def _empty_recent_message(has_connection_rows: bool) -> str:
         """Subtle hint when Recent is empty; copy depends on sidebar hosts."""
@@ -591,7 +637,9 @@ class WelcomePage(Gtk.Overlay):
             for conn in pinned:
                 row = self._min_row(
                     conn.nickname, mask_host_display(self._conn_target(conn), hide),
-                    lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+                    lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c),
+                    on_info=lambda c=conn: self._open_connection_dashboard(c),
+                )
                 self._attach_pinned_context_menu(row, conn)
                 rows.append(row)
             box.append(self._min_section(_('Pinned'), rows))

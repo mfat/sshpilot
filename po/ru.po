@@ -2016,24 +2016,14 @@ msgid "Forward X11 connections for GUI applications"
 msgstr "Перенаправлять соединения X11 для графических приложений"
 
 #: src/sshpilot/connection_dialog.py:3881
-msgid "Don't execute any remote command (ssh -N flag)"
-msgstr "Не выполнять удаленную команду (флаг ssh -N)"
+msgid "Do not start a remote shell (ssh -N flag)"
+msgstr "Не запускать удаленную оболочку (флаг ssh -N)"
 
-#: src/sshpilot/connection_dialog.py:3882
-msgid "Do not start a remote shell or command (SessionType none)"
-msgstr ""
-"Не запускать удаленную командную оболочку или команду (SessionType none)"
-
-#: src/sshpilot/connection_dialog.py:3885
+#: src/sshpilot/connection_dialog.py:3883
 msgid "Session"
 msgstr "Сеанс"
 
-#: src/sshpilot/connection_dialog.py:3887
-msgid "Keep the connection open for port forwarding without starting a session"
-msgstr ""
-"Оставлять подключение открытым для перенаправления портов без запуска сеанса"
-
-#: src/sshpilot/connection_dialog.py:3894
+#: src/sshpilot/connection_dialog.py:3888
 msgid "Port Forwarding Rules"
 msgstr "Правила перенаправления портов"
 
@@ -2074,19 +2064,19 @@ msgstr "О перенаправлении портов"
 msgid ""
 "Port forwarding allows you to securely tunnel network connections.\n"
 "\n"
-"• <b>Local Forwarding</b>: Forward a remote port to your local machine\n"
-"• <b>Remote Forwarding</b>: Forward a local port to the remote machine\n"
-"• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
+"• <b>Local Forwarding</b>: A port on the local machine is forwarded to the specified host and port from the remote machine.\n"
+"• <b>Remote Forwarding</b>: A port on the remote machine is forwarded to a specified host and port from the local machine.\n"
+"• <b>Dynamic Forwarding</b>: Starts a SOCKS proxy on the local machine listening on the specified port."
 msgstr ""
 "Перенаправление портов позволяет безопасно туннелировать сетевые "
 "соединения.\n"
 "\n"
-"• <b>Локальное перенаправление</b>: перенаправление удаленного порта на "
-"локальную машину\n"
-"• <b>Удаленное перенаправление</b>: перенаправление локального порта на "
-"удаленную машину\n"
-"• <b>Динамическое перенаправление</b>: создание прокси-сервера SOCKS на "
-"локальной машине"
+"• <b>Локальное перенаправление</b>: порт на локальной машине "
+"перенаправляется на указанный узел и порт со стороны удалённой машины.\n"
+"• <b>Удалённое перенаправление</b>: порт на удалённой машине "
+"перенаправляется на указанный узел и порт со стороны локальной машины.\n"
+"• <b>Динамическое перенаправление</b>: запускает SOCKS-прокси на локальной "
+"машине, слушающий указанный порт."
 
 #: src/sshpilot/connection_dialog.py:3961
 msgid "Connection Commands"
@@ -4272,9 +4262,15 @@ msgstr ""
 msgid "Gathering host information…"
 msgstr "Сбор сведений об узле…"
 
-#: src/sshpilot/machine_info_dialog.py:838
-msgid "Host Info"
-msgstr "Сведения об узле"
+#: src/sshpilot/machine_info_dialog.py:896
+msgid "Dashboard"
+msgstr "Панель"
+
+#: src/sshpilot/host_info_tab.py:100 src/sshpilot/host_info_tab.py:565
+#: src/sshpilot/machine_info_dialog.py:2385
+#, python-format
+msgid "%s — Dashboard"
+msgstr "%s — Панель"
 
 #: src/sshpilot/machine_info_dialog.py:858
 msgid "Refresh host information"
@@ -4954,6 +4950,14 @@ msgstr "Например: «{name}» или «ssh {target}» или «sftp {name
 #: src/sshpilot/omni_search.py:696
 msgid "Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”"
 msgstr "Например: «ssh root@203.0.113.7» или «sftp» или «preferences»"
+
+#: src/sshpilot/overflow_toolbar.py:85
+msgid "Action"
+msgstr "Действие"
+
+#: src/sshpilot/overflow_toolbar.py:233 src/sshpilot/overflow_toolbar.py:234
+msgid "More actions"
+msgstr "Дополнительные действия"
 
 #. Tools-menu "Docker Console" → sidebar selection, else Local. The page
 #. itself is never opened directly; on_activate handles the click.
@@ -6025,6 +6029,18 @@ msgstr "Светлая"
 #: src/sshpilot/window.py:3159
 msgid "Dark"
 msgstr "Темная"
+
+#: src/sshpilot/preferences.py:1379
+msgid "Monospace Font"
+msgstr "Моноширинный шрифт"
+
+#: src/sshpilot/preferences.py:1381
+msgid ""
+"Use a monospace typeface for the whole interface (matches your terminal font "
+"when one is set)"
+msgstr ""
+"Использовать моноширинный шрифт для всего интерфейса (соответствует шрифту "
+"терминала, если он задан)"
 
 #. Color overrides section
 #: src/sshpilot/preferences.py:1301
@@ -7802,7 +7818,7 @@ msgstr "Поиск"
 
 #: src/sshpilot/shortcut_editor.py:55 src/sshpilot/window_help.py:24
 msgid "Omnisearch"
-msgstr "Omnisearch"
+msgstr "Глобальный поиск"
 
 #: src/sshpilot/shortcut_editor.py:56 src/sshpilot/window_help.py:168
 msgid "Search in Terminal"
@@ -8134,9 +8150,9 @@ msgstr "Копировать адрес"
 msgid "Copy SSH Command"
 msgstr "Копировать команду SSH"
 
-#: src/sshpilot/sidebar.py:4455
-msgid "Host Info…"
-msgstr "Сведения об узле…"
+#: src/sshpilot/sidebar.py:4809
+msgid "Dashboard…"
+msgstr "Панель…"
 
 #: src/sshpilot/sidebar.py:4474
 msgid "Manage authorized_keys…"
@@ -9360,6 +9376,15 @@ msgstr "Импорт конфигурации"
 #: src/sshpilot/window.py:3873
 msgid "Import/Export"
 msgstr "Импорт/экспорт"
+
+#: src/sshpilot/window.py:4343 src/sshpilot/window_dialogs.py:745
+#: src/sshpilot/window_dialogs.py:750
+msgid "Backup"
+msgstr "Создать резервную копию"
+
+#: src/sshpilot/window.py:4345
+msgid "Backup/Restore"
+msgstr "Резервное копирование / Восстановление"
 
 #: src/sshpilot/window.py:3906
 msgid "About"

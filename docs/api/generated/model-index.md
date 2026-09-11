@@ -2975,11 +2975,13 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `port` | `int` | Yes | — | No |
 | `process` | `str` | No | `` | No |
+| `address` | `str` | No | `` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "address": "",
   "port": 22,
   "process": ""
 }

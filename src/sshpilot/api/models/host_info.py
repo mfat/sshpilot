@@ -504,6 +504,9 @@ class ListeningPort:
 
     port: int
     process: str = ""
+    #: Bind address from ``ss``/``netstat`` (``0.0.0.0``, ``127.0.0.1``, …).
+    #: Empty when the probe could not tell; frontends treat that as unspecified.
+    address: str = ""
 
     def __post_init__(self) -> None:
         if type(self.port) is not int or isinstance(self.port, bool) or not (
@@ -511,6 +514,7 @@ class ListeningPort:
         ):
             raise ValueError("listening port must be a TCP port")
         _require_text(self.process, "listening port process")
+        _require_text(self.address, "listening port address")
 
 
 @dataclass(frozen=True)

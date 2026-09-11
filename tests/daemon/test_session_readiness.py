@@ -172,7 +172,9 @@ def test_diagnostic_gate_defers_running_until_authenticated_marker():
     )
     assert runtime.get_session(prepared.id).state is SessionState.RUNNING
     assert authenticated == [prepared.id]
-    assert readiness.finished == [prepared.id]
+    # Diagnostics stay engaged after auth so ExitOnForwardFailure lines in
+    # the -E file can still be classified; finish happens on session exit.
+    assert readiness.finished == []
 
     runtime.shutdown()
     core.close()
@@ -276,10 +278,21 @@ def test_diagnostic_failure_while_running_does_not_tear_session_down():
         prepared.id,
         SshDiagnosticResult(
             SshDiagnosticState.FAILED,
-            "alice@example.test: Connection closed by 127.0.0.1.",
+            "bind [127.0.0.1]:53: Permission denied",
         ),
     )
     assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    # Detail is retained for the eventual exit banner; lease finishes on
+    # the FAILED diagnostic so the -E file can be cleaned up.
+    assert runtime.get_session(prepared.id).failure is None
+    assert readiness.finished == [prepared.id]
+
+    assert runner.handle is not None
+    runner.handle.exit(SessionExitInfo(exit_code=255, reason="process_exit"))
+    runner.handle._on_eof()
+    closed = runtime.get_session(prepared.id)
+    assert closed.failure is not None
+    assert "Permission denied" in closed.failure.message
 
     runtime.shutdown()
     core.close()
@@ -417,13 +430,12 @@ def test_readiness_finished_on_clean_exit_and_terminal_close():
         ),
     )
     assert runtime.get_session(prepared.id).state is SessionState.RUNNING
-    assert readiness.finished == [prepared.id]
+    assert readiness.finished == []
 
     assert runner.handle is not None
     runner.handle.exit(SessionExitInfo(exit_code=0, reason="process_exit"))
     runner.handle._on_eof()
     assert runtime.get_session(prepared.id).state is SessionState.CLOSED
-    # finish is idempotent; no further finished entries.
     assert readiness.finished == [prepared.id]
 
     runtime.shutdown()
@@ -524,7 +536,7 @@ def test_gated_session_without_result_stays_alive_until_marker():
 def test_parked_authenticated_marker_applies_atomically_when_handle_stored():
     """A marker that arrives before the process handle is stored is parked on
     the record with the lease still engaged, then applied by start_session:
-    RUNNING exactly once, lease finished exactly once after."""
+    RUNNING exactly once; diagnostics stay engaged for post-auth -E lines."""
     repo = make_test_repository()
     core = ConnectionApplicationService(repo, client_name="diag-park-ok")
     runner = _EvidenceTerminalRunner()
@@ -539,8 +551,8 @@ def test_parked_authenticated_marker_applies_atomically_when_handle_stored():
     runtime.start_session(prepared.id)
     assert runner.started.wait(1)
     assert runtime.get_session(prepared.id).state is SessionState.RUNNING
-    assert readiness.finished == [prepared.id]
-    assert not readiness.is_engaged(prepared.id)
+    assert readiness.finished == []
+    assert readiness.is_engaged(prepared.id)
 
     runtime.shutdown()
     core.close()
@@ -786,6 +798,126 @@ def test_success_delivered_twice_promotes_and_notifies_exactly_once():
     assert runtime.get_session(prepared.id).state is SessionState.RUNNING
     assert authenticated == [prepared.id]
     assert running_events.count(SessionState.RUNNING) == 1
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_exit_on_forward_failure_after_running_sets_session_failure():
+    """ExitOnForwardFailure after auth must not leave failure=None.
+
+    OpenSSH authenticates, promotes to RUNNING, then dies with 255 when a
+    LocalForward/RemoteForward cannot be set up. The PTY still has the
+    diagnostic; the session summary must carry it for the reconnect banner.
+    """
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-fwd-fail")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    states: list = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+
+    runner.emit(
+        b"Error: remote port forwarding failed for listen port 2222.\r\n"
+    )
+    assert runner.handle is not None
+    runner.handle.exit(SessionExitInfo(exit_code=255, reason="process_exit"))
+    runner.handle._on_eof()
+
+    assert SessionState.FAILED in states
+    closed = runtime.get_session(prepared.id)
+    assert closed.state is SessionState.CLOSED
+    assert closed.exit_info is not None
+    assert closed.exit_info.exit_code == 255
+    assert closed.failure is not None
+    assert closed.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
+    assert "port forwarding failed" in closed.failure.message
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_nonzero_exit_from_running_without_failure_evidence_stays_clean():
+    """A non-zero shell exit after a live session must not invent a failure."""
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-shell-exit")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    states: list = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    runner.emit(b"alice@host:~$ \r\n")
+    assert runner.handle is not None
+    runner.handle.exit(SessionExitInfo(exit_code=17, reason="process_exit"))
+    runner.handle._on_eof()
+
+    assert SessionState.FAILED not in states
+    closed = runtime.get_session(prepared.id)
+    assert closed.state is SessionState.CLOSED
+    assert closed.failure is None
+    assert closed.exit_info.exit_code == 17
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_exit_255_from_running_with_empty_pty_still_sets_failure():
+    """ExitOnForwardFailure can leave an empty PTY (LogLevel QUIET / mux).
+
+    Still classify exit 255 so the UI does not fall back to Connection lost.
+    """
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-silent-255")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    assert runner.handle is not None
+    runner.handle.exit(SessionExitInfo(exit_code=255, reason="process_exit"))
+    runner.handle._on_eof()
+
+    closed = runtime.get_session(prepared.id)
+    assert closed.state is SessionState.CLOSED
+    assert closed.failure is not None
+    assert closed.failure.message == "The SSH session exited with status 255"
 
     runtime.shutdown()
     core.close()

@@ -555,6 +555,30 @@ def find_available_port(preferred_port: int, address: str = '127.0.0.1') -> Opti
     """Find an available port near the preferred port"""
     return get_port_checker().find_available_port(preferred_port, address)
 
+
+def allocate_ephemeral_local_port(address: str = "127.0.0.1") -> Optional[int]:
+    """Ask the OS for an unused local TCP port (bind port 0), then release it.
+
+    Prefer this for temporary daemon local forwards instead of reusing the
+    remote service port as the local listen port. Stable local ports share a
+    browser origin (``http://127.0.0.1:<port>``), so cookies/cache from one
+    host's UI can leak into another.
+
+    The returned port is free at return time; the caller should bind it soon
+    (inherent TOCTOU). Falls back to ``None`` if the OS refuses the bind.
+    """
+
+    family = socket.AF_INET6 if ":" in (address or "") else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((address, 0))
+            port = int(sock.getsockname()[1])
+    except OSError:
+        return None
+    return port if port > 0 else None
+
+
 def check_port_conflicts(ports: List[int], address: str = '127.0.0.1') -> List[Tuple[int, PortInfo]]:
     """Check for port conflicts"""
     return get_port_checker().get_port_conflicts(ports, address)

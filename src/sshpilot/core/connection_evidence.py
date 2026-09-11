@@ -38,6 +38,17 @@ SSH_FAILURE_MARKERS = (
     "broken pipe",
     # telnet's connect failure ("telnet: Unable to connect to remote host")
     "unable to connect",
+    # ExitOnForwardFailure / port-forward setup (often after Authenticated to)
+    "port forwarding failed",
+    "address already in use",
+    "cannot assign requested address",
+    "channel_setup_failure",
+    "administratively prohibited",
+    "could not request local forwarding",
+    "could not request remote forwarding",
+    "cannot listen to port",
+    "master forward request failed",
+    "remote forward failure",
 )
 
 # Positive login evidence from SSH diagnostics or a remote login banner.
@@ -68,6 +79,26 @@ SSH_HOSTKEY_BANNER_MARKERS = (
     "key is not known by any other names",
     "known by the following other names",
     "known_hosts:",
+)
+
+# Extra post-auth scan when classify_connection_evidence stayed connected
+# (e.g. Authenticated to appeared before the fatal forward line was parsed
+# as noise). Keep these specific — a bare \"forward\" matches happy-path mux
+# chatter.
+_POST_AUTH_FAILURE_HINTS = (
+    "port forwarding failed",
+    "forwarding failed",
+    "forward request failed",
+    "could not request",
+    "cannot listen",
+    "address already in use",
+    "bind [",
+    "bind:",
+    "channel_setup",
+    "administratively prohibited",
+    "error: remote",
+    "error: local",
+    "fatal:",
 )
 
 # The GTK path scrapes already-rendered text, while the daemon sees raw PTY
@@ -130,3 +161,46 @@ def classify_connection_evidence(text: str) -> ConnectionEvidence:
         evidence = ConnectionEvidence("connected")
 
     return evidence
+
+
+def post_auth_exit_failure_reason(
+    text: str,
+    *,
+    exit_code: int | None,
+) -> str | None:
+    """Best-effort failure text when a RUNNING session dies with a non-zero exit.
+
+    Prefer a concrete OpenSSH line from the PTY. When the PTY is empty (common
+    with LogLevel QUIET or some ControlMaster paths) but ssh still exited 255,
+    return a stable generic message so the UI does not fall back to
+    \"Connection lost\".
+    """
+
+    evidence = classify_connection_evidence(text)
+    if evidence.verdict == "failed" and evidence.failure_reason:
+        return evidence.failure_reason.strip()
+
+    normalized = visible_terminal_text(text)
+    last_hint = ""
+    for line in normalized.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        if any(marker in lower for marker in SSH_FAILURE_MARKERS):
+            last_hint = stripped
+            continue
+        if any(hint in lower for hint in _POST_AUTH_FAILURE_HINTS):
+            # Skip pure debug chatter that happens to mention \"forward\".
+            if lower.startswith("debug"):
+                continue
+            last_hint = stripped
+    if last_hint:
+        return last_hint
+
+    # ssh(1) reserves 255 for its own fatals (including ExitOnForwardFailure).
+    # Other non-zero codes are usually a remote shell/command exit — leave
+    # those as a clean EXITED without inventing a SessionFailure.
+    if exit_code == 255:
+        return "The SSH session exited with status 255"
+    return None
