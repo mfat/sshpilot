@@ -4288,9 +4288,15 @@ msgstr ""
 msgid "Gathering host information…"
 msgstr "Host-Informationen werden erfasst…"
 
-#: src/sshpilot/machine_info_dialog.py:838
-msgid "Host Info"
-msgstr "Host-Informationen"
+#: src/sshpilot/machine_info_dialog.py:896
+msgid "Dashboard"
+msgstr "Dashboard"
+
+#: src/sshpilot/host_info_tab.py:100 src/sshpilot/host_info_tab.py:565
+#: src/sshpilot/machine_info_dialog.py:2385
+#, python-format
+msgid "%s — Dashboard"
+msgstr "%s — Dashboard"
 
 #: src/sshpilot/machine_info_dialog.py:858
 msgid "Refresh host information"
@@ -8195,9 +8201,9 @@ msgstr "Adresse kopieren"
 msgid "Copy SSH Command"
 msgstr "SSH-Befehl kopieren"
 
-#: src/sshpilot/sidebar.py:4455
-msgid "Host Info…"
-msgstr "Host-Informationen…"
+#: src/sshpilot/sidebar.py:4809
+msgid "Dashboard…"
+msgstr "Dashboard…"
 
 #: src/sshpilot/sidebar.py:4474
 msgid "Manage authorized_keys…"

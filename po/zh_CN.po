@@ -4133,9 +4133,15 @@ msgstr ""
 msgid "Gathering host information…"
 msgstr "正在收集主机信息…"
 
-#: src/sshpilot/machine_info_dialog.py:838
-msgid "Host Info"
-msgstr "主机信息"
+#: src/sshpilot/machine_info_dialog.py:896
+msgid "Dashboard"
+msgstr "仪表盘"
+
+#: src/sshpilot/host_info_tab.py:100 src/sshpilot/host_info_tab.py:565
+#: src/sshpilot/machine_info_dialog.py:2385
+#, python-format
+msgid "%s — Dashboard"
+msgstr "%s — 仪表盘"
 
 #: src/sshpilot/machine_info_dialog.py:858
 msgid "Refresh host information"
@@ -7907,9 +7913,9 @@ msgstr "复制地址"
 msgid "Copy SSH Command"
 msgstr "复制 SSH 命令"
 
-#: src/sshpilot/sidebar.py:4455
-msgid "Host Info…"
-msgstr "主机信息…"
+#: src/sshpilot/sidebar.py:4809
+msgid "Dashboard…"
+msgstr "仪表盘…"
 
 #: src/sshpilot/sidebar.py:4474
 msgid "Manage authorized_keys…"
