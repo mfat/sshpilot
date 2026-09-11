@@ -26,7 +26,7 @@ def _recent_page(hide):
                 get_metadata=lambda nickname: {"last_used": 10},
             ),
         ),
-        _min_row=lambda title, subtitle, callback: (title, subtitle),
+        _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
         _min_section=lambda title, rows: (title, rows),
         _connect_connection_summary=lambda connection_summary: None,
     )
@@ -49,7 +49,7 @@ def _pinned_page(hide):
             terminal_manager=SimpleNamespace(connect_to_host=lambda c: None),
         ),
         _conn_target=WelcomePage._conn_target,
-        _min_row=lambda title, subtitle, callback: (title, subtitle),
+        _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
         _min_section=lambda title, rows: (title, rows),
         _attach_pinned_context_menu=lambda row, conn_: None,
     )
