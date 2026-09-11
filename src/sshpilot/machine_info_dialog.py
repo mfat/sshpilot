@@ -425,15 +425,19 @@ def _key_value_rows(card: Gtk.Box, rows: Sequence[Tuple[str, str, bool]]) -> Non
 class _Table:
     """A card-hosted grid whose header and rows share real column widths.
 
-    Columns are grid columns rather than labels padded with a minimum size
-    request, so a long mount point or device name widens its column instead of
-    silently overflowing into the next one.
+    Non-expanding columns size to their contents so a long mount point or
+    device name widens its own column instead of overflowing into the next.
+    Expanding columns take leftover width; labels in them collapse their
+    natural width and ellipsize rather than stretching the card past its
+    parent (top-process command lines are the usual offender).
     """
 
     def __init__(self, columns: Sequence[Tuple[str, float, bool]]) -> None:
         self.widget = _card()
+        self.widget.set_hexpand(True)
         self._columns = columns
         self._grid = Gtk.Grid()
+        self._grid.set_hexpand(True)
         self._grid.set_column_spacing(16)
         self._grid.set_margin_start(16)
         self._grid.set_margin_end(16)
@@ -449,6 +453,11 @@ class _Table:
             label.add_css_class("heading")
             label.set_opacity(0.6)
             label.set_hexpand(expand)
+            if expand:
+                # Match body cells: a tiny natural width so the expand column
+                # sizes from leftover space, not from the longest command.
+                label.set_width_chars(1)
+                label.set_halign(Gtk.Align.FILL)
             self._grid.attach(label, column, 0, 1, 1)
         self._row = 1
 
@@ -462,6 +471,18 @@ class _Table:
             _, xalign, expand = self._columns[column]
             if isinstance(cell, Gtk.Label):
                 cell.set_xalign(xalign)
+                if expand:
+                    # Ellipsize alone still reports the full string as natural
+                    # width; collapse that so the allocated column can clip.
+                    cell.set_width_chars(1)
+                    cell.set_halign(Gtk.Align.FILL)
+                    if cell.get_ellipsize() == Pango.EllipsizeMode.NONE:
+                        cell.set_ellipsize(Pango.EllipsizeMode.END)
+                    text = cell.get_text()
+                    if text and not cell.get_tooltip_text():
+                        cell.set_tooltip_text(text)
+            elif expand:
+                cell.set_halign(Gtk.Align.FILL)
             cell.set_hexpand(expand)
             self._grid.attach(cell, column, self._row, 1, 1)
         self._row += 1

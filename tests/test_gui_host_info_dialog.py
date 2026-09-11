@@ -588,6 +588,35 @@ def test_a_multi_threaded_process_may_exceed_one_hundred_percent():
     assert "457.0%" in texts
 
 
+def test_long_process_commands_ellipsize_instead_of_widening_the_table():
+    """Command lines can be argv soups; they must clip, with the full text
+    still available on hover."""
+
+    from gi.repository import Pango
+
+    command = (
+        "/usr/sbin/openvpn --syslog openvpn(protonAludp) "
+        "--status /var/run/openvpn.protonAludp.status "
+        "--cd /etc/openvpn --config protonAludp.ovpn "
+        "--up /usr/libexec/openvpn-hotplug up protonAludp "
+        "--down /usr/libexec/openvpn-hotplug down protonAludp"
+    )
+    snapshot = _snapshot(
+        processes=(ProcessUsage(command=command, cpu_percent=1.0, memory_percent=2.0),)
+    )
+    labels = [
+        widget
+        for widget in _walk(_dialog(snapshot)._build_resources())
+        if isinstance(widget, Gtk.Label) and widget.get_text() == command
+    ]
+    assert labels, "top-process command is rendered as a label"
+    label = labels[0]
+    assert label.get_ellipsize() == Pango.EllipsizeMode.END
+    assert label.get_width_chars() == 1
+    assert label.get_hexpand()
+    assert label.get_tooltip_text() == command
+
+
 def test_a_process_without_a_memory_reading_shows_na_not_zero():
     snapshot = _snapshot(processes=(ProcessUsage(command="procd", cpu_percent=0.5),))
     texts = _texts(_dialog(snapshot)._build_resources())

@@ -203,6 +203,11 @@ button:disabled { opacity: .55; cursor: default; }
   vertical-align: top;
 }
 .table th { color: var(--muted); font-weight: 600; font-size: .78rem; }
+/* Top-process command lines (and similar argv soups) must clip. */
+.table-clip { table-layout: fixed; }
+.table-clip td:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .sev-ok { --tone: var(--ok); }
 .sev-careful { --tone: var(--careful); }
 .sev-warn { --tone: var(--warn); }
@@ -423,7 +428,7 @@ _JS = """
 
   function renderSystem(data) {
     const procRows = (data.processes || []).map(function (p) {
-      return '<tr><td class="mono">' + esc(p.name) +
+      return '<tr><td class="mono" title="' + esc(p.name) + '">' + esc(p.name) +
         '</td><td class="mono">' + esc(p.cpu) +
         '</td><td class="mono">' + esc(p.mem) + '</td></tr>';
     }).join("");
@@ -450,7 +455,7 @@ _JS = """
       kvHtml(data.system_rows || []) +
       section(S.processes || "Top processes",
         procRows
-          ? '<div class="card"><table class="table"><thead><tr><th>Command</th><th>CPU</th><th>Mem</th></tr></thead><tbody>' +
+          ? '<div class="card"><table class="table table-clip"><thead><tr><th>Command</th><th>CPU</th><th>Mem</th></tr></thead><tbody>' +
             procRows + '</tbody></table></div>'
           : emptyHtml()) +
       section(S.temperatures || "Temperatures",
