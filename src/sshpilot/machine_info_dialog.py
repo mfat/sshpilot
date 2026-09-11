@@ -893,7 +893,7 @@ class MachineInfoDialog:
         title_row.append(icon)
 
         title_column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-        title = Gtk.Label(label=_("Host Info"))
+        title = Gtk.Label(label=_("Dashboard"))
         title.add_css_class("title")
         title_column.append(title)
 
@@ -2382,7 +2382,7 @@ def open_machine_info_tab(window, connection) -> bool:
         page = tab_view.append(presenter.widget)
         presenter._tab_page = page
         nickname = getattr(connection, "nickname", "") or _("Host")
-        page.set_title(_("%s — Info") % nickname)
+        page.set_title(_("%s — Dashboard") % nickname)
         try:
             page.set_icon(
                 icon_utils.new_gicon_from_icon_name("info-outline-symbolic")

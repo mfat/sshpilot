@@ -96,8 +96,8 @@ class HostInfoTab(Gtk.Box):
         return self._connection
 
     def _title(self) -> str:
-        nickname = getattr(self._connection, "nickname", "") or _("Host Info")
-        return _("%s — Host Info") % nickname
+        nickname = getattr(self._connection, "nickname", "") or _("Host")
+        return _("%s — Dashboard") % nickname
 
     def _subtitle(self) -> str:
         nickname = getattr(self._connection, "nickname", "") or ""
@@ -562,7 +562,7 @@ def open_host_info_tab(window, connection) -> bool:
         tab = HostInfoTab(window, connection)
         page = tab_view.append(tab)
         nickname = getattr(connection, "nickname", "") or _("Host")
-        page.set_title(_("%s — Info") % nickname)
+        page.set_title(_("%s — Dashboard") % nickname)
         try:
             from . import icon_utils
 

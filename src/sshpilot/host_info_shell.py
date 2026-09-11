@@ -593,7 +593,7 @@ _JS = """
   };
 
   window.applyHostInfo({
-    title: "Host Info",
+    title: "Dashboard",
     subtitle: "",
     status: "busy",
     message: S.gathering || "Gathering host information…"
