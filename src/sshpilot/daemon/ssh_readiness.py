@@ -36,7 +36,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Mapping, Optional, Sequence
 
-from sshpilot.core.ssh_diagnostics import SshDiagnosticParser, SshDiagnosticResult
+from sshpilot.core.ssh_diagnostics import (
+    SshDiagnosticParser,
+    SshDiagnosticResult,
+    SshDiagnosticState,
+)
 from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
 from sshpilot.daemon.ssh_diagnostics_monitor import (
     SshDiagnosticsMonitor,
@@ -550,24 +554,46 @@ class SshReadinessManager:
     # -- event handling ---------------------------------------------------------
 
     def _consume(self, session_id: object, data: bytes) -> None:
+        """Parse new diagnostics bytes and deliver any new decisive verdict.
+
+        AUTHENTICATED does not stop the watch: OpenSSH writes
+        ExitOnForwardFailure lines to ``-E`` *after* ``Authenticated to``,
+        and those must still become a FAILED detail for the session banner.
+        """
+        callback = None
+        result = None
         with self._lock:
             record = self._sessions.get(session_id)
-            if record is None or record.finished or record.decisive:
+            if record is None or record.finished:
+                return
+            if (
+                record.decisive
+                and record.decisive_result is not None
+                and record.decisive_result.state is SshDiagnosticState.FAILED
+            ):
                 return
             result = record.parser.feed(data)
-            if result is not None:
-                record.decisive = True
-                record.decisive_result = result
-                if record.timer is not None:
-                    record.timer.cancel()
-                callback = record.on_result
-            else:
-                callback = None
+            if result is None:
+                return
+            record.decisive = True
+            record.decisive_result = result
+            if record.timer is not None:
+                record.timer.cancel()
+                record.timer = None
+            callback = record.on_result
         if callback is not None:
             try:
                 callback(session_id, result)
             except Exception:
                 logger.debug("diagnostics result callback failed", exc_info=True)
+        # Same read may already contain post-auth failure lines after the
+        # Authenticated marker; drain without waiting for another inotify.
+        if result is not None and result.state in {
+            SshDiagnosticState.AUTHENTICATED,
+            SshDiagnosticState.MUX_SESSION_OPENED,
+        }:
+            self._consume(session_id, b"")
+
 
     def _fire_grace_expired(self, session_id: object) -> None:
         with self._lock:

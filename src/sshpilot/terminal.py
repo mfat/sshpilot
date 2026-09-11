@@ -2335,6 +2335,16 @@ class TerminalWidget(Gtk.Box):
         Runs at most once per daemon session.
         """
         if getattr(self, '_daemon_exit_handled', False):
+            # SESSION_EXITED may have raced ahead of a SessionFailure. A later
+            # _on_connection_failed already set last_error_message — refresh
+            # the banner/Details without re-running full exit classification.
+            if self.last_error_message:
+                exit_info = getattr(self._daemon_controller, 'exit_info', None)
+                exit_code = getattr(exit_info, 'exit_code', None) if exit_info else None
+                self._record_error_detail(
+                    self.last_error_message, exit_code=exit_code
+                )
+                self._set_disconnected_banner_visible(True, self.last_error_message)
             return
         self._daemon_exit_handled = True
 
@@ -2377,9 +2387,21 @@ class TerminalWidget(Gtk.Box):
 
             # Unexpected end (remote reboot, killed connection, ...): show the
             # reconnect banner, classified the same way as the legacy path.
-            exit_state, exit_reason = self._classify_exit(exit_code, was_connected, '')
+            # Prefer an error already recorded by the FAILED path (daemon
+            # SessionFailure / ExitOnForwardFailure) over the exit-code-only
+            # classifier, and scrape the VTE when nothing else is available.
+            scraped = (
+                ""
+                if self.last_error_message
+                else self._scrape_recent_terminal_text()
+            )
+            exit_state, exit_reason = self._classify_exit(
+                exit_code, was_connected, scraped
+            )
             self.connection_state = exit_state
-            self.connection_state_reason = exit_reason or 'Session ended'
+            self.connection_state_reason = (
+                self.last_error_message or exit_reason or "Session ended"
+            )
             banner_text = self.last_error_message or exit_reason
             if not banner_text:
                 if exit_code:
@@ -2388,7 +2410,8 @@ class TerminalWidget(Gtk.Box):
                     banner_text = _('Session terminated by signal {sig}').format(sig=signal)
                 else:
                     banner_text = _('Session ended.')
-            self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
+            detail_reason = self.last_error_message or exit_reason or banner_text
+            self._record_error_detail(detail_reason, exit_code=exit_code)
             self._set_disconnected_banner_visible(True, banner_text)
         except Exception as e:
             logger.error(f"Failed to handle daemon session exit: {e}")
@@ -2910,6 +2933,24 @@ class TerminalWidget(Gtk.Box):
             if was_connected:
                 return ConnectionState.DISCONNECTED, 'Connection lost'
             return ConnectionState.FAILED, 'Connection timed out'
+        if 'port forwarding failed' in msg:
+            return ConnectionState.FAILED, (
+                self.last_error_message
+                or getattr(self, '_connect_failure_hint', None)
+                or 'Port forwarding failed'
+            )
+        if 'address already in use' in msg:
+            return ConnectionState.FAILED, (
+                self.last_error_message
+                or getattr(self, '_connect_failure_hint', None)
+                or 'Port already in use'
+            )
+        if 'administratively prohibited' in msg or 'channel_setup_failure' in msg:
+            return ConnectionState.FAILED, (
+                self.last_error_message
+                or getattr(self, '_connect_failure_hint', None)
+                or 'Port forwarding failed'
+            )
 
         # ssh's own fatal errors exit with 255. Plugin protocols don't reserve
         # an exit code: any non-zero exit before a session was established is

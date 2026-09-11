@@ -150,13 +150,29 @@ def test_trailing_unterminated_line_is_flushed_on_close():
 def test_decisive_result_latches_and_ignores_later_input():
     parser = SshDiagnosticParser()
     first = parser.feed(
+        b"ssh: connect to host x port 22: Connection refused\n"
+    )
+    assert first is not None
+    assert first.state is SshDiagnosticState.FAILED
+    assert parser.feed(b'debug1: Authenticated to example.test using "publickey".\n') is None
+    assert parser.close() is None
+
+
+def test_post_auth_forward_failure_after_authenticated():
+    """ExitOnForwardFailure lines arrive on -E after Authenticated to."""
+    parser = SshDiagnosticParser()
+    first = parser.feed(
         b'debug1: Authenticated to example.test ([127.0.0.1]:22) '
         b'using "publickey".\n'
+        b"bind [127.0.0.1]:53: Permission denied\n"
+        b"Could not request local forwarding.\n"
     )
     assert first is not None
     assert first.state is SshDiagnosticState.AUTHENTICATED
-    assert parser.feed(b"ssh: connect to host x port 22: Connection refused\n") is None
-    assert parser.close() is None
+    second = parser.feed(b"")
+    assert second is not None
+    assert second.state is SshDiagnosticState.FAILED
+    assert "Permission denied" in second.detail or "local forwarding" in second.detail.lower()
 
 
 def test_multiple_failure_markers_report_first():
