@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-arm64:
     name: macOS aarch64 PyInstaller
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout repository
