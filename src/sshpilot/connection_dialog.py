@@ -3939,9 +3939,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("About Port Forwarding"),
             description=_(
                 "Port forwarding allows you to securely tunnel network connections.\n\n"
-                "• <b>Local Forwarding</b>: Forward a remote port to your local machine\n"
-                "• <b>Remote Forwarding</b>: Forward a local port to the remote machine\n"
-                "• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
+                "• <b>Local Forwarding</b>: A port on the local machine is forwarded to the specified host and port from the remote machine.\n"
+                "• <b>Remote Forwarding</b>: A port on the remote machine is forwarded to a specified host and port from the local machine.\n"
+                "• <b>Dynamic Forwarding</b>: Starts a SOCKS proxy on the local machine listening on the specified port."
             )
         )
 
