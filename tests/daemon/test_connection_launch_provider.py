@@ -348,6 +348,70 @@ def test_remote_command_overrides_authored_session_type_none(provider):
     assert tokens[-1] == "uptime"
 
 
+def test_terminal_forwarding_only_disables_preference_multiplex(provider):
+    """SessionType none terminal launches must not inherit ControlMaster=auto.
+
+    Preference multiplexing injects ControlMaster=auto + ControlPersist via
+    ssh_overrides (last). Combined with SessionType none, OpenSSH backgrounds
+    the master and the watched process exits 0 — the tab closes as a clean
+    exit. Forced ControlMaster=no is first-value-wins before those overrides.
+    """
+    from types import SimpleNamespace
+
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    prov, records = provider
+    records["web"] = _record(
+        data={
+            "__authored_directives": ["hostname", "user"],
+            "hostname": "example.com",
+            "username": "alice",
+            "extra_ssh_config": "SessionType none",
+        }
+    )
+    multiplexed = DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+    command, _environment = multiplexed.prepare_terminal_launch(
+        "web", interaction_policy="none"
+    )
+    tokens = [str(token) for token in command]
+    forced_no = tokens.index("ControlMaster=no")
+    assert tokens[forced_no - 1] == "-o"
+    # Preference auto may still appear later; first value wins.
+    if "ControlMaster=auto" in tokens:
+        assert forced_no < tokens.index("ControlMaster=auto")
+    assert forced_no < len(tokens) - 1
+    assert tokens[-1]  # destination host / alias
+
+
+def test_terminal_shell_host_keeps_preference_multiplex(provider):
+    """Ordinary shell tabs still receive ControlMaster=auto when preferred."""
+    from types import SimpleNamespace
+
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    prov, _records = provider
+    multiplexed = DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+    command, _environment = multiplexed.prepare_terminal_launch(
+        "web", interaction_policy="none"
+    )
+    tokens = [str(token) for token in command]
+    assert "ControlMaster=auto" in tokens
+    assert "ControlMaster=no" not in tokens
+    assert "ControlPersist=60" in tokens
+
+
 @pytest.mark.parametrize(
     ("term", "expected"),
     [

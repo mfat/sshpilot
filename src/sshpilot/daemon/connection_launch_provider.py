@@ -483,6 +483,13 @@ class DaemonConnectionLaunchProvider:
             return self._headless_settings
         return None
 
+    @staticmethod
+    def _connection_is_forwarding_only(connection: HeadlessConnectionView) -> bool:
+        """True when this Host authors ``SessionType none`` (forwarding-only)."""
+        from ..forwarding_only_ui import connection_forwarding_only
+
+        return connection_forwarding_only(connection) is True
+
     def _prepare_ssh_launch(
         self,
         connection: HeadlessConnectionView,
@@ -589,12 +596,23 @@ class DaemonConnectionLaunchProvider:
             return self._prepare_protocol_launch(
                 connection, protocol, interaction_policy=interaction_policy
             )
+        # SessionType none (ssh -N / forwarding-only) must not ride the app
+        # ControlMaster=auto + ControlPersist preference. OpenSSH then
+        # backgrounds the mux master and the watched foreground process exits
+        # 0, which the UI treats as a clean shell exit and destroys the tab.
+        # Force ControlMaster=no first (OpenSSH first-value-wins; preference
+        # overrides are emitted last) so the -N process stays in the
+        # foreground. Normal shell tabs keep multiplexing unchanged.
+        extra_args: Optional[List[str]] = None
+        if self._connection_is_forwarding_only(connection):
+            extra_args = ["-o", "ControlMaster=no"]
         argv, environment = self._prepare_ssh_launch(
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
             remote_command=remote_command,
             force_tty=force_tty,
+            extra_args=extra_args,
         )
         # The daemon PTY is the semantic boundary for interactive SSH
         # terminals.  Authentication helpers intentionally preserve the
