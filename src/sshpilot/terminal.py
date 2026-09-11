@@ -398,31 +398,42 @@ class TerminalWidget(Gtk.Box):
 
         # Forwarding-only status (SessionType none): same opaque veil as
         # Connecting, backend-agnostic above VTE / PyXterm.
-        self.forwarding_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self.forwarding_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=28)
         self.forwarding_box.set_halign(Gtk.Align.CENTER)
         self.forwarding_box.set_valign(Gtk.Align.CENTER)
         self.forwarding_box.set_hexpand(True)
         self.forwarding_box.set_vexpand(True)
-        self.forwarding_box.set_margin_start(24)
-        self.forwarding_box.set_margin_end(24)
+        self.forwarding_box.set_margin_start(40)
+        self.forwarding_box.set_margin_end(40)
+        self.forwarding_box.set_margin_top(32)
+        self.forwarding_box.set_margin_bottom(32)
         if hasattr(self.forwarding_box, "add_css_class"):
             self.forwarding_box.add_css_class("session-overlay")
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        header.set_halign(Gtk.Align.CENTER)
         self.forwarding_title = Gtk.Label(label=_("Port forwarding"))
         self.forwarding_title.add_css_class("title-2")
         self.forwarding_subtitle = Gtk.Label()
         self.forwarding_subtitle.add_css_class("dim-label")
         self.forwarding_subtitle.set_wrap(True)
         self.forwarding_subtitle.set_justify(Gtk.Justification.CENTER)
+        header.append(self.forwarding_title)
+        header.append(self.forwarding_subtitle)
+
         self.forwarding_rules_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL, spacing=8
+            orientation=Gtk.Orientation.VERTICAL, spacing=16
         )
         self.forwarding_rules_box.set_halign(Gtk.Align.CENTER)
+        self.forwarding_rules_box.set_size_request(320, -1)
+
         self.forwarding_hint = Gtk.Label(
             label=_("Close this tab to disconnect")
         )
         self.forwarding_hint.add_css_class("dim-label")
-        self.forwarding_box.append(self.forwarding_title)
-        self.forwarding_box.append(self.forwarding_subtitle)
+        self.forwarding_hint.set_margin_top(4)
+
+        self.forwarding_box.append(header)
         self.forwarding_box.append(self.forwarding_rules_box)
         self.forwarding_box.append(self.forwarding_hint)
         self.forwarding_box.set_visible(False)
@@ -1323,12 +1334,17 @@ class TerminalWidget(Gtk.Box):
             return
 
         for row in rows:
-            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
             row_box.set_halign(Gtk.Align.FILL)
+            row_box.set_margin_top(4)
+            row_box.set_margin_bottom(4)
+            if hasattr(row_box, "add_css_class"):
+                row_box.add_css_class("session-overlay-rule")
             kind = Gtk.Label(label=row["kind"])
             kind.add_css_class("caption-heading")
             kind.set_width_chars(2)
-            endpoints = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            kind.set_valign(Gtk.Align.START)
+            endpoints = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             endpoints.set_hexpand(True)
             bind = Gtk.Label(label=row["bind"])
             bind.set_halign(Gtk.Align.START)
@@ -1340,6 +1356,7 @@ class TerminalWidget(Gtk.Box):
             endpoints.append(bind)
             endpoints.append(dest)
             status_label = Gtk.Label(label=row["status"])
+            status_label.set_valign(Gtk.Align.START)
             if row["status"] == "active":
                 status_label.add_css_class("success")
             else:

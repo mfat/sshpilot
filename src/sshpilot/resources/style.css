@@ -26,6 +26,10 @@
 .session-overlay label.error {
     color: @error_color;
 }
+.session-overlay-rule {
+    min-width: 280px;
+    padding: 6px 4px;
+}
 
 /* Key-order badge / key-type pill (connection_dialog.py). */
 .key-order-badge {

@@ -73,7 +73,11 @@ def _stub_gtk_rows(monkeypatch):
         "sshpilot.terminal.Gtk.Box",
         lambda *a, **k: SimpleNamespace(
             set_halign=lambda *_: None,
+            set_valign=lambda *_: None,
             set_hexpand=lambda *_: None,
+            set_margin_top=lambda *_: None,
+            set_margin_bottom=lambda *_: None,
+            add_css_class=lambda *_: None,
             append=lambda *_: None,
         ),
     )
@@ -83,6 +87,7 @@ def _stub_gtk_rows(monkeypatch):
             add_css_class=lambda *_: None,
             set_width_chars=lambda *_: None,
             set_halign=lambda *_: None,
+            set_valign=lambda *_: None,
             set_xalign=lambda *_: None,
             set_wrap=lambda *_: None,
             set_justify=lambda *_: None,
