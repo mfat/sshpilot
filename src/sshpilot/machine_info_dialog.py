@@ -51,6 +51,7 @@ from .host_info_web_uis import (
     ensure_daemon_local_forward,
     needs_local_forward,
 )
+from . import icon_utils
 from .web_tab import open_url_in_browser
 
 logger = logging.getLogger(__name__)
@@ -2216,10 +2217,13 @@ class MachineInfoDialog:
                 action.add_css_class("dim-label")
                 action.add_css_class("caption")
             else:
-                button = Gtk.Button(label=_("Open"))
+                button = icon_utils.new_button_from_icon_name(
+                    "web-browser-symbolic"
+                )
                 button.add_css_class("flat")
                 button.set_tooltip_text(
-                    _("Open %(label)s in the system browser") % {"label": match.label}
+                    _("Open %(label)s in the system browser")
+                    % {"label": match.label}
                 )
                 button.connect(
                     "clicked",
@@ -2359,8 +2363,6 @@ def open_machine_info_tab(window, connection) -> bool:
         nickname = getattr(connection, "nickname", "") or _("Host")
         page.set_title(_("%s — Info") % nickname)
         try:
-            from . import icon_utils
-
             page.set_icon(
                 icon_utils.new_gicon_from_icon_name("info-outline-symbolic")
             )

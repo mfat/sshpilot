@@ -554,8 +554,16 @@ def test_the_system_tab_reports_what_the_host_exposes():
     texts = _texts(page)
     assert "Running services" in texts
     assert "openwrt 23.05.5" in texts and "mips" in texts
-    assert "8080/tcp" in texts and "uhttpd" in texts
-    assert "Open" in texts  # well-known HTTP port gets a browser action
+    assert "8080/tcp" in texts
+    assert any("uhttpd" in text for text in texts)
+    web_ui_buttons = [
+        widget
+        for widget in _walk(page)
+        if isinstance(widget, Gtk.Button)
+        and widget.get_tooltip_text()
+        and "system browser" in widget.get_tooltip_text()
+    ]
+    assert web_ui_buttons, "well-known HTTP port gets a browser action"
     assert "logrotate.service" in texts
     assert "SHA256:abc" in texts and "ED25519" in texts
 
