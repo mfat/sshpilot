@@ -109,18 +109,18 @@ html, body {
   display: flex; flex-direction: column; height: 100%;
 }
 .topbar {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px;
   padding: 14px 20px 10px; border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   position: sticky; top: 0; z-index: 2;
 }
-.titles { min-width: 0; flex: 1; }
+.titles { min-width: 0; flex: 1 1 12rem; }
 .title { font-size: 1.05rem; font-weight: 700; }
 .subtitle {
   color: var(--muted); font-size: .85rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .age { color: var(--muted); font-size: .78rem; }
 button {
   appearance: none; border: 1px solid var(--border); background: var(--panel);
@@ -154,8 +154,10 @@ button:disabled { opacity: .55; cursor: default; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .grid { display: grid; gap: 12px; }
-.gauges { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.cards3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* auto-fit: 3 → 2 → 1 as the pane shrinks; minmax(0,1fr) alone never wraps. */
+.gauges, .cards3 {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
 .card {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow);
@@ -179,6 +181,7 @@ button:disabled { opacity: .55; cursor: default; }
 .kv { display: grid; grid-template-columns: minmax(120px, 180px) 1fr; gap: 8px 16px; }
 .kv .label { color: var(--muted); }
 .mono, .mono * { font-family: ui-monospace, "Source Code Pro", monospace; }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .bar {
   --pct: 0; --tone: var(--unknown);
   height: 8px; border-radius: 999px; background: var(--bar-track); overflow: hidden;
@@ -213,8 +216,11 @@ button:disabled { opacity: .55; cursor: default; }
 .sev-warn { --tone: var(--warn); }
 .sev-critical { --tone: var(--critical); }
 .sev-unknown { --tone: var(--unknown); }
-@media (max-width: 900px) {
-  .gauges, .cards3 { grid-template-columns: 1fr; }
+@media (max-width: 480px) {
+  .kv { grid-template-columns: 1fr; gap: 2px 0; }
+  .kv .label { margin-top: 6px; }
+  .kv .label:first-child { margin-top: 0; }
+  .actions { flex: 1 1 auto; justify-content: space-between; }
 }
 """
 
@@ -378,7 +384,10 @@ _JS = """
         '</div>'
       );
     }).join("");
-    return section(S.filesystems || "Filesystems", items || emptyHtml());
+    return section(
+      S.filesystems || "Filesystems",
+      items ? '<div class="grid cards3">' + items + '</div>' : emptyHtml()
+    );
   }
 
   function renderNetwork(data) {
@@ -394,7 +403,7 @@ _JS = """
       );
     }).join("");
     const table = rows
-      ? '<div class="card"><table class="table"><thead><tr>' +
+      ? '<div class="card table-wrap"><table class="table"><thead><tr>' +
           '<th>Name</th><th>State</th><th>Addresses</th><th>' +
           esc(S.rx) + '</th><th>' + esc(S.tx) + '</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>'
@@ -415,12 +424,12 @@ _JS = """
     return (
       section(S.listening || "Listening ports",
         listenRows
-          ? '<div class="card"><table class="table"><thead><tr><th>Port</th><th>Process</th></tr></thead><tbody>' +
+          ? '<div class="card table-wrap"><table class="table"><thead><tr><th>Port</th><th>Process</th></tr></thead><tbody>' +
             listenRows + '</tbody></table></div>'
           : emptyHtml()) +
       section(S.sockets || "Established sockets",
         sockRows
-          ? '<div class="card"><table class="table"><thead><tr><th>Dir</th><th>Local</th><th>Remote</th><th>Process</th></tr></thead><tbody>' +
+          ? '<div class="card table-wrap"><table class="table"><thead><tr><th>Dir</th><th>Local</th><th>Remote</th><th>Process</th></tr></thead><tbody>' +
             sockRows + '</tbody></table></div>'
           : emptyHtml())
     );
@@ -455,18 +464,20 @@ _JS = """
       kvHtml(data.system_rows || []) +
       section(S.processes || "Top processes",
         procRows
-          ? '<div class="card"><table class="table table-clip"><thead><tr><th>Command</th><th>CPU</th><th>Mem</th></tr></thead><tbody>' +
+          ? '<div class="card table-wrap"><table class="table table-clip"><thead><tr><th>Command</th><th>CPU</th><th>Mem</th></tr></thead><tbody>' +
             procRows + '</tbody></table></div>'
           : emptyHtml()) +
       section(S.temperatures || "Temperatures",
         tempCards ? '<div class="grid cards3">' + tempCards + '</div>' : emptyHtml()) +
       section(S.sessions || "Login sessions",
         sessionRows
-          ? '<div class="card"><table class="table"><thead><tr><th>User</th><th>TTY</th><th>From</th><th>Since</th></tr></thead><tbody>' +
+          ? '<div class="card table-wrap"><table class="table"><thead><tr><th>User</th><th>TTY</th><th>From</th><th>Since</th></tr></thead><tbody>' +
             sessionRows + '</tbody></table></div>'
           : emptyHtml()) +
-      section(S.failed || "Failed units", failed || emptyHtml()) +
-      section(S.host_keys || "SSH host keys", keys || emptyHtml())
+      section(S.failed || "Failed units",
+        failed ? '<div class="grid cards3">' + failed + '</div>' : emptyHtml()) +
+      section(S.host_keys || "SSH host keys",
+        keys ? '<div class="grid cards3">' + keys + '</div>' : emptyHtml())
     );
   }
 

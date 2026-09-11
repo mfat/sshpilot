@@ -78,6 +78,13 @@ def test_shell_is_self_contained():
     assert "Gathering host information" in html or "gathering" in html.lower()
 
 
+def test_shell_layouts_adapt_to_narrow_panes():
+    html = build_host_info_html()
+    assert "auto-fit" in html
+    assert "table-wrap" in html
+    assert "@media (max-width: 480px)" in html
+
+
 def test_shell_stringifies_bridge_messages():
     html = build_host_info_html()
     assert "postMessage(JSON.stringify(msg))" in html

@@ -352,6 +352,36 @@ def _card() -> Gtk.Box:
     return box
 
 
+def _tile_flow(*, max_per_line: int = 3) -> Gtk.FlowBox:
+    """Equal-width cards that wrap from N columns down to 1 as space shrinks."""
+
+    flow = Gtk.FlowBox()
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_homogeneous(True)
+    flow.set_max_children_per_line(max_per_line)
+    flow.set_min_children_per_line(1)
+    flow.set_column_spacing(12)
+    flow.set_row_spacing(12)
+    flow.set_hexpand(True)
+    flow.set_valign(Gtk.Align.START)
+    return flow
+
+
+def _insert_tile(
+    flow: Gtk.FlowBox, widget: Gtk.Widget, *, min_width: int = 200
+) -> None:
+    """Insert a tile with a floor width so FlowBox wraps before crushing it."""
+
+    widget.set_hexpand(True)
+    widget.set_halign(Gtk.Align.FILL)
+    widget.set_size_request(min_width, -1)
+    flow.insert(widget, -1)
+    child = widget.get_parent()
+    if child is not None:
+        child.set_hexpand(True)
+        child.set_halign(Gtk.Align.FILL)
+
+
 def _section_label(text: str) -> Gtk.Label:
     label = Gtk.Label(label=text)
     label.set_xalign(0)
@@ -1424,6 +1454,16 @@ class MachineInfoDialog:
                 switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
             except Exception:
                 logger.debug("Inline switcher label mode unavailable", exc_info=True)
+            # Prefer ellipsis over overflow when six tabs outgrow a narrow pane;
+            # do not force equal widths so short labels keep breathing room.
+            try:
+                switcher.set_can_shrink(True)
+            except Exception:
+                logger.debug("Inline switcher can-shrink unavailable", exc_info=True)
+            try:
+                switcher.set_homogeneous(False)
+            except Exception:
+                logger.debug("Inline switcher homogeneous unavailable", exc_info=True)
         else:
             switcher = Gtk.StackSwitcher(stack=stack)
             switcher.set_halign(Gtk.Align.CENTER)
@@ -1448,8 +1488,7 @@ class MachineInfoDialog:
         snapshot = self._snapshot
         memory = snapshot.memory
 
-        gauges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        gauges.set_homogeneous(True)
+        gauges = _tile_flow(max_per_line=3)
 
         # CPU utilization is a difference between two /proc/stat readings, and
         # the gather only took the first, so this starts unknown and fills in
@@ -1462,7 +1501,7 @@ class MachineInfoDialog:
             _format_frequency(snapshot.cpu.frequency_mhz),
             self._load_detail(snapshot.load_average),
         )
-        gauges.append(self._cpu_gauge.widget)
+        _insert_tile(gauges, self._cpu_gauge.widget)
 
         self._memory_gauge = _Gauge(_("Memory"), history=True)
         used = memory.used_bytes
@@ -1473,7 +1512,7 @@ class MachineInfoDialog:
             self._swap_detail(memory),
             record=True,
         )
-        gauges.append(self._memory_gauge.widget)
+        _insert_tile(gauges, self._memory_gauge.widget)
 
         root = snapshot.root_filesystem
         root_detail = root_device = ""
@@ -1493,7 +1532,7 @@ class MachineInfoDialog:
         storage.update(
             root.used_fraction if root is not None else None, root_detail, root_device
         )
-        gauges.append(storage.widget)
+        _insert_tile(gauges, storage.widget)
         page.append(gauges)
 
         card = _card()
@@ -1550,8 +1589,7 @@ class MachineInfoDialog:
         page.append(self._cpu_section.widget)
 
         page.append(_section_label(_("Load average")))
-        load_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        load_row.set_homogeneous(True)
+        load_row = _tile_flow(max_per_line=3)
         averages = (
             (_("1 min"), snapshot.load_average.one if snapshot.load_average else None),
             (_("5 min"), snapshot.load_average.five if snapshot.load_average else None),
@@ -1586,7 +1624,7 @@ class MachineInfoDialog:
                 )
             )
             card.append(inner)
-            load_row.append(card)
+            _insert_tile(load_row, card)
         page.append(load_row)
 
         page.append(self._pressure_section())
@@ -2117,8 +2155,7 @@ class MachineInfoDialog:
             item for item in self._snapshot.sockets
             if item.direction is SocketDirection.OUTGOING
         ]
-        columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        columns.set_homogeneous(True)
+        columns = _tile_flow(max_per_line=2)
         for title, sockets in (
             (ngettext("Incoming · %d established", "Incoming · %d established",
                       len(incoming)) % len(incoming), incoming),
@@ -2185,7 +2222,7 @@ class MachineInfoDialog:
                 empty.set_margin_bottom(12)
                 card.append(empty)
             column.append(card)
-            columns.append(column)
+            _insert_tile(columns, column, min_width=280)
         page.append(columns)
         return page
 
