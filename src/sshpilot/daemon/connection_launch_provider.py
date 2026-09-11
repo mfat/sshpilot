@@ -721,6 +721,17 @@ class DaemonConnectionLaunchProvider:
         destination_port: Optional[int] = None,
         interaction_policy: str = "broker",
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
+        """Build argv/env for a daemon-owned ``ssh -N`` forward process.
+
+        Preference ``ControlMaster=auto`` + ``ControlPersist`` must not ride
+        along: OpenSSH then backgrounds the mux master and the watched
+        ``ssh -N`` foreground exits 0 — Host Info / plugin local forwards fail
+        with ``forward_not_active`` while an orphaned master may still hold the
+        bind. Force ``ControlMaster=no`` first (OpenSSH first-value-wins;
+        preference overrides are emitted last) so the dedicated forward child
+        stays in the foreground for the daemon's lifetime tracking.
+        """
+
         record = self._resolve(connection_id)
         connection = HeadlessConnectionView(record)
         if connection.protocol != "ssh":
@@ -746,6 +757,8 @@ class DaemonConnectionLaunchProvider:
             interaction_policy=interaction_policy,
             command_type="ssh",
             extra_args=[
+                "-o",
+                "ControlMaster=no",
                 "-N",
                 "-T",
                 forward_flag,
