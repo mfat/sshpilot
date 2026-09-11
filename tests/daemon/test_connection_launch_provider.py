@@ -320,6 +320,34 @@ def test_require_master_overrides_authored_controlmaster_no(provider):
     assert any(token.startswith("ControlPath=") and "/%C" in token for token in tokens)
 
 
+def test_remote_command_overrides_authored_session_type_none(provider):
+    """Host Info must run a command even when the Host is forwarding-only.
+
+    ``SessionType none`` (ssh -N) makes OpenSSH ignore the remote command and
+    exit 0 with empty stdout — Host Info then "succeeds" with a blank
+    snapshot. Forced ``SessionType=default`` is first-value-wins before the
+    authored Advanced-tab option.
+    """
+    prov, records = provider
+    records["web"] = _record(
+        data={
+            "__authored_directives": ["hostname", "user"],
+            "hostname": "example.com",
+            "username": "alice",
+            "extra_ssh_config": "SessionType none",
+        }
+    )
+    command, _environment = prov.prepare_remote_command_launch("web", "uptime")
+    tokens = [str(token) for token in command]
+    forced = tokens.index("SessionType=default")
+    authored_none = tokens.index("SessionType=none")
+    assert tokens[forced - 1] == "-o"
+    assert forced < authored_none
+    assert forced < len(tokens) - 2
+    assert tokens[-2]  # destination alias / host
+    assert tokens[-1] == "uptime"
+
+
 @pytest.mark.parametrize(
     ("term", "expected"),
     [

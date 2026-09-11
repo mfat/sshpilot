@@ -768,6 +768,13 @@ class DaemonConnectionLaunchProvider:
         Host alias stays the target so the user's SSH configuration (ProxyJump,
         identities, ports) applies unchanged.
 
+        ``SessionType none`` (the forwarding-only / ``ssh -N`` Host setting)
+        must not ride along: OpenSSH then ignores the remote command and exits
+        successfully with empty stdout, so Host Info "succeeds" with a blank
+        snapshot. ``-o SessionType=default`` is forced into ``extra_args``,
+        which the builder emits before authored Host options, so it beats both
+        the config file and an Advanced-tab ``SessionType none``.
+
         ``require_master`` holds the multiplex master for the connection even
         when multiplexing is otherwise off (Host Info probes): preference
         ``ssh.controlmaster`` and an authored per-host ``ControlMaster`` both
@@ -794,7 +801,7 @@ class DaemonConnectionLaunchProvider:
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
-            extra_args=["-T"],
+            extra_args=["-T", "-o", "SessionType=default"],
             remote_command=remote_command,
             require_master=require_master,
         )
