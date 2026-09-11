@@ -32,6 +32,21 @@ def test_unknown_listener_has_no_match():
     )
 
 
+def test_non_web_process_on_well_known_http_port_has_no_match():
+    """sshd on 8080 must not be labeled HTTP or offered a browser open."""
+
+    assert (
+        classify_listening_port(ListeningPort(port=8080, process="sshd", address="0.0.0.0"))
+        is None
+    )
+    assert (
+        classify_listening_port(
+            ListeningPort(port=443, process="/usr/sbin/sshd", address="::")
+        )
+        is None
+    )
+
+
 def test_needs_forward_for_loopback_and_unspecified():
     assert needs_local_forward("") is True
     assert needs_local_forward("0.0.0.0") is True

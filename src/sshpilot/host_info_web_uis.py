@@ -56,6 +56,25 @@ _PROCESS_SCHEME: dict[str, Tuple[str, str]] = {
     "minio": ("http", "MinIO"),
 }
 
+# Listeners that never speak HTTP(S). A well-known web port alone must not
+# override these — e.g. sshd on 8080 must not get an "Open in browser" action.
+_NON_WEB_PROCESSES: frozenset[str] = frozenset(
+    {
+        "sshd",
+        "ssh",
+        "ssh-agent",
+        "systemd",
+        "systemd-resolved",
+        "systemd-networkd",
+        "dbus-daemon",
+        "dbus-broker",
+        "chronyd",
+        "ntpd",
+        "rpcbind",
+        "cupsd",
+    }
+)
+
 _UNSPECIFIED_OR_LOOPBACK = frozenset(
     {
         "",
@@ -86,6 +105,9 @@ def classify_listening_port(entry: ListeningPort) -> Optional[WebUiMatch]:
 
     process = (entry.process or "").strip()
     base = process.rsplit("/", 1)[-1].lower()
+    if base in _NON_WEB_PROCESSES:
+        return None
+
     scheme = ""
     label = ""
 
