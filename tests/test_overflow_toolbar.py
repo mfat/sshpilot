@@ -2,7 +2,11 @@
 
 from unittest.mock import MagicMock
 
-from sshpilot.overflow_toolbar import OverflowToolbar, choose_overflow
+from sshpilot.overflow_toolbar import (
+    OverflowToolbar,
+    choose_fill_pack,
+    choose_overflow,
+)
 
 
 def test_everything_fits_without_overflow():
@@ -42,6 +46,47 @@ def test_empty_toolbar():
     assert choose_overflow([], 100) == (0, False)
 
 
+def test_fill_pack_keeps_all_icons_by_tightening_gaps():
+    # Four 36px icons need 162px at spacing 6, but only 150px is free.
+    # At min_spacing 0 they need 144px, so all stay with spacing 2.
+    visible, show, spacing = choose_fill_pack(
+        [36, 36, 36, 36],
+        150,
+        preferred_spacing=6,
+        min_spacing=0,
+        overflow_width=36,
+    )
+    assert (visible, show) == (4, False)
+    assert spacing == 2  # largest spacing with 144 + 3*spacing <= 150
+
+
+def test_fill_pack_keeps_preferred_spacing_when_width_allows():
+    # Leftover width is left for homogeneous buttons to absorb, not gaps.
+    visible, show, spacing = choose_fill_pack(
+        [36, 36, 36],
+        192,
+        preferred_spacing=6,
+        min_spacing=0,
+        overflow_width=36,
+    )
+    assert (visible, show) == (3, False)
+    assert spacing == 6
+
+
+def test_fill_pack_overflows_only_when_min_spacing_cannot_fit():
+    # Three 40px icons need 120px even at spacing 0; 100px forces overflow.
+    visible, show, spacing = choose_fill_pack(
+        [40, 40, 40],
+        100,
+        preferred_spacing=6,
+        min_spacing=0,
+        overflow_width=36,
+    )
+    assert show is True
+    assert visible == 1  # 40 + 0 + 36 = 76 <= 100; two + overflow = 116 > 100
+    assert spacing == 0
+
+
 def test_item_width_reuses_cache_when_hidden_measure_collapses():
     """Hidden GTK widgets often measure as 0; packing must keep the cached size."""
     toolbar = OverflowToolbar.__new__(OverflowToolbar)
@@ -55,12 +100,16 @@ def test_apply_overflow_keeps_icons_hidden_after_remeasure():
     """A re-allocate must not un-hide overflowed icons when measures collapse."""
     toolbar = OverflowToolbar.__new__(OverflowToolbar)
     toolbar._spacing = 6
+    toolbar._min_spacing = 0
+    toolbar._fill_width = False
     toolbar._primary_count = 1
     toolbar._applying = False
     toolbar._last_visible = -1
     toolbar._last_overflow = False
     toolbar._last_available = -1
+    toolbar._last_spacing = -1
     toolbar._last_overflowed_ids = ()
+    toolbar._box = MagicMock()
     toolbar._overflow_btn = MagicMock()
     toolbar._overflow_btn.get_visible.return_value = True
     toolbar._overflow_btn.measure.return_value = (36, 36, -1, -1)
@@ -106,10 +155,49 @@ def test_apply_overflow_keeps_icons_hidden_after_remeasure():
     toolbar._overflow_btn.set_visible.assert_called_with(True)
 
 
+def test_apply_fill_width_sets_spacing_and_keeps_all_icons():
+    toolbar = OverflowToolbar.__new__(OverflowToolbar)
+    toolbar._spacing = 6
+    toolbar._min_spacing = 0
+    toolbar._fill_width = True
+    toolbar._primary_count = 1
+    toolbar._applying = False
+    toolbar._last_visible = -1
+    toolbar._last_overflow = False
+    toolbar._last_available = -1
+    toolbar._last_spacing = -1
+    toolbar._last_overflowed_ids = ()
+    toolbar._box = MagicMock()
+    toolbar._overflow_btn = MagicMock()
+    toolbar._overflow_btn.measure.return_value = (36, 36, -1, -1)
+    toolbar._items = []
+    toolbar._rebuild_overflow_menu = MagicMock()
+
+    for _ in range(4):
+        btn = MagicMock()
+        btn.get_visible.return_value = True
+        btn._overflow_force_hidden = False
+        btn._overflow_nat_width = 36
+        btn.measure.return_value = (36, 36, -1, -1)
+        toolbar._items.append(btn)
+
+    OverflowToolbar._apply_overflow(toolbar, 150)
+    assert toolbar._last_visible == 4
+    assert toolbar._last_overflow is False
+    assert toolbar._last_spacing == 2
+    toolbar._box.set_spacing.assert_called_with(2)
+    toolbar._box.set_homogeneous.assert_called_with(True)
+    toolbar._overflow_btn.set_visible.assert_called_with(False)
+    for btn in toolbar._items:
+        btn.set_visible.assert_called_with(True)
+        btn.set_hexpand.assert_called_with(True)
+
+
 def test_clip_reveal_shows_all_packable_items_and_hides_overflow():
     """During width animation the toolbar reveals by clipping, not overflow."""
     toolbar = OverflowToolbar.__new__(OverflowToolbar)
     toolbar._spacing = 6
+    toolbar._fill_width = False
     toolbar._primary_count = 1
     toolbar._applying = False
     toolbar._clip_reveal = True
@@ -117,6 +205,7 @@ def test_clip_reveal_shows_all_packable_items_and_hides_overflow():
     toolbar._last_overflow = True
     toolbar._last_available = 90
     toolbar._last_overflowed_ids = (1, 2)
+    toolbar._box = MagicMock()
     toolbar._overflow_btn = MagicMock()
     toolbar._items = []
     toolbar._preferred_width = MagicMock(return_value=200)
@@ -137,7 +226,7 @@ def test_clip_reveal_shows_all_packable_items_and_hides_overflow():
     toolbar._overflow_btn.set_visible.assert_called_with(False)
     assert toolbar._last_visible == -1
     assert toolbar._last_available == -1
-
+    toolbar._box.set_spacing.assert_called_with(6)
 
 def test_clip_reveal_with_a_target_freezes_the_destination_split(monkeypatch):
     """Given the width the animation ends at, the frozen row is the split that

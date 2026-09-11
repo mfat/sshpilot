@@ -4395,10 +4395,12 @@ def _build_sidebar_header(window, sidebar_box):
     """Build the sidebar action header (add/search/filter/sort/…)."""
     from sshpilot.overflow_toolbar import OverflowToolbar
 
-    # Priority order (kept visible longest first). Excess actions move into
-    # the trailing "…" popover as the pane narrows.
+    # Gaps shrink toward zero before any action moves into the "…" menu;
+    # visible icons share the row width equally (homogeneous).
     header = OverflowToolbar(
         spacing=6,
+        min_spacing=0,
+        fill_width=True,
         primary_count=1,
         accessible_name=_('Connection list actions'),
     )
