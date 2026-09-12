@@ -181,6 +181,17 @@ def test_post_connect_keeps_connecting_while_unresolved():
     term.connecting_box.set_visible.assert_called_with(True)
 
 
+def test_post_connect_clears_overlay_for_local_terminal():
+    """Local shells never resolve SessionType; must not stay on Connecting."""
+    term = _bare_terminal(SimpleNamespace(hostname="localhost", nickname="Terminal"))
+    term.is_connected = True
+    term.connection_state = ConnectionState.CONNECTED
+    term._show_post_connect_overlay()
+    assert term._overlay_mode == "none"
+    term.connecting_bg.set_visible.assert_called_with(False)
+    term.connecting_box.set_visible.assert_called_with(False)
+
+
 def test_connecting_mode_hides_forwarding_box():
     term = _bare_terminal(SimpleNamespace(forwarding_only=True, nickname="x"))
     term._set_connecting_overlay_visible(True)
