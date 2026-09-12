@@ -1393,12 +1393,6 @@ class TerminalWidget(Gtk.Box):
         """After connect evidence: forwarding status for SessionType none, else clear."""
         from .forwarding_only_ui import connection_forwarding_only
 
-        # Local shells never fetch editor details / SessionType; treating them
-        # as unresolved would leave the Connecting overlay up forever.
-        if self._is_local_terminal():
-            self._set_session_overlay_mode("none")
-            return
-
         flagged = getattr(self, "_forwarding_only_known", None)
         if flagged is None:
             flagged = connection_forwarding_only(getattr(self, "connection", None))
