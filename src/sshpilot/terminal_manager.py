@@ -975,6 +975,9 @@ class TerminalManager:
                     self.username = os.getenv("USER", "user")
                     self.port = 22
                     self.is_connected = True
+                    # Not an SSH host — never SessionType-none / forwarding-only.
+                    # Without this, post-connect overlay stays on "Connecting".
+                    self.forwarding_only = False
 
             local_connection = LocalConnection()
             terminal_widget = TerminalWidget(

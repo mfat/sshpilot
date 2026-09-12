@@ -61,6 +61,11 @@
 
 
 
+    <release version="6.1.1" date="2026-09-12">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="6.1.0" date="2026-09-11">
       <description>
         <p>Host Info renamed to Dashboard, opens in a new tab now</p>

@@ -181,6 +181,36 @@ def test_post_connect_keeps_connecting_while_unresolved():
     term.connecting_box.set_visible.assert_called_with(True)
 
 
+def test_post_connect_clears_overlay_for_local_terminal():
+    """Local shells never resolve SessionType; must not stay on Connecting.
+
+    Mirrors ``TerminalManager.show_local_terminal``'s LocalConnection, which
+    sets ``forwarding_only = False`` up front.
+    """
+    conn = SimpleNamespace(hostname="localhost", nickname="Terminal", forwarding_only=False)
+    term = _bare_terminal(conn)
+    term.is_connected = True
+    term.connection_state = ConnectionState.CONNECTED
+    term._show_post_connect_overlay()
+    assert term._overlay_mode == "none"
+    term.connecting_bg.set_visible.assert_called_with(False)
+    term.connecting_box.set_visible.assert_called_with(False)
+
+
+def test_post_connect_shows_forwarding_for_localhost_ssh_host(monkeypatch):
+    """A saved SessionType-none host on localhost (e.g. a VM on :2222) is SSH,
+    not a local shell — it must still get the forwarding overlay."""
+    conn = SimpleNamespace(
+        hostname="localhost", nickname="vm", forwarding_only=True, forwarding_rules=()
+    )
+    term = _bare_terminal(conn)
+    term.is_connected = True
+    term.connection_state = ConnectionState.CONNECTED
+    _stub_gtk_rows(monkeypatch)
+    term._show_post_connect_overlay()
+    assert term._overlay_mode == "forwarding"
+
+
 def test_connecting_mode_hides_forwarding_box():
     term = _bare_terminal(SimpleNamespace(forwarding_only=True, nickname="x"))
     term._set_connecting_overlay_visible(True)
