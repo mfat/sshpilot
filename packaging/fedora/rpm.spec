@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.1.0}
+Version:        %{?version}%{!?version:6.1.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -145,6 +145,9 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sat Sep 12 2026 mFat <newmfat@gmail.com> - 6.1.1-1
+- Bug fixes
+
 * Fri Sep 11 2026 mFat <newmfat@gmail.com> - 6.1.0-1
 - Host Info renamed to Dashboard, opens in a new tab now
 - Open common web UIs from Dashboard - you can open web UIs for remote services right from the dashboard
