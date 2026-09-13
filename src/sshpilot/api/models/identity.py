@@ -42,6 +42,11 @@ AGENT_UNAVAILABLE = "agent_unavailable"
 SSH_COPY_ID_UNAVAILABLE = "ssh_copy_id_unavailable"
 AUTHORIZED_KEYS_STALE = "authorized_keys_stale"
 AUTHORIZED_KEYS_LINE_NOT_FOUND = "authorized_keys_line_not_found"
+PUBLIC_KEY_SOURCE_INVALID = "public_key_source_invalid"
+PUBLIC_KEY_SOURCE_NOT_FOUND = "public_key_source_not_found"
+PUBLIC_KEY_SOURCE_EMPTY = "public_key_source_empty"
+PUBLIC_KEY_SOURCE_RATE_LIMITED = "public_key_source_rate_limited"
+PUBLIC_KEY_FETCH_FAILED = "public_key_fetch_failed"
 
 # ---------------------------------------------------------------------------
 # Provider registry and selection state
@@ -383,3 +388,64 @@ class RemoveAuthorizedKeyRequest:
         require_identifier(self.connection_id, "connection id")
         _validate_safe_text(self.line_id, "authorized key line id", allow_empty=False)
         _validate_revision(self.file_revision, "file_revision")
+
+
+# ---------------------------------------------------------------------------
+# Public keys published by online identities (ssh-import-id sources)
+# ---------------------------------------------------------------------------
+
+
+def _validate_single_line(value: object, field_name: str, *, allow_empty: bool) -> None:
+    _validate_safe_text(value, field_name, allow_empty=allow_empty)
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"{field_name} must be a single line")
+
+
+@dataclass(frozen=True)
+class FetchPublicKeysRequest:
+    """Fetch the public keys an online identity publishes.
+
+    ``source`` is an ``ssh-import-id`` user ID (``gh:user``, ``gl:user``,
+    ``lp:user``; a bare ``user`` means Launchpad) or an HTTPS URL returning
+    ``authorized_keys`` lines, such as ``https://github.com/user.keys``.
+    """
+
+    source: str
+
+    def __post_init__(self) -> None:
+        _validate_single_line(self.source, "public key source", allow_empty=False)
+
+
+@dataclass(frozen=True)
+class ImportedPublicKey:
+    """One validated public key from a key source.
+
+    ``line`` is a bare ``type base64 comment`` line ready to install; it never
+    carries ``authorized_keys`` options.
+    """
+
+    key_type: str
+    fingerprint: str
+    comment: str
+    line: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("key_type", "fingerprint", "line"):
+            _validate_single_line(getattr(self, field_name), field_name, allow_empty=False)
+        _validate_single_line(self.comment, "comment", allow_empty=True)
+
+
+@dataclass(frozen=True)
+class ImportedPublicKeyList:
+    """Keys fetched from one source; ``source`` is its normalized label."""
+
+    source: str
+    keys: Tuple[ImportedPublicKey, ...]
+
+    def __post_init__(self) -> None:
+        _validate_single_line(self.source, "public key source", allow_empty=False)
+        if type(self.keys) is not tuple:
+            raise TypeError("imported public keys must be a tuple")
+        for key in self.keys:
+            if type(key) is not ImportedPublicKey:
+                raise TypeError("imported public keys must be ImportedPublicKey")

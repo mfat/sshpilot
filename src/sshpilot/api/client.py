@@ -51,8 +51,10 @@ from .models.identity import (
     AgentKeyMutationRequest,
     AuthorizedKeyList,
     DeployKeyRequest,
+    FetchPublicKeysRequest,
     IdentityProviderRegistry,
     IdentityState,
+    ImportedPublicKeyList,
     ListAuthorizedKeysRequest,
     ListProviderAgentKeysRequest,
     RemoveAuthorizedKeyRequest,
@@ -614,6 +616,11 @@ class SshPilotClient(Protocol):
     def remove_authorized_key(
         self, request: RemoveAuthorizedKeyRequest
     ) -> OperationSummary:
+        ...
+
+    def fetch_public_keys(
+        self, request: FetchPublicKeysRequest
+    ) -> ImportedPublicKeyList:
         ...
 
     def get_operation(self, operation_id: OperationId) -> OperationSummary:

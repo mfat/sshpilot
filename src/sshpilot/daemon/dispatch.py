@@ -50,6 +50,8 @@ from sshpilot.api.transport.codec import (
     known_hosts_mutation_result_to_wire,
     known_hosts_snapshot_to_wire,
     list_authorized_keys_request_from_wire,
+    fetch_public_keys_request_from_wire,
+    imported_public_key_list_to_wire,
     list_keys_request_from_wire,
     list_provider_agent_keys_request_from_wire,
     operation_id_request_from_wire,
@@ -316,6 +318,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "identity.deploy_key": Capability.IDENTITY_OPERATE,
     "authorized_keys.list": Capability.IDENTITY_READ,
     "authorized_keys.remove": Capability.IDENTITY_OPERATE,
+    "authorized_keys.fetch": Capability.IDENTITY_READ,
     "operations.get": Capability.OPERATIONS_READ,
     "operations.cancel": Capability.OPERATIONS_CONTROL,
     "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
@@ -529,6 +532,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "identity.agent.key.remove",
         "identity.deploy_key",
         "authorized_keys.list",
+        "authorized_keys.fetch",
         "broadcast.start",
         "hostinfo.start",
         "authorized_keys.remove",
@@ -816,6 +820,7 @@ class RequestDispatcher:
             "identity.deploy_key": self._handle_deploy_key,
             "authorized_keys.list": self._handle_list_authorized_keys,
             "authorized_keys.remove": self._handle_remove_authorized_key,
+            "authorized_keys.fetch": self._handle_fetch_public_keys,
             "operations.get": self._handle_get_operation,
             "operations.cancel": self._handle_cancel_operation,
             "broadcast.start": self._handle_start_broadcast,
@@ -2978,6 +2983,22 @@ class RequestDispatcher:
                 service.remove_authorized_key(typed_request, owner_client_id=client_id)
             ),
             command_key=("identity.authorized_keys", typed_request.connection_id),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_fetch_public_keys(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = fetch_public_keys_request_from_wire(request.params)
+        service = self._required_identity_service()
+        return DeferredResult(
+            operation=lambda: imported_public_key_list_to_wire(
+                service.fetch_public_keys(typed_request)
+            ),
+            # Network fetches must not queue behind remote authorized_keys work.
+            command_key="identity.public_key_fetch",
             on_rejected=lambda: None,
         )
 

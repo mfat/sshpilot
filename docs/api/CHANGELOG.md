@@ -16,7 +16,19 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.58 (current)
+## API 0.59 (current)
+
+### API 0.59 Public keys from online identities
+
+- New client method `fetch_public_keys` with wire method
+  `authorized_keys.fetch` (capability `identity.read`). It performs the fetch
+  step of `ssh-import-id` in the daemon — `gh:`, `gl:`, `lp:` user IDs or any
+  HTTPS URL such as `https://github.com/user.keys` — and returns validated,
+  option-free key lines labelled `# ssh-import-id <source>` as
+  `ImportedPublicKeyList`. New models `FetchPublicKeysRequest`,
+  `ImportedPublicKey`, `ImportedPublicKeyList`. Protocol stays v1.
+
+## API 0.58
 
 ### API 0.58 Host Info listening-port bind address
 

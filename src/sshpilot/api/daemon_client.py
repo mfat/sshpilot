@@ -303,6 +303,9 @@ DEFAULT_REQUEST_TIMEOUT = 5.0
 # then run native ssh-keygen.  Keep this narrower than a global timeout change
 # while allowing the daemon's bounded operation to finish normally.
 KEY_GENERATION_REQUEST_TIMEOUT = 185.0
+# Fetching published public keys waits on a remote HTTPS service; the daemon
+# bounds that request at 15s, so allow it to fail on its own terms first.
+PUBLIC_KEY_FETCH_REQUEST_TIMEOUT = 30.0
 # Secret-backend RPCs that can block on a protected interaction (master
 # password / 2FA / API key prompt) — see
 # ``SecretBackendService.DEFAULT_SECRET_INTERACTION_TIMEOUT`` (120s) on the
@@ -489,6 +492,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "deploy_key": Capability.IDENTITY_OPERATE,
     "list_authorized_keys": Capability.IDENTITY_READ,
     "remove_authorized_key": Capability.IDENTITY_OPERATE,
+    "fetch_public_keys": Capability.IDENTITY_READ,
     "get_operation": Capability.OPERATIONS_READ,
     "cancel_operation": Capability.OPERATIONS_CONTROL,
 }
@@ -2733,6 +2737,27 @@ class DaemonClient:
             return operation_summary_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid operation")
+
+    def fetch_public_keys(self, request):
+        from sshpilot.api.models.identity import FetchPublicKeysRequest
+
+        self._require_capability(Capability.IDENTITY_READ)
+        if type(request) is not FetchPublicKeysRequest:
+            raise TypeError("a FetchPublicKeysRequest is required")
+        from sshpilot.api.transport.codec import (
+            fetch_public_keys_request_to_wire,
+            imported_public_key_list_from_wire,
+        )
+
+        result = self._request(
+            "authorized_keys.fetch",
+            fetch_public_keys_request_to_wire(request),
+            request_timeout=max(self._timeout, PUBLIC_KEY_FETCH_REQUEST_TIMEOUT),
+        )
+        try:
+            return imported_public_key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid public key list")
 
     def get_operation(self, operation_id):
         from sshpilot.api.models.operations import OperationId

@@ -42,6 +42,8 @@ from sshpilot.api.models.identity import (
     AuthorizedKeyLineKind,
     AuthorizedKeyList,
     DeployKeyRequest,
+    FetchPublicKeysRequest,
+    ImportedPublicKeyList,
     ListAuthorizedKeysRequest,
     RemoveAuthorizedKeyRequest,
 )
@@ -59,6 +61,7 @@ from sshpilot.authorized_keys_parser import (
     parse_file,
 )
 from sshpilot.core.identity_service import IdentityStateService
+from sshpilot.core.keys.public_key_import import Fetcher, fetch_public_keys
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.operation_runtime import OperationHandle, OperationRuntime
 from sshpilot.daemon.ssh_launch import (
@@ -116,6 +119,7 @@ class DaemonIdentityService:
         interaction_broker=None,
         popen: Optional[Callable[..., object]] = None,
         environ: Optional[Dict[str, str]] = None,
+        public_key_fetch: Optional[Fetcher] = None,
     ) -> None:
         self._state = state_service
         self._keys = key_service
@@ -124,6 +128,7 @@ class DaemonIdentityService:
         self._broker = interaction_broker
         self._popen = popen if popen is not None else subprocess.Popen
         self._environ = dict(os.environ if environ is None else environ)
+        self._public_key_fetch = public_key_fetch
 
     def attach_interaction_broker(self, broker) -> None:
         """Attach the daemon interaction broker (post-composition hook).
@@ -412,6 +417,19 @@ class DaemonIdentityService:
             request.connection_id, _REMOTE_READ_COMMAND, None
         )
         return self._build_authorized_key_list(request.connection_id, content)
+
+    def fetch_public_keys(
+        self, request: FetchPublicKeysRequest
+    ) -> ImportedPublicKeyList:
+        """Fetch the public keys an online identity publishes over HTTPS.
+
+        The ``ssh-import-id`` fetch step (``gh:``/``gl:``/``lp:`` or a URL);
+        nothing is installed here — the caller adds the keys to whichever
+        ``authorized_keys`` it is editing.
+        """
+        if type(request) is not FetchPublicKeysRequest:
+            raise TypeError("a FetchPublicKeysRequest is required")
+        return fetch_public_keys(request.source, fetch=self._public_key_fetch)
 
     def remove_authorized_key(
         self,

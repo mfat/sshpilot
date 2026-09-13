@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.58",
+  "api_implementation_version": "0.59",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -159,6 +159,10 @@
     },
     "export_secret_backup": {
       "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "fetch_public_keys": {
+      "capability": "identity.read",
       "status": "daemon-only"
     },
     "forget_master_password": {
@@ -627,6 +631,9 @@
     }
   },
   "daemon_method_contract": {
+    "authorized_keys.fetch": {
+      "capability": "identity.read"
+    },
     "authorized_keys.list": {
       "capability": "identity.read"
     },
