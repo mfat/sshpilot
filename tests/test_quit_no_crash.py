@@ -32,7 +32,6 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         'sshpilot.preferences': types.SimpleNamespace(
             PreferencesWindow=object,
             should_hide_external_terminal_options=lambda: False,
-            should_hide_file_manager_options=lambda: False,
         ),
         'sshpilot.sshcopyid_window': types.SimpleNamespace(SshCopyIdWindow=object),
         'sshpilot.groups': types.SimpleNamespace(GroupManager=lambda config: None),

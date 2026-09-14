@@ -164,7 +164,6 @@ from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
 from .platform_utils import is_macos, get_data_dir, get_state_dir
-from .file_manager_integration import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
 
@@ -316,8 +315,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('terminal-search', self.on_terminal_search, ['<Meta><Shift>f'])
             self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
-            if not should_hide_file_manager_options():
-                self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
+            self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
             logger.debug("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
             # Linux/Windows shortcuts using Primary key.
@@ -337,8 +335,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
             # Not a terminal-standard combo → disabled by default.
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, [])
-            if not should_hide_file_manager_options():
-                self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
+            self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
 
         # Double Shift is handled by MainWindow's key controller because GTK
@@ -1731,9 +1728,6 @@ class SshPilotApplication(Adw.Application):
 
     def on_manage_files(self, action, param):
         """Handle manage files shortcut."""
-        if should_hide_file_manager_options():
-            return
-
         win = self.props.active_window
         if not win:
             return

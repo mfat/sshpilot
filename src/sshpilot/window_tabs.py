@@ -29,11 +29,7 @@ from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .connection_display import get_connection_alias, get_connection_host
 from .file_manager_integration import launch_remote_file_manager
-from .file_manager_integration import (
-    has_internal_file_manager,
-    should_hide_external_terminal_options,
-    should_hide_file_manager_options,
-)
+from .file_manager_integration import should_hide_external_terminal_options
 
 logger = logging.getLogger(__name__)
 
@@ -472,9 +468,9 @@ class WindowTabsMixin:
             enabled.add('tabmenu-reconnect')
             conn = self.terminal_to_connection.get(child)
             caps = capabilities_for(conn) if conn else frozenset()
-            if Capability.FILE_TRANSFER in caps and not should_hide_file_manager_options():
+            if Capability.FILE_TRANSFER in caps:
                 enabled.add('tabmenu-manage-files')
-                if conn is not None and has_internal_file_manager():
+                if conn is not None:
                     enabled.add(
                         'tabmenu-hide-files-panel' if child.has_file_panel()
                         else 'tabmenu-show-files-panel'
@@ -486,8 +482,7 @@ class WindowTabsMixin:
         embed = self._file_manager_embed_for_child(child)
         if embed is not None:
             enabled = set(common)
-            if not should_hide_file_manager_options():
-                enabled.add('tabmenu-fm-new-window')
+            enabled.add('tabmenu-fm-new-window')
             controller = getattr(embed, '_controller', None)
             conn = getattr(controller, '_connection', None) if controller else None
             if conn is not None and hasattr(embed, 'has_terminal_panel'):

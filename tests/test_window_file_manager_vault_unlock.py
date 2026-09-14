@@ -36,7 +36,6 @@ def _patch_placeholder(monkeypatch, window):
         window, "_create_file_manager_placeholder_tab",
         lambda *a, **k: (calls.append(1), {})[1],
     )
-    monkeypatch.setattr(wfm, "has_internal_file_manager", lambda: True)
     return calls
 
 

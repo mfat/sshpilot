@@ -69,7 +69,6 @@ from .connection_sort import (
 # Port forwarding UI is now integrated into connection_dialog.py
 # ConnectionDialog is imported lazily at its use site (show_connection_dialog) so
 # the connection-dialog module stays off the startup import path.
-from .file_manager_integration import should_hide_file_manager_options
 # SshCopyIdRunner/SshCopyIdWindow and ScpWindowController are imported lazily
 # (see the sshcopyid_runner / scp_controller properties and their use sites) so
 # the sshcopyid_window and scp_window modules stay off the startup import path.
@@ -4309,8 +4308,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         server_section = Gio.Menu()
         server_section.append(_('Copy Key to Server'), 'app.new-key')
         server_section.append(_('Broadcast Command'), 'app.broadcast-command')
-        if not should_hide_file_manager_options():
-            server_section.append(_('Manage Files'), 'win.open-file-manager')
+        server_section.append(_('Manage Files'), 'win.open-file-manager')
         menu.append_section(None, server_section)
 
         ssh_section = Gio.Menu()
@@ -6360,12 +6358,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.manage_files_button.set_sensitive(
                 not multiple_connections
                 and PluginCapability.FILE_TRANSFER in caps
-                and not should_hide_file_manager_options()
-            )
-            from sshpilot.overflow_toolbar import mark_force_hidden
-            mark_force_hidden(
-                self.manage_files_button,
-                should_hide_file_manager_options(),
             )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 # System terminal uses a daemon-prepared launch specification.
@@ -6392,11 +6384,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
             self.manage_files_button.set_sensitive(False)
-            from sshpilot.overflow_toolbar import mark_force_hidden
-            mark_force_hidden(
-                self.manage_files_button,
-                should_hide_file_manager_options(),
-            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(allow_single_group)
@@ -6409,11 +6396,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
             self.manage_files_button.set_sensitive(False)
-            from sshpilot.overflow_toolbar import mark_force_hidden
-            mark_force_hidden(
-                self.manage_files_button,
-                should_hide_file_manager_options(),
-            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(False)

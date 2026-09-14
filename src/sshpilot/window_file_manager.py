@@ -20,11 +20,7 @@ from gettext import gettext as _
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .connection_display import get_connection_alias, get_connection_host
-from .file_manager_integration import (
-    create_internal_file_manager_tab,
-    has_internal_file_manager,
-    should_hide_file_manager_options,
-)
+from .file_manager_integration import create_internal_file_manager_tab
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +44,7 @@ class WindowFileManagerMixin:
     def open_file_manager_from_menu(self, action=None, param=None):
         """Main-menu entry: open files for the selected connection, or — with
         no selection — open the file manager with a host picker in the remote
-        pane (fallback: a picker popover, then the normal open flow)."""
-        if should_hide_file_manager_options():
-            return
+        pane."""
         try:
             row = self.connection_list.get_selected_row()
             connection = getattr(row, 'connection', None) if row else None
@@ -60,13 +54,7 @@ class WindowFileManagerMixin:
             self._open_manage_files_for_connection(connection)
             return
 
-        use_internal = has_internal_file_manager()
-        if use_internal:
-            self._open_file_manager_with_picker()
-        else:
-            from .host_picker import show_host_picker
-            show_host_picker(self, self.menu_button,
-                             self._open_manage_files_for_connection)
+        self._open_file_manager_with_picker()
 
     def _open_file_manager_with_picker(self):
         """Open the embedded file manager with no server; the remote pane
@@ -194,48 +182,12 @@ class WindowFileManagerMixin:
             self._launch_external_file_manager(connection)
             return
 
-        use_internal = has_internal_file_manager()
+        placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
 
-        placeholder_info = None
-        if use_internal and has_internal_file_manager():
-            placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
-
-            def _create_embedded_file_manager():
-                if not self._placeholder_is_open(placeholder_info):
-                    logger.debug("Placeholder tab closed before embedded file manager creation; aborting.")
-                    return False
-                try:
-                    widget, controller = create_internal_file_manager_tab(
-                        user=str(username or ''),
-                        host=str(host_value or ''),
-                        port=effective_port,
-                        nickname=str(nickname),
-                        parent_window=self,
-                        connection=connection,
-                        connection_manager=self.connection_manager,
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.error("Embedded file manager failed: %s", exc, exc_info=True)
-                    self._handle_file_manager_placeholder_error(
-                        placeholder_info,
-                        str(nickname or host_value or _('Remote Host')),
-                        str(exc) or _('Failed to open file manager'),
-                    )
-                else:
-                    self._register_file_manager_tab(
-                        widget,
-                        controller,
-                        nickname,
-                        host_value,
-                        page=placeholder_info.get('page') if placeholder_info else None,
-                        container=placeholder_info.get('container') if placeholder_info else None,
-                    )
+        def _create_embedded_file_manager():
+            if not self._placeholder_is_open(placeholder_info):
+                logger.debug("Placeholder tab closed before embedded file manager creation; aborting.")
                 return False
-
-            if GLib.timeout_add(250, _create_embedded_file_manager):
-                return
-            # If idle_add failed, fall back to immediate creation using the placeholder
-            fallback_placeholder = placeholder_info
             try:
                 widget, controller = create_internal_file_manager_tab(
                     user=str(username or ''),
@@ -246,10 +198,10 @@ class WindowFileManagerMixin:
                     connection=connection,
                     connection_manager=self.connection_manager,
                 )
-            except Exception as exc:
+            except Exception as exc:  # pragma: no cover - defensive
                 logger.error("Embedded file manager failed: %s", exc, exc_info=True)
                 self._handle_file_manager_placeholder_error(
-                    fallback_placeholder,
+                    placeholder_info,
                     str(nickname or host_value or _('Remote Host')),
                     str(exc) or _('Failed to open file manager'),
                 )
@@ -259,10 +211,42 @@ class WindowFileManagerMixin:
                     controller,
                     nickname,
                     host_value,
-                    page=fallback_placeholder.get('page') if fallback_placeholder else None,
-                    container=fallback_placeholder.get('container') if fallback_placeholder else None,
+                    page=placeholder_info.get('page') if placeholder_info else None,
+                    container=placeholder_info.get('container') if placeholder_info else None,
                 )
-                return
+            return False
+
+        if GLib.timeout_add(250, _create_embedded_file_manager):
+            return
+        # If idle_add failed, fall back to immediate creation using the placeholder
+        fallback_placeholder = placeholder_info
+        try:
+            widget, controller = create_internal_file_manager_tab(
+                user=str(username or ''),
+                host=str(host_value or ''),
+                port=effective_port,
+                nickname=str(nickname),
+                parent_window=self,
+                connection=connection,
+                connection_manager=self.connection_manager,
+            )
+        except Exception as exc:
+            logger.error("Embedded file manager failed: %s", exc, exc_info=True)
+            self._handle_file_manager_placeholder_error(
+                fallback_placeholder,
+                str(nickname or host_value or _('Remote Host')),
+                str(exc) or _('Failed to open file manager'),
+            )
+        else:
+            self._register_file_manager_tab(
+                widget,
+                controller,
+                nickname,
+                host_value,
+                page=fallback_placeholder.get('page') if fallback_placeholder else None,
+                container=fallback_placeholder.get('container') if fallback_placeholder else None,
+            )
+            return
 
         self._show_manage_files_error(
             str(nickname),
