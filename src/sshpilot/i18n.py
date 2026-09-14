@@ -11,11 +11,12 @@ An empty setting means "system default": leave the environment alone and let
 gettext read the user's locale, which is the behaviour every other GTK app has.
 """
 
+import gettext as _stdlib_gettext
 import json
 import logging
 import os
 import sys
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .platform_utils import get_config_dir
 
@@ -75,6 +76,30 @@ def N_(message: str) -> str:
     the actual ``_()``.
     """
     return message
+
+
+# The variables gettext.find() reads, in its order of precedence.
+_LOCALE_VARS = ('LANGUAGE', 'LC_ALL', 'LC_MESSAGES', 'LANG')
+_catalogues: Dict[tuple, _stdlib_gettext.NullTranslations] = {}
+
+
+def gettext(message: str) -> str:
+    """``gettext.gettext`` without searching for the catalogue on every call.
+
+    The stdlib resolves the ``.mo`` file afresh for each string -- expanding
+    every locale variant and stat-ing a path for each -- which cost ~70 ms over
+    the ~600 strings built at startup. What it resolves depends only on the text
+    domain, its directory and the locale variables, so the catalogue is kept
+    per that key; changing any of them still resolves anew, exactly as before.
+    """
+    domain = _stdlib_gettext.textdomain()
+    localedir = _stdlib_gettext.bindtextdomain(domain)
+    key = (domain, localedir, *(os.environ.get(v) for v in _LOCALE_VARS))
+    catalogue = _catalogues.get(key)
+    if catalogue is None:
+        catalogue = _stdlib_gettext.translation(domain, localedir, fallback=True)
+        _catalogues[key] = catalogue
+    return catalogue.gettext(message)
 
 
 def get_localedir() -> Optional[str]:

@@ -41,7 +41,7 @@ HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 HAS_TOOLBAR_VIEW = hasattr(Adw, 'ToolbarView')
 HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
-from gettext import gettext as _
+from .i18n import gettext as _
 
 from .accessibility import label_icon_button, set_accessible_name
 from .connection_model import Connection, ConnectionState
@@ -889,11 +889,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     "Failed to attach SSH overrides controller to Preferences",
                     exc_info=True,
                 )
-            # Preferences is preloaded on a low-priority idle, which can win
-            # the race against this first attach. Built without a client, it
-            # greys out the operation-mode radios and returns; nothing else
-            # would ever tell it the daemon arrived, so the modes stayed
-            # unswitchable until a restart happened to lose the race. The
+            # Preferences can be opened before this first attach lands. Built
+            # without a client, it greys out the operation-mode radios and
+            # returns; nothing else would ever tell it the daemon arrived, so
+            # the modes stayed unswitchable for the life of that window. The
             # rebind path already re-asks here -- the first attach must too.
             try:
                 reset = getattr(
@@ -1242,23 +1241,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .gtk.ssh_overrides_controller import SshOverridesController
         return SshOverridesController(client)
 
-    def _preload_preferences_window(self) -> bool:
-        """Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant."""
-        if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
-            return GLib.SOURCE_REMOVE
-        try:
-            from .preferences import PreferencesWindow
-            if getattr(self, '_preferences_window', None) is None:
-                controller = self._build_ssh_overrides_controller()
-                self._preferences_window = PreferencesWindow(
-                    self,
-                    self.config,
-                    ssh_overrides_controller=controller,
-                )
-        except Exception as exc:
-            logger.debug("Preloading preferences page skipped/failed: %s", exc)
-        return GLib.SOURCE_REMOVE
-
     def _check_previous_crash(self):
         """If the previous run left a crash report, offer to view/report it."""
         try:
@@ -1531,12 +1513,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug(f"Failed to execute pending focus operation: {e}")
 
         self._pending_focus_operations.clear()
-
-        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
-        try:
-            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
-        except Exception as e:
-            logger.debug(f"Failed to schedule preferences preloading: {e}")
 
         # Check for updates if enabled in preferences. Tips share the update
         # banner's area, so when a startup check runs they wait for its result
@@ -3691,6 +3667,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             description=name,
         )
 
+    def _create_terminal_theme_popover(self, button) -> None:
+        """Build the terminal scheme chooser the first time its popover opens."""
+        if self._terminal_theme_chooser is not None:
+            return
+        from .terminal_theme_selector import TerminalThemeChooser
+
+        self._terminal_theme_chooser = TerminalThemeChooser(
+            getattr(self.config, 'terminal_themes', {}) or {},
+            str(self.config.get_setting('terminal.theme', 'default')),
+            self._on_terminal_theme_selected,
+        )
+        popover = Gtk.Popover()
+        popover.set_child(self._terminal_theme_chooser.widget)
+        button.set_popover(popover)
+        self._sync_terminal_theme_selector()
+
     def _build_sort_button(self):
         from sshpilot import icon_utils
         button = icon_utils.new_button_from_icon_name("view-list-symbolic")
@@ -3998,26 +3990,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Terminal color schemes use the same compact color-button/popover
         # pattern as the SSH config editor. The button is only shown when the
-        # selected tab contains a terminal.
-        from .terminal_theme_selector import TerminalThemeChooser
-
+        # selected tab contains a terminal. The chooser draws a preview card
+        # per theme, so it is built when the popover first opens, not here.
         self._terminal_theme_menu_button = Gtk.MenuButton()
         _cmd_icon_utils.set_button_icon(
             self._terminal_theme_menu_button, 'brush-monitor-symbolic'
         )
         self._terminal_theme_menu_button.add_css_class('flat')
-        selected_theme = str(
-            self.config.get_setting('terminal.theme', 'default')
+        self._terminal_theme_menu_button.set_create_popup_func(
+            self._create_terminal_theme_popover
         )
-        self._terminal_theme_chooser = TerminalThemeChooser(
-            getattr(self.config, 'terminal_themes', {}) or {},
-            selected_theme,
-            self._on_terminal_theme_selected,
-        )
-        terminal_theme_popover = Gtk.Popover()
-        terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
-        self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
-        self._sync_terminal_theme_selector(selected_theme)
+        self._sync_terminal_theme_selector()
 
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
