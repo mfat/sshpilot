@@ -1,7 +1,7 @@
 """GTK-free parsing of local OpenSSH diagnostics for daemon session readiness.
 
-The daemon instruments owned SSH terminal launches with a private ``-v -E``
-pair so OpenSSH's own verbose stream becomes authoritative local evidence of a
+The daemon instruments owned SSH terminal launches with a private
+``-o LogLevel=DEBUG1 -E`` pair so OpenSSH's own verbose stream becomes authoritative local evidence of a
 successful login.  This module turns that stream into typed results without
 ever exposing the diagnostics to the user terminal:
 
@@ -95,7 +95,7 @@ def _terminal_failure_detail(line: str) -> Optional[str]:
 
 
 class SshDiagnosticParser:
-    """Incremental parser for one session's ``-v -E`` diagnostic stream.
+    """Incremental parser for one session's private ``-E`` diagnostic stream.
 
     Feed raw bytes as they are appended; partial lines are retained across
     calls.  Authentication success is returned once; further input is still
