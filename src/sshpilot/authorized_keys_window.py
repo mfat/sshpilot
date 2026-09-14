@@ -10,6 +10,13 @@ from typing import List
 from gi.repository import Adw, GLib, Gtk
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models.identity import (
+    PUBLIC_KEY_SOURCE_EMPTY,
+    PUBLIC_KEY_SOURCE_INVALID,
+    PUBLIC_KEY_SOURCE_NOT_FOUND,
+    PUBLIC_KEY_SOURCE_RATE_LIMITED,
+    FetchPublicKeysRequest,
+)
 from .authorized_keys_parser import (
     AuthorizedKeyEntry,
     Item,
@@ -37,6 +44,30 @@ def _added_keys_text(count: int) -> str:
         "Added {count} keys",
         count,
     ).format(count=count)
+
+
+def _already_authorized_text(count: int) -> str:
+    return ngettext(
+        "{count} key was already authorized",
+        "{count} keys were already authorized",
+        count,
+    ).format(count=count)
+
+
+def _public_key_fetch_error_text(error: BaseException | None) -> str:
+    code = error.details.get("code") if isinstance(error, SshPilotError) else None
+    if code == PUBLIC_KEY_SOURCE_INVALID or isinstance(error, (TypeError, ValueError)):
+        return _("Enter a username such as gh:username, or an HTTPS address.")
+    if code == PUBLIC_KEY_SOURCE_NOT_FOUND:
+        return _("No public keys found for this account.")
+    if code == PUBLIC_KEY_SOURCE_EMPTY:
+        return _("The source returned no usable public keys.")
+    if code == PUBLIC_KEY_SOURCE_RATE_LIMITED:
+        return _(
+            "GitHub is limiting requests. Try again later, "
+            "or use https://github.com/username.keys."
+        )
+    return _("Could not fetch public keys. Check the address and your network connection.")
 
 
 # Restriction-related flag options the user can toggle from the dialog.
@@ -99,6 +130,8 @@ class AuthorizedKeysWindow(Adw.Window):
     status_label = Gtk.Template.Child()
     list_box = Gtk.Template.Child()
 
+    _fetching_keys = False
+
     def __init__(
         self,
         parent,
@@ -112,6 +145,7 @@ class AuthorizedKeysWindow(Adw.Window):
     ) -> None:
         super().__init__()
         self._parent = parent
+        self._client = client
         self._connection = connection
         self._key_manager = key_manager
         self._interaction_dialogs = interaction_dialogs
@@ -184,6 +218,7 @@ class AuthorizedKeysWindow(Adw.Window):
         menu = Gio.Menu()
         menu.append(_("Add from local keys…"), "ak.add-local")
         menu.append(_("Paste public key…"), "ak.add-paste")
+        menu.append(_("Import from GitHub, GitLab or URL…"), "ak.add-import")
 
         group = Gio.SimpleActionGroup()
         action_local = Gio.SimpleAction.new("add-local", None)
@@ -192,6 +227,9 @@ class AuthorizedKeysWindow(Adw.Window):
         action_paste = Gio.SimpleAction.new("add-paste", None)
         action_paste.connect("activate", lambda *_: self._on_add_from_paste())
         group.add_action(action_paste)
+        action_import = Gio.SimpleAction.new("add-import", None)
+        action_import.connect("activate", lambda *_: self._on_add_from_import())
+        group.add_action(action_import)
         self.insert_action_group("ak", group)
         return menu
 
@@ -428,7 +466,7 @@ class AuthorizedKeysWindow(Adw.Window):
                 _("SSH keys require the background service. Start it and try again.")
             )
             return
-        if self._listing_keys or self._reading_public:
+        if self._listing_keys or self._reading_public or self._fetching_keys:
             return
         self._listing_keys = True
         self._set_local_key_busy(True)
@@ -505,7 +543,7 @@ class AuthorizedKeysWindow(Adw.Window):
 
     def _start_public_key_read(self, key) -> None:
         """Read a daemon-discovered key's public text off the GTK thread."""
-        if self._closing or self._listing_keys or self._reading_public:
+        if self._closing or self._listing_keys or self._reading_public or self._fetching_keys:
             return
         self._reading_public = True
         self._set_local_key_busy(True)
@@ -596,6 +634,115 @@ class AuthorizedKeysWindow(Adw.Window):
 
         dlg.connect("response", _on_response)
         dlg.present()
+
+    def _on_add_from_import(self) -> None:
+        """Ask for an ssh-import-id style source, then fetch it via the daemon."""
+        if self._closing:
+            return
+        dlg = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Import public keys"),
+            body=_(
+                "Enter a GitHub, GitLab or Launchpad username with its prefix, "
+                "or the web address of a public key file."
+            ),
+        )
+        entry = Gtk.Entry()
+        entry.set_placeholder_text(_("gh:username, gl:username, lp:username or https://…"))
+        entry.set_activates_default(True)
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", _("Cancel"))
+        dlg.add_response("import", _("Import"))
+        dlg.set_response_appearance("import", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("import")
+        dlg.set_close_response("cancel")
+
+        def _on_response(_d, resp):
+            if self._closing or resp != "import":
+                return
+            source = (entry.get_text() or "").strip()
+            if source:
+                self._start_public_key_fetch(source)
+
+        dlg.connect("response", _on_response)
+        dlg.present()
+
+    def _start_public_key_fetch(self, source: str) -> None:
+        """Fetch published keys through the daemon off the GTK thread."""
+        if self._closing or self._listing_keys or self._reading_public or self._fetching_keys:
+            return
+        if self._client is None:
+            self._toast(
+                _("SSH keys require the background service. Start it and try again.")
+            )
+            return
+        self._fetching_keys = True
+        self._set_local_key_busy(True)
+        self._set_status(_("Fetching public keys…"))
+        try:
+            thread = threading.Thread(
+                target=self._fetch_public_keys_worker,
+                args=(self._client, source),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.error("Could not start public key fetch: %s", type(exc).__name__)
+            self._fetching_keys = False
+            self._set_local_key_busy(False)
+            self._toast(_("Could not start fetching public keys."))
+
+    def _fetch_public_keys_worker(self, client, source: str) -> None:
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            result = client.fetch_public_keys(FetchPublicKeysRequest(source=source))
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            logger.info("Public key fetch failed: %s", exc)
+            GLib.idle_add(self._on_public_keys_fetched, None, exc)
+            return
+        GLib.idle_add(self._on_public_keys_fetched, result, None)
+
+    def _on_public_keys_fetched(self, result, exc) -> bool:
+        self._fetching_keys = False
+        if self._closing:
+            return False
+        self._set_local_key_busy(False)
+        self._set_status("")
+        if exc is not None:
+            self._toast(_public_key_fetch_error_text(exc))
+            return False
+        self._append_imported_keys(result)
+        return False
+
+    def _append_imported_keys(self, result) -> None:
+        """Add fetched keys, skipping any key the file already authorizes."""
+        present = {
+            it.fingerprint_sha256 or compute_fingerprint(it.keytype, it.key_b64)
+            for it in self._items
+            if isinstance(it, AuthorizedKeyEntry)
+        }
+        added = 0
+        skipped = 0
+        for key in result.keys:
+            if key.fingerprint in present:
+                skipped += 1
+                continue
+            for it in parse_file(key.line + "\n"):
+                if isinstance(it, AuthorizedKeyEntry):
+                    it.mark_dirty()
+                    self._items.append(it)
+                    present.add(key.fingerprint)
+                    added += 1
+        if added:
+            self._set_dirty(True)
+            self._refresh_list()
+        messages = []
+        if added or not skipped:
+            messages.append(_added_keys_text(added))
+        if skipped:
+            messages.append(_already_authorized_text(skipped))
+        self._toast(" · ".join(messages))
 
     def _append_pubkey_text(self, text: str) -> None:
         parsed = parse_file(text + "\n")

@@ -1,9 +1,9 @@
 """Daemon-owned OpenSSH session readiness: capability probe + diagnostics.
 
 The daemon instruments its owned SSH terminal launches with a private
-``-v -E <file>`` pair so OpenSSH's own verbose stream (never shown in the
-user terminal) provides authoritative local evidence of authentication.  This
-module owns everything around that evidence:
+``-o LogLevel=DEBUG1 -E <file>`` pair so OpenSSH's own verbose stream (never
+shown in the user terminal) provides authoritative local evidence of
+authentication.  This module owns everything around that evidence:
 
 * a secure per-daemon runtime directory under
   ``$XDG_RUNTIME_DIR/sshpilot/diagnostics/<instance>/`` (0700 dirs, 0600
@@ -78,7 +78,7 @@ OnGraceExpiredCallback = Callable[[object], None]
 
 
 def launch_eligible_for_diagnostics(argv: Sequence[str]) -> bool:
-    """Return whether *argv* may carry the private ``-v -E`` instrumentation.
+    """Return whether *argv* may carry the private diagnostics instrumentation.
 
     Only canonical OpenSSH ``ssh`` launches qualify.  SCP/SFTP/ssh-copy-id
     binaries, a user-supplied ``-E`` (never overwrite it), and any user-
@@ -116,18 +116,22 @@ def insert_ssh_diagnostics_options(
     argv: Sequence[str],
     diagnostics_path: str,
 ) -> tuple[str, ...]:
-    """Insert ``-v -E <path>`` before the destination.
+    """Insert ``-o LogLevel=DEBUG1 -E <path>`` before the destination.
 
     Options are inserted right after the executable / ``-F`` config so they
     are never mistaken for the remote command (which may trail the
     destination).  The destination stays ``argv[-1]`` when no remote command
     is set.
+
+    ``LogLevel=DEBUG1`` is used instead of ``-v``: OpenSSH copies each ``-v``
+    into the implicit ProxyJump command but not ``-E``, so the jump-host ssh
+    would print its debug stream into the user's terminal (issue #1214).
     """
     argv = tuple(argv)
     insert_at = 1
     if len(argv) >= 3 and argv[1] == "-F":
         insert_at = 3
-    options = ("-v", "-E", diagnostics_path)
+    options = ("-o", "LogLevel=DEBUG1", "-E", diagnostics_path)
     return (*argv[:insert_at], *options, *argv[insert_at:])
 
 

@@ -298,6 +298,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: list_authorized_keys status=daemon-only capability=identity.read -->
 <!-- api-method-contract: remove_agent_key status=daemon-only capability=identity.operate -->
 <!-- api-method-contract: remove_authorized_key status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: fetch_public_keys status=daemon-only capability=identity.read -->
 <!-- api-method-contract: update_identity_configuration status=daemon-only capability=identity.write -->
 <!-- api-method-contract: update_identity_selection status=daemon-only capability=identity.write -->
 
@@ -582,6 +583,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: secrets.unlock capability=secrets.operate -->
 <!-- api-daemon-method: authorized_keys.list capability=identity.read -->
 <!-- api-daemon-method: authorized_keys.remove capability=identity.operate -->
+<!-- api-daemon-method: authorized_keys.fetch capability=identity.read -->
 <!-- api-daemon-method: identity.agent.key.add capability=identity.operate -->
 <!-- api-daemon-method: identity.agent.key.remove capability=identity.operate -->
 <!-- api-daemon-method: identity.agent.keys.get capability=identity.read -->
@@ -1941,6 +1943,33 @@ finally:
   the daemon operation service.
 - **Parameters / return:** `RemoveAuthorizedKeyRequest`; returns
   `OperationSummary`.
+
+<!-- api-method: fetch_public_keys -->
+## `fetch_public_keys`
+
+- **Status / introduced:** Implemented in the daemon identity service / Protocol
+  v1 additive extension (API 0.59)
+- **Capability / purpose:** `identity.read`; fetch the public keys an online
+  identity publishes — the fetch step of `ssh-import-id` — so a frontend can add
+  them to the `authorized_keys` it is editing.
+- **Parameters / return:** `FetchPublicKeysRequest` whose `source` is `gh:user`
+  (GitHub API), `gl:user` (GitLab), `lp:user` or a bare `user` (Launchpad), or an
+  HTTPS URL returning `authorized_keys` lines (for example
+  `https://github.com/user.keys`); returns `ImportedPublicKeyList`.
+- **Errors:** `validation_failed` (`details.code` `public_key_source_invalid`)
+  for a malformed source or a non-HTTPS URL; `key_not_found`
+  (`public_key_source_not_found` on HTTP 404, `public_key_source_empty` when no
+  usable key was returned); retryable `key_public_unavailable`
+  (`public_key_source_rate_limited` for an exhausted GitHub API quota,
+  `public_key_fetch_failed` otherwise).
+- **Events:** None.
+- **Cancellation / ordering / threading:** Deferred on its own command key and
+  bounded by a 15 second HTTPS timeout; `DaemonClient` waits up to 30 seconds.
+- **Side effects / security:** Read-only; nothing is installed. Only HTTPS is
+  fetched and redirects to other schemes are refused. Only bare, well-formed
+  public-key lines are returned: option-prefixed lines, certificates, and blobs
+  whose embedded type differs from the line are dropped. Each key's comment
+  gains the `# ssh-import-id <source>` label `ssh-import-id` writes.
 
 <!-- api-method: get_operation -->
 ## `get_operation`

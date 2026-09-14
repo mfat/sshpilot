@@ -1,7 +1,7 @@
 """End-to-end OpenSSH readiness: real ssh diagnostics through the manager.
 
 These tests run a real local OpenSSH client against the disposable container
-sshd and prove the daemon's readiness instrumentation (private ``-v -E`` file,
+sshd and prove the daemon's readiness instrumentation (private ``-E`` file,
 inotify delivery, parser verdicts) works against real OpenSSH output:
 
 * a successful plain-key login yields AUTHENTICATED;

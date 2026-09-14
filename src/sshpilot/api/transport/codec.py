@@ -7003,6 +7003,76 @@ def remove_authorized_key_request_from_wire(value: Any) -> Any:
     )
 
 
+def fetch_public_keys_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import FetchPublicKeysRequest
+
+    if type(request) is not FetchPublicKeysRequest:
+        raise TypeError("FetchPublicKeysRequest is required")
+    return {"source": request.source}
+
+
+def fetch_public_keys_request_from_wire(value: Any) -> Any:
+    from ..models.identity import FetchPublicKeysRequest
+
+    data = _strict_fields(
+        value,
+        required={"source"},
+        context="fetch public keys request",
+    )
+    return FetchPublicKeysRequest(source=_text(data["source"], "public key source"))
+
+
+def imported_public_key_list_to_wire(key_list: Any) -> Dict[str, Any]:
+    from ..models.identity import ImportedPublicKey, ImportedPublicKeyList
+
+    if type(key_list) is not ImportedPublicKeyList:
+        raise TypeError("ImportedPublicKeyList is required")
+    keys = []
+    for key in key_list.keys:
+        if type(key) is not ImportedPublicKey:
+            raise TypeError("ImportedPublicKey is required")
+        keys.append(
+            {
+                "key_type": key.key_type,
+                "fingerprint": key.fingerprint,
+                "comment": key.comment,
+                "line": key.line,
+            }
+        )
+    return {"source": key_list.source, "keys": keys}
+
+
+def imported_public_key_list_from_wire(value: Any) -> Any:
+    from ..models.identity import ImportedPublicKey, ImportedPublicKeyList
+
+    data = _strict_fields(
+        value,
+        required={"source", "keys"},
+        context="imported public key list",
+    )
+    if type(data["keys"]) is not list:
+        raise ValueError("imported public keys must be a list")
+    keys = []
+    for item in data["keys"]:
+        key = _strict_fields(
+            item,
+            required={"key_type", "fingerprint", "comment", "line"},
+            context="imported public key",
+        )
+        keys.append(
+            ImportedPublicKey(
+                key_type=_text(key["key_type"], "public key type"),
+                fingerprint=_text(key["fingerprint"], "public key fingerprint"),
+                comment=_text(key["comment"], "public key comment", allow_empty=True),
+                line=_text(key["line"], "public key line"),
+            )
+        )
+    return ImportedPublicKeyList(
+        source=_text(data["source"], "public key source"),
+        keys=tuple(keys),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Host information
 # ---------------------------------------------------------------------------

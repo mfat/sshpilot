@@ -355,7 +355,7 @@ class _SessionRecord:
     # event-driven connection-evidence gate streams STARTING output directly.
     deferred_live_output: List[TerminalOutput] = field(default_factory=list)
     # OpenSSH diagnostics readiness (see SshReadinessManager). When engaged,
-    # the private ``-v -E`` stream is the authoritative readiness source and
+    # the private ``-E`` diagnostics stream is the authoritative readiness source and
     # PTY connection evidence is demoted to a fallback.
     readiness_engaged: bool = False
     diagnostic_primary: bool = False

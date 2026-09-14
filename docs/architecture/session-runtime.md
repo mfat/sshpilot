@@ -96,7 +96,9 @@ transition on authoritative local evidence so clients and frontends never
 observe a usable session before login:
 
 - **OpenSSH diagnostics (primary).** The daemon instruments its owned SSH
-  terminal launches with a private `-v -E <file>` pair; the verbose stream is
+  terminal launches with a private `-o LogLevel=DEBUG1 -E <file>` pair (not
+  `-v`, which OpenSSH copies into the implicit ProxyJump command without `-E`,
+  leaking the jump host's debug output into the terminal); the verbose stream is
   written to a per-session diagnostic file and never shown in the user
   terminal. A dedicated inotify monitor observes the file and feeds appended
   bytes to `SshDiagnosticParser`, which emits a decisive verdict:

@@ -710,6 +710,9 @@ class SplitViewTab(Gtk.Box):
 
         self._pane_scroll = Gtk.ScrolledWindow()
         self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # A floating scrollbar would sit on top of the right-edge pane's own
+        # terminal scrollbar and swallow its clicks (#1251); give it a column.
+        self._pane_scroll.set_overlay_scrolling(False)
 
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)

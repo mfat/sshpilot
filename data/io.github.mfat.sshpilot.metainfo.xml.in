@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.1.2" date="2026-09-14">
+      <description>
+        <p>Added support for importing authorized keys from GitHub, GitLab, Launchpad or a URL</p>
+        <p>Fixed overlapping scrollbars in splitview</p>
+      </description>
+    </release>
     <release version="6.1.1" date="2026-09-12">
       <description>
         <p>Bug fixes</p>

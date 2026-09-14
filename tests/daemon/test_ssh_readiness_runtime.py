@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import subprocess
 import time
 
 import pytest
@@ -127,15 +129,47 @@ def test_diagnostics_options_inserted_before_destination():
     out = insert_ssh_diagnostics_options(argv, "/diag/sess.log")
     assert out[0] == "/usr/bin/ssh"
     assert out[1] == "-F"
-    assert out[3:6] == ("-v", "-E", "/diag/sess.log")
+    assert out[3:7] == ("-o", "LogLevel=DEBUG1", "-E", "/diag/sess.log")
     assert out[-1] == "alice@host"
 
 
 def test_diagnostics_options_without_config_file():
     argv = ("/usr/bin/ssh", "-p", "22", "host")
     out = insert_ssh_diagnostics_options(argv, "/diag/sess.log")
-    assert out[1:4] == ("-v", "-E", "/diag/sess.log")
+    assert out[1:5] == ("-o", "LogLevel=DEBUG1", "-E", "/diag/sess.log")
     assert out[-1] == "host"
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="OpenSSH client not installed")
+def test_diagnostics_do_not_leak_through_proxy_jump(tmp_path):
+    """Issue #1214: the jump-host ssh must not print debug output to the PTY.
+
+    OpenSSH copies ``-v`` into the implicit ProxyJump command but not ``-E``.
+    The ``.invalid`` hosts fail at name resolution, so no network is used.
+    """
+    config = tmp_path / "config"
+    config.write_text("Host *\n    LogLevel QUIET\n")
+    diagnostics = tmp_path / "sess.log"
+    argv = insert_ssh_diagnostics_options(
+        (
+            shutil.which("ssh"), "-F", str(config),
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+            "-J", "jump.invalid", "target.invalid",
+        ),
+        str(diagnostics),
+    )
+    proc = subprocess.run(
+        (*argv, "true"),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert "debug1:" not in proc.stderr
+    log = diagnostics.read_text()
+    proxy_lines = [line for line in log.splitlines() if "Executing proxy command" in line]
+    assert proxy_lines, log
+    assert " -v" not in proxy_lines[0]
 
 
 def _manager(tmp_path, monkeypatch, probe_returncode=0, **kwargs):
