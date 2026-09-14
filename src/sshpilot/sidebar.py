@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Adw
 
-from .i18n import gettext as _
+from gettext import gettext as _
 
 from .dnd_payload import (
     content_provider_for_payload,

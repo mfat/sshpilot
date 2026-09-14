@@ -12,9 +12,10 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from gettext import gettext as _
 
 from .platform_utils import is_macos
-from .i18n import N_, available_languages, gettext as _
+from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
