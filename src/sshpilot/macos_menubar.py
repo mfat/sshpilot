@@ -22,6 +22,7 @@ from .actions import HEADERBAR_VISIBILITY_ACTIONS
 
 from gi.repository import Gio, GLib
 
+from .file_manager_integration import should_hide_file_manager_options
 from .platform_utils import is_macos
 
 
@@ -88,7 +89,8 @@ def build_macos_menubar(
     tools_menu = menu_cls()
     tools_menu.append(_("Copy Key to Server"), "app.new-key")
     tools_menu.append(_("Broadcast Command"), "app.broadcast-command")
-    tools_menu.append(_("Manage Files"), "win.open-file-manager")
+    if not should_hide_file_manager_options():
+        tools_menu.append(_("Manage Files"), "win.open-file-manager")
 
     tools_ssh_section = menu_cls()
     tools_ssh_section.append(_("SSH Config Editor"), "app.edit-ssh-config")

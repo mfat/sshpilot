@@ -39,6 +39,7 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
     monkeypatch.setattr(window_module.Gio, 'Menu', _Menu)
     monkeypatch.setattr(window_module.Gio, 'MenuItem', _MenuItem)
     monkeypatch.setattr(window_module.GLib, 'Variant', _StringVariant)
+    monkeypatch.setattr(window_module, 'should_hide_file_manager_options', lambda: True)
 
     stub = types.SimpleNamespace(
         _plugins_menu_section=None,

@@ -110,6 +110,7 @@ def test_placeholder_closed_before_creation_aborts(monkeypatch):
         return 1
 
     monkeypatch.setattr("gi.repository.GLib.timeout_add", capture_timeout)
+    monkeypatch.setattr("sshpilot.window_file_manager.has_internal_file_manager", lambda: True)
 
     mixin._open_manage_files_now_for_connection(MagicMock())
 

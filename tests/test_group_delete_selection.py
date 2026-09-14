@@ -100,6 +100,14 @@ def _target_rows(window, prefer_context=False):
     return MainWindow._get_target_group_rows(window, prefer_context=prefer_context)
 
 
+@pytest.fixture(autouse=True)
+def no_file_manager_gating(monkeypatch):
+    """The group branch only consults this for the file-manager button."""
+    monkeypatch.setattr(
+        window_module, "should_hide_file_manager_options", lambda: False
+    )
+
+
 # --- toolbar ---------------------------------------------------------------
 
 

@@ -9,7 +9,10 @@ from gettext import gettext as _
 
 from .accessibility import set_accessible_name
 from .dialog_focus import mark_default_response_visible
-from .file_manager_integration import should_hide_external_terminal_options
+from .file_manager_integration import (
+    should_hide_external_terminal_options,
+    should_hide_file_manager_options,
+)
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos
 from .shortcut_utils import TOGGLE_FULLSCREEN_ACTION
@@ -1262,8 +1265,8 @@ class WindowActions:
         every install, so it ships everywhere. Language-specific
         ``tips.<lang>.md`` files win when present (translated as data, not
         gettext). ``{primary}`` becomes Ctrl/Strg/⌘ for the platform, and
-        ``[external-terminal]`` tips are dropped when that feature is hidden.
-        Returns an empty list when no tip file is readable.
+        ``[file-manager]`` / ``[external-terminal]`` tips are dropped when those
+        features are hidden. Returns an empty list when no tip file is readable.
         """
         from .tips import load_window_tips
 
@@ -1271,6 +1274,7 @@ class WindowActions:
         return load_window_tips(
             os.path.join(here, 'resources'),
             _ui_language_codes(),
+            include_file_manager=not should_hide_file_manager_options(),
             include_external_terminal=not should_hide_external_terminal_options(),
         )
 
@@ -1499,16 +1503,17 @@ def register_window_actions(window):
     window.open_new_connection_tab_action.connect('activate', window.on_open_new_connection_tab_action)
     window.add_action(window.open_new_connection_tab_action)
 
-    # Action for managing files on remote server
-    window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
-    window.manage_files_action.connect('activate', window.on_manage_files_action)
-    window.add_action(window.manage_files_action)
+    # Action for managing files on remote server (skip on macOS and Flatpak)
+    if not should_hide_file_manager_options():
+        window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
+        window.manage_files_action.connect('activate', window.on_manage_files_action)
+        window.add_action(window.manage_files_action)
 
-    # Main-menu variant: uses the selected connection, or opens the file
-    # manager with a host picker in the remote pane when none is selected.
-    window.open_file_manager_action = Gio.SimpleAction.new('open-file-manager', None)
-    window.open_file_manager_action.connect('activate', window.open_file_manager_from_menu)
-    window.add_action(window.open_file_manager_action)
+        # Main-menu variant: uses the selected connection, or opens the file
+        # manager with a host picker in the remote pane when none is selected.
+        window.open_file_manager_action = Gio.SimpleAction.new('open-file-manager', None)
+        window.open_file_manager_action.connect('activate', window.open_file_manager_from_menu)
+        window.add_action(window.open_file_manager_action)
 
     if hasattr(window, 'on_duplicate_connection_action'):
         window.duplicate_connection_action = Gio.SimpleAction.new('duplicate-connection', None)

@@ -17,6 +17,9 @@ from gettext import gettext as _
 from .platform_utils import is_macos
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
+from .file_manager_integration import (
+    has_internal_file_manager,
+)
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
@@ -197,6 +200,7 @@ def _install_group_display_preview_css():
 from .file_manager_integration import (  # noqa: E402,F401
     macos_third_party_terminal_available,
     should_hide_external_terminal_options,
+    should_hide_file_manager_options,
 )
 
 
@@ -2612,120 +2616,131 @@ class PreferencesWindow(Adw.NavigationPage):
         file_management_page.set_icon_name("folder-symbolic")
 
         # File Management group
-        file_manager_group = Adw.PreferencesGroup(title=_("File Manager Options"))
-        file_manager_group.set_description(
-            _("These preferences only affect SSH Pilot's built-in SFTP file manager.")
-        )
+        if has_internal_file_manager():
+            file_manager_group = Adw.PreferencesGroup(title=_("File Manager Options"))
+            file_manager_group.set_description(
+                _("These preferences only affect SSH Pilot's built-in SFTP file manager.")
+            )
 
-        self.open_file_manager_externally_row = Adw.SwitchRow()
-        self.open_file_manager_externally_row.set_title(_("Open File Manager in Separate Window"))
-        self.open_file_manager_externally_row.set_subtitle(
-            _("Show the built-in file manager in its own window instead of a tab")
-        )
-        self.open_file_manager_externally_row.set_active(
-            bool(self.config.get_setting('file_manager.open_externally', False))
-        )
-        self.open_file_manager_externally_row.connect(
-            'notify::active', self.on_open_file_manager_externally_changed
-        )
+            self.open_file_manager_externally_row = Adw.SwitchRow()
+            self.open_file_manager_externally_row.set_title(_("Open File Manager in Separate Window"))
+            self.open_file_manager_externally_row.set_subtitle(
+                _("Show the built-in file manager in its own window instead of a tab")
+            )
+            self.open_file_manager_externally_row.set_active(
+                bool(self.config.get_setting('file_manager.open_externally', False))
+            )
+            self.open_file_manager_externally_row.connect(
+                'notify::active', self.on_open_file_manager_externally_changed
+            )
 
-        file_manager_group.add(self.open_file_manager_externally_row)
+            file_manager_group.add(self.open_file_manager_externally_row)
 
-        file_manager_defaults = {}
-        try:
-            defaults = self.config.get_default_config()
-            file_manager_defaults = defaults.get('file_manager', {}) if isinstance(defaults, dict) else {}
-        except Exception:
             file_manager_defaults = {}
-
-        file_manager_config: Dict[str, Any] = {}
-        if hasattr(self.config, 'get_file_manager_config'):
             try:
-                file_manager_config = self.config.get_file_manager_config() or {}
-            except Exception as exc:
-                logger.debug("Failed to read file manager configuration: %s", exc)
-                file_manager_config = {}
+                defaults = self.config.get_default_config()
+                file_manager_defaults = defaults.get('file_manager', {}) if isinstance(defaults, dict) else {}
+            except Exception:
+                file_manager_defaults = {}
 
-        def _fm_default_int(key: str, fallback: int = 0) -> int:
-            value = 0
-            if isinstance(file_manager_defaults, dict):
+            file_manager_config: Dict[str, Any] = {}
+            if hasattr(self.config, 'get_file_manager_config'):
                 try:
-                    value = int(file_manager_defaults.get(key, fallback))
-                except (TypeError, ValueError):
+                    file_manager_config = self.config.get_file_manager_config() or {}
+                except Exception as exc:
+                    logger.debug("Failed to read file manager configuration: %s", exc)
+                    file_manager_config = {}
+
+            def _fm_default_int(key: str, fallback: int = 0) -> int:
+                value = 0
+                if isinstance(file_manager_defaults, dict):
+                    try:
+                        value = int(file_manager_defaults.get(key, fallback))
+                    except (TypeError, ValueError):
+                        value = fallback
+                else:
                     value = fallback
-            else:
-                value = fallback
-            return value if value >= 0 else fallback
+                return value if value >= 0 else fallback
 
-        def _fm_config_int(key: str, fallback: int) -> int:
-            if isinstance(file_manager_config, dict):
-                try:
-                    value = int(file_manager_config.get(key, fallback))
-                except (TypeError, ValueError):
-                    value = fallback
-                if value < 0:
-                    return fallback
-                return value
-            return fallback
+            def _fm_config_int(key: str, fallback: int) -> int:
+                if isinstance(file_manager_config, dict):
+                    try:
+                        value = int(file_manager_config.get(key, fallback))
+                    except (TypeError, ValueError):
+                        value = fallback
+                    if value < 0:
+                        return fallback
+                    return value
+                return fallback
 
-        keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
-        keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
-        keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
+            keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
+            keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
+            keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
 
-        sftp_advanced_group = Adw.PreferencesGroup(title=_("Advanced SFTP Settings"))
-        sftp_advanced_group.set_description(
-            _("Fine-tune options that only apply to SSH Pilot's built-in SFTP file manager.")
-        )
+            sftp_advanced_group = Adw.PreferencesGroup(title=_("Advanced SFTP Settings"))
+            sftp_advanced_group.set_description(
+                _("Fine-tune options that only apply to SSH Pilot's built-in SFTP file manager.")
+            )
 
 
-        self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
-        self.sftp_keepalive_interval_row.set_title(_("SFTP Keepalive Interval (seconds)"))
-        self.sftp_keepalive_interval_row.set_subtitle(
-            _("How often the built-in file manager sends keepalives. "
-            "Set to 0 to disable.")
-        )
-        self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
-        self.sftp_keepalive_interval_row.connect(
-            'notify::value', self.on_sftp_keepalive_interval_changed
-        )
-        sftp_advanced_group.add(self.sftp_keepalive_interval_row)
+            self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
+            self.sftp_keepalive_interval_row.set_title(_("SFTP Keepalive Interval (seconds)"))
+            self.sftp_keepalive_interval_row.set_subtitle(
+                _("How often the built-in file manager sends keepalives. "
+                "Set to 0 to disable.")
+            )
+            self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
+            self.sftp_keepalive_interval_row.connect(
+                'notify::value', self.on_sftp_keepalive_interval_changed
+            )
+            sftp_advanced_group.add(self.sftp_keepalive_interval_row)
 
 
-        keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
-        keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
-        keepalive_count_value = max(0, min(keepalive_count_value, 10))
+            keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
+            keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
+            keepalive_count_value = max(0, min(keepalive_count_value, 10))
 
-        self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
-        self.sftp_keepalive_count_row.set_title(_("SFTP Keepalive Retry Limit"))
-        self.sftp_keepalive_count_row.set_subtitle(
-            _("Number of failed keepalives tolerated by the built-in file "
-            "manager before raising an error.")
-        )
-        self.sftp_keepalive_count_row.set_value(keepalive_count_value)
-        self.sftp_keepalive_count_row.connect(
-            'notify::value', self.on_sftp_keepalive_count_changed
-        )
-        sftp_advanced_group.add(self.sftp_keepalive_count_row)
+            self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
+            self.sftp_keepalive_count_row.set_title(_("SFTP Keepalive Retry Limit"))
+            self.sftp_keepalive_count_row.set_subtitle(
+                _("Number of failed keepalives tolerated by the built-in file "
+                "manager before raising an error.")
+            )
+            self.sftp_keepalive_count_row.set_value(keepalive_count_value)
+            self.sftp_keepalive_count_row.connect(
+                'notify::value', self.on_sftp_keepalive_count_changed
+            )
+            sftp_advanced_group.add(self.sftp_keepalive_count_row)
 
 
-        connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
-        connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
-        connect_timeout_value = max(0, min(connect_timeout_value, 600))
+            connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
+            connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
+            connect_timeout_value = max(0, min(connect_timeout_value, 600))
 
-        self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
-        self.sftp_connect_timeout_row.set_title(_("SFTP Connection Timeout (seconds)"))
-        self.sftp_connect_timeout_row.set_subtitle(
-            _("Time allowed for the built-in file manager to establish a "
-            "session; 0 uses the default.")
-        )
-        self.sftp_connect_timeout_row.set_value(connect_timeout_value)
-        self.sftp_connect_timeout_row.connect(
-            'notify::value', self.on_sftp_connect_timeout_changed
-        )
-        sftp_advanced_group.add(self.sftp_connect_timeout_row)
+            self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
+            self.sftp_connect_timeout_row.set_title(_("SFTP Connection Timeout (seconds)"))
+            self.sftp_connect_timeout_row.set_subtitle(
+                _("Time allowed for the built-in file manager to establish a "
+                "session; 0 uses the default.")
+            )
+            self.sftp_connect_timeout_row.set_value(connect_timeout_value)
+            self.sftp_connect_timeout_row.connect(
+                'notify::value', self.on_sftp_connect_timeout_changed
+            )
+            sftp_advanced_group.add(self.sftp_connect_timeout_row)
 
-        file_management_page.add(file_manager_group)
-        file_management_page.add(sftp_advanced_group)
+
+            self._update_external_file_manager_row()
+            file_management_page.add(file_manager_group)
+            file_management_page.add(sftp_advanced_group)
+        else:
+            # If no internal file manager, create empty page with message
+            no_file_manager_group = Adw.PreferencesGroup(title=_("File Manager"))
+            no_file_manager_row = Adw.ActionRow()
+            no_file_manager_row.set_title(_("File Manager Not Available"))
+            no_file_manager_row.set_subtitle(_("Built-in file manager is not available on this system"))
+            no_file_manager_group.add(no_file_manager_row)
+            file_management_page.add(no_file_manager_group)
         return file_management_page
 
     def _build_updates_preferences_page(self):
@@ -5938,6 +5953,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('file_manager.sftp_connect_timeout', max(0, connect_timeout_default))
             if getattr(self, 'sftp_connect_timeout_row', None) is not None:
                 self.sftp_connect_timeout_row.set_value(max(0, connect_timeout_default))
+            self._update_external_file_manager_row()
 
             if controller is None:
                 # No Preferences row exists for this Config-owned key, but the
@@ -6543,6 +6559,34 @@ class PreferencesWindow(Adw.NavigationPage):
         logger.info("Terminal color scheme changed to: %s", scheme_key)
         self.config.set_setting('terminal.theme', scheme_key)
         self.apply_color_scheme_to_terminals(scheme_key)
+
+    def _is_internal_file_manager_enabled(self) -> bool:
+        """Return ``True`` when the application uses the built-in file manager."""
+
+        try:
+            if not has_internal_file_manager():
+                return False
+        except Exception as exc:  # pragma: no cover - defensive capability detection
+            logger.debug("Internal file manager check failed: %s", exc)
+            return False
+
+        # Remote SFTP is always daemon-owned; GVFS is not an alternate SSH
+        # backend. The preference remains only as presentation compatibility
+        # for the separate-window UI.
+        return True
+
+    def _update_external_file_manager_row(self) -> None:
+        """Sync the external window preference with the current availability."""
+
+        row = getattr(self, 'open_file_manager_externally_row', None)
+        if row is None:
+            return
+
+        use_internal = self._is_internal_file_manager_enabled()
+        row.set_sensitive(use_internal)
+
+        if not use_internal and row.get_active():
+            row.set_active(False)
 
     def on_sidebar_flat_rows_changed(self, switch, *args):
         """Persist flat vs card styling for sidebar connection rows."""

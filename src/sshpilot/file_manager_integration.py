@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from functools import lru_cache
 from typing import Any, Optional, Tuple
 
 import gi
@@ -16,6 +17,19 @@ from gi.repository import GLib, Gtk
 from .platform_utils import is_flatpak, is_macos
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def has_internal_file_manager() -> bool:
+    """Return True when the built-in file manager window is available."""
+
+    try:
+        from . import file_manager_window as _file_manager_window
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Internal file manager unavailable: %s", exc)
+        return False
+
+    return hasattr(_file_manager_window, "FileManagerWindow")
 
 
 # --- "should hide/show X" capability helpers -------------------------------
@@ -63,6 +77,17 @@ def should_hide_external_terminal_options() -> bool:
     return is_flatpak() or (
         is_macos() and not macos_third_party_terminal_available()
     )
+
+
+
+def should_hide_file_manager_options() -> bool:
+    """Return whether the daemon-backed in-app file manager is unavailable."""
+
+    try:
+        return not has_internal_file_manager()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("File manager capability detection failed: %s", exc)
+    return True
 
 
 def open_internal_file_manager(
@@ -324,26 +349,37 @@ def launch_remote_file_manager(
     connection_manager: Any = None,
     ssh_config: Optional[dict] = None,
 ) -> Tuple[bool, Optional[str], Optional[Any]]:
-    """Open the built-in file manager window for the supplied connection."""
+    """Launch the appropriate file manager for the supplied connection."""
 
-    try:
-        window = open_internal_file_manager(
-            user=user,
-            host=host,
-            port=port,
-            parent_window=parent_window,
-            nickname=nickname,
-            connection=connection,
-            connection_manager=connection_manager,
-            ssh_config=ssh_config,
-        )
-        return True, None, window
-    except Exception as exc:
-        logger.error("Internal file manager failed: %s", exc)
-        message = str(exc) or "Failed to open internal file manager"
-        if error_callback:
-            try:
-                error_callback(message)
-            except Exception:  # pragma: no cover - defensive
-                logger.debug("Error callback failed when reporting internal manager error")
-        return False, message, None
+    if has_internal_file_manager():
+        try:
+            window = open_internal_file_manager(
+                user=user,
+                host=host,
+                port=port,
+                parent_window=parent_window,
+                nickname=nickname,
+                connection=connection,
+                connection_manager=connection_manager,
+                ssh_config=ssh_config,
+            )
+            return True, None, window
+        except Exception as exc:
+            logger.error("Internal file manager failed: %s", exc)
+            message = str(exc) or "Failed to open internal file manager"
+            if error_callback:
+                try:
+                    error_callback(message)
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug("Error callback failed when reporting internal manager error")
+            return False, message, None
+
+    message = "No compatible file manager integration is available."
+    if error_callback:
+        try:
+            error_callback(message)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Error callback failed when reporting missing integrations")
+
+    logger.warning("No file manager integration available for %s@%s", user, host)
+    return False, message, None
