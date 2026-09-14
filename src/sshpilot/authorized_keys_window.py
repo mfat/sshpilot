@@ -57,15 +57,15 @@ def _already_authorized_text(count: int) -> str:
 def _public_key_fetch_error_text(error: BaseException | None) -> str:
     code = error.details.get("code") if isinstance(error, SshPilotError) else None
     if code == PUBLIC_KEY_SOURCE_INVALID or isinstance(error, (TypeError, ValueError)):
-        return _("Enter gh:user, gl:user, lp:user, or an HTTPS URL.")
+        return _("Enter a username such as gh:username, or an HTTPS address.")
     if code == PUBLIC_KEY_SOURCE_NOT_FOUND:
-        return _("No such account, or it publishes no keys.")
+        return _("No public keys found for this account.")
     if code == PUBLIC_KEY_SOURCE_EMPTY:
         return _("The source returned no usable public keys.")
     if code == PUBLIC_KEY_SOURCE_RATE_LIMITED:
         return _(
-            "GitHub's API rate limit is exhausted. Try again later, "
-            "or use https://github.com/<user>.keys instead."
+            "GitHub is limiting requests. Try again later, "
+            "or use https://github.com/username.keys."
         )
     return _("Could not fetch public keys. Check the address and your network connection.")
 
@@ -644,13 +644,12 @@ class AuthorizedKeysWindow(Adw.Window):
             modal=True,
             heading=_("Import public keys"),
             body=_(
-                "Add the keys an account publishes: gh:user for GitHub, "
-                "gl:user for GitLab, lp:user for Launchpad, or an HTTPS URL "
-                "such as https://github.com/user.keys."
+                "Enter a GitHub, GitLab or Launchpad username with its prefix, "
+                "or the web address of a public key file."
             ),
         )
         entry = Gtk.Entry()
-        entry.set_placeholder_text(_("gh:user or https://…"))
+        entry.set_placeholder_text(_("gh:username, gl:username, lp:username or https://…"))
         entry.set_activates_default(True)
         dlg.set_extra_child(entry)
         dlg.add_response("cancel", _("Cancel"))

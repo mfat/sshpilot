@@ -157,7 +157,7 @@ def test_structured_error_renders_its_message(idle):
     _run_fetch(window, idle)
 
     message = window._toast.call_args[0][0]
-    assert "rate limit" in message
+    assert "GitHub is limiting requests" in message
     assert "raw daemon text" not in message
     assert window._items == []
     assert window._fetching_keys is False
