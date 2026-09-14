@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.1.1}
+Version:        %{?version}%{!?version:6.1.2}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -145,6 +145,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Mon Sep 14 2026 mFat <newmfat@gmail.com> - 6.1.2-1
+- Added support for importing authorized keys from GitHub, GitLab, Launchpad or a URL
+- Fixed overlapping scrollbars in splitview
+
 * Sat Sep 12 2026 mFat <newmfat@gmail.com> - 6.1.1-1
 - Bug fixes
 

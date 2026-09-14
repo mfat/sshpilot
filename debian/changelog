@@ -1,3 +1,12 @@
+sshpilot (6.1.2-1) unstable; urgency=medium
+
+  * Release v6.1.2.
+  * Added support for importing authorized keys from GitHub, GitLab,
+    Launchpad or a URL
+  * Fixed overlapping scrollbars in splitview
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 14 Sep 2026 00:43:39 +0000
+
 sshpilot (6.1.1-1) unstable; urgency=medium
 
   * Release v6.1.1.
