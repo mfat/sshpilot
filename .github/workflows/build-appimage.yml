@@ -46,6 +46,7 @@ jobs:
             gir1.2-vte-3.91 \
             gir1.2-gtksource-5 \
             gir1.2-secret-1 \
+            gir1.2-webkit-6.0 \
             adwaita-icon-theme \
             hicolor-icon-theme \
             librsvg2-common \
@@ -79,9 +80,13 @@ jobs:
       # CPython and the pyproject.toml dependencies around it. The script
       # smoke-tests the AppDir under `env -i` before packing, so a missing
       # library or typelib fails here rather than on a user's machine.
+      #
+      # xvfb-run: with a display available the smoke test also renders the
+      # xterm.js shell in a real WebView, which is the only way to catch a
+      # WebKit whose out-of-process helpers cannot be exec'd from the bundle.
       - name: Build AppImage
         run: |
-          packaging/appimage/build-appimage.sh \
+          xvfb-run -a packaging/appimage/build-appimage.sh \
             '${{ steps.version.outputs.version }}' \
             release-assets
 

@@ -23,6 +23,22 @@ export GI_TYPELIB_PATH="$APPDIR/usr/lib/girepository-1.0"
 export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
 export GIO_MODULE_DIR="$APPDIR/usr/lib/gio/modules"
 
+# WebKitGTK renders out of process and has the helper paths compiled in, which
+# point at the build host's /usr. Without these two a WebView just never
+# finishes loading: no PyXterm.js terminal and no Host Info tab.
+export WEBKIT_EXEC_PATH="$APPDIR/usr/lib/webkitgtk-6.0"
+export WEBKIT_INJECTED_BUNDLE_PATH="$APPDIR/usr/lib/webkitgtk-6.0/injected-bundle"
+
+# xterm.js assets: the app prefers the host's /usr/share/javascript/xterm when
+# it exists, which for a self-contained bundle is the wrong copy. The env
+# override the app already supports points it back at our own.
+for xterm_dir in "$APPDIR"/usr/lib/python3*/*-packages/sshpilot/vendor/pyxtermjs/xterm; do
+    if [ -f "$xterm_dir/xterm.js" ]; then
+        export PYXTERMJS_ASSETS_DIR="$xterm_dir"
+        break
+    fi
+done
+
 # The loaders.cache has to name the loaders by absolute path, which is only
 # known once the AppImage is mounted. Materialise it per user rather than
 # writing into the read-only mount; a fixed path keeps this from piling up.

@@ -6,12 +6,17 @@
 # VERSION defaults to src/sshpilot/__init__.py::__version__, OUTDIR to dist/.
 #
 # The AppImage bundles the GTK 4 stack (GTK, libadwaita, VTE, GtkSourceView,
-# libsecret), their typelibs, a CPython interpreter, PyGObject and the Python
-# dependencies from pyproject.toml. Not bundled: anything glibc- or
-# host-coupled (see packaging/appimage/excludelist), OpenSSH -- the app drives
-# the host's ssh, as it does in every other package -- and WebKitGTK, which
-# would double the image for the optional PyXterm.js terminal backend. The
-# default VTE backend is unaffected; the WebKit one reports itself unavailable.
+# libsecret, WebKitGTK), their typelibs, a CPython interpreter, PyGObject and
+# the Python dependencies from pyproject.toml. Not bundled: anything glibc- or
+# host-coupled (see packaging/appimage/excludelist), and OpenSSH -- the app
+# drives the host's ssh, as it does in every other package.
+#
+# WebKitGTK is the expensive part of that list and the fiddly one: it runs its
+# renderer out of process, so the WebKit*Process helpers and the injected
+# bundle are bundled too and AppRun points WEBKIT_EXEC_PATH /
+# WEBKIT_INJECTED_BUNDLE_PATH at them. It earns its size -- both the
+# PyXterm.js terminal backend and the Host Info tab are WebKit-only, and an
+# AppImage without it would quietly have fewer features than the .deb.
 #
 # What makes the result relocatable:
 #
@@ -251,6 +256,9 @@ WANTED = [
     ("Vte", "3.91"),
     ("GtkSource", "5"),
     ("Secret", "1"),
+    # Pulls JavaScriptCore with it; both the PyXterm.js terminal backend and
+    # the Host Info tab need them.
+    ("WebKit", "6.0"),
     ("Gio", "2.0"),
     ("GLib", "2.0"),
     ("GLibUnix", "2.0"),
@@ -314,6 +322,29 @@ for module in "$SYS_LIBDIR"/gio/modules/*.so; do
     [ -e "$module" ] && cp -a "$module" "$LIBDIR/gio/modules/"
 done
 
+log "Bundling the WebKitGTK helper processes"
+# WebKitGTK renders out of process: libwebkitgtk itself is only half of it, and
+# a WebView whose helpers cannot be exec'd never finishes loading. The paths
+# are compiled into the library, so AppRun overrides them with WEBKIT_EXEC_PATH
+# and WEBKIT_INJECTED_BUNDLE_PATH.
+WEBKIT_SRC=$SYS_LIBDIR/webkitgtk-6.0
+[ -d "$WEBKIT_SRC" ] || die "$WEBKIT_SRC missing (install gir1.2-webkit-6.0)"
+WEBKIT_DIR=$LIBDIR/webkitgtk-6.0
+mkdir -p "$WEBKIT_DIR/injected-bundle"
+webkit_helpers=()
+for helper in WebKitWebProcess WebKitNetworkProcess WebKitGPUProcess; do
+    # GPUProcess is absent in some builds; the other two are not optional.
+    if [ -x "$WEBKIT_SRC/$helper" ]; then
+        install -Dm755 "$WEBKIT_SRC/$helper" "$WEBKIT_DIR/$helper"
+        webkit_helpers+=("$WEBKIT_DIR/$helper")
+    elif [ "$helper" != WebKitGPUProcess ]; then
+        die "$WEBKIT_SRC/$helper missing"
+    fi
+done
+# MiniBrowser is WebKit's own demo app, not something the bundle needs.
+install -Dm644 "$WEBKIT_SRC/injected-bundle/libwebkitgtkinjectedbundle.so" \
+    "$WEBKIT_DIR/injected-bundle/libwebkitgtkinjectedbundle.so"
+
 # --------------------------------------------------------------------------
 # 7. Shared libraries: the transitive closure of everything bundled so far,
 #    minus what has to come from the host.
@@ -331,7 +362,9 @@ queue=("$APPDIR/usr/bin/python$PY_VER")
 while IFS= read -r -d '' elf; do
     queue+=("$elf")
 done < <(find "$MODULEDIR" "$STDLIB_COPY/lib-dynload" "$PIXBUF_DIR/loaders" \
-              "$LIBDIR/gio/modules" -name '*.so' -print0 2>/dev/null)
+              "$LIBDIR/gio/modules" "$WEBKIT_DIR" -name '*.so' -print0 2>/dev/null)
+# The helpers are executables, not libraries, and pull in libraries of their own.
+queue+=("${webkit_helpers[@]}")
 for soname in "${typelib_libs[@]}"; do
     path=$(resolve_soname "$soname")
     [ -n "$path" ] || die "typelib names $soname but ldconfig cannot find it"
@@ -374,6 +407,9 @@ set_rpath() {
 }
 
 set_rpath "$APPDIR/usr/bin/python$PY_VER"
+for helper in "${webkit_helpers[@]}"; do
+    set_rpath "$helper"
+done
 # MODULEDIR usually sits inside LIBDIR; sort -zu keeps that from patching the
 # same file twice.
 while IFS= read -r -d '' elf; do
@@ -419,17 +455,21 @@ fi
 # 11. Smoke-test the bundle before packaging it.
 # --------------------------------------------------------------------------
 log "Smoke-testing the AppDir"
-# env -i: prove the bundle stands on its own, with none of the build host's
-# GTK, GI or Python environment leaking into the test.
+# The environment comes from AppRun itself, with only its final exec line
+# stripped, so this tests what users actually get and the two can never drift.
+grep -v '^exec ' "$APPDIR/AppRun" > "$BUILD_DIR/apprun-env.sh"
+
+# env -i: prove the bundle stands on its own, with none of the build host's GTK,
+# GI or Python environment leaking in. DISPLAY, when the caller has one, turns
+# on the WebKit render check below -- run the build under xvfb-run to get it in
+# CI.
 env -i \
     HOME="${HOME:-/tmp}" \
     PATH=/usr/bin:/bin \
     APPDIR="$APPDIR" \
-    XDG_DATA_DIRS="$APPDIR/usr/share:/usr/local/share:/usr/share" \
-    GI_TYPELIB_PATH="$TYPELIBDIR" \
-    GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas" \
-    GIO_MODULE_DIR="$LIBDIR/gio/modules" \
-    GDK_PIXBUF_MODULEDIR="$PIXBUF_DIR/loaders" \
+    ${DISPLAY:+DISPLAY="$DISPLAY"} \
+    ${XAUTHORITY:+XAUTHORITY="$XAUTHORITY"} \
+    bash -c '. "$1"; shift; exec "$@"' _ "$BUILD_DIR/apprun-env.sh" \
     "$APPDIR/usr/bin/python3" - "$APPDIR" <<'PY'
 import os
 import sys
@@ -437,15 +477,34 @@ import sys
 appdir = sys.argv[1]
 assert sys.executable.startswith(appdir), sys.executable
 
+# Everything below runs under AppRun's environment, so these are AppRun's
+# paths, not ones this test invented.
+for variable, expected in (
+    ("GI_TYPELIB_PATH", "Gtk-4.0.typelib"),
+    ("GSETTINGS_SCHEMA_DIR", "gschemas.compiled"),
+    ("GIO_MODULE_DIR", None),
+    ("WEBKIT_EXEC_PATH", "WebKitWebProcess"),
+    ("WEBKIT_INJECTED_BUNDLE_PATH", "libwebkitgtkinjectedbundle.so"),
+    ("PYXTERMJS_ASSETS_DIR", "xterm.js"),
+):
+    value = os.environ.get(variable)
+    assert value and value.startswith(appdir), "%s=%r" % (variable, value)
+    assert os.path.isdir(value), "%s=%r is not a directory" % (variable, value)
+    if expected:
+        assert os.path.exists(os.path.join(value, expected)), \
+            "%s has no %s" % (variable, expected)
+
 import gi
 
 for namespace, version in (
     ("Gtk", "4.0"), ("Gdk", "4.0"), ("Adw", "1"), ("Vte", "3.91"),
     ("GtkSource", "5"), ("Secret", "1"), ("GLibUnix", "2.0"),
-    ("PangoFT2", "1.0"),
+    ("PangoFT2", "1.0"), ("WebKit", "6.0"),
 ):
     gi.require_version(namespace, version)
-from gi.repository import Adw, Gdk, Gio, Gtk, GtkSource, Secret, Vte  # noqa: F401
+from gi.repository import (  # noqa: F401
+    Adw, Gdk, Gio, GLib, Gtk, GtkSource, Secret, Vte, WebKit,
+)
 
 # The dependencies the app imports at runtime.
 import cairo, certifi, cryptography, keyring, psutil, yaml  # noqa: F401,E401
@@ -464,6 +523,52 @@ from gi.repository import GdkPixbuf
 
 formats = {fmt.get_name() for fmt in GdkPixbuf.Pixbuf.get_formats()}
 assert "svg" in formats, sorted(formats)
+
+# The xterm.js assets the PyXterm.js backend renders. AppRun's
+# PYXTERMJS_ASSETS_DIR is what keeps this off the host's libjs-xterm.
+from sshpilot.xterm_shell import asset_dir, build_shell_html
+
+assert asset_dir().startswith(appdir), asset_dir()
+assert os.path.isfile(os.path.join(asset_dir(), "xterm.js")), asset_dir()
+shell_html = build_shell_html()
+
+# Importing WebKit only proves the library loads. The renderer runs in a
+# separate process that WebKit exec's from a path compiled in at build time, so
+# the check that matters is whether a real WebView finishes a load -- if
+# WEBKIT_EXEC_PATH is wrong, this hangs until the timeout instead. Needs a
+# display, so it is skipped when there is none (the build still fails on a
+# WebKit that cannot even be imported).
+if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+    Gtk.init()
+    window = Gtk.Window()
+    webview = WebKit.WebView()
+    window.set_child(webview)
+    window.present()
+
+    outcome = {}
+    loop = GLib.MainLoop()
+
+    def _on_load_changed(_view, event):
+        if event == WebKit.LoadEvent.FINISHED:
+            outcome["loaded"] = True
+            loop.quit()
+
+    def _on_timeout():
+        outcome.setdefault("loaded", False)
+        loop.quit()
+        return False
+
+    webview.connect("load-changed", _on_load_changed)
+    GLib.timeout_add_seconds(90, _on_timeout)
+    webview.load_html(shell_html, "file:///")
+    loop.run()
+    assert outcome.get("loaded"), (
+        "the bundled WebKit never finished loading the xterm.js shell -- "
+        "check WEBKIT_EXEC_PATH and the WebKit*Process helpers"
+    )
+    print("smoke test ok: WebKit rendered the xterm.js shell")
+else:
+    print("smoke test: no display, WebKit checked by import only")
 
 print("smoke test ok: sshpilot %s" % sshpilot.__version__)
 PY

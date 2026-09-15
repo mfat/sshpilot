@@ -119,7 +119,9 @@ yay -S sshpilot-git
 
 A single self-contained file for any distribution that meets the
 [minimum requirements](#operating-system). It bundles GTK 4, libadwaita, VTE,
-GtkSourceView and Python, and uses the host's `ssh`. Download
+GtkSourceView, WebKitGTK and Python — so the PyXterm.js terminal backend and
+the Host Info tab work the same as in the other packages — and uses the host's
+`ssh`. Download
 `sshpilot-<version>-linux-x86_64.AppImage` from the
 [Releases](https://github.com/mfat/sshpilot/releases/) page — there are no
 automatic updates, so grab a new one when a release lands.
@@ -131,8 +133,6 @@ chmod +x sshpilot-*-linux-x86_64.AppImage
 
 The AppImage mounts itself with FUSE 3, which every supported distribution
 ships; on a system without it, run the file with `--appimage-extract-and-run`.
-WebKitGTK is not bundled, so the optional PyXterm.js terminal backend is
-unavailable there — the default VTE terminal works as usual.
 
 ### <img src="https://brew.sh/assets/img/homebrew-256x256.png" width="24" height="24"/> Homebrew (macOS + Linux)
 

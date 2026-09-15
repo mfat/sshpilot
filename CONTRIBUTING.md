@@ -242,7 +242,11 @@ sources moved under `src/`.
   image. It rewrites the Meson-installed launcher and `build_config.py` to
   resolve their prefix relatively, and gives every bundled library an `$ORIGIN`
   RPATH so no library or Python path leaks into the terminal's shell, `ssh` or
-  anything else the app spawns. Read the header of the script before changing it.
+  anything else the app spawns. WebKitGTK is bundled with its out-of-process
+  helpers, which AppRun points at through `WEBKIT_EXEC_PATH` — the PyXterm.js
+  backend and the Host Info tab are WebKit-only, so an AppImage without it
+  would have fewer features than the `.deb`. Read the header of the script
+  before changing it.
 - `scripts/bump-version.sh` is the single writer of the version and changelog
   across `__init__.py`, `meson.build`, the RPM spec, the metainfo and
   `debian/changelog`. Both `scripts/release.sh` and the Release workflow call
