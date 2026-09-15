@@ -207,6 +207,26 @@ def test_openwrt_overlay_is_preferred_as_the_root_filesystem():
     assert snapshot.root_filesystem.device == "/dev/mtdblock6"
 
 
+def test_a_container_overlay_root_is_kept_but_other_overlays_stay_hidden():
+    # BusyBox df inside an Alpine container under Docker or Podman, plus the
+    # kind of overlay mount a container host shows for each running container.
+    snapshot = parse_host_info(
+        _probe(
+            DF=(
+                "Filesystem           Type       1-blocks       Used Available Use% Mounted on\n"
+                "overlay              overlay    124133236736 104500903936 13279379456  89% /\n"
+                "overlay              overlay    124133236736 104500903936 13279379456  89% "
+                "/var/lib/docker/overlay2/0a1b2c/merged\n"
+                "tmpfs                tmpfs          65536         0     65536   0% /dev\n"
+            )
+        )
+    )
+    assert [item.mount_point for item in snapshot.filesystems] == ["/"]
+    assert snapshot.root_filesystem is not None
+    assert snapshot.root_filesystem.fstype == "overlay"
+    assert snapshot.root_filesystem.size_bytes == 124133236736
+
+
 def test_net_dev_bytes_are_the_first_and_ninth_columns():
     counters = parse_network_counters(
         "Inter-|   Receive                                                |  Transmit\n"

@@ -324,7 +324,13 @@ def _df_rows(text: str):
         device = parts[0]
         fstype = parts[1] if has_type else ""
         mount_point = " ".join(parts[5 + offset:])
-        if device.lower() in _PSEUDO_FILESYSTEMS or fstype.lower() in _PSEUDO_FILESYSTEMS:
+        # Inside a Docker/Podman container "/" is itself an overlay, and it is
+        # the host's real root; the overlays a container host mounts elsewhere
+        # (/var/lib/docker/overlay2/.../merged) stay hidden.
+        is_container_root = mount_point == "/" and "overlay" in (device.lower(), fstype.lower())
+        if not is_container_root and (
+            device.lower() in _PSEUDO_FILESYSTEMS or fstype.lower() in _PSEUDO_FILESYSTEMS
+        ):
             continue
         if mount_point.startswith(_PSEUDO_MOUNT_PREFIXES):
             continue
