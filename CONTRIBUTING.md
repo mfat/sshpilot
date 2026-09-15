@@ -228,6 +228,7 @@ sources moved under `src/`.
 | Debian / PPA | `debian/rules` | `dh --buildsystem=meson` |
 | Fedora / COPR | `packaging/fedora/rpm.spec` | `%meson` macros |
 | Arch | `packaging/ArchLinux/PKGBUILD` | `arch-meson` |
+| Linux AppImage | `packaging/appimage/build-appimage.sh` | `meson install` into an AppDir, then the GTK stack and CPython bundled around it |
 | macOS DMG | `packaging/pyinstaller/` | PyInstaller (not Meson); `packaging/macos/` only holds the `.icns` |
 
 - The setuptools build (`pyproject.toml`) is kept in parallel for the
@@ -235,6 +236,13 @@ sources moved under `src/`.
 - `meson test` runs the desktop-entry and AppStream validators; the packaging
   wires it into `%check` / `dh_auto_test`.
 - macOS DMG naming takes its version from `__init__.py`.
+- The AppImage is built by `Build AppImage` (`.github/workflows/build-appimage.yml`)
+  on every `v*` tag, and the same script builds it locally on Ubuntu 24.04 — the
+  oldest release carrying libadwaita 1.5, and therefore the glibc floor for the
+  image. It rewrites the Meson-installed launcher and `build_config.py` to
+  resolve their prefix relatively, and gives every bundled library an `$ORIGIN`
+  RPATH so no library or Python path leaks into the terminal's shell, `ssh` or
+  anything else the app spawns. Read the header of the script before changing it.
 - `scripts/bump-version.sh` is the single writer of the version and changelog
   across `__init__.py`, `meson.build`, the RPM spec, the metainfo and
   `debian/changelog`. Both `scripts/release.sh` and the Release workflow call

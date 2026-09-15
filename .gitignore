@@ -13,6 +13,8 @@ venv/
 # Build output
 /dist
 /build
+# AppImage build output (packaging/appimage/build-appimage.sh, CI writes here too)
+/release-assets
 builddir/
 /artifacts
 
