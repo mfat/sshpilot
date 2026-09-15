@@ -46,8 +46,11 @@ RUN set -eux; \
 # Python test dependencies: the same requirements-dev.txt tests.yml installs,
 # + pexpect for the PTY integration tests and wakeonlan so its xfail test
 # passes. PyGObject is omitted on purpose — gi is stubbed by the test suite.
+# --ignore-installed for the same reason as the mcp line below: openssh-tests
+# pulls in Debian's python3-cryptography (41.x, no RECORD), and requirements.txt
+# needs >= 42, so pip would otherwise try, and fail, to uninstall it.
 COPY requirements.txt requirements-dev.txt /tmp/requirements/
-RUN pip3 install -r /tmp/requirements/requirements-dev.txt pexpect wakeonlan
+RUN pip3 install --ignore-installed -r /tmp/requirements/requirements-dev.txt pexpect wakeonlan
 
 # openssh-tests installs Debian Python packages (notably idna) without pip
 # RECORD metadata. The MCP optional dependency's resolver otherwise attempts

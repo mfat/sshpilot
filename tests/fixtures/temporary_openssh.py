@@ -520,8 +520,12 @@ exec /usr/sbin/sshd -D -e
         timeout=120.0,
     )
     if create.returncode != 0:
-        detail = (create.stderr or create.stdout or "").strip()
-        raise RuntimeError(f"container start failed: {detail or 'unknown'}")
+        # Both streams: stderr carries the image pull progress, which would
+        # otherwise hide whatever the runtime reported after it.
+        detail = "\n".join(s.strip() for s in (create.stderr, create.stdout) if s and s.strip())
+        raise RuntimeError(
+            f"container start failed ({runtime}, exit {create.returncode}): {detail or 'no output'}"
+        )
     container_id = create.stdout.strip() or container_name
     env = TemporaryOpenSSH(
         runtime=runtime,
