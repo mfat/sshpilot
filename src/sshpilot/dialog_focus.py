@@ -20,8 +20,8 @@ from gi.repository import GLib, Gtk
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "mark_default_response_visible",
     "capture_toplevels",
+    "mark_default_response_visible",
     "mark_new_dialog_default_visible",
 ]
 

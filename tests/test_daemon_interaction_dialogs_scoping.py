@@ -22,7 +22,6 @@ import pytest
 pytest.importorskip("gi")
 
 from sshpilot import daemon_interaction_dialogs as dialogs_mod
-from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import EventType
 from sshpilot.api.interaction_identity import new_interaction_id
 from sshpilot.api.models import (

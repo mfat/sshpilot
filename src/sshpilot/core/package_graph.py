@@ -54,6 +54,7 @@ ALLOWED_EDGES = {
         # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
         "sshpilot.askpass_utils",
         "sshpilot.authorized_keys_parser",  # GI-free authorized_keys parser
+        "sshpilot.forwarding_only_ui",  # GI-free SessionType-none detection
         "sshpilot.ssh_config_utils",
         "sshpilot.transfer_scp",  # GTK-free native SCP operand helpers
         "sshpilot.sftp",

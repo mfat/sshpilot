@@ -39,6 +39,9 @@ class _Button:
     def set_visible(self, value):
         self.visible = bool(value)
 
+    def get_parent(self):
+        return None
+
 
 class _GroupRow:
     def __init__(self, group_id, is_tag_group=False):

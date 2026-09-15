@@ -232,8 +232,8 @@ __all__ = [
     "DOUBLE_SHIFT_SHORTCUT",
     "DoubleShiftDetector",
     "accel_matches_latin_fallback",
-    "latin_fallback_keyvals",
     "get_primary_modifier_label",
     "install_esc_to_close",
     "install_search_esc",
+    "latin_fallback_keyvals",
 ]

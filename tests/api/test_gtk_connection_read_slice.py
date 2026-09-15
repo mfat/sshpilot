@@ -77,7 +77,7 @@ def test_recent_listing_reads_dtos_from_client_not_manager():
                 get_metadata=lambda nickname: {"last_used": 10},
             ),
         ),
-        _min_row=lambda title, subtitle, callback: (title, subtitle, callback),
+        _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle, callback),
         _min_section=lambda title, rows: (title, rows),
         _connect_connection_summary=lambda connection_summary: None,
     )
@@ -274,7 +274,7 @@ def test_daemon_backed_recent_read_is_submitted_without_blocking(monkeypatch):
             get_metadata=lambda _nickname: {"last_used": 1},
         ),
     )
-    page._min_row = lambda title, subtitle, callback: (title, subtitle, callback)
+    page._min_row = lambda title, subtitle, callback, on_info=None: (title, subtitle, callback)
     page._min_section = lambda title, rows: (title, rows)
     page._connect_connection_summary = lambda _summary: None
 

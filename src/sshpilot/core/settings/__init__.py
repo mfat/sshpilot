@@ -64,8 +64,8 @@ __all__ = [
     "normalize_provider",
     "normalize_ssh_overrides",
     "save_settings",
-    "ssh_config_from_settings",
     "set_nested",
     "settings_transaction_lock",
+    "ssh_config_from_settings",
     "ssh_settings_from_values",
 ]

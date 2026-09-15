@@ -110,8 +110,8 @@ def test_build_menubar_uses_existing_actions(monkeypatch):
         "win.save-session",
         "win.open-session",
         "win.manage-sessions",
-        "win.import-config",
         "win.export-config",
+        "win.import-config",
     ]
     assert [a for _l, a in _flatten_items(menus["Edit"])] == [
         "text.undo",

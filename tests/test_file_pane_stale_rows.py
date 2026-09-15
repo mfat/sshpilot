@@ -8,7 +8,6 @@ so e.g. stepping /root -> / -> /root showed leftover 'bin'/'cache' rows that
 only disappeared on a manual reload.
 """
 
-import pytest
 
 # _restore_module_registry is an autouse fixture: importing it here undoes this
 # module's rebuilding of the gi stubs and its purge of the sshpilot.file_manager
