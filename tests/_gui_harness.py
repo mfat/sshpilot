@@ -2,7 +2,8 @@
 
 These tests boot the *real* ``SshPilotApplication`` on a display and drive it
 through its real ``Gio`` actions / widgets, then assert on observable state
-(open dialogs, tab counts, …). They are opt-in and never run in CI:
+(open dialogs, tab counts, …). They are opt-in; only the basic-functions set
+runs in CI, in the release-tag "Test environment" workflow's gui-basics job:
 
     SSHPILOT_GUI_TESTS=1 pytest -m gui          # on a display
     SSHPILOT_GUI_TESTS=1 xvfb-run -a pytest -m gui   # headless box
