@@ -1,0 +1,13 @@
+{
+  "name": "collision_after_duplicate_does_not_move_display_name",
+  "description": "A connection is duplicated through the app, the copy is moved to another port, and then both are pushed onto one destination and renamed in a single external edit. Moving the original to the copy's old port leaves the copy's new alias as the only one at the original destination. Production must not use that to hand the original's identity, and its display name, to the copy. Found by the property search with Hypothesis 6.168.0.",
+  "initial_connections": [
+    {"ref": "base", "hostname": "0.0.example", "port": 22}
+  ],
+  "operations": [
+    {"op": "managed_duplicate", "ref": "base", "as": "copy"},
+    {"op": "external_change_port", "ref": "copy", "port": 2222},
+    {"op": "external_collide_and_rename", "a": "base", "b": "copy"},
+    {"op": "external_change_port", "ref": "base", "port": 2222}
+  ]
+}

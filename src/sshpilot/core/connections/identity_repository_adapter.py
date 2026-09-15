@@ -196,10 +196,10 @@ def reconcile_identity_state(
     # EXACT_ALIAS/anchor evidence on every later pass -- including against a
     # completely unrelated new connection that merely reuses its old, now-
     # free alias. Route each such identity through its own constrained
-    # rematch against only its own pending ambiguity's candidate aliases
-    # (still using this pass's fresh evidence, so a genuine disambiguating
-    # edit -- e.g. one candidate's destination changing -- still resolves it
-    # normally); everything else reconciles exactly as before.
+    # rematch against only its own pending ambiguity's candidate aliases,
+    # using this pass's fresh evidence; everything else reconciles exactly as
+    # before. An edit that makes the candidates differ does not count as
+    # disambiguating -- see the retirement rules below.
     #
     # A pending ambiguity only means something while the aliases it was
     # recorded against are still on offer. Once every candidate alias has left
@@ -264,6 +264,34 @@ def reconcile_identity_state(
     # It cannot be held back as still-pending either: the state model requires
     # a pending ambiguity's aliases to be unclaimed, and these now belong to
     # ordinary identities. So there is nothing sound left to resolve it by.
+    #
+    # And for a third: editing the candidates apart disambiguates nothing
+    # either. Every candidate matched the ghost equally well when the
+    # ambiguity was recorded, so once one of them moves to another port, user
+    # or identity file, the one left matching the ghost's frozen evidence is
+    # no likelier to be the ghost than the one that moved. Rematching there
+    # handed the ghost to whichever candidate the user did not edit -- after
+    # a duplicate collided with its original and the original was then moved,
+    # the original's display name went to the copy.
+    ambiguous_new_by_alias = {projection.alias: projection for projection in ambiguous_new}
+    diverged_ghost_uuids = set()
+    for ambiguity in live_ambiguities:
+        present = [
+            ambiguous_new_by_alias[candidate.alias]
+            for candidate in ambiguity.new_projections
+            if candidate.alias in ambiguous_new_by_alias
+        ]
+        evidence = {
+            (
+                projection.destination_anchor,
+                projection.username_literal,
+                projection.identity_file_evidence.mode,
+                projection.identity_file_evidence.values,
+            )
+            for projection in present
+        }
+        if len(evidence) > 1:
+            diverged_ghost_uuids.update(ambiguity.old_uuids)
     ordinary_new_aliases = {projection.alias for projection in ordinary_new}
     ordinary_new_anchors = {
         projection.destination_anchor
@@ -277,6 +305,7 @@ def reconcile_identity_state(
             entry.projection.destination_anchor is not None
             and entry.projection.destination_anchor in ordinary_new_anchors
         )
+        or entry.uuid in diverged_ghost_uuids
     }
     if retiring_ghost_uuids:
         ambiguous_old = tuple(
