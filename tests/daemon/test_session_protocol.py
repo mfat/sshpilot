@@ -240,7 +240,11 @@ def test_client_disconnect_during_attach_does_not_close_session(
         observer.close()
         assert barrier.is_set()
         assert _wait_until(lambda: owner.get_session(session.id).attachment_count == 1)
-        assert owner.get_session(session.id).state is SessionState.RUNNING
+        # The runner reports RUNNING asynchronously; on a starved CI runner the
+        # detach can be observed while the session is still STARTING.
+        assert _wait_until(
+            lambda: owner.get_session(session.id).state is SessionState.RUNNING
+        )
     finally:
         owner.close()
         observer.close()
