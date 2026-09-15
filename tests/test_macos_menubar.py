@@ -95,10 +95,7 @@ def test_build_menubar_top_level_structure():
     assert labels == ["File", "Edit", "View", "Tools", "Window", "Help"]
 
 
-def test_build_menubar_uses_existing_actions(monkeypatch):
-    import sshpilot.macos_menubar as mm
-
-    monkeypatch.setattr(mm, "should_hide_file_manager_options", lambda: False)
+def test_build_menubar_uses_existing_actions():
     model = _build()
     menus = _submenus_by_label(model)
 
@@ -154,16 +151,9 @@ def test_build_menubar_uses_existing_actions(monkeypatch):
     ]
 
 
-def test_build_menubar_manage_files_follows_availability(monkeypatch):
-    import sshpilot.macos_menubar as mm
-
-    monkeypatch.setattr(mm, "should_hide_file_manager_options", lambda: False)
+def test_build_menubar_always_offers_manage_files():
     tools_menu = _submenus_by_label(_build())["Tools"]
     assert ("Manage Files", "win.open-file-manager") in _flatten_items(tools_menu)
-
-    monkeypatch.setattr(mm, "should_hide_file_manager_options", lambda: True)
-    tools_menu = _submenus_by_label(_build())["Tools"]
-    assert ("Manage Files", "win.open-file-manager") not in _flatten_items(tools_menu)
 
 
 def test_build_menubar_attaches_shared_plugin_section_under_tools():

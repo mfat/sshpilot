@@ -36,10 +36,7 @@ from .connection_display import (
     hosts_hidden as _hosts_hidden,
 )
 from .context_menu import IconContextMenu
-from .file_manager_integration import (
-    should_hide_external_terminal_options,
-    should_hide_file_manager_options,
-)
+from .file_manager_integration import should_hide_external_terminal_options
 from .groups import GroupManager
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
@@ -4822,7 +4819,7 @@ def _attach_connection_list_context_menu(window):
                     menu.add_section(wol_item)
                 else:
                     menu.add_section(
-                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: window.on_manage_files_action(None, None)) if (Capability.FILE_TRANSFER in conn_caps and not should_hide_file_manager_options()) else None,
+                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: window.on_manage_files_action(None, None)) if Capability.FILE_TRANSFER in conn_caps else None,
                         menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: window.on_copy_key_to_server_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
                         menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: window.on_manage_authorized_keys_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
                         wol_item,
@@ -5134,7 +5131,7 @@ def _attach_connection_list_shortcuts(window):
 
 def _build_sidebar_toolbar(window, sidebar_box):
     """Build connection and group toolbars at the bottom of the sidebar."""
-    from sshpilot.overflow_toolbar import OverflowToolbar, mark_force_hidden
+    from sshpilot.overflow_toolbar import OverflowToolbar
 
     toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     toolbar.set_hexpand(True)
@@ -5211,10 +5208,6 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.manage_files_button.set_sensitive(False)
     window.manage_files_button.connect('clicked', window.on_manage_files_button_clicked)
     window.connection_toolbar.add_item(window.manage_files_button)
-    mark_force_hidden(
-        window.manage_files_button,
-        should_hide_file_manager_options(),
-    )
 
     if not should_hide_external_terminal_options():
         window.system_terminal_button = icon_utils.new_button_from_icon_name(
