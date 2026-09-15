@@ -111,11 +111,14 @@ async def test_read_text_file_roundtrip():
     async with stdio_client(_server_parameters(REPO_ROOT)) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+            # LICENSE, not AGENTS.md: AGENTS.md is gitignored, so a CI
+            # checkout has no copy to read. LICENSE is tracked, stable and well
+            # under read_text_file's 64 KiB cap.
             result = await session.call_tool(
-                "read_text_file", {"path": "AGENTS.md"}
+                "read_text_file", {"path": "LICENSE"}
             )
             assert not result.is_error
-            assert "typed frontend-neutral API" in result.content[0].text
+            assert "GNU GENERAL PUBLIC LICENSE" in result.content[0].text
 
 
 async def test_read_text_file_rejects_traversal():
