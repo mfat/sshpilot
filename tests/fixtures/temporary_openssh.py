@@ -52,8 +52,15 @@ def _container_env() -> dict[str, str]:
     Phase 14 harnesses isolate ``HOME``/``XDG_*``. If podman inherits that, it
     creates a fresh storage root that often cannot unpack images (insufficient
     UIDs/GIDs). Keep container engine state on the real login home.
+
+    The GUI tests also run under ``dbus-run-session``, whose private bus has no
+    systemd: rootless podman asks it for the container's cgroup scope and crun
+    fails with "sd-bus call: Process org.freedesktop.systemd1 exited with
+    status 1". Without the address podman uses the user bus in
+    ``XDG_RUNTIME_DIR``, or cgroupfs when there is none.
     """
     env = os.environ.copy()
+    env.pop("DBUS_SESSION_BUS_ADDRESS", None)
     home = _login_home()
     env["HOME"] = str(home)
     env["XDG_DATA_HOME"] = str(home / ".local" / "share")

@@ -29,8 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The build args give the uid the tests run as below a passwd entry,
+      # which OpenSSH needs.
       - name: Build test environment image
-        run: docker build -f tests/test-environment.Dockerfile -t sshpilot-test-env .
+        run: |
+          docker build -f tests/test-environment.Dockerfile \
+            --build-arg TEST_UID="$(id -u)" --build-arg TEST_GID="$(id -g)" \
+            -t sshpilot-test-env .
 
       - name: Run pytest (incl. real-tool integration) in the container
         # Mount the repo at /work and the host docker socket so the docker-exec
