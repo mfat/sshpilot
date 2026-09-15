@@ -58,6 +58,16 @@ RUN pip3 install --ignore-installed -r /tmp/requirements/requirements-dev.txt pe
 # environment intact while installing MCP and its declared transitive deps.
 RUN pip3 install --ignore-installed mcp
 
+# CI runs the suite as the runner's uid, not root. ssh and ssh-keygen refuse to
+# run for a uid with no passwd entry ("No user exists for uid"), so give that uid
+# an account. Its home matches the HOME the workflow sets on the exec tmpfs. An
+# id the base image already has (1000 is "ubuntu") is left as it is.
+ARG TEST_UID=1000
+ARG TEST_GID=1000
+RUN getent group "$TEST_GID" >/dev/null || groupadd -g "$TEST_GID" tester; \
+    getent passwd "$TEST_UID" >/dev/null \
+        || useradd -M -u "$TEST_UID" -g "$TEST_GID" -d /pytest-tmp/home -s /bin/sh tester
+
 # This image is the canonical environment for the real-tool integration gate.
 # Tests may still be run on arbitrary developer machines, where unsupported
 # hardware/provider capabilities can be skipped deliberately.
