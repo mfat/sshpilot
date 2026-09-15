@@ -22,6 +22,7 @@ DEFAULT_MAX_FILE_BYTES = 64 * 1024
 def create_server(scope: Optional[RepoScope] = None) -> Any:
     """Build the dev MCP server, discovering the repository if not pinned."""
     from mcp.server.mcpserver import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
 
     if scope is None:
         scope = RepoScope.discover()
@@ -55,7 +56,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return scope.read_text(path, max_bytes=max_bytes)
         except ScopeError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def list_directory(path: str = ".") -> dict:
@@ -66,7 +67,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return {"path": path, "entries": scope.list_directory(path)}
         except ScopeError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def search_source(
@@ -119,11 +120,11 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         """
         git = GitInspector(scope.root)
         if not git.is_git_repo():
-            raise ValueError(f"not a git repository: {scope.root}")
+            raise ToolError(f"not a git repository: {scope.root}")
         try:
             return git.status()
         except GitError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def git_log(limit: int = 20) -> dict:
@@ -133,11 +134,11 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         """
         git = GitInspector(scope.root)
         if not git.is_git_repo():
-            raise ValueError(f"not a git repository: {scope.root}")
+            raise ToolError(f"not a git repository: {scope.root}")
         try:
             return git.log(limit)
         except GitError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def git_diff(
@@ -153,11 +154,11 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         """
         git = GitInspector(scope.root)
         if not git.is_git_repo():
-            raise ValueError(f"not a git repository: {scope.root}")
+            raise ToolError(f"not a git repository: {scope.root}")
         try:
             return git.diff(base, path=path, stat_only=stat_only)
         except GitError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def find_tests(path: Optional[str] = None) -> dict:
@@ -184,7 +185,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         ``surface`` is ``all`` (default), ``client``, or ``daemon``.
         """
         if surface not in {"all", "client", "daemon"}:
-            raise ValueError("surface must be 'all', 'client', or 'daemon'")
+            raise ToolError("surface must be 'all', 'client', or 'daemon'")
         return api_surface.list_methods(scope, surface=surface)
 
     @server.tool()
@@ -199,7 +200,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return api_surface.inspect_method(scope, method)
         except api_surface.ApiNotFoundError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def check_api_drift() -> dict:
@@ -238,7 +239,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return architecture.trace_interaction_scope(scope, method)
         except architecture.ArchitectureError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def review_commit(base: str = "HEAD") -> dict:
@@ -251,7 +252,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return architecture.review_commit(scope, base=base)
         except architecture.ArchitectureError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def plan_api_change(method: str) -> dict:
@@ -264,7 +265,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return architecture.plan_api_change(scope, method)
         except architecture.ArchitectureError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def recommend_tests(paths: List[str]) -> dict:
@@ -277,7 +278,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return architecture.recommend_tests(scope, paths)
         except architecture.ArchitectureError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def validate_change(base: str = "HEAD") -> dict:
@@ -290,7 +291,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return architecture.validate_change(scope, base=base)
         except (architecture.ArchitectureError, execution.ExecutionError) as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def run_tests(suite: str, path: Optional[str] = None) -> dict:
@@ -304,7 +305,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return execution.run_tests(scope, suite, path=path)
         except execution.ExecutionError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def validate_api_artifacts() -> dict:
@@ -315,7 +316,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return execution.check_api_artifacts(scope)
         except execution.ExecutionError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     @server.tool()
     def run_lint(path: Optional[str] = None) -> dict:
@@ -327,7 +328,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         try:
             return execution.run_lint(scope, path)
         except execution.ExecutionError as error:
-            raise ValueError(str(error)) from error
+            raise ToolError(str(error)) from error
 
     return server
 

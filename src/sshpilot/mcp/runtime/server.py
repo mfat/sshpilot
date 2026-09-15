@@ -23,8 +23,18 @@ SERVER_NAME = "sshpilot-mcp-runtime"
 SERVER_VERSION = "0.1.0"
 
 
-class RuntimeToolError(RuntimeError):
-    """Tool invocation failed; message is safe to surface to the model."""
+try:
+    from mcp.server.mcpserver.exceptions import ToolError as _ToolErrorBase
+except ImportError:  # optional dependency; the handle stays usable without it
+    _ToolErrorBase = RuntimeError
+
+
+class RuntimeToolError(_ToolErrorBase):
+    """Tool invocation failed; message is safe to surface to the model.
+
+    Derives from MCP's ``ToolError`` when available: since mcp 2.2 any other
+    exception reaches the model only as ``Error executing tool <name>``.
+    """
 
 
 class RuntimeHandle:

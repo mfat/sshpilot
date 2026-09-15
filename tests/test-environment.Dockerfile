@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip \
         openssh-client openssh-tests sshpass \
         fido2-tools \
-        socat mosh picocom screen \
+        socat mosh picocom screen telnet \
         docker.io \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,13 +43,11 @@ RUN set -eux; \
     chmod +x /usr/local/bin/kubectl /usr/local/bin/kind; \
     kubectl version --client; kind version
 
-# Python test dependencies (mirrors .github/workflows/tests.yml, including
-# pytest-xdist for pytest.ini's addopts, + pexpect for the PTY integration
-# tests and wakeonlan so its xfail test passes). PyGObject is omitted on
-# purpose — gi is stubbed by the test suite.
-RUN pip3 install \
-        paramiko cryptography keyring psutil certifi \
-        pytest pytest-cov pytest-xdist pexpect wakeonlan jsonschema
+# Python test dependencies: the same requirements-dev.txt tests.yml installs,
+# + pexpect for the PTY integration tests and wakeonlan so its xfail test
+# passes. PyGObject is omitted on purpose — gi is stubbed by the test suite.
+COPY requirements.txt requirements-dev.txt /tmp/requirements/
+RUN pip3 install -r /tmp/requirements/requirements-dev.txt pexpect wakeonlan
 
 # openssh-tests installs Debian Python packages (notably idna) without pip
 # RECORD metadata. The MCP optional dependency's resolver otherwise attempts

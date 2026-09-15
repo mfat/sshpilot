@@ -216,10 +216,13 @@ def test_native_backend_survives_a_child_that_floods_stderr():
     semantics, which is what a hand-written fake stream gets wrong.
     """
     flood = 1_000_000
+    # The launch argv ends with the destination operand: build_argv inserts
+    # the sources just before it, so the script must not be the last element.
     provider = _RealProcessProvider([
         sys.executable,
         "-c",
         f"import sys; sys.stderr.write('x' * {flood}); sys.stderr.flush()",
+        "alice@example.test:/remote/path",
     ])
     backend = NativeScpBackend(provider, _Broker())
 

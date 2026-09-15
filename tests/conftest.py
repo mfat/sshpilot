@@ -117,8 +117,19 @@ def _cleanup_integration_containers(label):
         print(f"[fixtures] {label} OpenSSH cleanup skipped: {exc!r}")
 
 
+def _is_xdist_worker(config):
+    return hasattr(config, "workerinput")
+
+
 def pytest_collection_finish(session):
-    """Clean leftovers before a run that will actually exercise integration."""
+    """Clean leftovers before a run that will actually exercise integration.
+
+    Only the controlling process sweeps: every xdist worker also collects and
+    finishes a session, and a worker's sweep removes the sshd containers other
+    workers are still using ("No such container" mid-test).
+    """
+    if _is_xdist_worker(session.config):
+        return
     selected = any(
         item.get_closest_marker("integration") is not None
         for item in session.items

@@ -40,17 +40,26 @@ jobs:
         # "<testname>current" symlink per unique tmp_path-using test name, and at
         # ~5k items that's thousands of resolve() syscalls -- slow enough on a
         # regular disk-backed /tmp to blow the job timeout.
+        # Docker mounts /dev/shm noexec, which breaks every test that execs a
+        # helper out of tmp_path (askpass, pinentry, frozen-build shims), so
+        # basetemp is a dedicated exec tmpfs instead. Tests run as the runner
+        # user, not root: root ignores file modes, so permission-denied tests
+        # cannot fail the way they should. The docker socket's group is added
+        # so the sibling-container fixtures still reach the daemon.
         # virtual_fido requires runner-level UHID/hidraw setup and an
         # explicitly built pando85 binary; the dedicated job below provisions
         # that capability and runs it independently.
         run: |
           docker run --rm \
             --network=host \
-            --shm-size=2g \
+            --user "$(id -u):$(id -g)" \
+            --group-add "$(stat -c %g /var/run/docker.sock)" \
+            --tmpfs /pytest-tmp:exec,mode=1777,size=2g \
+            -e HOME=/pytest-tmp/home \
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra -m "not gui and not virtual_fido" --basetemp=/dev/shm/pytest-tmp
+            pytest -ra -m "not gui and not virtual_fido" --basetemp=/pytest-tmp/basetemp
 
   virtual-fido:
     name: Virtual HID FIDO (hosted runner)

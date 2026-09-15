@@ -165,10 +165,14 @@ class TestForwardDaemonPath:
         forwards = client.list_forwards()
         matching = [f for f in forwards if f.id == fwd.id]
         assert len(matching) == 1
+        # This daemon has no launch provider, so the forward fails preparation
+        # moments after it is opened; which state the listing catches is a race.
+        # What is under test is that the opened forward is tracked at all.
         assert matching[0].state in {
             ForwardState.ACTIVE,
             ForwardState.STARTING,
             ForwardState.CREATED,
+            ForwardState.FAILED,
         }
 
         client.close_forward(CloseForwardRequest(forward_id=fwd.id))

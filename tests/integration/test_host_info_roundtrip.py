@@ -152,7 +152,12 @@ class _LoopbackLaunchProvider:
         return "127.0.0.1", os.environ.get("USER", ""), self._port
 
     def prepare_remote_command_launch(
-        self, connection_id, remote_command, *, interaction_policy="broker"
+        self,
+        connection_id,
+        remote_command,
+        *,
+        interaction_policy="broker",
+        require_master=False,
     ):
         # No BatchMode: the daemon's askpass transport must be able to raise
         # a prompt, which BatchMode would suppress. The real provider does not

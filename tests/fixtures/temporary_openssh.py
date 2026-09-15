@@ -136,19 +136,23 @@ def cleanup_orphaned_temporary_openssh(
     *,
     runtime: Optional[str] = None,
     keep_names: Optional[Iterable[str]] = None,
+    only_names: Optional[Iterable[str]] = None,
 ) -> list[str]:
     """Force-remove leftover ``sshpilot-p13-*`` containers (and their conmon).
 
     Safe for pytest session start/finish and Flatpak handoff scripts. Never
-    touches the production sshPilot daemon socket or processes.
+    touches the production sshPilot daemon socket or processes. ``only_names``
+    restricts the sweep, so a test can exercise it without removing the
+    containers parallel workers are still using.
     """
     rt = runtime or container_runtime()
     if rt is None:
         return []
     keep = {n for n in (keep_names or ()) if n}
+    only = None if only_names is None else {n for n in only_names if n}
     removed: list[str] = []
     for name in list_temporary_openssh_containers(rt):
-        if name in keep:
+        if name in keep or (only is not None and name not in only):
             continue
         result = _run_container(rt, ("rm", "-f", name), timeout=60.0)
         if result.returncode == 0:
