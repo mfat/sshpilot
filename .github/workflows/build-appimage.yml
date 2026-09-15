@@ -84,8 +84,15 @@ jobs:
       # xvfb-run: with a display available the smoke test also renders the
       # xterm.js shell in a real WebView, which is the only way to catch a
       # WebKit whose out-of-process helpers cannot be exec'd from the bundle.
+      #
+      # The sysctl: the runner restricts unprivileged user namespaces and, unlike
+      # a desktop Ubuntu, loads no AppArmor profile that lets bwrap bring up the
+      # loopback in WebKit's sandbox, so the web process dies with
+      # "bwrap: loopback: Failed RTM_NEWADDR". Lifting it on the runner keeps the
+      # render check exercising the real sandbox rather than disabling it.
       - name: Build AppImage
         run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           xvfb-run -a packaging/appimage/build-appimage.sh \
             '${{ steps.version.outputs.version }}' \
             release-assets
