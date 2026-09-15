@@ -1,14 +1,14 @@
 name: Test environment
 
 # Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
-# and runs the complete headless suite at the pre-merge/nightly gates, not on
-# every pull-request update. It can also be started manually when a change needs
-# integration coverage before entering the merge queue.
+# and runs the complete headless suite when a release is tagged, not on every
+# pull-request update. It can also be started manually when a change needs
+# integration coverage before release.
 
 on:
-  merge_group:
-  schedule:
-    - cron: "23 2 * * *"
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       virtual_fido_only:
@@ -40,17 +40,68 @@ jobs:
         # "<testname>current" symlink per unique tmp_path-using test name, and at
         # ~5k items that's thousands of resolve() syscalls -- slow enough on a
         # regular disk-backed /tmp to blow the job timeout.
+        # Docker mounts /dev/shm noexec, which breaks every test that execs a
+        # helper out of tmp_path (askpass, pinentry, frozen-build shims), so
+        # basetemp is a dedicated exec tmpfs instead. Tests run as the runner
+        # user, not root: root ignores file modes, so permission-denied tests
+        # cannot fail the way they should. The docker socket's group is added
+        # so the sibling-container fixtures still reach the daemon.
         # virtual_fido requires runner-level UHID/hidraw setup and an
         # explicitly built pando85 binary; the dedicated job below provisions
         # that capability and runs it independently.
         run: |
           docker run --rm \
             --network=host \
-            --shm-size=2g \
+            --user "$(id -u):$(id -g)" \
+            --group-add "$(stat -c %g /var/run/docker.sock)" \
+            --tmpfs /pytest-tmp:exec,mode=1777,size=2g \
+            -e HOME=/pytest-tmp/home \
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra -m "not gui and not virtual_fido" --basetemp=/dev/shm/pytest-tmp
+            pytest -ra -m "not gui and not virtual_fido" --basetemp=/pytest-tmp/basetemp
+
+  gui-basics:
+    name: Basic app functions in a real window
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.virtual_fido_only != true }}
+    # Ubuntu 24.04 ships libadwaita 1.5, the oldest version the packages
+    # support, so this also proves the app still starts on the minimum stack.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK stack and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo python3-venv \
+            gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-vte-3.91 \
+            gir1.2-gtksource-5 gir1.2-secret-1 \
+            openssh-client xvfb dbus gnome-keyring
+
+      - name: Install Python test dependencies
+        # --system-site-packages keeps the distro's PyGObject visible.
+        run: |
+          python3 -m venv --system-site-packages .venv-gui
+          .venv-gui/bin/pip install -r requirements-dev.txt
+
+      - name: Log in with a password, a key and a passphrase key, and open a local shell
+        # Each test drives the real main window on Xvfb against a disposable
+        # sshd container and waits for output only a running shell produces.
+        # A D-Bus session with an unlocked gnome-keyring gives the app a real
+        # Secret Service, so saving a password and filling it in is covered too.
+        env:
+          SSHPILOT_GUI_TESTS: "1"
+        run: |
+          dbus-run-session -- bash -ceu '
+            printf "ci" | gnome-keyring-daemon --unlock --replace --components=secrets >/dev/null
+            xvfb-run -a -s "-screen 0 1400x900x24" \
+              .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 -m gui \
+                tests/gui/test_basic_app_functions.py \
+                "tests/gui/test_phase14_auth_dialogs.py::test_password_dialog_without_auth_helper" \
+                "tests/gui/test_phase14_terminal_integration.py::test_connect_via_terminal_manager_daemon_route"
+          '
 
   virtual-fido:
     name: Virtual HID FIDO (hosted runner)

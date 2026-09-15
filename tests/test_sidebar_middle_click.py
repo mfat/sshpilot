@@ -10,7 +10,6 @@ handler, so no display is needed.
 
 import types
 
-import pytest
 
 from sshpilot import sidebar
 from sshpilot.sidebar import Gdk

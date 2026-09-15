@@ -92,6 +92,39 @@ jobs:
           # Re-check with `brew info --json=v2 <formula>` when a new one breaks:
           # the tell is a bottle list with arm64_* and x86_64_linux but no
           # plain sequoia/sonoma tag.
+          # appstream's build closure reaches llvm@22 (vala -> graphviz ->
+          # librsvg -> rust -> llvm@22). The current llvm@22 rebuild ships no
+          # Intel bottle, so brew compiles LLVM from source -- hours, past the
+          # job timeout, and it trips over upstream patch checksums. ghcr
+          # still holds the Intel bottle an earlier rebuild of the same
+          # version published; pour that so only rust builds from source.
+          # Falls through to brew's normal resolution when it is not there.
+          pour_earlier_intel_bottle() {
+            local formula="$1" repo version token digest file
+            repo="homebrew/core/$(echo "$formula" | tr '@' '/')"
+            version="$(brew info --json=v2 "$formula" | python3 -c 'import json,sys; f=json.load(sys.stdin)["formulae"][0]; r=f["revision"]; print(f["versions"]["stable"] + (f"_{r}" if r else ""))')"
+            token="$(curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')" || return 0
+            digest="$(curl -fsSL -H "Authorization: Bearer $token" \
+                -H "Accept: application/vnd.oci.image.index.v1+json" \
+                "https://ghcr.io/v2/${repo}/manifests/${version}" \
+              | python3 -c 'import json,sys
+          for m in json.load(sys.stdin).get("manifests", []):
+              a = m.get("annotations", {})
+              if a.get("org.opencontainers.image.ref.name", "").rsplit(".", 1)[-1] in ("sequoia", "sonoma"):
+                  print(a["sh.brew.bottle.digest"]); break')" || return 0
+            if [ -z "$digest" ]; then
+              echo "::warning::no earlier Intel bottle for $formula $version on ghcr"
+              return 0
+            fi
+            file="$RUNNER_TEMP/${formula}--${version}.sonoma.bottle.tar.gz"
+            curl -fsSL -H "Authorization: Bearer $token" -o "$file" \
+              "https://ghcr.io/v2/${repo}/blobs/sha256:${digest}" || return 0
+            echo "${digest}  ${file}" | shasum -a 256 -c - || return 0
+            brew install --ignore-dependencies "$file" \
+              || echo "::warning::pouring the earlier $formula bottle failed"
+          }
+          pour_earlier_intel_bottle llvm@22
+
           brew_install --overwrite --build-from-source appstream
 
           # Install with overwrite flag to prevent linking errors.

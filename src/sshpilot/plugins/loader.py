@@ -22,12 +22,12 @@ tomllib is 3.11+)::
       "id": "ssh",
       "name": "SSH protocol",
       "api_version": 1,
-      "entry": "plugin",          // attribute or module exposing the class
       "builtin": true
     }
 
-The entry module must expose a ``Plugin`` class subclassing
-``SshPilotPlugin``.
+The package's ``__init__.py`` must expose a ``Plugin`` class subclassing
+``SshPilotPlugin``; that name is fixed. A legacy ``entry`` key is tolerated in
+a manifest but ignored.
 """
 
 from __future__ import annotations

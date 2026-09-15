@@ -12,7 +12,7 @@ change without notice.
 > and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.9` (see [Versioning](#versioning)).
+- **Current API version:** `1.14` (see [Versioning](#9-versioning)).
 - **Worked examples** — both are **IP/SSH** providers (provision → get an address
   → `add_connection` a normal SSH connection); they differ in how much they do:
   - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — the minimal shape, against a fake provider.
@@ -36,19 +36,20 @@ change without notice.
 | Stream a remote command line-by-line (native SSH/auth path) | `ctx.run_command_stream(nickname, command, on_line=…)` *(1.13)* |
 | Run a one-shot local command (Flatpak-host aware) | `ctx.run_local_command(command)` *(1.11)* |
 | Stream a local command line-by-line | `ctx.run_local_command_stream(command, on_line=…)` *(1.13)* |
-| Read resolved SSH config (`ssh -G`) | `ctx.get_effective_ssh_config(nickname)` *(1.5)* |
-| List/delete keys, deploy a key to a host | `ctx.list_keys()` / `ctx.delete_key(path)` / `ctx.copy_key_to_host(nickname, pub)` *(1.5)* |
+| List/delete keys the app manages | `ctx.list_keys()` / `ctx.delete_key(path)` *(1.5)* |
 | Inspect/drive open terminals | `ctx.list_sessions()` / `ctx.read_terminal(id)` / `ctx.send_terminal(id, text)` *(1.5)* |
 | Persist files / make HTTP calls | `ctx.data_dir`, `ctx.files`, `ctx.http` *(1.5)* |
 | Open a terminal tab running a one-off command (streamed) | `ctx.open_command_terminal(nickname, remote_command, title=)` *(1.6)* |
 | Open a local terminal tab running a command (streamed/interactive) | `ctx.open_local_command_terminal(command, title=)` *(1.11)* |
 | Add an item to the connection right-click menu | `ctx.ui.register_connection_action(action_id, label, icon, callback)` *(1.7)* |
 | Register a page with no menu entry / custom activation | `ctx.ui.register_page(..., add_menu_item=False, on_activate=cb)` *(1.8)* |
-| Keep one SSH connection warm & multiplex calls over it | `ctx.acquire_multiplex(nickname)` / `ctx.release_multiplex(nickname)` *(1.9)* |
+| Forward a remote port to a local one | `ctx.ensure_local_forward(nickname, remote_port)` *(1.12)* |
+| Show a URL in an embedded WebKit tab | `ctx.ui.open_web_tab(url, title=)` *(1.12)* |
 | Store/read credentials (keyring) | `ctx.secrets.get/set/delete(key)` |
 | Prompt for SSH login password (in-app GUI) | `show_ssh_password_dialog(...)` in `sshpilot.window_dialogs` (also re-exported from `sshpilot.window`) *(escape hatch — see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs))* |
 | Store/read plugin settings | `ctx.settings.get/set(key)` |
 | Run code back on the UI thread | `ctx.run_on_ui_thread(fn, *args)` |
+| Reach the typed daemon client (escape hatch) | `ctx.daemon_client()` |
 
 ---
 
@@ -139,9 +140,12 @@ quit    │  app_shutdown event  then deactivate()
   made early are queued where possible, but don't rely on it; do live work from
   `app_started` or later events / user actions.)
 - **Don't touch daemon-owned state in `activate()` either** — `settings`,
-  `secrets`, `identities`, `add_connection`/`update_connection` and the key
-  operations all raise `BackendUnavailable` (a `RuntimeError`) until the daemon
-  client is up. In particular **`ctx.settings.get()` raises rather than
+  `secrets`, `add_connection`/`update_connection` and the key operations all
+  raise until the daemon client is up: `BackendUnavailable` from `settings`, a
+  plain `RuntimeError` from the rest (both are `RuntimeError` subclasses).
+  `identities` is the one that doesn't raise — it reports an empty list /
+  `False` instead, which is indistinguishable from "no keys loaded", so don't
+  read it during `activate()` either. In particular **`ctx.settings.get()` raises rather than
   returning your `default`**: a silent default is indistinguishable from "unset",
   so a plugin that loads a store at `activate()` and writes the whole store back
   on the next edit would erase it. Read your settings in the `app_started`
@@ -169,15 +173,13 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `update_connection(nickname: str, data: dict) -> bool` — update an existing connection in place (rewrites its stored settings and re-stores its password). Returns `False` if no connection with that nickname exists. Pair with `add_connection` to refresh a provisioned host whose address/credentials changed. *(API ≥ 1.3)*
 - `open_connection(nickname: str) -> bool` — open a terminal tab for an existing connection. Returns `False` if unknown / UI not ready. *(after `app_started`)*
 - `list_connections() -> list[ConnectionInfo]` — read-only snapshot of every saved connection. Safe any time after load. *(API ≥ 1.4)*
-- `generate_key(name: str, *, key_type="ed25519", key_size=3072, comment=None, passphrase=None) -> str | None` — generate an SSH key; returns the private-key path or `None`. *(after `app_started`)*
+- `generate_key(name: str, **kwargs) -> str | None` — generate an SSH key; returns the private-key path or `None`. Keyword arguments are passed straight to the key manager: `key_type="ed25519"`, `key_size=0` (RSA callers that omit it get 3072), `comment=None`, `encrypted=False`. There is no `passphrase=` argument — protected input is collected by the daemon interaction flow. *(after `app_started`)*
 
-### Remote commands, config & keys *(API ≥ 1.5)*
-- `run_command(nickname: str, command: str, *, timeout=30, input=None) -> CommandResult` — run a one-shot command on a saved host and capture `exit_code`/`stdout`/`stderr`. Reuses the app's SSH/auth path (`~/.ssh/config`, ProxyJump, passphrase via askpass; sshpass only when the connection's auth method is password). **Blocking** — call from a worker thread. `exit_code == -1` means it couldn't be launched. Optional `input` is written to the remote command's stdin (e.g. a password for `sudo -S`); the SSH transport itself is non-interactive (no PTY).
+### Remote commands & keys *(API ≥ 1.5)*
+- `run_command(nickname: str, command: str, *, timeout=30, input=None) -> CommandResult` — run a one-shot command on a saved host and capture `exit_code`/`stdout`/`stderr`. It is executed by the daemon over the app's own SSH/auth path (`~/.ssh/config`, ProxyJump, stored credentials), so the plugin never assembles an `ssh` command line of its own. **Blocking** — call from a worker thread. `exit_code == -1` means it couldn't be launched. Optional `input` is written to the remote command's stdin (e.g. a password for `sudo -S`); the SSH transport itself is non-interactive (no PTY).
 - `run_command_stream(nickname: str, command: str, *, on_line, on_done=None, input=None) -> StreamHandle` *(API ≥ 1.13)* — start a long-lived remote command over the same native SSH/auth path and deliver stdout/stderr **lines** to `on_line` (marshalled onto the UI thread). No timeout — call `handle.stop()` when finished (page unmap, selection change, …). `on_done(exit_code)` runs when the process exits. Use this for in-page streaming such as `docker logs -f` or `docker events` when you need lines in a widget rather than a VTE tab.
-- `get_effective_ssh_config(nickname: str) -> dict` — resolved `ssh -G` options for the host (keys lowercased; multi-value options are lists).
 - `list_keys() -> list[dict]` — `{"private_path", "public_path"}` for keys the app manages. *(after `app_started`)*
-- `delete_key(private_path: str) -> bool` — delete a key pair; refuses paths outside the app's key dir. *(after `app_started`)*
-- `copy_key_to_host(nickname: str, public_key_path: str) -> bool` — install a public key on a host via the shared ssh-copy-id/auth path. **Blocking.** *(after `app_started`)*
+- `delete_key(private_path: str) -> bool` — delete a key pair. The path is compatibility input: it is matched against the daemon's own key list and deletion is delegated by key id, so a path the daemon doesn't manage simply returns `False`. *(after `app_started`)*
 - `open_command_terminal(nickname: str, remote_command: str, *, title=None, pty_prompt=None, pty_response=None) -> bool` *(API ≥ 1.6)* — open a new terminal tab running a one-off command on the host over the single native SSH/auth path. Use this for **streamed/interactive** output that `run_command` (one-shot, captured) can't show — e.g. `docker logs -f`, `docker exec -it`, `top`. Optional `pty_prompt`/`pty_response` arm a one-shot auto-fill: the first time `pty_prompt` appears in the terminal output, `pty_response` (plus a newline) is typed into the PTY — useful to answer a remote `sudo` password prompt without putting the secret on a command line. *(after `app_started`)*
 
 ### Local commands *(API ≥ 1.11)*
@@ -189,30 +191,29 @@ Use these only for genuinely local work. Remote commands must use `run_command` 
 `run_command_stream` / `open_command_terminal` so they retain sshPilot's unified
 SSH and authentication path.
 
-### Connection multiplexing — faster polling *(API ≥ 1.9)*
-If your plugin polls a host (repeated `run_command` calls — a dashboard, a stats
-refresh, a watch loop), each call otherwise pays a fresh TCP connect **and auth
-handshake**. Ask core to keep one SSH **ControlMaster** connection warm for the
-host while your surface is open; `run_command` then transparently reuses it (no
-re-auth, ~10–50 ms/call instead of hundreds). No socket management or new auth
-path on your side — it rides the same `~/.ssh/config`/auth path as everything else.
-- `acquire_multiplex(nickname: str) -> None` — start keeping a master warm for the
-  host. **Refcounted** and shared process-wide, so two surfaces (or your plugin +
-  the global Preferences toggle) share a single master. The master is created
-  lazily by the first `run_command` after acquire and is self-healing.
-- `release_multiplex(nickname: str) -> None` — drop your reference; when the last
-  one goes away core tears the master down (`ssh -O exit`), else `ControlPersist`
-  expires it. **Always balance every `acquire`** — the natural place is the page's
-  `map`/`unmap` (acquire when shown, release when hidden; swap on host change).
-- Older cores lack these methods — guard with `try/except AttributeError` (or check
-  the negotiated API minor) and fall back to plain `run_command`.
+### Port forwards & web tabs *(API ≥ 1.12)*
+- `ensure_local_forward(nickname: str, remote_port: int, *, timeout=15) -> int` —
+  open (through the daemon's forwarding service) a forward from a free local
+  port to `127.0.0.1:remote_port` on the host, and return the local port.
+  **Blocking** — call from a worker thread; raises `RuntimeError` if the daemon
+  has no forwarding capability, the connection is unknown, or the forward never
+  reaches the active state.
+- `ctx.ui.open_web_tab(url, *, title=None) -> bool` — show `url` in an embedded
+  WebKit tab, falling back to the system browser when WebKit is unavailable.
+  Returns `True` when something opened. *(after `app_started`)* Pair the two to
+  surface a remote web UI without asking the user to set up a tunnel.
 
-```python
-# In a polling page, tie the warm master to the page being visible:
-self.connect("map",   lambda *_: self.ctx.acquire_multiplex(self._nick))
-self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
-# …then just call self.ctx.run_command(self._nick, "docker ps …") on your timer.
-```
+### Connection reuse — nothing to do *(was API 1.9)*
+`acquire_multiplex(nickname)` / `release_multiplex(nickname)` shipped in 1.9 as an
+explicit ControlMaster hint. Transport reuse is daemon-owned as of 1.14, and both
+methods are **retained only as no-ops** so plugins written against 1.9 keep
+importing and running. Repeated `run_command` calls to the same host are pooled
+for you.
+
+- **Writing new code?** Don't call them, and don't add `map`/`unmap` bookkeeping
+  for them.
+- **Porting a 1.9 plugin?** Delete the calls. Leaving them in is harmless but
+  misleading — they do nothing.
 
 ### Terminals & sessions *(API ≥ 1.5, after `app_started`)*
 - `list_sessions() -> list[SessionInfo]` — currently open terminal sessions.
@@ -239,7 +240,7 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 - If the user selects a session-backed backend (Bitwarden/Vaultwarden) that is locked, or the `agent` "don't store" backend, `get`/`set` may return `None`/fail — handle missing secrets gracefully.
 
 ### Identities — `ctx.identities` (SSH identity providers, read-only)
-- `list() -> list[Identity]` — every SSH identity the configured identity providers currently expose (e.g. keys loaded in the system ssh-agent). `is_agent_available() -> bool` — whether the system ssh-agent is reachable.
+- `list() -> list[Identity]` — the keys the **system ssh-agent** currently exposes, read from daemon-owned provider state. `is_agent_available() -> bool` — whether that agent is reachable right now (answered from the daemon's provider registry, even when the user has selected a different provider). Both return empty/`False` rather than raising when the daemon can't be reached — there is no partial frontend fallback.
 - `Identity` fields: `id`, `display_name`, `fingerprint` (str | None), `provider_name`. Import it from `sshpilot.plugins.api`.
 - This is the identity-side parallel of `ctx.secrets`: secrets answer *what password/passphrase*, identities answer *which key/agent*. Keeping them separate lets users mix sources (keys via ssh-agent, passwords via libsecret/Bitwarden) as configuration.
 - Read-only for plugins — choosing/configuring providers is the user's job. See `IDENTITY_PROVIDERS.md` for the provider contract.
@@ -430,7 +431,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 13)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 14)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -440,17 +441,19 @@ must be made on the UI thread.
   `ctx.run_on_ui_thread`, `ctx.plugin_id`; `1.3` connection groups
   (`create_group`/`add_connection_to_group`/`add_connection_group`) and
   `update_connection`; `1.4` `list_connections`; `1.5` `run_command`,
-  `get_effective_ssh_config`, `copy_key_to_host`, `list_keys`/`delete_key`,
+  `list_keys`/`delete_key`,
   `list_sessions`/`read_terminal`/`send_terminal`, and `ctx.data_dir`/
   `ctx.files`/`ctx.http`; `1.6` `open_command_terminal` (streamed/interactive
   output); `1.7` `ui.register_connection_action` (connection right-click menu);
   `1.8` `ui.register_page(add_menu_item=…, on_activate=…)`; `1.9`
-  `acquire_multiplex`/`release_multiplex` (ControlMaster connection reuse for
-  polling plugins — `run_command` reuses the warm master transparently); `1.10`
+  `acquire_multiplex`/`release_multiplex` (**since withdrawn** — see
+  [Connection reuse](#connection-reuse--nothing-to-do-was-api-19)); `1.10`
   `identities`; `1.11` `run_local_command`/`open_local_command_terminal`;
   `1.12` `ensure_local_forward` / `ui.open_web_tab`; `1.13`
   `run_command_stream` / `run_local_command_stream` (line-oriented streams +
-  `StreamHandle.stop()`).
+  `StreamHandle.stop()`); `1.14` remote commands, streams, settings and session
+  views became daemon-owned, which turned `acquire_multiplex` /
+  `release_multiplex` into no-ops.
 
 ---
 
@@ -459,8 +462,8 @@ must be made on the UI thread.
 - **Do** import only from `sshpilot.plugins.api`.
 - **Do** keep `activate` to registration; do live work after `app_started`.
 - **Do** keep network/slow work off the UI thread.
-- **Do** call `acquire_multiplex`/`release_multiplex` (balanced) if you poll a host
-  with repeated `run_command` calls — it removes a per-call connect+auth handshake.
+- **Do** just call `run_command` on a timer if you poll a host — the daemon pools
+  the transport; there is nothing for you to acquire or release.
 - **Don't** touch the main window, the internal `Connection` class, private
   modules, or GObject signals directly — use events and `PluginContext`.
 - **Don't** store secrets in `settings`.
@@ -508,9 +511,10 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 
 **Rules for both:**
 - **The `ctx` in `build_spawn` is a host-less spawn context** (built via
-  `PluginContext.for_spawn`): `ctx.secrets` / `ctx.settings` work and are scoped
-  to your plugin, but `ctx.ui` and `ctx.events` are `None` — `build_spawn` must be
-  stateless, deriving everything from `connection.data` + the environment.
+  `PluginContext.for_spawn`): `ctx.ui` and `ctx.events` are `None`, and
+  `ctx.secrets` / `ctx.settings` are **not available** — the daemon builds that
+  context without a backend, so both raise. `build_spawn` must be stateless,
+  deriving everything from `connection.data` + the environment.
 - **Run the CLI off the UI thread** (`threading.Thread` + `subprocess.run(..., timeout=…)`), then marshal results back with `ctx.run_on_ui_thread`. `build_spawn` itself must not block — it only assembles argv.
 - **Parse defensively.** Prefer `--output json` / `--json`, but tolerate missing/renamed fields; don't hard-assert a schema.
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.

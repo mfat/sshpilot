@@ -374,7 +374,9 @@ def test_cleanup_orphaned_removes_detached_fixture(tmp_path):
     name = env.container_name
     # Simulate starter process dropping the object without destroy.
     env.detach()
-    removed = cleanup_orphaned_temporary_openssh()
+    # Sweep only this container: an unrestricted sweep also removes the sshd
+    # containers other xdist workers are using at the same moment.
+    removed = cleanup_orphaned_temporary_openssh(only_names={name})
     assert name in removed
     probe = subprocess.run(
         (env.runtime, "inspect", name),

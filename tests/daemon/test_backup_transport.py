@@ -8,7 +8,6 @@ store may build an ssh command line of its own.
 from __future__ import annotations
 
 import base64
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -540,7 +539,6 @@ def test_daemon_server_attaches_the_backup_transport(tmp_path, monkeypatch):
     """The real composition must hand the secrets service a provider carrying
     the SFTP, transfer and one-shot runtimes -- otherwise every SSH-server
     backup fails with "no remote backup transport is configured"."""
-    import logging
 
     from sshpilot.daemon import DaemonServer
     from sshpilot.daemon.backup_transport import BackupTransportProvider
@@ -737,7 +735,6 @@ def test_encrypted_preview_reuses_the_archive_it_already_downloaded(tmp_path):
 
 def test_preview_deletes_the_archive_it_downloads_on_the_happy_path(tmp_path):
     """Only the encrypted-without-a-passphrase case retains a file."""
-    import os
 
     from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
 

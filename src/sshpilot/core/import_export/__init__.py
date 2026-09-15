@@ -27,10 +27,10 @@ from .orchestrator import (
 from .validation import ImportValidationReport, validate_connection_export_payload
 
 __all__ = [
+    "CURRENT_SCHEMA_VERSION",
     "AsbruConnectionDraft",
     "AsbruGroupDraft",
     "AsbruParseResult",
-    "CURRENT_SCHEMA_VERSION",
     "ConflictAction",
     "ConflictDescription",
     "ImportPlan",

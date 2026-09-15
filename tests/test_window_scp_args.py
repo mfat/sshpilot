@@ -33,13 +33,6 @@ def test_native_backend_preserves_alias_and_literal_proxy_config_boundary():
 
 
 def test_native_backend_places_recursive_flag_in_daemon_launch_args():
-    request = StartScpTransferRequest(
-        connection_id=ConnectionId("demo"),
-        direction=TransferDirection.UPLOAD,
-        sources=("/tmp/folder",),
-        destination="/remote/path",
-        recursive=True,
-    )
     backend = NativeScpBackend(_Provider(), object())
     argv = backend.build_argv(
         (

@@ -13,7 +13,8 @@ Patterns shown (the conventions the official non-protocol plugins follow):
 * pure logic (`next_count`) kept GTK-free so it's unit-testable
 
 See ../writing-plugins.md ▸ "Event-driven & UI plugins" for the full guide, and
-../../../plugins/ for richer worked examples (auto-group, notes, health).
+https://github.com/mfat/sshpilot-plugins for richer worked examples (auto-group,
+notes, health).
 """
 
 from __future__ import annotations

@@ -94,38 +94,18 @@ def create_window():
     return DummyWindow()
 
 
-def test_manage_files_action_hidden_on_macos(monkeypatch):
+def test_manage_files_action_is_always_registered(monkeypatch):
     actions = prepare_actions(monkeypatch)
-    monkeypatch.setattr(actions, "should_hide_file_manager_options", lambda: True)
-    monkeypatch.setattr(actions, "should_hide_external_terminal_options", lambda: True)
-    window = create_window()
-    actions.register_window_actions(window)
-    assert not hasattr(window, "manage_files_action")
-
-
-def test_manage_files_action_visible_on_other_platforms(monkeypatch):
-    actions = prepare_actions(monkeypatch)
-    monkeypatch.setattr(actions, "should_hide_file_manager_options", lambda: False)
     monkeypatch.setattr(actions, "should_hide_external_terminal_options", lambda: True)
     window = create_window()
     actions.register_window_actions(window)
     assert hasattr(window, "manage_files_action")
+    assert hasattr(window, "open_file_manager_action")
 
-
-def test_should_hide_file_manager_options(monkeypatch):
-    # should_hide_file_manager_options moved to file_manager_integration (it's
-    # re-exported from preferences); patch its deps where the function lives.
-    fmi = prepare_file_manager_integration(monkeypatch)
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
-    assert fmi.should_hide_file_manager_options()
-
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: True)
-    assert not fmi.should_hide_file_manager_options()
 
 def test_launch_remote_file_manager_always_uses_daemon_internal_backend(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
     sentinel = object()
     monkeypatch.setattr(integration, "open_internal_file_manager", lambda **_kwargs: sentinel)
 
@@ -143,8 +123,6 @@ def test_launch_remote_file_manager_always_uses_daemon_internal_backend(monkeypa
 
 def test_launch_remote_file_manager_uses_internal(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
-
-    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
 
     sentinel = object()
     captured = {}
@@ -172,28 +150,6 @@ def test_launch_remote_file_manager_uses_internal(monkeypatch):
     assert captured["kwargs"]["connection"] is None
     assert captured["kwargs"].get("connection_manager") is None
     assert captured["kwargs"].get("ssh_config") is None
-
-
-def test_launch_remote_file_manager_no_backend(monkeypatch):
-    integration = prepare_file_manager_integration(monkeypatch)
-
-    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
-
-    captured = {}
-
-    def error_callback(message):
-        captured["message"] = message
-
-    success, error, window = integration.launch_remote_file_manager(
-        user="carol",
-        host="example.org",
-        error_callback=error_callback,
-    )
-
-    assert not success
-    assert "No compatible" in error
-    assert captured["message"] == error
-    assert window is None
 
 
 def test_manage_files_entry_honors_external_window_preference(monkeypatch):
@@ -254,7 +210,6 @@ def test_manage_files_entry_honors_embedded_window_preference(monkeypatch):
     fake._show_manage_files_error = lambda *_args: None
     fake._launch_external_file_manager = lambda _conn: calls.append("external")
     monkeypatch.setattr(module, "capabilities_for", lambda _connection: {module.Capability.FILE_TRANSFER})
-    monkeypatch.setattr(module, "has_internal_file_manager", lambda: True)
     monkeypatch.setattr(
         module.GLib,
         "timeout_add",

@@ -48,7 +48,8 @@ def test_for_spawn_builds_hostless_context():
         plugin_id="core", app_config=object(), connection_manager=object(),
         protocol_registry=ProtocolRegistry())
     assert ctx.plugin_id == "core"
-    # Host-less: no event/UI facades, but secrets/settings are present.
+    # Host-less: no event/UI facades. secrets/settings objects exist but have
+    # no backend behind them, so build_spawn cannot use them.
     assert ctx.events is None
     assert ctx.ui is None
     assert ctx.secrets is not None

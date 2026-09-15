@@ -52,7 +52,7 @@ def test_empty_payload_without_length_stays_empty():
 def test_multibyte_text_truncated_at_nul_pads_after_utf8():
     # Padding has to extend the encoding that matches the reported length,
     # not the shorter latin-1 one: "é\0" is three bytes on the wire.
-    assert commit_payload_to_bytes("é", 3) == "é".encode("utf-8") + b"\x00"
+    assert commit_payload_to_bytes("é", 3) == "é".encode() + b"\x00"
 
 
 def test_bytes_payload_is_returned_unchanged():

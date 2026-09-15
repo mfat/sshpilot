@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -112,7 +113,9 @@ async def test_read_file_content_redacted_without_content_opt_in(stack):
             service_id = _extract_json_id(result.content[0].text, label="SFTP service")
             stack.wait_sftp_ready(service_id)
 
-            path = "mcp-secret-demo"
+            # Tests share one remote home: a fixed name makes the second
+            # create fail with "The remote file already exists".
+            path = f"mcp-secret-redacted-{uuid.uuid4().hex[:8]}"
             result = await session.call_tool(
                 "sftp_create_file",
                 {"service_id": service_id, "path": path, "confirm": True},
@@ -145,7 +148,7 @@ async def test_read_file_content_returned_with_content_opt_in(stack):
             service_id = _extract_json_id(result.content[0].text, label="SFTP service")
             stack.wait_sftp_ready(service_id)
 
-            path = "mcp-secret-demo"
+            path = f"mcp-secret-content-{uuid.uuid4().hex[:8]}"
             result = await session.call_tool(
                 "sftp_create_file",
                 {"service_id": service_id, "path": path, "confirm": True},

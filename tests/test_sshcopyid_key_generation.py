@@ -65,6 +65,10 @@ def _make_window():
     window.radio_existing.get_active.return_value = True
     window.radio_generate = MagicMock()
     window.radio_generate.get_active.return_value = False
+    window.radio_paste = MagicMock()
+    window.radio_paste.get_active.return_value = False
+    window.paste_row = MagicMock()
+    window.paste_view = MagicMock()
     window.btn_ok = MagicMock()
     window.row_key_name = MagicMock()
     window.type_dropdown = MagicMock()

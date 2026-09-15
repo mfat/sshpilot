@@ -5,6 +5,7 @@ Requires sshpilot importable (CI installs it with --no-deps; sshpilot.plugins.ap
 has no GTK dependency)."""
 
 import importlib.util
+import json
 import os
 
 import pytest
@@ -65,3 +66,12 @@ def test_activate_registers_backend():
     mod = _load_plugin_module()
     mod.Plugin().activate(_ctx())
     assert registry_mod.protocol_registry().get("example") is not None
+
+
+def test_manifest_declares_its_protocol():
+    """The daemon uses plugin.json's "protocols" to find this backend without
+    importing every other enabled plugin — keep the two in step."""
+    with open(os.path.join(HERE, "..", "plugin.json"), encoding="utf-8") as fh:
+        meta = json.load(fh)
+    mod = _load_plugin_module()
+    assert meta["protocols"] == [mod.ExampleProtocolBackend.protocol_id]

@@ -58,7 +58,6 @@ class Phase14Harness:
         from tests._gui_harness import GuiApp, requires_gui
         from tests.fixtures.temporary_openssh import start_temporary_openssh
 
-        from sshpilot.core.connection_application_service import ConnectionApplicationService
         from sshpilot.api import DaemonClient
         from sshpilot.api.client_factory import ClientSelection
         from sshpilot.daemon import DaemonServer
@@ -94,14 +93,12 @@ class Phase14Harness:
             tempfile.mkdtemp(prefix=f"sshpilot-p14d-{secrets.token_hex(4)}-")
         )
         self.daemon_socket = sock_root / "sshpilotd.sock"
-        cm = win.connection_manager
-        gm = win.group_manager
+        # The production composition, so launches use the real launch and
+        # secret providers against the isolated HOME/XDG/SSH dirs.
+        from sshpilot.daemon.cli import _production_core_services
+
         self.daemon_server = DaemonServer(
-            lambda: ConnectionApplicationService(
-                cm,
-                group_manager=gm,
-                client_name="sshpilotd-phase14",
-            ),
+            _production_core_services,
             socket_path=self.daemon_socket,
         )
         self.daemon_server.start_in_thread()
@@ -296,8 +293,43 @@ class Phase14Harness:
         known_hosts_path: Optional[Path] = None,
         strict_host_key_checking: str = "accept-new",
     ) -> Any:
+        return self._add_ssh_connection(
+            nickname,
+            {
+                "auth_method": 1,
+                # The daemon stores the password when it arrives with the create.
+                "password": self.openssh.password if store_password else "",
+            },
+            known_hosts_path=known_hosts_path,
+            strict_host_key_checking=strict_host_key_checking,
+        )
+
+    def add_key_connection(self, nickname: str, *, encrypted: bool) -> Any:
+        """A connection that logs in with one of the fixture's own keys."""
+        openssh = self.openssh
+        key_path = openssh.encrypted_key_path if encrypted else openssh.plain_key_path
+        return self._add_ssh_connection(
+            nickname,
+            {
+                "auth_method": 0,
+                "key_select_mode": 1,
+                "identity_files": [str(key_path)],
+            },
+            # Key tests must prove the key worked, not a fallback to a password.
+            extra_config="PreferredAuthentications publickey\n",
+        )
+
+    def _add_ssh_connection(
+        self,
+        nickname: str,
+        auth_fields: dict,
+        *,
+        known_hosts_path: Optional[Path] = None,
+        strict_host_key_checking: str = "accept-new",
+        extra_config: str = "",
+    ) -> Any:
+        """Create an SSH connection the way the app does: through the daemon."""
         win = self.gui.window
-        cm = win.connection_manager
         openssh = self.openssh
         kh = known_hosts_path if known_hosts_path is not None else openssh.known_hosts
         data = {
@@ -306,10 +338,6 @@ class Phase14Harness:
             "host": "127.0.0.1",
             "username": openssh.username,
             "port": openssh.port,
-            "auth_method": 1,
-            "keyfile": "",
-            "key_select_mode": 0,
-            "password": "",
             "protocol": "ssh",
             "extra_ssh_config": (
                 f"UserKnownHostsFile {kh}\n"
@@ -318,30 +346,21 @@ class Phase14Harness:
                 "ControlMaster no\n"
                 "ControlPath none\n"
                 "IdentitiesOnly yes\n"
+                f"{extra_config}"
             ),
+            **auth_fields,
         }
-        conn = cm.add_connection_from_data(data)
-        if store_password:
-            try:
-                cm.store_connection_password(conn, openssh.password)
-            except Exception:
-                conn.password = openssh.password
-            else:
-                conn.password = openssh.password
-        else:
-            conn.password = ""
-            try:
-                cm.delete_password(getattr(conn, "hostname", None) or "127.0.0.1", openssh.username)
-            except Exception:
-                pass
-        self.pump(200)
+        created = win.plugin_connection_services.add_connection_from_data(data)
+        store = win.connection_manager
+        self.pump_until(
+            lambda: store.get_connection_by_id(str(created.id)) is not None,
+            timeout=10.0,
+            label=f"connection {nickname!r} in the sidebar store",
+        )
         try:
             win.rebuild_connection_list()
         except Exception:
-            try:
-                win._rebuild_connection_list()
-            except Exception:
-                pass
+            pass
         self.pump(200)
         # Re-assert daemon client after connection writes (welcome/reconnect
         # races must not silently demote to a local backend).
@@ -352,7 +371,7 @@ class Phase14Harness:
                 ClientSelection(client=self.daemon_client)
             )
             self.pump(100)
-        return conn
+        return store.get_connection_by_id(str(created.id))
 
     # -- auth helper (broker; mandatory GTK dialog tests use real dialogs) -
 
@@ -638,7 +657,13 @@ class Phase14Harness:
         term = terminal or self.find_terminal_widget()
         if term is None:
             return None
-        return getattr(term, "vte", None)
+        # TerminalWidget no longer exposes ``vte``; the backend owns the widget.
+        backend = getattr(term, "backend", None)
+        return (
+            getattr(term, "vte", None)
+            or getattr(backend, "vte", None)
+            or getattr(term, "terminal_widget", None)
+        )
 
     def emit_terminal_input(self, text: str, terminal=None) -> None:
         term = terminal or self.find_terminal_widget()
@@ -707,14 +732,14 @@ class Phase14Harness:
         if term is None:
             return ""
         backend = getattr(term, "backend", None)
-        if backend is not None and hasattr(backend, "get_text"):
+        if backend is not None and hasattr(backend, "get_content"):
             try:
-                text = backend.get_text()
+                text = backend.get_content()
                 if text:
                     return text
             except Exception:
                 pass
-        vte = getattr(term, "vte", None)
+        vte = self.find_vte_widget(term)
         if vte is None:
             return ""
         try:
@@ -787,15 +812,18 @@ class Phase14Harness:
             return
         win = self.gui.window
         tm = win.terminal_manager
-        original_legacy = tm._open_removed_local_ssh
+        # The legacy local-SSH path has been removed from TerminalManager; only
+        # guard it on builds that still carry it.
+        original_legacy = getattr(tm, "_open_removed_local_ssh", None)
 
-        def _spy_legacy(*args, **kwargs):
-            self.legacy_open_calls.append((args, kwargs))
-            raise Phase14EvidenceError(
-                "legacy local SSH path invoked during Phase 14 daemon gate"
-            )
+        if original_legacy is not None:
+            def _spy_legacy(*args, **kwargs):
+                self.legacy_open_calls.append((args, kwargs))
+                raise Phase14EvidenceError(
+                    "legacy local SSH path invoked during Phase 14 daemon gate"
+                )
 
-        tm._open_removed_local_ssh = _spy_legacy  # type: ignore[method-assign]
+            tm._open_removed_local_ssh = _spy_legacy  # type: ignore[method-assign]
 
         try:
             from gi.repository import Vte
@@ -1042,34 +1070,78 @@ class Phase14Harness:
                 uniq.append(d)
         return uniq
 
-    def wait_for_password_dialog(self, *, timeout: float = 30.0):
-        """Wait for DaemonInteractionDialogs password Adw.AlertDialog (no auth helper)."""
+    def answer_password_dialog(self, password: str) -> dict:
+        """Answer the SSH password dialog as soon as it appears.
+
+        The prompt (``window_dialogs.show_ssh_password_dialog``) blocks in a
+        nested main loop, so test code waiting outside that loop never runs
+        while it is open. Install this before connecting: the GLib timeout
+        fires inside the nested loop, types the password, and presses OK.
+        Returns a dict whose ``answered`` flips to True once that happened.
+        """
+        from gi.repository import Adw, GLib, Gtk
+
+        state = {"answered": False, "title": None}
+
+        def _descendants(widget):
+            child = widget.get_first_child() if widget is not None else None
+            while child is not None:
+                yield child
+                yield from _descendants(child)
+                child = child.get_next_sibling()
+
+        def _roots():
+            yield self.gui.window
+            toplevels = Gtk.Window.get_toplevels()
+            for index in range(toplevels.get_n_items()):
+                yield toplevels.get_item(index)
+
+        def _try_answer():
+            if self.gui is None:
+                return GLib.SOURCE_REMOVE
+            for root in _roots():
+                for widget in _descendants(root):
+                    if not isinstance(widget, Adw.Dialog) or isinstance(
+                        widget, Adw.AlertDialog
+                    ):
+                        continue
+                    rows = [w for w in _descendants(widget) if isinstance(w, Adw.PasswordEntryRow)]
+                    if not rows:
+                        continue
+                    state["title"] = widget.get_title()
+                    rows[0].set_text(password)
+                    rows[0].emit("entry-activated")
+                    state["answered"] = True
+                    return GLib.SOURCE_REMOVE
+            return GLib.SOURCE_CONTINUE
+
+        GLib.timeout_add(100, _try_answer)
+        return state
+
+    def wait_for_passphrase_dialog(self, *, timeout: float = 30.0):
+        """Wait for the key passphrase Adw.AlertDialog ("Passphrase for <key>")."""
 
         def _find():
             for dialog in self.find_adw_alert_dialogs():
-                heading = ""
                 try:
                     heading = dialog.get_heading() or ""
                 except Exception:
-                    pass
-                if "Password for" in heading:
+                    heading = ""
+                if heading.startswith("Passphrase for"):
                     return dialog
-            # Fallback: inspect DaemonInteractionDialogs on terminals
             for terms in (self.gui.window.connection_to_terminals or {}).values():
                 for term in terms:
                     di = getattr(term, "_daemon_interaction_dialogs", None)
-                    if di is None:
-                        continue
                     for dialog in (getattr(di, "_dialogs", {}) or {}).values():
                         try:
                             heading = dialog.get_heading() or ""
                         except Exception:
                             heading = ""
-                        if "Password for" in heading or "Passphrase" in heading:
+                        if heading.startswith("Passphrase for"):
                             return dialog
             return None
 
-        self.pump_until(lambda: _find() is not None, timeout=timeout, label="password dialog")
+        self.pump_until(lambda: _find() is not None, timeout=timeout, label="passphrase dialog")
         return _find()
 
     def wait_for_host_key_dialog(self, *, timeout: float = 30.0):
@@ -1315,5 +1387,10 @@ def make_isolated_home(tmp_path: Path) -> Path:
         path.mkdir(parents=True, exist_ok=True)
         os.environ[name] = str(path)
     os.environ["HOME"] = str(home)
+    # SSH config does not follow XDG_CONFIG_HOME; without this a connection
+    # created by a test could land in the developer's real ~/.ssh/config.
+    ssh_dir = home / ".ssh"
+    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+    os.environ["SSHPILOT_SSH_DIR"] = str(ssh_dir)
     os.environ.pop("SSHPILOT_DAEMON_SOCKET", None)
     return home

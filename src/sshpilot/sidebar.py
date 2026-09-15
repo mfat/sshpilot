@@ -36,10 +36,7 @@ from .connection_display import (
     hosts_hidden as _hosts_hidden,
 )
 from .context_menu import IconContextMenu
-from .file_manager_integration import (
-    should_hide_external_terminal_options,
-    should_hide_file_manager_options,
-)
+from .file_manager_integration import should_hide_external_terminal_options
 from .groups import GroupManager
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
@@ -591,15 +588,20 @@ def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
     return None
 
 
-def _resolve_group_color_by_id(manager, group_id) -> Optional[Gdk.RGBA]:
-    """Walk the group's parent chain and return the first colour found.
+def _resolve_group_color_by_id(manager, group_id, topmost=False) -> Optional[Gdk.RGBA]:
+    """Walk the group's parent chain and return the colour it displays.
 
-    A group keeps its own colour when set; otherwise it inherits the nearest
-    coloured ancestor's colour. Returns ``None`` when no ancestor has a colour.
+    By default a group keeps its own colour when set; otherwise it inherits
+    the nearest coloured ancestor's colour. With ``topmost`` (the "Use Group
+    Color for Child Rows" setting) the outermost coloured ancestor wins, so a
+    whole subtree reads as its top-level group. Nothing is stored: moving a
+    group out restores its own colour. Returns ``None`` when no group in the
+    chain has a colour.
     """
     if not manager:
         return None
 
+    found = None
     visited = set()
     while group_id:
         if group_id in visited:
@@ -616,11 +618,20 @@ def _resolve_group_color_by_id(manager, group_id) -> Optional[Gdk.RGBA]:
 
         color = _parse_color(group_info.get('color'))
         if color:
-            return color
+            if not topmost:
+                return color
+            found = color
 
         group_id = group_info.get('parent_id')
 
-    return None
+    return found
+
+
+def _child_rows_use_group_color(config) -> bool:
+    try:
+        return bool(config.get_setting('ui.group_color_child_rows', True)) if config else False
+    except Exception:
+        return False
 
 
 def _get_color_display_mode(config) -> str:
@@ -1524,35 +1535,13 @@ class GroupRow(Gtk.ListBoxRow):
     def _apply_group_color_style(self):
         # Keep our own colour when set; otherwise inherit the nearest coloured
         # ancestor so nested groups read as part of their parent. When "Use
-        # Group Color for Child Rows" is on, a coloured ancestor overrides our
-        # own colour too, so a subgroup always reads as part of its parent.
-        own_rgba = None
-        parent_id = None
-        try:
-            group_info = self.group_manager.groups.get(self.group_id)
-        except Exception:
-            group_info = None
-        if group_info:
-            own_rgba = _parse_color(group_info.get('color'))
-            parent_id = group_info.get('parent_id')
-
-        ancestor_rgba = (
-            _resolve_group_color_by_id(self.group_manager, parent_id)
-            if parent_id else None
-        )
-
+        # Group Color for Child Rows" is on, the top-level coloured ancestor
+        # overrides every colour below it, matching the connection rows.
         config = getattr(self.group_manager, 'config', None)
-        try:
-            color_children = bool(
-                config.get_setting('ui.group_color_child_rows', True)
-            ) if config else False
-        except Exception:
-            color_children = False
-
-        if color_children and ancestor_rgba:
-            rgba = ancestor_rgba
-        else:
-            rgba = own_rgba or ancestor_rgba
+        rgba = _resolve_group_color_by_id(
+            self.group_manager, self.group_id,
+            _child_rows_use_group_color(config),
+        )
         # In the minimal strip the colour tints the folder glyph only — never a
         # row treatment. Expand/collapse re-runs this via _update_display,
         # which would otherwise bring the accent bar back.
@@ -1665,7 +1654,10 @@ class GroupRow(Gtk.ListBoxRow):
             _configure_compact_label(
                 self.name_label, group_name, max_chars=chars, group=True)
             self.set_tooltip_text(group_name)
-            rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
+            rgba = _resolve_group_color_by_id(
+                self.group_manager, self.group_id,
+                _child_rows_use_group_color(getattr(self.group_manager, 'config', None)),
+            )
             _apply_row_color(self, 'fill', None)
             _set_compact_fg_color(self.name_label, rgba)
         else:
@@ -2203,7 +2195,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             group_id = None
 
-        return _resolve_group_color_by_id(manager, group_id)
+        # Only consulted when "Use Group Color for Child Rows" is on, so the
+        # top-level group's colour wins, as it does on the group rows.
+        return _resolve_group_color_by_id(manager, group_id, True)
 
     def _apply_group_color_style(self):
         # Text-only strip: no tint/bar/badge on the row (names stay legible).
@@ -4825,7 +4819,7 @@ def _attach_connection_list_context_menu(window):
                     menu.add_section(wol_item)
                 else:
                     menu.add_section(
-                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: window.on_manage_files_action(None, None)) if (Capability.FILE_TRANSFER in conn_caps and not should_hide_file_manager_options()) else None,
+                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: window.on_manage_files_action(None, None)) if Capability.FILE_TRANSFER in conn_caps else None,
                         menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: window.on_copy_key_to_server_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
                         menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: window.on_manage_authorized_keys_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
                         wol_item,
@@ -5137,7 +5131,7 @@ def _attach_connection_list_shortcuts(window):
 
 def _build_sidebar_toolbar(window, sidebar_box):
     """Build connection and group toolbars at the bottom of the sidebar."""
-    from sshpilot.overflow_toolbar import OverflowToolbar, mark_force_hidden
+    from sshpilot.overflow_toolbar import OverflowToolbar
 
     toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     toolbar.set_hexpand(True)
@@ -5214,10 +5208,6 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.manage_files_button.set_sensitive(False)
     window.manage_files_button.connect('clicked', window.on_manage_files_button_clicked)
     window.connection_toolbar.add_item(window.manage_files_button)
-    mark_force_hidden(
-        window.manage_files_button,
-        should_hide_file_manager_options(),
-    )
 
     if not should_hide_external_terminal_options():
         window.system_terminal_button = icon_utils.new_button_from_icon_name(

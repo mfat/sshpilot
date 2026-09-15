@@ -25,7 +25,6 @@ try:
 except Exception as error:  # pragma: no cover
     pytest.skip(f"VTE unavailable: {error}", allow_module_level=True)
 
-from tests.gui._phase14_harness import OUTPUT_MARKER
 
 pytestmark = pytest.mark.gui
 
@@ -35,6 +34,9 @@ def test_password_dialog_without_auth_helper(phase14_harness):
     h.stop_auth_helper()
     conn = h.add_password_connection("P14AuthPwd", store_password=False)
 
+    # The prompt runs a nested main loop; the responder must be armed first.
+    answer = h.answer_password_dialog(h.openssh.password)
+
     win = h.gui.window
     win.terminal_manager.connect_to_host(conn, force_new=True)
     h.pump_until(
@@ -43,23 +45,17 @@ def test_password_dialog_without_auth_helper(phase14_harness):
         label="auth dialog terminal widget",
     )
 
-    dialog = h.wait_for_password_dialog(timeout=45.0)
-    assert dialog is not None
-    heading = dialog.get_heading() or ""
-    assert "Password for" in heading
+    # The tab reports connected as soon as ssh starts, before it asks for the
+    # password, so wait for the dialog itself and then a RUNNING session.
+    h.pump_until(lambda: answer["answered"], timeout=45.0, label="password dialog answered")
+    assert answer["title"] == "Password Required"
 
-    h.respond_password_dialog(dialog, h.openssh.password)
-
-    def _connected():
-        t = h.find_terminal_widget(conn)
-        return bool(t and getattr(t, "is_connected", False))
-
-    h.pump_until(_connected, timeout=45.0, label="connected after password dialog")
     term = h.find_terminal_widget(conn)
-    h.ensure_input_ready(term, timeout=20.0)
-    h.emit_terminal_input(f"echo {OUTPUT_MARKER}\n", term)
-    text = h.wait_for_marker(OUTPUT_MARKER, terminal=term, timeout=30.0)
-    assert OUTPUT_MARKER in text
+    h.ensure_input_ready(term, timeout=45.0)
+    # A computed marker: the typed command itself never contains it.
+    h.emit_terminal_input("printf 'PW_%s_OK\\n' $((6*7))\n", term)
+    text = h.wait_for_marker("PW_42_OK", terminal=term, timeout=30.0)
+    assert "PW_42_OK" in text
 
 
 def test_host_key_dialog_without_auth_helper(phase14_harness):

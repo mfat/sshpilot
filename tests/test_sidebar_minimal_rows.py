@@ -36,7 +36,10 @@ def _make():
     row._file_manager_callback = MagicMock()
     row._is_hovering = False
     row.set_tooltip_text = MagicMock()
+    row.set_tooltip_markup = MagicMock()
+    row.get_root = MagicMock(return_value=None)
     row.update_status = MagicMock()
+    row._update_forwarding_indicators = MagicMock()
     row.set_margin_start = MagicMock()
     row.apply_row_style = MagicMock()
     row._apply_group_display_mode = MagicMock()
@@ -111,7 +114,7 @@ def test_compact_connection_shows_text_only_label(monkeypatch):
     row.nickname_label.set_text.assert_called_with('Prod Web')
     row.nickname_label.set_max_width_chars.assert_called_with(mod.MINIMAL_LABEL_MAX_CHARS)
     row.nickname_label.add_css_class.assert_called_with('sidebar-compact-label')
-    row.set_tooltip_text.assert_called_with('Prod Web')
+    assert row.set_tooltip_markup.call_args.args[0].startswith('<b>Prod Web</b>')
     # No avatar/initials path.
     assert not hasattr(row, '_avatar') or row._avatar is None
     apply_color.assert_called_once()
@@ -183,7 +186,7 @@ def test_compact_connection_uses_display_name(monkeypatch):
     row.set_compact(True)
 
     row.nickname_label.set_text.assert_called_with('Production Web')
-    row.set_tooltip_text.assert_called_with('Production Web')
+    assert row.set_tooltip_markup.call_args.args[0].startswith('<b>Production Web</b>')
 
 
 def test_compact_refreshes_label_when_display_name_changes(monkeypatch):
@@ -250,7 +253,7 @@ def test_full_labels_restore_character_minimum():
 
     label.set_width_chars.assert_called_with(mod.FULL_LABEL_MIN_CHARS)
     label.set_max_width_chars.assert_called_with(mod.FULL_LABEL_MAX_CHARS)
-    assert mod.FULL_LABEL_MIN_CHARS == 10
+    assert mod.FULL_LABEL_MIN_CHARS == 6
 
 
 def test_restore_shows_labels_and_refreshes_status(monkeypatch):
@@ -268,7 +271,7 @@ def test_restore_shows_labels_and_refreshes_status(monkeypatch):
     # Full rows carry the plain name; bold belongs to group headers.
     row.nickname_label.set_text.assert_called_with('Prod Web')
     row.nickname_label.set_markup.assert_not_called()
-    row.set_tooltip_text.assert_called_with(None)
+    assert row.set_tooltip_markup.call_args.args[0].startswith('<b>Prod Web</b>')
     row.update_status.assert_called_once()
 
 

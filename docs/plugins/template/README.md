@@ -10,7 +10,7 @@ See the [plugin developer guide](../writing-plugins.md) for the full API.
 
 ```
 example-plugin/
-├── plugin.json                 # manifest (id, name, api_version)
+├── plugin.json                 # manifest (id, name, api_version, protocols)
 ├── __init__.py                 # exposes `class Plugin(SshPilotPlugin)`
 ├── tests/test_plugin.py        # unit tests (no GTK needed)
 └── .github/workflows/test.yml  # CI: pytest against the published sshpilot API
@@ -20,11 +20,16 @@ example-plugin/
 
 1. Copy this directory out of the sshPilot repo into a new project/repo.
 2. In `plugin.json`, change `id` and `name` (the `id` is your directory name and
-   keyring/settings namespace).
+   keyring/settings namespace). It is separate from your backend's
+   `protocol_id`: this template is plugin `example-plugin` registering protocol
+   `example`.
 3. Rewrite `__init__.py` — keep the `class Plugin(SshPilotPlugin)` entry point;
    register a protocol (`ctx.register_protocol(...)`) and/or a UI page
    (`ctx.ui.register_page(...)`).
-4. Update `tests/`.
+4. Keep `"protocols"` in `plugin.json` listing every `protocol_id` you register.
+   The daemon launches sessions in its own process and uses that list to load
+   your plugin directly instead of sweeping every enabled plugin.
+5. Update `tests/`.
 
 > Tip: on GitHub, mark your repo as a **template repository** so others can
 > generate from it.
