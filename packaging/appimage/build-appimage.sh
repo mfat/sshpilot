@@ -245,7 +245,12 @@ import sys
 
 import gi
 
-gi.require_version("GIRepository", "2.0")
+# Newer hosts (Ubuntu 26.04) ship only GLib's GIRepository-3.0; the Ubuntu 24.04
+# floor ships gobject-introspection's 2.0. The two APIs differ slightly below.
+try:
+    gi.require_version("GIRepository", "3.0")
+except ValueError:
+    gi.require_version("GIRepository", "2.0")
 from gi.repository import GIRepository
 
 WANTED = [
@@ -271,7 +276,24 @@ WANTED = [
     ("Graphene", "1.0"),
 ]
 
-repo = GIRepository.Repository.get_default()
+def lookup(namespace, version):
+    """Return (typelib path, shared libraries, immediate dependencies)."""
+    if gi.get_required_version("GIRepository") == "3.0":
+        # A fresh repository per namespace: reusing one makes
+        # get_shared_libraries() return the first namespace's libraries for
+        # every later one (seen with GLib 2.88 / PyGObject 3.56).
+        repo = GIRepository.Repository.new()
+        repo.require(namespace, version, 0)
+        libraries = repo.get_shared_libraries(namespace)
+    else:
+        repo = GIRepository.Repository.get_default()
+        repo.require(namespace, version, 0)
+        libraries = (repo.get_shared_library(namespace) or "").split(",")
+    return (repo.get_typelib_path(namespace),
+            [lib for lib in libraries if lib],
+            repo.get_immediate_dependencies(namespace))
+
+
 seen = set()
 queue = list(WANTED)
 while queue:
@@ -280,13 +302,12 @@ while queue:
         continue
     seen.add(namespace)
     try:
-        repo.require(namespace, version, 0)
+        typelib, libraries, dependencies = lookup(namespace, version)
     except Exception as exc:  # a namespace this build's GTK does not ship
         print("SKIP\t%s-%s\t%s" % (namespace, version, exc), file=sys.stderr)
         continue
-    print("%s\t%s" % (repo.get_typelib_path(namespace),
-                      repo.get_shared_library(namespace) or ""))
-    for dep in repo.get_immediate_dependencies(namespace):
+    print("%s\t%s" % (typelib, ",".join(libraries)))
+    for dep in dependencies:
         dep_ns, _, dep_ver = dep.partition("-")
         queue.append((dep_ns, dep_ver))
 PY
@@ -307,8 +328,12 @@ done < "$BUILD_DIR/typelibs.txt"
 # --------------------------------------------------------------------------
 # 6. Loadable modules GTK/GLib open by path rather than by DT_NEEDED.
 # --------------------------------------------------------------------------
+# Read once, not piped per lookup: awk exits at the first match, and a cache
+# listing larger than the pipe buffer then kills ldconfig with SIGPIPE, which
+# pipefail turns into a build failure.
+LDCONFIG_CACHE=$(ldconfig -p)
 resolve_soname() {
-    ldconfig -p | awk -v name="$1" '$1 == name { print $NF; exit }'
+    awk -v name="$1" '$1 == name { print $NF; exit }' <<<"$LDCONFIG_CACHE"
 }
 
 SYS_LIBDIR=$(dirname "$(resolve_soname libglib-2.0.so.0)")
