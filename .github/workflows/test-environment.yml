@@ -54,6 +54,10 @@ jobs:
         # virtual_fido requires runner-level UHID/hidraw setup and an
         # explicitly built pando85 binary; the dedicated job below provisions
         # that capability and runs it independently.
+        # The marker expression repeats pytest.ini's opt-in markers (e2e,
+        # stress, property): a command-line -m replaces addopts' -m, so naming
+        # only gui/virtual_fido silently ran the Hypothesis searches here. Keep
+        # it in sync with pytest.ini and tests.yml; integration stays in.
         run: |
           docker run --rm \
             --network=host \
@@ -64,7 +68,8 @@ jobs:
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra -m "not gui and not virtual_fido" --basetemp=/pytest-tmp/basetemp
+            pytest -ra -m "not gui and not virtual_fido and not e2e and not stress and not property" \
+              --basetemp=/pytest-tmp/basetemp
 
   gui-basics:
     name: Basic app functions in a real window
