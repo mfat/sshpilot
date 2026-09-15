@@ -391,6 +391,9 @@ done < <(find "$MODULEDIR" "$STDLIB_COPY/lib-dynload" "$PIXBUF_DIR/loaders" \
 # The helpers are executables, not libraries, and pull in libraries of their own.
 queue+=("${webkit_helpers[@]}")
 for soname in "${typelib_libs[@]}"; do
+    # A typelib naming a host library (HarfBuzz names libharfbuzz.so.0) is no
+    # reason to bundle it: GI dlopen()s it by soname, so the host copy loads.
+    [ -n "${EXCLUDED[$soname]:-}" ] && continue
     path=$(resolve_soname "$soname")
     [ -n "$path" ] || die "typelib names $soname but ldconfig cannot find it"
     [ -n "${COLLECTED[$soname]:-}" ] && continue
