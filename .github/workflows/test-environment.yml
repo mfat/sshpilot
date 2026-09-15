@@ -1,14 +1,14 @@
 name: Test environment
 
 # Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
-# and runs the complete headless suite at the pre-merge/nightly gates, not on
-# every pull-request update. It can also be started manually when a change needs
-# integration coverage before entering the merge queue.
+# and runs the complete headless suite when a release is tagged, not on every
+# pull-request update. It can also be started manually when a change needs
+# integration coverage before release.
 
 on:
-  merge_group:
-  schedule:
-    - cron: "23 2 * * *"
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       virtual_fido_only:
