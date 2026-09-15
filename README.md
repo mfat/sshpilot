@@ -115,6 +115,25 @@ Nightly Arch Linux package via AUR (community maintained): https://aur.archlinux
 yay -S sshpilot-git
 ```
 
+### AppImage (x86-64)
+
+A single self-contained file for any distribution that meets the
+[minimum requirements](#operating-system). It bundles GTK 4, libadwaita, VTE,
+GtkSourceView, WebKitGTK and Python — so the PyXterm.js terminal backend and
+the Host Info tab work the same as in the other packages — and uses the host's
+`ssh`. Download
+`sshpilot-<version>-linux-x86_64.AppImage` from the
+[Releases](https://github.com/mfat/sshpilot/releases/) page — there are no
+automatic updates, so grab a new one when a release lands.
+
+```bash
+chmod +x sshpilot-*-linux-x86_64.AppImage
+./sshpilot-*-linux-x86_64.AppImage
+```
+
+The AppImage mounts itself with FUSE 3, which every supported distribution
+ships; on a system without it, run the file with `--appimage-extract-and-run`.
+
 ### <img src="https://brew.sh/assets/img/homebrew-256x256.png" width="24" height="24"/> Homebrew (macOS + Linux)
 
 ```bash
