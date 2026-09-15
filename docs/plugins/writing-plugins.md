@@ -309,8 +309,11 @@ no client to reach — this process *is* the daemon). Keep `activate()` to
 `register_protocol` and your `build_spawn` free of anything that needs the UI.
 
 `build_spawn` gets a host-less context built by `PluginContext.for_spawn`:
-`ctx.secrets` / `ctx.settings` work and are scoped to you, but `ctx.ui` and
-`ctx.events` are `None`. Derive everything else from `connection.data`.
+`ctx.ui` and `ctx.events` are `None`, and `ctx.secrets` / `ctx.settings` are
+**not available** — the daemon builds that context without a backend, so both
+raise. Derive everything from `connection.data` (use `connection_fields` for
+per-connection options) and the environment. Credentials don't belong in
+`connection.data`; let the program you launch obtain its own.
 
 ### UI-page plugins
 Register a page that builds a GTK widget on demand:

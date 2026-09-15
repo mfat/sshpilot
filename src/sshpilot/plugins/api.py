@@ -110,9 +110,9 @@ class ProtocolBackend(abc.ABC):
 
         Must be **stateless per connection**: derive everything from
         ``connection.data`` and the environment. ``ctx`` here is a host-less
-        spawn context (see ``PluginContext.for_spawn``) — ``ctx.secrets`` and
-        ``ctx.settings`` are available and correctly scoped, but ``ctx.ui`` and
-        ``ctx.events`` are ``None`` and must not be used.
+        spawn context (see ``PluginContext.for_spawn``) — ``ctx.ui`` and
+        ``ctx.events`` are ``None``, and ``ctx.secrets`` / ``ctx.settings``
+        raise because the daemon builds that context without a backend.
         """
 
     def connection_fields(self) -> List[FieldSpec]:
@@ -656,11 +656,11 @@ class PluginContext:
                   connection_manager: Any, protocol_registry: Any) -> "PluginContext":
         """Build a host-less context for ProtocolBackend.build_spawn().
 
-        Created by the terminal at spawn time, scoped to the plugin that
-        registered the protocol. ``events``/``ui`` are None (build_spawn must
-        not touch them); ``secrets``/``settings`` work and are correctly
-        scoped, so a backend may read its own stored config when assembling
-        argv/env."""
+        Created by the daemon at launch time, scoped to the plugin that
+        registered the protocol. ``events``/``ui`` are None. ``secrets`` and
+        ``settings`` exist but are unusable: there is no host to reach the
+        backend through, and the daemon's credential shim has no plugin-secret
+        lookup. build_spawn must work from ``connection.data`` alone."""
         return cls(plugin_id=plugin_id, app_config=app_config,
                    connection_manager=connection_manager,
                    protocol_registry=protocol_registry, host=None)

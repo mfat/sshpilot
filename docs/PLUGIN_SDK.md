@@ -511,9 +511,10 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 
 **Rules for both:**
 - **The `ctx` in `build_spawn` is a host-less spawn context** (built via
-  `PluginContext.for_spawn`): `ctx.secrets` / `ctx.settings` work and are scoped
-  to your plugin, but `ctx.ui` and `ctx.events` are `None` — `build_spawn` must be
-  stateless, deriving everything from `connection.data` + the environment.
+  `PluginContext.for_spawn`): `ctx.ui` and `ctx.events` are `None`, and
+  `ctx.secrets` / `ctx.settings` are **not available** — the daemon builds that
+  context without a backend, so both raise. `build_spawn` must be stateless,
+  deriving everything from `connection.data` + the environment.
 - **Run the CLI off the UI thread** (`threading.Thread` + `subprocess.run(..., timeout=…)`), then marshal results back with `ctx.run_on_ui_thread`. `build_spawn` itself must not block — it only assembles argv.
 - **Parse defensively.** Prefer `--output json` / `--json`, but tolerate missing/renamed fields; don't hard-assert a schema.
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.
