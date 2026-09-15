@@ -1,7 +1,10 @@
 import json
 import os
 
-from tests.test_file_pane_typeahead import _load_file_manager_window
+from tests.test_file_pane_typeahead import (  # noqa: F401
+    _load_file_manager_window,
+    _restore_module_registry,
+)
 
 
 def test_drop_rejects_stale_drag_metadata(monkeypatch):

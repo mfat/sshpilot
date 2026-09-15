@@ -53,6 +53,12 @@ def _ensure_gi_stub():
 
     class _DummyModule(types.ModuleType):
         def __getattr__(self, name):
+            # Module introspection probes dunders such as ``__file__``.
+            # Answering those with a dummy class made Hypothesis, which walks
+            # sys.modules for local source files, crash with "argument of type
+            # 'type' is not iterable" (conftest's gi stub guards the same way).
+            if name.startswith("__"):
+                raise AttributeError(name)
             value = type(name, (), {})
             setattr(self, name, value)
             return value

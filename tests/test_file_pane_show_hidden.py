@@ -1,4 +1,7 @@
-from tests.test_file_pane_typeahead import _load_file_manager_window
+from tests.test_file_pane_typeahead import (  # noqa: F401
+    _load_file_manager_window,
+    _restore_module_registry,
+)
 
 
 class DummyToolbar:
