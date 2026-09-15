@@ -314,6 +314,59 @@ if 'cairo' not in sys.modules:
     sys.modules['cairo'] = _DummyGIModule('cairo')
 
 
+def _restore_module_registry(saved):
+    """Put sys.modules back to ``saved`` and undo what fresh imports rebound.
+
+    Restoring the registry alone is not enough: importing ``a.b`` also binds
+    ``b`` on package ``a``, and ``import a.b as c`` reads that attribute. So
+    every submodule the test replaced or added is unbound from, or rebound on,
+    its parent too.
+    """
+    changed = {
+        name: module for name, module in sys.modules.items()
+        if saved.get(name) is not module
+    }
+    for name in set(sys.modules) - set(saved):
+        del sys.modules[name]
+    sys.modules.update(saved)
+    for name, module in changed.items():
+        parent_name, _, child = name.rpartition('.')
+        parent = saved.get(parent_name)
+        if parent is None or getattr(parent, child, None) is not module:
+            continue
+        if name in saved:
+            setattr(parent, child, saved[name])
+        else:
+            delattr(parent, child)
+
+
+@pytest.fixture
+def load_file_manager_window(monkeypatch):
+    """Import sshpilot.file_manager_window against the file pane's own gi stub.
+
+    The stub (tests/file_pane_gi_stub.py) replaces conftest's gi, and the
+    file_manager chain is dropped so FilePane re-imports against it; a cached
+    pane module would stay bound to whatever gi a sibling test installed. Both
+    changes, and every module imported meanwhile, are undone after the test.
+    """
+    import importlib
+
+    from file_pane_gi_stub import install_file_pane_stubs
+
+    saved = dict(sys.modules)
+
+    def load():
+        install_file_pane_stubs(monkeypatch)
+        for mod in ('sshpilot.file_manager_window',
+                    'sshpilot.file_manager.pane',
+                    'sshpilot.file_manager'):
+            sys.modules.pop(mod, None)
+        return importlib.import_module('sshpilot.file_manager_window')
+
+    yield load
+    _restore_module_registry(saved)
+
+
 # --- Real-GTK GUI test fixtures (opt-in, marker ``gui``) -------------------
 # Defined here (not in tests/_gui_harness.py) so the session-scoped app boots
 # exactly once and is shared across every GUI test module. They are lazy: the

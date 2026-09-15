@@ -1,9 +1,3 @@
-from tests.test_file_pane_typeahead import (  # noqa: F401
-    _load_file_manager_window,
-    _restore_module_registry,
-)
-
-
 class DummyToolbar:
     def __init__(self):
         self.states = []
@@ -26,8 +20,8 @@ def _make_minimal_pane(module):
     return pane
 
 
-def test_show_hidden_toggle_affects_only_current_pane():
-    module = _load_file_manager_window()
+def test_show_hidden_toggle_affects_only_current_pane(load_file_manager_window):
+    module = load_file_manager_window()
     left = _make_minimal_pane(module)
     right = _make_minimal_pane(module)
 
@@ -44,8 +38,8 @@ def test_show_hidden_toggle_affects_only_current_pane():
     assert right._filter_calls == []
 
 
-def test_file_manager_window_no_global_show_hidden():
-    module = _load_file_manager_window()
+def test_file_manager_window_no_global_show_hidden(load_file_manager_window):
+    module = load_file_manager_window()
     FileManagerWindow = module.FileManagerWindow
 
     assert not hasattr(FileManagerWindow, "set_show_hidden")
