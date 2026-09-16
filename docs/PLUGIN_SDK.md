@@ -16,7 +16,7 @@ change without notice.
 - **Worked examples** — both are **IP/SSH** providers (provision → get an address
   → `add_connection` a normal SSH connection); they differ in how much they do:
   - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — the minimal shape, against a fake provider.
-  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/) — the same shape against a real REST API ([easyenv.io](https://easyenv.io/cli)): sign-in with a stored token, poll until a workspace is up, then materialize its nodes as SSH connections in a group, driven from a management page.
+  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/): the same shape against a real REST API ([easyenv.io](https://easyenv.io/cli)), with a twist on the last step: sign in with a token shared with the provider's CLI, show the account's credit, create workspaces from templates with per-machine stacks and sizes, and turn each machine into an ordinary SSH connection reached through the provider's SSH jump host (pattern C in [CLI-driven plugins](#11-cli-driven-plugins)). No public IP and no VPN.
   - For a **protocol backend** — a connection that *is* a command rather than an SSH host — read the built-ins instead: `builtin/telnet_protocol/` (minimal) and `builtin/{docker,kubernetes,serial,mosh}_protocol/`.
 
 ---
@@ -480,9 +480,9 @@ the above wired together.
 Many providers ship a CLI that already does the work (provision, list, status,
 connect). You don't need an HTTP SDK — shell out to the CLI. Two patterns:
 
-**A. The connection *is* a CLI command (mesh / no raw SSH params).** Some
-providers (e.g. [easyenv.io](https://easyenv.io/cli): `easyenv workspace ssh <id>`)
-connect over their own mesh and never expose host/port/user/key. Model this as
+**A. The connection *is* a CLI command (no raw SSH params).** Some
+providers (e.g. [easyenv.io](https://easyenv.io/cli): `easyenv machine ssh <id>`)
+connect over their own tunnel and never expose host/port/user/key. Model this as
 a **protocol backend** whose `build_spawn` returns the CLI command as argv —
 exactly like the built-in telnet backend:
 
@@ -496,7 +496,7 @@ class EasyEnvBackend(ProtocolBackend):
     def build_spawn(self, connection, ctx):
         wsid = (connection.data or {}).get("workspace_id")
         if not wsid: raise ProtocolError("No workspace id.")
-        return SpawnSpec(argv=["easyenv", "workspace", "ssh", str(wsid)], env=dict(os.environ))
+        return SpawnSpec(argv=["easyenv", "machine", "ssh", str(wsid)], env=dict(os.environ))
 ```
 
 Register it in `activate`, then create connections from your page with
@@ -509,6 +509,44 @@ doesn't apply.
 gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})`
 (see `mock_vps`).
 
+**C. A normal SSH connection reached through a ProxyCommand.** When the
+provider has its own way in (a jump host, a tunnel, `cloudflared access ssh`,
+`aws ssm start-session`), prefer this to A: the connection stays an SSH
+connection, so SFTP, the file manager, port forwarding and `ssh-copy-id` keep
+working, which a protocol backend cannot offer. Write the ProxyCommand as an
+**extra config line**:
+
+```python
+ctx.add_connection({
+    "protocol": "ssh", "nickname": name,
+    "hostname": f"{box}.box.easyenv.io", "username": "easyenv", "port": 22,
+    "auth_method": 0,
+    "extra_ssh_config": "ProxyCommand ssh -o StrictHostKeyChecking=accept-new "
+                        "-W %h:%p easyenv@ssh.easyenv.io",
+})
+```
+
+Spell a jump host out as `ssh -W` rather than `ProxyJump`: the inner ssh of a
+`ProxyJump` reads only the jump host's own `Host` block, so options such as
+`StrictHostKeyChecking` in yours never reach it. If the jump host takes keys
+only, keep `auth_method` at 0: a password connection turns public keys off.
+A first version of this example ran its own websocket client as the
+ProxyCommand; it passed every test here and failed on real desktops, where the
+connection never reached the machine.
+
+Not as the `proxy_command` field: the daemon accepts only its editable config
+fields from a plugin (`EDITABLE_CONFIG_FIELDS`), and `proxy_command` is not one
+of them, so it is dropped without an error and ssh dials the host name
+directly. In a command of your own, double any literal `%`, since ssh expands
+its own tokens there. Keep nicknames free of spaces: sshPilot runs ssh with
+the nickname, and OpenSSH refuses a destination with a space in it.
+
+To refresh a connection that may already exist, look before you add
+(`ctx.list_connections()`), then `update_connection`. The daemon reports a
+duplicate nickname as `SshPilotError` (`CONNECTION_ALREADY_EXISTS`), not the
+`ValueError` documented under `add_connection`, so catching `ValueError`
+misses it.
+
 **Rules for both:**
 - **The `ctx` in `build_spawn` is a host-less spawn context** (built via
   `PluginContext.for_spawn`): `ctx.ui` and `ctx.events` are `None`, and
@@ -520,7 +558,8 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.
 - **Let the CLI own its credentials.** If the tool keychains its own token (e.g. `easyenv auth login`), detect state (`auth whoami`) and optionally drive login; don't duplicate the token in `ctx.secrets`.
 
-No shipped example implements pattern A — [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/)
-provisions over REST and hands back ordinary SSH connections (pattern B). For a
+No shipped example implements pattern A. [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/)
+provisions over REST and hands back ordinary SSH connections reached through the
+provider's jump host (pattern C); `mock_vps` is pattern B. For a
 working protocol backend read `builtin/telnet_protocol/` and
 `builtin/docker_protocol/`; the sketch above is the shape to copy.
