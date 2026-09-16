@@ -227,8 +227,6 @@ class TerminalManager:
         the value (the CLI builds one), this fetches the editor snapshot
         through the client bridge first. A failed lookup never blocks the
         connection.
-        Frontend-local by design: headless SshPilotClient callers bypass this;
-        move to daemon ownership if shared behavior is ever needed.
         """
         inline = _connection_pre_command(connection)
         if inline:
