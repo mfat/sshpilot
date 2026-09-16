@@ -41,6 +41,13 @@ def _install_sync_harness(monkeypatch):
 
 def _manager():
     window = mock.Mock()
+    # No daemon transport: these tests cover the vault-unlock gate only, and a
+    # Mock client/bridge would instead send the connect path off to look up the
+    # connection's pre-connection command (see
+    # tests/test_terminal_manager_pre_command.py) and never come back, because
+    # a Mock submit() never invokes its callbacks.
+    window.client = None
+    window.client_bridge = None
     return TerminalManager(window)
 
 
