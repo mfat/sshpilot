@@ -1465,7 +1465,15 @@ class MachineInfoDialog:
             except Exception:
                 logger.debug("Inline switcher homogeneous unavailable", exc_info=True)
         else:
-            switcher = Gtk.StackSwitcher(stack=stack)
+            # Adw.ViewStack must pair with Adw.ViewSwitcher (available since
+            # libadwaita 1.0). Gtk.StackSwitcher only accepts Gtk.Stack, so
+            # passing a ViewStack raises:
+            #   TypeError: could not convert value for property `stack`
+            #   from ViewStack to GtkStack
+            # This is the AppImage path where InlineViewSwitcher (1.7+) is
+            # missing while ViewStack/ViewSwitcher are present.
+            switcher = Adw.ViewSwitcher()
+            switcher.set_stack(stack)
             switcher.set_halign(Gtk.Align.CENTER)
 
         switcher_card = _card()
