@@ -59,6 +59,49 @@ from .terminal_display_pause import (
 _terminal_padding_css_installed = False
 
 
+PRE_CONNECTION_COMMAND_TIMEOUT = 30
+
+
+def run_pre_connection_command(command: str) -> None:
+    """Run a connection's pre-connection command locally, before SSH dials out.
+
+    Typically a port knock (fwknop) or a VPN dial-up that authorises a short
+    access window, so it has to complete before the session opens.
+
+    Runs through ``sh -lc`` rather than a bare ``sh -c``: the command is a
+    user-authored shell string that legitimately uses substitutions such as
+    ``fwknop -n host --wget-cmd "$(which wget)"``, and a *login* shell also
+    sources the user's profile. That matters in the packaged app -- a bundle
+    launched from Finder inherits a minimal PATH that does not include
+    Homebrew, so a non-login shell would not find the knock helper at all.
+
+    Blocking; call it from a worker thread. Failures are logged and swallowed:
+    SSH's own error tells the user far more than a pre-step veto, which is the
+    behaviour this feature shipped with.
+    """
+    command = (command or "").strip()
+    if not command:
+        return
+
+    shell = shutil.which("sh") or "/bin/sh"
+    logger.info("Running pre-connection command: %s", command)
+    try:
+        result = subprocess.run(
+            [shell, "-lc", command],
+            timeout=PRE_CONNECTION_COMMAND_TIMEOUT,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "Pre-connection command exited with code %s: %s",
+                result.returncode,
+                command,
+            )
+    except subprocess.TimeoutExpired:
+        logger.warning("Pre-connection command timed out: %s", command)
+    except Exception as exc:
+        logger.warning("Pre-connection command failed: %s", exc)
+
+
 def _finish_capture_gesture(gesture, handled: bool) -> None:
     """Resolve a capture gesture without leaving it competing with VTE."""
     state = (
