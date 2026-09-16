@@ -61,6 +61,18 @@ class TestDaemonTerminalActivation:
         window.client.server_instance_id = "test-daemon-123"
         window.client.get_capabilities = Mock(return_value=_capabilities())
         window.client_bridge = Mock()
+        # The real bridge runs the submitted operation and always calls back.
+        # The connect path uses it to read the connection's pre-connection
+        # command (see tests/test_terminal_manager_pre_command.py), so a
+        # submit() that never invokes a callback would stall the connect here.
+        window.client.get_connection_editor = Mock(
+            return_value=SimpleNamespace(pre_command="")
+        )
+        window.client_bridge.submit = Mock(
+            side_effect=lambda operation, on_success, on_error, **kw: on_success(
+                operation()
+            )
+        )
         window.tab_view = Mock()
         window.tab_view.append = Mock(return_value=Mock())
         window.tab_view.close_page = Mock()
