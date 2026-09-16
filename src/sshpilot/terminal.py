@@ -89,15 +89,42 @@ def run_pre_connection_command(command: str) -> None:
         result = subprocess.run(
             [shell, "-lc", command],
             timeout=PRE_CONNECTION_COMMAND_TIMEOUT,
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
+            stderr = (getattr(result, "stderr", "") or "").strip()
+            if len(stderr) > 2000:
+                stderr = stderr[-2000:]
+            if stderr:
+                logger.warning(
+                    "Pre-connection command exited with code %s: %s: %s",
+                    result.returncode,
+                    command,
+                    stderr,
+                )
+            else:
+                logger.warning(
+                    "Pre-connection command exited with code %s: %s",
+                    result.returncode,
+                    command,
+                )
+    except subprocess.TimeoutExpired as exc:
+        stderr = (getattr(exc, "stderr", "") or "")
+        if isinstance(stderr, bytes):
+            try:
+                stderr = stderr.decode("utf-8", "replace")
+            except Exception:
+                stderr = ""
+        stderr = stderr.strip()
+        if len(stderr) > 2000:
+            stderr = stderr[-2000:]
+        if stderr:
             logger.warning(
-                "Pre-connection command exited with code %s: %s",
-                result.returncode,
-                command,
+                "Pre-connection command timed out: %s: %s", command, stderr
             )
-    except subprocess.TimeoutExpired:
-        logger.warning("Pre-connection command timed out: %s", command)
+        else:
+            logger.warning("Pre-connection command timed out: %s", command)
     except Exception as exc:
         logger.warning("Pre-connection command failed: %s", exc)
 
