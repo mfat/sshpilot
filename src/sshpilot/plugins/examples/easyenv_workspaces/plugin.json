@@ -1,10 +1,13 @@
 {
   "id": "easyenv-workspaces",
   "name": "EasyEnv Workspaces",
+  "version": "2.6.0",
   "api_version": 1,
   "entry": "plugin",
   "permissions": [
     "network",
+    "filesystem",
+    "process",
     "keyring",
     "connections",
     "ui"
