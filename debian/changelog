@@ -1,3 +1,11 @@
+sshpilot (6.1.4-1) unstable; urgency=medium
+
+  * Release v6.1.4.
+  * Improvements to SplitView mode
+  * Added ProxyCommand entry to connection dialog
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 17 Sep 2026 13:36:18 +0000
+
 sshpilot (6.1.3-1) unstable; urgency=medium
 
   * Release v6.1.3.
