@@ -1067,8 +1067,7 @@ class SplitViewTab(Gtk.Box):
         # strong signal while dragging.
         hint = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         hint.set_halign(Gtk.Align.CENTER)
-        hint.set_valign(Gtk.Align.START)
-        hint.set_margin_top(24)
+        hint.set_valign(Gtk.Align.CENTER)
         hint.set_hexpand(True)
         hint_label = Gtk.Label(
             label=_(
@@ -1076,10 +1075,18 @@ class SplitViewTab(Gtk.Box):
                 " or press the Add Terminal button below."
             )
         )
+        hint_label.set_halign(Gtk.Align.CENTER)
+        hint_label.set_justify(Gtk.Justification.CENTER)
         hint_label.add_css_class("dim-label")
         hint_label.add_css_class("monospace")
         hint.append(hint_label)
+        top_filler = Gtk.Box()
+        top_filler.set_vexpand(True)
+        bottom_filler = Gtk.Box()
+        bottom_filler.set_vexpand(True)
+        spacer.append(top_filler)
         spacer.append(hint)
+        spacer.append(bottom_filler)
 
         dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())
