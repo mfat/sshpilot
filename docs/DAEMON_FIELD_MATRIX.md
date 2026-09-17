@@ -55,6 +55,14 @@ migration. Every phase of the implementation references it by row number.
 |---|--------|----------|-----------|---------------|-----------|--------|--------|---------|
 | 18 | `x11_row` | `x11_forwarding` | `x11_forwarding` | `ForwardX11 yes` | `lines.append("    ForwardX11 yes")` (when True) | `forwardx11 in ('yes','true','1','on')` | config | **Yes** |
 | 19 | `proxy_jump_row` | `proxy_jump` | `proxy_jump` | `ProxyJump <h1,h2,...>` | `f"    ProxyJump {','.join(proxy_jump)}"` | `config.get('proxyjump')` → split by `[\s,]+` | config | **Yes** |
+| 38 | `proxy_command_row` | `proxy_command` | `proxy_command` | `ProxyCommand <value>` | `f"    ProxyCommand {proxy_command}"` | `config['proxycommand']` | config | **Yes** |
+
+> `proxy_jump` (19) and `proxy_command` (38) may coexist in one block: the
+> dialog shows both rows exactly as authored and saves are never refused.
+> OpenSSH applies the first line in the file and ignores the second; edits
+> keep the block's proxy order so a save cannot flip the effective route.
+> New blocks render Jump-then-Command. If the route fails, inspect the file —
+> that resolution is the user's, not the editor's.
 | 20 | `forward_agent_row` | `forward_agent` | `forward_agent` | `ForwardAgent yes` | `f"    ForwardAgent {target or 'yes'}"` | `config.get('forwardagent')` → boolean | config | **Yes** |
 
 ## Commands
@@ -131,7 +139,6 @@ via `_preserve_multivalue_on_update` when the save payload omits them.
 
 | # | data key | Conn attr | SSH directive | Formatter | Parser | Domain |
 |---|----------|-----------|---------------|-----------|--------|--------|
-| 38 | `proxy_command` | `proxy_command` | `ProxyCommand <value>` | `f"    ProxyCommand {proxy_command}"` | `config['proxycommand']` | config |
 | 39 | `request_tty` | `request_tty` | `RequestTTY <token>` | Emitted only when explicitly selected/authored | `config.get('requesttty')` → normalized token | config |
 | 40 | `forward_agent_target` | `forward_agent_target` | Part of `ForwardAgent` value | `f"    ForwardAgent {target}"` | Extracted from `forwardagent` when not plain yes/no | config |
 | 41 | `identity_file_none` | `identity_file_none` | `IdentityFile none` | `_clean_list` filters `none` | Detected as `identity_suppressed` flag | config (derived) |

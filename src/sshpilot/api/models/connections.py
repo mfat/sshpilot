@@ -113,7 +113,7 @@ EDITABLE_CONFIG_FIELDS = frozenset({
     "identity_agent", "add_keys_to_agent",
     "pkcs11_provider", "security_key_provider",
     "pubkey_auth_no",
-    "proxy_jump", "forward_agent",
+    "proxy_jump", "proxy_command", "forward_agent",
     "forward_agent_explicit_no", "forward_agent_target",
     "forwarding_rules", "x11_forwarding",
     "pre_command", "local_command", "remote_command",
@@ -150,7 +150,7 @@ def _validate_field_value(key: str, value: Any) -> None:
     if key in ("nickname", "hostname", "username", "protocol",
                "identity_agent", "add_keys_to_agent", "pkcs11_provider",
                "security_key_provider", "pre_command", "local_command",
-               "remote_command", "extra_ssh_config"):
+               "remote_command", "extra_ssh_config", "proxy_command"):
         if not isinstance(value, str):
             raise ValueError(f"{key} must be a string")
     elif key == "port":
@@ -490,7 +490,7 @@ class ConnectionEditorDetails(ConnectionDetails):
     forward_agent: bool = False
     forward_agent_explicit_no: bool = False
     forward_agent_target: str = ""  # socket path / $ENV; empty when yes/no
-    proxy_command: str = ""  # preserved, no widget
+    proxy_command: str = ""  # Routing-tab row; OpenSSH applies the first of ProxyJump/ProxyCommand in the file
     # Forwarding
     forwarding_rules: Tuple[ForwardingRule, ...] = ()
     # Commands

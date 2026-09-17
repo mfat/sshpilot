@@ -91,7 +91,11 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     if port and (port != 22 or 'port' in authored):
         lines.append(f"    Port {port}")
 
-    # Proxy settings
+    # Proxy settings. ProxyJump and ProxyCommand may coexist in one block;
+    # OpenSSH applies the first line and ignores the second, so the dialog
+    # shows both and saves are never refused. New blocks render Jump-then-
+    # Command; edits keep the old block's proxy order (see
+    # _order_proxy_lines_like_block) so a save cannot flip the route.
     proxy_jump = data.get('proxy_jump') or []
     if isinstance(proxy_jump, str):
         proxy_jump = [h.strip() for h in re.split(r'[\s,]+', proxy_jump) if h.strip()]
@@ -319,6 +323,38 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     return '\n'.join(cleaned_lines)
 
 
+def _order_proxy_lines_like_block(managed_body: List[str], old_lines) -> None:
+    """Reorder ProxyJump/ProxyCommand lines in *managed_body* in place.
+
+    When the old block authored ProxyCommand before ProxyJump, move the
+    re-emitted ProxyCommand line ahead of the ProxyJump line so an edit
+    preserves the order OpenSSH resolves (first line wins). Otherwise —
+    including new blocks — the formatter's Jump-then-Command order stands.
+    """
+    jump_idx = command_idx = None
+    for index, raw in enumerate(managed_body):
+        key = _split_keyword(raw.strip())[0]
+        if key == 'proxyjump' and jump_idx is None:
+            jump_idx = index
+        elif key == 'proxycommand' and command_idx is None:
+            command_idx = index
+    if jump_idx is None or command_idx is None or command_idx < jump_idx:
+        return
+    first_old = None
+    for raw in (old_lines or [])[1:]:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        key = _split_keyword(stripped)[0]
+        if key in ('proxyjump', 'proxycommand'):
+            first_old = key
+            break
+    if first_old == 'proxycommand':
+        managed_body[jump_idx], managed_body[command_idx] = (
+            managed_body[command_idx], managed_body[jump_idx],
+        )
+
+
 def merged_block_lines(old_block: Optional[HostBlock],
                        new_data: Dict[str, Any]) -> List[str]:
     """Render the edited Host block surgically instead of wholesale.
@@ -342,6 +378,13 @@ def merged_block_lines(old_block: Optional[HostBlock],
     managed_only['extra_ssh_config'] = ''
     formatted = format_ssh_config_entry(managed_only).split('\n')
     header, managed_body = formatted[0] + '\n', [ln + '\n' for ln in formatted[1:]]
+
+    # ProxyJump and ProxyCommand are both allowed in one block: OpenSSH
+    # applies the first line in the file and ignores the second. The
+    # formatter emits Jump-then-Command for new blocks, but an edit must not
+    # reorder a Command-first block into Jump-first — that would silently
+    # flip which route OpenSSH takes. Match the old block's proxy order.
+    _order_proxy_lines_like_block(managed_body, old_block.lines)
 
     has_extra_key = 'extra_ssh_config' in new_data
     remaining_extras: List[Tuple[Tuple[str, str], str]] = []
