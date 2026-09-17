@@ -929,16 +929,6 @@ class SplitViewTab(Gtk.Box):
 
         from sshpilot import icon_utils  # noqa: PLC0415
 
-        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
-            create_layout_toggle_buttons(
-                lambda: self.set_layout_mode(self.HORIZONTAL),
-                lambda: self.set_layout_mode(self.VERTICAL),
-                as_pill=True,
-            )
-        )
-        strip.pack_start(self._layout_h_btn)
-        strip.pack_start(self._layout_v_btn)
-
         scroll_top_btn = Gtk.Button()
         icon_utils.set_button_icon(scroll_top_btn, 'top-large-symbolic')
         scroll_top_btn.set_tooltip_text(_("Scroll to top"))
@@ -964,6 +954,16 @@ class SplitViewTab(Gtk.Box):
         compact_btn.set_tooltip_text(_("Reset panes to a smaller size"))
         compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
         strip.pack_start(compact_btn)
+
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self.set_layout_mode(self.HORIZONTAL),
+                lambda: self.set_layout_mode(self.VERTICAL),
+                as_pill=True,
+            )
+        )
+        strip.pack_start(self._layout_h_btn)
+        strip.pack_start(self._layout_v_btn)
 
         add_btn = Gtk.Button(label=_("+ Add Terminal"))
         add_btn.add_css_class("suggested-action")
