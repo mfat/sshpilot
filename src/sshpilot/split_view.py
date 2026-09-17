@@ -1056,10 +1056,30 @@ class SplitViewTab(Gtk.Box):
     def _append_scroll_spacer(self) -> None:
         """Append the extra scroll area below rows; accepts connection drops."""
         _ensure_drop_zone_css()
-        spacer = Gtk.Box()
+        spacer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         spacer.add_css_class("add-pane-scroll-spacer")
         spacer.set_hexpand(True)
         spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
+
+        # Dim centered hint so the reserved scroll room reads as intentional
+        # empty space rather than a rendering gap. Native Adwaita classes only
+        # (no custom visuals); the existing .drag-over tint takes over as the
+        # strong signal while dragging.
+        hint = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        hint.set_halign(Gtk.Align.CENTER)
+        hint.set_valign(Gtk.Align.START)
+        hint.set_margin_top(24)
+        hint.set_hexpand(True)
+        hint_label = Gtk.Label(
+            label=_(
+                "Empty space. Drop connections here,"
+                " or press the Add Terminal button below."
+            )
+        )
+        hint_label.add_css_class("dim-label")
+        hint_label.add_css_class("monospace")
+        hint.append(hint_label)
+        spacer.append(hint)
 
         dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())
