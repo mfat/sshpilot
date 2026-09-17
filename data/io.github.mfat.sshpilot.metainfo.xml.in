@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.1.4" date="2026-09-17">
+      <description>
+        <p>Improvements to SplitView mode</p>
+        <p>Added ProxyCommand entry to connection dialog</p>
+      </description>
+    </release>
     <release version="6.1.3" date="2026-09-15">
       <description>
         <p>Bug fixes</p>
