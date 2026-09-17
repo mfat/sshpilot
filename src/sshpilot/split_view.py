@@ -756,6 +756,9 @@ class SplitViewTab(Gtk.Box):
         # Action bar strip below the panes (revealed shortly after the tab opens)
         self._add_pane_btn: Optional[Gtk.Button] = None
         self._add_pane_strip: Optional[Gtk.ActionBar] = None
+        self._layout_h_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_v_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_toggle_updating: list = [False]
         self._add_strip_reveal_scheduled = False
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
@@ -807,11 +810,22 @@ class SplitViewTab(Gtk.Box):
         if mode != self._layout_mode:
             self._layout_mode = mode
             self._rebuild_layout()
+        self._sync_layout_toggle_buttons()
         try:
             if hasattr(self.window, '_update_layout_toggle_state'):
                 self.window._update_layout_toggle_state()
         except Exception:
             pass
+
+    def _sync_layout_toggle_buttons(self) -> None:
+        if self._layout_h_btn is None or self._layout_v_btn is None:
+            return
+        self._layout_toggle_updating[0] = True
+        try:
+            self._layout_h_btn.set_active(self._layout_mode == self.HORIZONTAL)
+            self._layout_v_btn.set_active(self._layout_mode == self.VERTICAL)
+        finally:
+            self._layout_toggle_updating[0] = False
 
     def scroll_panes_to_top(self) -> None:
         try:
@@ -915,6 +929,16 @@ class SplitViewTab(Gtk.Box):
 
         from sshpilot import icon_utils  # noqa: PLC0415
 
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self.set_layout_mode(self.HORIZONTAL),
+                lambda: self.set_layout_mode(self.VERTICAL),
+                as_pill=True,
+            )
+        )
+        strip.pack_start(self._layout_h_btn)
+        strip.pack_start(self._layout_v_btn)
+
         scroll_top_btn = Gtk.Button()
         icon_utils.set_button_icon(scroll_top_btn, 'top-large-symbolic')
         scroll_top_btn.set_tooltip_text(_("Scroll to top"))
@@ -950,6 +974,7 @@ class SplitViewTab(Gtk.Box):
 
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
+        self._sync_layout_toggle_buttons()
 
         dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
