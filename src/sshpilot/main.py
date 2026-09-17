@@ -233,6 +233,9 @@ class SshPilotApplication(Adw.Application):
         from .unsaved_host import SavePromptDismissals
         self.save_prompt_dismissals = SavePromptDismissals()
 
+        # Shared with setup_logging: create once, reuse for theme/accelerators.
+        self.config = None
+
         # Set up logging
         self.setup_logging()
 
@@ -259,7 +262,6 @@ class SshPilotApplication(Adw.Application):
         # Service D-Bus connect — never blocks the pre-window main thread.
 
         # Apply saved application theme (light/dark/system)
-        self.config = None
         self._default_shortcuts = {}
         self._action_order = []
         # Names that appear in the shortcut editor and respect config overrides
