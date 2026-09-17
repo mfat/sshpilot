@@ -184,10 +184,6 @@ def _ensure_tips_banner_css() -> None:
     provider = Gtk.CssProvider()
     provider.load_from_data(b"""
 .tips-banner-revealer {
-    /* Parent width changes (sidebar strip/full) must not paint the accent
-       child outside the revealer's allocation -- that reads as a brief blue
-       rectangle beside the top chrome. */
-    overflow: hidden;
 }
 .tips-banner {
     background-color: @accent_bg_color;
