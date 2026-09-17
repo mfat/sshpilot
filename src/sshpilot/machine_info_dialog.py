@@ -1436,6 +1436,14 @@ class MachineInfoDialog:
             ("system", _("System"), self._build_system()),
         )
 
+        if not hasattr(Adw, "InlineViewSwitcher"):
+            # AppImage path (libadwaita < 1.7): labels-only notebook, the
+            # same fallback connection_dialog uses. Adw.ViewSwitcher always
+            # renders page icons and Gtk.StackSwitcher rejects Adw.ViewStack,
+            # so neither can reproduce the labels-only switcher here.
+            self._build_tabs_notebook(pages)
+            return
+
         stack = Adw.ViewStack()
         stack.set_vexpand(True)
         for name, title, widget in pages:
@@ -1445,36 +1453,24 @@ class MachineInfoDialog:
             scrolled.set_child(widget)
             stack.add_titled(scrolled, name, title)
 
-        if hasattr(Adw, "InlineViewSwitcher"):
-            switcher = Adw.InlineViewSwitcher()
-            switcher.set_stack(stack)
-            switcher.set_hexpand(True)
-            switcher.set_halign(Gtk.Align.FILL)
-            try:
-                switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
-            except Exception:
-                logger.debug("Inline switcher label mode unavailable", exc_info=True)
-            # Prefer ellipsis over overflow when six tabs outgrow a narrow pane;
-            # do not force equal widths so short labels keep breathing room.
-            try:
-                switcher.set_can_shrink(True)
-            except Exception:
-                logger.debug("Inline switcher can-shrink unavailable", exc_info=True)
-            try:
-                switcher.set_homogeneous(False)
-            except Exception:
-                logger.debug("Inline switcher homogeneous unavailable", exc_info=True)
-        else:
-            # Adw.ViewStack must pair with Adw.ViewSwitcher (available since
-            # libadwaita 1.0). Gtk.StackSwitcher only accepts Gtk.Stack, so
-            # passing a ViewStack raises:
-            #   TypeError: could not convert value for property `stack`
-            #   from ViewStack to GtkStack
-            # This is the AppImage path where InlineViewSwitcher (1.7+) is
-            # missing while ViewStack/ViewSwitcher are present.
-            switcher = Adw.ViewSwitcher()
-            switcher.set_stack(stack)
-            switcher.set_halign(Gtk.Align.CENTER)
+        switcher = Adw.InlineViewSwitcher()
+        switcher.set_stack(stack)
+        switcher.set_hexpand(True)
+        switcher.set_halign(Gtk.Align.FILL)
+        try:
+            switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
+        except Exception:
+            logger.debug("Inline switcher label mode unavailable", exc_info=True)
+        # Prefer ellipsis over overflow when six tabs outgrow a narrow pane;
+        # do not force equal widths so short labels keep breathing room.
+        try:
+            switcher.set_can_shrink(True)
+        except Exception:
+            logger.debug("Inline switcher can-shrink unavailable", exc_info=True)
+        try:
+            switcher.set_homogeneous(False)
+        except Exception:
+            logger.debug("Inline switcher homogeneous unavailable", exc_info=True)
 
         switcher_card = _card()
         switcher_card.set_hexpand(True)
@@ -1488,6 +1484,23 @@ class MachineInfoDialog:
         container.append(switcher_card)
         container.append(stack)
         self._content.append(container)
+
+    def _build_tabs_notebook(
+        self, pages: Sequence[Tuple[str, str, Gtk.Widget]]
+    ) -> None:
+        """Labels-only tabs for libadwaita < 1.7 (no InlineViewSwitcher)."""
+        notebook = Gtk.Notebook()
+        notebook.set_show_tabs(True)
+        notebook.set_show_border(False)
+        notebook.set_vexpand(True)
+        notebook.set_scrollable(True)
+        for _name, title, widget in pages:
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scrolled.set_vexpand(True)
+            scrolled.set_child(widget)
+            notebook.append_page(scrolled, Gtk.Label(label=title))
+        self._content.append(notebook)
 
     # -- Overview -------------------------------------------------------
 
