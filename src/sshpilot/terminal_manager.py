@@ -1110,6 +1110,42 @@ class TerminalManager:
         except Exception as e:
             logger.error(f"Failed to add terminal tab: {e}")
 
+    def create_local_terminal_for_pane(self, title: Optional[str] = None):
+        """Create a local-shell TerminalWidget for use inside a SplitPane.
+
+        Mirrors :meth:`show_local_terminal` but does NOT append the terminal
+        to tab_view. The caller (SplitPane) embeds the returned widget in its
+        own layout via ``add_terminal``.
+        """
+        effective_title = title or _("Terminal")
+
+        class LocalConnection:
+            def __init__(self):
+                self.nickname = effective_title
+                self.hostname = "localhost"
+                self.host = self.hostname
+                self.username = os.getenv("USER", "user")
+                self.port = 22
+                self.is_connected = True
+                # Not an SSH host — never SessionType-none / forwarding-only.
+                self.forwarding_only = False
+
+        local_connection = LocalConnection()
+        terminal_widget = TerminalWidget(
+            local_connection, self.window.config, self.window.connection_manager
+        )
+        terminal_widget.setup_local_shell()
+
+        # Register terminal so theme/font updates and pane cleanup work,
+        # mirroring show_local_terminal()/create_terminal_for_pane().
+        window = self.window
+        window.connection_to_terminals.setdefault(local_connection, []).append(
+            terminal_widget
+        )
+        window.terminal_to_connection[terminal_widget] = local_connection
+        window.active_terminals[local_connection] = terminal_widget
+        return terminal_widget
+
     def show_local_terminal(
         self,
         *,

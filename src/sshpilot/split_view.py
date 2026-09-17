@@ -333,6 +333,13 @@ class SplitPane(Gtk.Box):
         select_host_btn.connect("clicked", self._on_select_host_clicked)
         inner.append(select_host_btn)
 
+        local_btn = Gtk.Button(label=_("Local terminal"))
+        local_btn.add_css_class("pill")
+        local_btn.set_halign(Gtk.Align.CENTER)
+        local_btn.set_tooltip_text(_("Open a local shell in this pane"))
+        local_btn.connect("clicked", lambda _b: self.add_local_terminal())
+        inner.append(local_btn)
+
         pick_btn = Gtk.Button(label=_("Pick existing tab"))
         pick_btn.add_css_class("pill")
         pick_btn.set_halign(Gtk.Align.CENTER)
@@ -429,6 +436,13 @@ class SplitPane(Gtk.Box):
         """Create a new terminal for connection and add it to this pane."""
         terminal = self._window.terminal_manager.create_terminal_for_pane(connection)
         self.add_terminal(terminal, getattr(connection, 'nickname', None))
+
+    def add_local_terminal(self) -> None:
+        """Create a local-shell terminal and add it to this pane."""
+        terminal = self._window.terminal_manager.create_local_terminal_for_pane(
+            _("Terminal")
+        )
+        self.add_terminal(terminal, _("Terminal"))
 
     def get_terminals(self) -> list:
         result = []
@@ -564,6 +578,8 @@ class SplitPane(Gtk.Box):
             self._window,
             button,
             lambda conn: self.add_connection(conn),
+            include_local_terminal=True,
+            on_select_local=self.add_local_terminal,
         )
 
     # ── "Pick existing tab" button ────────────────────────────────────────────

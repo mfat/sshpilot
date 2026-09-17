@@ -10,7 +10,8 @@ from gettext import gettext as _
 
 
 def show_host_picker(window, anchor, on_selected, *, toast=None,
-                     connections=None):
+                     connections=None, include_local_terminal=False,
+                     on_select_local=None):
     """Pop up a searchable list of the saved connections, anchored at *anchor*.
 
     Args:
@@ -22,6 +23,10 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
         toast: optional callable(str) used to warn when there are no hosts.
         connections: optional pre-filtered connection list; defaults to every
             connection in the window's ``connection_manager``.
+        include_local_terminal: when True, prepend a "Local terminal" row
+            that invokes *on_select_local* instead of *on_selected*.
+        on_select_local: callable invoked when the local-terminal row is
+            picked. Required when *include_local_terminal* is True.
 
     Returns the ``Gtk.Popover`` (already scheduled to pop up), or ``None``.
     """
@@ -33,7 +38,7 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
     else:
         connections = list(connections)
 
-    if not connections:
+    if not connections and not include_local_terminal:
         if toast:
             toast(_('No connections in inventory'))
         return None
@@ -63,6 +68,33 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
     list_box = Gtk.ListBox()
     list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
     list_box.add_css_class('boxed-list')
+
+    if include_local_terminal:
+        local_row = Gtk.ListBoxRow()
+        local_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        local_box.set_margin_top(6)
+        local_box.set_margin_bottom(6)
+        local_box.set_margin_start(8)
+        local_box.set_margin_end(8)
+        local_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        local_icon.set_valign(Gtk.Align.CENTER)
+        local_box.append(local_icon)
+        local_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        local_info.set_hexpand(True)
+        local_lbl = Gtk.Label(label=_('Local terminal'))
+        local_lbl.set_halign(Gtk.Align.START)
+        local_lbl.add_css_class('heading')
+        local_info.append(local_lbl)
+        local_sub = Gtk.Label(label=_('Open a local shell'))
+        local_sub.set_halign(Gtk.Align.START)
+        local_sub.add_css_class('caption')
+        local_sub.add_css_class('dim-label')
+        local_info.append(local_sub)
+        local_box.append(local_info)
+        local_row.set_child(local_box)
+        local_row._is_local_terminal_row = True
+        local_row._connection = None
+        list_box.append(local_row)
 
     for conn in connections:
         is_open = conn in active_terminals
@@ -106,6 +138,8 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
         q = search_entry.get_text().lower().strip()
         if not q:
             return True
+        if getattr(list_row, '_is_local_terminal_row', False):
+            return q in _('Local terminal').lower() or q in 'local'
         conn = getattr(list_row, '_connection', None)
         if conn is None:
             return False
@@ -129,6 +163,11 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
             index += 1
 
     def _on_activated(_lb, list_row):
+        if getattr(list_row, '_is_local_terminal_row', False):
+            if on_select_local is not None:
+                popover.popdown()
+                on_select_local()
+            return
         conn = getattr(list_row, '_connection', None)
         if conn:
             popover.popdown()
