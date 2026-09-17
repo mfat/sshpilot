@@ -2270,17 +2270,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_overlay.set_hexpand(True)
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
-        from .search_popup import SearchPopup
-        self._search_popup = SearchPopup(
-            self._content_overlay,
-            self._sidebar_toolbar_view,
-            self._sidebar_box,
-            self._popup_target_width,
-            on_shown=self._on_search_popup_shown,
-            on_hidden=self._on_search_popup_hidden,
-            on_dismiss=self._dismiss_search_popup,
-            focus_func=lambda: getattr(self, 'search_entry', None),
-        )
+        self._search_popup = None
+        GLib.idle_add(self._ensure_search_popup, priority=GLib.PRIORITY_LOW)
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
@@ -2320,20 +2311,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._global_overlay.set_child(root_widget)
         main_box.append(self._global_overlay)
 
-        from .omni_search import OmniSearchController
-        self._omni_search = OmniSearchController(
-            self,
-            self._global_overlay,
-            self.welcome_view.omni_home,
-        )
-        # Initial Start presentation at first paint: the Start tab is created
-        # and selected before this controller exists (see ``_add_start_tab``),
-        # so its selection notification cannot reach the controller here. Ask
-        # for the Omnisearch attention tracer directly; the controller defers
-        # it until the window is actually mapped.
-        omni = getattr(self, '_omni_search', None)
-        if omni is not None and hasattr(omni, 'request_attention'):
-            omni.request_attention()
+        self._omni_search = None
+        GLib.idle_add(self._ensure_omni_search, priority=GLib.PRIORITY_LOW)
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -3666,6 +3645,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if popover is not None:
             popover.popdown()
 
+    def _ensure_terminal_theme_chooser(self):
+        chooser = getattr(self, '_terminal_theme_chooser', None)
+        if chooser is None and not getattr(self, '_is_quitting', False):
+            if hasattr(self, '_terminal_theme_menu_button') and hasattr(self, 'config') and self.config is not None:
+                from .terminal_theme_selector import TerminalThemeChooser
+                selected_theme = str(
+                    self.config.get_setting('terminal.theme', 'default')
+                )
+                self._terminal_theme_chooser = TerminalThemeChooser(
+                    getattr(self.config, 'terminal_themes', {}) or {},
+                    selected_theme,
+                    self._on_terminal_theme_selected,
+                )
+                terminal_theme_popover = Gtk.Popover()
+                terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
+                self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
+                self._sync_terminal_theme_selector(selected_theme)
+                chooser = self._terminal_theme_chooser
+        return chooser
+
     def _sync_terminal_theme_selector(self, theme_key: str | None = None) -> None:
         """Keep the terminal color button and chooser aligned with Config."""
         themes = getattr(self.config, 'terminal_themes', {}) or {}
@@ -3994,8 +3993,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Terminal color schemes use the same compact color-button/popover
         # pattern as the SSH config editor. The button is only shown when the
         # selected tab contains a terminal.
-        from .terminal_theme_selector import TerminalThemeChooser
-
         self._terminal_theme_menu_button = Gtk.MenuButton()
         _cmd_icon_utils.set_button_icon(
             self._terminal_theme_menu_button, 'brush-monitor-symbolic'
@@ -4004,15 +4001,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         selected_theme = str(
             self.config.get_setting('terminal.theme', 'default')
         )
-        self._terminal_theme_chooser = TerminalThemeChooser(
-            getattr(self.config, 'terminal_themes', {}) or {},
-            selected_theme,
-            self._on_terminal_theme_selected,
-        )
-        terminal_theme_popover = Gtk.Popover()
-        terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
-        self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
+        self._terminal_theme_chooser = None
         self._sync_terminal_theme_selector(selected_theme)
+        GLib.idle_add(self._ensure_terminal_theme_chooser, priority=GLib.PRIORITY_LOW)
 
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
@@ -5163,9 +5154,42 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to activate search entry: {e}")
 
+    def _ensure_search_popup(self):
+        popup = getattr(self, '_search_popup', None)
+        if popup is None and not getattr(self, '_is_quitting', False):
+            if hasattr(self, '_content_overlay') and hasattr(self, '_sidebar_toolbar_view') and hasattr(self, '_sidebar_box'):
+                from .search_popup import SearchPopup
+                self._search_popup = SearchPopup(
+                    self._content_overlay,
+                    self._sidebar_toolbar_view,
+                    self._sidebar_box,
+                    getattr(self, '_popup_target_width', 300),
+                    on_shown=self._on_search_popup_shown,
+                    on_hidden=self._on_search_popup_hidden,
+                    on_dismiss=self._dismiss_search_popup,
+                    focus_func=lambda: getattr(self, 'search_entry', None),
+                )
+                popup = self._search_popup
+        return popup
+
+    def _ensure_omni_search(self):
+        omni = getattr(self, '_omni_search', None)
+        if omni is None and not getattr(self, '_is_quitting', False):
+            if hasattr(self, '_global_overlay') and hasattr(self, 'welcome_view') and self.welcome_view is not None:
+                from .omni_search import OmniSearchController
+                self._omni_search = OmniSearchController(
+                    self,
+                    self._global_overlay,
+                    self.welcome_view.omni_home,
+                )
+                if hasattr(self._omni_search, 'request_attention'):
+                    self._omni_search.request_attention()
+                omni = self._omni_search
+        return omni
+
     def activate_omni_search(self):
         """Show and focus the global omni-search."""
-        omni = getattr(self, '_omni_search', None)
+        omni = self._ensure_omni_search()
         if omni is not None:
             omni.show()
 
