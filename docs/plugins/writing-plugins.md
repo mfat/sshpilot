@@ -336,8 +336,9 @@ The widget is built once, on first open, and then cached — see
 [Keeping a page fresh](#keeping-a-page-fresh). A factory that raises is logged and
 surfaced as a toast; it can't take the app down.
 
-`examples/easyenv_workspaces/` is a full page-based plugin (sign-in, list,
-create, open connections), and the built-in `builtin/docker_manager/` ("Docker
+`examples/easyenv_workspaces/` is a full page-based plugin (sign-in, credit,
+a card grid, a two-step create dialog with templates, stacks and sizes, and
+connections reached through a jump host), and the built-in `builtin/docker_manager/` ("Docker
 Console") is a first-party page plugin with per-host tabs and streaming.
 
 ## Event-driven & UI plugins
