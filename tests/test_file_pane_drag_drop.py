@@ -1,11 +1,9 @@
 import json
 import os
 
-from tests.test_file_pane_typeahead import _load_file_manager_window
 
-
-def test_drop_rejects_stale_drag_metadata(monkeypatch):
-    module = _load_file_manager_window()
+def test_drop_rejects_stale_drag_metadata(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -65,8 +63,8 @@ def test_drop_rejects_stale_drag_metadata(monkeypatch):
     assert toasts[-1] == "Dragged item is no longer available"
 
 
-def test_drag_payload_with_colons_is_parsed(monkeypatch):
-    module = _load_file_manager_window()
+def test_drag_payload_with_colons_is_parsed(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -119,8 +117,8 @@ def test_drag_payload_with_colons_is_parsed(monkeypatch):
     assert args[0][0][0] == os.path.join(source_pane._current_path, entry.name)
 
 
-def test_drop_transfers_all_selected_entries(monkeypatch):
-    module = _load_file_manager_window()
+def test_drop_transfers_all_selected_entries(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -186,8 +184,8 @@ def test_drop_transfers_all_selected_entries(monkeypatch):
     assert [entry.name for _, entry in items] == ["alpha.txt", "beta.txt"]
 
 
-def test_drag_prepare_includes_multi_selection(monkeypatch):
-    module = _load_file_manager_window()
+def test_drag_prepare_includes_multi_selection(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -240,8 +238,8 @@ def _make_drag_value(module, source_pane, entry):
     )
 
 
-def test_same_pane_remote_drop_into_folder_moves(monkeypatch):
-    module = _load_file_manager_window()
+def test_same_pane_remote_drop_into_folder_moves(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -274,8 +272,8 @@ def test_same_pane_remote_drop_into_folder_moves(monkeypatch):
     assert move is True
 
 
-def test_same_pane_remote_drop_on_empty_space_is_rejected(monkeypatch):
-    module = _load_file_manager_window()
+def test_same_pane_remote_drop_on_empty_space_is_rejected(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -302,8 +300,8 @@ def test_same_pane_remote_drop_on_empty_space_is_rejected(monkeypatch):
     assert calls == []
 
 
-def test_same_pane_remote_drop_copies_with_primary_modifier(monkeypatch):
-    module = _load_file_manager_window()
+def test_same_pane_remote_drop_copies_with_primary_modifier(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -340,8 +338,8 @@ def test_same_pane_remote_drop_copies_with_primary_modifier(monkeypatch):
     assert calls[0][3] is False  # copy, not move
 
 
-def test_same_pane_local_drop_into_folder_moves(monkeypatch):
-    module = _load_file_manager_window()
+def test_same_pane_local_drop_into_folder_moves(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -374,8 +372,8 @@ def test_same_pane_local_drop_into_folder_moves(monkeypatch):
     assert move is True
 
 
-def test_remote_clipboard_skips_self_descendant_paste(monkeypatch):
-    module = _load_file_manager_window()
+def test_remote_clipboard_skips_self_descendant_paste(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     FileEntry = module.FileEntry
     window = module.FileManagerWindow.__new__(module.FileManagerWindow)
@@ -408,8 +406,8 @@ def test_remote_clipboard_skips_self_descendant_paste(monkeypatch):
     assert calls[0][1]["move"] is True
 
 
-def test_is_remote_descendant_guard(monkeypatch):
-    module = _load_file_manager_window()
+def test_is_remote_descendant_guard(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
 
     cls = module.FileManagerWindow
     assert cls._is_remote_descendant("/a", "/a") is True

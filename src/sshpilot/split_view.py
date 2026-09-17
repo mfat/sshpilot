@@ -333,6 +333,13 @@ class SplitPane(Gtk.Box):
         select_host_btn.connect("clicked", self._on_select_host_clicked)
         inner.append(select_host_btn)
 
+        local_btn = Gtk.Button(label=_("Local terminal"))
+        local_btn.add_css_class("pill")
+        local_btn.set_halign(Gtk.Align.CENTER)
+        local_btn.set_tooltip_text(_("Open a local shell in this pane"))
+        local_btn.connect("clicked", lambda _b: self.add_local_terminal())
+        inner.append(local_btn)
+
         pick_btn = Gtk.Button(label=_("Pick existing tab"))
         pick_btn.add_css_class("pill")
         pick_btn.set_halign(Gtk.Align.CENTER)
@@ -429,6 +436,13 @@ class SplitPane(Gtk.Box):
         """Create a new terminal for connection and add it to this pane."""
         terminal = self._window.terminal_manager.create_terminal_for_pane(connection)
         self.add_terminal(terminal, getattr(connection, 'nickname', None))
+
+    def add_local_terminal(self) -> None:
+        """Create a local-shell terminal and add it to this pane."""
+        terminal = self._window.terminal_manager.create_local_terminal_for_pane(
+            _("Terminal")
+        )
+        self.add_terminal(terminal, _("Terminal"))
 
     def get_terminals(self) -> list:
         result = []
@@ -564,6 +578,8 @@ class SplitPane(Gtk.Box):
             self._window,
             button,
             lambda conn: self.add_connection(conn),
+            include_local_terminal=True,
+            on_select_local=self.add_local_terminal,
         )
 
     # ── "Pick existing tab" button ────────────────────────────────────────────
@@ -756,6 +772,9 @@ class SplitViewTab(Gtk.Box):
         # Action bar strip below the panes (revealed shortly after the tab opens)
         self._add_pane_btn: Optional[Gtk.Button] = None
         self._add_pane_strip: Optional[Gtk.ActionBar] = None
+        self._layout_h_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_v_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_toggle_updating: list = [False]
         self._add_strip_reveal_scheduled = False
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
@@ -807,11 +826,22 @@ class SplitViewTab(Gtk.Box):
         if mode != self._layout_mode:
             self._layout_mode = mode
             self._rebuild_layout()
+        self._sync_layout_toggle_buttons()
         try:
             if hasattr(self.window, '_update_layout_toggle_state'):
                 self.window._update_layout_toggle_state()
         except Exception:
             pass
+
+    def _sync_layout_toggle_buttons(self) -> None:
+        if self._layout_h_btn is None or self._layout_v_btn is None:
+            return
+        self._layout_toggle_updating[0] = True
+        try:
+            self._layout_h_btn.set_active(self._layout_mode == self.HORIZONTAL)
+            self._layout_v_btn.set_active(self._layout_mode == self.VERTICAL)
+        finally:
+            self._layout_toggle_updating[0] = False
 
     def scroll_panes_to_top(self) -> None:
         try:
@@ -941,6 +971,16 @@ class SplitViewTab(Gtk.Box):
         compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
         strip.pack_start(compact_btn)
 
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self.set_layout_mode(self.HORIZONTAL),
+                lambda: self.set_layout_mode(self.VERTICAL),
+                as_pill=True,
+            )
+        )
+        strip.pack_start(self._layout_h_btn)
+        strip.pack_start(self._layout_v_btn)
+
         add_btn = Gtk.Button(label=_("+ Add Terminal"))
         add_btn.add_css_class("suggested-action")
         add_btn.add_css_class("pill")
@@ -950,6 +990,7 @@ class SplitViewTab(Gtk.Box):
 
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
+        self._sync_layout_toggle_buttons()
 
         dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
@@ -1015,10 +1056,37 @@ class SplitViewTab(Gtk.Box):
     def _append_scroll_spacer(self) -> None:
         """Append the extra scroll area below rows; accepts connection drops."""
         _ensure_drop_zone_css()
-        spacer = Gtk.Box()
+        spacer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         spacer.add_css_class("add-pane-scroll-spacer")
         spacer.set_hexpand(True)
         spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
+
+        # Dim centered hint so the reserved scroll room reads as intentional
+        # empty space rather than a rendering gap. Native Adwaita classes only
+        # (no custom visuals); the existing .drag-over tint takes over as the
+        # strong signal while dragging.
+        hint = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        hint.set_halign(Gtk.Align.CENTER)
+        hint.set_valign(Gtk.Align.CENTER)
+        hint.set_hexpand(True)
+        hint_label = Gtk.Label(
+            label=_(
+                "Empty space. Drop connections here,"
+                " or press the Add Terminal button below."
+            )
+        )
+        hint_label.set_halign(Gtk.Align.CENTER)
+        hint_label.set_justify(Gtk.Justification.CENTER)
+        hint_label.add_css_class("dim-label")
+        hint_label.add_css_class("monospace")
+        hint.append(hint_label)
+        top_filler = Gtk.Box()
+        top_filler.set_vexpand(True)
+        bottom_filler = Gtk.Box()
+        bottom_filler.set_vexpand(True)
+        spacer.append(top_filler)
+        spacer.append(hint)
+        spacer.append(bottom_filler)
 
         dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())

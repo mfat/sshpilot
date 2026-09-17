@@ -9,14 +9,6 @@ up the whole directory listing (issue #1235).
 
 import pytest
 
-# _restore_module_registry is an autouse fixture: importing it here undoes this
-# module's rebuilding of the gi stubs and its purge of the sshpilot.file_manager
-# chain, both of which live in the process-global sys.modules.
-from tests.test_file_pane_typeahead import (  # noqa: F401
-    _load_file_manager_window,
-    _restore_module_registry,
-)
-
 
 BAD_NAME = "\udce5\udcb1 broken.txt"
 
@@ -95,19 +87,19 @@ def _entry(module, name, is_dir=False):
         ("\ud800x", "�x"),
     ],
 )
-def test_safe_display_text(value, expected):
-    safe_display_text = _load_file_manager_window().safe_display_text
+def test_safe_display_text(load_file_manager_window, value, expected):
+    safe_display_text = load_file_manager_window().safe_display_text
     assert safe_display_text(value) == expected
 
 
-def test_safe_display_text_output_is_always_encodable():
-    safe_display_text = _load_file_manager_window().safe_display_text
+def test_safe_display_text_output_is_always_encodable(load_file_manager_window):
+    safe_display_text = load_file_manager_window().safe_display_text
     for value in (BAD_NAME, "\udcff", "a\udce5b", "ok"):
         safe_display_text(value).encode("utf-8")
 
 
-def test_listing_survives_a_name_that_is_not_valid_utf8(monkeypatch):
-    module = _load_file_manager_window()
+def test_listing_survives_a_name_that_is_not_valid_utf8(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
     monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
 
     entries = [
@@ -133,9 +125,9 @@ def test_listing_survives_a_name_that_is_not_valid_utf8(monkeypatch):
     ]
 
 
-def test_a_row_gtk_still_rejects_does_not_blank_the_pane(monkeypatch):
+def test_a_row_gtk_still_rejects_does_not_blank_the_pane(load_file_manager_window, monkeypatch):
     """Store and ``_entries`` stay index-aligned when a row is dropped."""
-    module = _load_file_manager_window()
+    module = load_file_manager_window()
 
     class RejectsOneName(FakeStringObject):
         @classmethod
@@ -201,11 +193,11 @@ def _strict(name, returns=None):
     return Recorder
 
 
-def test_properties_dialog_header_shows_a_name_gtk_can_encode(monkeypatch):
+def test_properties_dialog_header_shows_a_name_gtk_can_encode(load_file_manager_window, monkeypatch):
     import sys
     import unittest.mock
 
-    module = _load_file_manager_window()
+    module = load_file_manager_window()
     dialogs = sys.modules["sshpilot.file_manager.properties_dialog"]
     from sshpilot import icon_utils
 
@@ -230,10 +222,10 @@ def test_properties_dialog_header_shows_a_name_gtk_can_encode(monkeypatch):
     assert label.calls[0][1]["label"] == "� broken.txt"
 
 
-def test_properties_dialog_parent_row_shows_a_path_gtk_can_encode(monkeypatch):
+def test_properties_dialog_parent_row_shows_a_path_gtk_can_encode(load_file_manager_window, monkeypatch):
     import sys
 
-    module = _load_file_manager_window()
+    module = load_file_manager_window()
     dialogs = sys.modules["sshpilot.file_manager.properties_dialog"]
     row = _strict("ActionRow")
     monkeypatch.setattr(dialogs.Adw, "ActionRow", row, raising=False)
@@ -248,10 +240,10 @@ def test_properties_dialog_parent_row_shows_a_path_gtk_can_encode(monkeypatch):
     assert row.calls[0][1]["subtitle"] == "/tmp/bad�dir"
 
 
-def test_fallback_properties_dialog_heading_is_encodable(monkeypatch):
+def test_fallback_properties_dialog_heading_is_encodable(load_file_manager_window, monkeypatch):
     import sys
 
-    module = _load_file_manager_window()
+    module = load_file_manager_window()
     pane_mod = sys.modules["sshpilot.file_manager.pane"]
     message_dialog = _strict("MessageDialog")
     monkeypatch.setattr(pane_mod.Adw, "MessageDialog", message_dialog, raising=False)
@@ -265,10 +257,10 @@ def test_fallback_properties_dialog_heading_is_encodable(monkeypatch):
     assert message_dialog.calls[0][1]["heading"] == "� broken.txt Properties"
 
 
-def test_editor_toast_is_encodable(monkeypatch):
+def test_editor_toast_is_encodable(load_file_manager_window, monkeypatch):
     import sys
 
-    _load_file_manager_window()
+    load_file_manager_window()
     editor = sys.modules["sshpilot.text_editor"]
     toast = _strict("Toast")
     monkeypatch.setattr(editor.Adw, "Toast", toast, raising=False)
@@ -282,7 +274,7 @@ def test_editor_toast_is_encodable(monkeypatch):
     assert toast.calls[0][0][0] == "Save failed: � broken.txt"
 
 
-def test_closing_an_edited_file_still_prompts(monkeypatch):
+def test_closing_an_edited_file_still_prompts(load_file_manager_window, monkeypatch):
     """The unsaved-changes prompt must survive a name GTK cannot encode.
 
     ``_check_and_close`` runs inside the ``close-request`` handler, and
@@ -291,7 +283,7 @@ def test_closing_an_edited_file_still_prompts(monkeypatch):
     """
     import sys
 
-    _load_file_manager_window()
+    load_file_manager_window()
     editor = sys.modules["sshpilot.text_editor"]
     alert = _strict("AlertDialog")
     monkeypatch.setattr(editor.Adw, "AlertDialog", alert, raising=False)

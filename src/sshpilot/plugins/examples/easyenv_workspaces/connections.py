@@ -111,8 +111,11 @@ def connection_data(nickname, machine):
     a password connection, sshPilot turned public keys off, which the
     gateway needs, and fed the password to a hop that never asks for one.
 
-    The ProxyCommand travels as an extra config line, not as the connection's
-    ``proxy_command`` field, which sshPilot's daemon drops from a plugin.
+    The ProxyCommand travels as an extra config line (bundled with the other
+    hop options in ``SSH_OPTIONS``); it could equally be the connection's
+    ``proxy_command`` field, which the daemon accepts and the dialog shows.
+    If a jump host were also set, OpenSSH would apply whichever line comes
+    first in the file.
     """
     box = machine["uuid"]
     return {

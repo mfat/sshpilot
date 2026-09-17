@@ -156,6 +156,7 @@ def _editor_details_to_connection(details):
         port=port,
         protocol=protocol,
         proxy_jump=getattr(details, 'proxy_jump', None) or (),
+        proxy_command=getattr(details, 'proxy_command', '') or '',
         forward_agent=bool(getattr(details, 'forward_agent', False)),
         forward_agent_explicit_no=bool(
             getattr(details, 'forward_agent_explicit_no', False)
@@ -2643,6 +2644,11 @@ class ConnectionDialog(
                 proxy_hosts = [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()]
             if proxy_hosts:
                 config_lines.append(f"    ProxyJump {','.join(proxy_hosts)}")
+            proxy_command_val = ''
+            if hasattr(self, 'proxy_command_row'):
+                proxy_command_val = self.proxy_command_row.get_text().strip()
+            if proxy_command_val:
+                config_lines.append(f"    ProxyCommand {proxy_command_val}")
             if hasattr(self, 'forward_agent_row'):
                 fa_text = forward_agent_text_from_fields(
                     **self._selected_forward_agent_fields()
@@ -2724,6 +2730,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         ('username_row', 'user', 'user'),
         ('port_row', 'port', 'port'),
         ('proxy_jump_row', 'proxyjump', 'proxyjump'),
+        ('proxy_command_row', 'proxycommand', 'proxycommand'),
         ('pkcs11_provider_row', 'pkcs11provider', 'pkcs11provider'),
         ('security_key_provider_row', 'securitykeyprovider', 'securitykeyprovider'),
         ('local_command_row', 'localcommand', 'localcommand'),
@@ -2737,6 +2744,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         'username_row': 'username',
         'port_row': 'port',
         'proxy_jump_row': 'proxy_jump',
+        'proxy_command_row': 'proxy_command',
         'pkcs11_provider_row': 'pkcs11_provider',
         'security_key_provider_row': 'security_key_provider',
         'local_command_row': 'local_command',
@@ -3053,6 +3061,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 item.strip() for item in text("proxy_jump_row").replace(",", " ").split()
                 if item.strip()
             ),
+            "proxy_command": text("proxy_command_row"),
             **self._selected_forward_agent_fields(),
             "x11_forwarding": active("x11_row"),
             "pubkey_auth_no": active("pubkey_auth_row"),
@@ -3194,6 +3203,22 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     )
                 except Exception:
                     self._set_text_without_completion(self.proxy_jump_row, "")
+            # ProxyCommand shares the Routing group with ProxyJump; both rows
+            # show what the Host block authors, even when both are set.
+            proxy_command_row = getattr(self, 'proxy_command_row', None)
+            if proxy_command_row is not None:
+                try:
+                    command = getattr(self.connection, 'proxy_command', '')
+                    if not command:
+                        data = getattr(self.connection, 'data', None)
+                        if isinstance(data, dict):
+                            command = data.get('proxy_command', '')
+                    proxy_command_row.set_text(str(command or ''))
+                except Exception:
+                    try:
+                        proxy_command_row.set_text('')
+                    except Exception:
+                        pass
             try:
                 mode, extra = forward_agent_mode_from_connection(self.connection)
                 modes = getattr(self, "_forward_agent_modes", None) or _FORWARD_AGENT_MODES
@@ -3860,6 +3885,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.proxy_jump_row.add_suffix(pick_btn)
 
         proxy_group.add(self.proxy_jump_row)
+
+        # ProxyCommand runs an arbitrary local command to relay the session.
+        # Both rows show exactly what the Host block authors; when both are
+        # set, OpenSSH applies the first line in the file.
+        # Adw.EntryRow has no subtitle (like proxy_jump_row above), so the
+        # hint lives in the tooltip.
+        self.proxy_command_row = Adw.EntryRow(title=_("Proxy command"))
+        self.proxy_command_row.set_tooltip_text(
+            _("Runs locally to relay the connection, e.g. ssh -W %h:%p bastion. A ProxyCommand executes a local command — only keep values you trust.")
+        )
+        proxy_group.add(self.proxy_command_row)
 
         # ssh_config(5): yes, no, an agent socket path, or $VARIABLE.
         # Default leaves the Host block unauthored so a broader block wins.
@@ -4569,6 +4605,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
+            'proxy_command': (self.proxy_command_row.get_text().strip()
+                              if hasattr(self, 'proxy_command_row') else ''),
             **self._selected_forward_agent_fields(),
 
             'forwarding_rules': forwarding_rules,

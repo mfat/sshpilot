@@ -746,12 +746,17 @@ def _append_identity_and_proxy(
         cmd.extend(['-o', f'CertificateFile={cert_file}'])
 
     proxy_command = _get_ssh_config_value(config, 'proxycommand')
-    if proxy_command and proxy_command.strip():
-        cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
-
     proxy_jump = [j for j in _get_ssh_config_list(config, 'proxyjump') if j and j.strip()]
-    if proxy_jump:
-        cmd.extend(['-o', f'ProxyJump={",".join(proxy_jump)}'])
+    if proxy_command and proxy_command.strip() and proxy_jump:
+        # Both resolve: OpenSSH applies the first line in the file, so no
+        # -o ordering here may impose a precedence — the -F config already
+        # on argv resolves exactly what plain `ssh host` would do.
+        pass
+    else:
+        if proxy_command and proxy_command.strip():
+            cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
+        if proxy_jump:
+            cmd.extend(['-o', f'ProxyJump={",".join(proxy_jump)}'])
 
 
 def _build_base_ssh_command(
@@ -977,17 +982,27 @@ def _authored_ssh_options(
     if 'hostname' in authored and _text('hostname'):
         _option('HostName', _text('hostname'))
 
-    # ProxyJump and ProxyCommand are mutually exclusive in the launch request;
-    # a block authoring both is resolved the way OpenSSH resolves it, by
-    # letting ProxyJump win.
+    # ProxyJump and ProxyCommand may coexist in one block; OpenSSH applies
+    # the first line in the file and ignores the second. When the block
+    # authors both, neither is re-emitted here: any -o ordering would impose
+    # this module's precedence over the file's, while the -F config already
+    # on argv resolves exactly what plain `ssh host` would do. A single
+    # authored directive is still re-emitted so an earlier `Host *` block
+    # cannot override what the editor shows.
     raw_proxy_jump = _raw('proxy_jump') or ()
     if isinstance(raw_proxy_jump, str):
         raw_proxy_jump = [h for h in re.split(r'[\s,]+', raw_proxy_jump) if h]
     proxy_jump = [str(e).strip() for e in raw_proxy_jump if str(e).strip()]
-    if 'proxyjump' in authored and proxy_jump:
-        kwargs['proxy_jump'] = proxy_jump
-    elif 'proxycommand' in authored and _text('proxy_command'):
-        kwargs['proxy_command'] = _text('proxy_command')
+    proxy_command = _text('proxy_command')
+    both_proxies = (
+        'proxyjump' in authored and proxy_jump
+        and 'proxycommand' in authored and proxy_command
+    )
+    if not both_proxies:
+        if 'proxyjump' in authored and proxy_jump:
+            kwargs['proxy_jump'] = proxy_jump
+        elif 'proxycommand' in authored and proxy_command:
+            kwargs['proxy_command'] = proxy_command
 
     if 'forwardagent' in authored:
         # ssh_config(5): yes / no / a socket path / $ENV. Collapsing a

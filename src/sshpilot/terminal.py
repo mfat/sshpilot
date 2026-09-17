@@ -78,28 +78,43 @@ def run_pre_connection_command(command: str) -> None:
     Blocking; call it from a worker thread. Failures are logged and swallowed:
     SSH's own error tells the user far more than a pre-step veto, which is the
     behaviour this feature shipped with.
+
+    The command string may embed user secrets (a token or password on the
+    command line), so its content -- and any command output -- is logged at
+    debug only, matching ``PluginContext.run_local_command``. INFO/WARNING
+    carry lifecycle signals without content.
     """
     command = (command or "").strip()
     if not command:
         return
 
     shell = shutil.which("sh") or "/bin/sh"
-    logger.info("Running pre-connection command: %s", command)
+    logger.info("Running pre-connection command")
+    logger.debug("Pre-connection command: %s", command)
     try:
         result = subprocess.run(
             [shell, "-lc", command],
             timeout=PRE_CONNECTION_COMMAND_TIMEOUT,
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             logger.warning(
-                "Pre-connection command exited with code %s: %s",
+                "Pre-connection command exited with code %s",
                 result.returncode,
-                command,
             )
+            stderr = (getattr(result, "stderr", "") or "").strip()
+            if stderr:
+                logger.debug(
+                    "Pre-connection command failure output: %.800s",
+                    stderr,
+                )
     except subprocess.TimeoutExpired:
-        logger.warning("Pre-connection command timed out: %s", command)
+        logger.warning("Pre-connection command timed out")
+        logger.debug("Pre-connection command timed out: %s", command)
     except Exception as exc:
-        logger.warning("Pre-connection command failed: %s", exc)
+        logger.warning("Pre-connection command failed")
+        logger.debug("Pre-connection command failed: %s", exc, exc_info=True)
 
 
 def _finish_capture_gesture(gesture, handled: bool) -> None:

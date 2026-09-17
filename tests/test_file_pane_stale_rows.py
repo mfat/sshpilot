@@ -9,15 +9,6 @@ only disappeared on a manual reload.
 """
 
 
-# _restore_module_registry is an autouse fixture: importing it here undoes this
-# module's rebuilding of the gi stubs and its purge of the sshpilot.file_manager
-# chain, both of which live in the process-global sys.modules.
-from tests.test_file_pane_typeahead import (  # noqa: F401
-    _load_file_manager_window,
-    _restore_module_registry,
-)
-
-
 class FakeStringObject:
     def __init__(self, value):
         self._value = value
@@ -115,8 +106,8 @@ def _list(pane, entries):
     pane._apply_entry_filter(preserve_selection=False)
 
 
-def test_rows_bound_during_the_update_describe_the_new_directory(monkeypatch):
-    module = _load_file_manager_window()
+def test_rows_bound_during_the_update_describe_the_new_directory(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
     monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
     pane = _make_pane(module)
 
@@ -130,8 +121,8 @@ def test_rows_bound_during_the_update_describe_the_new_directory(monkeypatch):
     assert [entry.name for entry in pane._entries] == ["ssh", "notes.txt"]
 
 
-def test_a_shorter_listing_leaves_no_row_from_the_previous_one(monkeypatch):
-    module = _load_file_manager_window()
+def test_a_shorter_listing_leaves_no_row_from_the_previous_one(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
     monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
     pane = _make_pane(module)
 
@@ -142,9 +133,9 @@ def test_a_shorter_listing_leaves_no_row_from_the_previous_one(monkeypatch):
     assert [item.get_string() for item in pane._list_store.items] == ["only.txt"]
 
 
-def test_entries_are_published_before_the_store_changes(monkeypatch):
+def test_entries_are_published_before_the_store_changes(load_file_manager_window, monkeypatch):
     """The ordering invariant itself, independent of how GTK binds."""
-    module = _load_file_manager_window()
+    module = load_file_manager_window()
     monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
     pane = _make_pane(module)
 

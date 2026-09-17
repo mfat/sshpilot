@@ -534,10 +534,11 @@ A first version of this example ran its own websocket client as the
 ProxyCommand; it passed every test here and failed on real desktops, where the
 connection never reached the machine.
 
-Not as the `proxy_command` field: the daemon accepts only its editable config
-fields from a plugin (`EDITABLE_CONFIG_FIELDS`), and `proxy_command` is not one
-of them, so it is dropped without an error and ssh dials the host name
-directly. In a command of your own, double any literal `%`, since ssh expands
+As the `proxy_command` field instead of an extra line if you prefer — it is an
+editable daemon field, shown in the connection dialog's Routing group and
+validated like any typed field. If a jump host is also set, OpenSSH applies
+whichever line comes first in the file and ignores the other. In a
+command of your own, double any literal `%`, since ssh expands
 its own tokens there. Keep nicknames free of spaces: sshPilot runs ssh with
 the nickname, and OpenSSH refuses a destination with a space in it.
 
