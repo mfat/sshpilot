@@ -2271,7 +2271,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
         self._search_popup = None
-        GLib.idle_add(self._ensure_search_popup, priority=GLib.PRIORITY_LOW)
+        GLib.idle_add(
+            lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
+            priority=GLib.PRIORITY_LOW,
+        )
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
@@ -2312,7 +2315,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         main_box.append(self._global_overlay)
 
         self._omni_search = None
-        GLib.idle_add(self._ensure_omni_search, priority=GLib.PRIORITY_LOW)
+        GLib.idle_add(
+            lambda: (self._ensure_omni_search(), GLib.SOURCE_REMOVE)[1],
+            priority=GLib.PRIORITY_LOW,
+        )
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -4003,7 +4009,29 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
         self._terminal_theme_chooser = None
         self._sync_terminal_theme_selector(selected_theme)
-        GLib.idle_add(self._ensure_terminal_theme_chooser, priority=GLib.PRIORITY_LOW)
+
+        def _on_terminal_theme_menu_button_toggled(_btn, _pspec):
+            # GtkMenuButton has no clicked signal; its internal toggle flips
+            # "active" even with no popover wired yet. Pre-idle activation
+            # would otherwise no-op. Post-idle the popover exists and the
+            # default machinery already showed it, so only intervene when the
+            # button went active with nothing to show.
+            if (
+                self._terminal_theme_menu_button.get_active()
+                and self._terminal_theme_menu_button.get_popover() is None
+            ):
+                self._ensure_terminal_theme_chooser()
+                popover = self._terminal_theme_menu_button.get_popover()
+                if popover is not None:
+                    popover.popup()
+
+        self._terminal_theme_menu_button.connect(
+            'notify::active', _on_terminal_theme_menu_button_toggled
+        )
+        GLib.idle_add(
+            lambda: (self._ensure_terminal_theme_chooser(), GLib.SOURCE_REMOVE)[1],
+            priority=GLib.PRIORITY_LOW,
+        )
 
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
@@ -5086,19 +5114,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         so the terminal never resizes. This applies both to minimal mode and a
         sidebar manually hidden with F9. Remembered so it re-attaches on close.
         """
+        self._search_popup = self._ensure_search_popup()
         self._search_expanded_sidebar = (
             getattr(self, '_sidebar_minimal', False) or sidebar_hidden
         )
         if self._command_popup is not None and self._command_popup.visible:
             self._command_popup.hide()
         if self._search_expanded_sidebar:
-            self._search_popup.show()
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.show()
 
     def _restore_sidebar_after_search(self):
         """Re-attach the strip if opening search is what detached it."""
         if getattr(self, '_search_expanded_sidebar', False):
             self._search_expanded_sidebar = False
-            self._search_popup.hide()
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.hide()
 
     def _close_search_if_open(self):
         """Dismiss the search bar (clear filter, rebuild, restore the sidebar).
@@ -6557,7 +6590,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if getattr(self, 'search_container', None) and self.search_container.get_visible():
             self._close_search_if_open()
         else:
-            self._search_popup.hide()
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.hide()
 
     def _sidebar_mode_is_minimal(self) -> bool:
         """Icon-strip resting mode is retired; always False."""
