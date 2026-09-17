@@ -52,10 +52,14 @@ def _parse_export_maps(path: Path) -> tuple[set[str], set[str], set[str]]:
 
     for node in tree.body:
         if isinstance(node, ast.If) and (
-            isinstance(node.test, ast.Name)
-            and node.test.id == "TYPE_CHECKING"
-            or isinstance(node.test, ast.Attribute)
-            and node.test.attr == "TYPE_CHECKING"
+            (
+                isinstance(node.test, ast.Name)
+                and node.test.id == "TYPE_CHECKING"
+            )
+            or (
+                isinstance(node.test, ast.Attribute)
+                and node.test.attr == "TYPE_CHECKING"
+            )
         ):
             continue
 
