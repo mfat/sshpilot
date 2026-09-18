@@ -2418,7 +2418,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Show/hide the toggleable header-bar buttons per preferences
         (Settings ▸ Interface ▸ Header Bar)."""
         mapping = (
-            ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', False),
+            ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', True),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
             ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', True),

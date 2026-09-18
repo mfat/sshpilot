@@ -148,10 +148,10 @@ def test_headerbar_menu_action_updates_shared_preference(monkeypatch):
     actions._register_headerbar_visibility_actions(window)
     action = window.actions['headerbar-sidebar-toggle']
 
-    assert action.get_state().get_boolean() is False
-    action.change_state(Variant(True))
-    assert window.config.values['ui.headerbar_show_sidebar_toggle'] is True
     assert action.get_state().get_boolean() is True
+    action.change_state(Variant(False))
+    assert window.config.values['ui.headerbar_show_sidebar_toggle'] is False
+    assert action.get_state().get_boolean() is False
     assert window.update_count == 1
 
     theme_action = window.actions['headerbar-terminal-theme']

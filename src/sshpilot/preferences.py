@@ -1649,7 +1649,6 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Sidebar Toggle Button"),
             _("Show the button that hides/shows the sidebar (F9 still works when hidden)"),
             'ui.headerbar_show_sidebar_toggle',
-            default=False,
         )
         _add_headerbar_switch(
             _("Split View Button"),

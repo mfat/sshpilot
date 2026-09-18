@@ -114,7 +114,7 @@ def get_default_config() -> Dict[str, Any]:
             # 'none' | 'hide'. ('minimize' / icon strip is retired.)
             'sidebar_on_terminal_open': 'none',
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-            'headerbar_show_sidebar_toggle': False,
+            'headerbar_show_sidebar_toggle': True,
             'headerbar_show_split_view': False,
             'headerbar_show_commands': True,
             'headerbar_show_terminal_theme': True,
