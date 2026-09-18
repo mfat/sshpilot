@@ -534,6 +534,103 @@ def test_protocol_terminal_launch_normalizes_unusable_term_at_provider_boundary(
     assert environment["TERM"] == expected
 
 
+@pytest.mark.parametrize(
+    ("spawn_env", "expect_lang", "expect_lc_ctype", "expect_lc_all"),
+    [
+        # Finder/Dock-style C/ASCII inheritance (issue #1263 follow-up).
+        (
+            {
+                "LANG": "",
+                "LC_CTYPE": "C",
+                "LC_COLLATE": "C",
+                "LC_MESSAGES": "C",
+            },
+            True,
+            True,
+            False,
+        ),
+        ({}, True, False, False),
+        ({"LANG": "C"}, True, False, False),
+        ({"LANG": "POSIX"}, True, False, False),
+        ({"LC_ALL": "C"}, False, False, True),
+        # Already UTF-8 — leave intact (including intentional LC_COLLATE=C).
+        (
+            {"LANG": "en_US.UTF-8", "LC_COLLATE": "C"},
+            "en_US.UTF-8",
+            None,
+            None,
+        ),
+        (
+            {"LC_CTYPE": "C.UTF-8", "LANG": ""},
+            True,
+            "C.UTF-8",
+            None,
+        ),
+        (
+            {"LC_ALL": "de_DE.UTF-8"},
+            None,
+            None,
+            "de_DE.UTF-8",
+        ),
+        (
+            {"LANG": "fr_FR.utf8"},
+            "fr_FR.utf8",
+            None,
+            None,
+        ),
+    ],
+)
+def test_protocol_terminal_launch_normalizes_unusable_locale_at_provider_boundary(
+    provider, monkeypatch, spawn_env, expect_lang, expect_lc_ctype, expect_lc_all
+):
+    """Interactive mosh launches get a UTF-8 locale when Finder left C/ASCII."""
+    from sshpilot.daemon.connection_launch_provider import _DEFAULT_UTF8_LOCALE
+    from sshpilot.plugins.api import SpawnSpec
+    import sshpilot.plugins.builtin.mosh_protocol as mosh_mod
+
+    prov, records = provider
+    records["mosh1"] = _record(
+        id="mosh1",
+        nickname="mosh1",
+        protocol="mosh",
+        data={"host": "example.com"},
+    )
+
+    env = dict(spawn_env)
+    env.setdefault("PATH", "/usr/bin:/bin")
+    env.setdefault("TERM", "xterm-256color")
+
+    def fake_build_spawn(self, connection, ctx):
+        return SpawnSpec(argv=["/usr/bin/mosh", "example.com"], env=dict(env))
+
+    monkeypatch.setattr(mosh_mod.MoshProtocolBackend, "build_spawn", fake_build_spawn)
+    monkeypatch.setattr(
+        "sshpilot.daemon.connection_launch_provider.shutil.which",
+        lambda name, path=None, **_kwargs: (
+            name if isinstance(name, str) and name.startswith("/") else f"/usr/bin/{name}"
+        ),
+    )
+
+    _command, environment = prov.prepare_terminal_launch("mosh1")
+
+    def _expect(flag_or_value, key):
+        if flag_or_value is None:
+            assert key not in environment or environment.get(key) == spawn_env.get(key)
+        elif flag_or_value is True:
+            assert environment.get(key) == _DEFAULT_UTF8_LOCALE
+        elif flag_or_value is False:
+            assert key not in environment or not str(environment.get(key) or "").strip()
+        else:
+            assert environment.get(key) == flag_or_value
+
+    _expect(expect_lang, "LANG")
+    _expect(expect_lc_ctype, "LC_CTYPE")
+    _expect(expect_lc_all, "LC_ALL")
+    # Non-charset categories stay untouched.
+    if "LC_COLLATE" in spawn_env:
+        assert environment.get("LC_COLLATE") == spawn_env["LC_COLLATE"]
+
+
 def test_non_terminal_ssh_launch_does_not_get_terminal_term_default(provider, monkeypatch):
     import sshpilot.ssh_connection_builder as builder
 
@@ -552,6 +649,9 @@ def test_non_terminal_ssh_launch_does_not_get_terminal_term_default(provider, mo
     _command, environment = prov.prepare_scp_launch("web")
 
     assert "TERM" not in environment
+    assert "LANG" not in environment
+    assert "LC_CTYPE" not in environment
+    assert "LC_ALL" not in environment
 
 
 def test_production_settings_view_is_not_called_as_a_function(provider, monkeypatch):
