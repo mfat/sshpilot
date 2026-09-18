@@ -397,23 +397,22 @@ def install_sidebar_css():
           background-color: shade(@accent_bg_color, 0.90);
         }
 
-        /* Accent-bar mode: the coloured left bar is the highlight, so a
-           selected row uses a neutral overlay instead of the accent fill
-           (which would swamp the bar). Every bar-mode row carries
-           .color-bar, and this out-specifies the accent `row:selected`
-           rule above at the same provider priority. */
+        /* Accent-bar mode: every bar-mode row carries .color-bar. Use the
+           same accent selection as other modes so the row stays readable;
+           the group colour strip is a background-image and still paints
+           over the fill. Hover/active match .tinted:selected. */
         .navigation-sidebar row.color-bar:selected {
-          background-color: alpha(@window_fg_color, 0.10);
-          color: @window_fg_color;
+          background-color: @accent_bg_color;
+          color: @accent_fg_color;
           box-shadow: none;
         }
 
         .navigation-sidebar row.color-bar:selected:hover {
-          background-color: alpha(@window_fg_color, 0.13);
+          background-color: shade(@accent_bg_color, 0.95);
         }
 
         .navigation-sidebar row.color-bar:selected:active {
-          background-color: alpha(@window_fg_color, 0.16);
+          background-color: shade(@accent_bg_color, 0.90);
         }
 
         /* Minimal strip only (.sidebar-minimal is set on the sidebar box while
