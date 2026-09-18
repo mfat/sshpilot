@@ -976,10 +976,10 @@ def _set_compact_fg_color(widget: Gtk.Widget, rgba: Optional[Gdk.RGBA],
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
-    Modes: ``fill`` (tinted card), ``badge`` (tag icon), ``bar`` (leading
-    accent bar), ``dot`` (dot before the row icon). Mutually exclusive, so we
-    always clear the others first. ``row`` must expose ``color_badge``,
-    ``_update_color_badge`` and ``color_dot``.
+    Modes: ``fill`` (tinted card), ``badge`` (tag icon before the row icon),
+    ``bar`` (leading accent bar), ``dot`` (dot before the row icon). Mutually
+    exclusive, so we always clear the others first. ``row`` must expose
+    ``color_badge``, ``_update_color_badge`` and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
@@ -1287,6 +1287,14 @@ class GroupRow(Gtk.ListBoxRow):
         self.color_dot = _create_color_dot("big-dot-symbolic")
         content.append(self.color_dot)
 
+        # Same leading slot as color_dot (mutually exclusive via _apply_row_color).
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
+
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
@@ -1353,13 +1361,6 @@ class GroupRow(Gtk.ListBoxRow):
 
         # Set up hover events to show/hide buttons
         self._setup_hover_buttons()
-
-        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
-        self.color_badge.add_css_class("sidebar-color-badge")
-        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
-        self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_visible(False)
-        content.append(self.color_badge)
 
         self.expand_button = Gtk.Button()
         icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
@@ -1989,6 +1990,14 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_dot = _create_color_dot()
         content.append(self.color_dot)
 
+        # Same leading slot as color_dot (mutually exclusive via _apply_row_color).
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
+
         self.connection_icon = icon_utils.new_image_from_icon_name("computer-symbolic")
         self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.connection_icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
@@ -2046,13 +2055,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
-
-        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
-        self.color_badge.add_css_class("sidebar-color-badge")
-        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
-        self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_visible(False)
-        content.append(self.color_badge)
 
         # File manager button — revealed on hover with its width reserved, so
         # hovering never reflows the row. Parked in a height-only stack so
