@@ -593,31 +593,34 @@ class DaemonConnectionLaunchProvider:
         connection = HeadlessConnectionView(record)
         protocol = connection.protocol
         if protocol != "ssh":
-            return self._prepare_protocol_launch(
+            argv, environment = self._prepare_protocol_launch(
                 connection, protocol, interaction_policy=interaction_policy
             )
-        # SessionType none (ssh -N / forwarding-only) must not ride the app
-        # ControlMaster=auto + ControlPersist preference. OpenSSH then
-        # backgrounds the mux master and the watched foreground process exits
-        # 0, which the UI treats as a clean shell exit and destroys the tab.
-        # Force ControlMaster=no first (OpenSSH first-value-wins; preference
-        # overrides are emitted last) so the -N process stays in the
-        # foreground. Normal shell tabs keep multiplexing unchanged.
-        extra_args: Optional[List[str]] = None
-        if self._connection_is_forwarding_only(connection):
-            extra_args = ["-o", "ControlMaster=no"]
-        argv, environment = self._prepare_ssh_launch(
-            connection,
-            interaction_policy=interaction_policy,
-            command_type="ssh",
-            remote_command=remote_command,
-            force_tty=force_tty,
-            extra_args=extra_args,
-        )
-        # The daemon PTY is the semantic boundary for interactive SSH
-        # terminals.  Authentication helpers intentionally preserve the
-        # caller environment, but a missing or ``dumb`` TERM is not usable for
-        # the interactive OpenSSH child.  Keep valid terminal types intact.
+        else:
+            # SessionType none (ssh -N / forwarding-only) must not ride the app
+            # ControlMaster=auto + ControlPersist preference. OpenSSH then
+            # backgrounds the mux master and the watched foreground process exits
+            # 0, which the UI treats as a clean shell exit and destroys the tab.
+            # Force ControlMaster=no first (OpenSSH first-value-wins; preference
+            # overrides are emitted last) so the -N process stays in the
+            # foreground. Normal shell tabs keep multiplexing unchanged.
+            extra_args: Optional[List[str]] = None
+            if self._connection_is_forwarding_only(connection):
+                extra_args = ["-o", "ControlMaster=no"]
+            argv, environment = self._prepare_ssh_launch(
+                connection,
+                interaction_policy=interaction_policy,
+                command_type="ssh",
+                remote_command=remote_command,
+                force_tty=force_tty,
+                extra_args=extra_args,
+            )
+        # The daemon PTY is the semantic boundary for interactive terminals
+        # (SSH and protocol plugins such as mosh). Authentication helpers
+        # intentionally preserve the caller environment, but a missing or
+        # ``dumb`` TERM is not usable — mosh aborts immediately without TERM
+        # when the app is launched from Finder/Dock (issue #1263). Keep valid
+        # terminal types intact.
         term = environment.get("TERM")
         if not term or term.lower() == "dumb":
             environment["TERM"] = "xterm-256color"
