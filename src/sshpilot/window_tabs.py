@@ -1206,7 +1206,7 @@ class WindowTabsMixin:
                             pass
                     return True
 
-                if drag_type not in ("connection", "group"):
+                if drag_type not in ("connection", "group", "local_terminal"):
                     return False
 
                 # Only convert if the terminal is still in the main tab_view
@@ -1216,7 +1216,9 @@ class WindowTabsMixin:
 
                 tab_title = _("Split View")
 
-                if drag_type == "connection":
+                if drag_type == "local_terminal":
+                    connections = None  # sentinel: one local shell in pane 1
+                elif drag_type == "connection":
                     nicknames = value.get("connection_nicknames") or []
                     if not nicknames and value.get("connection_nickname"):
                         nicknames = [value["connection_nickname"]]
@@ -1241,7 +1243,7 @@ class WindowTabsMixin:
                         if conn is not None:
                             connections.append(conn)
 
-                if not connections:
+                if connections is not None and not connections:
                     return False
 
                 from .split_view import SplitViewTab
@@ -1272,12 +1274,15 @@ class WindowTabsMixin:
                     return False
                 GLib.idle_add(_embed_terminal_in_pane0)
 
-                # Add each dropped connection to pane 1 (and extra panes beyond)
-                for i, conn in enumerate(connections):
-                    if i == 0:
-                        svt._panes[1].add_connection(conn)
-                    else:
-                        svt.add_pane().add_connection(conn)
+                if connections is None:
+                    svt._panes[1].add_local_terminal()
+                else:
+                    # Add each dropped connection to pane 1 (and extra panes beyond)
+                    for i, conn in enumerate(connections):
+                        if i == 0:
+                            svt._panes[1].add_connection(conn)
+                        else:
+                            svt.add_pane().add_connection(conn)
 
                 # Append the split-view tab to the main tab_view
                 new_page = self.tab_view.append(svt)
@@ -1787,6 +1792,53 @@ class WindowTabsMixin:
                 pass
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
+
+    def _cycle_local_terminal_tabs_or_open(self):
+        """Cycle main-tab local shells (wrap), or open one when none exist.
+
+        Local shells each get a fresh ``LocalConnection`` object, so identity
+        cannot use ``terminal_to_connection`` equality the way SSH rows do —
+        collect by ``TerminalWidget._is_local_terminal()`` instead.
+        """
+        self._return_to_tab_view_if_welcome()
+        self._close_search_if_open()
+        try:
+            terms = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, "get_child") else None
+                if child is None:
+                    continue
+                try:
+                    if child._is_local_terminal():
+                        terms.append(child)
+                except Exception:
+                    continue
+
+            if terms:
+                selected = self.tab_view.get_selected_page()
+                current_idx = -1
+                if selected is not None:
+                    current_child = selected.get_child()
+                    for i, term in enumerate(terms):
+                        if term == current_child:
+                            current_idx = i
+                            break
+                next_idx = (current_idx + 1) % len(terms) if current_idx >= 0 else 0
+                next_term = terms[next_idx]
+                page = self._page_for_child(next_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    self._focus_terminal_widget(next_term)
+                    return
+
+            self.terminal_manager.show_local_terminal()
+        except Exception as exc:
+            logger.error("Failed to cycle or open local terminal: %s", exc)
 
     def _focus_terminal_widget(self, terminal: TerminalWidget) -> None:
         """Request focus for a terminal widget, retrying on idle if needed."""

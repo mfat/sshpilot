@@ -4534,6 +4534,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         tag_filter = getattr(self, '_tag_filter', None)
 
+        # Pin a local-terminal row at the top of every list shape (grouped,
+        # flat search, tag filter). Search filters it like any other row.
+        self._add_local_terminal_row_if_visible(search_text)
+
         # When the search popup asks for a flat list (no group headers), show a
         # plain connection list honouring the active search/tag filters.
         popup = getattr(self, '_search_popup', None)
@@ -4692,6 +4696,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, "group_id") and row.group_id == group_id:
                 self._select_only_row(row)
                 break
+
+    def _add_local_terminal_row_if_visible(self, search_text: str = '') -> None:
+        """Prepend the pinned local-terminal row when it matches the search."""
+        from .sidebar import LocalTerminalRow, local_terminal_row_matches
+
+        if search_text and not local_terminal_row_matches(search_text):
+            return
+        row = LocalTerminalRow(self.config)
+        self.connection_list.append(row)
 
     def add_connection_row(
         self,
@@ -6343,6 +6356,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     # Signal handlers
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
+        if row is not None and getattr(row, 'is_local_terminal_row', False):
+            self._dismiss_search_popup()
+            self._cycle_local_terminal_tabs_or_open()
+            return
         if row is not None and hasattr(row, 'command_action'):
             # Close the popup first (restores the sidebar), then run the command
             # so the dialog/page it opens isn't fighting the popup for the overlay.
@@ -6364,6 +6381,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
         self._return_to_tab_view_if_welcome()
+        if row and getattr(row, 'is_local_terminal_row', False):
+            self._cycle_local_terminal_tabs_or_open()
+            return True
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
@@ -6373,6 +6393,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle the activate-connection action"""
         self._return_to_tab_view_if_welcome()
         row = self.connection_list.get_selected_row()
+        if row and getattr(row, 'is_local_terminal_row', False):
+            self._cycle_local_terminal_tabs_or_open()
+            return
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
 

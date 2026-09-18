@@ -2748,6 +2748,250 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.set_compact(True)
 
 
+def local_terminal_row_matches(query: str) -> bool:
+    """Return True when the pinned local-terminal row should appear for ``query``.
+
+    Empty query always matches (the row stays pinned at the top). Otherwise every
+    whitespace-separated keyword must hit the title, subtitle, or common aliases
+    (``local`` / ``terminal`` / ``shell``), matching :func:`connection_matches`.
+    """
+    if not query:
+        return True
+    keywords = query.lower().split()
+    if not keywords:
+        return True
+    fields = [
+        _("Local Terminal").lower(),
+        _("Open a local shell").lower(),
+        "local",
+        "terminal",
+        "shell",
+    ]
+    return all(any(keyword in field for field in fields) for keyword in keywords)
+
+
+class LocalTerminalRow(Gtk.ListBoxRow):
+    """Pinned connection-list row that opens a local shell.
+
+    Not a real :class:`Connection` — activation calls
+    ``terminal_manager.show_local_terminal``. Attribute names mirror
+    :class:`ConnectionRow` (``connection_icon``, ``host_label``, …) so the
+    sidebar preference walker and compact/minimal paths apply unchanged.
+    """
+
+    is_local_terminal_row = True
+
+    def __init__(self, config=None):
+        super().__init__()
+        self.config = config
+        self._compact = False
+        self._content_spacing_base = 12
+        _apply_sidebar_row_style(self, config)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self._content_box = content
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+
+        from sshpilot import icon_utils
+
+        self.connection_icon = icon_utils.new_image_from_icon_name(
+            "utilities-terminal-symbolic"
+        )
+        self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.connection_icon.set_valign(Gtk.Align.CENTER)
+        show_icon = True
+        if config is not None:
+            try:
+                show_icon = bool(
+                    config.get_setting("ui.sidebar_show_connection_icon", True)
+                )
+            except Exception:
+                show_icon = True
+        self.connection_icon.set_visible(show_icon)
+        content.append(self.connection_icon)
+
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+        info_box.set_valign(Gtk.Align.CENTER)
+        self._info_box = info_box
+
+        self.nickname_label = Gtk.Label()
+        self.nickname_label.set_text(_("Local Terminal"))
+        self.nickname_label.set_halign(Gtk.Align.START)
+        self.nickname_label.set_xalign(0.0)
+        self.nickname_label.set_valign(Gtk.Align.CENTER)
+        self.nickname_label.set_hexpand(True)
+        self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.nickname_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.nickname_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
+        info_box.append(self.nickname_label)
+
+        # Reuses ConnectionRow's host_label slot so preference visibility updates
+        # (ui.sidebar_show_user_hostname) apply without a special case.
+        self.host_label = Gtk.Label()
+        self.host_label.set_text(_("Open a local shell"))
+        self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.set_xalign(0.0)
+        self.host_label.add_css_class("dim-label")
+        self.host_label.set_hexpand(True)
+        self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.host_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
+        show_subtitle = False
+        if config is not None:
+            try:
+                show_subtitle = bool(
+                    config.get_setting("ui.sidebar_show_user_hostname", False)
+                )
+            except Exception:
+                show_subtitle = False
+        self.host_label.set_visible(show_subtitle)
+        info_box.append(self.host_label)
+
+        content.append(info_box)
+
+        # Match ConnectionRow height when icon/host prefs are off: that row's
+        # Manage Files control is taller than a single label and is parked in a
+        # height-only stack so shedding it never collapses the row. Mirror the
+        # same metrics with a non-interactive placeholder (empty page up → zero
+        # width, button height reserved).
+        placeholder = icon_utils.new_button_from_icon_name("folder-symbolic")
+        placeholder.add_css_class("flat")
+        placeholder.add_css_class("file-manager-button")
+        placeholder.set_valign(Gtk.Align.CENTER)
+        placeholder.set_sensitive(False)
+        placeholder.set_can_target(False)
+        placeholder.set_focusable(False)
+        placeholder.set_opacity(0.0)
+        self._height_placeholder = placeholder
+        self._height_slot = _make_row_action_slot(placeholder)
+        self._height_slot.set_visible_child_name(ROW_ACTION_SLOT_EMPTY)
+        content.append(self._height_slot)
+
+        self.set_child(content)
+
+        self.set_selectable(True)
+        set_accessible_name(self, _("Local Terminal"))
+        set_accessible_description(self, _("Open a local shell"))
+        self.set_tooltip_text(_("Open a local shell"))
+        self._setup_drag_source()
+
+    def apply_row_style(self, flat: bool | None = None) -> None:
+        _apply_sidebar_row_style(self, self.config, flat=flat)
+
+    def _setup_drag_source(self) -> None:
+        """Allow dragging the row onto a terminal / split pane (not for regrouping)."""
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        self.add_controller(drag_source)
+        self._drag_source = drag_source
+
+    def _on_drag_prepare(self, _source, _x, _y):
+        # Distinct from connection payloads so the sidebar regroup drop ignores it.
+        return content_provider_for_payload({"type": "local_terminal"})
+
+    def _on_drag_begin(self, source, drag):
+        set_internal_drag_icon(
+            source, self, drag=drag, icon_name="utilities-terminal-symbolic"
+        )
+        try:
+            window = self.get_root()
+            if window is None:
+                return
+            window._dragged_local_terminal = True
+            if hasattr(window, "_dragged_connections"):
+                delattr(window, "_dragged_connections")
+            if hasattr(window, "_dragged_group_id"):
+                delattr(window, "_dragged_group_id")
+            window._drag_in_progress = True
+            if hasattr(window, "begin_sidebar_drag_expand"):
+                window.begin_sidebar_drag_expand()
+        except Exception as exc:
+            logger.error("Local terminal drag begin failed: %s", exc)
+
+    def _on_drag_end(self, _source, _drag, _delete_data):
+        try:
+            window = self.get_root()
+            if window is None:
+                return
+            if hasattr(window, "_dragged_local_terminal"):
+                delattr(window, "_dragged_local_terminal")
+            window._drag_in_progress = False
+            if hasattr(window, "end_sidebar_drag_expand"):
+                window.end_sidebar_drag_expand()
+        except Exception as exc:
+            logger.error("Local terminal drag end failed: %s", exc)
+
+    def set_compact(self, compact: bool, *, max_chars: int | None = None) -> None:
+        """Collapse to a short strip label (minimal sidebar) or restore."""
+        compact = bool(compact)
+        if not compact and not getattr(self, "_compact", False):
+            return
+        self._compact = compact
+        content = self._content_box
+
+        if not compact:
+            content.set_halign(Gtk.Align.FILL)
+            content.set_margin_start(12)
+            content.set_margin_end(12)
+            content.set_spacing(self._content_spacing_base)
+            content.set_vexpand(False)
+            _restore_full_label_width(self.nickname_label)
+            self._info_box.set_visible(True)
+            self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
+            try:
+                self.connection_icon.set_visible(
+                    bool(
+                        self.config.get_setting(
+                            "ui.sidebar_show_connection_icon", True
+                        )
+                    )
+                    if self.config
+                    else True
+                )
+            except Exception:
+                self.connection_icon.set_visible(True)
+            try:
+                self.host_label.set_visible(
+                    bool(
+                        self.config.get_setting(
+                            "ui.sidebar_show_user_hostname", False
+                        )
+                    )
+                    if self.config
+                    else False
+                )
+            except Exception:
+                self.host_label.set_visible(False)
+            self.nickname_label.set_text(_("Local Terminal"))
+            self.apply_row_style()
+            return
+
+        if max_chars is not None:
+            self._compact_max_chars = max(1, int(max_chars))
+        chars = int(
+            getattr(self, "_compact_max_chars", 0) or MINIMAL_LABEL_MAX_CHARS
+        )
+        self.apply_row_style(flat=True)
+        content.set_halign(Gtk.Align.FILL)
+        content.set_margin_start(6)
+        content.set_margin_end(6)
+        content.set_spacing(0)
+        content.set_vexpand(True)
+        self._info_box.set_visible(True)
+        self.host_label.set_visible(False)
+        self.connection_icon.set_visible(False)
+        _configure_compact_label(
+            self.nickname_label, _("Local Terminal"), max_chars=chars
+        )
+
+
 # ---------------------------------------------------------------------------
 # Drag-and-drop helpers
 # ---------------------------------------------------------------------------
@@ -2777,6 +3021,8 @@ def reset_connection_list_drag_session(window) -> None:
         delattr(window, "_dragged_group_id")
     if hasattr(window, "_dragged_connections"):
         delattr(window, "_dragged_connections")
+    if hasattr(window, "_dragged_local_terminal"):
+        delattr(window, "_dragged_local_terminal")
 
     window._drag_in_progress = False
 
@@ -4716,7 +4962,15 @@ def _attach_connection_list_context_menu(window):
                 except Exception:
                     pass
 
-            if getattr(row, 'is_tag_group', False):
+            if getattr(row, 'is_local_terminal_row', False):
+                menu.add_section(
+                    menu.add_item(
+                        'utilities-terminal-symbolic',
+                        _('Open Local Terminal'),
+                        lambda: window.terminal_manager.show_local_terminal(),
+                    ),
+                )
+            elif getattr(row, 'is_tag_group', False):
                 # Virtual tag groups: rename the tag or open members in
                 # split view — no edit/delete/run (nothing to mutate).
                 # The Untagged section is not a real tag: no rename.
@@ -5061,6 +5315,17 @@ def _attach_connection_list_context_menu(window):
 
             # Middle click opens tabs: one for a connection row, one per member
             # for a group row (which confirms first when the group is a big one).
+            # The pinned local-terminal row opens a local shell instead.
+            if getattr(row, 'is_local_terminal_row', False):
+                try:
+                    window.terminal_manager.show_local_terminal()
+                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                except Exception:
+                    logger.debug(
+                        "Middle-click local terminal failed", exc_info=True
+                    )
+                return
+
             is_group = not hasattr(row, 'connection') and hasattr(row, 'group_id')
             if is_group:
                 open_action = getattr(window, 'on_open_group_in_tabs_action', None)

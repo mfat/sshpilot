@@ -466,9 +466,9 @@ def test_incompatible_daemon_is_asked_to_stop_before_it_is_signalled(
 def test_frozen_builds_get_a_longer_startup_budget(monkeypatch):
     """A packaged app is a bundle launch, not an interpreter launch.
 
-    Three seconds is the source-tree budget; a signed .app doing first-launch
-    validation routinely needs more, and timing out there reports a broken
-    daemon when it was only still starting.
+    Source builds share a generous cold-start budget; a signed .app doing
+    first-launch validation still needs more, and timing out there reports a
+    broken daemon when it was only still starting.
     """
     from sshpilot.daemon.launcher import (
         DEFAULT_STARTUP_TIMEOUT,

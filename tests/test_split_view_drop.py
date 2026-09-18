@@ -11,7 +11,11 @@ actual widget creation — those remain manual.
 
 import types
 
-from sshpilot.split_view import SplitPane, _connections_from_drop_payload
+from sshpilot.split_view import (
+    SplitPane,
+    _connections_from_drop_payload,
+    _is_local_terminal_drop,
+)
 
 
 # ── pure payload normalization ──────────────────────────────────────────────
@@ -20,6 +24,19 @@ def test_payload_non_dict_returns_empty():
     assert _connections_from_drop_payload(None) == []
     assert _connections_from_drop_payload("nick") == []
     assert _connections_from_drop_payload(42) == []
+
+
+def test_local_terminal_payload_is_detected():
+    from sshpilot.dnd_payload import encode_dnd_payload
+
+    assert _is_local_terminal_drop({"type": "local_terminal"}) is True
+    assert _is_local_terminal_drop(
+        encode_dnd_payload({"type": "local_terminal"})
+    ) is True
+    assert _is_local_terminal_drop({"type": "connection"}) is False
+    assert _is_local_terminal_drop(None) is False
+    # Local-terminal drops must not look like connection nicknames.
+    assert _connections_from_drop_payload({"type": "local_terminal"}) == []
 
 
 def test_payload_json_string_is_decoded():
@@ -68,6 +85,8 @@ def _make_pane(known, terminal_count):
 
     added_here = []
     added_in_new_pane = []
+    local_here = []
+    local_new = []
 
     def find(nick):
         return known.get(nick)
@@ -77,17 +96,21 @@ def _make_pane(known, terminal_count):
     )
     pane.get_terminal_count = lambda: terminal_count["value"]
     pane.add_connection = lambda conn: added_here.append(conn)
+    pane.add_local_terminal = lambda: local_here.append(True)
 
-    new_pane = types.SimpleNamespace(add_connection=lambda conn: added_in_new_pane.append(conn))
+    new_pane = types.SimpleNamespace(
+        add_connection=lambda conn: added_in_new_pane.append(conn),
+        add_local_terminal=lambda: local_new.append(True),
+    )
     pane._split_view_tab = types.SimpleNamespace(add_pane=lambda: new_pane)
 
-    return pane, added_here, added_in_new_pane
+    return pane, added_here, added_in_new_pane, local_here, local_new
 
 
 def test_drop_into_empty_pane_fills_in_place():
     conn = object()
     count = {"value": 0}
-    pane, here, new = _make_pane({"a": conn}, count)
+    pane, here, new, _lh, _ln = _make_pane({"a": conn}, count)
 
     assert pane._on_drop(None, {"type": "connection", "connection_nickname": "a"}, 0, 0) is True
     assert here == [conn]
@@ -97,7 +120,7 @@ def test_drop_into_empty_pane_fills_in_place():
 def test_drop_into_occupied_pane_spawns_new_pane():
     conn = object()
     count = {"value": 1}
-    pane, here, new = _make_pane({"a": conn}, count)
+    pane, here, new, _lh, _ln = _make_pane({"a": conn}, count)
 
     assert pane._on_drop(None, {"type": "connection", "connection_nickname": "a"}, 0, 0) is True
     assert here == []
@@ -107,7 +130,7 @@ def test_drop_into_occupied_pane_spawns_new_pane():
 def test_drop_multiple_first_fills_rest_open_new_panes():
     c1, c2, c3 = object(), object(), object()
     count = {"value": 0}
-    pane, here, new = _make_pane({"a": c1, "b": c2, "c": c3}, count)
+    pane, here, new, _lh, _ln = _make_pane({"a": c1, "b": c2, "c": c3}, count)
     # After the empty pane is filled, subsequent connections must open new panes.
     # The fake's get_terminal_count is dynamic so flip it once the first lands.
     real_add = pane.add_connection
@@ -126,7 +149,7 @@ def test_drop_multiple_first_fills_rest_open_new_panes():
 
 def test_drop_unknown_nickname_is_skipped():
     count = {"value": 0}
-    pane, here, new = _make_pane({}, count)  # nothing resolves
+    pane, here, new, _lh, _ln = _make_pane({}, count)  # nothing resolves
 
     assert pane._on_drop(None, {"type": "connection", "connection_nickname": "ghost"}, 0, 0) is True
     assert here == []
@@ -135,8 +158,30 @@ def test_drop_unknown_nickname_is_skipped():
 
 def test_drop_non_connection_payload_returns_false():
     count = {"value": 0}
-    pane, here, new = _make_pane({}, count)
+    pane, here, new, _lh, _ln = _make_pane({}, count)
 
     assert pane._on_drop(None, {"type": "group"}, 0, 0) is False
+    assert here == []
+    assert new == []
+
+
+def test_drop_local_terminal_into_empty_pane():
+    count = {"value": 0}
+    pane, here, new, local_here, local_new = _make_pane({}, count)
+
+    assert pane._on_drop(None, {"type": "local_terminal"}, 0, 0) is True
+    assert local_here == [True]
+    assert local_new == []
+    assert here == []
+    assert new == []
+
+
+def test_drop_local_terminal_into_occupied_pane_spawns_new_pane():
+    count = {"value": 1}
+    pane, here, new, local_here, local_new = _make_pane({}, count)
+
+    assert pane._on_drop(None, {"type": "local_terminal"}, 0, 0) is True
+    assert local_here == []
+    assert local_new == [True]
     assert here == []
     assert new == []

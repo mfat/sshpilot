@@ -37,6 +37,12 @@ def _connections_from_drop_payload(value) -> List[str]:
     return list(nicknames)
 
 
+def _is_local_terminal_drop(value) -> bool:
+    """True when *value* is the pinned Local Terminal sidebar drag payload."""
+    value = decode_dnd_payload(value)
+    return isinstance(value, dict) and value.get("type") == "local_terminal"
+
+
 # Installed once per process; scoped to the .add-pane-strip / scroll-spacer
 # style classes so it only affects those widgets and nothing else in the app.
 # Class-only selectors so the rule applies whether the strip is a Gtk.Box or a
@@ -504,6 +510,13 @@ class SplitPane(Gtk.Box):
 
     def _on_drop(self, _target, value, _x: float, _y: float) -> bool:
         try:
+            if _is_local_terminal_drop(value):
+                if self.get_terminal_count() == 0:
+                    self.add_local_terminal()
+                else:
+                    self._split_view_tab.add_pane().add_local_terminal()
+                return True
+
             nicknames = _connections_from_drop_payload(value)
             if not nicknames:
                 return False
@@ -1041,6 +1054,9 @@ class SplitViewTab(Gtk.Box):
 
     def _on_add_pane_drop(self, _target, value, _x, _y) -> bool:
         try:
+            if _is_local_terminal_drop(value):
+                self.add_pane().add_local_terminal()
+                return True
             nicknames = _connections_from_drop_payload(value)
             if not nicknames:
                 return False
