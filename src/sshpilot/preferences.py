@@ -1457,6 +1457,19 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_group.add(flat_rows_switch)
 
+        show_local_terminal_switch = Adw.SwitchRow()
+        show_local_terminal_switch.set_title(_("Local Terminal Row"))
+        show_local_terminal_switch.set_subtitle(
+            _("Show the Local Terminal entry at the top of the connection list")
+        )
+        show_local_terminal_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_local_terminal', True))
+        )
+        show_local_terminal_switch.connect(
+            'notify::active', self.on_sidebar_show_local_terminal_changed
+        )
+        sidebar_group.add(show_local_terminal_switch)
+
         # Display user@hostname toggle
         show_user_hostname_switch = Adw.SwitchRow()
         show_user_hostname_switch.set_title(_("Display user@hostname"))
@@ -6553,6 +6566,20 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar flat rows preference: %s", exc)
+
+    def on_sidebar_show_local_terminal_changed(self, switch, *args):
+        """Persist and rebuild so the pinned Local Terminal row appears or hides."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_local_terminal', active)
+            if self.parent_window and hasattr(
+                self.parent_window, 'rebuild_connection_list'
+            ):
+                self.parent_window.rebuild_connection_list()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show local terminal preference: %s", exc
+            )
 
     def on_interface_monospace_font_changed(self, switch, *args):
         """Persist and apply monospace typeface for the whole interface."""

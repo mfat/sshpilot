@@ -114,6 +114,92 @@ def test_rebuild_pins_local_terminal_row_first(window_mod, sidebar_mod, monkeypa
     assert win.connection_list.children[0] is created[0]
 
 
+def test_rebuild_omits_local_terminal_row_when_pref_disabled(
+    window_mod, sidebar_mod, monkeypatch
+):
+    """ui.sidebar_show_local_terminal=False skips the pinned row."""
+
+    class OffCfg:
+        def get_setting(self, key, default=None):
+            if key == "ui.sidebar_show_local_terminal":
+                return False
+            return default
+
+    created = []
+
+    class StubLocalRow:
+        is_local_terminal_row = True
+
+        def __init__(self, config=None):
+            created.append(self)
+
+    import sshpilot.sidebar as sidebar_pkg
+
+    monkeypatch.setattr(sidebar_pkg, "LocalTerminalRow", StubLocalRow)
+
+    class DummyList:
+        def __init__(self):
+            self.children = []
+
+        def get_first_child(self):
+            return self.children[0] if self.children else None
+
+        def remove(self, child):
+            self.children.remove(child)
+
+        def append(self, child):
+            self.children.append(child)
+
+        def get_selected_rows(self):
+            return []
+
+        def get_selected_row(self):
+            return None
+
+    class DummyCM:
+        def get_connections(self):
+            return []
+
+        def get_metadata(self, _nickname):
+            return {}
+
+    class DummyGM:
+        groups = {}
+        root_connections = []
+
+        def get_all_groups(self):
+            return []
+
+        def get_group_hierarchy(self):
+            return []
+
+        def get_connection_groups(self, _nick):
+            return []
+
+    win = window_mod.MainWindow.__new__(window_mod.MainWindow)
+    win.connection_list = DummyList()
+    win.connection_rows = {}
+    win.connection_scrolled = None
+    win.connection_manager = DummyCM()
+    win.group_manager = DummyGM()
+    win.config = OffCfg()
+    win.search_entry = types.SimpleNamespace(get_text=lambda: "")
+    win._hide_hosts = False
+    win._tag_filter = None
+    win._search_popup = None
+    win._sidebar_minimal = False
+    win._attach_sidebar_forwarding_rules = lambda *_a, **_k: None
+    win._refresh_sidebar_forwarding_rules = lambda *_a, **_k: None
+    win._finish_rebuild = lambda *_a, **_k: None
+    win._apply_sidebar_minimal_rows = lambda *_a, **_k: None
+    win._apply_sidebar_row_actions = lambda *_a, **_k: None
+
+    win.rebuild_connection_list()
+
+    assert created == []
+    assert win.connection_list.children == []
+
+
 def test_rebuild_hides_local_terminal_row_when_search_mismatches(
     window_mod, sidebar_mod, monkeypatch
 ):

@@ -4728,6 +4728,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Prepend the pinned local-terminal row when it matches the search."""
         from .sidebar import LocalTerminalRow, local_terminal_row_matches
 
+        if not bool(self.config.get_setting('ui.sidebar_show_local_terminal', True)):
+            return
         if search_text and not local_terminal_row_matches(search_text):
             return
         row = LocalTerminalRow(self.config)
