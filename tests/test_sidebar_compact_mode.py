@@ -64,7 +64,7 @@ def test_compact_mode_hides_chrome_and_forces_flat():
     conn.host_label.set_visible.assert_called_with(False)
     group.count_label.set_visible.assert_called_with(False)
     group.icon.set_visible.assert_called_with(False)
-    group.expand_button.set_visible.assert_called_with(False)
+    group.expand_button.set_visible.assert_called_with(True)
     conn.apply_row_style.assert_called_with(True)
     group.apply_row_style.assert_called_with(True)
     conn.apply_sidebar_mode.assert_called_once()

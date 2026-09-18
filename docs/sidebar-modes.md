@@ -86,10 +86,9 @@ A title-only flat list:
 
 - **Title only** on connection rows (no connection icon, status lock, port
   forwarding badge, secondary host label, or Manage Files hover button).
-- **Group headers** show the group title and the active group-color treatment
-  only (no folder icon, connection count, split-view hover button, or expand
-  chevron — activate the row to expand/collapse). Height matches connection
-  rows.
+- **Group headers** show the group title, expand chevron, and the active
+  group-color treatment (no folder icon, connection count, or split-view
+  hover button). Height matches connection rows.
 - **Always flat** (`navigation-sidebar`); card chrome is never used.
 - **Tighter** row margins/spacing than Full (content `4/0` px and
   inter-row gap `1px 4px` via `.sidebar-compact`).

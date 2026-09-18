@@ -1318,8 +1318,6 @@ class GroupRow(Gtk.ListBoxRow):
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
-        # Compact: title + color only — expand via row activation instead.
-        self.expand_button.set_visible(not compact)
         content.append(self.expand_button)
 
         # Add drop target indicator (initially hidden)
@@ -1636,7 +1634,8 @@ class GroupRow(Gtk.ListBoxRow):
             self._content_spacing_base = content.get_spacing()
             self._apply_group_display_mode()
         if hasattr(self, 'expand_button') and self.expand_button is not None:
-            self.expand_button.set_visible(not compact)
+            # Keep the expand chevron in both Full and Compact modes.
+            self.expand_button.set_visible(True)
         show_count = False
         if not compact and config is not None:
             try:

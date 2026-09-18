@@ -2513,8 +2513,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
             if hasattr(row, 'expand_button') and row.expand_button is not None:
-                # Compact: title + color only; expand via row activation.
-                row.expand_button.set_visible(not compact)
+                # Expand chevron stays visible in Compact as well as Full.
+                row.expand_button.set_visible(True)
 
             # Re-evaluate hover action buttons against current prefs / hover.
             if hasattr(row, '_reveal_file_manager_button'):
