@@ -1102,6 +1102,8 @@ class SectionHeaderRow(Gtk.ListBoxRow):
         icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
         self.expand_button.add_css_class("flat")
         self.expand_button.add_css_class("group-expand-button")
+        # Match the section title: chrome, not folder chrome.
+        self.expand_button.add_css_class("dim-label")
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
         content.append(self.expand_button)
