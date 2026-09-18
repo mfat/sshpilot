@@ -12,6 +12,7 @@ from gettext import gettext as _
 
 from .api.errors import SshPilotError
 from .connection_display import hosts_hidden, mask_host_display
+from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .platform_utils import is_macos
 from . import icon_utils
 
@@ -47,6 +48,7 @@ class WelcomePage(Gtk.Overlay):
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_can_focus(False)
+        self.add_css_class('startpage')
 
         self._pinned_box = None
         self._recent_box = None
@@ -68,6 +70,94 @@ class WelcomePage(Gtk.Overlay):
         footer.set_valign(Gtk.Align.END)
         footer.set_margin_bottom(32)
         self.add_overlay(footer)
+
+        self._setup_drop_target()
+
+    # --- Sidebar drag → connect ---
+
+    def _setup_drop_target(self) -> None:
+        """Accept sidebar connection/group/local-terminal drops to open sessions."""
+        dt = new_internal_drop_target()
+        dt.connect('drop', self._on_drop)
+        dt.connect('enter', self._on_drop_enter)
+        dt.connect('leave', self._on_drop_leave)
+        self.add_controller(dt)
+
+    def _on_drop_enter(self, _target, _x: float, _y: float):
+        self.add_css_class('drag-over')
+        return Gdk.DragAction.MOVE
+
+    def _on_drop_leave(self, _target) -> None:
+        self.remove_css_class('drag-over')
+
+    def _on_drop(self, _target, value, _x: float, _y: float) -> bool:
+        """Open dropped sidebar hosts (or a local shell) from the Start page."""
+        self.remove_css_class('drag-over')
+        try:
+            payload = decode_dnd_payload(value)
+            if not isinstance(payload, dict):
+                return False
+
+            drag_type = payload.get('type')
+            manager = self.window.terminal_manager
+
+            if drag_type == 'local_terminal':
+                # Defer past the drop/drag teardown. VTE local spawn runs
+                # synchronously in show_local_terminal(); doing that inside the
+                # DropTarget callback can leave a tab with no shell prompt.
+                # SSH drops are already async (daemon), so they don't hit this.
+                GLib.idle_add(self._open_dropped_local_terminal)
+                return True
+
+            if drag_type == 'connection':
+                nicknames = payload.get('connection_nicknames') or []
+                if not nicknames and payload.get('connection_nickname'):
+                    nicknames = [payload['connection_nickname']]
+                opened = False
+                for nick in nicknames:
+                    conn = self.connection_manager.find_connection_by_nickname(nick)
+                    if conn is None:
+                        continue
+                    manager.connect_to_host(conn)
+                    opened = True
+                return opened
+
+            if drag_type == 'group':
+                group_id = payload.get('group_id')
+                group_info = None
+                if group_id:
+                    group_info = self.window.group_manager.groups.get(group_id)
+                if not group_info:
+                    return False
+                connections = []
+                for nick in group_info.get('connections', []):
+                    conn = self.connection_manager.find_connection_by_nickname(nick)
+                    if conn is not None:
+                        connections.append(conn)
+                if not connections:
+                    return False
+                batch = getattr(self.window, '_open_connection_batch', None)
+                if callable(batch):
+                    # Prefer tabs from Start: there is no existing terminal to
+                    # keep beside the drop, unlike convert-to-split on a tab.
+                    batch(connections, prefer='tabs')
+                else:
+                    for conn in connections:
+                        manager.connect_to_host(conn)
+                return True
+
+            return False
+        except Exception as exc:
+            logger.error('Start page drop failed: %s', exc)
+            return False
+
+    def _open_dropped_local_terminal(self) -> bool:
+        """Idle callback: open a local shell after a Start-page drop settles."""
+        try:
+            self.window.terminal_manager.show_local_terminal()
+        except Exception as exc:
+            logger.error('Start page local-terminal drop failed: %s', exc)
+        return False
 
     # --- New connection pill ---
 

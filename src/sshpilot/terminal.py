@@ -3339,18 +3339,92 @@ class TerminalWidget(Gtk.Box):
             # titles can still replace it later.
             self.emit('title-changed', _('Terminal'))
 
-            # Try agent-based approach first (fixes job control in Flatpak)
-            if is_flatpak() and self._try_agent_based_shell():
-                logger.info("Using agent-based local shell (with job control fix)")
-                return
-
-            # Fall back to direct spawn (legacy approach)
-            logger.info("Using direct spawn for local shell (fallback)")
-            self._setup_local_shell_direct()
+            # Defer the actual spawn until this widget is mapped with a non-zero
+            # size. Spawning while still 0x0 (common for the first Start-page
+            # drop after startup) lets the shell paint its prompt into a dead
+            # PTY — user only sees a blinking cursor until Enter redraws it.
+            self._schedule_local_shell_spawn()
 
         except Exception as e:
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
+
+    def _local_shell_geometry_widget(self):
+        return getattr(self, 'terminal_widget', None) or self
+
+    def _local_shell_has_geometry(self) -> bool:
+        widget = self._local_shell_geometry_widget()
+        try:
+            if not widget.get_mapped():
+                return False
+            return widget.get_width() > 0 and widget.get_height() > 0
+        except Exception:
+            return False
+
+    def _disconnect_local_shell_map_handler(self) -> None:
+        handler = getattr(self, '_local_shell_map_handler', None)
+        if handler is None:
+            return
+        self._local_shell_map_handler = None
+        widget = self._local_shell_geometry_widget()
+        try:
+            widget.disconnect(handler)
+        except Exception:
+            pass
+
+    def _schedule_local_shell_spawn(self) -> None:
+        """Queue a local-shell spawn for the first mapped, non-zero layout."""
+        if getattr(self, '_local_shell_spawned', False):
+            return
+        if getattr(self, '_local_shell_spawn_scheduled', False):
+            return
+        self._local_shell_spawn_scheduled = True
+
+        def _idle_try() -> bool:
+            self._try_spawn_local_shell(force=False)
+            return False
+
+        GLib.idle_add(_idle_try)
+
+        widget = self._local_shell_geometry_widget()
+        try:
+            def _on_map(*_args):
+                GLib.idle_add(_idle_try)
+
+            self._local_shell_map_handler = widget.connect('map', _on_map)
+        except Exception:
+            logger.debug(
+                "Could not connect local-shell map handler; relying on idle/timeout",
+                exc_info=True,
+            )
+
+        # Last resort so a tab is never left without a shell if map never fires.
+        GLib.timeout_add(750, lambda: (self._try_spawn_local_shell(force=True), False)[1])
+
+    def _try_spawn_local_shell(self, *, force: bool = False) -> bool:
+        """Spawn once geometry is ready (or *force*). Returns True if spawned."""
+        if getattr(self, '_local_shell_spawned', False):
+            return True
+        if getattr(self, '_is_quitting', False):
+            return False
+        if not force and not self._local_shell_has_geometry():
+            return False
+
+        self._local_shell_spawned = True
+        self._local_shell_spawn_scheduled = False
+        self._disconnect_local_shell_map_handler()
+
+        try:
+            # Try agent-based approach first (fixes job control in Flatpak)
+            if is_flatpak() and self._try_agent_based_shell():
+                logger.info("Using agent-based local shell (with job control fix)")
+            else:
+                logger.info("Using direct spawn for local shell (fallback)")
+                self._setup_local_shell_direct()
+        except Exception as e:
+            logger.error(f"Failed to spawn local shell: {e}")
+            self.emit('connection-failed', str(e))
+        return True
 
     def _get_terminal_size(self) -> tuple[int, int]:
         """Return ``(columns, rows)`` from the active backend."""

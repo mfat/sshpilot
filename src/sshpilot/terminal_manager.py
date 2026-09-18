@@ -1188,7 +1188,9 @@ class TerminalManager:
                     terminal_widget.feed_child_data(data)
 
                 terminal_widget.connect("connection-established", _run_command)
-            terminal_widget.setup_local_shell()
+            # Add to the tab view *before* scheduling the shell spawn so the
+            # widget can map and receive a real size. Spawning first (while
+            # still parentless) loses the initial prompt on a cold start.
             self._add_terminal_tab(terminal_widget, effective_title)
 
             # Register terminal so theme/font updates affect existing local tabs
@@ -1196,6 +1198,8 @@ class TerminalManager:
             window.connection_to_terminals.setdefault(local_connection, []).append(terminal_widget)
             window.terminal_to_connection[terminal_widget] = local_connection
             window.active_terminals[local_connection] = terminal_widget
+
+            terminal_widget.setup_local_shell()
 
             GLib.idle_add(terminal_widget.show)
             # Show the terminal widget (backend-agnostic)
