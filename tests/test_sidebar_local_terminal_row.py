@@ -417,6 +417,7 @@ def test_local_terminal_row_compact_hides_icon_and_subtitle(sidebar_mod, monkeyp
     for name in ("_content_box", "_info_box", "connection_icon", "nickname_label", "host_label"):
         setattr(row, name, MagicMock())
     row.apply_row_style = MagicMock()
+    row._apply_group_color_style = MagicMock()
 
     configure = MagicMock()
     monkeypatch.setattr(sidebar_mod, "_configure_compact_label", configure)
@@ -428,6 +429,7 @@ def test_local_terminal_row_compact_hides_icon_and_subtitle(sidebar_mod, monkeyp
     row.host_label.set_visible.assert_called_with(False)
     configure.assert_called_once()
     assert configure.call_args.args[1] == "Local Terminal"
+    row._apply_group_color_style.assert_called_once()
 
 
 def test_local_terminal_row_reserves_connection_row_action_height(sidebar_mod):
@@ -439,4 +441,33 @@ def test_local_terminal_row_reserves_connection_row_action_height(sidebar_mod):
     assert "ROW_ACTION_SLOT_EMPTY" in src
     assert "_height_slot" in src
     assert "file-manager-button" in src
+
+
+def test_local_terminal_row_gets_color_bar_in_bar_mode(sidebar_mod):
+    """Accent-bar mode must put .color-bar on the pinned row for selection CSS."""
+
+    class BarCfg:
+        def get_setting(self, key, default=None):
+            if key == "ui.group_color_display":
+                return "bar"
+            return default
+
+    row = sidebar_mod.LocalTerminalRow.__new__(sidebar_mod.LocalTerminalRow)
+    row.config = BarCfg()
+    row._compact = False
+    classes = set()
+    row.add_css_class = classes.add
+    row.remove_css_class = classes.discard
+
+    row._apply_group_color_style()
+    assert "color-bar" in classes
+
+    row.config = _Cfg()
+    row._apply_group_color_style()
+    assert "color-bar" not in classes
+
+    row.config = BarCfg()
+    row._compact = True
+    row._apply_group_color_style()
+    assert "color-bar" not in classes
 

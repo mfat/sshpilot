@@ -3042,9 +3042,26 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         set_accessible_description(self, _("Open a local shell"))
         self.set_tooltip_text(_("Open a local shell"))
         self._setup_drag_source()
+        self._apply_group_color_style()
 
     def apply_row_style(self, flat: bool | None = None) -> None:
         _apply_sidebar_row_style(self, self.config, flat=flat)
+
+    def _apply_group_color_style(self) -> None:
+        """Match connection-row bar chrome; this row has no group colour.
+
+        In accent-bar mode every list row carries ``.color-bar`` so content
+        stays aligned and selection uses the neutral overlay. Without it the
+        pinned local-terminal row keeps the accent fill and looks selected
+        differently from hosts below it.
+        """
+        _clear_bar(self)
+        _clear_tint(self)
+        if getattr(self, "_compact", False):
+            return
+        mode = _get_color_display_mode(self.config) if self.config else "dot"
+        if mode == "bar":
+            self.add_css_class("color-bar")
 
     def _setup_drag_source(self) -> None:
         """Allow dragging the row onto a terminal / split pane (not for regrouping)."""
@@ -3135,6 +3152,7 @@ class LocalTerminalRow(Gtk.ListBoxRow):
                 self.host_label.set_visible(False)
             self.nickname_label.set_text(_("Local Terminal"))
             self.apply_row_style()
+            self._apply_group_color_style()
             return
 
         if max_chars is not None:
@@ -3154,6 +3172,7 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         _configure_compact_label(
             self.nickname_label, _("Local Terminal"), max_chars=chars
         )
+        self._apply_group_color_style()
 
 
 # ---------------------------------------------------------------------------
