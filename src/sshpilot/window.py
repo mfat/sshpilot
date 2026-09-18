@@ -3639,6 +3639,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         if HAS_TOOLBAR_VIEW:
             content_box = Adw.ToolbarView()
+            # Pair with the sidebar's .sidebar-pane so the paned split matches
+            # AdwOverlaySplitView's content/sidebar tone split.
+            content_box.add_css_class('content-pane')
             # Kept on the window: terminal fullscreen drives this view's
             # reveal/extend properties to overlay the custom tab/title bar
             # chrome (see window_fullscreen.py).

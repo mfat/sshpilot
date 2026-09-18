@@ -469,11 +469,22 @@ def install_sidebar_css():
 
 
 
+        /* Match AdwOverlaySplitView's pane hairline: .sidebar-pane already
+           draws the trailing inset border, so suppress the paned separator's
+           own stroke to avoid a double line. GTK keeps a wider input area
+           than it paints, so the divider stays grabbable. */
+        paned.sidebar-paned > separator {
+          box-shadow: none;
+          background: none;
+        }
+
         /* Detachable sidebar popup: an opaque panel floating over the work area
-           (see search_popup.SearchPopup). The shadow lifts it off the
-           content; the scrim is transparent and only captures click-outside. */
+           (see search_popup.SearchPopup). Use the same sidebar tone as the
+           docked .sidebar-pane shell; the shadow lifts it off the content;
+           the scrim is transparent and only captures click-outside. */
         .sidebar-popup {
-          background-color: @window_bg_color;
+          background-color: @sidebar_bg_color;
+          color: @sidebar_fg_color;
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
@@ -496,7 +507,7 @@ def install_sidebar_css():
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
-          background-color: alpha(@window_bg_color, 0.94);
+          background-color: alpha(@sidebar_bg_color, 0.94);
         }
 
         /* Chrome-free panel for modes whose content draws its own frame
@@ -5554,7 +5565,10 @@ def _assemble_sidebar_shell(window, sidebar_box):
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
     sidebar_toolbar_view = Adw.ToolbarView()
-    sidebar_toolbar_view.add_css_class('sidebar')
+    # Same tone AdwOverlaySplitView / AdwNavigationSplitView apply via their
+    # .sidebar-pane wrapper (sidebar-bg / backdrop / trailing hairline). The
+    # deprecated .sidebar class only drew a border and cleared list fills.
+    sidebar_toolbar_view.add_css_class('sidebar-pane')
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
     sidebar_toolbar_view.set_content(sidebar_box)
     # Kept so the detachable sidebar popup can reparent sidebar_box out of here

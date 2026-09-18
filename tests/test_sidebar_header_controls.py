@@ -41,6 +41,12 @@ def test_sidebar_shell_is_attached_to_the_split_view(sidebar_mod, monkeypatch):
     window._set_sidebar_widget.assert_called_once_with(window._sidebar_toolbar_view)
 
 
+def test_sidebar_shell_uses_adwaita_sidebar_pane_tone(sidebar_mod, monkeypatch):
+    """Docked sidebar gets Adwaita's .sidebar-pane fill, not the deprecated .sidebar."""
+    window, _header = _assemble(sidebar_mod, monkeypatch)
+    window._sidebar_toolbar_view.add_css_class.assert_called_once_with('sidebar-pane')
+
+
 def test_sidebar_header_title_is_the_title_label(sidebar_mod, monkeypatch):
     window, header = _assemble(sidebar_mod, monkeypatch)
     header.set_title_widget.assert_called_once_with(window._sidebar_title_label)
