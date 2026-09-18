@@ -4612,8 +4612,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
 
-        # Dimmed section headers so Groups and Ungrouped can be collapsed
-        # independently whenever either section has content.
+        # Dimmed section headers only when groups exist — a flat ungrouped list
+        # needs no Groups/Ungrouped chrome.
         groups_header = None
         if hierarchy:
             groups_header = SectionHeaderRow("groups", _("Groups"), self.config)
@@ -4634,10 +4634,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ]
 
         if ungrouped_nicks:
-            ungrouped_header = SectionHeaderRow(
-                "ungrouped", _("Ungrouped"), self.config
-            )
-            self.connection_list.append(ungrouped_header)
+            # Only label Ungrouped when Groups is also present; otherwise the
+            # whole list is root connections and a section header is noise.
+            ungrouped_header = None
+            if hierarchy:
+                ungrouped_header = SectionHeaderRow(
+                    "ungrouped", _("Ungrouped"), self.config
+                )
+                self.connection_list.append(ungrouped_header)
 
             # Root order is daemon-owned; render from the snapshot and append
             # any not-yet-projected ungrouped connections without local writes.
@@ -4649,7 +4653,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 conn = connections_dict.get(nick)
                 if conn:
                     row = self.add_connection_row(conn)
-                    if row is not None:
+                    if row is not None and ungrouped_header is not None:
                         ungrouped_header.add_child_row(row)
                     seen.add(nick)
             for nick in ungrouped_nicks:
@@ -4658,9 +4662,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 conn = connections_dict.get(nick)
                 if conn:
                     row = self.add_connection_row(conn)
-                    if row is not None:
+                    if row is not None and ungrouped_header is not None:
                         ungrouped_header.add_child_row(row)
-            ungrouped_header.apply_descendant_visibility()
+            if ungrouped_header is not None:
+                ungrouped_header.apply_descendant_visibility()
 
 
         self._finish_rebuild(scroll_position, selected_connection_rows)
