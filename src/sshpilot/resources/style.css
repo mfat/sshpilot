@@ -52,6 +52,9 @@
 }
 
 /* Start page (welcome_page.py). */
+.startpage.drag-over {
+    background-color: alpha(@accent_bg_color, 0.18);
+}
 .startpage-hero {
     background-color: alpha(@accent_bg_color, 0.15);
     border: 1px solid alpha(@accent_color, 0.3);

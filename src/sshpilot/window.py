@@ -39,7 +39,6 @@ import threading
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 HAS_TOOLBAR_VIEW = hasattr(Adw, 'ToolbarView')
-HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
@@ -77,10 +76,10 @@ from .session_manager import SessionManager
 from .sidebar import (
     GroupRow,
     ConnectionRow,
+    SectionHeaderRow,
     apply_interface_monospace_font,
     build_sidebar,
     install_sidebar_css,
-    minimal_label_max_chars,
     reset_connection_list_drag_session,
 )
 from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, SidebarPaned
@@ -184,10 +183,6 @@ def _ensure_tips_banner_css() -> None:
     provider = Gtk.CssProvider()
     provider.load_from_data(b"""
 .tips-banner-revealer {
-    /* Parent width changes (sidebar strip/full) must not paint the accent
-       child outside the revealer's allocation -- that reads as a brief blue
-       rectangle beside the top chrome. */
-    overflow: hidden;
 }
 .tips-banner {
     background-color: @accent_bg_color;
@@ -260,17 +255,6 @@ def _apply_content_window_control_layout(*controls: Gtk.WindowControls) -> None:
 _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
-
-# Width of the minimal (label) sidebar strip — fits ~10 ellipsized characters
-# plus margins at rest; dragging wider grows the label char budget.
-# Keep in sync with ``sidebar.MINIMAL_LABEL_BASE_WIDTH``.
-_MINIMAL_STRIP_WIDTH = 112
-
-# Horizontal margins of the sidebar's header toolbar, full mode and strip. The
-# full-mode pair is also what a width animation subtracts from the sidebar width
-# to know the row width its button split must be frozen at.
-_SIDEBAR_HEADER_MARGIN_FULL = 12
-_SIDEBAR_HEADER_MARGIN_STRIP = 6
 
 # Narrowest full sidebar that still reserves space for a group row's split-view
 # action and connection-row port-forwarding indicator. Below it the rows
@@ -447,12 +431,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
-        self._sidebar_minimal = False   # compact label-strip state
         self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
-        self._sidebar_width_animation = None
-        # While True, hostname / group-count labels stay hidden so row height
-        # matches the strip during a mode transition (then prefs are restored).
-        self._sidebar_suppress_secondary_labels = False
         self._sidebar_density_restore_source = 0
         self._context_menu_row = None
         self._context_menu_group_rows = None
@@ -488,9 +467,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.setup_signals()
         # Authoritative SSH files are monitored by the daemon; GTK refreshes
         # from connection events and never installs a filesystem watcher.
-
-        # Icon-strip sidebar mode is retired; settings migration forces
-        # ui.sidebar_mode to 'full', so startup never restores a strip.
 
         # Terminal manager handles terminal-related operations (import deferred so
         # terminal.py stays off the window module import path until __init__).
@@ -2113,8 +2089,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Custom one-row title/tab bar. Gtk.WindowHandle supplies window dragging,
         # double-click maximise and the title-bar context menu; WindowControls
         # on both sides follow the desktop's configured button placement. The
-        # centre stack shows either the full-width tab bar, the minimal-sidebar
-        # title, or an empty draggable region.
+        # centre stack shows either the full-width tab bar or an empty
+        # draggable region.
         self.header_bar = Gtk.WindowHandle()
         self.header_bar.add_css_class('content-titlebar')
         self._content_header_box = Gtk.Box(
@@ -2228,15 +2204,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             fraction=0.25,
             user_width=saved_width,
             on_user_resize=self._on_sidebar_width_dragged,
-            on_mode_switch=self._on_sidebar_drag_mode_switch,
             on_drag=self._on_sidebar_divider_drag,
         )
         self.split_view.set_vexpand(True)
         self.split_view.connect(
-            'notify::position', self._on_sidebar_strip_position_changed)
+            'notify::position', self._on_sidebar_position_changed)
         self._split_variant = 'paned'
         logger.debug("Using resizable Gtk.Paned split view")
-        self._minimal_label_chars_applied = None
 
         # Initial sidebar visibility. Apply "hide on startup" HERE — before the
         # window is presented — so it never flashes visible then collapses.
@@ -2274,16 +2248,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_overlay.set_hexpand(True)
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
-        from .search_popup import SearchPopup
-        self._search_popup = SearchPopup(
-            self._content_overlay,
-            self._sidebar_toolbar_view,
-            self._sidebar_box,
-            self._popup_target_width,
-            on_shown=self._on_search_popup_shown,
-            on_hidden=self._on_search_popup_hidden,
-            on_dismiss=self._dismiss_search_popup,
-            focus_func=lambda: getattr(self, 'search_entry', None),
+        self._search_popup = None
+        GLib.idle_add(
+            lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
+            priority=GLib.PRIORITY_LOW,
         )
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
@@ -2324,20 +2292,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._global_overlay.set_child(root_widget)
         main_box.append(self._global_overlay)
 
-        from .omni_search import OmniSearchController
-        self._omni_search = OmniSearchController(
-            self,
-            self._global_overlay,
-            self.welcome_view.omni_home,
+        self._omni_search = None
+        GLib.idle_add(
+            lambda: (self._ensure_omni_search(), GLib.SOURCE_REMOVE)[1],
+            priority=GLib.PRIORITY_LOW,
         )
-        # Initial Start presentation at first paint: the Start tab is created
-        # and selected before this controller exists (see ``_add_start_tab``),
-        # so its selection notification cannot reach the controller here. Ask
-        # for the Omnisearch attention tracer directly; the controller defers
-        # it until the window is actually mapped.
-        omni = getattr(self, '_omni_search', None)
-        if omni is not None and hasattr(omni, 'request_attention'):
-            omni.request_attention()
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -2436,7 +2395,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Show/hide the toggleable header-bar buttons per preferences
         (Settings ▸ Interface ▸ Header Bar)."""
         mapping = (
-            ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', False),
+            ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', True),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
             ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', True),
@@ -2477,32 +2436,67 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._attach_sidebar_forwarding_rules(connections)
         self._refresh_sidebar_forwarding_rules(connections)
 
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
-        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', False)
-        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
-        show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
-        flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
-        # Strip / in-transition: keep secondary lines off so row height stays
-        # single-line (matches compact strip density).
-        if (
-            getattr(self, '_sidebar_suppress_secondary_labels', False)
-            or getattr(self, '_sidebar_minimal', False)
-        ):
-            show_user_hostname = False
-            show_group_count = False
+        compact = False
+        try:
+            compact = (
+                str(self.config.get_setting('ui.sidebar_mode', 'full')).lower()
+                == 'compact'
+            )
+        except Exception:
+            compact = False
+
+        show_user_hostname = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        )
+        show_group_count = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_group_count', False)
+        )
+        show_status = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_connection_status', True)
+        )
+        show_connection_icon = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        )
+        show_group_icon = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_group_icon', True)
+        )
+        # Compact is always flat; otherwise honor the Flat Sidebar Rows toggle.
+        flat_rows = True if compact else self.config.get_setting(
+            'ui.sidebar_flat_rows', False
+        )
+
+        try:
+            from sshpilot.sidebar import _apply_sidebar_list_compact_class
+            _apply_sidebar_list_compact_class(self.connection_list, self.config)
+        except Exception:
+            logger.debug(
+                "Failed to apply sidebar-compact list class",
+                exc_info=True,
+            )
 
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
+            if hasattr(row, 'apply_sidebar_mode'):
+                try:
+                    row.apply_sidebar_mode()
+                except Exception:
+                    logger.debug(
+                        "Failed to apply sidebar mode density",
+                        exc_info=True,
+                    )
             if hasattr(row, 'apply_row_style'):
                 row.apply_row_style(flat_rows)
             # Update ConnectionRow elements
             if hasattr(row, 'connection_icon'):
                 row.connection_icon.set_visible(show_connection_icon)
             if hasattr(row, 'host_label'):
-                host_visible = show_user_hostname and not getattr(row, '_compact', False)
-                row.host_label.set_visible(host_visible)
+                row.host_label.set_visible(show_user_hostname)
             if hasattr(row, 'status_icon'):
                 # update_status() applies both the icon and visibility, honoring
                 # the show_status pref AND keeping idle (UNKNOWN) rows iconless.
@@ -2515,10 +2509,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             # Update GroupRow elements
             if hasattr(row, 'count_label'):
-                count_visible = show_group_count and not getattr(row, '_compact', False)
-                row.count_label.set_visible(count_visible)
+                row.count_label.set_visible(show_group_count)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
+            if hasattr(row, 'expand_button') and row.expand_button is not None:
+                # Expand chevron stays visible in Compact as well as Full.
+                row.expand_button.set_visible(True)
 
             # Re-evaluate hover action buttons against current prefs / hover.
             if hasattr(row, '_reveal_file_manager_button'):
@@ -2549,12 +2545,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
             row = row.get_next_sibling()
-
-        # These per-preference updates re-show widgets that minimized mode hides;
-        # re-collapse so the icon strip isn't broken by a preference change (but
-        # not while detached into the popup, which shows full rows).
-        if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
-            self._apply_sidebar_minimal_rows(True)
 
     def _sidebar_forwarding_rules_enabled(self) -> bool:
         try:
@@ -2717,18 +2707,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         Content width changes every frame while tips are revealed paint a brief
         blue flash beside the top chrome.
-
-        The drag no longer drops hostname / group-count. That existed to keep
-        row density at the strip's single-line size so a drag *into* the strip
-        blended; dragging no longer collapses the sidebar
-        (``sidebar_paned.COLLAPSE_BY_DRAG``), so all it did was make rows
-        flicker their second line on every resize.
         """
         self._pause_tips_banner_for_sidebar_anim(True)
         self._schedule_sidebar_density_restore()
 
     def _schedule_sidebar_density_restore(self) -> None:
-        """Restore the tips bar (and post-switch row density) once a drag settles."""
+        """Restore the tips bar once a divider drag settles."""
         from sshpilot.sidebar_paned import _PERSIST_DELAY_MS
 
         src = getattr(self, '_sidebar_density_restore_source', 0)
@@ -2742,169 +2726,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _restore_sidebar_density_after_drag(self) -> bool:
         self._sidebar_density_restore_source = 0
-        if getattr(self, '_sidebar_width_animation', None) is not None:
-            # Still animating a button-triggered transition — leave suppressed.
-            return GLib.SOURCE_REMOVE
         # Tips live in the content pane; re-show after settle + timeout.
         self._queue_tips_banner_restore()
-        # Strip mode keeps hostname/count off; only full mode restores prefs.
-        if getattr(self, '_sidebar_minimal', False):
-            return GLib.SOURCE_REMOVE
-        self._set_sidebar_secondary_labels_suppressed(False)
         return GLib.SOURCE_REMOVE
-
-    def _persist_sidebar_mode(self, minimal: bool = False) -> None:
-        """Remember the resting sidebar mode. Icon strip is retired — always full."""
-        try:
-            self.config.set_setting('ui.sidebar_mode', 'full')
-        except Exception:
-            logger.debug("Failed to save sidebar mode", exc_info=True)
-
-    def _on_sidebar_drag_mode_switch(self, minimal: bool) -> None:
-        """The divider asked for a mode change.
-
-        Icon-strip mode is retired, so a request to collapse is ignored. A
-        request to expand still restores the full sidebar (and clears any
-        leftover strip pin from older builds). Never animated: the pointer is
-        still on the divider.
-        """
-        if minimal:
-            return
-        self._persist_sidebar_mode(False)
-        if not getattr(self, '_sidebar_minimal', False):
-            return
-        try:
-            self.set_sidebar_minimal(False, animate=False)
-        except Exception:
-            logger.debug("sidebar drag mode switch failed", exc_info=True)
-
-    # --- Minimal (icon-only) sidebar strip -----------------------------------
-    def _apply_sidebar_width(self, width: int) -> None:
-        """Pin the sidebar to exactly ``width`` px (one animation tick)."""
-        sv = getattr(self, 'split_view', None)
-        if sv is None or not hasattr(sv, 'pin_width'):
-            return
-        try:
-            sv.pin_width(width)
-        except Exception:
-            logger.debug("Failed to pin sidebar width", exc_info=True)
-
-    def _set_sidebar_clipping(self, enabled: bool) -> None:
-        """Sync sidebar scroller policies for full vs minimal chrome.
-
-        Header/toolbar clips stay EXTERNAL horizontally so overflow toolbars
-        can shrink the pane without flooring at the full button-row width.
-        The connection list uses EXTERNAL only during width transitions (so
-        rows can be revealed by the animation); at rest it is NEVER so labels
-        ellipsize to the sidebar width.
-        """
-        list_hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
-        # In the minimal strip the vertical scrollbar is hidden the documented
-        # way — EXTERNAL keeps the list scrollable (wheel/touch) without drawing
-        # a scrollbar over the icons; full mode shows it on demand (AUTOMATIC).
-        conn_vpol = (Gtk.PolicyType.EXTERNAL
-                     if getattr(self, '_sidebar_minimal', False)
-                     else Gtk.PolicyType.AUTOMATIC)
-        targets = (
-            ('connection_scrolled', list_hpol, conn_vpol),
-            ('_sidebar_header_clip', Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER),
-            ('_sidebar_toolbar_clip', Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER),
-        )
-        for attr, hpol, vpol in targets:
-            sw = getattr(self, attr, None)
-            if sw is not None:
-                try:
-                    sw.set_policy(hpol, vpol)
-                except Exception:
-                    pass
-
-    def _apply_sidebar_minimal_chrome(
-        self,
-        minimal: bool,
-        *,
-        header_compact: bool = True,
-        selection_style: bool = True,
-    ) -> None:
-        """Collapse chrome for the strip; keep the same header toolbar buttons.
-
-        ``header_compact`` / ``selection_style`` can be deferred until a width
-        animation settles. Dropping ``.sidebar-minimal`` (accent selection) or
-        force-relayouting the header at strip width is what painted a brief
-        blue rectangle under the top toolbar during expand.
-        """
-        show = not minimal
-        # The "SSH Pilot" title label has a natural min width that floors how
-        # narrow the sidebar can get; hide it so the strip can shrink fully, and
-        # move the title to the content title bar instead.
-        title = getattr(self, '_sidebar_title_label', None)
-        if title is not None:
-            try:
-                title.set_visible(show)
-            except Exception:
-                pass
-        # The app icon takes the title's place in the strip (see sidebar.py,
-        # _assemble_sidebar_shell), so the strip's header is not a blank bar.
-        app_icon = getattr(self, '_sidebar_app_icon', None)
-        if app_icon is not None:
-            try:
-                app_icon.set_visible(minimal)
-            except Exception:
-                pass
-        self._move_title_to_content_header(minimal)
-        # The top OverflowToolbar stays (same New Connection button as full
-        # mode); search and the bottom selection toolbar still cannot fit.
-        for attr in ('search_container', '_sidebar_toolbar_box'):
-            widget = getattr(self, attr, None)
-            if widget is None:
-                continue
-            if attr == 'search_container' and show:
-                continue
-            try:
-                widget.set_visible(show)
-            except Exception:
-                pass
-        if header_compact:
-            self._apply_sidebar_header_compact(minimal)
-        btn = getattr(self, '_sidebar_expand_button', None)
-        if btn is not None:
-            try:
-                btn.set_visible(minimal)
-            except Exception:
-                pass
-        if selection_style:
-            box = getattr(self, '_sidebar_box', None)
-            if box is not None:
-                try:
-                    (box.add_css_class if minimal else box.remove_css_class)(
-                        'sidebar-minimal')
-                except Exception:
-                    pass
-
-    def _set_sidebar_header_clip_reveal(
-        self, enabled: bool, target_width: int | None = None
-    ) -> None:
-        """Toggle clip-reveal on the top sidebar OverflowToolbar.
-
-        ``target_width`` is the width the animation ends at; passing it keeps
-        the button row on the split the destination settles on, so the reveal
-        does not show buttons that hop into the "…" menu on the last frame.
-        """
-        header = getattr(self, '_sidebar_header_toolbar', None)
-        if header is None or not hasattr(header, 'set_clip_reveal'):
-            return
-        try:
-            header.set_clip_reveal(enabled, target_width=target_width)
-        except Exception:
-            logger.debug("header clip-reveal failed", exc_info=True)
 
     def _pause_tips_banner_for_sidebar_anim(self, pause: bool) -> None:
         """Hide the accent tips bar while the sidebar width is unstable.
 
-        Divider mode switches use ``animate=False``, and live divider drags
-        resize the content pane every frame — both flash ``@accent_bg_color``
-        from the tips revealer. Snap-hide the container (not only reveal-child)
-        for the unstable window; restore only after settle plus
-        :data:`_TIPS_BANNER_RESTORE_DELAY_MS` via
+        Live divider drags resize the content pane every frame — that flashes
+        ``@accent_bg_color`` from the tips revealer. Snap-hide the container
+        (not only reveal-child) for the unstable window; restore only after
+        settle plus :data:`_TIPS_BANNER_RESTORE_DELAY_MS` via
         :meth:`_queue_tips_banner_restore`.
         """
         revealer = getattr(self, 'tips_revealer', None)
@@ -2998,112 +2830,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _on_tips_banner_restore_timeout(self) -> bool:
         self._tips_restore_source = 0
-        if getattr(self, '_sidebar_width_animation', None) is not None:
-            # Width still moving — wait for another settle window.
-            self._queue_tips_banner_restore()
-            return GLib.SOURCE_REMOVE
         self._pause_tips_banner_for_sidebar_anim(False)
         return GLib.SOURCE_REMOVE
 
-    def _sidebar_header(self):
-        return getattr(self, '_sidebar_header_toolbar', None) or getattr(
-            self, '_sidebar_header_box', None)
-
-    def _apply_sidebar_header_items(self, minimal: bool) -> None:
-        """Set which header buttons exist for this mode.
-
-        Hostnames are not shown in the compact strip, so the reveal/conceal
-        control does nothing useful there — drop it from the toolbar and
-        overflow menu until full mode returns. This is the half of header
-        compacting an expand applies *up front*: the button set has to be the
-        destination's before clip-reveal freezes the row, or the missing
-        control leaves room for two buttons that hop into the "…" menu on the
-        animation's last frame.
-        """
-        from sshpilot.overflow_toolbar import mark_force_hidden
-
-        handle = getattr(self, '_sidebar_header_handle', None)
-        if handle is not None:
-            try:
-                handle.set_visible(True)
-            except Exception:
-                pass
-        if self._sidebar_header() is None:
-            return
-        hide_btn = getattr(self, '_hide_hosts_button', None)
-        if hide_btn is None:
-            return
-        try:
-            mark_force_hidden(hide_btn, minimal)
-        except Exception:
-            logger.debug(
-                "Failed to toggle hide-hosts in strip header",
-                exc_info=True,
-            )
-
-    def _apply_sidebar_header_compact(self, minimal: bool) -> None:
-        """Tighten horizontal header margins in the strip; hide hostname toggle.
-
-        Vertical margins stay fixed (12 top / 6 bottom). Changing them with the
-        strip made the New Connection toolbar jump whenever rows compacted —
-        the same moment list row heights change — which read as the chrome
-        shifting with the list.
-        """
-        self._apply_sidebar_header_items(minimal)
-        header = self._sidebar_header()
-        if header is None:
-            return
-        try:
-            header.set_margin_start(
-                _SIDEBAR_HEADER_MARGIN_STRIP if minimal
-                else _SIDEBAR_HEADER_MARGIN_FULL)
-            header.set_margin_end(
-                _SIDEBAR_HEADER_MARGIN_STRIP if minimal
-                else _SIDEBAR_HEADER_MARGIN_FULL)
-            header.set_margin_top(12)
-            header.set_margin_bottom(6)
-        except Exception:
-            pass
-        try:
-            if hasattr(header, 'force_relayout'):
-                header.force_relayout()
-        except Exception:
-            pass
-
-    def _move_title_to_content_header(self, minimal: bool) -> None:
-        """Select tabs, the minimal-sidebar title, or the empty drag region."""
+    def _move_title_to_content_header(self) -> None:
+        """Select the tab bar or the empty drag region in the content title."""
         stack = getattr(self, '_content_title_stack', None)
         if stack is None:
             return
-        if minimal and not hasattr(self, '_content_title_label'):
-            self._content_title_label = Gtk.Label(label='SSH Pilot')
-            self._content_title_label.add_css_class('title')
-            stack.add_named(self._content_title_label, 'title')
-        title = getattr(self, '_content_title_label', None)
         tab_bar = getattr(self, 'tab_bar', None)
         try:
             if tab_bar is not None and self.has_user_tabs():
                 stack.set_visible_child(tab_bar)
             else:
-                stack.set_visible_child(
-                    title if minimal and title is not None
-                    else self._content_empty_title
-                )
+                stack.set_visible_child(self._content_empty_title)
         except Exception:
             pass
-
-    def _minimal_strip_label_chars(self) -> int:
-        """Compact-label character budget for the current sidebar width."""
-        try:
-            width = int(self._get_sidebar_width())
-        except Exception:
-            width = _MINIMAL_STRIP_WIDTH
-        if width <= 0:
-            width = _MINIMAL_STRIP_WIDTH
-        return minimal_label_max_chars(
-            width,
-            base_width=_MINIMAL_STRIP_WIDTH,
-        )
 
     def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
         """Reserve or shed narrow-sidebar chrome for this width.
@@ -3142,93 +2884,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.debug("row set_indicators_reserved failed", exc_info=True)
             row = row.get_next_sibling()
 
-    def _on_sidebar_strip_position_changed(self, *_args) -> None:
-        """Grow/shrink compact label ellipsis as the minimal strip is dragged."""
+    def _on_sidebar_position_changed(self, *_args) -> None:
+        """Re-evaluate narrow-sidebar row chrome when the divider moves."""
         self._apply_sidebar_row_actions()
-        if not getattr(self, '_sidebar_minimal', False):
-            return
-        try:
-            chars = self._minimal_strip_label_chars()
-        except Exception:
-            return
-        if chars == getattr(self, '_minimal_label_chars_applied', None):
-            return
-        self._apply_sidebar_minimal_rows(True)
-
-    def _apply_sidebar_secondary_labels(self) -> None:
-        """Show or hide hostname / group-count lines from current suppress state.
-
-        These two prefs add a second line (or a count badge) that changes row
-        height. During strip↔full transitions they stay off so density matches
-        the strip; preferences return only once full mode has settled.
-        """
-        lb = getattr(self, 'connection_list', None)
-        if lb is None:
-            return
-        suppressed = (
-            getattr(self, '_sidebar_suppress_secondary_labels', False)
-            or getattr(self, '_sidebar_minimal', False)
-        )
-        if suppressed:
-            show_host = False
-            show_count = False
-        else:
-            try:
-                show_host = bool(
-                    self.config.get_setting('ui.sidebar_show_user_hostname', False))
-            except Exception:
-                show_host = False
-            try:
-                show_count = bool(
-                    self.config.get_setting('ui.sidebar_show_group_count', False))
-            except Exception:
-                show_count = False
-        row = lb.get_first_child()
-        while row is not None:
-            if hasattr(row, 'host_label'):
-                try:
-                    visible = show_host and not getattr(row, '_compact', False)
-                    row.host_label.set_visible(visible)
-                except Exception:
-                    pass
-            if hasattr(row, 'count_label'):
-                try:
-                    visible = show_count and not getattr(row, '_compact', False)
-                    row.count_label.set_visible(visible)
-                except Exception:
-                    pass
-            row = row.get_next_sibling()
-
-    def _set_sidebar_secondary_labels_suppressed(self, suppressed: bool) -> None:
-        """Force hostname/group-count off (or restore prefs) for a transition."""
-        self._sidebar_suppress_secondary_labels = bool(suppressed)
-        self._apply_sidebar_secondary_labels()
-
-    def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
-        """Toggle compact rendering on every connection/group row."""
-        lb = getattr(self, 'connection_list', None)
-        if lb is None:
-            return
-        max_chars = None
-        if minimal:
-            try:
-                max_chars = self._minimal_strip_label_chars()
-            except Exception:
-                max_chars = None
-            self._minimal_label_chars_applied = max_chars
-        else:
-            self._minimal_label_chars_applied = None
-        row = lb.get_first_child()
-        while row is not None:
-            if hasattr(row, 'set_compact'):
-                try:
-                    if minimal and max_chars is not None:
-                        row.set_compact(True, max_chars=max_chars)
-                    else:
-                        row.set_compact(minimal)
-                except Exception:
-                    logger.debug("row set_compact failed", exc_info=True)
-            row = row.get_next_sibling()
 
     def _measure_sidebar_content_min(self) -> int:
         """Largest minimum width among the sidebar's full-content strips.
@@ -3249,199 +2907,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
         return widest
-
-    def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
-        """Expand to the full sidebar. Icon-strip collapse is retired.
-
-        Callers that still pass ``minimal=True`` (legacy drag expand/collapse,
-        minimize-on-connect) are ignored so the strip cannot be re-entered.
-        """
-        if bool(minimal):
-            return
-        if not getattr(self, '_sidebar_minimal', False):
-            return
-        minimal = False
-        self._sidebar_minimal = False
-
-        anim = getattr(self, '_sidebar_width_animation', None)
-        if anim is not None:
-            try:
-                anim.pause()
-            except Exception:
-                pass
-            self._sidebar_width_animation = None
-
-        sv = getattr(self, 'split_view', None)
-        if sv is None or not hasattr(sv, 'pin_width'):
-            # No width lever — just swap the content to the target state.
-            self._set_sidebar_secondary_labels_suppressed(True)
-            self._apply_sidebar_minimal_chrome(minimal)
-            self._apply_sidebar_minimal_rows(minimal)
-            self._set_sidebar_clipping(False)  # apply the minimal-aware vpolicy
-            self._set_sidebar_secondary_labels_suppressed(minimal)
-            return
-
-        def _resting_width():
-            # The width the sidebar returns to once the pin is released: the one
-            # the user dragged to, else the automatic fraction of the window.
-            try:
-                return int(sv.get_resting_sidebar_width())
-            except Exception:
-                logger.debug("resting sidebar width failed", exc_info=True)
-                return self._measure_sidebar_content_min()
-
-        # Decide the full (expanded) width and prepare the content. The chrome's
-        # min width can push the resting width above it, so the full endpoint
-        # must reflect that or the end of the animation snaps to it.
-        # Header compact (margins / hide-hosts) is deferred until the width
-        # settles — applying it at the wrong width force-relayouts the top
-        # OverflowToolbar and reads as flicker.
-        # Hostname / group-count stay off for the whole transition so row
-        # height matches the strip (prefs return only when full mode settles).
-        # Tips (accent blue) hide before any width/chrome change — divider
-        # switches use animate=False and previously never paused them.
-        self._set_sidebar_secondary_labels_suppressed(True)
-        self._pause_tips_banner_for_sidebar_anim(True)
-        if minimal:
-            # Collapsing: lock the current (full) width before compacting so
-            # releasing the chrome's min width doesn't drop the sidebar first.
-            full_width = 0
-            box = getattr(self, '_sidebar_box', None)
-            if box is not None:
-                try:
-                    full_width = int(box.get_width())
-                except Exception:
-                    full_width = 0
-            if full_width <= _MINIMAL_STRIP_WIDTH:
-                full_width = max(_resting_width(), self._measure_sidebar_content_min())
-            self._apply_sidebar_width(full_width)
-            # Apply strip selection style + compact rows immediately so the
-            # accent (blue) selection does not linger while the width shrinks.
-            self._apply_sidebar_minimal_chrome(True, header_compact=False)
-            self._apply_sidebar_minimal_rows(True)
-        else:
-            # Expanding: clip first so restoring full content can't force the
-            # width. Keep compact rows and .sidebar-minimal until the width has
-            # landed — uncompacting / accent selection at strip width is the
-            # brief blue rectangle under the top toolbar.
-            self._set_sidebar_clipping(True)
-            self._apply_sidebar_minimal_chrome(
-                False, header_compact=False, selection_style=False)
-            # Header *margins* stay deferred (relayouting at strip width reads
-            # as flicker), but the button set is full mode's from the first
-            # frame: the strip drops the hide-hostnames control, and freezing
-            # the row without it leaves room for two buttons that would hop
-            # into the "…" menu the moment the width settles.
-            self._apply_sidebar_header_items(False)
-            full_width = max(_resting_width(), self._measure_sidebar_content_min())
-
-        full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
-
-        def _settle():
-            # Resting state: the strip stays pinned at its width, the full
-            # sidebar goes back to being freely resizable.
-            try:
-                if minimal:
-                    sv.pin_width(_MINIMAL_STRIP_WIDTH)
-                else:
-                    sv.release_width()
-            except Exception:
-                logger.debug("Failed to settle sidebar width", exc_info=True)
-
-        def _finish_chrome():
-            if not minimal:
-                # Width is full now: safe to restore row chrome + accent selection.
-                self._apply_sidebar_minimal_rows(False)
-                self._apply_sidebar_minimal_chrome(False)
-            else:
-                self._apply_sidebar_header_compact(True)
-            self._set_sidebar_header_clip_reveal(False)
-            self._set_sidebar_clipping(False)
-            # Tips return only after settle + timeout (not on this frame).
-            self._queue_tips_banner_restore()
-            if minimal:
-                self._set_sidebar_secondary_labels_suppressed(True)
-            elif animate:
-                self._set_sidebar_secondary_labels_suppressed(False)
-            else:
-                self._sidebar_suppress_secondary_labels = True
-                self._apply_sidebar_secondary_labels()
-                self._schedule_sidebar_density_restore()
-
-        if not animate or not HAS_TIMED_ANIMATION:
-            _finish_chrome()
-            _settle()
-            return
-
-        if minimal:
-            start, target = float(full_width), float(_MINIMAL_STRIP_WIDTH)
-        else:
-            start, target = float(_MINIMAL_STRIP_WIDTH), float(full_width)
-
-        # Both directions: clip the sidebar and let the header toolbar reveal
-        # by clipping instead of overflow-popping every animation tick.
-        # Freeze the button row on the split the *full* sidebar settles on —
-        # the wider endpoint, whichever direction this is. Expanding then
-        # reveals exactly the buttons that stay, and collapsing clips them away
-        # instead of dropping them all on the first frame. The row is the
-        # sidebar minus the header's full-mode margins.
-        self._set_sidebar_clipping(True)
-        self._set_sidebar_header_clip_reveal(
-            True, int(max(start, target)) - 2 * _SIDEBAR_HEADER_MARGIN_FULL)
-
-        def _tick(value, *_):
-            self._apply_sidebar_width(int(value))
-
-        target_cb = Adw.CallbackAnimationTarget.new(_tick)
-        animation = Adw.TimedAnimation.new(sv, start, float(target), 200, target_cb)
-        try:
-            animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
-        except Exception:
-            pass
-
-        def _on_done(*_a):
-            _finish_chrome()
-            _settle()
-            self._sidebar_width_animation = None
-
-        animation.connect('done', _on_done)
-        self._sidebar_width_animation = animation
-        animation.play()
-
-    #: Delay before collapsing the drag-expanded strip, so the drop settles first.
-    _DRAG_COLLAPSE_DELAY_MS = 900
-
-    def begin_sidebar_drag_expand(self) -> None:
-        """Temporarily expand a minimal strip while a drag is in progress so
-        drop targets (groups, ungrouped area) are visible and reachable. Paired
-        with :meth:`end_sidebar_drag_expand` on drag-end."""
-        self._cancel_pending_drag_collapse()
-        if getattr(self, '_sidebar_minimal', False):
-            self._sidebar_expanded_for_drag = True
-            self.set_sidebar_minimal(False)
-
-    def end_sidebar_drag_expand(self) -> None:
-        """Collapse the strip back if it was auto-expanded for a drag, after a
-        short delay so the drop lands before the sidebar snaps closed."""
-        if getattr(self, '_sidebar_expanded_for_drag', False):
-            self._sidebar_expanded_for_drag = False
-            self._cancel_pending_drag_collapse()
-            self._drag_collapse_timeout_id = GLib.timeout_add(
-                self._DRAG_COLLAPSE_DELAY_MS, self._collapse_after_drag)
-
-    def _collapse_after_drag(self) -> bool:
-        self._drag_collapse_timeout_id = 0
-        self.set_sidebar_minimal(True)
-        return False  # one-shot
-
-    def _cancel_pending_drag_collapse(self) -> None:
-        tid = getattr(self, '_drag_collapse_timeout_id', 0)
-        if tid:
-            try:
-                GLib.source_remove(tid)
-            except Exception:
-                pass
-            self._drag_collapse_timeout_id = 0
 
     def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
         """Display an error dialog when duplication fails."""
@@ -3669,6 +3134,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         popover = getattr(self._terminal_theme_menu_button, 'get_popover', lambda: None)()
         if popover is not None:
             popover.popdown()
+
+    def _ensure_terminal_theme_chooser(self):
+        chooser = getattr(self, '_terminal_theme_chooser', None)
+        if chooser is None and not getattr(self, '_is_quitting', False):
+            if hasattr(self, '_terminal_theme_menu_button') and hasattr(self, 'config') and self.config is not None:
+                from .terminal_theme_selector import TerminalThemeChooser
+                selected_theme = str(
+                    self.config.get_setting('terminal.theme', 'default')
+                )
+                self._terminal_theme_chooser = TerminalThemeChooser(
+                    getattr(self.config, 'terminal_themes', {}) or {},
+                    selected_theme,
+                    self._on_terminal_theme_selected,
+                )
+                terminal_theme_popover = Gtk.Popover()
+                terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
+                self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
+                self._sync_terminal_theme_selector(selected_theme)
+                chooser = self._terminal_theme_chooser
+        return chooser
 
     def _sync_terminal_theme_selector(self, theme_key: str | None = None) -> None:
         """Keep the terminal color button and chooser aligned with Config."""
@@ -3998,8 +3483,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Terminal color schemes use the same compact color-button/popover
         # pattern as the SSH config editor. The button is only shown when the
         # selected tab contains a terminal.
-        from .terminal_theme_selector import TerminalThemeChooser
-
         self._terminal_theme_menu_button = Gtk.MenuButton()
         _cmd_icon_utils.set_button_icon(
             self._terminal_theme_menu_button, 'brush-monitor-symbolic'
@@ -4008,15 +3491,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         selected_theme = str(
             self.config.get_setting('terminal.theme', 'default')
         )
-        self._terminal_theme_chooser = TerminalThemeChooser(
-            getattr(self.config, 'terminal_themes', {}) or {},
-            selected_theme,
-            self._on_terminal_theme_selected,
-        )
-        terminal_theme_popover = Gtk.Popover()
-        terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
-        self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
+        self._terminal_theme_chooser = None
         self._sync_terminal_theme_selector(selected_theme)
+
+        def _on_terminal_theme_menu_button_toggled(_btn, _pspec):
+            # GtkMenuButton has no clicked signal; its internal toggle flips
+            # "active" even with no popover wired yet. Pre-idle activation
+            # would otherwise no-op. Post-idle the popover exists and the
+            # default machinery already showed it, so only intervene when the
+            # button went active with nothing to show.
+            if (
+                self._terminal_theme_menu_button.get_active()
+                and self._terminal_theme_menu_button.get_popover() is None
+            ):
+                self._ensure_terminal_theme_chooser()
+                popover = self._terminal_theme_menu_button.get_popover()
+                if popover is not None:
+                    popover.popup()
+
+        self._terminal_theme_menu_button.connect(
+            'notify::active', _on_terminal_theme_menu_button_toggled
+        )
+        GLib.idle_add(
+            lambda: (self._ensure_terminal_theme_chooser(), GLib.SOURCE_REMOVE)[1],
+            priority=GLib.PRIORITY_LOW,
+        )
 
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
@@ -4140,6 +3639,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         if HAS_TOOLBAR_VIEW:
             content_box = Adw.ToolbarView()
+            # Pair with the sidebar's .sidebar-pane so the paned split matches
+            # AdwOverlaySplitView's content/sidebar tone split.
+            content_box.add_css_class('content-pane')
             # Kept on the window: terminal fullscreen drives this view's
             # reveal/extend properties to overlay the custom tab/title bar
             # chrome (see window_fullscreen.py).
@@ -4407,17 +3909,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     ) -> None:
         """Common tail for every rebuild_connection_list() exit path.
 
-        Freshly-built rows always start expanded; re-collapse them when the
-        sidebar is the icon strip (the filtered search/tag paths return early and
-        would otherwise show full rows inside the strip), then restore scroll.
-        While the sidebar is detached into the popup it shows full rows, so skip
-        the re-collapse then.
+        Freshly-built rows reserve their row actions; a narrow sidebar sheds
+        them. Then restore scroll and selection.
         """
         self._ungrouped_area_row = None
         # Command/settings results in the popup are parked until the welcome-page
         # omnisearch lands — re-enable by calling self._append_command_matches().
-        if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
-            self._apply_sidebar_minimal_rows(True)
         # Fresh rows reserve their row actions; a narrow sidebar sheds them.
         self._apply_sidebar_row_actions(force=True)
         for connection_uuid, group_id in selected_connection_rows:
@@ -4519,6 +4016,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         tag_filter = getattr(self, '_tag_filter', None)
 
+        # Pin a local-terminal row at the top of every list shape (grouped,
+        # flat search, tag filter). Search filters it like any other row.
+        self._add_local_terminal_row_if_visible(search_text)
+
         # When the search popup asks for a flat list (no group headers), show a
         # plain connection list honouring the active search/tag filters.
         popup = getattr(self, '_search_popup', None)
@@ -4592,8 +4093,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
 
+        # Dimmed section headers only when groups exist — a flat ungrouped list
+        # needs no Groups/Ungrouped chrome.
+        groups_header = None
+        if hierarchy:
+            groups_header = SectionHeaderRow("groups", _("Groups"), self.config)
+            self.connection_list.append(groups_header)
+
         # Build the list with groups
-        self._build_grouped_list(hierarchy, connections_dict, 0)
+        group_rows = self._build_grouped_list(hierarchy, connections_dict, 0)
+        if groups_header is not None:
+            for group_row in group_rows:
+                groups_header.add_child_row(group_row)
+            groups_header.apply_descendant_visibility()
 
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
@@ -4603,6 +4115,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ]
 
         if ungrouped_nicks:
+            # Only label Ungrouped when Groups is also present; otherwise the
+            # whole list is root connections and a section header is noise.
+            ungrouped_header = None
+            if hierarchy:
+                ungrouped_header = SectionHeaderRow(
+                    "ungrouped", _("Ungrouped"), self.config
+                )
+                self.connection_list.append(ungrouped_header)
+
             # Root order is daemon-owned; render from the snapshot and append
             # any not-yet-projected ungrouped connections without local writes.
             ungrouped_set = set(ungrouped_nicks)
@@ -4612,14 +4133,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     continue
                 conn = connections_dict.get(nick)
                 if conn:
-                    self.add_connection_row(conn)
+                    row = self.add_connection_row(conn)
+                    if row is not None and ungrouped_header is not None:
+                        ungrouped_header.add_child_row(row)
                     seen.add(nick)
             for nick in ungrouped_nicks:
                 if nick in seen:
                     continue
                 conn = connections_dict.get(nick)
                 if conn:
-                    self.add_connection_row(conn)
+                    row = self.add_connection_row(conn)
+                    if row is not None and ungrouped_header is not None:
+                        ungrouped_header.add_child_row(row)
+            if ungrouped_header is not None:
+                ungrouped_header.apply_descendant_visibility()
 
 
         self._finish_rebuild(scroll_position, selected_connection_rows)
@@ -4677,6 +4204,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, "group_id") and row.group_id == group_id:
                 self._select_only_row(row)
                 break
+
+    def _add_local_terminal_row_if_visible(self, search_text: str = '') -> None:
+        """Prepend the pinned local-terminal row when it matches the search."""
+        from .sidebar import LocalTerminalRow, local_terminal_row_matches
+
+        if not bool(self.config.get_setting('ui.sidebar_show_local_terminal', False)):
+            return
+        if search_text and not local_terminal_row_matches(search_text):
+            return
+        row = LocalTerminalRow(self.config)
+        self.connection_list.append(row)
 
     def add_connection_row(
         self,
@@ -5096,22 +4634,25 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         Detaches the sidebar into the floating popup (looks like the expanded
         sidebar, floats over the content) rather than expanding the split view —
-        so the terminal never resizes. This applies both to minimal mode and a
-        sidebar manually hidden with F9. Remembered so it re-attaches on close.
+        so the terminal never resizes. Applies when the sidebar was manually
+        hidden with F9. Remembered so it re-attaches on close.
         """
-        self._search_expanded_sidebar = (
-            getattr(self, '_sidebar_minimal', False) or sidebar_hidden
-        )
+        self._search_popup = self._ensure_search_popup()
+        self._search_expanded_sidebar = bool(sidebar_hidden)
         if self._command_popup is not None and self._command_popup.visible:
             self._command_popup.hide()
         if self._search_expanded_sidebar:
-            self._search_popup.show()
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.show()
 
     def _restore_sidebar_after_search(self):
-        """Re-attach the strip if opening search is what detached it."""
+        """Re-attach the sidebar if opening search is what detached it."""
         if getattr(self, '_search_expanded_sidebar', False):
             self._search_expanded_sidebar = False
-            self._search_popup.hide()
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.hide()
 
     def _close_search_if_open(self):
         """Dismiss the search bar (clear filter, rebuild, restore the sidebar).
@@ -5167,9 +4708,42 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to activate search entry: {e}")
 
+    def _ensure_search_popup(self):
+        popup = getattr(self, '_search_popup', None)
+        if popup is None and not getattr(self, '_is_quitting', False):
+            if hasattr(self, '_content_overlay') and hasattr(self, '_sidebar_toolbar_view') and hasattr(self, '_sidebar_box'):
+                from .search_popup import SearchPopup
+                self._search_popup = SearchPopup(
+                    self._content_overlay,
+                    self._sidebar_toolbar_view,
+                    self._sidebar_box,
+                    getattr(self, '_popup_target_width', 300),
+                    on_shown=self._on_search_popup_shown,
+                    on_hidden=self._on_search_popup_hidden,
+                    on_dismiss=self._dismiss_search_popup,
+                    focus_func=lambda: getattr(self, 'search_entry', None),
+                )
+                popup = self._search_popup
+        return popup
+
+    def _ensure_omni_search(self):
+        omni = getattr(self, '_omni_search', None)
+        if omni is None and not getattr(self, '_is_quitting', False):
+            if hasattr(self, '_global_overlay') and hasattr(self, 'welcome_view') and self.welcome_view is not None:
+                from .omni_search import OmniSearchController
+                self._omni_search = OmniSearchController(
+                    self,
+                    self._global_overlay,
+                    self.welcome_view.omni_home,
+                )
+                if hasattr(self._omni_search, 'request_attention'):
+                    self._omni_search.request_attention()
+                omni = self._omni_search
+        return omni
+
     def activate_omni_search(self):
         """Show and focus the global omni-search."""
-        omni = getattr(self, '_omni_search', None)
+        omni = self._ensure_omni_search()
         if omni is not None:
             omni.show()
 
@@ -6290,6 +5864,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     # Signal handlers
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
+        if row is not None and getattr(row, 'is_local_terminal_row', False):
+            self._dismiss_search_popup()
+            self._cycle_local_terminal_tabs_or_open()
+            return
+        if row is not None and getattr(row, 'is_section_header', False):
+            row._toggle_expand()
+            return
         if row is not None and hasattr(row, 'command_action'):
             # Close the popup first (restores the sidebar), then run the command
             # so the dialog/page it opens isn't fighting the popup for the overlay.
@@ -6311,6 +5892,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
         self._return_to_tab_view_if_welcome()
+        if row and getattr(row, 'is_local_terminal_row', False):
+            self._cycle_local_terminal_tabs_or_open()
+            return True
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
@@ -6320,6 +5904,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle the activate-connection action"""
         self._return_to_tab_view_if_welcome()
         row = self.connection_list.get_selected_row()
+        if row and getattr(row, 'is_local_terminal_row', False):
+            self._cycle_local_terminal_tabs_or_open()
+            return
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
 
@@ -6484,7 +6071,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
           width underneath.
 
         This is a pure presentation switch — sidebar visibility is untouched, so
-        it composes with show/hide and with minimal mode. A true overlay needs
+        it composes with show/hide. A true overlay needs
         the ``AdwOverlaySplitView`` backend; the resizable ``Gtk.Paned`` the
         window now uses is always a side-by-side column, so the request is
         recorded but the layout does not change. The floating sidebar popup
@@ -6515,21 +6102,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return DEFAULT_SIDEBAR_MAX_WIDTH
 
     def _on_search_popup_shown(self) -> None:
-        """Detached: show the full sidebar even when the strip is minimal, and
-        hide the connection list for search-only modes (spotlight)."""
-        self._set_sidebar_clipping(False)
-        self._apply_sidebar_minimal_chrome(False)
-        self._apply_sidebar_minimal_rows(False)
+        """Detached: honour search-only modes (spotlight hides the list)."""
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(not self._search_popup.search_only)
 
     def _on_search_popup_hidden(self) -> None:
-        """Re-attached: restore the list and re-collapse the strip if minimal."""
+        """Re-attached: restore the connection list visibility."""
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(True)
-        if getattr(self, '_sidebar_minimal', False):
-            self._apply_sidebar_minimal_chrome(True)
-            self._apply_sidebar_minimal_rows(True)
 
     def _dismiss_search_popup(self) -> None:
         """Esc / click-outside: route through search teardown when search is
@@ -6537,18 +6117,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if getattr(self, 'search_container', None) and self.search_container.get_visible():
             self._close_search_if_open()
         else:
-            self._search_popup.hide()
-
-    def _sidebar_mode_is_minimal(self) -> bool:
-        """Icon-strip resting mode is retired; always False."""
-        return False
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.hide()
 
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
-        # Leave any leftover strip chrome so the next reveal is the full sidebar.
-        if getattr(self, '_sidebar_minimal', False):
-            self.set_sidebar_minimal(False, animate=False)
         try:
             self._toggle_sidebar_visibility(visible)
             if hasattr(self, 'sidebar_toggle_button'):
@@ -6598,11 +6173,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
         return 'none'
-
-    def _minimize_sidebar_after_terminal(self) -> bool:
-        """No-op: icon-strip minimize-on-connect is retired."""
-        self._sidebar_hide_timer_id = None
-        return GLib.SOURCE_REMOVE
 
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""

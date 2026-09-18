@@ -83,6 +83,9 @@ def get_default_config() -> Dict[str, Any]:
             'window_width': 1200,
             'window_height': 800,
             'sidebar_width': 300,
+            # Connection-list presentation: 'full' (chrome + prefs) or
+            # 'compact' (title-only flat rows; other sidebar toggles ignored).
+            'sidebar_mode': 'full',
             'group_color_display': 'dot',
             'group_color_child_rows': True,
             'group_row_display': 'nested',
@@ -97,6 +100,8 @@ def get_default_config() -> Dict[str, Any]:
             # Hover action buttons on sidebar rows (Settings ▸ Interface ▸ Sidebar)
             'sidebar_show_file_manager_button': True,
             'sidebar_show_split_view_button': False,
+            # Pinned Local Terminal row at the top of the connection list
+            'sidebar_show_local_terminal': False,
             'sidebar_flat_rows': True,
             # When True, the whole UI uses a monospace face — the family from
             # terminal.font when set, otherwise Monospace.
@@ -105,14 +110,12 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_hide_on_startup': False,
             'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
             'sidebar_show_when_no_tabs': False,
-            # Resting sidebar presentation. Icon-strip ('minimal') is retired;
-            # migration rewrites any persisted 'minimal' to 'full'.
-            'sidebar_mode': 'full',
             # What happens to the sidebar when a session opens:
-            # 'none' | 'hide'. ('minimize' / icon strip is retired.)
+            # 'none' | 'hide'. ('minimize' / icon strip is retired; migration
+            # rewrites any persisted 'minimize' to 'none'.)
             'sidebar_on_terminal_open': 'none',
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-            'headerbar_show_sidebar_toggle': False,
+            'headerbar_show_sidebar_toggle': True,
             'headerbar_show_split_view': False,
             'headerbar_show_commands': True,
             'headerbar_show_terminal_theme': True,

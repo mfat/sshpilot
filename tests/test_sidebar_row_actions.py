@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 def _group_row(show_split_view=True):
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.GroupRow.__new__(mod.GroupRow)
-    row._compact = False
     row._is_hovering_row = False
     row._actions_reserved = True
     row.group_manager = SimpleNamespace(
@@ -89,19 +88,9 @@ def test_widening_restores_the_reservation():
         mod.ROW_ACTION_SLOT_BUTTON)
 
 
-def test_the_strip_keeps_no_row_action():
-    row, mod = _group_row()
-    row._compact = True
-
-    mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
-
-    row._split_view_slot.set_visible.assert_called_with(False)
-
-
 def _connection_row(callback=True, show_file_manager=True):
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.ConnectionRow.__new__(mod.ConnectionRow)
-    row._compact = False
     row._is_hovering = False
     row._file_manager_callback = MagicMock() if callback else None
     row.config = SimpleNamespace(
@@ -214,7 +203,6 @@ def test_repeat_calls_do_not_walk_the_list_again():
 def _connection_row_indicators():
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.ConnectionRow.__new__(mod.ConnectionRow)
-    row._compact = False
     row._indicators_reserved = True
     row.config = SimpleNamespace(get_setting=lambda key, default=None: default)
     row.connection = SimpleNamespace(forwarding_rules=())
@@ -245,18 +233,6 @@ def test_widening_restores_port_forwarding_indicators():
     assert row._indicators_reserved is True
     row.indicator_box.set_visible.assert_called_with(True)
     row._update_forwarding_indicators.assert_called_once()
-
-
-def test_shed_port_forwarding_indicators_ignored_while_compact():
-    row, mod = _connection_row_indicators()
-    row._compact = True
-    row._update_forwarding_indicators = MagicMock()
-
-    mod.ConnectionRow.set_indicators_reserved(row, False)
-
-    assert row._indicators_reserved is False
-    row.indicator_box.set_visible.assert_not_called()
-    row._update_forwarding_indicators.assert_not_called()
 
 
 def test_update_forwarding_indicators_noops_when_shed():

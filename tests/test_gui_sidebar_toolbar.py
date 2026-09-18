@@ -50,27 +50,6 @@ def test_new_group_button_is_in_sidebar_header(gui):
     assert gui.window._sidebar_add_button is header._items[0]
 
 
-def test_strip_header_keeps_the_full_mode_add_button(gui):
-    win = gui.window
-    add = win._sidebar_add_button
-    assert add is not None
-    assert add.has_css_class('flat')
-    assert not add.has_css_class('pill')
-    assert not add.has_css_class('suggested-action')
-    assert getattr(win, '_sidebar_strip_add_button', None) is None
-    assert getattr(win, '_sidebar_header_stack', None) is None
-
-    win._apply_sidebar_header_compact(True)
-    gui.pump(50)
-    assert add.get_visible()
-    assert win._sidebar_header_toolbar.get_margin_start() == 6
-    assert win._sidebar_header_toolbar.get_margin_top() == 12
-
-    win._apply_sidebar_header_compact(False)
-    gui.pump(50)
-    assert win._sidebar_header_toolbar.get_margin_start() == 12
-    assert win._sidebar_header_toolbar.get_margin_top() == 12
-
 
 def test_explicit_sort_is_not_reapplied_during_sidebar_rebuild(gui, monkeypatch):
     """A rebuild must preserve daemon/DnD ordering after an explicit sort."""

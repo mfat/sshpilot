@@ -61,6 +61,13 @@
 
 
 
+    <release version="6.1.5" date="2026-09-18">
+      <description>
+        <p>New &quot;Compact&quot; style for sidebar</p>
+        <p>Fixed mosh connection failure</p>
+        <p>New option to add a pinned local shell to connection list</p>
+      </description>
+    </release>
     <release version="6.1.4" date="2026-09-17">
       <description>
         <p>Improvements to SplitView mode</p>

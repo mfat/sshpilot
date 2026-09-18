@@ -488,6 +488,52 @@ def test_terminal_launch_normalizes_unusable_term_at_provider_boundary(
     assert environment["TERM"] == expected
 
 
+@pytest.mark.parametrize(
+    ("term", "expected"),
+    [
+        (None, "xterm-256color"),
+        ("", "xterm-256color"),
+        ("dumb", "xterm-256color"),
+        ("DUMB", "xterm-256color"),
+        ("foot", "foot"),
+        ("kitty", "kitty"),
+        ("xterm-256color", "xterm-256color"),
+    ],
+)
+def test_protocol_terminal_launch_normalizes_unusable_term_at_provider_boundary(
+    provider, monkeypatch, term, expected
+):
+    """Non-SSH interactive launches get the same TERM default (issue #1263)."""
+    from sshpilot.plugins.api import SpawnSpec
+    import sshpilot.plugins.builtin.mosh_protocol as mosh_mod
+
+    prov, records = provider
+    records["mosh1"] = _record(
+        id="mosh1",
+        nickname="mosh1",
+        protocol="mosh",
+        data={"host": "example.com"},
+    )
+
+    spawn_env = {} if term is None else {"TERM": term}
+    spawn_env.setdefault("PATH", "/usr/bin:/bin")
+
+    def fake_build_spawn(self, connection, ctx):
+        return SpawnSpec(argv=["/usr/bin/mosh", "example.com"], env=dict(spawn_env))
+
+    monkeypatch.setattr(mosh_mod.MoshProtocolBackend, "build_spawn", fake_build_spawn)
+    monkeypatch.setattr(
+        "sshpilot.daemon.connection_launch_provider.shutil.which",
+        lambda name, path=None, **_kwargs: (
+            name if isinstance(name, str) and name.startswith("/") else f"/usr/bin/{name}"
+        ),
+    )
+
+    _command, environment = prov.prepare_terminal_launch("mosh1")
+
+    assert environment["TERM"] == expected
+
+
 def test_non_terminal_ssh_launch_does_not_get_terminal_term_default(provider, monkeypatch):
     import sshpilot.ssh_connection_builder as builder
 

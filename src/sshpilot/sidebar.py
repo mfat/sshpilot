@@ -296,16 +296,28 @@ def install_sidebar_css():
           background: alpha(@accent_bg_color, 0.1);
         }
 
-        /* Row hover actions in the minimal strip: the button keeps its
-           reserved space (hovering must never reflow the row), so it is
-           trimmed to the icon to leave the label as much of the ~112px
-           strip as possible. */
-        .file-manager-button.sidebar-compact-action {
-          min-width: 16px;
-          min-height: 16px;
-          padding: 1px;
-          margin: 0;
+        /* Dimmed section headers (Groups / Ungrouped) sit above folder and
+           root connection rows. Flat, non-card, smaller than GroupRow so they
+           read as list chrome rather than another folder. */
+        .navigation-sidebar row.sidebar-section-header {
+          margin: 6px 8px 0 8px;
+          background: transparent;
+          box-shadow: none;
         }
+        .navigation-sidebar.sidebar-compact row.sidebar-section-header {
+          margin: 4px 6px 0 6px;
+        }
+        .navigation-sidebar row.sidebar-section-header:hover,
+        .navigation-sidebar row.sidebar-section-header:selected,
+        .navigation-sidebar row.sidebar-section-header:selected:hover {
+          background: transparent;
+          box-shadow: none;
+          color: inherit;
+        }
+        .sidebar-section-header .sidebar-section-label {
+          letter-spacing: 0.04em;
+        }
+
         
         /* Smooth drag indicator transitions */
         .drag-indicator {
@@ -330,6 +342,15 @@ def install_sidebar_css():
         /* Gap between sidebar list rows (GtkListBox has no spacing property) */
         .navigation-sidebar row {
           margin: 4px 8px;
+        }
+
+        /* Compact mode: denser IDE-style gaps (Cursor/VS Code); horizontal
+           inset still leaves room for the selection pill. */
+        .navigation-sidebar.sidebar-compact row {
+          margin: 1px 4px;
+        }
+        .navigation-sidebar.sidebar-compact row.tinted {
+          margin: 1px 4px;
         }
 
         /* Selected sidebar row: always use the accent so selection is
@@ -380,47 +401,26 @@ def install_sidebar_css():
 
         /* Accent-bar mode: the coloured left bar is the highlight, so a
            selected row uses a neutral overlay instead of the accent fill
-           (which would swamp the bar). Every bar-mode row carries
-           .color-bar, and this out-specifies the accent `row:selected`
-           rule above at the same provider priority. */
+           (which would swamp the bar). Stronger than libadwaita's default
+           ~0.10 shade so selection still reads on dark sidebar cards.
+           Every bar-mode row carries .color-bar, and this out-specifies the
+           accent `row:selected` rule above at the same provider priority. */
         .navigation-sidebar row.color-bar:selected {
-          background-color: alpha(@window_fg_color, 0.10);
+          background-color: alpha(@window_fg_color, 0.18);
           color: @window_fg_color;
           box-shadow: none;
         }
 
         .navigation-sidebar row.color-bar:selected:hover {
-          background-color: alpha(@window_fg_color, 0.13);
+          background-color: alpha(@window_fg_color, 0.22);
         }
 
         .navigation-sidebar row.color-bar:selected:active {
-          background-color: alpha(@window_fg_color, 0.16);
+          background-color: alpha(@window_fg_color, 0.26);
         }
 
-        /* Minimal strip only (.sidebar-minimal is set on the sidebar box while
-           collapsed): selection uses the plain libadwaita-style neutral shade
-           for every row — no accent fill, no forced fg text — regardless of the
-           group colour mode. Higher specificity than the accent/color-bar rules
-           above so it wins; the full sidebar is untouched. */
-        .sidebar-minimal .navigation-sidebar row:selected,
-        .sidebar-minimal .navigation-sidebar row.tinted:selected,
-        .sidebar-minimal .navigation-sidebar row.color-bar:selected {
-          background-color: alpha(currentColor, 0.10);
-          color: inherit;
-          box-shadow: none;
-        }
 
-        .sidebar-minimal .navigation-sidebar row:selected:hover,
-        .sidebar-minimal .navigation-sidebar row.tinted:selected:hover,
-        .sidebar-minimal .navigation-sidebar row.color-bar:selected:hover {
-          background-color: alpha(currentColor, 0.13);
-        }
 
-        .sidebar-minimal .navigation-sidebar row:selected:active,
-        .sidebar-minimal .navigation-sidebar row.tinted:selected:active,
-        .sidebar-minimal .navigation-sidebar row.color-bar:selected:active {
-          background-color: alpha(currentColor, 0.16);
-        }
 
         /* Reorder placeholder: a slim transparent gap row whose child
            DragIndicator draws the accent bar; the list parts around it. */
@@ -467,25 +467,24 @@ def install_sidebar_css():
           }
         }
 
-        /* Minimal strip labels: short truncated text. Groups are bold and may
-           carry the group colour on the label (no folder glyph). */
-        .sidebar-compact-label {
-          color: @window_fg_color;
-        }
 
-        .sidebar-compact-label.sidebar-compact-group {
-          font-weight: bold;
-        }
 
-        .sidebar-compact-label.sidebar-compact-online {
-          color: #16A34A;
+        /* Match AdwOverlaySplitView's pane hairline: .sidebar-pane already
+           draws the trailing inset border, so suppress the paned separator's
+           own stroke to avoid a double line. GTK keeps a wider input area
+           than it paints, so the divider stays grabbable. */
+        paned.sidebar-paned > separator {
+          box-shadow: none;
+          background: none;
         }
 
         /* Detachable sidebar popup: an opaque panel floating over the work area
-           (see search_popup.SearchPopup). The shadow lifts it off the
-           content; the scrim is transparent and only captures click-outside. */
+           (see search_popup.SearchPopup). Use the same sidebar tone as the
+           docked .sidebar-pane shell; the shadow lifts it off the content;
+           the scrim is transparent and only captures click-outside. */
         .sidebar-popup {
-          background-color: @window_bg_color;
+          background-color: @sidebar_bg_color;
+          color: @sidebar_fg_color;
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
@@ -508,7 +507,7 @@ def install_sidebar_css():
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
-          background-color: alpha(@window_bg_color, 0.94);
+          background-color: alpha(@sidebar_bg_color, 0.94);
         }
 
         /* Chrome-free panel for modes whose content draws its own frame
@@ -539,7 +538,81 @@ def install_sidebar_css():
         logger.debug(f"CSS installation traceback: {traceback.format_exc()}")
 
 
+#: Row content margins/spacing for full vs compact sidebar modes.
+# (margin_start, margin_end, margin_top, margin_bottom, spacing)
+_SIDEBAR_ROW_DENSITY_FULL = (12, 12, 6, 6, 12)
+# Cursor-like compact: minimal vertical padding, tight horizontal inset.
+_SIDEBAR_ROW_DENSITY_COMPACT = (4, 4, 0, 0, 4)
+
+
+def _sidebar_is_compact(config) -> bool:
+    """Whether Preferences ▸ Sidebar is set to compact (title-only) mode."""
+    if config is None:
+        return False
+    try:
+        return str(config.get_setting('ui.sidebar_mode', 'full')).lower() == 'compact'
+    except Exception:
+        return False
+
+
+def _sidebar_row_density(config) -> tuple[int, int, int, int, int]:
+    """Return (margin_start, margin_end, margin_top, margin_bottom, spacing)."""
+    if _sidebar_is_compact(config):
+        return _SIDEBAR_ROW_DENSITY_COMPACT
+    return _SIDEBAR_ROW_DENSITY_FULL
+
+
+def _apply_sidebar_list_compact_class(connection_list, config) -> None:
+    """Toggle ``sidebar-compact`` on the connection ListBox for denser row gaps."""
+    if connection_list is None:
+        return
+    compact = _sidebar_is_compact(config)
+    if compact:
+        if not connection_list.has_css_class('sidebar-compact'):
+            connection_list.add_css_class('sidebar-compact')
+    else:
+        if connection_list.has_css_class('sidebar-compact'):
+            connection_list.remove_css_class('sidebar-compact')
+
+
+def _apply_sidebar_row_density(content: Gtk.Box, config) -> None:
+    """Apply mode-dependent margins and spacing to a row content box."""
+    start, end, top, bottom, spacing = _sidebar_row_density(config)
+    content.set_margin_start(start)
+    content.set_margin_end(end)
+    content.set_margin_top(top)
+    content.set_margin_bottom(bottom)
+    content.set_spacing(spacing)
+
+
+def _apply_sidebar_title_centering(
+    info_box: Gtk.Box,
+    title_label: Gtk.Label,
+    *,
+    single_line: bool,
+) -> None:
+    """Keep the row title vertically centered when only one text line shows.
+
+    The title lives in a vertical ``info_box``. Taller siblings (hover-action
+    slots, expand chevron, icons) stretch a FILL ``info_box``; without
+    expanding the title, GTK packs it at the top of that space and the label
+    looks top-aligned inside the row.
+    """
+    if single_line:
+        info_box.set_valign(Gtk.Align.FILL)
+        title_label.set_vexpand(True)
+        title_label.set_valign(Gtk.Align.CENTER)
+    else:
+        info_box.set_valign(Gtk.Align.CENTER)
+        title_label.set_vexpand(False)
+        # First line of a two-line stack sits at the top of the info box.
+        title_label.set_valign(Gtk.Align.START)
+
+
 def _use_flat_sidebar_rows(config) -> bool:
+    # Compact is always a flat list; card chrome is never used there.
+    if _sidebar_is_compact(config):
+        return True
     if config is None:
         return False
     try:
@@ -838,30 +911,6 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     row.color_dot.set_visible(True)
 
 
-# Character budget for labels in the minimal strip at the default strip width
-# (``window._MINIMAL_STRIP_WIDTH``). Grows with the strip via
-# :func:`minimal_label_max_chars`; the full name stays on the row tooltip.
-MINIMAL_LABEL_MAX_CHARS = 10
-
-# Pixel width that yields ``MINIMAL_LABEL_MAX_CHARS`` — keep in sync with
-# ``window._MINIMAL_STRIP_WIDTH``.
-MINIMAL_LABEL_BASE_WIDTH = 112
-
-
-def minimal_label_max_chars(
-    width: int,
-    *,
-    base_width: int = MINIMAL_LABEL_BASE_WIDTH,
-    base_chars: int = MINIMAL_LABEL_MAX_CHARS,
-) -> int:
-    """Ellipsis budget for compact labels at a strip ``width`` of pixels.
-
-    Scales linearly from ``base_chars`` at ``base_width`` (10 characters in the
-    default 112px strip) so dragging the strip open reveals more of each name.
-    """
-    base_width = max(1, int(base_width))
-    return max(1, (max(0, int(width)) * max(1, int(base_chars))) // base_width)
-
 
 #: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
 #: floor GTK never lays the label out below (~80px at 10 characters); natural
@@ -898,68 +947,13 @@ def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
     return slot
 
 
-def _configure_compact_label(label: Gtk.Label, text: str,
-                             *, max_chars: int = MINIMAL_LABEL_MAX_CHARS,
-                             group: bool = False) -> None:
-    """Show ``text`` as a short ellipsized strip label (full name via tooltip)."""
-    label.set_text(text)
-    label.set_ellipsize(Pango.EllipsizeMode.END)
-    label.set_width_chars(0)
-    label.set_max_width_chars(max(1, int(max_chars)))
-    label.add_css_class('sidebar-compact-label')
-    if group:
-        label.add_css_class('sidebar-compact-group')
-    else:
-        label.remove_css_class('sidebar-compact-group')
-
-
-def _restore_full_label_width(label: Gtk.Label) -> None:
-    """Undo compact max-width constraints on a name label."""
-    label.remove_css_class('sidebar-compact-label')
-    label.remove_css_class('sidebar-compact-group')
-    label.remove_css_class('sidebar-compact-online')
-    label.set_width_chars(FULL_LABEL_MIN_CHARS)
-    label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
-    label.set_ellipsize(Pango.EllipsizeMode.END)
-
-
-def _set_compact_fg_color(widget: Gtk.Widget, rgba: Optional[Gdk.RGBA],
-                          *, css_class: str = 'sidebar-compact-label') -> None:
-    """Tint a compact-strip label (or other glyph) with ``rgba``."""
-    old = getattr(widget, '_color_provider', None)
-    if old is not None:
-        try:
-            widget.get_style_context().remove_provider(old)
-        except Exception:
-            pass
-        widget._color_provider = None  # type: ignore[attr-defined]
-    if rgba is None:
-        return
-    try:
-        color = rgba.to_string()
-    except Exception:
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_data(
-        (
-            f".{css_class} {{"
-            f"  color: {_standalone_glyph_color(color)};"
-            "}"
-        ).encode()
-    )
-    widget._color_provider = provider  # type: ignore[attr-defined]
-    widget.get_style_context().add_provider(
-        provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-    )
-
-
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
-    Modes: ``fill`` (tinted card), ``badge`` (tag icon), ``bar`` (leading
-    accent bar), ``dot`` (dot before the row icon). Mutually exclusive, so we
-    always clear the others first. ``row`` must expose ``color_badge``,
-    ``_update_color_badge`` and ``color_dot``.
+    Modes: ``fill`` (tinted card), ``badge`` (tag icon before the row icon),
+    ``bar`` (leading accent bar), ``dot`` (dot before the row icon). Mutually
+    exclusive, so we always clear the others first. ``row`` must expose
+    ``color_badge``, ``_update_color_badge`` and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
@@ -1074,6 +1068,128 @@ class DragIndicator(Gtk.Widget):
             snapshot.pop()
 
 
+class SectionHeaderRow(Gtk.ListBoxRow):
+    """Dimmed, collapsible list chrome for the Groups / Ungrouped sections.
+
+    Not a real group: no drag, no context-menu actions, not selectable. Click
+    (or the chevron) expands/collapses the rows registered via
+    :meth:`add_child_row`. Expanded state is persisted under
+    ``ui.sidebar_section_expanded``.
+    """
+
+    is_section_header = True
+    EXPANDED_SETTING = "ui.sidebar_section_expanded"
+
+    __gsignals__ = {
+        "section-toggled": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),
+    }
+
+    def __init__(self, section_id: str, title: str, config=None):
+        super().__init__()
+        self.section_id = section_id
+        self._title = title
+        self.config = config
+        self._child_rows: List[Gtk.ListBoxRow] = []
+        self._expanded = self._load_expanded()
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.set_margin_start(12)
+        content.set_margin_end(8)
+        content.set_margin_top(4)
+        content.set_margin_bottom(2)
+        self._content = content
+
+        self.name_label = Gtk.Label(label=title)
+        self.name_label.set_halign(Gtk.Align.START)
+        self.name_label.set_hexpand(True)
+        self.name_label.set_xalign(0.0)
+        self.name_label.add_css_class("caption-heading")
+        self.name_label.add_css_class("dim-label")
+        self.name_label.add_css_class("sidebar-section-label")
+        content.append(self.name_label)
+
+        from sshpilot import icon_utils
+
+        self.expand_button = Gtk.Button()
+        icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
+        self.expand_button.add_css_class("flat")
+        self.expand_button.add_css_class("group-expand-button")
+        # Match the section title: chrome, not folder chrome.
+        self.expand_button.add_css_class("dim-label")
+        self.expand_button.set_can_focus(False)
+        self.expand_button.connect("clicked", self._on_expand_clicked)
+        content.append(self.expand_button)
+
+        self.set_child(content)
+        self.add_css_class("sidebar-section-header")
+        # Transparent chrome: never look like a card/folder row.
+        self.remove_css_class("card")
+        self.set_selectable(False)
+        self.set_activatable(True)
+        self.set_can_focus(True)
+
+        self._update_display()
+
+    def _load_expanded(self) -> bool:
+        config = self.config
+        if config is None:
+            return True
+        try:
+            state = config.get_setting(self.EXPANDED_SETTING, {}) or {}
+            if self.section_id in state:
+                return bool(state[self.section_id])
+        except Exception:
+            logger.debug("Failed to load section expand state", exc_info=True)
+        return True
+
+    def _persist_expanded(self) -> None:
+        config = self.config
+        if config is None:
+            return
+        try:
+            state = dict(config.get_setting(self.EXPANDED_SETTING, {}) or {})
+            state[self.section_id] = bool(self._expanded)
+            config.set_setting(self.EXPANDED_SETTING, state)
+        except Exception:
+            logger.debug("Failed to persist section expand state", exc_info=True)
+
+    def add_child_row(self, row: Gtk.ListBoxRow) -> None:
+        """Track a direct child of this section for in-place expand/collapse."""
+        self._child_rows.append(row)
+
+    def apply_descendant_visibility(self) -> None:
+        """Show or hide section children without rebuilding the sidebar."""
+        visible = bool(self._expanded)
+        for row in self._child_rows:
+            row.set_visible(visible)
+            if hasattr(row, "apply_descendant_visibility"):
+                # Nested groups keep their own expand state under the section.
+                row.apply_descendant_visibility(visible)
+
+    def _update_display(self) -> None:
+        from sshpilot import icon_utils
+
+        if self._expanded:
+            icon_utils.set_button_icon(self.expand_button, "pan-down-symbolic")
+        else:
+            icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
+        set_accessible_name(self, self._title)
+        set_accessible_expanded(self, self._expanded)
+        set_accessible_name(
+            self.expand_button,
+            _("Collapse section") if self._expanded else _("Expand section"),
+        )
+
+    def _on_expand_clicked(self, _button) -> None:
+        self._toggle_expand()
+
+    def _toggle_expand(self) -> None:
+        self._expanded = not self._expanded
+        self._persist_expanded()
+        self._update_display()
+        self.apply_descendant_visibility()
+        self.emit("section-toggled", self.section_id, self._expanded)
+
 class GroupRow(Gtk.ListBoxRow):
     """Row widget for group headers."""
 
@@ -1094,7 +1210,6 @@ class GroupRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._tint_provider = None
         self._color_badge_provider = None
-        self._compact = False
         self._member_rows = []
         self._child_group_rows = []
 
@@ -1107,15 +1222,12 @@ class GroupRow(Gtk.ListBoxRow):
 
         # Main content
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        content.set_margin_start(12)
-        content.set_margin_end(12)
-        content.set_margin_top(6)
-        content.set_margin_bottom(6)
+        _apply_sidebar_row_density(content, config)
         # Kept so set_indentation() can offset nested group headers and honor
         # the fullwidth/nested Group Layout preference.
         self._content = content
-        self._content_margin_base = 12
-        self._content_spacing_base = 12
+        self._content_margin_base = content.get_margin_start()
+        self._content_spacing_base = content.get_spacing()
         self._indent_level = 0
         self._group_display_mode = None
 
@@ -1123,11 +1235,23 @@ class GroupRow(Gtk.ListBoxRow):
         self.color_dot = _create_color_dot("big-dot-symbolic")
         content.append(self.color_dot)
 
+        # Same leading slot as color_dot (mutually exclusive via _apply_row_color).
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
+
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         config = getattr(self.group_manager, 'config', None)
-        show_group_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
+        compact = _sidebar_is_compact(config)
+        show_group_icon = (
+            False if compact
+            else (config.get_setting('ui.sidebar_show_group_icon', True) if config else True)
+        )
         icon.set_visible(show_group_icon)
         content.append(icon)
         self.icon = icon
@@ -1165,9 +1289,15 @@ class GroupRow(Gtk.ListBoxRow):
         self.count_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         # Set initial visibility based on preference
         config = getattr(self.group_manager, 'config', None)
-        show_group_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
+        show_group_count = (
+            False if compact
+            else (config.get_setting('ui.sidebar_show_group_count', False) if config else False)
+        )
         self.count_label.set_visible(show_group_count)
         info_box.append(self.count_label)
+        _apply_sidebar_title_centering(
+            info_box, self.name_label, single_line=not show_group_count
+        )
 
         content.append(info_box)
 
@@ -1177,6 +1307,8 @@ class GroupRow(Gtk.ListBoxRow):
         # ``window._ROW_ACTIONS_MIN_WIDTH``) frees the width without collapsing
         # the row — the button is taller than the labels beside it. Editing
         # the group is a context-menu item ("Edit Group" / "Rename Tag…").
+        # Compact mode drops the slot entirely so group height matches
+        # connection rows (title + color only).
         self._actions_reserved = True
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
@@ -1185,17 +1317,14 @@ class GroupRow(Gtk.ListBoxRow):
         self.split_view_button.set_opacity(0.0)
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
         self._split_view_slot = _make_row_action_slot(self.split_view_button)
+        if compact:
+            # Drop height reservation immediately — empty stack pages are as
+            # tall as the button and would top-align the title beside them.
+            self._split_view_slot.set_visible(False)
         content.append(self._split_view_slot)
 
         # Set up hover events to show/hide buttons
         self._setup_hover_buttons()
-
-        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
-        self.color_badge.add_css_class("sidebar-color-badge")
-        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
-        self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_visible(False)
-        content.append(self.color_badge)
 
         self.expand_button = Gtk.Button()
         icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
@@ -1273,9 +1402,6 @@ class GroupRow(Gtk.ListBoxRow):
             _("Collapse group") if expanded else _("Expand group"),
         )
         self._apply_group_color_style()
-        # Name markup resets width constraints; re-apply the strip layout.
-        if getattr(self, '_compact', False):
-            self.set_compact(True)
 
 
     def _accessible_row_name(self, group_name: str) -> str:
@@ -1313,8 +1439,6 @@ class GroupRow(Gtk.ListBoxRow):
                     delattr(window, "_dragged_connections")
                 # Track which group is being dragged
                 window._dragged_group_id = self.group_id
-                if hasattr(window, "begin_sidebar_drag_expand"):
-                    window.begin_sidebar_drag_expand()
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
 
@@ -1334,8 +1458,6 @@ class GroupRow(Gtk.ListBoxRow):
                         window.connection_list.set_selection_mode(
                             Gtk.SelectionMode.MULTIPLE
                         )
-                if hasattr(window, "end_sidebar_drag_expand"):
-                    window.end_sidebar_drag_expand()
         except Exception as e:
             logger.error(f"Error in group drag end: {e}")
 
@@ -1476,7 +1598,7 @@ class GroupRow(Gtk.ListBoxRow):
     def _split_view_button_enabled(self) -> bool:
         """Whether Preferences allows the group-row split-view hover button."""
         config = getattr(self.group_manager, 'config', None)
-        if config is None:
+        if config is None or _sidebar_is_compact(config):
             return False
         try:
             return bool(config.get_setting('ui.sidebar_show_split_view_button', False))
@@ -1491,26 +1613,56 @@ class GroupRow(Gtk.ListBoxRow):
         """Fade the split-view action in or out of its reserved space.
 
         The slot's button page is up only while the action is reserved
-        (:meth:`set_actions_reserved`, Sidebar preference on, never in the
-        strip); opacity then tracks the pointer so hovering never reflows the
-        row. Otherwise the empty page stays up — zero width, but the same
-        height as the button, so shedding the action never collapses the row.
+        (:meth:`set_actions_reserved`, Sidebar preference on); opacity then
+        tracks the pointer so hovering never reflows the row. Otherwise the
+        empty page stays up — zero width, but the same height as the button,
+        so shedding the action never collapses the row.
+
+        Compact mode hides the slot entirely so group rows stay title-height.
         """
         slot = getattr(self, '_split_view_slot', None)
         btn = getattr(self, 'split_view_button', None)
         if slot is None or btn is None:
             return
         reserved = (getattr(self, '_actions_reserved', True)
-                    and not getattr(self, '_compact', False)
                     and self._split_view_button_enabled())
-        if getattr(self, '_compact', False):
-            # Strip density: drop the slot entirely (no height to keep).
+        if not reserved and _sidebar_is_compact(
+            getattr(self.group_manager, 'config', None)
+        ):
             slot.set_visible(False)
-        else:
-            slot.set_visible(True)
-            slot.set_visible_child_name(
-                ROW_ACTION_SLOT_BUTTON if reserved else ROW_ACTION_SLOT_EMPTY)
+            btn.set_opacity(0.0)
+            return
+        slot.set_visible(True)
+        slot.set_visible_child_name(
+            ROW_ACTION_SLOT_BUTTON if reserved else ROW_ACTION_SLOT_EMPTY)
         btn.set_opacity(1.0 if (reserved and revealed) else 0.0)
+
+    def apply_sidebar_mode(self) -> None:
+        """Re-apply compact/full chrome after Preferences ▸ Sidebar Mode changes."""
+        config = getattr(self.group_manager, 'config', None)
+        compact = _sidebar_is_compact(config)
+        content = getattr(self, '_content', None)
+        if content is not None:
+            _apply_sidebar_row_density(content, config)
+            self._content_margin_base = content.get_margin_start()
+            self._content_spacing_base = content.get_spacing()
+            self._apply_group_display_mode()
+        if hasattr(self, 'expand_button') and self.expand_button is not None:
+            # Keep the expand chevron in both Full and Compact modes.
+            self.expand_button.set_visible(True)
+        show_count = False
+        if not compact and config is not None:
+            try:
+                show_count = bool(config.get_setting('ui.sidebar_show_group_count', False))
+            except Exception:
+                show_count = False
+        if hasattr(self, '_info_box') and hasattr(self, 'name_label'):
+            _apply_sidebar_title_centering(
+                self._info_box,
+                self.name_label,
+                single_line=not show_count,
+            )
+        self._reveal_row_actions(self._pointer_is_on_row())
 
     def set_actions_reserved(self, reserved: bool) -> None:
         """Keep the split-view action's reserved width, or shed it.
@@ -1542,13 +1694,6 @@ class GroupRow(Gtk.ListBoxRow):
             self.group_manager, self.group_id,
             _child_rows_use_group_color(config),
         )
-        # In the minimal strip the colour tints the folder glyph only — never a
-        # row treatment. Expand/collapse re-runs this via _update_display,
-        # which would otherwise bring the accent bar back.
-        if getattr(self, '_compact', False):
-            _apply_row_color(self, 'fill', None)
-            _set_compact_fg_color(self.name_label, rgba)
-            return
         config = getattr(self.group_manager, 'config', None)
         mode = _get_color_display_mode(config) if config else 'fill'
         _apply_row_color(self, mode, rgba)
@@ -1609,87 +1754,6 @@ class GroupRow(Gtk.ListBoxRow):
         config = getattr(self.group_manager, 'config', None)
         _apply_sidebar_row_style(self, config, flat=flat)
 
-    def set_compact(self, compact: bool, *, max_chars: int | None = None) -> None:
-        """Collapse the group header to a short label, or restore."""
-        compact = bool(compact)
-        self._compact = compact
-        content = self._content
-        if compact:
-            if max_chars is not None:
-                self._compact_max_chars = max(1, int(max_chars))
-            chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
-            # Card chrome (padding/radius) is full-sidebar only; the strip is
-            # always flat regardless of ui.sidebar_flat_rows.
-            self.apply_row_style(flat=True)
-            content.set_halign(Gtk.Align.FILL)
-            content.set_margin_start(6)
-            content.set_margin_end(6)
-            content.set_spacing(4)
-            # Same slack as a compact connection row: hand the box the row's
-            # full height so its centred children sit in the middle of it.
-            content.set_vexpand(True)
-            self.set_margin_start(0)  # flatten nested-group indentation in the strip
-            self.color_dot.set_visible(False)
-            self.color_badge.set_visible(False)
-            slot = getattr(self, '_split_view_slot', None)
-            if slot is not None:
-                slot.set_visible(False)
-            else:
-                self.split_view_button.set_visible(False)
-            # The chevron stays: collapsing a group is the one group action the
-            # strip keeps, and unlike the row's hover actions it is always on
-            # screen, so the strip reads the same as the full sidebar. It is
-            # already trimmed by `.group-expand-button`.
-            self.expand_button.set_visible(True)
-            self.count_label.set_visible(False)
-            self._info_box.set_visible(True)
-            # Text-only strip: no folder glyph; colour + bold on the label.
-            self.icon.set_visible(False)
-            try:
-                self.icon.remove_css_class('sidebar-compact-icon')
-            except Exception:
-                pass
-            _set_compact_fg_color(self.icon, None)
-            group_name = str(self.group_info.get('name', ''))
-            _configure_compact_label(
-                self.name_label, group_name, max_chars=chars, group=True)
-            self.set_tooltip_text(group_name)
-            rgba = _resolve_group_color_by_id(
-                self.group_manager, self.group_id,
-                _child_rows_use_group_color(getattr(self.group_manager, 'config', None)),
-            )
-            _apply_row_color(self, 'fill', None)
-            _set_compact_fg_color(self.name_label, rgba)
-        else:
-            content.set_halign(Gtk.Align.FILL)
-            content.set_margin_start(self._content_margin_base)
-            content.set_margin_end(self._content_margin_base)
-            content.set_spacing(self._content_spacing_base)
-            content.set_vexpand(False)
-            try:
-                self.icon.remove_css_class('sidebar-compact-icon')
-            except Exception:
-                pass
-            _set_compact_fg_color(self.icon, None)
-            _set_compact_fg_color(self.name_label, None)
-            _restore_full_label_width(self.name_label)
-            self._reveal_row_actions(getattr(self, '_is_hovering_row', False))
-            self.expand_button.set_visible(True)
-            self.set_tooltip_text(None)
-            config = getattr(self.group_manager, 'config', None)
-            show_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
-            self.icon.set_visible(show_icon)
-            show_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
-            self.count_label.set_visible(show_count)
-            try:
-                self.icon.set_icon_size(Gtk.IconSize.NORMAL)
-            except Exception:
-                pass
-            self.apply_row_style()  # restore card/flat preference
-            self._apply_group_display_mode()  # restore nested indentation
-            self._update_display()  # restores name markup + colors
-
-
 class TagGroupRow(GroupRow):
     """Virtual, read-only group row derived from connection tags.
 
@@ -1738,16 +1802,7 @@ class TagGroupRow(GroupRow):
         raw_prefix = str(self.group_info.get("prefix", "#"))
         name = GLib.markup_escape_text(raw_name)
         prefix = GLib.markup_escape_text(raw_prefix)
-        if getattr(self, '_compact', False):
-            chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
-            _configure_compact_label(
-                self.name_label, f"{raw_prefix}{raw_name}",
-                max_chars=chars, group=True)
-            self.set_tooltip_text(f"{raw_prefix}{raw_name}")
-            rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
-            _set_compact_fg_color(self.name_label, rgba)
-        else:
-            self.name_label.set_markup(f"<b>{prefix}{name}</b>")
+        self.name_label.set_markup(f"<b>{prefix}{name}</b>")
 
     def _toggle_expand(self):
         # Persist to config, not GroupManager — the group only exists here.
@@ -1795,7 +1850,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._tint_provider = None
         self._color_badge_provider = None
         self._color_dot_provider = None
-        self._compact = False
         # Port-forwarding indicator stays until a narrow sidebar sheds it
         # (``set_indicators_reserved``) so the nickname can keep its
         # ``FULL_LABEL_MIN_CHARS`` floor.
@@ -1816,20 +1870,31 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Content container
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self._content_box = content
-        content.set_margin_start(12)
-        content.set_margin_end(12)
-        content.set_margin_top(6)
-        content.set_margin_bottom(6)
+        _apply_sidebar_row_density(content, config)
+        self._content_margin_base = content.get_margin_start()
+        self._content_spacing_base = content.get_spacing()
 
         from sshpilot import icon_utils
         self.color_dot = _create_color_dot()
         content.append(self.color_dot)
 
+        # Same leading slot as color_dot (mutually exclusive via _apply_row_color).
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
+
         self.connection_icon = icon_utils.new_image_from_icon_name("computer-symbolic")
         self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.connection_icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         # Set initial visibility based on preference
-        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        compact = _sidebar_is_compact(self.config)
+        show_connection_icon = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        )
         self.connection_icon.set_visible(show_connection_icon)
         content.append(self.connection_icon)
 
@@ -1841,9 +1906,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label = Gtk.Label()
         connection_name = getattr(connection, "display_name", None) or connection.nickname
         # Plain text, not bold: bold is the group headers' way of standing out
-        # from the connections under them (as it already is in the strip). Plain
-        # set_text() also keeps a name with '<' or '&' in it out of the markup
-        # parser.
+        # from the connections under them. Plain set_text() also keeps a name
+        # with '<' or '&' in it out of the markup parser.
         self.nickname_label.set_text(connection_name)
         self.nickname_label.set_halign(Gtk.Align.START)
         self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
@@ -1872,9 +1936,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_user_hostname = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        )
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
+        _apply_sidebar_title_centering(
+            info_box, self.nickname_label, single_line=not show_user_hostname
+        )
 
         content.append(info_box)
 
@@ -1883,17 +1953,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
 
-        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
-        self.color_badge.add_css_class("sidebar-color-badge")
-        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
-        self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_visible(False)
-        content.append(self.color_badge)
-
         # File manager button — revealed on hover with its width reserved, so
         # hovering never reflows the row. Parked in a height-only stack so
         # shedding it (preference off, or no callback) frees the width without
         # collapsing the row — the button is taller than the labels beside it.
+        # Compact mode drops the slot entirely (title-only rows).
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
@@ -1903,6 +1967,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
+        if compact:
+            self._file_manager_slot.set_visible(False)
         content.append(self._file_manager_slot)
 
         # Set up hover events to show/hide button
@@ -2010,6 +2076,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _file_manager_button_enabled(self) -> bool:
         """Whether Preferences allows the connection-row file manager button."""
+        if _sidebar_is_compact(self.config):
+            return False
         try:
             return bool(
                 self.config.get_setting('ui.sidebar_show_file_manager_button', True)
@@ -2028,7 +2096,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         callback is available; opacity then tracks the pointer so hovering
         never reflows the row. Otherwise the empty page stays up — zero width,
         but the same height as the button, so shedding the action never
-        collapses the row. The strip keeps the (trimmed) button the same way.
+        collapses the row.
+
+        Compact mode hides the slot entirely so rows stay title-height.
         """
         slot = getattr(self, '_file_manager_slot', None)
         btn = getattr(self, 'file_manager_button', None)
@@ -2038,6 +2108,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._file_manager_button_enabled()
             and bool(self._file_manager_callback)
         )
+        if not enabled and _sidebar_is_compact(self.config):
+            slot.set_visible(False)
+            btn.set_opacity(0.0)
+            return
         slot.set_visible(True)
         slot.set_visible_child_name(
             ROW_ACTION_SLOT_BUTTON if enabled else ROW_ACTION_SLOT_EMPTY)
@@ -2200,10 +2274,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         return _resolve_group_color_by_id(manager, group_id, True)
 
     def _apply_group_color_style(self):
-        # Text-only strip: no tint/bar/badge on the row (names stay legible).
-        if getattr(self, '_compact', False):
-            _apply_row_color(self, 'fill', None)
-            return
         config = getattr(self, 'config', None)
         mode = _get_color_display_mode(config)
         try:
@@ -2371,8 +2441,6 @@ class ConnectionRow(Gtk.ListBoxRow):
                 if not hasattr(window, "_dragged_connections"):
                     window._dragged_connections = [self.connection.nickname]
                 window._drag_in_progress = True
-                if hasattr(window, "begin_sidebar_drag_expand"):
-                    window.begin_sidebar_drag_expand()
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -2385,8 +2453,6 @@ class ConnectionRow(Gtk.ListBoxRow):
                     delattr(window, "_dragged_connections")
                 window._drag_in_progress = False
                 _hide_ungrouped_area(window)
-                if hasattr(window, "end_sidebar_drag_expand"):
-                    window.end_sidebar_drag_expand()
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
 
@@ -2421,15 +2487,12 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         Once the nickname is at :data:`FULL_LABEL_MIN_CHARS`, further chrome
         only steals width the name can no longer yield. Shedding the indicator
-        lets the divider keep narrowing without clipping that floor. The
-        compact strip always hides indicators regardless of this flag.
+        lets the divider keep narrowing without clipping that floor.
         """
         reserved = bool(reserved)
         if reserved == getattr(self, '_indicators_reserved', True):
             return
         self._indicators_reserved = reserved
-        if getattr(self, '_compact', False):
-            return
         if reserved:
             self.indicator_box.set_visible(True)
             self._update_forwarding_indicators()
@@ -2455,7 +2518,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             # Check preference for showing port forwarding indicators
             show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
-            if not show_port_forwarding:
+            if _sidebar_is_compact(self.config) or not show_port_forwarding:
                 return
 
             # Forwarding indicator only makes sense for protocols that support it.
@@ -2519,6 +2582,31 @@ class ConnectionRow(Gtk.ListBoxRow):
             self, self.config, in_tag_section=self._in_tag_section, flat=flat
         )
 
+    def apply_sidebar_mode(self) -> None:
+        """Re-apply compact/full chrome after Preferences ▸ Sidebar Mode changes."""
+        content = getattr(self, '_content_box', None)
+        if content is not None:
+            _apply_sidebar_row_density(content, self.config)
+            self._content_margin_base = content.get_margin_start()
+            self._content_spacing_base = content.get_spacing()
+            self._apply_group_display_mode()
+        compact = _sidebar_is_compact(self.config)
+        show_host = False
+        if not compact and self.config is not None:
+            try:
+                show_host = bool(
+                    self.config.get_setting('ui.sidebar_show_user_hostname', False)
+                )
+            except Exception:
+                show_host = False
+        if hasattr(self, '_info_box') and hasattr(self, 'nickname_label'):
+            _apply_sidebar_title_centering(
+                self._info_box,
+                self.nickname_label,
+                single_line=not show_host,
+            )
+        self._reveal_file_manager_button(self._pointer_is_on_row())
+
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
         self._refresh_row_tooltip()
@@ -2531,7 +2619,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         reads the mutable connection model maintained by ``ConnectionManager``.
 
         The lock lives in ``status_box`` (same role as ``indicator_box`` for
-        the forwarding indicator): idle / preference-off / compact hide the box so it
+        the forwarding indicator): idle / preference-off hide the box so it
         costs no width; a real state shows the box with the styled icon.
         """
         try:
@@ -2554,8 +2642,6 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.status_icon.set_tooltip_text("")
                 self.status_icon.queue_draw()
                 self._apply_group_color_style()
-                if getattr(self, '_compact', False):
-                    self._refresh_compact_status()
                 return
 
             # Other states render an icon, subject to the global visibility pref.
@@ -2563,7 +2649,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 show_status = bool(self.config.get_setting('ui.sidebar_show_connection_status', True))
             except Exception:
                 show_status = True
-            show = show_status and not getattr(self, '_compact', False)
+            if _sidebar_is_compact(self.config):
+                show_status = False
+            show = show_status
             self.status_box.set_visible(show)
 
             if state == ConnectionState.CONNECTED:
@@ -2593,8 +2681,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             )
 
         self._apply_group_color_style()
-        if getattr(self, '_compact', False):
-            self._refresh_compact_status()
 
     def _is_online(self) -> bool:
         from .connection_model import ConnectionState
@@ -2622,112 +2708,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             )
             return state, ''
 
-    def _refresh_compact_status(self) -> None:
-        """Restyle the compact text label for connection state and keep
-        group-color widgets suppressed (they don't fit the strip)."""
-        online = self._is_online()
-        if online:
-            self.nickname_label.add_css_class('sidebar-compact-online')
-        else:
-            self.nickname_label.remove_css_class('sidebar-compact-online')
-        # update_status() re-shows the status box and colour widgets; keep them
-        # hidden in the strip (this runs at the end of update_status when compact).
-        self.status_box.set_visible(False)
-        self.color_dot.set_visible(False)
-        self.color_badge.set_visible(False)
-
-    def set_compact(self, compact: bool, *, max_chars: int | None = None) -> None:
-        """Collapse the row to a short text label (minimal sidebar) or restore.
-
-        Idempotent for restore; when already compact, re-runs so a renamed
-        connection refreshes the truncated label immediately. ``max_chars``
-        scales with the strip width; omitted reuses the last value.
-        """
-        compact = bool(compact)
-        if not compact and not getattr(self, '_compact', False):
-            return
-        self._compact = compact
-        content = self._content_box
-
-        if not compact:
-            content.set_halign(Gtk.Align.FILL)
-            content.set_margin_start(12)
-            content.set_margin_end(12)
-            content.set_spacing(self._content_spacing_base)
-            content.set_vexpand(False)
-            _restore_full_label_width(self.nickname_label)
-            self._info_box.set_visible(True)
-            self.indicator_box.set_visible(
-                bool(getattr(self, '_indicators_reserved', True)))
-            if getattr(self, '_indicators_reserved', True):
-                self._update_forwarding_indicators()
-            self.file_manager_button.remove_css_class('sidebar-compact-action')
-            self._reveal_file_manager_button(self._pointer_is_on_row())
-            self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
-            self.connection_icon.remove_css_class('conn-status-up')
-            try:
-                self.connection_icon.set_visible(
-                    bool(self.config.get_setting('ui.sidebar_show_connection_icon', True)))
-            except Exception:
-                self.connection_icon.set_visible(True)
-            try:
-                self.host_label.set_visible(
-                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', False)))
-            except Exception:
-                self.host_label.set_visible(False)
-            connection_name = (
-                getattr(self.connection, 'display_name', None)
-                or self.connection.nickname
-            )
-            self.nickname_label.set_text(connection_name)
-            self.apply_row_style()  # restore card/flat preference
-            self._apply_group_display_mode()  # restore nested indentation
-            self.update_status()  # restores status_icon + group-color widgets
-            self._refresh_row_tooltip()
-            return
-
-        if max_chars is not None:
-            self._compact_max_chars = max(1, int(max_chars))
-        chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
-        # Card chrome is full-sidebar only; the strip is always flat.
-        self.apply_row_style(flat=True)
-        content.set_halign(Gtk.Align.FILL)
-        content.set_margin_start(6)
-        content.set_margin_end(6)
-        content.set_spacing(0)
-        # A single-line strip row is shorter than the list row's theme minimum,
-        # and a Gtk.Box packs that slack after its last child — so without this
-        # the label and the hover action sit high in the highlighted row.
-        # Expanding the content box hands it the whole height, which its
-        # centre-aligned children then share.
-        content.set_vexpand(True)
-        self.set_margin_start(0)  # flatten nested-group indentation in the strip
-        self._info_box.set_visible(True)
-        self.host_label.set_visible(False)
-        self.indicator_box.set_visible(False)
-        self.color_badge.set_visible(False)
-        self.color_dot.set_visible(False)
-        # The Manage Files hover action survives the strip (the one row action
-        # that does): it is the only way to reach the file manager without
-        # leaving minimal mode. It keeps the full row's opacity reveal, so its
-        # space stays reserved and hovering never reflows the row — but it wears
-        # `.sidebar-compact-action` to give the label back the padding it can.
-        self.file_manager_button.add_css_class('sidebar-compact-action')
-        self._reveal_file_manager_button(self._pointer_is_on_row())
-        self.status_box.set_visible(False)
-        self.connection_icon.set_visible(False)
-        connection_name = (
-            getattr(self.connection, 'display_name', None)
-            or self.connection.nickname
-        )
-        _configure_compact_label(
-            self.nickname_label, connection_name, max_chars=chars)
-        # Text-only strip: no group-color fill on the label (keeps names legible).
-        _apply_row_color(self, 'fill', None)
-        self._refresh_row_tooltip()
-
-        self._refresh_compact_status()
-
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
             connection_name = (
@@ -2742,16 +2722,230 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._update_forwarding_indicators()
         self.update_status()
         self._refresh_row_tooltip()
-        # The above repopulate labels/indicators that the strip hides; re-apply
-        # the compact layout so an edit doesn't leave the row half-expanded.
-        if getattr(self, "_compact", False):
-            self.set_compact(True)
+
+
+def local_terminal_row_matches(query: str) -> bool:
+    """Return True when the pinned local-terminal row should appear for ``query``.
+
+    Empty query always matches (the row stays pinned at the top). Otherwise every
+    whitespace-separated keyword must hit the title, subtitle, or common aliases
+    (``local`` / ``terminal`` / ``shell``), matching :func:`connection_matches`.
+    """
+    if not query:
+        return True
+    keywords = query.lower().split()
+    if not keywords:
+        return True
+    fields = [
+        _("Local Terminal").lower(),
+        _("Open a local shell").lower(),
+        "local",
+        "terminal",
+        "shell",
+    ]
+    return all(any(keyword in field for field in fields) for keyword in keywords)
+
+
+class LocalTerminalRow(Gtk.ListBoxRow):
+    """Pinned connection-list row that opens a local shell.
+
+    Not a real :class:`Connection` — activation calls
+    ``terminal_manager.show_local_terminal``. Attribute names mirror
+    :class:`ConnectionRow` (``connection_icon``, ``host_label``, …) so the
+    sidebar preference walker and sidebar preference walker applies unchanged.
+    """
+
+    is_local_terminal_row = True
+
+    def __init__(self, config=None):
+        super().__init__()
+        self.config = config
+        _apply_sidebar_row_style(self, config)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self._content_box = content
+        _apply_sidebar_row_density(content, config)
+        self._content_spacing_base = content.get_spacing()
+
+        from sshpilot import icon_utils
+
+        self.connection_icon = icon_utils.new_image_from_icon_name(
+            "utilities-terminal-symbolic"
+        )
+        self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.connection_icon.set_valign(Gtk.Align.CENTER)
+        compact = _sidebar_is_compact(config)
+        show_icon = False if compact else True
+        if not compact and config is not None:
+            try:
+                show_icon = bool(
+                    config.get_setting("ui.sidebar_show_connection_icon", True)
+                )
+            except Exception:
+                show_icon = True
+        self.connection_icon.set_visible(show_icon)
+        content.append(self.connection_icon)
+
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+        info_box.set_valign(Gtk.Align.CENTER)
+        self._info_box = info_box
+
+        self.nickname_label = Gtk.Label()
+        self.nickname_label.set_text(_("Local Terminal"))
+        self.nickname_label.set_halign(Gtk.Align.START)
+        self.nickname_label.set_xalign(0.0)
+        self.nickname_label.set_valign(Gtk.Align.CENTER)
+        self.nickname_label.set_hexpand(True)
+        self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.nickname_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.nickname_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
+        info_box.append(self.nickname_label)
+
+        # Reuses ConnectionRow's host_label slot so preference visibility updates
+        # (ui.sidebar_show_user_hostname) apply without a special case.
+        self.host_label = Gtk.Label()
+        self.host_label.set_text(_("Open a local shell"))
+        self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.set_xalign(0.0)
+        self.host_label.add_css_class("dim-label")
+        self.host_label.set_hexpand(True)
+        self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.host_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
+        show_subtitle = False
+        if not compact and config is not None:
+            try:
+                show_subtitle = bool(
+                    config.get_setting("ui.sidebar_show_user_hostname", False)
+                )
+            except Exception:
+                show_subtitle = False
+        self.host_label.set_visible(show_subtitle)
+        info_box.append(self.host_label)
+        _apply_sidebar_title_centering(
+            info_box, self.nickname_label, single_line=not show_subtitle
+        )
+
+        content.append(info_box)
+
+        # Match ConnectionRow height when icon/host prefs are off: that row's
+        # Manage Files control is taller than a single label and is parked in a
+        # height-only stack so shedding it never collapses the row. Mirror the
+        # same metrics with a non-interactive placeholder (empty page up → zero
+        # width, button height reserved). Compact drops the placeholder so this
+        # row matches title-only connection rows.
+        placeholder = icon_utils.new_button_from_icon_name("folder-symbolic")
+        placeholder.add_css_class("flat")
+        placeholder.add_css_class("file-manager-button")
+        placeholder.set_valign(Gtk.Align.CENTER)
+        placeholder.set_sensitive(False)
+        placeholder.set_can_target(False)
+        placeholder.set_focusable(False)
+        placeholder.set_opacity(0.0)
+        self._height_placeholder = placeholder
+        self._height_slot = _make_row_action_slot(placeholder)
+        self._height_slot.set_visible_child_name(ROW_ACTION_SLOT_EMPTY)
+        self._height_slot.set_visible(not compact)
+        content.append(self._height_slot)
+
+        self.set_child(content)
+
+        self.set_selectable(True)
+        set_accessible_name(self, _("Local Terminal"))
+        set_accessible_description(self, _("Open a local shell"))
+        self.set_tooltip_text(_("Open a local shell"))
+        self._setup_drag_source()
+        self._apply_group_color_style()
+
+    def apply_row_style(self, flat: bool | None = None) -> None:
+        _apply_sidebar_row_style(self, self.config, flat=flat)
+
+    def apply_sidebar_mode(self) -> None:
+        """Re-apply compact/full chrome after Preferences ▸ Sidebar Mode changes."""
+        content = getattr(self, '_content_box', None)
+        if content is not None:
+            _apply_sidebar_row_density(content, self.config)
+            self._content_spacing_base = content.get_spacing()
+        compact = _sidebar_is_compact(self.config)
+        slot = getattr(self, '_height_slot', None)
+        if slot is not None:
+            slot.set_visible(not compact)
+        show_subtitle = False
+        if not compact and self.config is not None:
+            try:
+                show_subtitle = bool(
+                    self.config.get_setting('ui.sidebar_show_user_hostname', False)
+                )
+            except Exception:
+                show_subtitle = False
+        if hasattr(self, '_info_box') and hasattr(self, 'nickname_label'):
+            _apply_sidebar_title_centering(
+                self._info_box,
+                self.nickname_label,
+                single_line=not show_subtitle,
+            )
+
+    def _apply_group_color_style(self) -> None:
+        """Match connection-row bar chrome; this row has no group colour.
+
+        In accent-bar mode every list row carries ``.color-bar`` so content
+        stays aligned and selection uses the neutral overlay. Without it the
+        pinned local-terminal row keeps the accent fill and looks selected
+        differently from hosts below it.
+        """
+        _clear_bar(self)
+        _clear_tint(self)
+        mode = _get_color_display_mode(self.config) if self.config else "dot"
+        if mode == "bar":
+            self.add_css_class("color-bar")
+
+    def _setup_drag_source(self) -> None:
+        """Allow dragging the row onto a terminal / split pane (not for regrouping)."""
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        self.add_controller(drag_source)
+        self._drag_source = drag_source
+
+    def _on_drag_prepare(self, _source, _x, _y):
+        # Distinct from connection payloads so the sidebar regroup drop ignores it.
+        return content_provider_for_payload({"type": "local_terminal"})
+
+    def _on_drag_begin(self, source, drag):
+        set_internal_drag_icon(
+            source, self, drag=drag, icon_name="utilities-terminal-symbolic"
+        )
+        try:
+            window = self.get_root()
+            if window is None:
+                return
+            window._dragged_local_terminal = True
+            if hasattr(window, "_dragged_connections"):
+                delattr(window, "_dragged_connections")
+            if hasattr(window, "_dragged_group_id"):
+                delattr(window, "_dragged_group_id")
+            window._drag_in_progress = True
+        except Exception as exc:
+            logger.error("Local terminal drag begin failed: %s", exc)
+
+    def _on_drag_end(self, _source, _drag, _delete_data):
+        try:
+            window = self.get_root()
+            if window is None:
+                return
+            if hasattr(window, "_dragged_local_terminal"):
+                delattr(window, "_dragged_local_terminal")
+            window._drag_in_progress = False
+        except Exception as exc:
+            logger.error("Local terminal drag end failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
 # Drag-and-drop helpers
 # ---------------------------------------------------------------------------
-
 
 def reset_connection_list_drag_session(window) -> None:
     """Clear transient sidebar drag-and-drop state on ``window``.
@@ -2777,6 +2971,8 @@ def reset_connection_list_drag_session(window) -> None:
         delattr(window, "_dragged_group_id")
     if hasattr(window, "_dragged_connections"):
         delattr(window, "_dragged_connections")
+    if hasattr(window, "_dragged_local_terminal"):
+        delattr(window, "_dragged_local_terminal")
 
     window._drag_in_progress = False
 
@@ -2787,12 +2983,6 @@ def reset_connection_list_drag_session(window) -> None:
         except Exception:
             pass
 
-    # A drop rebuilds the list, destroying the dragged connection row before its
-    # drag-end fires; collapse the drag-expanded strip here so it isn't missed
-    # (no-op unless we auto-expanded). Cancels without a rebuild are handled by
-    # the rows' own drag-end handlers.
-    if hasattr(window, "end_sidebar_drag_expand"):
-        window.end_sidebar_drag_expand()
 
 
 def setup_connection_list_dnd(window):
@@ -2858,6 +3048,20 @@ def _on_connection_list_motion(window, target, x, y):
             _clear_drop_indicator(window)
             window._drop_indicator_row = row
             window._drop_indicator_position = "ungrouped"
+            return Gdk.DragAction.MOVE
+
+        # Section chrome is not a nest target; the Ungrouped header acts like
+        # the drop-to-ungroup zone, and Groups is skipped.
+        if getattr(row, "is_section_header", False):
+            if getattr(row, "section_id", None) == "ungrouped":
+                if hasattr(window, "_dragged_group_id"):
+                    _show_group_end_drop(window)
+                else:
+                    _clear_drop_indicator(window)
+                    window._drop_indicator_row = row
+                    window._drop_indicator_position = "ungrouped"
+            else:
+                _clear_drop_indicator(window)
             return Gdk.DragAction.MOVE
 
         # Show indicators for valid drop targets
@@ -3293,9 +3497,14 @@ def _group_section_end_index(window):
             continue
         if getattr(child, "ungrouped_area", False):
             return idx
+        # Ungrouped section header marks the end of the Groups block.
+        if (getattr(child, "is_section_header", False)
+                and getattr(child, "section_id", None) == "ungrouped"):
+            return idx
         if (hasattr(child, "connection")
                 and getattr(child, "_group_id", None) is None
-                and not getattr(child, "_in_tag_section", False)):
+                and not getattr(child, "_in_tag_section", False)
+                and not getattr(child, "is_section_header", False)):
             return idx
         idx += 1
         child = child.get_next_sibling()
@@ -3717,6 +3926,13 @@ def _root_connections_start_index(window) -> int:
             return -1
         for subtree_row in _collect_group_subtree_rows(group_row):
             insert_at = max(insert_at, subtree_row.get_index() + 1)
+
+    # Skip the Ungrouped section header so reorder lands on connection rows.
+    child = window.connection_list.get_row_at_index(insert_at)
+    if (child is not None
+            and getattr(child, "is_section_header", False)
+            and getattr(child, "section_id", None) == "ungrouped"):
+        insert_at += 1
     return insert_at
 
 
@@ -3745,6 +3961,17 @@ def _sync_root_connection_rows(window) -> bool:
         if row.get_index() != insert_at:
             _listbox_reposition_row(window.connection_list, row, insert_at)
         insert_at += 1
+
+    # Keep the Ungrouped section header's child list in sync so expand/collapse
+    # still covers every root connection after an in-place DnD move.
+    header = window.connection_list.get_row_at_index(start_index - 1)
+    if (header is not None
+            and getattr(header, "is_section_header", False)
+            and getattr(header, "section_id", None) == "ungrouped"
+            and hasattr(header, "_child_rows")):
+        header._child_rows = list(ordered_rows)
+        if hasattr(header, "apply_descendant_visibility"):
+            header.apply_descendant_visibility()
     return True
 
 
@@ -3789,15 +4016,40 @@ def _apply_root_group_order(window) -> bool:
         key=lambda gid: window.group_manager.groups[gid].get("order", 0),
     )
 
+    # Skip pinned chrome above the Groups block (Local Terminal, Groups header).
     insert_at = 0
+    child = window.connection_list.get_first_child()
+    while child is not None:
+        if getattr(child, "is_local_terminal_row", False) or (
+            getattr(child, "is_section_header", False)
+            and getattr(child, "section_id", None) == "groups"
+        ):
+            insert_at = child.get_index() + 1
+            child = child.get_next_sibling()
+            continue
+        break
+
+    ordered_root_rows = []
     for gid in root_ids:
         group_row = _find_group_row_by_id(window, gid)
         if group_row is None:
             return False
+        ordered_root_rows.append(group_row)
         for subtree_row in _collect_group_subtree_rows(group_row):
             if subtree_row.get_index() != insert_at:
                 _listbox_reposition_row(window.connection_list, subtree_row, insert_at)
             insert_at += 1
+
+    # Rebind the Groups section header so collapse still covers every root group.
+    if insert_at > 0:
+        probe = window.connection_list.get_row_at_index(
+            ordered_root_rows[0].get_index() - 1
+        ) if ordered_root_rows else None
+        if (probe is not None
+                and getattr(probe, "is_section_header", False)
+                and getattr(probe, "section_id", None) == "groups"
+                and hasattr(probe, "_child_rows")):
+            probe._child_rows = list(ordered_root_rows)
     return True
 
 
@@ -4066,7 +4318,10 @@ def _on_connection_list_drop(window, target, value, x, y):
                         target_group_id=None,
                     )
                     return True
-                elif getattr(target_row, "ungrouped_area", False) or indicator_pos == "ungrouped":
+                elif (getattr(target_row, "ungrouped_area", False)
+                        or indicator_pos == "ungrouped"
+                        or (getattr(target_row, "is_section_header", False)
+                            and getattr(target_row, "section_id", None) == "ungrouped")):
                     _submit_connection_dnd_move(
                         window,
                         connection_nicknames,
@@ -4372,9 +4627,8 @@ def _horizontal_clip(child: Gtk.Widget) -> Gtk.ScrolledWindow:
 
     Overflow toolbars already hide excess actions into a "…" menu; this
     ScrolledWindow with EXTERNAL horizontal policy and ``min_content_width`` 0
-    keeps the strip from flooring the sidebar at the full button-row width
-    (and still clips during the expand animation). NEVER vertical policy keeps
-    the row's natural height.
+    keeps the sidebar from flooring at the full button-row width. NEVER
+    vertical policy keeps the row's natural height.
     """
     clip = Gtk.ScrolledWindow()
     clip.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
@@ -4627,10 +4881,7 @@ def _create_sidebar_connection_list(window, sidebar_box):
     """Create the connection ListBox and wire selection/DnD."""
     # Connection list
     window.connection_scrolled = Gtk.ScrolledWindow()
-    # NEVER horizontally at rest so rows fit and ellipsize to the sidebar width.
-    # During the expand animation the window flips this to EXTERNAL (see
-    # _set_sidebar_clipping) so full-width rows can be clipped instead of
-    # forcing the sidebar wide; it flips back when the animation finishes.
+    # NEVER horizontally so rows fit and ellipsize to the sidebar width.
     window.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
     window.connection_scrolled.set_min_content_width(0)
     window.connection_scrolled.set_vexpand(True)
@@ -4638,6 +4889,9 @@ def _create_sidebar_connection_list(window, sidebar_box):
     
     window.connection_list = Gtk.ListBox()
     window.connection_list.add_css_class("navigation-sidebar")
+    _apply_sidebar_list_compact_class(
+        window.connection_list, getattr(window, 'config', None)
+    )
     # The sidebar has no visible heading, so name the list itself.
     set_accessible_name(window.connection_list, _('Connections'))
     window.connection_list.set_hexpand(True)
@@ -4716,7 +4970,18 @@ def _attach_connection_list_context_menu(window):
                 except Exception:
                     pass
 
-            if getattr(row, 'is_tag_group', False):
+            if getattr(row, 'is_local_terminal_row', False):
+                menu.add_section(
+                    menu.add_item(
+                        'utilities-terminal-symbolic',
+                        _('Open Local Terminal'),
+                        lambda: window.terminal_manager.show_local_terminal(),
+                    ),
+                )
+            elif getattr(row, 'is_section_header', False):
+                # Section chrome only toggles expand/collapse on activate.
+                return
+            elif getattr(row, 'is_tag_group', False):
                 # Virtual tag groups: rename the tag or open members in
                 # split view — no edit/delete/run (nothing to mutate).
                 # The Untagged section is not a real tag: no rename.
@@ -5061,6 +5326,17 @@ def _attach_connection_list_context_menu(window):
 
             # Middle click opens tabs: one for a connection row, one per member
             # for a group row (which confirms first when the group is a big one).
+            # The pinned local-terminal row opens a local shell instead.
+            if getattr(row, 'is_local_terminal_row', False):
+                try:
+                    window.terminal_manager.show_local_terminal()
+                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                except Exception:
+                    logger.debug(
+                        "Middle-click local terminal failed", exc_info=True
+                    )
+                return
+
             is_group = not hasattr(row, 'connection') and hasattr(row, 'group_id')
             if is_group:
                 open_action = getattr(window, 'on_open_group_in_tabs_action', None)
@@ -5271,35 +5547,12 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window._sidebar_toolbar_clip = _horizontal_clip(toolbar)
     sidebar_box.append(window._sidebar_toolbar_clip)
 
-    expand_button = Gtk.Button()
-    icon_utils.set_button_icon(expand_button, 'sidebar-expand-left-symbolic')
-    expand_button.set_tooltip_text(_('Expand sidebar'))
-    expand_button.add_css_class('flat')
-
-    def _expand_sidebar(*_a):
-        if hasattr(window, '_persist_sidebar_mode'):
-            window._persist_sidebar_mode(False)
-        window.set_sidebar_minimal(False)
-
-    expand_button.connect('clicked', _expand_sidebar)
-    expand_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-    expand_bar.add_css_class('toolbar')
-    expand_bar.set_halign(Gtk.Align.CENTER)
-    expand_bar.set_margin_top(6)
-    expand_bar.set_margin_bottom(6)
-    expand_bar.append(expand_button)
-    expand_bar.set_visible(False)
-    window._sidebar_expand_button = expand_bar
-    sidebar_box.append(expand_bar)
-
 
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
-    from sshpilot import icon_utils
-
-    # Sidebar header: the title only. The window controls live in the content
-    # title bar, and a copy here would ask for ~126px — twice the width of the
-    # minimal icon strip, holding the whole sidebar that wide.
+    # Sidebar header: the title only. Window controls live in the content
+    # title bar — a copy here would floor the header (and the sidebar) much
+    # wider than the connection list needs.
     window.sidebar_header_bar = Adw.HeaderBar()
     window.sidebar_header_bar.add_css_class('flat')
     window.sidebar_header_bar.set_show_start_title_buttons(False)
@@ -5309,28 +5562,13 @@ def _assemble_sidebar_shell(window, sidebar_box):
     sidebar_title_label.add_css_class('title')
     sidebar_title_label.set_xalign(0.0)
     window._sidebar_title_label = sidebar_title_label
-
-    # In the minimal strip the title label is hidden (its natural width alone
-    # would floor the strip) and the title moves to the content header, leaving
-    # this bar empty. The app icon is what stands in its place: it is narrow
-    # enough for the compact strip and keeps the strip's top from reading as a
-    # blank bar. Only one of the two is ever visible; the swap lives in
-    # window._apply_sidebar_minimal_chrome.
-    sidebar_app_icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
-    sidebar_app_icon.set_pixel_size(24)
-    sidebar_app_icon.set_halign(Gtk.Align.CENTER)
-    sidebar_app_icon.set_valign(Gtk.Align.CENTER)
-    sidebar_app_icon.set_tooltip_text('SSH Pilot')
-    sidebar_app_icon.set_visible(False)
-    window._sidebar_app_icon = sidebar_app_icon
-
-    title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-    title_box.append(sidebar_app_icon)
-    title_box.append(sidebar_title_label)
-    window.sidebar_header_bar.set_title_widget(title_box)
+    window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
     sidebar_toolbar_view = Adw.ToolbarView()
-    sidebar_toolbar_view.add_css_class('sidebar')
+    # Same tone AdwOverlaySplitView / AdwNavigationSplitView apply via their
+    # .sidebar-pane wrapper (sidebar-bg / backdrop / trailing hairline). The
+    # deprecated .sidebar class only drew a border and cleared list fills.
+    sidebar_toolbar_view.add_css_class('sidebar-pane')
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
     sidebar_toolbar_view.set_content(sidebar_box)
     # Kept so the detachable sidebar popup can reparent sidebar_box out of here
@@ -5364,6 +5602,7 @@ def build_sidebar(window):
 __all__ = [
     "ConnectionRow",
     "GroupRow",
+    "SectionHeaderRow",
     "apply_interface_monospace_font",
     "apply_sidebar_monospace_font",
     "build_sidebar",

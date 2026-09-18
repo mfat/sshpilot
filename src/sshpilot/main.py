@@ -233,6 +233,9 @@ class SshPilotApplication(Adw.Application):
         from .unsaved_host import SavePromptDismissals
         self.save_prompt_dismissals = SavePromptDismissals()
 
+        # Shared with setup_logging: create once, reuse for theme/accelerators.
+        self.config = None
+
         # Set up logging
         self.setup_logging()
 
@@ -259,7 +262,6 @@ class SshPilotApplication(Adw.Application):
         # Service D-Bus connect — never blocks the pre-window main thread.
 
         # Apply saved application theme (light/dark/system)
-        self.config = None
         self._default_shortcuts = {}
         self._action_order = []
         # Names that appear in the shortcut editor and respect config overrides
@@ -273,9 +275,11 @@ class SshPilotApplication(Adw.Application):
         self._config_handler = None
 
         try:
-            from .config import Config
-            cfg = Config()
-            self.config = cfg
+            cfg = getattr(self, 'config', None)
+            if cfg is None:
+                from .config import Config
+                cfg = Config()
+                self.config = cfg
             try:
                 self._accelerators_enabled = not bool(cfg.get_setting('terminal.pass_through_mode', False))
             except Exception:
@@ -287,13 +291,19 @@ class SshPilotApplication(Adw.Application):
                 except Exception:
                     self._config_handler = None
             saved_theme = str(cfg.get_setting('app-theme', 'default'))
-            style_manager = Adw.StyleManager.get_default()
-            if saved_theme == 'light':
-                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-            elif saved_theme == 'dark':
-                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-            else:
-                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+            if saved_theme in ('light', 'dark'):
+                def _apply_saved_theme():
+                    try:
+                        style_manager = Adw.StyleManager.get_default()
+                        if saved_theme == 'light':
+                            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+                        elif saved_theme == 'dark':
+                            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+                    except Exception:
+                        pass
+                    return False
+
+                GLib.idle_add(_apply_saved_theme)
 
             # Apply color overrides
             self.apply_color_overrides(cfg)
@@ -1452,8 +1462,11 @@ class SshPilotApplication(Adw.Application):
         verbose = bool(getattr(self, 'verbose_override', False))
         if not (quiet or verbose):
             try:
-                from .config import Config
-                cfg = Config()
+                cfg = getattr(self, 'config', None)
+                if cfg is None:
+                    from .config import Config
+                    cfg = Config()
+                    self.config = cfg
                 level_setting = cfg.get_setting('logging.level', 'info')
                 configured_level = str(level_setting).lower()
             except Exception:

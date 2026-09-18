@@ -33,7 +33,12 @@ from .lifecycle import (
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_STARTUP_TIMEOUT = 3.0
+# Source-tree cold starts commonly land around 1.5–2.5s on macOS (venv Python
+# importing the daemon while the GTK UI is also waking up). A 3s budget left
+# almost no headroom and reported ``startup_timeout`` under contested load
+# even when the child was healthy and about to bind. Keep this comfortably
+# above measured cold starts; frozen builds still get the longer budget below.
+DEFAULT_STARTUP_TIMEOUT = 10.0
 # A frozen build starts a whole application bundle, not an interpreter: code
 # signature validation, dyld, and a cold page cache put first-launch startup
 # well past the source-tree budget on macOS in particular. Timing out there

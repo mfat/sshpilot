@@ -1,6 +1,6 @@
 """Connection-row status lock lives in ``status_box``, like forwarding badges
 in ``indicator_box``: the box is shown only when there is a real status to
-draw, and hidden while idle / preference-off / compact.
+draw, and hidden while idle / preference-off.
 """
 
 import importlib
@@ -10,10 +10,9 @@ from unittest.mock import MagicMock
 from sshpilot.connection_model import ConnectionState
 
 
-def _row(*, state=ConnectionState.UNKNOWN, show_status=True, compact=False):
+def _row(*, state=ConnectionState.UNKNOWN, show_status=True):
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.ConnectionRow.__new__(mod.ConnectionRow)
-    row._compact = compact
     row.config = SimpleNamespace(
         get_setting=lambda key, default=None: (
             show_status if key == 'ui.sidebar_show_connection_status' else default
@@ -25,7 +24,6 @@ def _row(*, state=ConnectionState.UNKNOWN, show_status=True, compact=False):
     row._resolve_status = lambda: (state, '')
     row._install_status_css = lambda: None
     row._apply_group_color_style = MagicMock()
-    row._refresh_compact_status = MagicMock()
     return row, mod
 
 
@@ -51,12 +49,3 @@ def test_status_pref_off_hides_the_status_box():
     mod.ConnectionRow.update_status(row)
 
     row.status_box.set_visible.assert_called_with(False)
-
-
-def test_compact_strip_hides_the_status_box():
-    row, mod = _row(state=ConnectionState.CONNECTED, compact=True)
-
-    mod.ConnectionRow.update_status(row)
-
-    row.status_box.set_visible.assert_called_with(False)
-    row._refresh_compact_status.assert_called()

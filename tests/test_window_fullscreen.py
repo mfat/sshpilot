@@ -382,7 +382,6 @@ class _FullscreenWindow:
         self.tab_view.set_selected_page(self._start_tab_page)
 
         self.config = types.SimpleNamespace(get_setting=lambda key, default=None: default)
-        self._sidebar_minimal = False
 
     # -- Gtk.Window API ----------------------------------------------------
     def connect(self, signal, handler, *args):
@@ -456,13 +455,8 @@ class _FullscreenWindow:
     def _apply_sidebar_visible(self, visible):
         self._toggle_sidebar_visibility(visible)
 
-    def _sidebar_mode_is_minimal(self):
-        return False
 
-    def set_sidebar_minimal(self, minimal, animate=True):
-        return None
 
-    # -- scenario helpers --------------------------------------------------
     def open_terminal(self, title='session'):
         terminal = _FakeTerminal(self)
         page = self.tab_view.append(terminal)

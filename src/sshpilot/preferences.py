@@ -1442,7 +1442,35 @@ class PreferencesWindow(Adw.NavigationPage):
         # Sidebar group (at bottom of Interface page)
         sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
 
-        # Sidebar presentation is full-width only; icon-strip mode is retired.
+        # Presentation mode: Full (individual chrome toggles) vs Compact
+        # (title-only flat list). Compact greys out the toggles below.
+        self._sidebar_mode_values = ['full', 'compact']
+        self.sidebar_mode_row = Adw.ComboRow()
+        self.sidebar_mode_row.set_title(_("Sidebar Mode"))
+        self.sidebar_mode_row.set_subtitle(
+            _("Full shows icons and status; Compact is a title-only flat list")
+        )
+        mode_options = Gtk.StringList()
+        mode_options.append(_("Full"))
+        mode_options.append(_("Compact"))
+        self.sidebar_mode_row.set_model(mode_options)
+        current_mode = str(
+            self.config.get_setting('ui.sidebar_mode', 'full') or 'full'
+        ).lower()
+        if current_mode not in self._sidebar_mode_values:
+            current_mode = 'full'
+        self.sidebar_mode_row.set_selected(
+            self._sidebar_mode_values.index(current_mode)
+        )
+        self.sidebar_mode_row.connect(
+            'notify::selected', self.on_sidebar_mode_changed
+        )
+        sidebar_group.add(self.sidebar_mode_row)
+
+        # Rows greyed out while Compact is selected (chrome is forced off /
+        # flat). Local Terminal Row stays interactive — it only controls
+        # whether that pinned entry appears, not row chrome.
+        self._sidebar_mode_dependent_rows = []
 
         flat_rows_switch = Adw.SwitchRow()
         flat_rows_switch.set_title(_("Flat Sidebar Rows"))
@@ -1456,6 +1484,20 @@ class PreferencesWindow(Adw.NavigationPage):
             'notify::active', self.on_sidebar_flat_rows_changed
         )
         sidebar_group.add(flat_rows_switch)
+        self._sidebar_mode_dependent_rows.append(flat_rows_switch)
+
+        show_local_terminal_switch = Adw.SwitchRow()
+        show_local_terminal_switch.set_title(_("Local Terminal Row"))
+        show_local_terminal_switch.set_subtitle(
+            _("Show the Local Terminal entry at the top of the connection list")
+        )
+        show_local_terminal_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_local_terminal', False))
+        )
+        show_local_terminal_switch.connect(
+            'notify::active', self.on_sidebar_show_local_terminal_changed
+        )
+        sidebar_group.add(show_local_terminal_switch)
 
         # Display user@hostname toggle
         show_user_hostname_switch = Adw.SwitchRow()
@@ -1466,6 +1508,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
         sidebar_group.add(show_user_hostname_switch)
+        self._sidebar_mode_dependent_rows.append(show_user_hostname_switch)
 
         # Display connection count in groups toggle
         show_group_count_switch = Adw.SwitchRow()
@@ -1476,6 +1519,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
         sidebar_group.add(show_group_count_switch)
+        self._sidebar_mode_dependent_rows.append(show_group_count_switch)
 
         # Display connection status toggle
         show_status_switch = Adw.SwitchRow()
@@ -1486,6 +1530,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
         sidebar_group.add(show_status_switch)
+        self._sidebar_mode_dependent_rows.append(show_status_switch)
 
         # Display port forwarding icon toggle
         show_port_forwarding_switch = Adw.SwitchRow()
@@ -1496,6 +1541,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
         sidebar_group.add(show_port_forwarding_switch)
+        self._sidebar_mode_dependent_rows.append(show_port_forwarding_switch)
 
         # Display connection icon toggle
         show_connection_icon_switch = Adw.SwitchRow()
@@ -1506,6 +1552,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
         sidebar_group.add(show_connection_icon_switch)
+        self._sidebar_mode_dependent_rows.append(show_connection_icon_switch)
 
         # Display group icon toggle
         show_group_icon_switch = Adw.SwitchRow()
@@ -1516,6 +1563,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
         sidebar_group.add(show_group_icon_switch)
+        self._sidebar_mode_dependent_rows.append(show_group_icon_switch)
 
         # File manager hover button on connection rows
         show_file_manager_button_switch = Adw.SwitchRow()
@@ -1530,6 +1578,7 @@ class PreferencesWindow(Adw.NavigationPage):
             'notify::active', self.on_sidebar_show_file_manager_button_changed
         )
         sidebar_group.add(show_file_manager_button_switch)
+        self._sidebar_mode_dependent_rows.append(show_file_manager_button_switch)
 
         # Split-view hover button on group rows (off by default)
         show_split_view_button_switch = Adw.SwitchRow()
@@ -1544,7 +1593,9 @@ class PreferencesWindow(Adw.NavigationPage):
             'notify::active', self.on_sidebar_show_split_view_button_changed
         )
         sidebar_group.add(show_split_view_button_switch)
+        self._sidebar_mode_dependent_rows.append(show_split_view_button_switch)
 
+        self._update_sidebar_mode_dependent_sensitivity()
         interface_page.add(sidebar_group)
 
         # Sidebar behavior
@@ -1604,8 +1655,6 @@ class PreferencesWindow(Adw.NavigationPage):
             idx = combo_row.get_selected()
             values = getattr(self, '_on_terminal_open_values', ['none', 'hide'])
             action = values[idx] if 0 <= idx < len(values) else 'none'
-            if action == 'minimize':
-                action = 'none'
             self.config.set_setting('ui.sidebar_on_terminal_open', action)
             # Keep the legacy booleans consistent for any older readers.
             self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
@@ -1636,7 +1685,6 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Sidebar Toggle Button"),
             _("Show the button that hides/shows the sidebar (F9 still works when hidden)"),
             'ui.headerbar_show_sidebar_toggle',
-            default=False,
         )
         _add_headerbar_switch(
             _("Split View Button"),
@@ -6544,6 +6592,36 @@ class PreferencesWindow(Adw.NavigationPage):
         self.config.set_setting('terminal.theme', scheme_key)
         self.apply_color_scheme_to_terminals(scheme_key)
 
+    def on_sidebar_mode_changed(self, combo_row, _param):
+        """Persist Full/Compact sidebar presentation and refresh the list."""
+        try:
+            idx = combo_row.get_selected()
+            values = getattr(self, '_sidebar_mode_values', ['full', 'compact'])
+            mode = values[idx] if 0 <= idx < len(values) else 'full'
+            self.config.set_setting('ui.sidebar_mode', mode)
+            self._update_sidebar_mode_dependent_sensitivity()
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar mode preference: %s", exc)
+
+    def _update_sidebar_mode_dependent_sensitivity(self):
+        """Grey out chrome toggles while Compact mode is selected."""
+        compact = False
+        try:
+            mode = str(self.config.get_setting('ui.sidebar_mode', 'full') or 'full').lower()
+            compact = mode == 'compact'
+        except Exception:
+            compact = False
+        for row in getattr(self, '_sidebar_mode_dependent_rows', None) or []:
+            try:
+                row.set_sensitive(not compact)
+            except Exception:
+                logger.debug(
+                    "Failed to update sidebar mode-dependent row sensitivity",
+                    exc_info=True,
+                )
+
     def on_sidebar_flat_rows_changed(self, switch, *args):
         """Persist flat vs card styling for sidebar connection rows."""
         try:
@@ -6553,6 +6631,20 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar flat rows preference: %s", exc)
+
+    def on_sidebar_show_local_terminal_changed(self, switch, *args):
+        """Persist and rebuild so the pinned Local Terminal row appears or hides."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_local_terminal', active)
+            if self.parent_window and hasattr(
+                self.parent_window, 'rebuild_connection_list'
+            ):
+                self.parent_window.rebuild_connection_list()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show local terminal preference: %s", exc
+            )
 
     def on_interface_monospace_font_changed(self, switch, *args):
         """Persist and apply monospace typeface for the whole interface."""

@@ -41,6 +41,22 @@ def test_ensure_config_defaults_retires_sidebar_minimal():
     assert cfg["ui"]["sidebar_minimize_on_connect"] is False
 
 
+def test_default_config_has_sidebar_mode_full():
+    cfg = get_default_config()
+    assert cfg["ui"]["sidebar_mode"] == "full"
+
+
+def test_ensure_config_defaults_keeps_sidebar_compact():
+    cfg, updated = ensure_config_defaults({"ui": {"sidebar_mode": "compact"}})
+    assert cfg["ui"]["sidebar_mode"] == "compact"
+
+
+def test_ensure_config_defaults_normalizes_unknown_sidebar_mode():
+    cfg, updated = ensure_config_defaults({"ui": {"sidebar_mode": "weird"}})
+    assert updated is True
+    assert cfg["ui"]["sidebar_mode"] == "full"
+
+
 def test_settings_round_trip(tmp_path):
     path = tmp_path / "config.json"
     original = get_default_config()

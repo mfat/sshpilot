@@ -1,3 +1,12 @@
+sshpilot (6.1.5-1) unstable; urgency=medium
+
+  * Release v6.1.5.
+  * New "Compact" style for sidebar
+  * Fixed mosh connection failure
+  * New option to add a pinned local shell to connection list
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 18 Sep 2026 16:00:24 +0000
+
 sshpilot (6.1.4-1) unstable; urgency=medium
 
   * Release v6.1.4.
