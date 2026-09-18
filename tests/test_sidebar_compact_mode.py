@@ -127,7 +127,7 @@ def test_compact_forces_flat_rows_helper():
 def test_compact_density_is_comfortable():
     mod = importlib.import_module('sshpilot.sidebar')
     assert mod._SIDEBAR_ROW_DENSITY_COMPACT == (4, 4, 0, 0, 4)
-    assert mod._SIDEBAR_ROW_DENSITY_FULL == (10, 10, 3, 3, 10)
+    assert mod._SIDEBAR_ROW_DENSITY_FULL == (12, 12, 6, 6, 12)
 
 
 def test_sidebar_list_compact_class_toggles():
