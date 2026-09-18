@@ -296,6 +296,25 @@ def install_sidebar_css():
           background: alpha(@accent_bg_color, 0.1);
         }
 
+        /* Dimmed section headers (Groups / Ungrouped) sit above folder and
+           root connection rows. Flat, non-card, smaller than GroupRow so they
+           read as list chrome rather than another folder. */
+        .navigation-sidebar row.sidebar-section-header {
+          margin: 6px 8px 0 8px;
+          background: transparent;
+          box-shadow: none;
+        }
+        .navigation-sidebar row.sidebar-section-header:hover,
+        .navigation-sidebar row.sidebar-section-header:selected,
+        .navigation-sidebar row.sidebar-section-header:selected:hover {
+          background: transparent;
+          box-shadow: none;
+          color: inherit;
+        }
+        .sidebar-section-header .sidebar-section-label {
+          letter-spacing: 0.04em;
+        }
+
         /* Row hover actions in the minimal strip: the button keeps its
            reserved space (hovering must never reflow the row), so it is
            trimmed to the icon to leave the label as much of the ~112px
@@ -1072,6 +1091,150 @@ class DragIndicator(Gtk.Widget):
             snapshot.push_rounded_clip(cap_rounded)
             snapshot.append_color(accent, cap_rect)
             snapshot.pop()
+
+
+class SectionHeaderRow(Gtk.ListBoxRow):
+    """Dimmed, collapsible list chrome for the Groups / Ungrouped sections.
+
+    Not a real group: no drag, no context-menu actions, not selectable. Click
+    (or the chevron) expands/collapses the rows registered via
+    :meth:`add_child_row`. Expanded state is persisted under
+    ``ui.sidebar_section_expanded``.
+    """
+
+    is_section_header = True
+    EXPANDED_SETTING = "ui.sidebar_section_expanded"
+
+    __gsignals__ = {
+        "section-toggled": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),
+    }
+
+    def __init__(self, section_id: str, title: str, config=None):
+        super().__init__()
+        self.section_id = section_id
+        self._title = title
+        self.config = config
+        self._child_rows: List[Gtk.ListBoxRow] = []
+        self._compact = False
+        self._expanded = self._load_expanded()
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.set_margin_start(12)
+        content.set_margin_end(8)
+        content.set_margin_top(4)
+        content.set_margin_bottom(2)
+        self._content = content
+
+        self.name_label = Gtk.Label(label=title)
+        self.name_label.set_halign(Gtk.Align.START)
+        self.name_label.set_hexpand(True)
+        self.name_label.set_xalign(0.0)
+        self.name_label.add_css_class("caption-heading")
+        self.name_label.add_css_class("dim-label")
+        self.name_label.add_css_class("sidebar-section-label")
+        content.append(self.name_label)
+
+        from sshpilot import icon_utils
+
+        self.expand_button = Gtk.Button()
+        icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
+        self.expand_button.add_css_class("flat")
+        self.expand_button.add_css_class("group-expand-button")
+        self.expand_button.set_can_focus(False)
+        self.expand_button.connect("clicked", self._on_expand_clicked)
+        content.append(self.expand_button)
+
+        self.set_child(content)
+        self.add_css_class("sidebar-section-header")
+        # Transparent chrome: never look like a card/folder row.
+        self.remove_css_class("card")
+        self.set_selectable(False)
+        self.set_activatable(True)
+        self.set_can_focus(True)
+
+        self._update_display()
+
+    def _load_expanded(self) -> bool:
+        config = self.config
+        if config is None:
+            return True
+        try:
+            state = config.get_setting(self.EXPANDED_SETTING, {}) or {}
+            if self.section_id in state:
+                return bool(state[self.section_id])
+        except Exception:
+            logger.debug("Failed to load section expand state", exc_info=True)
+        return True
+
+    def _persist_expanded(self) -> None:
+        config = self.config
+        if config is None:
+            return
+        try:
+            state = dict(config.get_setting(self.EXPANDED_SETTING, {}) or {})
+            state[self.section_id] = bool(self._expanded)
+            config.set_setting(self.EXPANDED_SETTING, state)
+        except Exception:
+            logger.debug("Failed to persist section expand state", exc_info=True)
+
+    def add_child_row(self, row: Gtk.ListBoxRow) -> None:
+        """Track a direct child of this section for in-place expand/collapse."""
+        self._child_rows.append(row)
+
+    def apply_descendant_visibility(self) -> None:
+        """Show or hide section children without rebuilding the sidebar."""
+        visible = bool(self._expanded)
+        for row in self._child_rows:
+            row.set_visible(visible)
+            if hasattr(row, "apply_descendant_visibility"):
+                # Nested groups keep their own expand state under the section.
+                row.apply_descendant_visibility(visible)
+
+    def _update_display(self) -> None:
+        from sshpilot import icon_utils
+
+        if self._expanded:
+            icon_utils.set_button_icon(self.expand_button, "pan-down-symbolic")
+        else:
+            icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
+        set_accessible_name(self, self._title)
+        set_accessible_expanded(self, self._expanded)
+        set_accessible_name(
+            self.expand_button,
+            _("Collapse section") if self._expanded else _("Expand section"),
+        )
+
+    def _on_expand_clicked(self, _button) -> None:
+        self._toggle_expand()
+
+    def _toggle_expand(self) -> None:
+        self._expanded = not self._expanded
+        self._persist_expanded()
+        self._update_display()
+        self.apply_descendant_visibility()
+        self.emit("section-toggled", self.section_id, self._expanded)
+
+    def set_compact(self, compact: bool, max_chars: int = 0) -> None:
+        """Tighten margins in the minimal strip; keep the dimmed label."""
+        self._compact = bool(compact)
+        if compact:
+            self._content.set_margin_start(4)
+            self._content.set_margin_end(2)
+            self._content.set_margin_top(2)
+            self._content.set_margin_bottom(2)
+            chars = int(max_chars or MINIMAL_LABEL_MAX_CHARS)
+            self.name_label.set_width_chars(1)
+            self.name_label.set_max_width_chars(chars)
+            self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
+            self.set_tooltip_text(self._title)
+        else:
+            self._content.set_margin_start(12)
+            self._content.set_margin_end(8)
+            self._content.set_margin_top(4)
+            self._content.set_margin_bottom(2)
+            self.name_label.set_width_chars(-1)
+            self.name_label.set_max_width_chars(-1)
+            self.set_tooltip_text(None)
 
 
 class GroupRow(Gtk.ListBoxRow):
@@ -3106,6 +3269,20 @@ def _on_connection_list_motion(window, target, x, y):
             window._drop_indicator_position = "ungrouped"
             return Gdk.DragAction.MOVE
 
+        # Section chrome is not a nest target; the Ungrouped header acts like
+        # the drop-to-ungroup zone, and Groups is skipped.
+        if getattr(row, "is_section_header", False):
+            if getattr(row, "section_id", None) == "ungrouped":
+                if hasattr(window, "_dragged_group_id"):
+                    _show_group_end_drop(window)
+                else:
+                    _clear_drop_indicator(window)
+                    window._drop_indicator_row = row
+                    window._drop_indicator_position = "ungrouped"
+            else:
+                _clear_drop_indicator(window)
+            return Gdk.DragAction.MOVE
+
         # Show indicators for valid drop targets
         if hasattr(row, "show_drop_indicator"):
             row_y = row.get_allocation().y
@@ -3539,9 +3716,14 @@ def _group_section_end_index(window):
             continue
         if getattr(child, "ungrouped_area", False):
             return idx
+        # Ungrouped section header marks the end of the Groups block.
+        if (getattr(child, "is_section_header", False)
+                and getattr(child, "section_id", None) == "ungrouped"):
+            return idx
         if (hasattr(child, "connection")
                 and getattr(child, "_group_id", None) is None
-                and not getattr(child, "_in_tag_section", False)):
+                and not getattr(child, "_in_tag_section", False)
+                and not getattr(child, "is_section_header", False)):
             return idx
         idx += 1
         child = child.get_next_sibling()
@@ -3963,6 +4145,13 @@ def _root_connections_start_index(window) -> int:
             return -1
         for subtree_row in _collect_group_subtree_rows(group_row):
             insert_at = max(insert_at, subtree_row.get_index() + 1)
+
+    # Skip the Ungrouped section header so reorder lands on connection rows.
+    child = window.connection_list.get_row_at_index(insert_at)
+    if (child is not None
+            and getattr(child, "is_section_header", False)
+            and getattr(child, "section_id", None) == "ungrouped"):
+        insert_at += 1
     return insert_at
 
 
@@ -3991,6 +4180,17 @@ def _sync_root_connection_rows(window) -> bool:
         if row.get_index() != insert_at:
             _listbox_reposition_row(window.connection_list, row, insert_at)
         insert_at += 1
+
+    # Keep the Ungrouped section header's child list in sync so expand/collapse
+    # still covers every root connection after an in-place DnD move.
+    header = window.connection_list.get_row_at_index(start_index - 1)
+    if (header is not None
+            and getattr(header, "is_section_header", False)
+            and getattr(header, "section_id", None) == "ungrouped"
+            and hasattr(header, "_child_rows")):
+        header._child_rows = list(ordered_rows)
+        if hasattr(header, "apply_descendant_visibility"):
+            header.apply_descendant_visibility()
     return True
 
 
@@ -4035,15 +4235,40 @@ def _apply_root_group_order(window) -> bool:
         key=lambda gid: window.group_manager.groups[gid].get("order", 0),
     )
 
+    # Skip pinned chrome above the Groups block (Local Terminal, Groups header).
     insert_at = 0
+    child = window.connection_list.get_first_child()
+    while child is not None:
+        if getattr(child, "is_local_terminal_row", False) or (
+            getattr(child, "is_section_header", False)
+            and getattr(child, "section_id", None) == "groups"
+        ):
+            insert_at = child.get_index() + 1
+            child = child.get_next_sibling()
+            continue
+        break
+
+    ordered_root_rows = []
     for gid in root_ids:
         group_row = _find_group_row_by_id(window, gid)
         if group_row is None:
             return False
+        ordered_root_rows.append(group_row)
         for subtree_row in _collect_group_subtree_rows(group_row):
             if subtree_row.get_index() != insert_at:
                 _listbox_reposition_row(window.connection_list, subtree_row, insert_at)
             insert_at += 1
+
+    # Rebind the Groups section header so collapse still covers every root group.
+    if insert_at > 0:
+        probe = window.connection_list.get_row_at_index(
+            ordered_root_rows[0].get_index() - 1
+        ) if ordered_root_rows else None
+        if (probe is not None
+                and getattr(probe, "is_section_header", False)
+                and getattr(probe, "section_id", None) == "groups"
+                and hasattr(probe, "_child_rows")):
+            probe._child_rows = list(ordered_root_rows)
     return True
 
 
@@ -4312,7 +4537,10 @@ def _on_connection_list_drop(window, target, value, x, y):
                         target_group_id=None,
                     )
                     return True
-                elif getattr(target_row, "ungrouped_area", False) or indicator_pos == "ungrouped":
+                elif (getattr(target_row, "ungrouped_area", False)
+                        or indicator_pos == "ungrouped"
+                        or (getattr(target_row, "is_section_header", False)
+                            and getattr(target_row, "section_id", None) == "ungrouped")):
                     _submit_connection_dnd_move(
                         window,
                         connection_nicknames,
@@ -4970,6 +5198,9 @@ def _attach_connection_list_context_menu(window):
                         lambda: window.terminal_manager.show_local_terminal(),
                     ),
                 )
+            elif getattr(row, 'is_section_header', False):
+                # Section chrome only toggles expand/collapse on activate.
+                return
             elif getattr(row, 'is_tag_group', False):
                 # Virtual tag groups: rename the tag or open members in
                 # split view — no edit/delete/run (nothing to mutate).
@@ -5629,6 +5860,7 @@ def build_sidebar(window):
 __all__ = [
     "ConnectionRow",
     "GroupRow",
+    "SectionHeaderRow",
     "apply_interface_monospace_font",
     "apply_sidebar_monospace_font",
     "build_sidebar",

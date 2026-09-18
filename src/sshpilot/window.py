@@ -77,6 +77,7 @@ from .session_manager import SessionManager
 from .sidebar import (
     GroupRow,
     ConnectionRow,
+    SectionHeaderRow,
     apply_interface_monospace_font,
     build_sidebar,
     install_sidebar_css,
@@ -4611,8 +4612,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
 
+        # Dimmed section headers so Groups and Ungrouped can be collapsed
+        # independently whenever either section has content.
+        groups_header = None
+        if hierarchy:
+            groups_header = SectionHeaderRow("groups", _("Groups"), self.config)
+            self.connection_list.append(groups_header)
+
         # Build the list with groups
-        self._build_grouped_list(hierarchy, connections_dict, 0)
+        group_rows = self._build_grouped_list(hierarchy, connections_dict, 0)
+        if groups_header is not None:
+            for group_row in group_rows:
+                groups_header.add_child_row(group_row)
+            groups_header.apply_descendant_visibility()
 
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
@@ -4622,6 +4634,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ]
 
         if ungrouped_nicks:
+            ungrouped_header = SectionHeaderRow(
+                "ungrouped", _("Ungrouped"), self.config
+            )
+            self.connection_list.append(ungrouped_header)
+
             # Root order is daemon-owned; render from the snapshot and append
             # any not-yet-projected ungrouped connections without local writes.
             ungrouped_set = set(ungrouped_nicks)
@@ -4631,14 +4648,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     continue
                 conn = connections_dict.get(nick)
                 if conn:
-                    self.add_connection_row(conn)
+                    row = self.add_connection_row(conn)
+                    if row is not None:
+                        ungrouped_header.add_child_row(row)
                     seen.add(nick)
             for nick in ungrouped_nicks:
                 if nick in seen:
                     continue
                 conn = connections_dict.get(nick)
                 if conn:
-                    self.add_connection_row(conn)
+                    row = self.add_connection_row(conn)
+                    if row is not None:
+                        ungrouped_header.add_child_row(row)
+            ungrouped_header.apply_descendant_visibility()
 
 
         self._finish_rebuild(scroll_position, selected_connection_rows)
@@ -6359,6 +6381,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if row is not None and getattr(row, 'is_local_terminal_row', False):
             self._dismiss_search_popup()
             self._cycle_local_terminal_tabs_or_open()
+            return
+        if row is not None and getattr(row, 'is_section_header', False):
+            row._toggle_expand()
             return
         if row is not None and hasattr(row, 'command_action'):
             # Close the popup first (restores the sidebar), then run the command
