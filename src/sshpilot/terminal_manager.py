@@ -1129,6 +1129,8 @@ class TerminalManager:
                 self.is_connected = True
                 # Not an SSH host — never SessionType-none / forwarding-only.
                 self.forwarding_only = False
+                # Distinguishes from a saved SSH Connection to localhost.
+                self.is_local_shell = True
 
         local_connection = LocalConnection()
         terminal_widget = TerminalWidget(
@@ -1169,6 +1171,8 @@ class TerminalManager:
                     # Not an SSH host — never SessionType-none / forwarding-only.
                     # Without this, post-connect overlay stays on "Connecting".
                     self.forwarding_only = False
+                    # Distinguishes from a saved SSH Connection to localhost.
+                    self.is_local_shell = True
 
             local_connection = LocalConnection()
             terminal_widget = TerminalWidget(

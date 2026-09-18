@@ -5319,12 +5319,21 @@ class TerminalWidget(Gtk.Box):
         return None
 
     def _is_local_terminal(self):
-        """Check if this is a local terminal (not SSH)"""
+        """Check if this is an embedded local shell (not an SSH session).
+
+        Real :class:`Connection` objects always expose ``protocol`` (even for
+        an SSH host named localhost). Ephemeral LocalConnection objects used
+        by ``show_local_terminal`` do not, so that distinguishes them from
+        saved localhost SSH entries.
+        """
         try:
             if not hasattr(self, 'connection') or not self.connection:
                 return False
-            return (hasattr(self.connection, 'hostname') and
-                   self.connection.hostname == 'localhost')
+            if getattr(self.connection, 'is_local_shell', False):
+                return True
+            if getattr(self.connection, 'hostname', None) != 'localhost':
+                return False
+            return not hasattr(self.connection, 'protocol')
         except Exception:
             return False
 

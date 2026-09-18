@@ -281,6 +281,80 @@ def test_cycle_local_terminal_opens_when_none(window_mod):
     assert opened == [True]
 
 
+def test_cycle_skips_ssh_to_localhost(window_mod):
+    """Saved SSH hosts named localhost must not join the local-shell cycle."""
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    class FakePage:
+        def __init__(self, child):
+            self._child = child
+
+        def get_child(self):
+            return self._child
+
+    class FakeTabView:
+        def __init__(self, pages):
+            self._pages = list(pages)
+            self.selected = None
+
+        def get_n_pages(self):
+            return len(self._pages)
+
+        def get_nth_page(self, i):
+            return self._pages[i]
+
+        def get_selected_page(self):
+            return self.selected
+
+        def set_selected_page(self, page):
+            self.selected = page
+
+    ssh_localhost = types.SimpleNamespace(
+        _is_local_terminal=lambda: False,  # Connection has protocol
+    )
+    local_shell = types.SimpleNamespace(_is_local_terminal=lambda: True)
+    pages = [FakePage(ssh_localhost), FakePage(local_shell)]
+    tab_view = FakeTabView(pages)
+    tab_view.selected = pages[0]
+
+    win = window_mod.MainWindow.__new__(window_mod.MainWindow)
+    win.tab_view = tab_view
+    win._return_to_tab_view_if_welcome = lambda: None
+    win._close_search_if_open = lambda: None
+    win._page_for_child = lambda child: next(
+        (p for p in pages if p.get_child() is child), None
+    )
+    focused = []
+    win._focus_terminal_widget = lambda term: focused.append(term)
+    win.terminal_manager = types.SimpleNamespace(
+        show_local_terminal=lambda: False
+    )
+
+    WindowTabsMixin._cycle_local_terminal_tabs_or_open(win)
+    assert focused == [local_shell]
+    assert tab_view.selected is pages[1]
+
+
+def test_is_local_terminal_rejects_ssh_localhost():
+    from sshpilot.terminal import TerminalWidget
+    from sshpilot.connection_manager import Connection
+
+    term = TerminalWidget.__new__(TerminalWidget)
+    term.connection = Connection(
+        {"nickname": "box", "hostname": "localhost", "username": "me"}
+    )
+    assert term._is_local_terminal() is False
+
+    term.connection = types.SimpleNamespace(
+        hostname="localhost", is_local_shell=True
+    )
+    assert term._is_local_terminal() is True
+
+    term.connection = types.SimpleNamespace(hostname="localhost")
+    assert term._is_local_terminal() is True
+
+
+
 def test_middle_click_opens_local_terminal(sidebar_mod, monkeypatch):
     from sshpilot.sidebar import Gdk
 
