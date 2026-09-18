@@ -17,7 +17,7 @@ def test_sidebar_row_action_button_defaults():
     defaults = Config.get_default_config(Config.__new__(Config))
     assert defaults['ui']['sidebar_show_file_manager_button'] is True
     assert defaults['ui']['sidebar_show_split_view_button'] is False
-    assert defaults['ui']['sidebar_show_local_terminal'] is True
+    assert defaults['ui']['sidebar_show_local_terminal'] is False
 
 
 def test_sidebar_connection_row_display_defaults():

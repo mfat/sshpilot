@@ -98,7 +98,7 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_file_manager_button': True,
             'sidebar_show_split_view_button': False,
             # Pinned Local Terminal row at the top of the connection list
-            'sidebar_show_local_terminal': True,
+            'sidebar_show_local_terminal': False,
             'sidebar_flat_rows': True,
             # When True, the whole UI uses a monospace face — the family from
             # terminal.font when set, otherwise Monospace.

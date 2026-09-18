@@ -22,6 +22,13 @@ class _Cfg:
         return default
 
 
+class _CfgWithLocalTerminalRow(_Cfg):
+    def get_setting(self, key, default=None):
+        if key == "ui.sidebar_show_local_terminal":
+            return True
+        return super().get_setting(key, default)
+
+
 def test_local_terminal_row_matches_aliases(sidebar_mod):
     matches = sidebar_mod.local_terminal_row_matches
     assert matches("") is True
@@ -96,7 +103,7 @@ def test_rebuild_pins_local_terminal_row_first(window_mod, sidebar_mod, monkeypa
     win.connection_scrolled = None
     win.connection_manager = DummyCM()
     win.group_manager = DummyGM()
-    win.config = _Cfg()
+    win.config = _CfgWithLocalTerminalRow()
     win.search_entry = types.SimpleNamespace(get_text=lambda: "")
     win._hide_hosts = False
     win._tag_filter = None
@@ -257,7 +264,7 @@ def test_rebuild_hides_local_terminal_row_when_search_mismatches(
     win.connection_scrolled = None
     win.connection_manager = DummyCM()
     win.group_manager = DummyGM()
-    win.config = _Cfg()
+    win.config = _CfgWithLocalTerminalRow()
     win.search_entry = types.SimpleNamespace(get_text=lambda: "prod-only")
     win._hide_hosts = False
     win._tag_filter = None

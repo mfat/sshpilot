@@ -1463,7 +1463,7 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Show the Local Terminal entry at the top of the connection list")
         )
         show_local_terminal_switch.set_active(
-            bool(self.config.get_setting('ui.sidebar_show_local_terminal', True))
+            bool(self.config.get_setting('ui.sidebar_show_local_terminal', False))
         )
         show_local_terminal_switch.connect(
             'notify::active', self.on_sidebar_show_local_terminal_changed
