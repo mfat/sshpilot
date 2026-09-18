@@ -91,7 +91,8 @@ A title-only flat list:
   chevron — activate the row to expand/collapse). Height matches connection
   rows.
 - **Always flat** (`navigation-sidebar`); card chrome is never used.
-- **Tighter** row margins/spacing than Full.
+- **Tighter** row margins/spacing than Full (content `4/0` px and
+  inter-row gap `1px 4px` via `.sidebar-compact`).
 - **Nesting / indentation** still apply (Group Layout preference).
 - Group color modes that do not increase row height (fill, badge, bar, dot)
   remain available from Groups ▸ Group Appearance.

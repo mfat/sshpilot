@@ -2470,6 +2470,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             'ui.sidebar_flat_rows', False
         )
 
+        try:
+            from sshpilot.sidebar import _apply_sidebar_list_compact_class
+            _apply_sidebar_list_compact_class(self.connection_list, self.config)
+        except Exception:
+            logger.debug(
+                "Failed to apply sidebar-compact list class",
+                exc_info=True,
+            )
+
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:

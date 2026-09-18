@@ -122,3 +122,24 @@ def test_compact_forces_flat_rows_helper():
 
     cfg.get_setting.side_effect = _get
     assert mod._use_flat_sidebar_rows(cfg) is True
+
+
+def test_compact_density_is_comfortable():
+    mod = importlib.import_module('sshpilot.sidebar')
+    assert mod._SIDEBAR_ROW_DENSITY_COMPACT == (4, 4, 0, 0, 4)
+    assert mod._SIDEBAR_ROW_DENSITY_FULL == (10, 10, 3, 3, 10)
+
+
+def test_sidebar_list_compact_class_toggles():
+    mod = importlib.import_module('sshpilot.sidebar')
+    lb = MagicMock(name='connection_list')
+    lb.has_css_class.return_value = False
+    cfg = MagicMock()
+    cfg.get_setting.return_value = 'compact'
+    mod._apply_sidebar_list_compact_class(lb, cfg)
+    lb.add_css_class.assert_called_with('sidebar-compact')
+
+    lb.has_css_class.return_value = True
+    cfg.get_setting.return_value = 'full'
+    mod._apply_sidebar_list_compact_class(lb, cfg)
+    lb.remove_css_class.assert_called_with('sidebar-compact')

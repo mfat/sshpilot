@@ -300,7 +300,7 @@ def install_sidebar_css():
            root connection rows. Flat, non-card, smaller than GroupRow so they
            read as list chrome rather than another folder. */
         .navigation-sidebar row.sidebar-section-header {
-          margin: 6px 8px 0 8px;
+          margin: 4px 6px 0 6px;
           background: transparent;
           box-shadow: none;
         }
@@ -336,9 +336,20 @@ def install_sidebar_css():
           transform: scale(0.98);
         }
 
-        /* Gap between sidebar list rows (GtkListBox has no spacing property) */
+        /* Gap between sidebar list rows (GtkListBox has no spacing property).
+           Keep vertical margins small so the list reads like a dense IDE
+           sidebar (Cursor/VS Code); horizontal inset leaves room for the
+           selection pill. */
         .navigation-sidebar row {
-          margin: 4px 8px;
+          margin: 1px 6px;
+        }
+
+        /* Compact mode: near-flush rows, still a readable selection pill */
+        .navigation-sidebar.sidebar-compact row {
+          margin: 1px 4px;
+        }
+        .navigation-sidebar.sidebar-compact row.tinted {
+          margin: 1px 4px;
         }
 
         /* Selected sidebar row: always use the accent so selection is
@@ -356,7 +367,7 @@ def install_sidebar_css():
         }
 
         .navigation-sidebar row.tinted {
-          margin: 4px 8px;
+          margin: 1px 6px;
           border-radius: 10px;
           transition: background-color 0s ease;
         }
@@ -516,8 +527,10 @@ def install_sidebar_css():
 
 
 #: Row content margins/spacing for full vs compact sidebar modes.
-_SIDEBAR_ROW_DENSITY_FULL = (12, 12, 6, 6, 12)  # start, end, top, bottom, spacing
-_SIDEBAR_ROW_DENSITY_COMPACT = (8, 8, 2, 2, 6)
+# (margin_start, margin_end, margin_top, margin_bottom, spacing)
+_SIDEBAR_ROW_DENSITY_FULL = (10, 10, 3, 3, 10)
+# Cursor-like compact: minimal vertical padding, tight horizontal inset.
+_SIDEBAR_ROW_DENSITY_COMPACT = (4, 4, 0, 0, 4)
 
 
 def _sidebar_is_compact(config) -> bool:
@@ -535,6 +548,19 @@ def _sidebar_row_density(config) -> tuple[int, int, int, int, int]:
     if _sidebar_is_compact(config):
         return _SIDEBAR_ROW_DENSITY_COMPACT
     return _SIDEBAR_ROW_DENSITY_FULL
+
+
+def _apply_sidebar_list_compact_class(connection_list, config) -> None:
+    """Toggle ``sidebar-compact`` on the connection ListBox for denser row gaps."""
+    if connection_list is None:
+        return
+    compact = _sidebar_is_compact(config)
+    if compact:
+        if not connection_list.has_css_class('sidebar-compact'):
+            connection_list.add_css_class('sidebar-compact')
+    else:
+        if connection_list.has_css_class('sidebar-compact'):
+            connection_list.remove_css_class('sidebar-compact')
 
 
 def _apply_sidebar_row_density(content: Gtk.Box, config) -> None:
@@ -4850,6 +4876,9 @@ def _create_sidebar_connection_list(window, sidebar_box):
     
     window.connection_list = Gtk.ListBox()
     window.connection_list.add_css_class("navigation-sidebar")
+    _apply_sidebar_list_compact_class(
+        window.connection_list, getattr(window, 'config', None)
+    )
     # The sidebar has no visible heading, so name the list itself.
     set_accessible_name(window.connection_list, _('Connections'))
     window.connection_list.set_hexpand(True)
