@@ -531,7 +531,6 @@ class _TabWindow:
         self._start_tab_page = _FakePage()
         self.tab_view = _FakeTabView(self._start_tab_page)
         self.user_tabs = []
-        self._sidebar_minimal = False
         self.terminal_to_connection = {}
         self.config = types.SimpleNamespace(get_setting=lambda key, default=None: default)
 
@@ -541,8 +540,6 @@ class _TabWindow:
             '_update_layout_toggle_state',
             '_is_start_tab_page',
             'has_user_tabs',
-            'set_sidebar_minimal',
-            '_sidebar_mode_is_minimal',
             '_apply_sidebar_visible',
             'on_tab_selected',
         ):

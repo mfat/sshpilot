@@ -64,7 +64,6 @@ class _FakeGroupRow:
     def __init__(self, manager, group_id):
         self.group_manager = manager
         self.group_id = group_id
-        self._compact = False
 
 
 class _FakeConnectionRow:
@@ -78,7 +77,6 @@ class _FakeConnectionRow:
         self.config = manager.config
         self._group_id = manager.memberships[nickname]
         self._in_tag_section = False
-        self._compact = False
 
 
 @pytest.fixture

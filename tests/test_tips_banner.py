@@ -124,7 +124,6 @@ def test_queue_tips_banner_restore_uses_timeout(monkeypatch):
     win = window_module.MainWindow.__new__(window_module.MainWindow)
     win._tips_paused_for_sidebar = True
     win._tips_restore_source = 0
-    win._sidebar_width_animation = None
     scheduled = []
 
     monkeypatch.setattr(

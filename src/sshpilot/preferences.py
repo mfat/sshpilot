@@ -1617,8 +1617,6 @@ class PreferencesWindow(Adw.NavigationPage):
             idx = combo_row.get_selected()
             values = getattr(self, '_on_terminal_open_values', ['none', 'hide'])
             action = values[idx] if 0 <= idx < len(values) else 'none'
-            if action == 'minimize':
-                action = 'none'
             self.config.set_setting('ui.sidebar_on_terminal_open', action)
             # Keep the legacy booleans consistent for any older readers.
             self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')

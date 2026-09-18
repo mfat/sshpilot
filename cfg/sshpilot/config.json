@@ -94,8 +94,6 @@
     "sidebar_flat_rows": true,
     "sidebar_hide_on_startup": false,
     "sidebar_hide_on_terminal_open": false,
-    "sidebar_minimal_row_style": "initials",
-    "sidebar_mode": "full",
     "sidebar_on_terminal_open": "none",
     "sidebar_show_connection_icon": false,
     "sidebar_show_connection_status": true,

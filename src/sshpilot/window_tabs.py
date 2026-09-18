@@ -1375,11 +1375,11 @@ class WindowTabsMixin:
             if hasattr(self, 'tab_bar'):
                 self.tab_bar.set_visible(show_tabs)
             # The tab bar occupies the custom title bar's centre stack. When
-            # it disappears, restore the minimal-sidebar title (or the empty
-            # draggable centre) instead of leaving an invisible child selected.
+            # it disappears, restore the empty draggable centre instead of
+            # leaving an invisible child selected.
             mover = getattr(self, '_move_title_to_content_header', None)
             if callable(mover):
-                mover(bool(getattr(self, '_sidebar_minimal', False)))
+                mover()
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
 
@@ -1702,8 +1702,8 @@ class WindowTabsMixin:
         Otherwise open a new tab for the server.
         """
         self._return_to_tab_view_if_welcome()
-        # Executing a result dismisses search (and restores the icon strip if
-        # search expanded it). No-op when not searching.
+        # Executing a result dismisses search (and re-attaches a sidebar that
+        # search had detached). No-op when not searching.
         self._close_search_if_open()
         try:
             # Check if there are open tabs for this connection
@@ -1747,8 +1747,8 @@ class WindowTabsMixin:
         Otherwise open a new tab for the server.
         """
         self._return_to_tab_view_if_welcome()
-        # Executing a result dismisses search (and restores the icon strip if
-        # search expanded it). No-op when not searching.
+        # Executing a result dismisses search (and re-attaches a sidebar that
+        # search had detached). No-op when not searching.
         self._close_search_if_open()
         try:
             # Collect current pages in visual/tab order
@@ -1899,12 +1899,6 @@ class WindowTabsMixin:
                     omni.request_attention()
                 try:
                     if not self.has_user_tabs():
-                        # Back at the welcome screen with no sessions: undo a
-                        # transient minimize-on-connect, but keep the strip when
-                        # minimal is the configured resting mode.
-                        if (getattr(self, '_sidebar_minimal', False)
-                                and not self._sidebar_mode_is_minimal()):
-                            self.set_sidebar_minimal(False)
                         if self.config.get_setting('ui.sidebar_show_when_no_tabs', False):
                             self._apply_sidebar_visible(True)
                 except Exception:

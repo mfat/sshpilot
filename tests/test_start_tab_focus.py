@@ -157,7 +157,6 @@ class _FocusWindow:
         )
         self.user_tabs = []
         self.config = types.SimpleNamespace(get_setting=lambda key, default=None: default)
-        self._sidebar_minimal = False
 
     # -- focus observation -------------------------------------------------
     def get_focus(self):
@@ -186,13 +185,8 @@ class _FocusWindow:
     def _apply_sidebar_visible(self, _visible):
         return None
 
-    def _sidebar_mode_is_minimal(self):
-        return False
 
-    def set_sidebar_minimal(self, _minimal):
-        return None
 
-    # -- scenario helpers --------------------------------------------------
     def finish_startup(self):
         self._startup_complete = True
         self._initial_connection_list_focus_done = True

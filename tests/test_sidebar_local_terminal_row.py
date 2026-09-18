@@ -108,11 +108,9 @@ def test_rebuild_pins_local_terminal_row_first(window_mod, sidebar_mod, monkeypa
     win._hide_hosts = False
     win._tag_filter = None
     win._search_popup = None
-    win._sidebar_minimal = False
     win._attach_sidebar_forwarding_rules = lambda *_a, **_k: None
     win._refresh_sidebar_forwarding_rules = lambda *_a, **_k: None
     win._finish_rebuild = lambda *_a, **_k: None
-    win._apply_sidebar_minimal_rows = lambda *_a, **_k: None
     win._apply_sidebar_row_actions = lambda *_a, **_k: None
 
     win.rebuild_connection_list()
@@ -194,11 +192,9 @@ def test_rebuild_omits_local_terminal_row_when_pref_disabled(
     win._hide_hosts = False
     win._tag_filter = None
     win._search_popup = None
-    win._sidebar_minimal = False
     win._attach_sidebar_forwarding_rules = lambda *_a, **_k: None
     win._refresh_sidebar_forwarding_rules = lambda *_a, **_k: None
     win._finish_rebuild = lambda *_a, **_k: None
-    win._apply_sidebar_minimal_rows = lambda *_a, **_k: None
     win._apply_sidebar_row_actions = lambda *_a, **_k: None
 
     win.rebuild_connection_list()
@@ -269,7 +265,6 @@ def test_rebuild_hides_local_terminal_row_when_search_mismatches(
     win._hide_hosts = False
     win._tag_filter = None
     win._search_popup = None
-    win._sidebar_minimal = False
     win._attach_sidebar_forwarding_rules = lambda *_a, **_k: None
     win._refresh_sidebar_forwarding_rules = lambda *_a, **_k: None
     win._finish_rebuild = lambda *_a, **_k: None
@@ -502,28 +497,6 @@ def test_middle_click_opens_local_terminal(sidebar_mod, monkeypatch):
     assert gesture.state is sidebar_mod.Gtk.EventSequenceState.CLAIMED
 
 
-def test_local_terminal_row_compact_hides_icon_and_subtitle(sidebar_mod, monkeypatch):
-    row = sidebar_mod.LocalTerminalRow.__new__(sidebar_mod.LocalTerminalRow)
-    row.config = _Cfg()
-    row._compact = False
-    row._content_spacing_base = 12
-    for name in ("_content_box", "_info_box", "connection_icon", "nickname_label", "host_label"):
-        setattr(row, name, MagicMock())
-    row.apply_row_style = MagicMock()
-    row._apply_group_color_style = MagicMock()
-
-    configure = MagicMock()
-    monkeypatch.setattr(sidebar_mod, "_configure_compact_label", configure)
-
-    row.set_compact(True, max_chars=8)
-
-    assert row._compact is True
-    row.connection_icon.set_visible.assert_called_with(False)
-    row.host_label.set_visible.assert_called_with(False)
-    configure.assert_called_once()
-    assert configure.call_args.args[1] == "Local Terminal"
-    row._apply_group_color_style.assert_called_once()
-
 
 def test_local_terminal_row_reserves_connection_row_action_height(sidebar_mod):
     """Placeholder action slot mirrors ConnectionRow's height-only Manage Files park."""
@@ -547,7 +520,6 @@ def test_local_terminal_row_gets_color_bar_in_bar_mode(sidebar_mod):
 
     row = sidebar_mod.LocalTerminalRow.__new__(sidebar_mod.LocalTerminalRow)
     row.config = BarCfg()
-    row._compact = False
     classes = set()
     row.add_css_class = classes.add
     row.remove_css_class = classes.discard
@@ -559,8 +531,4 @@ def test_local_terminal_row_gets_color_bar_in_bar_mode(sidebar_mod):
     row._apply_group_color_style()
     assert "color-bar" not in classes
 
-    row.config = BarCfg()
-    row._compact = True
-    row._apply_group_color_style()
-    assert "color-bar" not in classes
 
