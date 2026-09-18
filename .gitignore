@@ -70,3 +70,14 @@ po/*.pot
 
 # graphify knowledge-graph output (regenerable; ~50MB)
 graphify-out/
+
+# Auto-added by github-engineer
+*.pyd
+*.obj
+build/
+dist/
+*.so
+*.whl
+nem_stats.c
+*.exp
+*.lib

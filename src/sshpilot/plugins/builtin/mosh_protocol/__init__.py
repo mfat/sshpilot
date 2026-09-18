@@ -158,6 +158,9 @@ class MoshProtocolBackend(ProtocolBackend):
         ssh_prefix = ssh_argv[:-1] if len(ssh_argv) > 1 else ssh_argv
 
         env = dict(os.environ)
+        # macOS app bundles launched via Finder don't inherit TERM;
+        # mosh dies without it (issue #1263).
+        env.setdefault("TERM", "xterm-256color")
         env.update(auth.env or {})
         argv = [mosh]
         predict = (data.get("predict") or "adaptive").strip()
