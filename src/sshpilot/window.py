@@ -2436,16 +2436,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._attach_sidebar_forwarding_rules(connections)
         self._refresh_sidebar_forwarding_rules(connections)
 
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
-        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', False)
-        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
-        show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
-        flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
+        compact = False
+        try:
+            compact = (
+                str(self.config.get_setting('ui.sidebar_mode', 'full')).lower()
+                == 'compact'
+            )
+        except Exception:
+            compact = False
+
+        show_user_hostname = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        )
+        show_group_count = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_group_count', False)
+        )
+        show_status = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_connection_status', True)
+        )
+        show_connection_icon = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        )
+        show_group_icon = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_group_icon', True)
+        )
+        # Compact is always flat; otherwise honor the Flat Sidebar Rows toggle.
+        flat_rows = True if compact else self.config.get_setting(
+            'ui.sidebar_flat_rows', False
+        )
 
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
+            if hasattr(row, 'apply_sidebar_mode'):
+                try:
+                    row.apply_sidebar_mode()
+                except Exception:
+                    logger.debug(
+                        "Failed to apply sidebar mode density",
+                        exc_info=True,
+                    )
             if hasattr(row, 'apply_row_style'):
                 row.apply_row_style(flat_rows)
             # Update ConnectionRow elements
@@ -2468,6 +2503,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 row.count_label.set_visible(show_group_count)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
+            if hasattr(row, 'expand_button') and row.expand_button is not None:
+                # Compact: title + color only; expand via row activation.
+                row.expand_button.set_visible(not compact)
 
             # Re-evaluate hover action buttons against current prefs / hover.
             if hasattr(row, '_reveal_file_manager_button'):

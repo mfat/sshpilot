@@ -10,6 +10,7 @@ def _window(host_pref=True, count_pref=True):
     win = win_mod.MainWindow.__new__(win_mod.MainWindow)
     win.config = MagicMock()
     win.config.get_setting.side_effect = lambda key, default=None: {
+        'ui.sidebar_mode': 'full',
         'ui.sidebar_show_user_hostname': host_pref,
         'ui.sidebar_show_group_count': count_pref,
         'ui.sidebar_show_connection_status': True,

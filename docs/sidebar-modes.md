@@ -67,19 +67,48 @@ What changed for callers:
 - **The sidebar header carries no window controls** (`sidebar.py`,
   `_assemble_sidebar_shell`). They are in the content title bar.
 
-## 1. Icon-strip ("minimal") mode — REMOVED
+## 1. Sidebar presentation mode — Full vs Compact
 
-Icon-strip ("minimal") sidebar mode has been **removed**. It is not available
-at runtime and Preferences no longer offers it.
+`ui.sidebar_mode`: `'full'` (default) or `'compact'`.
 
-Existing installs are migrated in `ensure_config_defaults`:
+Set from Preferences ▸ Interface ▸ Sidebar ▸ **Sidebar Mode**.
+
+### Full
+
+The default presentation. Individual toggles under Sidebar control row chrome
+(icons, status, user@hostname, port-forwarding badge, flat vs card rows,
+hover action buttons, group count, group icon). Nesting and group-color
+display (fill / badge / bar / dot) work as configured.
+
+### Compact
+
+A title-only flat list:
+
+- **Title only** on connection rows (no connection icon, status lock, port
+  forwarding badge, secondary host label, or Manage Files hover button).
+- **Group headers** show the group title and the active group-color treatment
+  only (no folder icon, connection count, split-view hover button, or expand
+  chevron — activate the row to expand/collapse). Height matches connection
+  rows.
+- **Always flat** (`navigation-sidebar`); card chrome is never used.
+- **Tighter** row margins/spacing than Full.
+- **Nesting / indentation** still apply (Group Layout preference).
+- Group color modes that do not increase row height (fill, badge, bar, dot)
+  remain available from Groups ▸ Group Appearance.
+
+While Compact is selected, the other Sidebar chrome toggles are greyed out
+(their stored values are kept for when the user switches back to Full). The
+**Local Terminal Row** toggle stays interactive.
+
+Icon-strip ("minimal") sidebar mode has been **removed**. Existing installs
+are migrated in `ensure_config_defaults`:
 
 - `ui.sidebar_mode: minimal` → `full`
 - `ui.sidebar_on_terminal_open: minimize` → `none`
 - `ui.sidebar_minimize_on_connect: true` → `false`
 
-Those keys are no longer part of the default config. Migration still rewrites
-them when an old config file still carries them.
+Those retired values are no longer part of the default config. Migration still
+rewrites them when an old config file still carries them.
 
 ## 2. Default vs. Overlay presentation
 

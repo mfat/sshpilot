@@ -515,7 +515,66 @@ def install_sidebar_css():
         logger.debug(f"CSS installation traceback: {traceback.format_exc()}")
 
 
+#: Row content margins/spacing for full vs compact sidebar modes.
+_SIDEBAR_ROW_DENSITY_FULL = (12, 12, 6, 6, 12)  # start, end, top, bottom, spacing
+_SIDEBAR_ROW_DENSITY_COMPACT = (8, 8, 2, 2, 6)
+
+
+def _sidebar_is_compact(config) -> bool:
+    """Whether Preferences ▸ Sidebar is set to compact (title-only) mode."""
+    if config is None:
+        return False
+    try:
+        return str(config.get_setting('ui.sidebar_mode', 'full')).lower() == 'compact'
+    except Exception:
+        return False
+
+
+def _sidebar_row_density(config) -> tuple[int, int, int, int, int]:
+    """Return (margin_start, margin_end, margin_top, margin_bottom, spacing)."""
+    if _sidebar_is_compact(config):
+        return _SIDEBAR_ROW_DENSITY_COMPACT
+    return _SIDEBAR_ROW_DENSITY_FULL
+
+
+def _apply_sidebar_row_density(content: Gtk.Box, config) -> None:
+    """Apply mode-dependent margins and spacing to a row content box."""
+    start, end, top, bottom, spacing = _sidebar_row_density(config)
+    content.set_margin_start(start)
+    content.set_margin_end(end)
+    content.set_margin_top(top)
+    content.set_margin_bottom(bottom)
+    content.set_spacing(spacing)
+
+
+def _apply_sidebar_title_centering(
+    info_box: Gtk.Box,
+    title_label: Gtk.Label,
+    *,
+    single_line: bool,
+) -> None:
+    """Keep the row title vertically centered when only one text line shows.
+
+    The title lives in a vertical ``info_box``. Taller siblings (hover-action
+    slots, expand chevron, icons) stretch a FILL ``info_box``; without
+    expanding the title, GTK packs it at the top of that space and the label
+    looks top-aligned inside the row.
+    """
+    if single_line:
+        info_box.set_valign(Gtk.Align.FILL)
+        title_label.set_vexpand(True)
+        title_label.set_valign(Gtk.Align.CENTER)
+    else:
+        info_box.set_valign(Gtk.Align.CENTER)
+        title_label.set_vexpand(False)
+        # First line of a two-line stack sits at the top of the info box.
+        title_label.set_valign(Gtk.Align.START)
+
+
 def _use_flat_sidebar_rows(config) -> bool:
+    # Compact is always a flat list; card chrome is never used there.
+    if _sidebar_is_compact(config):
+        return True
     if config is None:
         return False
     try:
@@ -1123,15 +1182,12 @@ class GroupRow(Gtk.ListBoxRow):
 
         # Main content
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        content.set_margin_start(12)
-        content.set_margin_end(12)
-        content.set_margin_top(6)
-        content.set_margin_bottom(6)
+        _apply_sidebar_row_density(content, config)
         # Kept so set_indentation() can offset nested group headers and honor
         # the fullwidth/nested Group Layout preference.
         self._content = content
-        self._content_margin_base = 12
-        self._content_spacing_base = 12
+        self._content_margin_base = content.get_margin_start()
+        self._content_spacing_base = content.get_spacing()
         self._indent_level = 0
         self._group_display_mode = None
 
@@ -1151,7 +1207,11 @@ class GroupRow(Gtk.ListBoxRow):
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         config = getattr(self.group_manager, 'config', None)
-        show_group_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
+        compact = _sidebar_is_compact(config)
+        show_group_icon = (
+            False if compact
+            else (config.get_setting('ui.sidebar_show_group_icon', True) if config else True)
+        )
         icon.set_visible(show_group_icon)
         content.append(icon)
         self.icon = icon
@@ -1189,9 +1249,15 @@ class GroupRow(Gtk.ListBoxRow):
         self.count_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         # Set initial visibility based on preference
         config = getattr(self.group_manager, 'config', None)
-        show_group_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
+        show_group_count = (
+            False if compact
+            else (config.get_setting('ui.sidebar_show_group_count', False) if config else False)
+        )
         self.count_label.set_visible(show_group_count)
         info_box.append(self.count_label)
+        _apply_sidebar_title_centering(
+            info_box, self.name_label, single_line=not show_group_count
+        )
 
         content.append(info_box)
 
@@ -1201,6 +1267,8 @@ class GroupRow(Gtk.ListBoxRow):
         # ``window._ROW_ACTIONS_MIN_WIDTH``) frees the width without collapsing
         # the row — the button is taller than the labels beside it. Editing
         # the group is a context-menu item ("Edit Group" / "Rename Tag…").
+        # Compact mode drops the slot entirely so group height matches
+        # connection rows (title + color only).
         self._actions_reserved = True
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
@@ -1209,6 +1277,10 @@ class GroupRow(Gtk.ListBoxRow):
         self.split_view_button.set_opacity(0.0)
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
         self._split_view_slot = _make_row_action_slot(self.split_view_button)
+        if compact:
+            # Drop height reservation immediately — empty stack pages are as
+            # tall as the button and would top-align the title beside them.
+            self._split_view_slot.set_visible(False)
         content.append(self._split_view_slot)
 
         # Set up hover events to show/hide buttons
@@ -1220,6 +1292,8 @@ class GroupRow(Gtk.ListBoxRow):
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
+        # Compact: title + color only — expand via row activation instead.
+        self.expand_button.set_visible(not compact)
         content.append(self.expand_button)
 
         # Add drop target indicator (initially hidden)
@@ -1486,7 +1560,7 @@ class GroupRow(Gtk.ListBoxRow):
     def _split_view_button_enabled(self) -> bool:
         """Whether Preferences allows the group-row split-view hover button."""
         config = getattr(self.group_manager, 'config', None)
-        if config is None:
+        if config is None or _sidebar_is_compact(config):
             return False
         try:
             return bool(config.get_setting('ui.sidebar_show_split_view_button', False))
@@ -1505,6 +1579,8 @@ class GroupRow(Gtk.ListBoxRow):
         tracks the pointer so hovering never reflows the row. Otherwise the
         empty page stays up — zero width, but the same height as the button,
         so shedding the action never collapses the row.
+
+        Compact mode hides the slot entirely so group rows stay title-height.
         """
         slot = getattr(self, '_split_view_slot', None)
         btn = getattr(self, 'split_view_button', None)
@@ -1512,10 +1588,42 @@ class GroupRow(Gtk.ListBoxRow):
             return
         reserved = (getattr(self, '_actions_reserved', True)
                     and self._split_view_button_enabled())
+        if not reserved and _sidebar_is_compact(
+            getattr(self.group_manager, 'config', None)
+        ):
+            slot.set_visible(False)
+            btn.set_opacity(0.0)
+            return
         slot.set_visible(True)
         slot.set_visible_child_name(
             ROW_ACTION_SLOT_BUTTON if reserved else ROW_ACTION_SLOT_EMPTY)
         btn.set_opacity(1.0 if (reserved and revealed) else 0.0)
+
+    def apply_sidebar_mode(self) -> None:
+        """Re-apply compact/full chrome after Preferences ▸ Sidebar Mode changes."""
+        config = getattr(self.group_manager, 'config', None)
+        compact = _sidebar_is_compact(config)
+        content = getattr(self, '_content', None)
+        if content is not None:
+            _apply_sidebar_row_density(content, config)
+            self._content_margin_base = content.get_margin_start()
+            self._content_spacing_base = content.get_spacing()
+            self._apply_group_display_mode()
+        if hasattr(self, 'expand_button') and self.expand_button is not None:
+            self.expand_button.set_visible(not compact)
+        show_count = False
+        if not compact and config is not None:
+            try:
+                show_count = bool(config.get_setting('ui.sidebar_show_group_count', False))
+            except Exception:
+                show_count = False
+        if hasattr(self, '_info_box') and hasattr(self, 'name_label'):
+            _apply_sidebar_title_centering(
+                self._info_box,
+                self.name_label,
+                single_line=not show_count,
+            )
+        self._reveal_row_actions(self._pointer_is_on_row())
 
     def set_actions_reserved(self, reserved: bool) -> None:
         """Keep the split-view action's reserved width, or shed it.
@@ -1723,10 +1831,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Content container
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self._content_box = content
-        content.set_margin_start(12)
-        content.set_margin_end(12)
-        content.set_margin_top(6)
-        content.set_margin_bottom(6)
+        _apply_sidebar_row_density(content, config)
+        self._content_margin_base = content.get_margin_start()
+        self._content_spacing_base = content.get_spacing()
 
         from sshpilot import icon_utils
         self.color_dot = _create_color_dot()
@@ -1744,7 +1851,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.connection_icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         # Set initial visibility based on preference
-        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        compact = _sidebar_is_compact(self.config)
+        show_connection_icon = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        )
         self.connection_icon.set_visible(show_connection_icon)
         content.append(self.connection_icon)
 
@@ -1786,9 +1897,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_user_hostname = (
+            False if compact
+            else self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        )
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
+        _apply_sidebar_title_centering(
+            info_box, self.nickname_label, single_line=not show_user_hostname
+        )
 
         content.append(info_box)
 
@@ -1801,6 +1918,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         # hovering never reflows the row. Parked in a height-only stack so
         # shedding it (preference off, or no callback) frees the width without
         # collapsing the row — the button is taller than the labels beside it.
+        # Compact mode drops the slot entirely (title-only rows).
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
@@ -1810,6 +1928,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
+        if compact:
+            self._file_manager_slot.set_visible(False)
         content.append(self._file_manager_slot)
 
         # Set up hover events to show/hide button
@@ -1917,6 +2037,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _file_manager_button_enabled(self) -> bool:
         """Whether Preferences allows the connection-row file manager button."""
+        if _sidebar_is_compact(self.config):
+            return False
         try:
             return bool(
                 self.config.get_setting('ui.sidebar_show_file_manager_button', True)
@@ -1936,6 +2058,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         never reflows the row. Otherwise the empty page stays up — zero width,
         but the same height as the button, so shedding the action never
         collapses the row.
+
+        Compact mode hides the slot entirely so rows stay title-height.
         """
         slot = getattr(self, '_file_manager_slot', None)
         btn = getattr(self, 'file_manager_button', None)
@@ -1945,6 +2069,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._file_manager_button_enabled()
             and bool(self._file_manager_callback)
         )
+        if not enabled and _sidebar_is_compact(self.config):
+            slot.set_visible(False)
+            btn.set_opacity(0.0)
+            return
         slot.set_visible(True)
         slot.set_visible_child_name(
             ROW_ACTION_SLOT_BUTTON if enabled else ROW_ACTION_SLOT_EMPTY)
@@ -2351,7 +2479,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             # Check preference for showing port forwarding indicators
             show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
-            if not show_port_forwarding:
+            if _sidebar_is_compact(self.config) or not show_port_forwarding:
                 return
 
             # Forwarding indicator only makes sense for protocols that support it.
@@ -2415,6 +2543,31 @@ class ConnectionRow(Gtk.ListBoxRow):
             self, self.config, in_tag_section=self._in_tag_section, flat=flat
         )
 
+    def apply_sidebar_mode(self) -> None:
+        """Re-apply compact/full chrome after Preferences ▸ Sidebar Mode changes."""
+        content = getattr(self, '_content_box', None)
+        if content is not None:
+            _apply_sidebar_row_density(content, self.config)
+            self._content_margin_base = content.get_margin_start()
+            self._content_spacing_base = content.get_spacing()
+            self._apply_group_display_mode()
+        compact = _sidebar_is_compact(self.config)
+        show_host = False
+        if not compact and self.config is not None:
+            try:
+                show_host = bool(
+                    self.config.get_setting('ui.sidebar_show_user_hostname', False)
+                )
+            except Exception:
+                show_host = False
+        if hasattr(self, '_info_box') and hasattr(self, 'nickname_label'):
+            _apply_sidebar_title_centering(
+                self._info_box,
+                self.nickname_label,
+                single_line=not show_host,
+            )
+        self._reveal_file_manager_button(self._pointer_is_on_row())
+
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
         self._refresh_row_tooltip()
@@ -2457,6 +2610,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                 show_status = bool(self.config.get_setting('ui.sidebar_show_connection_status', True))
             except Exception:
                 show_status = True
+            if _sidebar_is_compact(self.config):
+                show_status = False
             show = show_status
             self.status_box.set_visible(show)
 
@@ -2566,15 +2721,12 @@ class LocalTerminalRow(Gtk.ListBoxRow):
     def __init__(self, config=None):
         super().__init__()
         self.config = config
-        self._content_spacing_base = 12
         _apply_sidebar_row_style(self, config)
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self._content_box = content
-        content.set_margin_start(12)
-        content.set_margin_end(12)
-        content.set_margin_top(6)
-        content.set_margin_bottom(6)
+        _apply_sidebar_row_density(content, config)
+        self._content_spacing_base = content.get_spacing()
 
         from sshpilot import icon_utils
 
@@ -2583,8 +2735,9 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         )
         self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.connection_icon.set_valign(Gtk.Align.CENTER)
-        show_icon = True
-        if config is not None:
+        compact = _sidebar_is_compact(config)
+        show_icon = False if compact else True
+        if not compact and config is not None:
             try:
                 show_icon = bool(
                     config.get_setting("ui.sidebar_show_connection_icon", True)
@@ -2622,7 +2775,7 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         self.host_label.set_width_chars(FULL_LABEL_MIN_CHARS)
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         show_subtitle = False
-        if config is not None:
+        if not compact and config is not None:
             try:
                 show_subtitle = bool(
                     config.get_setting("ui.sidebar_show_user_hostname", False)
@@ -2631,6 +2784,9 @@ class LocalTerminalRow(Gtk.ListBoxRow):
                 show_subtitle = False
         self.host_label.set_visible(show_subtitle)
         info_box.append(self.host_label)
+        _apply_sidebar_title_centering(
+            info_box, self.nickname_label, single_line=not show_subtitle
+        )
 
         content.append(info_box)
 
@@ -2638,7 +2794,8 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         # Manage Files control is taller than a single label and is parked in a
         # height-only stack so shedding it never collapses the row. Mirror the
         # same metrics with a non-interactive placeholder (empty page up → zero
-        # width, button height reserved).
+        # width, button height reserved). Compact drops the placeholder so this
+        # row matches title-only connection rows.
         placeholder = icon_utils.new_button_from_icon_name("folder-symbolic")
         placeholder.add_css_class("flat")
         placeholder.add_css_class("file-manager-button")
@@ -2650,6 +2807,7 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         self._height_placeholder = placeholder
         self._height_slot = _make_row_action_slot(placeholder)
         self._height_slot.set_visible_child_name(ROW_ACTION_SLOT_EMPTY)
+        self._height_slot.set_visible(not compact)
         content.append(self._height_slot)
 
         self.set_child(content)
@@ -2663,6 +2821,31 @@ class LocalTerminalRow(Gtk.ListBoxRow):
 
     def apply_row_style(self, flat: bool | None = None) -> None:
         _apply_sidebar_row_style(self, self.config, flat=flat)
+
+    def apply_sidebar_mode(self) -> None:
+        """Re-apply compact/full chrome after Preferences ▸ Sidebar Mode changes."""
+        content = getattr(self, '_content_box', None)
+        if content is not None:
+            _apply_sidebar_row_density(content, self.config)
+            self._content_spacing_base = content.get_spacing()
+        compact = _sidebar_is_compact(self.config)
+        slot = getattr(self, '_height_slot', None)
+        if slot is not None:
+            slot.set_visible(not compact)
+        show_subtitle = False
+        if not compact and self.config is not None:
+            try:
+                show_subtitle = bool(
+                    self.config.get_setting('ui.sidebar_show_user_hostname', False)
+                )
+            except Exception:
+                show_subtitle = False
+        if hasattr(self, '_info_box') and hasattr(self, 'nickname_label'):
+            _apply_sidebar_title_centering(
+                self._info_box,
+                self.nickname_label,
+                single_line=not show_subtitle,
+            )
 
     def _apply_group_color_style(self) -> None:
         """Match connection-row bar chrome; this row has no group colour.

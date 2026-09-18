@@ -188,11 +188,19 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         ui_cfg['monospace_font'] = bool(ui_cfg.get('monospace_font'))
         updated = True
 
-    # Icon-strip ("minimal") sidebar mode is retired. Existing installs that
-    # persisted it (or minimize-on-terminal-open) must wake up in full mode.
-    if str(ui_cfg.get('sidebar_mode', 'full')).lower() == 'minimal':
+    # Sidebar presentation mode: 'full' | 'compact'. Icon-strip ("minimal")
+    # is retired — existing installs that persisted it (or minimize-on-
+    # terminal-open) wake up in full mode.
+    if 'sidebar_mode' not in ui_cfg:
         ui_cfg['sidebar_mode'] = 'full'
         updated = True
+    else:
+        mode = str(ui_cfg.get('sidebar_mode', 'full')).lower()
+        if mode == 'minimal' or mode not in ('full', 'compact'):
+            mode = 'full'
+        if ui_cfg.get('sidebar_mode') != mode:
+            ui_cfg['sidebar_mode'] = mode
+            updated = True
     if str(ui_cfg.get('sidebar_on_terminal_open', 'none')).lower() == 'minimize':
         ui_cfg['sidebar_on_terminal_open'] = 'none'
         updated = True
