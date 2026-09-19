@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..api.errors import ErrorCode, SshPilotError
@@ -24,6 +25,54 @@ from ..api.models.sessions import PluginSessionFailure
 from ..core.connections.models import ConnectionRecord
 
 logger = logging.getLogger(__name__)
+
+# Finder/Dock launches often inherit C/ASCII locales. Prefer a native UTF-8
+# locale that is present on the host: macOS ships en_US.UTF-8; Linux CI and
+# most distros expose C.UTF-8 (issue #1263).
+_DEFAULT_UTF8_LOCALE = "en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8"
+
+
+def _locale_name_is_utf8(name: str) -> bool:
+    """True when a locale name advertises a UTF-8 codeset."""
+    normalized = str(name or "").strip().upper().replace("-", "").replace("_", "")
+    return "UTF8" in normalized
+
+
+def _ensure_utf8_locale(
+    environment: Dict[str, str],
+    *,
+    default: str = _DEFAULT_UTF8_LOCALE,
+) -> None:
+    """Ensure interactive children see a UTF-8 native locale.
+
+    Mosh (and other UTF-8-only clients) call ``nl_langinfo(CODESET)`` after
+    ``setlocale(LC_ALL, "")``. POSIX precedence is LC_ALL > LC_CTYPE > LANG, so
+    a bare ``LANG=*.UTF-8`` does not help when ``LC_CTYPE=C`` is set — the
+    pattern seen when sshPilot is started from Finder/Dock on macOS.
+    """
+    lc_all = str(environment.get("LC_ALL") or "").strip()
+    lc_ctype = str(environment.get("LC_CTYPE") or "").strip()
+    lang = str(environment.get("LANG") or "").strip()
+
+    if lc_all:
+        if _locale_name_is_utf8(lc_all):
+            return
+        environment["LC_ALL"] = default
+        return
+
+    if lc_ctype:
+        if _locale_name_is_utf8(lc_ctype):
+            if not lang:
+                environment["LANG"] = default
+            return
+        environment["LC_CTYPE"] = default
+        if not lang or not _locale_name_is_utf8(lang):
+            environment["LANG"] = default
+        return
+
+    if lang and _locale_name_is_utf8(lang):
+        return
+    environment["LANG"] = default
 
 
 class _PluginSessionLaunchError(SshPilotError):
@@ -620,10 +669,12 @@ class DaemonConnectionLaunchProvider:
         # intentionally preserve the caller environment, but a missing or
         # ``dumb`` TERM is not usable — mosh aborts immediately without TERM
         # when the app is launched from Finder/Dock (issue #1263). Keep valid
-        # terminal types intact.
+        # terminal types intact. The same launches often inherit C/ASCII
+        # locales; mosh-client requires a UTF-8 native locale.
         term = environment.get("TERM")
         if not term or term.lower() == "dumb":
             environment["TERM"] = "xterm-256color"
+        _ensure_utf8_locale(environment)
         return argv, environment
 
     def prepare_scp_launch(
