@@ -88,6 +88,21 @@ jobs:
             brew install --ignore-dependencies --force-bottle "sshpilot/pins/$name"
             brew link --overwrite "$name"
           done
+          # An older version can need a dependency the current one dropped
+          # (libadwaita 1.9.3 needs appstream, 1.10.0 does not). Nothing fails
+          # at build time -- PyInstaller just omits the library and the app
+          # dies at startup on the user's Mac (GH #1266).
+          missing=""
+          for pin in $HOMEBREW_PINS; do
+            name="${pin%@*}"
+            for dep in $(brew deps --formula "sshpilot/pins/$name"); do
+              brew list --versions "$dep" >/dev/null 2>&1 || missing="$missing $dep"
+            done
+          done
+          if [ -n "$missing" ]; then
+            echo "=== PIN: installing dependencies the pinned versions need:$missing ==="
+            brew install --ignore-dependencies $missing
+          fi
           echo "=== PIN: resulting versions ==="
           brew list --versions gtk4 libadwaita vte3 gtksourceview5
 
@@ -217,6 +232,12 @@ jobs:
             echo "=== DEBUG: ERROR - dist directory does not exist ==="
           fi
           echo "=== DEBUG: Build verification completed ==="
+
+      # Catches a library PyInstaller could not find on the build host: the
+      # daemon smoke test below exits before libadwaita loads, so it cannot.
+      - name: Verify bundled libraries resolve
+        run: |
+          .venv-homebrew/bin/python scripts/verify_macos_bundle_linkage.py dist/SSHPilot.app
 
       - name: Smoke-test bundled daemon entrypoint
         run: |
