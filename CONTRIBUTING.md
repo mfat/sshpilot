@@ -236,6 +236,13 @@ sources moved under `src/`.
 - `meson test` runs the desktop-entry and AppStream validators; the packaging
   wires it into `%check` / `dh_auto_test`.
 - macOS DMG naming takes its version from `__init__.py`.
+- `packaging/pyinstaller/pyinstaller.sh` runs `dylib_closure.py` over the
+  finished `.app` before signing it: every bundled Mach-O file must have all
+  its non-system dependencies inside `Contents/Frameworks/`. PyInstaller
+  silently ships a bundle whose unresolved dependencies it rewrote to
+  `@rpath/…` anyway (GH #1266: a missing `libappstream.5.dylib` stopped
+  libadwaita loading, so the app died at launch), so the check copies in what
+  Homebrew has and fails the build when it cannot.
 - The AppImage is built by `Build AppImage` (`.github/workflows/build-appimage.yml`)
   on every `v*` tag, and the same script builds it locally on Ubuntu 24.04 — the
   oldest release carrying libadwaita 1.5, and therefore the glibc floor for the
