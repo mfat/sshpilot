@@ -68,37 +68,24 @@ jobs:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: |
           set -euo pipefail
-          TAG="$(brew ruby -e 'print Utils::Bottles.tag')"
-          WORK="$RUNNER_TEMP/homebrew-pins"
-          mkdir -p "$WORK"
+          # Current Homebrew no longer installs a bottle file directly, so the
+          # old formulae go in a throwaway tap whose bottles still come from
+          # homebrew-core's registry. Their dependencies are already present.
+          brew tap-new --no-git sshpilot/pins
+          TAP="$(brew --repository sshpilot/pins)/Formula"
           for pin in $HOMEBREW_PINS; do
             name="${pin%@*}"
             commit="${pin#*@}"
-            rb="$WORK/$name.rb"
+            rb="$TAP/$name.rb"
             raw="https://raw.githubusercontent.com/Homebrew/homebrew-core/$commit/Formula"
             curl -fsSL -o "$rb" "$raw/${name:0:1}/$name.rb" 2>/dev/null \
               || curl -fsSL -o "$rb" "$raw/lib/$name.rb"
-            read -r file sha < <(python3 - "$rb" "$name" "$TAG" <<'PY'
-          import re, sys
-          src, name, tag = open(sys.argv[1]).read(), sys.argv[2], sys.argv[3]
-          version = re.search(r'^\s*url "[^"]*?-(\d[\d.]*)\.tar', src, re.M).group(1)
-          revision = re.search(r'^\s*revision (\d+)', src, re.M)
-          rebuild = re.search(r'^\s*rebuild (\d+)', src, re.M)
-          sha = re.search(
-              rf'sha256 (?:cellar: :?[\w/"]+,\s*)?{tag}:\s*"([0-9a-f]{{64}})"', src
-          ).group(1)
-          if revision:
-              version += f"_{revision.group(1)}"
-          suffix = f".{rebuild.group(1)}" if rebuild and rebuild.group(1) != "0" else ""
-          print(f"{name}--{version}.{tag}.bottle{suffix}.tar.gz", sha)
-          PY
-            )
-            echo "=== PIN: $name@$commit -> $file ==="
-            curl -fsSL -H "Authorization: Bearer QQ==" -o "$WORK/$file" \
-              "https://ghcr.io/v2/homebrew/core/$name/blobs/sha256:$sha"
-            echo "$sha  $WORK/$file" | shasum -a 256 -c -
+            sed -i '' 's|^  bottle do$|  bottle do\
+              root_url "https://ghcr.io/v2/homebrew/core"|' "$rb"
+            echo "=== PIN: $name@$commit ==="
+            grep -m1 '^  url ' "$rb"
             brew uninstall --ignore-dependencies --force "$name"
-            brew install "$WORK/$file"
+            brew install --ignore-dependencies --force-bottle "sshpilot/pins/$name"
             brew link --overwrite "$name"
           done
           echo "=== PIN: resulting versions ==="
