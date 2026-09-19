@@ -243,6 +243,15 @@ sources moved under `src/`.
   `@rpath/…` anyway (GH #1266: a missing `libappstream.5.dylib` stopped
   libadwaita loading, so the app died at launch), so the check copies in what
   Homebrew has and fails the build when it cannot.
+- Both macOS workflows install from a frozen `homebrew-core` commit
+  (`HOMEBREW_CORE_SNAPSHOT`, with `HOMEBREW_NO_INSTALL_FROM_API=1`), so a
+  release ships the toolkit we chose rather than whatever Homebrew published
+  that day — GTK 4.24.0 drops every Fn-flagged macOS key event, which is the
+  arrow keys, Home/End, PgUp/PgDn and the F-keys (GH #1266). Both
+  architectures use the same commit. To move it: bump the commit in both
+  workflows, build, and check the keyboard on a real Mac. A manual arm64 run
+  can override it with the `homebrew_core_snapshot` input, and each build
+  records what it used in `build-env.txt` next to the DMG.
 - The AppImage is built by `Build AppImage` (`.github/workflows/build-appimage.yml`)
   on every `v*` tag, and the same script builds it locally on Ubuntu 24.04 — the
   oldest release carrying libadwaita 1.5, and therefore the glibc floor for the
