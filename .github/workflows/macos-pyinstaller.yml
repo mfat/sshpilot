@@ -5,6 +5,13 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      homebrew_pins:
+        description: >-
+          Test builds only: space-separated formula@homebrew-core-commit pairs
+          whose bottles replace the latest ones (e.g. gtk4@2339f7dd9b)
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -47,6 +54,55 @@ jobs:
             echo "=== DEBUG: WARNING - gtksourceview5 not found in brew list ==="
           fi
           echo "=== DEBUG: Homebrew installation completed ==="
+
+      # The bundle ships whatever Homebrew has on build day, so a toolkit
+      # regression can land without any change here (GTK 4.24.0 drops every
+      # Fn-flagged key event, i.e. the arrow keys: GH #1266). This installs the
+      # exact bottles a homebrew-core commit pointed at, to bisect such bumps.
+      - name: Pin Homebrew formulae to older bottles
+        if: github.event_name == 'workflow_dispatch' && inputs.homebrew_pins != ''
+        env:
+          HOMEBREW_PINS: ${{ inputs.homebrew_pins }}
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_UPGRADE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          set -euo pipefail
+          TAG="$(brew ruby -e 'print Utils::Bottles.tag')"
+          WORK="$RUNNER_TEMP/homebrew-pins"
+          mkdir -p "$WORK"
+          for pin in $HOMEBREW_PINS; do
+            name="${pin%@*}"
+            commit="${pin#*@}"
+            rb="$WORK/$name.rb"
+            raw="https://raw.githubusercontent.com/Homebrew/homebrew-core/$commit/Formula"
+            curl -fsSL -o "$rb" "$raw/${name:0:1}/$name.rb" 2>/dev/null \
+              || curl -fsSL -o "$rb" "$raw/lib/$name.rb"
+            read -r file sha < <(python3 - "$rb" "$name" "$TAG" <<'PY'
+          import re, sys
+          src, name, tag = open(sys.argv[1]).read(), sys.argv[2], sys.argv[3]
+          version = re.search(r'^\s*url "[^"]*?-(\d[\d.]*)\.tar', src, re.M).group(1)
+          revision = re.search(r'^\s*revision (\d+)', src, re.M)
+          rebuild = re.search(r'^\s*rebuild (\d+)', src, re.M)
+          sha = re.search(
+              rf'sha256 (?:cellar: :?[\w/"]+,\s*)?{tag}:\s*"([0-9a-f]{{64}})"', src
+          ).group(1)
+          if revision:
+              version += f"_{revision.group(1)}"
+          suffix = f".{rebuild.group(1)}" if rebuild and rebuild.group(1) != "0" else ""
+          print(f"{name}--{version}.{tag}.bottle{suffix}.tar.gz", sha)
+          PY
+            )
+            echo "=== PIN: $name@$commit -> $file ==="
+            curl -fsSL -H "Authorization: Bearer QQ==" -o "$WORK/$file" \
+              "https://ghcr.io/v2/homebrew/core/$name/blobs/sha256:$sha"
+            echo "$sha  $WORK/$file" | shasum -a 256 -c -
+            brew uninstall --ignore-dependencies --force "$name"
+            brew install "$WORK/$file"
+            brew link --overwrite "$name"
+          done
+          echo "=== PIN: resulting versions ==="
+          brew list --versions gtk4 libadwaita vte3 gtksourceview5
 
       - name: Prepare Homebrew virtual environment
         run: |
