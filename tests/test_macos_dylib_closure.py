@@ -18,6 +18,7 @@ sys.path.insert(
 
 from dylib_closure import (  # noqa: E402
     ClosureReport,
+    MachOTool,
     close_dylib_graph,
     find_library,
     format_report,
@@ -27,6 +28,8 @@ from dylib_closure import (  # noqa: E402
     iter_macho_files,
     loader_path_reference,
     parse_otool_dependencies,
+    parse_otool_install_name,
+    strip_install_name,
 )
 
 OTOOL_LIBADWAITA = """\
@@ -278,7 +281,7 @@ def test_framework_dependency_already_in_the_bundle_is_accepted(tmp_path):
     assert tool.changes == []
 
 
-def test_missing_framework_dependency_is_reported_not_flattened(tmp_path):
+def test_missing_framework_dependency_warns_instead_of_flattening(tmp_path):
     frameworks = _bundle(tmp_path, ["libadwaita-1.0.dylib"])
     roots = _homebrew(tmp_path, ["Python"])
     tool = FakeMachOTool(
@@ -291,8 +294,14 @@ def test_missing_framework_dependency_is_reported_not_flattened(tmp_path):
 
     report = close_dylib_graph(frameworks, roots, tool=tool)
 
-    assert not report.is_complete
+    # Not something a copied file can fix, so it is reported without
+    # blocking the release.
     assert report.copied == []
+    assert not (frameworks / "Python").exists()
+    assert report.warnings == [
+        ("libadwaita-1.0.dylib", "@rpath/Python.framework/Versions/3.13/Python")
+    ]
+    assert report.is_complete
 
 
 def test_absolute_reference_is_copied_from_where_it_points(tmp_path):
@@ -327,11 +336,68 @@ def test_absolute_framework_path_is_not_flattened(tmp_path):
 
     report = close_dylib_graph(frameworks, _homebrew(tmp_path, []), tool=tool)
 
-    # Reported so the build fails, rather than dropping a bare "Python" file
-    # at Frameworks root and calling it fixed.
-    assert not report.is_complete
+    # An absolute path into a framework names a file, but not one that can be
+    # dropped at Frameworks root as "Python" and called fixed.
     assert report.copied == []
     assert not (frameworks / "Python").exists()
+
+
+OTOOL_D_RUST = """\
+/…/cryptography/hazmat/bindings/_rust.abi3.so:
+@rpath/cryptography.hazmat.bindings._rust.abi3.so
+"""
+
+
+def test_a_librarys_own_install_name_is_not_a_dependency():
+    # maturin names cryptography's extension after the Python module, not the
+    # file, so a basename check reads its LC_ID_DYLIB as a missing library and
+    # fails the build on a bundle that is perfectly fine.
+    own = parse_otool_install_name(OTOOL_D_RUST)
+    assert own == "@rpath/cryptography.hazmat.bindings._rust.abi3.so"
+
+    deps = [own, "@loader_path/libssl.3.dylib", "/usr/lib/libSystem.B.dylib"]
+    assert strip_install_name(deps, own) == [
+        "@loader_path/libssl.3.dylib",
+        "/usr/lib/libSystem.B.dylib",
+    ]
+
+
+def test_install_name_parsing_tolerates_per_architecture_headers():
+    assert parse_otool_install_name(
+        "/path/libfoo.dylib (architecture arm64):\n@rpath/libfoo.dylib\n"
+    ) == "@rpath/libfoo.dylib"
+    # A Mach-O bundle without LC_ID_DYLIB prints only the header.
+    assert parse_otool_install_name("/path/_module.so:\n") is None
+    assert strip_install_name(["@rpath/libfoo.dylib"], None) == [
+        "@rpath/libfoo.dylib"
+    ]
+
+
+def test_machotool_filters_the_install_name(monkeypatch):
+    calls = []
+
+    class Result:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd[1])
+        if cmd[1] == "-L":
+            return Result(
+                "/…/_rust.abi3.so:\n"
+                "\t@rpath/cryptography.hazmat.bindings._rust.abi3.so"
+                " (compatibility version 0.0.0, current version 0.0.0)\n"
+                "\t/usr/lib/libSystem.B.dylib"
+                " (compatibility version 1.0.0, current version 1.0.0)\n"
+            )
+        return Result(OTOOL_D_RUST)
+
+    monkeypatch.setattr("dylib_closure.subprocess.run", fake_run)
+
+    deps = MachOTool().dependencies(Path("/…/_rust.abi3.so"))
+
+    assert calls == ["-L", "-D"]
+    assert deps == ["/usr/lib/libSystem.B.dylib"]
 
 
 def test_report_of_a_closed_graph_says_so():

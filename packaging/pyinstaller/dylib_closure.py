@@ -55,8 +55,9 @@ def parse_otool_dependencies(output: str) -> List[str]:
     """Extract dependency references from ``otool -L`` output.
 
     The first line names the inspected file and is skipped; every remaining
-    indented line is a load-command reference (including the library's own
-    ``LC_ID_DYLIB`` install name, which resolves to itself and is harmless).
+    indented line is a load-command reference. A library's own
+    ``LC_ID_DYLIB`` is listed among them and is not a dependency — see
+    :func:`strip_install_name`.
     """
     deps: List[str] = []
     for line in output.splitlines():
@@ -64,6 +65,30 @@ def parse_otool_dependencies(output: str) -> List[str]:
         if match:
             deps.append(match.group(1))
     return deps
+
+
+def parse_otool_install_name(output: str) -> Optional[str]:
+    """Read the ``LC_ID_DYLIB`` install name from ``otool -D`` output."""
+    for line in output.splitlines():
+        candidate = line.strip()
+        if not candidate or candidate.endswith(":"):
+            # The header line, including otool's "(architecture arm64):" form.
+            continue
+        return candidate
+    return None
+
+
+def strip_install_name(deps: Sequence[str], install_name: Optional[str]) -> List[str]:
+    """Drop a library's own install name from its dependency list.
+
+    It is never a dependency, and its basename need not match the file's:
+    cryptography's ``_rust.abi3.so`` calls itself
+    ``@rpath/cryptography.hazmat.bindings._rust.abi3.so``, which a
+    name-based check reads as a library missing from the bundle.
+    """
+    if not install_name:
+        return list(deps)
+    return [ref for ref in deps if ref != install_name]
 
 
 def iter_macho_files(root: Path) -> List[Path]:
@@ -109,9 +134,17 @@ class ClosureReport:
     copied: List[str] = field(default_factory=list)
     rewritten: List[Tuple[str, str]] = field(default_factory=list)
     unresolved: List[Tuple[str, str]] = field(default_factory=list)
+    warnings: List[Tuple[str, str]] = field(default_factory=list)
 
     @property
     def is_complete(self) -> bool:
+        """False only for a missing library this pass could have supplied.
+
+        A structural reference (into a .framework, say) is reported as a
+        warning instead: copying a file cannot fix one, and failing the
+        build over it would block every macOS release for something
+        PyInstaller, not this pass, owns.
+        """
         return not self.unresolved
 
 
@@ -119,13 +152,21 @@ class MachOTool:
     """The macOS binaries this pass drives; swapped out in tests."""
 
     def dependencies(self, path: Path) -> List[str]:
-        out = subprocess.run(
+        listed = subprocess.run(
             ["otool", "-L", str(path)],
             check=True,
             capture_output=True,
             text=True,
         ).stdout
-        return parse_otool_dependencies(out)
+        own = subprocess.run(
+            ["otool", "-D", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return strip_install_name(
+            parse_otool_dependencies(listed), parse_otool_install_name(own)
+        )
 
     def set_id(self, path: Path, new_id: str) -> None:
         subprocess.run(
@@ -250,14 +291,15 @@ def close_dylib_graph(
                 copyable = is_leaf_reference(ref) or (
                     os.path.isabs(ref) and name.endswith(MACHO_SUFFIXES)
                 )
-                src = None
-                if copyable:
-                    # An absolute reference already points at the library on
-                    # the build machine; otherwise go looking in Homebrew.
-                    if os.path.isabs(ref) and os.path.isfile(ref):
-                        src = ref
-                    else:
-                        src = find_library(name, search_roots)
+                if not copyable:
+                    report.warnings.append((binary.name, ref))
+                    continue
+                # An absolute reference already points at the library on the
+                # build machine; otherwise go looking in Homebrew.
+                if os.path.isabs(ref) and os.path.isfile(ref):
+                    src = ref
+                else:
+                    src = find_library(name, search_roots)
                 if src is None:
                     report.unresolved.append((binary.name, ref))
                     continue
@@ -298,6 +340,9 @@ def format_report(report: ClosureReport) -> str:
         lines.extend(f"  + {name}" for name in report.copied)
     if report.rewritten:
         lines.append(f"Rewrote {len(report.rewritten)} absolute reference(s).")
+    if report.warnings:
+        lines.append("Unresolved structural references (not fixable here):")
+        lines.extend(f"  ? {owner}: {ref}" for owner, ref in report.warnings)
     if report.unresolved:
         lines.append("UNRESOLVED dependencies (the bundle would crash at launch):")
         lines.extend(f"  ! {owner}: {ref}" for owner, ref in report.unresolved)
