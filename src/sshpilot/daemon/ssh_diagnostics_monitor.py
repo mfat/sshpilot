@@ -30,7 +30,7 @@ from typing import Callable, Dict, Optional
 # fails there; inotify_available() below then reports the honest degradation.
 try:
     _INOTIFY_LIBC = ctypes.CDLL(None, use_errno=True)
-except OSError:
+except (OSError, TypeError):
     _INOTIFY_LIBC = None
 
 _INOTIFY_FUNCTIONS_READY = False

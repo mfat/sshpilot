@@ -220,6 +220,27 @@ def test_build_spawn_invalid_ssh_options_use_stable_field_key(monkeypatch):
     assert failure.diagnostic
 
 
+def test_build_spawn_sets_term_when_missing(monkeypatch):
+    """macOS app bundles launched via Finder don't inherit TERM (issue #1263)."""
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    _stub_ssh_builders(monkeypatch)
+    monkeypatch.delenv('TERM', raising=False)
+    conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'myhost'})
+    spec = MoshProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.env['TERM'] == 'xterm-256color'
+
+
+def test_build_spawn_preserves_existing_term(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    _stub_ssh_builders(monkeypatch)
+    monkeypatch.setenv('TERM', 'screen-256color')
+    conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'myhost'})
+    spec = MoshProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.env['TERM'] == 'screen-256color'
+
+
 def test_activate_registers_backend():
     Plugin().activate(_ctx())
     assert registry_mod.protocol_registry().get('mosh') is not None

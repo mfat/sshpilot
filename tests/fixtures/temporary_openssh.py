@@ -13,7 +13,10 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-import pwd
+try:
+    import pwd
+except ImportError:  # Windows
+    pwd = None  # type: ignore[assignment]
 import secrets
 import shutil
 import socket
