@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.1.8" date="2026-09-20">
+      <description>
+        <p>Fixed arrow keys not working on macOS after recent GTK update</p>
+        <p>Fixed macOS Intel builds</p>
+      </description>
+    </release>
     <release version="6.1.7" date="2026-09-19">
       <description>
         <p>Bug fixes</p>

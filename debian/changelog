@@ -1,3 +1,11 @@
+sshpilot (6.1.8-1) unstable; urgency=medium
+
+  * Release v6.1.8.
+  * Fixed arrow keys not working on macOS after recent GTK update
+  * Fixed macOS Intel builds
+
+ -- Mehdi <mah.fat@gmail.com>  Sun, 20 Sep 2026 07:55:36 +0000
+
 sshpilot (6.1.7-1) unstable; urgency=medium
 
   * Release v6.1.7.
