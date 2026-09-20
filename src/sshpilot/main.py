@@ -1181,7 +1181,7 @@ class SshPilotApplication(Adw.Application):
         except ValueError:
             logger.warning("Pre-connection command notice could not be presented")
             return False
-        overlay = getattr(window, 'toast_overlay', None)
+        overlay = self._pre_command_toast_overlay()
         if overlay is None:
             # No overlay means no window chrome yet; the daemon log still has
             # the full trace, so say where to find it rather than nothing.
@@ -1194,6 +1194,39 @@ class SshPilotApplication(Adw.Application):
         except Exception:
             logger.warning("Unable to display the pre-connection command alert")
         return False
+
+    def _pre_command_toast_overlay(self):
+        """The toast overlay of whichever window the user is actually looking at.
+
+        A launch is started from wherever the user is -- the File Manager, an
+        SCP window, a terminal tab -- so the alert has to follow them. Reuses
+        the routing the app already does for daemon-originated askpass
+        prompts (``resolve_topmost_prompt_parent``), which handles the cases
+        that make a naive ``get_active_window()`` wrong: a modal secondary
+        window is blocking input and must win, and on Wayland a modal
+        transient does not reliably become the active window, so the main
+        window would otherwise be picked and the toast would appear behind.
+
+        A resolved window with no overlay of its own (the SCP and copy-key
+        windows have none) falls back to the main window rather than losing
+        the alert.
+        """
+        window = self.window
+        main_overlay = getattr(window, 'toast_overlay', None)
+        try:
+            from .window_dialogs import resolve_topmost_prompt_parent
+
+            windows = self.get_windows()
+            try:
+                active_window = self.get_active_window()
+            except Exception:
+                active_window = None
+            target = resolve_topmost_prompt_parent(windows, active_window, window)
+        except Exception:
+            logger.debug("Could not resolve the pre-command toast window", exc_info=True)
+            return main_overlay
+        overlay = getattr(target, 'toast_overlay', None)
+        return overlay if overlay is not None else main_overlay
 
     def _connection_display_name(self, connection_id) -> str:
         """Best-effort nickname for *connection_id*; '' when unknown."""

@@ -37,6 +37,8 @@ def application():
         # keeps this test free of a display while still running every branch
         # that decides *whether* to alert.
         window=SimpleNamespace(_is_quitting=False, toast_overlay=None),
+        get_windows=lambda: [],
+        get_active_window=lambda: None,
     )
     for name in (
         "register_pre_command_status",
@@ -44,6 +46,7 @@ def application():
         "_set_pre_command_status",
         "_deliver_pre_command_status",
         "_handle_pre_command_event",
+        "_pre_command_toast_overlay",
         "_connection_display_name",
     ):
         setattr(app, name, getattr(SshPilotApplication, name).__get__(app))
@@ -172,3 +175,95 @@ def test_replay_does_not_leak_between_scopes(application):
     application.register_pre_command_status("scope-1", seen.append)
 
     assert seen == []
+
+
+# --- where the alert lands ---------------------------------------------------
+#
+# A launch is started from wherever the user is, so the alert has to follow
+# them. The app already routes daemon-originated askpass prompts this way
+# (``resolve_topmost_prompt_parent``); these pin that the toast reuses it
+# rather than always drawing on the main window, which is how the File Manager
+# and the SCP window ended up alerting into a window nobody was looking at.
+
+
+class _Window:
+    def __init__(self, overlay=None, *, visible=True, modal=False):
+        self.toast_overlay = overlay
+        self._visible = visible
+        self._modal = modal
+        self._is_quitting = False
+
+    def get_visible(self):
+        return self._visible
+
+    def get_modal(self):
+        return self._modal
+
+
+def _app_with_windows(main, windows, active):
+    from sshpilot.main import SshPilotApplication
+
+    app = SimpleNamespace(
+        window=main,
+        get_windows=lambda: windows,
+        get_active_window=lambda: active,
+    )
+    app._pre_command_toast_overlay = (
+        SshPilotApplication._pre_command_toast_overlay.__get__(app)
+    )
+    return app
+
+
+def test_the_alert_follows_the_file_manager_when_it_is_focused():
+    main = _Window(overlay="main")
+    file_manager = _Window(overlay="file-manager")
+    app = _app_with_windows(main, [main, file_manager], file_manager)
+
+    assert app._pre_command_toast_overlay() == "file-manager"
+
+
+def test_a_modal_secondary_wins_even_when_gtk_calls_the_main_window_active():
+    """The Wayland quirk the resolver exists for.
+
+    A naive ``get_active_window()`` would pick the main window here and the
+    toast would appear behind the modal window blocking input.
+    """
+
+    main = _Window(overlay="main")
+    modal = _Window(overlay="modal", modal=True)
+    app = _app_with_windows(main, [main, modal], main)
+
+    assert app._pre_command_toast_overlay() == "modal"
+
+
+def test_a_window_without_an_overlay_falls_back_rather_than_losing_the_alert():
+    """The SCP and copy-key windows have no overlay of their own."""
+
+    main = _Window(overlay="main")
+    scp = _Window(overlay=None, modal=True)
+    app = _app_with_windows(main, [main, scp], scp)
+
+    assert app._pre_command_toast_overlay() == "main"
+
+
+def test_the_main_window_is_used_when_nothing_else_is_focused():
+    main = _Window(overlay="main")
+    app = _app_with_windows(main, [main], main)
+
+    assert app._pre_command_toast_overlay() == "main"
+
+
+def test_a_broken_window_lookup_still_alerts_on_the_main_window():
+    main = _Window(overlay="main")
+
+    def _explode():
+        raise RuntimeError("no display")
+
+    from sshpilot.main import SshPilotApplication
+
+    app = SimpleNamespace(window=main, get_windows=_explode, get_active_window=_explode)
+    app._pre_command_toast_overlay = (
+        SshPilotApplication._pre_command_toast_overlay.__get__(app)
+    )
+
+    assert app._pre_command_toast_overlay() == "main"
