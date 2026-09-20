@@ -529,6 +529,11 @@ _OPERATION_EVENT_TYPES = frozenset(
     }
 )
 _BROADCAST_EVENT_TYPES = frozenset({EventType.BROADCAST_OUTPUT})
+#: The launcher's pre-connection command step. Deliberately its own set
+#: rather than part of _CONNECTION_EVENT_TYPES: those all carry a
+#: ConnectionSummary, and connection_event_from_envelope would decode this
+#: payload as one.
+_PRE_COMMAND_EVENT_TYPES = frozenset({EventType.PRE_CONNECTION_COMMAND})
 _FORWARDED_EVENT_TYPES = (
     _CONNECTION_EVENT_TYPES
     | _SESSION_EVENT_TYPES
@@ -539,6 +544,7 @@ _FORWARDED_EVENT_TYPES = (
     | _DAEMON_EVENT_TYPES
     | _OPERATION_EVENT_TYPES
     | _BROADCAST_EVENT_TYPES
+    | _PRE_COMMAND_EVENT_TYPES
 )
 
 
@@ -596,6 +602,14 @@ def public_event_to_envelope(
         if type(event.payload) is not OperationSummary:
             raise TypeError("operation event payload must be OperationSummary")
         payload = operation_summary_to_wire(event.payload)
+    elif event.type in _PRE_COMMAND_EVENT_TYPES:
+        from ..models.pre_command import PreConnectionCommandNotice
+
+        if type(event.payload) is not PreConnectionCommandNotice:
+            raise TypeError(
+                "pre-connection command event payload is invalid"
+            )
+        payload = pre_connection_command_notice_to_wire(event.payload)
     elif event.type in _BROADCAST_EVENT_TYPES:
         from ..models.broadcast import BroadcastCommandOutput
 
@@ -711,6 +725,15 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             payload=operation_summary,
             sequence=envelope.sequence,
             connection_id=operation_summary.connection_id,
+        )
+    if event_type in _PRE_COMMAND_EVENT_TYPES:
+        notice = pre_connection_command_notice_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=notice,
+            sequence=envelope.sequence,
+            connection_id=notice.connection_id,
+            session_id=SessionId(notice.scope_id),
         )
     if event_type in _BROADCAST_EVENT_TYPES:
         from ..models.broadcast import BroadcastCommandOutput
@@ -5033,6 +5056,87 @@ def cancel_transfer_request_from_wire(value: Any) -> CancelTransferRequest:
         context="cancel transfer request",
     )
     return CancelTransferRequest(transfer_id=_transfer_id(data["transfer_id"], "transfer id"))
+
+
+def pre_connection_command_notice_to_wire(
+    notice: "PreConnectionCommandNotice",
+) -> Dict[str, Any]:
+    """Encode one pre-connection command notice.
+
+    Codes and numbers only. The command text, its output and any rendered
+    sentence stay in the daemon: the command line can embed a token or a
+    password, and the wording belongs to the frontend, which owns translation.
+    """
+    from ..models.pre_command import PreConnectionCommandNotice
+
+    if type(notice) is not PreConnectionCommandNotice:
+        raise TypeError("pre-connection command notice is required")
+    return {
+        "connection_id": notice.connection_id,
+        "scope_id": notice.scope_id,
+        "kind": notice.kind.value,
+        "phase": notice.phase.value,
+        "reason": notice.reason.value,
+        "exit_code": notice.exit_code,
+        "duration_ms": notice.duration_ms,
+    }
+
+
+def pre_connection_command_notice_from_wire(
+    value: Any,
+) -> "PreConnectionCommandNotice":
+    from ..models.pre_command import (
+        PreCommandLaunchKind,
+        PreCommandPhase,
+        PreCommandReason,
+        PreConnectionCommandNotice,
+    )
+
+    data = _strict_fields(
+        value,
+        required={
+            "connection_id",
+            "scope_id",
+            "kind",
+            "phase",
+            "reason",
+            "exit_code",
+            "duration_ms",
+        },
+        context="pre-connection command notice",
+    )
+    try:
+        kind = PreCommandLaunchKind(data["kind"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown launch kind"
+        ) from None
+    try:
+        phase = PreCommandPhase(data["phase"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown phase"
+        ) from None
+    try:
+        reason = PreCommandReason(data["reason"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown reason"
+        ) from None
+    exit_code = data["exit_code"]
+    if exit_code is not None:
+        exit_code = _integer(exit_code, "pre-connection command exit code")
+    return PreConnectionCommandNotice(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "pre-connection command connection id")
+        ),
+        scope_id=_identifier(data["scope_id"], "pre-connection command scope id"),
+        kind=kind,
+        phase=phase,
+        reason=reason,
+        exit_code=exit_code,
+        duration_ms=_integer(data["duration_ms"], "pre-connection command duration"),
+    )
 
 
 def forward_summary_to_wire(summary: ForwardSummary) -> Dict[str, Any]:

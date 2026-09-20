@@ -208,6 +208,12 @@ class SshPilotApplication(Adw.Application):
         # unaffected, so non-cyclic resources still free promptly.)
         gc.disable()
         self._gc_pending = False
+        #: scope id -> callable(text|None) for the inline pre-connection
+        #: command status. Surfaces register while they own a launch scope.
+        self._pre_command_status_targets = {}
+        #: scope id -> the status text currently in force, so a surface
+        #: that binds its scope late can still pick the line up.
+        self._pre_command_active = {}
         self._gc_timer_id = GLib.timeout_add_seconds(5, self._collect_garbage)
 
         # Command line verbosity overrides — mutually exclusive at argparse,
@@ -670,6 +676,14 @@ class SshPilotApplication(Adw.Application):
                 EventType.SESSION_CLOSED,
             }:
                 GLib.idle_add(self._handle_api_session_event, event)
+            elif event.type is EventType.PRE_CONNECTION_COMMAND:
+                # Handled here rather than by whichever surface owns the
+                # launch scope: a scope-bound presenter may not be bound yet
+                # when the notice arrives, and a pre-connection command that
+                # failed silently is exactly the bug this feature exists to
+                # end. The inline status on the tab or pane is the nicety; the
+                # window toast is the guarantee.
+                GLib.idle_add(self._handle_pre_command_event, event.payload)
 
         try:
             self._api_event_subscription = client.subscribe_events(_on_event)
@@ -1087,6 +1101,119 @@ class SshPilotApplication(Adw.Application):
                 subscription.unsubscribe()
             except Exception:
                 logger.warning("Application API event unsubscription failed")
+
+    def register_pre_command_status(self, scope_id: str, setter) -> None:
+        """Let the surface owning *scope_id* show the running status inline.
+
+        The registry exists because there is one subscription for these
+        notices (here) and many possible surfaces. A surface that never
+        registers loses only the inline line: the failure toast below is
+        raised from this handler regardless, so a pre-connection command can
+        never fail silently again.
+        """
+        if not scope_id or not callable(setter):
+            return
+        scope_id = str(scope_id)
+        self._pre_command_status_targets[scope_id] = setter
+        # Replay, for the same reason the interaction presenter reconciles
+        # against a live snapshot: the daemon starts the command on a worker
+        # as soon as the open is accepted, which is routinely *before* the
+        # frontend has processed the response and learned its session id.
+        # Without this the running line would almost never appear on the very
+        # tab it exists for.
+        pending = self._pre_command_active.get(scope_id)
+        if pending:
+            self._deliver_pre_command_status(scope_id, setter, pending)
+
+    def unregister_pre_command_status(self, scope_id: str) -> None:
+        self._pre_command_status_targets.pop(str(scope_id), None)
+
+    def _set_pre_command_status(self, scope_id: str, text) -> None:
+        scope_id = str(scope_id)
+        if text:
+            self._pre_command_active[scope_id] = text
+        else:
+            self._pre_command_active.pop(scope_id, None)
+        setter = self._pre_command_status_targets.get(scope_id)
+        if setter is None:
+            return
+        self._deliver_pre_command_status(scope_id, setter, text)
+
+    def _deliver_pre_command_status(self, scope_id: str, setter, text) -> None:
+        try:
+            setter(text)
+        except Exception:
+            # A destroyed surface must not take the toast down with it.
+            logger.debug("Pre-connection command status target failed", exc_info=True)
+            self.unregister_pre_command_status(scope_id)
+
+    def _handle_pre_command_event(self, notice) -> bool:
+        """Show the running status, then alert if the command did not succeed.
+
+        Only failures raise a toast. A successful or coalesced run is a normal
+        part of connecting and interrupting for it would train people to
+        ignore the toast that matters.
+        """
+        from .api.models.pre_command import PreCommandPhase
+        from .gtk.pre_command_messages import (
+            format_pre_command_failure,
+            format_pre_command_running,
+            pre_command_is_failure,
+        )
+
+        window = self.window
+        if window is None or getattr(window, '_is_quitting', False):
+            return False
+        if getattr(notice, 'phase', None) is PreCommandPhase.RUNNING:
+            self._set_pre_command_status(
+                notice.scope_id, format_pre_command_running()
+            )
+            return False
+        # Finished, however it finished: the overlay line goes away either way.
+        self._set_pre_command_status(notice.scope_id, None)
+        try:
+            if not pre_command_is_failure(notice):
+                return False
+            message = format_pre_command_failure(
+                notice,
+                display_name=self._connection_display_name(notice.connection_id),
+            )
+        except ValueError:
+            logger.warning("Pre-connection command notice could not be presented")
+            return False
+        overlay = getattr(window, 'toast_overlay', None)
+        if overlay is None:
+            # No overlay means no window chrome yet; the daemon log still has
+            # the full trace, so say where to find it rather than nothing.
+            logger.warning("Pre-connection command failed; no toast surface")
+            return False
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(6)
+            overlay.add_toast(toast)
+        except Exception:
+            logger.warning("Unable to display the pre-connection command alert")
+        return False
+
+    def _connection_display_name(self, connection_id) -> str:
+        """Best-effort nickname for *connection_id*; '' when unknown."""
+        window = self.window
+        lookup = getattr(window, 'connection_manager', None) if window else None
+        getter = getattr(lookup, 'get_connection_by_id', None)
+        if not callable(getter):
+            return ''
+        try:
+            connection = getter(connection_id)
+        except Exception:
+            return ''
+        # ``display_name`` is the label the sidebar shows, but it is optional
+        # and stays empty when the user never set one; nickname is always
+        # present. Host is the last resort for a summary shaped differently.
+        for attribute in ('display_name', 'nickname', 'host'):
+            value = getattr(connection, attribute, '')
+            if isinstance(value, str) and value.strip():
+                return value
+        return ''
 
     def _handle_api_client_event(self, event_type) -> bool:
         from .api.events import EventType

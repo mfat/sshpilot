@@ -177,6 +177,26 @@ local `error.occurred` continuity notification where delivery remains possible.
 - **Coalescing / dropping:** One snapshot per committed mutation; a pure
   group or metadata change publishes only this event.
 
+<!-- api-event: connection.pre_command -->
+## `connection.pre_command`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.60.
+- **Trigger / payload:** The launcher's pre-connection command step, for every
+  launch kind plus the external-terminal launch; exact
+  `PreConnectionCommandNotice` payload. Connection and scope IDs are populated
+  (the scope id is the session, SFTP service, forward, transfer or operation
+  the launch belongs to, or the connection id for an external terminal).
+- **Related IDs/order/delivery:** A `running` notice is published before the
+  command starts and a `finished` notice after it ends, in that order, in the
+  shared daemon sequence. Both precede the launch's own lifecycle events,
+  because the step completes before the child is spawned.
+- **Coalescing / dropping:** A launch whose connection has no pre-connection
+  command publishes nothing. Repeats inside the coalescing window publish a
+  `finished` notice with reason `coalesced` and do not re-run the command.
+- **Contents:** Reason code, exit status and duration only. The command text
+  and its output never cross the wire: the command line can embed a token or a
+  password, and the wording is the frontend's.
+
 <!-- api-event: session.created -->
 ## `session.created`
 

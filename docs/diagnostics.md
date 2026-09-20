@@ -41,6 +41,32 @@ new daemon records are also forwarded into the frontend console/master stream
 using a `daemon.forwarded.*` logger namespace, while the Log Viewer continues
 to read `daemon.log` directly.
 
+## Tracing a pre-connection command
+
+A connection's **Pre-Connection Command** (a port knock or a VPN dial-up) is run
+by the daemon before every launch, so its trace is in `daemon.log` — and, under
+`--verbose`/`--diagnostics`, inline in the frontend master stream as
+`daemon.forwarded.*`. Every line carries `[connection=… session=…]`, so one
+connect reads as a sequence:
+
+```
+pre-connection command starting kind=terminal timeout_s=30 coalesce_s=5 [connection=… session=…]
+pre-connection command finished exit=0 duration_ms=412 stdout_bytes=0 stderr_bytes=0 kind=terminal
+```
+
+- `kind=` is the launch it belongs to: `terminal`, `sftp`, `forward`, `scp`,
+  `remote_command` or `copy_id`.
+- `reused age_ms=… window_s=…` means a recent run was coalesced rather than
+  repeated — opening three tabs at once knocks once.
+- `lock wait ms=…` means another launch to the same host was running it.
+- A non-zero exit, a timeout or a shell that could not start logs a WARNING
+  and raises a toast; the connection continues either way, so OpenSSH's own
+  error is still the primary signal.
+- **The command text and its output are DEBUG-only** (the command line may
+  carry a token or a password), so reproduce with `--diagnostics` when the
+  failure is in the command itself. A timeout kills the shell but not any
+  descendants it left running; the WARNING says so.
+
 ## Command-line flags
 
 By default the logs already capture **GTK/GLib warnings & criticals** (the

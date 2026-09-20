@@ -644,6 +644,7 @@ class RequestDispatcher:
         *,
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
+        pre_command_runner: Optional[Any] = None,
         ssh_overrides_service: Any = None,
         secrets_service: Any = None,
         identity_service: Any = None,
@@ -676,6 +677,11 @@ class RequestDispatcher:
         self._plugin_settings = plugin_settings
         self._command_input_waiter = command_input_waiter
         self._diagnostics_provider = diagnostics_provider
+        # Only the external-terminal route needs this here. Every in-app
+        # launch reaches the pre-connection command through SshLauncher;
+        # an external terminal is handed a bare argv and spawned by the
+        # frontend, so it never touches the launcher at all.
+        self._pre_command_runner = pre_command_runner
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
             if lifecycle_controller is not None
@@ -1392,13 +1398,42 @@ class RequestDispatcher:
         if type(connection_id) is not str or not connection_id.strip():
             raise ValueError("connection_id must be a non-empty string")
         typed_id = ConnectionId(connection_id)
-        return DeferredResult(
-            operation=lambda: external_terminal_launch_spec_to_wire(
+
+        def _prepare():
+            spec = external_terminal_launch_spec_to_wire(
                 self._connections.prepare_external_terminal_launch(typed_id)
-            ),
+            )
+            # After the spec is built, mirroring the in-app ordering: the
+            # knock or VPN dial-up authorises a short window, so it belongs as
+            # close to the spawn as possible. ``get_launch_command`` is
+            # deliberately *not* given this step -- it answers "what does this
+            # connection run" for the clipboard and must not dial anything.
+            self._run_pre_connection_command(typed_id)
+            return spec
+
+        return DeferredResult(
+            operation=_prepare,
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_id,
+        )
+
+    def _run_pre_connection_command(self, connection_id: ConnectionId) -> None:
+        """Run the pre-connection command for an external-terminal launch."""
+
+        runner = self._pre_command_runner
+        if runner is None:
+            return
+        from sshpilot.api.models.pre_command import PreCommandLaunchKind
+
+        # The external terminal runs the same ``ssh`` the in-app terminal
+        # would, so it reports as a terminal launch. Its scope is the
+        # connection: there is no session id, because the daemon never owns
+        # the child.
+        runner.run(
+            connection_id,
+            scope_id=str(connection_id),
+            kind=PreCommandLaunchKind.TERMINAL,
         )
 
     def _handle_get_launch_command(

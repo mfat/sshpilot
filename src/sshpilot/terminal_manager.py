@@ -10,35 +10,9 @@ from gi.repository import Gio, GLib, Adw, Gdk, Gtk
 from gettext import gettext as _
 
 from .dialog_focus import mark_default_response_visible
-from .terminal import TerminalWidget, run_pre_connection_command
+from .terminal import TerminalWidget
 
 logger = logging.getLogger(__name__)
-
-
-def _connection_pre_command(connection) -> str:
-    """Return the connection's pre-connection command, or '' when unset.
-
-    ``Connection`` is an ephemeral projection that promotes only a handful of
-    keys to attributes, so this value normally lives in ``.data``. The
-    attribute is still read first, for callers that build a connection-like
-    object of their own.
-    """
-    if connection is None:
-        return ""
-    try:
-        # Only a genuine string is ever returned: this value is handed to a
-        # shell, so anything else (a stub attribute, a stray object) must read
-        # as "unset" rather than be coerced into a command line.
-        value = getattr(connection, "pre_command", None)
-        if not isinstance(value, str) or not value.strip():
-            data = getattr(connection, "data", None)
-            value = data.get("pre_command") if isinstance(data, dict) else None
-        if not isinstance(value, str):
-            return ""
-        return value.strip()
-    except Exception:
-        logger.debug("Could not read pre_command", exc_info=True)
-        return ""
 
 
 class TerminalManager:
@@ -209,105 +183,6 @@ class TerminalManager:
         threading.Thread(target=_initial_check, daemon=True).start()
         return True
 
-    def _maybe_run_pre_command_then(self, connection, retry) -> bool:
-        """Run the connection's pre-connection command, then call ``retry``; return
-        True. Return False when there is nothing to run and nowhere to look it
-        up, so the caller proceeds inline.
-
-        Callers invoke this *after* any vault unlock and as late as possible
-        before the session opens: the typical command is a port knock
-        (fwknop) or a VPN dial-up that authorises a short access window, and
-        a modal unlock prompt sitting between the knock and the connect can
-        outlast it.
-
-        The GTK side holds a ``ConnectionSummary``, which carries display
-        fields only. ``pre_command`` is part of the editable config, so it
-        lives on ``ConnectionEditorDetails`` -- not on ``ConnectionDetails``,
-        which omits it. Unless the caller passed a projection that already has
-        the value (the CLI builds one), this fetches the editor snapshot
-        through the client bridge first. A failed lookup never blocks the
-        connection.
-        """
-        inline = _connection_pre_command(connection)
-        if inline:
-            self._run_pre_command(inline, retry)
-            return True
-
-        client = getattr(self.window, "client", None)
-        bridge = getattr(self.window, "client_bridge", None)
-        if client is None or bridge is None:
-            return False
-
-        try:
-            connection_id = connection_id_for(connection)
-        except Exception:
-            logger.debug("Could not resolve connection id", exc_info=True)
-            return False
-        if not connection_id:
-            return False
-
-        # A bridge may answer inline rather than on a later main-loop turn, in
-        # which case the whole resumed connect runs inside the submit() call
-        # below. Track that, so the except clause can tell "the lookup could
-        # not be started" from "the connection we resumed then failed" and
-        # never swallow the latter -- doing so would both lose the real error
-        # and have the caller start the connection a second time.
-        resumed = [False]
-
-        def _on_details(details):
-            resumed[0] = True
-            command = getattr(details, "pre_command", "") or ""
-            command = command.strip() if isinstance(command, str) else ""
-            if command:
-                self._run_pre_command(command, retry)
-            else:
-                retry()
-
-        def _on_error(error):
-            # The command is an optional pre-step; a details lookup that fails
-            # must not strand an otherwise valid connection.
-            resumed[0] = True
-            logger.warning("Could not read pre-connection command: %s", error)
-            retry()
-
-        try:
-            bridge.submit(
-                lambda: client.get_connection_editor(connection_id),
-                on_success=_on_details,
-                on_error=_on_error,
-            )
-        except Exception as exc:
-            if resumed[0]:
-                raise
-            logger.warning("Could not request pre-connection command: %s", exc)
-            return False
-        return True
-
-    def _run_pre_command(self, pre_cmd: str, retry) -> None:
-        """Execute *pre_cmd* off the main thread, then resume via ``retry``.
-
-        Execution itself lives in ``terminal`` -- the frontend module that is
-        allowed to own a local process (see
-        tests/architecture/test_frontend_closure.py) and where this feature ran
-        before the daemon-backed refactor dropped it.
-
-        Off the main thread because the command may block for its full timeout,
-        which on the GTK loop would freeze the UI that long.
-        """
-
-        def _run():
-            try:
-                run_pre_connection_command(pre_cmd)
-            except Exception as exc:
-                # Defensive: the helper already swallows a failing command, but
-                # a connection must never be stranded by this optional
-                # pre-step, so the resume is guaranteed either way.
-                logger.warning("Pre-connection command handling failed: %s", exc)
-            finally:
-                GLib.idle_add(lambda: (retry(), False)[1])
-
-        threading.Thread(target=_run, daemon=True).start()
-
     def connect_to_host(
         self,
         connection,
@@ -392,8 +267,6 @@ class TerminalManager:
             lambda: self._open_external_ssh(connection, _secret_unlock_attempted=True)
         ):
             return
-        if self._maybe_run_pre_command_then(connection, _launch):
-            return
         _launch()
 
     def _open_daemon_ssh(
@@ -406,7 +279,6 @@ class TerminalManager:
         pty_prompt: Optional[str] = None,
         pty_response: Optional[str] = None,
         _secret_unlock_attempted: bool = False,
-        _pre_command_ran: bool = False,
     ):
         """Daemon-owned SSH — no native_connect, VTE SSH spawn, or local askpass.
 
@@ -440,7 +312,6 @@ class TerminalManager:
                 pty_prompt=pty_prompt,
                 pty_response=pty_response,
                 _secret_unlock_attempted=True,
-                _pre_command_ran=_pre_command_ran,
             )
         ):
             return
@@ -456,23 +327,6 @@ class TerminalManager:
                 window,
                 daemon_readiness_user_message(readiness),
             )
-            return
-
-        # Runs after the unlock above and immediately before the session opens,
-        # so a knock/VPN step cannot expire behind a modal prompt.
-        if not _pre_command_ran and self._maybe_run_pre_command_then(
-            connection,
-            lambda: self._open_daemon_ssh(
-                connection,
-                remote_command=remote_command,
-                tab_title=tab_title,
-                force_tty=force_tty,
-                pty_prompt=pty_prompt,
-                pty_response=pty_response,
-                _secret_unlock_attempted=True,
-                _pre_command_ran=True,
-            ),
-        ):
             return
 
         terminal, _page = self._create_internal_terminal_tab(
@@ -794,17 +648,10 @@ class TerminalManager:
                     # A locked session-backed vault has no stored credential for
                     # the daemon to hand off; unlock it first the same way a
                     # fresh connect does (see _maybe_unlock_secrets_then).
-                    def _pane_pre_command_then_start():
-                        if self._maybe_run_pre_command_then(
-                            connection, _start_pane_session
-                        ):
-                            return
-                        _start_pane_session()
-
                     if not self._maybe_unlock_secrets_then(
-                        _pane_pre_command_then_start
+                        _start_pane_session
                     ):
-                        _pane_pre_command_then_start()
+                        _start_pane_session()
                     return
 
             except Exception as exc:
@@ -1817,19 +1664,12 @@ class TerminalManager:
                     True, _('Reconnect failed to start')
                 )
 
-        # A reconnect re-opens the SSH session, so it needs the pre-connection
-        # command as much as the first connect: a knock-gated host refuses the
-        # reconnect outright once the earlier access window has closed.
-        connection = getattr(terminal, "connection", None)
-
-        def _retry():
-            if self._maybe_run_pre_command_then(connection, _do_reconnect):
-                return
-            _do_reconnect()
-
-        if self._maybe_unlock_secrets_then(_retry):
-            return True
-        if self._maybe_run_pre_command_then(connection, _do_reconnect):
+        # A reconnect re-opens the SSH session, so it re-runs the
+        # pre-connection command as much as the first connect does: a
+        # knock-gated host refuses the reconnect outright once the earlier
+        # access window has closed. That now happens daemon-side, inside the
+        # launch the reconnect starts.
+        if self._maybe_unlock_secrets_then(_do_reconnect):
             return True
         return self.reconnect_terminal(terminal)
 

@@ -73,6 +73,13 @@ migration. Every phase of the implementation references it by row number.
 | 22 | `local_command_row` | `local_command` | `local_command` | `PermitLocalCommand yes` + `LocalCommand <value>` | Both emitted when non-empty | `config.get('localcommand')` | config | **Yes** |
 | 23 | `remote_command_row` | `remote_command` | `remote_command` | `RemoteCommand <value>`; `RequestTTY <token>` only when explicitly selected/authored | Preserved exactly as entered | `config.get('remotecommand')` + `config.get('requesttty')` | config | **Yes** |
 
+Row 21 is executed by the daemon, not by the frontend. `SshLauncher` runs it
+for every launch kind (`_POLICIES[...].pre_connection_command`) plus the
+external-terminal launch, serialized and coalesced per connection by
+`sshpilot.daemon.pre_connection_command`. It never fails a launch; outcomes
+travel to the user as `connection.pre_command` events. Rows 22 and 23 remain
+plain OpenSSH directives and are not executed by SSH Pilot at all.
+
 ## Advanced
 
 | # | Widget | data key | Conn attr | SSH directive | Formatter | Parser | Domain | Guarded |

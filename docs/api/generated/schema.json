@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.59",
+  "api_implementation_version": "0.60",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1370,6 +1370,7 @@
       "connection.updated",
       "connection.deleted",
       "connection_store.changed",
+      "connection.pre_command",
       "session.created",
       "session.state_changed",
       "session.output",

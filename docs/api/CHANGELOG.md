@@ -16,7 +16,30 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.59 (current)
+## API 0.60 (current)
+
+### API 0.60 Pre-connection command notices
+
+- The connection's pre-connection command (`pre_command`, stored as the
+  `# sshpilot:PreCommand` config comment) is now executed by the daemon
+  launcher rather than by the GTK frontend, and it runs for every launch kind
+  — terminal, SFTP, forward, SCP, remote command and `ssh-copy-id` — plus the
+  external-terminal launch. Previously only in-app terminal tabs ran it, so a
+  knock-gated host refused every other path.
+- New event `connection.pre_command` (`EventType.PRE_CONNECTION_COMMAND`)
+  carrying `PreConnectionCommandNotice`, with new enums
+  `PreCommandLaunchKind`, `PreCommandPhase` and `PreCommandReason`. The notice
+  carries a stable reason code, an exit status and a duration — never the
+  command text, its output, or a rendered sentence. Frontends show the running
+  phase inline and alert on a finished phase whose reason is not `ok`.
+- The step never fails a launch, so no existing failure vocabulary changed:
+  `SessionFailure`, `SftpFailureCode`, `ScpFailureCode` and
+  `IdentityFailureCode` are untouched, and no `ErrorCode` was added.
+- Bumped `API_IMPLEMENTATION_VERSION` because the event inventory and the
+  model surface grew. `PROTOCOL_VERSION` stays `1.0`: the framing, the
+  envelope shapes and every existing method are unchanged.
+
+## API 0.59
 
 ### API 0.59 Public keys from online identities
 

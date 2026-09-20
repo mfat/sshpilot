@@ -224,6 +224,30 @@ class ConnectionApplicationService:
             )
         return result
 
+    def get_pre_connection_command(self, connection_id: ConnectionId) -> str:
+        """Return the connection's pre-connection command, or ``''``.
+
+        Daemon-internal: the launcher runs this command locally before every
+        launch (see :mod:`sshpilot.daemon.pre_connection_command`), and it is
+        the only caller. It is deliberately not a client method -- the value
+        already reaches the editor through
+        :meth:`get_connection_editor`, and a frontend has no reason to read
+        it now that execution lives behind the launcher.
+
+        Narrower than building a whole ``ConnectionEditorDetails`` for one
+        string, and it never raises for an unknown connection: a launch whose
+        connection vanished mid-flight has a real error of its own coming,
+        and an optional pre-step must not pre-empt it.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        record = self._repository.get_editor_record(connection_id)
+        if record is None:
+            return ""
+        data = record.data or {}
+        value = data.get("pre_command")
+        return value.strip() if isinstance(value, str) else ""
+
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId
     ) -> ExternalTerminalLaunchSpec:
