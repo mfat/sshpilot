@@ -104,6 +104,21 @@ if [ -d "dist/SSHPilot.app" ]; then
         echo "⚠️  sshpass not found in PATH; bundle will require system sshpass"
     fi
 
+    # Close the dylib dependency graph before signing. PyInstaller rewrites a
+    # dependency it could not resolve at analysis time to @rpath/... anyway and
+    # ships the bundle regardless, which is how libadwaita went out referencing
+    # a libappstream.5.dylib that was never copied: GTK then failed to load and
+    # the app died at launch with "could not create new GType ... (subclass of
+    # void)" (GH #1266). Copy in whatever is missing, repoint build-machine
+    # paths at the bundle, and fail the build if anything is still unresolved.
+    echo "🔗 Verifying bundled libraries resolve inside the app..."
+    if ! python packaging/pyinstaller/dylib_closure.py "dist/SSHPilot.app"; then
+        echo "❌ Bundle has unresolved dynamic library dependencies — it would"
+        echo "   crash on launch. Install the missing Homebrew formula in the"
+        echo "   build environment (see the list above) and rebuild."
+        exit 1
+    fi
+
     # Ad-hoc sign LAST — after sshpass + the GtkSourceView symlink — so the
     # signature seals the final bundle. Signing earlier (e.g. in the spec) then
     # modifying the bundle yields an inconsistent signature and the dreaded

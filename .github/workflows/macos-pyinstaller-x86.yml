@@ -25,16 +25,47 @@ jobs:
           fetch-depth: 0
 
       - name: Install Homebrew dependencies
+        env:
+          # macos-15-intel is Homebrew Tier 3, and homebrew-core stopped
+          # publishing Intel macOS bottles for the GTK stack: gtk4 4.24.0,
+          # libadwaita 1.10.0, vte3 0.84.1_2, glib 2.90.0, pygobject3 3.58.0,
+          # appstream 1.2.0 and more ship arm64 bottles only. Building them from
+          # source drags in vala -> graphviz -> librsvg -> rust -> llvm@22 and
+          # gts -> netpbm (an SVN checkout from SourceForge), which runs past
+          # the job timeout or fails outright. So the Intel build installs from
+          # a frozen homebrew-core commit whose whole dependency closure still
+          # has Intel bottles; nothing is compiled. Intel therefore stays on
+          # GTK 4.22 / libadwaita 1.9 (which also avoids the GTK 4.24.0 arrow
+          # key regression, GH #1266).
+          # To move the snapshot, check every formula in the runtime closure
+          # of the install list below still has a sonoma/sequoia/tahoe (or
+          # "all") bottle at the new commit.
+          HOMEBREW_CORE_SNAPSHOT: 4851c1f19466880a685aafb3241e4b20328a0c72
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_UPGRADE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: |
-          brew update
+          set -euo pipefail
+
+          # Put homebrew/core at the snapshot. A shallow fetch of the one
+          # commit is enough: with the API disabled and auto-update off, brew
+          # reads formulae straight from this checkout.
+          CORE="$(brew --repository)/Library/Taps/homebrew/homebrew-core"
+          rm -rf "$CORE"
+          mkdir -p "$CORE"
+          git -C "$CORE" init -q
+          git -C "$CORE" remote add origin https://github.com/Homebrew/homebrew-core
+          git -C "$CORE" fetch -q --depth 1 origin "$HOMEBREW_CORE_SNAPSHOT"
+          git -C "$CORE" checkout -q FETCH_HEAD
+          echo "homebrew/core pinned at $(git -C "$CORE" rev-parse HEAD)"
+          brew info gtk4 libadwaita vte3 pygobject3 | grep -E '^==> [a-z0-9@-]+: stable' || true
 
           # Homebrew returns 1 when ANY formula's post-install step fails, even
-          # though every formula installed fine. On Intel that now bites us:
-          # formulae without an Intel bottle get built from source as
-          # dependencies, and openssl@3 3.6.4's post-install (symlinking the
-          # ca-certificates bundle into etc/openssl@3) fails on this runner.
-          # Treat "installed, but a post-install step failed" as a warning and
-          # keep going; a formula that genuinely did not install still fails.
+          # though every formula installed fine (openssl@3's CA bundle symlink
+          # has done this on this runner). Treat "installed, but a post-install
+          # step failed" as a warning; a formula that did not install still
+          # fails.
           brew_install() {
             local args=("$@") formulae=() f log
             for f in "${args[@]}"; do
@@ -61,12 +92,12 @@ jobs:
             done
             echo "All requested formulae are installed; continuing."
           }
-          
+
           # Forcefully unlink any conflicting brew versions
           for v in 3.14 3.13 3.12 3.11 3.10; do
             brew unlink python@$v 2>/dev/null || true
           done
-          
+
           # Remove conflicting non-brew macOS Python framework symlinks
           sudo rm -f /usr/local/bin/idle3.13 \
                      /usr/local/bin/pip3.13 \
@@ -74,68 +105,15 @@ jobs:
                      /usr/local/bin/python3.13 \
                      /usr/local/bin/python3.13-config
 
-          # macos-15-intel is Homebrew Tier 3: a formula may ship no Intel
-          # macOS bottle at all (arm64 macOS + Linux only), and brew will NOT
-          # fall back to source on its own there -- it hard-fails with
-          # "<formula>: no bottle available!". Two formulae in this dependency
-          # closure are currently affected and must be built explicitly:
-          #
-          #   appstream  (1.2.0+)  pulled in by libadwaita
-          #   pygobject3 (3.58+)   a direct dependency of the app
-          #
-          # appstream has to be built BEFORE the bulk install below, because
-          # resolving libadwaita is what drags it in. Other formulae in the
-          # closure that lost their Intel bottle (openssl@3 3.6.4, pcre2 10.48)
-          # do get built from source on their own when pulled in as
-          # dependencies -- slow, but it works; these two are the ones brew
-          # refuses outright when asked for directly.
-          # Re-check with `brew info --json=v2 <formula>` when a new one breaks:
-          # the tell is a bottle list with arm64_* and x86_64_linux but no
-          # plain sequoia/sonoma tag.
-          # appstream's build closure reaches llvm@22 (vala -> graphviz ->
-          # librsvg -> rust -> llvm@22). The current llvm@22 rebuild ships no
-          # Intel bottle, so brew compiles LLVM from source -- hours, past the
-          # job timeout, and it trips over upstream patch checksums. ghcr
-          # still holds the Intel bottle an earlier rebuild of the same
-          # version published; pour that so only rust builds from source.
-          # Falls through to brew's normal resolution when it is not there.
-          pour_earlier_intel_bottle() {
-            local formula="$1" repo version token digest file
-            repo="homebrew/core/$(echo "$formula" | tr '@' '/')"
-            version="$(brew info --json=v2 "$formula" | python3 -c 'import json,sys; f=json.load(sys.stdin)["formulae"][0]; r=f["revision"]; print(f["versions"]["stable"] + (f"_{r}" if r else ""))')"
-            token="$(curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')" || return 0
-            digest="$(curl -fsSL -H "Authorization: Bearer $token" \
-                -H "Accept: application/vnd.oci.image.index.v1+json" \
-                "https://ghcr.io/v2/${repo}/manifests/${version}" \
-              | python3 -c 'import json,sys
-          for m in json.load(sys.stdin).get("manifests", []):
-              a = m.get("annotations", {})
-              if a.get("org.opencontainers.image.ref.name", "").rsplit(".", 1)[-1] in ("sequoia", "sonoma"):
-                  print(a["sh.brew.bottle.digest"]); break')" || return 0
-            if [ -z "$digest" ]; then
-              echo "::warning::no earlier Intel bottle for $formula $version on ghcr"
-              return 0
-            fi
-            file="$RUNNER_TEMP/${formula}--${version}.sonoma.bottle.tar.gz"
-            curl -fsSL -H "Authorization: Bearer $token" -o "$file" \
-              "https://ghcr.io/v2/${repo}/blobs/sha256:${digest}" || return 0
-            echo "${digest}  ${file}" | shasum -a 256 -c - || return 0
-            brew install --ignore-dependencies "$file" \
-              || echo "::warning::pouring the earlier $formula bottle failed"
-          }
-          pour_earlier_intel_bottle llvm@22
-
-          brew_install --overwrite --build-from-source appstream
-
-          # Install with overwrite flag to prevent linking errors.
-          brew_install --overwrite python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
-            adwaita-icon-theme gobject-introspection py3cairo \
-            create-dmg sshpass
-
-          brew_install --overwrite --build-from-source pygobject3
+          # --force-bottle: fail loudly instead of silently compiling if the
+          # snapshot ever lacks an Intel bottle for something.
+          brew_install --overwrite --force-bottle python@3.13 gtk4 libadwaita vte3 \
+            gtksourceview5 adwaita-icon-theme gobject-introspection py3cairo \
+            pygobject3 create-dmg sshpass
           brew unlink python@3.14 2>/dev/null || true
           brew link --overwrite --force python@3.13
           brew link --overwrite libadwaita
+          brew list --versions gtk4 libadwaita vte3 gtksourceview5 glib pygobject3
 
           PYTHON_PATH="$(brew --prefix python@3.13)/bin/python3.13"
           "$PYTHON_PATH" -c "import gi; print('PyGObject', gi.__version__)"

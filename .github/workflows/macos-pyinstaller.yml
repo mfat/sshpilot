@@ -5,6 +5,13 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      homebrew_core_snapshot:
+        description: >-
+          homebrew-core commit to build against. Defaults to the pinned
+          snapshot; pass another commit to test a different toolkit.
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -22,31 +29,52 @@ jobs:
           fetch-depth: 0
 
       - name: Install Homebrew dependencies
+        env:
+          # The bundle ships whatever Homebrew has on build day unless this is
+          # pinned, so a toolkit regression can land with no change here: GTK
+          # 4.24.0 drops every Fn-flagged macOS key event -- the arrow keys,
+          # Home/End, PgUp/PgDn and the F-keys (GH #1266). This snapshot is the
+          # last homebrew-core tree before that bump (gtk4 4.22.4, libadwaita
+          # 1.9.3), and it is the same commit the Intel build uses, so both
+          # architectures ship an identical stack. Move it deliberately: bump
+          # the commit, build, and check the keyboard on a real Mac.
+          HOMEBREW_CORE_SNAPSHOT: ${{ inputs.homebrew_core_snapshot || '4851c1f19466880a685aafb3241e4b20328a0c72' }}
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_UPGRADE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          HOMEBREW_NO_BOTTLE_SOURCE_FALLBACK: 1
         run: |
-          echo "=== DEBUG: Starting Homebrew dependency installation ==="
-          brew update
-          echo "=== DEBUG: Installing packages ==="
-          brew install python@3.13 gtk4 libadwaita vte3 gtksourceview5 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
-          # Note: webkitgtk is Linux-only (not available on macOS via Homebrew)
-          # PyXterm.js backend will not be available on macOS builds
-          echo "=== DEBUG: Linking libadwaita ==="
+          set -euo pipefail
+
+          # Put homebrew/core at the snapshot. A shallow fetch of the one
+          # commit is enough: with the API disabled and auto-update off, brew
+          # reads formulae straight from this checkout.
+          CORE="$(brew --repository)/Library/Taps/homebrew/homebrew-core"
+          rm -rf "$CORE"
+          mkdir -p "$CORE"
+          git -C "$CORE" init -q
+          git -C "$CORE" remote add origin https://github.com/Homebrew/homebrew-core
+          git -C "$CORE" fetch -q --depth 1 origin "$HOMEBREW_CORE_SNAPSHOT"
+          git -C "$CORE" checkout -q FETCH_HEAD
+          echo "homebrew/core pinned at $(git -C "$CORE" rev-parse HEAD)"
+
+          # --force-bottle: fail loudly instead of silently compiling if the
+          # snapshot ever lacks a bottle for this runner.
+          brew install --overwrite --force-bottle python@3.13 gtk4 libadwaita \
+            vte3 gtksourceview5 adwaita-icon-theme gobject-introspection \
+            pygobject3 py3cairo create-dmg sshpass
           brew link --overwrite libadwaita
-          echo "=== DEBUG: Verifying installations ==="
-          brew list --formula | grep -E "(python@3.13|gtk4|libadwaita|vte3|gtksourceview5|gobject-introspection|pygobject3|py3cairo)"
-          echo "=== DEBUG: Verifying gtksourceview5 installation ==="
-          if brew list gtksourceview5 &> /dev/null; then
-            echo "=== DEBUG: gtksourceview5 is installed ==="
-            echo "=== DEBUG: gtksourceview5 library location ==="
-            ls -la "$(brew --prefix)/lib/libgtksourceview-5"* || echo "=== DEBUG: Library files not found ==="
-            echo "=== DEBUG: gtksourceview5 share data location ==="
-            ls -la "$(brew --prefix)/share/gtksourceview-5" 2>/dev/null || echo "=== DEBUG: Share data not in standard location, checking Cellar ==="
-            if [ -d "$(brew --prefix)/Cellar/gtksourceview5" ]; then
-              find "$(brew --prefix)/Cellar/gtksourceview5" -name "gtksourceview-5" -type d | head -1 | xargs ls -la 2>/dev/null || echo "=== DEBUG: Share data not found in Cellar ==="
-            fi
-          else
-            echo "=== DEBUG: WARNING - gtksourceview5 not found in brew list ==="
-          fi
-          echo "=== DEBUG: Homebrew installation completed ==="
+
+          # Shipped next to the DMG so a later "which toolkit was this built
+          # with?" is a file lookup, not a CI-log dig.
+          {
+            echo "runner=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "homebrew_core_snapshot=$(git -C "$CORE" rev-parse HEAD)"
+            brew list --versions
+          } > build-env.txt
+          echo "=== Toolkit versions ==="
+          brew list --versions gtk4 libadwaita vte3 gtksourceview5 glib pygobject3
 
       - name: Prepare Homebrew virtual environment
         run: |
@@ -222,7 +250,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-dmg
-          path: dist/${{ steps.artifact-info.outputs.dmg }}
+          path: |
+            dist/${{ steps.artifact-info.outputs.dmg }}
+            build-env.txt
         continue-on-error: true
 
       - name: Upload app bundle artifact

@@ -35,6 +35,12 @@ hb_gir = f"{hb_lib}/girepository-1.0"
 # Keep list tight; expand if otool shows missing libs
 gtk_libs_patterns = [
     "libadwaita-1.*.dylib",
+    # libadwaita links libappstream, and some Homebrew bottles name it
+    # "@rpath/libappstream.5.dylib" — a form PyInstaller's analysis cannot
+    # always resolve, so it rewrote the reference without collecting the
+    # library and the app died at launch (GH #1266). Collect it outright;
+    # dylib_closure.py catches whatever this list still misses.
+    "libappstream.*.dylib",
     "libgtk-4.*.dylib",
     "libgdk-4.*.dylib",
     "libgdk_pixbuf-2.0.*.dylib",
