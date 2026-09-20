@@ -20,6 +20,7 @@ from .connection_display import (
 )
 from .platform_utils import is_flatpak
 from .shortcut_utils import install_esc_to_close
+from .window_dialogs import install_toast_overlay
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.scp_failure_messages import format_scp_failure
 from .file_manager.format_utils import safe_display_text
@@ -182,6 +183,10 @@ class ScpDownloadWindow(Adw.Window):
         super().__init__()
         self.set_transient_for(parent)
         install_esc_to_close(self)
+        # Browsing the remote host starts a launch, so a pre-connection
+        # command can run while this window is in front. Give it somewhere to
+        # say so, instead of alerting on the main window behind it.
+        install_toast_overlay(self)
         self.window_title.set_subtitle(subtitle)
 
     @Gtk.Template.Callback()

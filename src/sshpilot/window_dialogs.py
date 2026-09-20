@@ -278,6 +278,35 @@ def associate_window_with_parent_application(window, parent) -> None:
         pass
 
 
+def install_toast_overlay(window) -> None:
+    """Give *window* a ``toast_overlay``, wrapping whatever content it has.
+
+    A secondary window that can start a launch -- the SCP picker, the
+    copy-key window -- needs somewhere to show a message the daemon sends
+    while that launch runs. Without one, an alert routed to it by
+    :func:`resolve_topmost_prompt_parent` has to fall back to the main window,
+    which is behind it.
+
+    Done here rather than in each ``.ui`` template because it is the same six
+    lines every time and the templates are shared with other callers. Safe to
+    call on a window that already has an overlay, and a failure leaves the
+    window exactly as it was -- a missing toast surface must never stop a
+    window from opening.
+    """
+    if getattr(window, "toast_overlay", None) is not None:
+        return
+    try:
+        content = window.get_content()
+        if content is None:
+            return
+        overlay = Adw.ToastOverlay()
+        window.set_content(overlay)
+        overlay.set_child(content)
+        window.toast_overlay = overlay
+    except Exception as exc:
+        logger.debug("Could not install a toast overlay: %s", exc)
+
+
 def present_for_modal_dialog(window: Gtk.Window) -> None:
     """Raise *window* before showing a modal child so it stacks on top (Wayland).
 

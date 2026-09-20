@@ -126,3 +126,89 @@ def test_associate_handles_none_parent():
     window = _RegisteringFakeWin()
     associate_window_with_parent_application(window, parent=None)
     assert window._application is None
+
+
+# --- install_toast_overlay ---------------------------------------------------
+#
+# A secondary window that can start a launch needs somewhere to show a message
+# the daemon sends while that launch runs. Without one, an alert routed to it
+# falls back to the main window -- which is behind it, where nobody looks.
+
+
+class FakeOverlay:
+    def __init__(self):
+        self.child = None
+
+    def set_child(self, child):
+        self.child = child
+
+
+class FakeContentWindow:
+    def __init__(self, content="content"):
+        self._content = content
+        self.toast_overlay = None
+
+    def get_content(self):
+        return self._content
+
+    def set_content(self, content):
+        self._content = content
+
+
+def test_the_window_gets_an_overlay_wrapping_its_existing_content(monkeypatch):
+    from sshpilot import window_dialogs
+
+    overlay = FakeOverlay()
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", lambda: overlay)
+    window = FakeContentWindow("original")
+
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is overlay
+    assert overlay.child == "original", "the window's content must be kept"
+    assert window._content is overlay
+
+
+def test_installing_twice_keeps_the_first_overlay(monkeypatch):
+    """Re-running must not nest overlays or orphan the window's content."""
+
+    from sshpilot import window_dialogs
+
+    first = FakeOverlay()
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", lambda: first)
+    window = FakeContentWindow("original")
+    window_dialogs.install_toast_overlay(window)
+
+    second = FakeOverlay()
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", lambda: second)
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is first
+    assert second.child is None
+
+
+def test_a_window_with_no_content_is_left_alone():
+    from sshpilot import window_dialogs
+
+    window = FakeContentWindow(None)
+
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is None
+
+
+def test_a_failure_leaves_the_window_openable(monkeypatch):
+    """A missing toast surface must never stop a window from opening."""
+
+    from sshpilot import window_dialogs
+
+    def _explode():
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", _explode)
+    window = FakeContentWindow("original")
+
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is None
+    assert window._content == "original"

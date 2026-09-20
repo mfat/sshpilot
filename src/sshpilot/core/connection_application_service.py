@@ -224,6 +224,44 @@ class ConnectionApplicationService:
             )
         return result
 
+    def attach_pre_command_runner(self, runner: Any) -> None:
+        """Inject the launcher's pre-connection command runner after startup.
+
+        Five places build an :class:`~sshpilot.daemon.ssh_launch.SshLauncher`
+        -- sessions, SCP, ``ssh-copy-id``, one-shot remote commands and
+        privileged file reads -- and each is constructed by a different
+        service. Threading a runner through four constructors would put the
+        same wiring in four places and guarantee that the fifth one added
+        later forgets it, which is precisely how this feature shipped broken
+        the first time.
+
+        Instead it hangs off the one object every launcher already holds: the
+        launch provider. There is exactly one runner per daemon, which is also
+        a requirement rather than a convenience -- serialization and
+        coalescing are worthless if each service keeps its own state.
+
+        Two objects answer to "the launch provider" and the launchers are
+        split between them: sessions pass *this* service, while SCP,
+        ``ssh-copy-id``, broadcast and privileged reads pass the inner
+        :class:`DaemonConnectionLaunchProvider` they were handed separately.
+        Both carry the runner, so a launcher needs one lookup and does not
+        have to know which kind of provider it was built with.
+        """
+        self._pre_command_runner = runner
+        inner = getattr(self, "_launch_provider", None)
+        if inner is not None:
+            try:
+                inner.pre_command_runner = runner
+            except Exception:
+                logger.debug(
+                    "Launch provider cannot carry the pre-command runner",
+                    exc_info=True,
+                )
+
+    @property
+    def pre_command_runner(self) -> Any:
+        return getattr(self, "_pre_command_runner", None)
+
     def get_pre_connection_command(self, connection_id: ConnectionId) -> str:
         """Return the connection's pre-connection command, or ``''``.
 

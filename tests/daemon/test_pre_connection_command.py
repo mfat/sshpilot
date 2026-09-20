@@ -210,6 +210,57 @@ def test_operation_launches_run_it_once_with_their_own_kind(intent, expected):
     assert runner.calls == [(ConnectionId("demo"), "op-1", expected)]
 
 
+class ProviderWithRunner(RecordingProvider):
+    """A launch provider carrying the daemon's one runner.
+
+    This is how production wires it: the runner hangs off the provider, so a
+    launcher built with nothing but ``(provider, broker)`` still finds it.
+    """
+
+    def __init__(self, runner):
+        self.pre_command_runner = runner
+
+
+def test_a_launcher_built_without_a_runner_finds_the_provider_s():
+    """The wiring that four services depend on.
+
+    ``identity_service``, ``native_scp_backend``, ``broadcast_service`` and
+    ``privileged_file_service`` each build ``SshLauncher(provider, broker)``
+    with no runner argument, so ssh-copy-id, SCP, Host Info/broadcast and
+    privileged file reads all resolve it this way. When the runner was passed
+    only to the session launcher, every one of those kinds silently skipped
+    the pre-connection command -- half the bug this feature exists to fix,
+    shipped looking fixed.
+    """
+
+    runner = RecordingRunner()
+    launcher = SshLauncher(ProviderWithRunner(runner), RecordingBroker())
+
+    with launcher.open(scope_id=SessionId("op-1"), connection_id=ConnectionId("demo")) as scope:
+        scope.prepare(CopyIdLaunch(public_key_path="/tmp/id.pub"))
+
+    assert runner.calls == [
+        (ConnectionId("demo"), "op-1", PreCommandLaunchKind.COPY_ID)
+    ]
+
+
+def test_an_explicit_runner_wins_over_the_provider_s():
+    """The injection seam stays usable, and unambiguous."""
+
+    explicit = RecordingRunner()
+    from_provider = RecordingRunner()
+    launcher = SshLauncher(
+        ProviderWithRunner(from_provider),
+        RecordingBroker(),
+        pre_command_runner=explicit,
+    )
+
+    launcher.prepare_session(Spec(), TerminalLaunch())
+
+    assert len(explicit.calls) == 1
+    assert from_provider.calls == []
+
+
 def test_it_runs_after_brokering_not_before():
     """Unlock first, knock second.
 

@@ -658,9 +658,9 @@ class SshLauncher:
         self._provider = launch_provider
         self._broker = interaction_broker
         self._readiness = readiness_manager
-        # Injected rather than constructed here: a launcher is built per call
-        # (see ``DaemonServer._session_launcher``), and the runner's coalescing
-        # state has to outlive one launch to be worth anything.
+        # Usually None: the daemon hangs the one runner off the launch
+        # provider instead, so every launcher finds it without each service
+        # passing it along. This parameter is the injection seam for tests.
         self._pre_command = pre_command_runner
         self._popen = popen
 
@@ -783,7 +783,15 @@ class SshLauncher:
         SSH's own error tells the user far more than a pre-step veto.
         """
 
-        if not policy.pre_connection_command or self._pre_command is None:
+        if not policy.pre_connection_command:
+            return
+        # Injected for tests; in the daemon it rides the launch provider, so
+        # every launcher finds the one runner without four services having to
+        # pass it along. See ConnectionApplicationService.attach_pre_command_runner.
+        runner = self._pre_command
+        if runner is None:
+            runner = getattr(self._provider, "pre_command_runner", None)
+        if runner is None:
             return
         if connection_id is None or scope_id is None:
             return
@@ -796,7 +804,7 @@ class SshLauncher:
             # the user, so it does not get the step either.
             logger.debug("launch kind has no pre-connection command identity")
             return
-        self._pre_command.run(connection_id, scope_id=str(scope_id), kind=kind)
+        runner.run(connection_id, scope_id=str(scope_id), kind=kind)
 
     def _session_builder(
         self, intent: "LaunchIntent", policy: _KindPolicy

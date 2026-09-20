@@ -12,6 +12,10 @@ from .connection_display import (
     get_connection_host as _get_connection_host,
 )
 from .shortcut_utils import install_esc_to_close
+from .window_dialogs import (
+    associate_window_with_parent_application,
+    install_toast_overlay,
+)
 from .i18n import N_
 
 logger = logging.getLogger(__name__)
@@ -81,6 +85,14 @@ class SshCopyIdWindow(Adw.Window):
         super().__init__()
         self.set_transient_for(parent)
         install_esc_to_close(self)
+        # A bare Adw.Window is absent from Gtk.Application.get_windows() until
+        # it is associated, and a window the app cannot see is a window no
+        # routed message can be aimed at. Done here rather than at the four
+        # call sites that build this window.
+        associate_window_with_parent_application(self, parent)
+        # Deploying a key starts a launch, so a pre-connection command can run
+        # while this window is in front.
+        install_toast_overlay(self)
 
         self._parent = parent
         self._conn = connection

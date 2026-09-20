@@ -808,6 +808,17 @@ class DaemonServer:
                     )
                 )
             self._pre_command_runner = self._build_pre_command_runner()
+            if self._pre_command_runner is not None:
+                # Hang it off the launch provider, which every one of the
+                # five SshLauncher call sites already holds -- sessions,
+                # SCP, ssh-copy-id, one-shot remote commands and
+                # privileged file reads. Passing it to each service
+                # instead would leave the next one to forget it.
+                attach = getattr(
+                    self._connection_service, "attach_pre_command_runner", None
+                )
+                if callable(attach):
+                    attach(self._pre_command_runner)
             self._dispatcher = RequestDispatcher(
                 self._connection_service,
                 self._session_runtime,
@@ -960,10 +971,6 @@ class DaemonServer:
             self._connection_service,
             self._interaction_broker,
             readiness_manager=self._readiness_manager,
-            # Read defensively: a launcher can be built before startup has
-            # wired the runner, and the launch itself must not depend on an
-            # optional pre-step existing.
-            pre_command_runner=getattr(self, "_pre_command_runner", None),
         )
 
     def _prepare_session_launch(self, spec: Any, launch_builder: Any = None) -> tuple:
