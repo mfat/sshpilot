@@ -28,6 +28,8 @@ def _recent_page(hide):
         ),
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
         _min_section=lambda title, rows: (title, rows),
+        # Masking is what is under test; the Dashboard gate has its own tests.
+        _dashboard_callback=lambda connection: None,
         _connect_connection_summary=lambda connection_summary: None,
     )
 
@@ -51,6 +53,7 @@ def _pinned_page(hide):
         _conn_target=WelcomePage._conn_target,
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
         _min_section=lambda title, rows: (title, rows),
+        _dashboard_callback=lambda connection: None,
         _attach_pinned_context_menu=lambda row, conn_: None,
     )
 

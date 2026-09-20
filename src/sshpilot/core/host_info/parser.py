@@ -46,6 +46,7 @@ from ...api.models.host_info import (
     SocketDirection,
     TemperatureReading,
 )
+from . import bsd
 from .probe import SECTION_PATTERN
 
 _SECTION_RE = re.compile(SECTION_PATTERN)
@@ -59,6 +60,10 @@ _PSEUDO_FILESYSTEMS = frozenset(
         "devtmpfs", "efivarfs", "fusectl", "hugetlbfs", "mqueue", "none",
         "nsfs", "overlay", "overlayfs", "proc", "pstore", "ramfs",
         "rpc_pipefs", "securityfs", "sysfs", "tmpfs", "tracefs", "udev",
+        # The BSD and Darwin equivalents, which df lists alongside real
+        # storage exactly as Linux does.
+        "autofs", "devfs", "fdescfs", "kernfs", "linprocfs", "linsysfs",
+        "map", "procfs",
     }
 )
 
@@ -343,6 +348,7 @@ def parse_filesystems(
     text: str,
     inodes: Optional[Dict[str, Sequence[Optional[int]]]] = None,
     options: Optional[Dict[str, str]] = None,
+    types: Optional[Dict[str, str]] = None,
 ) -> Tuple[FilesystemUsage, ...]:
     """Parse ``df`` output, normalising every size to bytes.
 
@@ -350,15 +356,18 @@ def parse_filesystems(
     reports 1K blocks in six.  The header decides which, so the multiplier is
     never guessed from the magnitude of the numbers.
 
-    ``inodes`` and ``options`` come from separate probe sections and are joined
-    on the mount point; a mount either side does not mention simply keeps the
-    absent-reading default.
+    ``inodes``, ``options`` and ``types`` come from separate probe sections and
+    are joined on the mount point; a mount either side does not mention simply
+    keeps the absent-reading default.  ``types`` exists because POSIX ``df -P``
+    -- what the BSD and Darwin hosts answer -- has no type column at all, so
+    the type is read from their ``mount`` output instead.
     """
 
     header = text.strip().splitlines()[0].lower() if text.strip() else ""
     multiplier = 1024 if ("1k-block" in header or "1024-block" in header) else 1
     inodes = inodes or {}
     options = options or {}
+    types = types or {}
     rows: List[FilesystemUsage] = []
     for device, fstype, mount_point, values, percent in _df_rows(text):
         sizes = [None if value is None else value * multiplier for value in values]
@@ -367,7 +376,7 @@ def parse_filesystems(
             FilesystemUsage(
                 device=device,
                 mount_point=mount_point,
-                fstype=fstype,
+                fstype=fstype or types.get(mount_point, ""),
                 size_bytes=sizes[0],
                 used_bytes=sizes[1],
                 available_bytes=sizes[2],
@@ -387,12 +396,45 @@ def parse_inode_usage(text: str) -> Dict[str, Tuple[Optional[int], ...]]:
     Counts, not bytes, so no multiplier applies whichever ``df`` answered.
     Filesystems that have no fixed inode table (btrfs, zfs) print ``-`` in
     these columns, which reads as unknown rather than as zero.
+
+    The BSD and Darwin ``df -i`` prints the block columns *and* the inode ones
+    (``iused``, ``ifree``, ``%iused``) in one table, so its columns are located
+    by name from the header rather than by position, and the total is the sum
+    of used and free -- that table never prints one.
     """
 
+    if "iused" in text.split("\n", 1)[0]:
+        return _bsd_inode_usage(text)
     return {
         mount_point: tuple(values)
         for _device, _fstype, mount_point, values, _percent in _df_rows(text)
     }
+
+
+def _bsd_inode_usage(text: str) -> Dict[str, Tuple[Optional[int], ...]]:
+    lines = text.strip().splitlines()
+    header = lines[0].split()
+    try:
+        used_at = header.index("iused")
+        free_at = header.index("ifree")
+        mount_at = header.index("Mounted")
+    except ValueError:
+        return {}
+    usage: Dict[str, Tuple[Optional[int], ...]] = {}
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) <= mount_at:
+            continue
+        used = _int_or_none(fields[used_at])
+        free = _int_or_none(fields[free_at])
+        total = None if used is None or free is None else used + free
+        if not total:
+            # msdosfs and the other table-less filesystems print zeros here.
+            # No inode table is "unknown", the same as Linux's "-", and not a
+            # filesystem with nought inodes in it.
+            total = used = free = None
+        usage[" ".join(fields[mount_at:])] = (total, used, free)
+    return usage
 
 
 #: ``/proc/self/mounts`` escapes these four characters in octal.
@@ -802,19 +844,20 @@ def parse_process_table(text: str) -> Tuple[ProcessUsage, ...]:
     different columns in different orders, but each names them, so the header
     decides where to read rather than a per-tool column index.  BusyBox
     publishes ``%VSZ`` and no ``%MEM``; a share of virtual size is not a share
-    of memory, so it is left unreported rather than relabelled.
+    of memory, so it is left unreported rather than relabelled.  The BSD and
+    Darwin ``ps`` head the same column ``COMM`` rather than ``COMMAND``.
     """
 
     lines = text.splitlines()
     for index, line in enumerate(lines):
         header = line.split()
-        if "%CPU" in header and "COMMAND" in header:
+        if "%CPU" in header and ("COMMAND" in header or "COMM" in header):
             break
     else:
         return ()
 
     cpu_at = header.index("%CPU")
-    command_at = header.index("COMMAND")
+    command_at = header.index("COMMAND" if "COMMAND" in header else "COMM")
     memory_at = header.index("%MEM") if "%MEM" in header else None
 
     processes: List[ProcessUsage] = []
@@ -971,7 +1014,9 @@ def _boot_time(sections: Dict[str, str]) -> str:
     return sections.get("UPTIME_SINCE", "").strip()
 
 
-def _process_counts(sections: Dict[str, str]) -> Optional[ProcessCounts]:
+def _process_counts(
+    sections: Dict[str, str], sysctl: Optional[Dict[str, str]] = None
+) -> Optional[ProcessCounts]:
     """Assemble the process table summary from whichever section answered.
 
     ``ps`` gives the full breakdown.  A host whose ``ps`` has no ``-o`` -- every
@@ -982,6 +1027,12 @@ def _process_counts(sections: Dict[str, str]) -> Optional[ProcessCounts]:
 
     buckets = parse_process_states(sections.get("PROC_STATES", ""))
     pid_max = _positive_int_or_none(sections.get("PID_MAX", ""))
+    if pid_max is None and sysctl:
+        # The BSD spelling of the same limit; Darwin caps processes with
+        # kern.maxproc and has no pid_max of its own.
+        pid_max = _positive_int_or_none(
+            sysctl.get("kern.pid_max") or sysctl.get("kern.maxproc") or ""
+        )
     if buckets["total"] is None:
         counters = parse_proc_stat_counters(sections.get("STAT", ""))
         running = counters["procs_running"]
@@ -996,7 +1047,25 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
 
     sections = split_sections(raw)
 
-    listening = parse_listening_ports(sections.get("SS_LISTEN", ""))
+    # Which family answered.  The host's own ``uname -s`` decides, rather than
+    # the shape of any one section: a Linux host that happens to have an empty
+    # section must keep reading it the Linux way, and a BSD one must not have
+    # a Linux reading preferred over a better reading of its own (``who -b``
+    # prints a usable date on Linux and a bare day and time on FreeBSD).
+    os_type = sections.get("OSTYPE", "").strip()
+    sysctl = bsd.parse_sysctl(sections.get("SYSCTL", ""))
+    bsd_host = bsd.is_bsd(os_type)
+
+    listening_text = sections.get("SS_LISTEN", "")
+    established_text = sections.get("SS_ESTAB", "")
+    if bsd_host:
+        # One netstat listing answers both questions there, once its endpoints
+        # are spelled the way every socket parser here expects.
+        listening_text = established_text = bsd.normalise_endpoints(
+            sections.get("NETSTAT_AN", "")
+        )
+
+    listening = parse_listening_ports(listening_text)
     # Prefer the port the probe itself arrived on, then any port sshd is seen
     # listening on. There is deliberately no fallback to 22: reporting nothing
     # is honest, while guessing 22 is wrong on every host that moved the port.
@@ -1007,7 +1076,7 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         for port, (_address, process) in sorted(listening.items())
         if process == "sshd" and port != session_port
     )
-    sockets = parse_sockets(sections.get("SS_ESTAB", ""), tuple(listening))
+    sockets = parse_sockets(established_text, tuple(listening))
 
     sessions = parse_who(sections.get("WHO", ""))
     if not sessions:
@@ -1020,6 +1089,8 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
     )
     if not temperatures:
         temperatures = parse_sensors(sections.get("SENSORS", ""))
+    if not temperatures:
+        temperatures = bsd.parse_temperatures(sections.get("BSD_TEMPS", ""))
 
     processes = parse_process_table(sections.get("PROCESSES", ""))
     if not processes:
@@ -1035,6 +1106,50 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
     uptime = _float_or_none(sections.get("UPTIME", "").split()[0]) if sections.get(
         "UPTIME", ""
     ).split() else None
+    boot_time = _boot_time(sections)
+
+    cpu = parse_cpu(
+        sections.get("LSCPU", ""),
+        sections.get("CPUINFO", ""),
+        sections.get("NPROC", ""),
+    )
+    memory = parse_meminfo(sections.get("MEMINFO", ""))
+    load = parse_load_average(sections.get("LOADAVG", ""))
+    cpu_times = parse_proc_stat(sections.get("STAT", ""))
+    interfaces = parse_interfaces(
+        sections.get("IP_LINK", ""),
+        sections.get("IP_ADDR", ""),
+        sections.get("WIRELESS", ""),
+    )
+    mount_types: Dict[str, str] = {}
+    mount_options = parse_mount_options(sections.get("MOUNTS", ""))
+
+    if bsd_host:
+        # Every reading below has a Linux source that simply is not there on
+        # these hosts -- no /proc, no iproute2 -- so the BSD one is not a
+        # fallback for a failure, it is the only source.
+        cpu = bsd.cpu_info(sysctl, os_type)
+        memory = bsd.memory(
+            sysctl, sections.get("VM_STAT", ""), sections.get("SWAPINFO", "")
+        )
+        load = bsd.load_average(sysctl)
+        cpu_times = bsd.cpu_times(sysctl)
+        interfaces = bsd.parse_ifconfig(sections.get("IFCONFIG", ""))
+        gateway, gateway_interface = bsd.parse_default_route(
+            sections.get("NETSTAT_RN", "")
+        )
+        uptime, printed_boot_time = bsd.uptime(sysctl, sections.get("NOW_EPOCH", ""))
+        boot_time = printed_boot_time or boot_time
+        mounts = bsd.parse_mounts(sections.get("BSD_MOUNT", ""))
+        mount_types = {point: fstype for point, (fstype, _opts) in mounts.items()}
+        mount_options = {point: opts for point, (_fstype, opts) in mounts.items()}
+        if not os_release.get("PRETTY_NAME"):
+            pretty, identifier, version = bsd.os_identity(
+                sections.get("SW_VERS", ""), sysctl
+            )
+            os_release = {
+                "PRETTY_NAME": pretty, "ID": identifier, "VERSION_ID": version
+            }
 
     return HostInfoSnapshot(
         hostname=sections.get("HOSTNAME", "").strip(),
@@ -1042,24 +1157,17 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         os_pretty_name=os_release.get("PRETTY_NAME", ""),
         kernel=uname,
         uptime_seconds=uptime if uptime is not None and uptime >= 0 else None,
-        boot_time=_boot_time(sections),
-        cpu=parse_cpu(
-            sections.get("LSCPU", ""),
-            sections.get("CPUINFO", ""),
-            sections.get("NPROC", ""),
-        ),
-        memory=parse_meminfo(sections.get("MEMINFO", "")),
-        load_average=parse_load_average(sections.get("LOADAVG", "")),
+        boot_time=boot_time,
+        cpu=cpu,
+        memory=memory,
+        load_average=load,
         filesystems=parse_filesystems(
             sections.get("DF", ""),
             parse_inode_usage(sections.get("DF_INODES", "")),
-            parse_mount_options(sections.get("MOUNTS", "")),
+            mount_options,
+            mount_types,
         ),
-        interfaces=parse_interfaces(
-            sections.get("IP_LINK", ""),
-            sections.get("IP_ADDR", ""),
-            sections.get("WIRELESS", ""),
-        ),
+        interfaces=interfaces,
         temperatures=temperatures,
         sessions=sessions,
         sockets=sockets,
@@ -1089,27 +1197,50 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         cpu_pressure_full=cpu_full,
         memory_pressure_some=memory_some,
         memory_pressure_full=memory_full,
-        cpu_times=parse_proc_stat(sections.get("STAT", "")),
-        process_counts=_process_counts(sections),
+        cpu_times=cpu_times,
+        process_counts=_process_counts(sections, sysctl),
         context_switches=stat_counters["context_switches"],
         interrupts=stat_counters["interrupts"],
     )
 
 
+def _counters(sections: Dict[str, str], bsd_host: bool) -> Tuple[InterfaceCounters, ...]:
+    """Interface byte counters from whichever listing the host publishes."""
+
+    if bsd_host:
+        return bsd.parse_netstat_counters(sections.get("NETSTAT_IB", ""))
+    return parse_network_counters(sections.get("NET_DEV", ""))
+
+
 def parse_counters_probe(raw: str) -> Tuple[InterfaceCounters, ...]:
     """Parse the lightweight bandwidth probe."""
 
-    return parse_network_counters(split_sections(raw).get("NET_DEV", ""))
+    sections = split_sections(raw)
+    return _counters(sections, bsd.is_bsd(sections.get("OSTYPE", "").strip()))
 
 
 def parse_live_probe(raw: str) -> LiveSample:
     """Parse one live sample.
 
     Every section reuses the full gather's parser and marker name, so a reading
-    cannot mean one thing on open and another two seconds later.
+    cannot mean one thing on open and another two seconds later -- and the
+    same is true across families: a BSD sample is read from the same sections
+    of the same probe as its own full gather, so the counters a rate is built
+    from always come from one source.
     """
 
     sections = split_sections(raw)
+    if bsd.is_bsd(sections.get("OSTYPE", "").strip()):
+        sysctl = bsd.parse_sysctl(sections.get("SYSCTL", ""))
+        memory = bsd.memory(
+            sysctl, sections.get("VM_STAT", ""), sections.get("SWAPINFO", "")
+        )
+        return LiveSample(
+            counters=_counters(sections, True),
+            cpu_times=bsd.cpu_times(sysctl),
+            memory=memory if memory.total_bytes else None,
+            load_average=bsd.load_average(sysctl),
+        )
     return LiveSample(
         counters=parse_network_counters(sections.get("NET_DEV", "")),
         cpu_times=parse_proc_stat(sections.get("STAT", "")),
