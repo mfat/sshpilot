@@ -31,7 +31,7 @@ import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 from .lifecycle import resolve_socket_path
 
@@ -232,6 +232,79 @@ def probe_control_master(
         state=MasterState.UNKNOWN,
         reason="the check failed for an unrecognized reason",
     )
+
+
+def launch_rides_live_master(
+    argv: Sequence[str], environment: Mapping[str, str], *,
+    timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT,
+    runner=None,
+) -> bool:
+    """Whether *argv* would reuse an already-live multiplex master.
+
+    Two steps, and the first one is why this is not simply ``-O check`` on
+    *argv*. The ControlPath sshPilot passes contains ``%C``, OpenSSH's
+    per-connection hash, so there is a path to probe only after ssh expands
+    it -- and ``-O`` has to precede the destination, while *argv* may carry a
+    remote command after it. Appending ``-O check`` therefore does not probe
+    anything: ssh reads it as more remote command, connects, and runs it.
+
+    ``ssh -G`` resolves the effective configuration and exits without
+    connecting, ignoring any trailing command, so it answers what the
+    ControlPath expands to for *this* launch and nothing else. The expanded,
+    literal path is then probed by :func:`probe_control_master`.
+
+    Only ``ssh`` is asked: ``sftp`` and ``scp`` take neither flag, and a
+    plugin protocol's argv is not an ssh command line at all. Anything
+    unanswerable is False, because the cost of being wrong is asymmetric --
+    a needless run of a pre-connection step is noise, while skipping one that
+    was needed fails the connection.
+    """
+    path = resolve_launch_control_path(
+        argv, environment, timeout=timeout, runner=runner
+    )
+    if path is None:
+        return False
+    return probe_control_master(path, timeout=timeout).state is MasterState.LIVE
+
+
+def resolve_launch_control_path(
+    argv: Sequence[str], environment: Mapping[str, str], *,
+    timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT,
+    runner=None,
+) -> Optional[Path]:
+    """The ControlPath *argv* resolves to, or None when it has no usable one."""
+
+    argv = tuple(argv)
+    if len(argv) < 2:
+        return None
+    if os.path.basename(argv[0]) not in ("ssh", "ssh.exe"):
+        return None
+    run = runner if runner is not None else subprocess.run
+    try:
+        result = run(
+            [argv[0], "-G", *argv[1:]],
+            env=dict(environment) or None,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    stdout = getattr(result, "stdout", b"") or b""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", "replace")
+    for line in stdout.splitlines():
+        key, _, value = line.partition(" ")
+        if key.strip().lower() != "controlpath":
+            continue
+        value = value.strip()
+        # ``none`` is OpenSSH's way of saying multiplexing is off here.
+        if not value or value.lower() == "none":
+            return None
+        return Path(value)
+    return None
 
 
 def survey_control_masters(

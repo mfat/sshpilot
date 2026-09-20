@@ -291,6 +291,129 @@ def test_a_launcher_without_a_runner_still_prepares():
     assert environment == {"PATH": "/usr/bin"}
 
 
+# --- riding an existing master -----------------------------------------------
+#
+# Host Info samples every two seconds over a multiplex master it already
+# holds. Those launches open no connection, so knocking for them authorised a
+# door that was already open -- measured at seven knocks in forty seconds with
+# the dashboard open, which is enough to trip the replay protection and rate
+# limiting that knock daemons have. The first launch still knocks: it is the
+# one that builds the master.
+
+
+def _fake_ssh(control_path, *, master_alive, calls):
+    """Stand in for both probe steps: ``ssh -G`` then ``ssh -O check``."""
+
+    def _run(argv, **kwargs):
+        argv = tuple(argv)
+        calls.append(argv)
+        if "-G" in argv:
+            body = f"user alice\ncontrolpath {control_path}\nport 22\n"
+            return SimpleNamespace(returncode=0, stdout=body.encode(), stderr=b"")
+        if "-O" in argv:
+            return SimpleNamespace(
+                returncode=0 if master_alive else 1,
+                stdout=b"Master running (pid=123)" if master_alive else b"",
+                stderr=b"" if master_alive else b"No such file or directory",
+            )
+        raise AssertionError(f"unexpected probe: {argv}")
+
+    return _run
+
+
+def _launch_with_master(monkeypatch, *, control_path="/run/cm-abc", master_alive=True):
+    import sshpilot.daemon.control_masters as masters
+
+    calls = []
+    monkeypatch.setattr(
+        masters.subprocess, "run", _fake_ssh(control_path, master_alive=master_alive, calls=calls)
+    )
+    runner = RecordingRunner()
+    launcher = SshLauncher(
+        RecordingProvider(), RecordingBroker(), pre_command_runner=runner
+    )
+    launcher.prepare_session(Spec(), TerminalLaunch())
+    return runner, calls
+
+
+def test_a_launch_riding_a_live_master_does_not_run_the_command(monkeypatch):
+    runner, _calls = _launch_with_master(monkeypatch, master_alive=True)
+
+    assert runner.calls == []
+
+
+def test_a_launch_whose_master_is_gone_still_runs_the_command(monkeypatch):
+    runner, _calls = _launch_with_master(monkeypatch, master_alive=False)
+
+    assert len(runner.calls) == 1
+
+
+def test_the_probe_never_connects(monkeypatch):
+    """The first attempt appended ``-O check`` to the launch argv, where ssh
+    read it as more remote command: it connected and ran it. ``-G`` resolves
+    the config and exits, so the expansion costs nothing and touches no host.
+    """
+
+    _runner, calls = _launch_with_master(monkeypatch)
+
+    resolve = calls[0]
+    assert resolve[1] == "-G", "the ControlPath must be resolved, not guessed"
+    assert resolve[0] == "ssh"
+    # Whatever follows is the launch's own argv, unaltered -- the expansion
+    # depends on the host, port and user it carries.
+    assert resolve[2:] == ("-o", "Opt=1", "host")
+    # And the check that follows probes a literal path, never the launch argv.
+    check = calls[1]
+    assert "-O" in check and "check" in check
+    assert "/run/cm-abc" in " ".join(check)
+
+
+def test_multiplexing_turned_off_runs_the_command(monkeypatch):
+    runner, calls = _launch_with_master(monkeypatch, control_path="none")
+
+    assert len(runner.calls) == 1
+    assert len(calls) == 1, "there is nothing to probe once ControlPath is none"
+
+
+def test_an_unanswerable_probe_runs_the_command(monkeypatch):
+    """Being wrong is asymmetric: a needless knock is noise, a missing one
+    fails the connection."""
+
+    import sshpilot.daemon.control_masters as masters
+
+    def _explode(*args, **kwargs):
+        raise OSError("ssh is unavailable")
+
+    monkeypatch.setattr(masters.subprocess, "run", _explode)
+    runner = RecordingRunner()
+    launcher = SshLauncher(
+        RecordingProvider(), RecordingBroker(), pre_command_runner=runner
+    )
+
+    launcher.prepare_session(Spec(), TerminalLaunch())
+
+    assert len(runner.calls) == 1
+
+
+def test_a_non_ssh_argv_is_never_probed(monkeypatch):
+    """sftp and scp take neither flag, and a plugin protocol's argv is not an
+    ssh command line at all -- which is also how Docker and Mosh keep their
+    pre-connection command."""
+
+    import sshpilot.daemon.control_masters as masters
+
+    calls = []
+    monkeypatch.setattr(
+        masters.subprocess,
+        "run",
+        lambda argv, **kw: calls.append(argv) or SimpleNamespace(returncode=0),
+    )
+
+    assert not masters.launch_rides_live_master(("docker", "exec", "-it", "web"), {})
+    assert not masters.launch_rides_live_master(("sftp", "host"), {})
+    assert calls == []
+
+
 # --- execution ---------------------------------------------------------------
 
 
@@ -577,3 +700,58 @@ def test_records_carry_the_connection_and_scope_ids():
     lines = [line for line in stream.getvalue().splitlines() if line.strip()]
     assert lines
     assert all("[connection=conn-9 session=sess-4]" in line for line in lines)
+
+
+# --- plugin protocols --------------------------------------------------------
+#
+# Docker over ``ssh://`` and Mosh open real SSH connections, so a host behind
+# port knocking has to be reachable from them too. They already route through
+# the same launch provider as SSH, so the launcher hook reaches them for free;
+# what was missing was any way to set the value, which the API refused and the
+# editor hid.
+
+
+def test_a_plugin_connection_may_carry_a_pre_connection_command():
+    from tests.helpers.fake_connection_repository import make_test_connection_service
+    from sshpilot.api.models.connections import CreateConnectionRequest
+
+    service = make_test_connection_service()
+
+    service.create_connection(
+        CreateConnectionRequest(
+            nickname="dockerbox",
+            hostname="localhost",
+            username="root",
+            port=22,
+            protocol="docker",
+            plugin_data={"container": "web", "command": "sh", "runtime": "docker"},
+            config_patch={"pre_command": "knock host 1000 2000"},
+        )
+    )
+
+    assert service.get_pre_connection_command("dockerbox") == "knock host 1000 2000"
+
+
+def test_a_plugin_connection_still_refuses_ssh_directives():
+    """Only the pre-connection command is allowed through: it is a local
+    command, not an ssh directive, and sshPilot builds no ssh command line for
+    these connections."""
+
+    from tests.helpers.fake_connection_repository import make_test_connection_service
+    from sshpilot.api.errors import SshPilotError
+    from sshpilot.api.models.connections import CreateConnectionRequest
+
+    service = make_test_connection_service()
+
+    with pytest.raises(SshPilotError):
+        service.create_connection(
+            CreateConnectionRequest(
+                nickname="dockerbox2",
+                hostname="localhost",
+                username="root",
+                port=22,
+                protocol="docker",
+                plugin_data={"container": "web"},
+                config_patch={"pre_command": "knock host", "proxy_jump": ["bastion"]},
+            )
+        )

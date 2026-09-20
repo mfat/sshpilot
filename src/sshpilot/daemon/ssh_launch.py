@@ -542,6 +542,8 @@ class LaunchScope:
             intent,
             connection_id=target_connection,
             scope_id=self._scope_id,
+            argv=argv,
+            environment=environment,
         )
         return PreparedLaunch(argv, environment, self)
 
@@ -752,6 +754,8 @@ class SshLauncher:
             intent,
             connection_id=getattr(spec, "connection_id", None),
             scope_id=getattr(spec, "session_id", None),
+            argv=argv,
+            environment=environment,
         )
         return argv, environment
 
@@ -764,6 +768,8 @@ class SshLauncher:
         *,
         connection_id: Optional[ConnectionId],
         scope_id: Optional[ScopeId],
+        argv: Sequence[str] = (),
+        environment: Mapping[str, str] = {},
     ) -> None:
         """Run the connection's pre-connection command for this launch.
 
@@ -795,6 +801,20 @@ class SshLauncher:
             return
         if connection_id is None or scope_id is None:
             return
+        # A launch that rides a live multiplex master opens no connection, so
+        # there is nothing for a port knock or a VPN dial-up to authorise.
+        # Host Info made this impossible to ignore: it samples every two
+        # seconds over a master it already holds, which knocked the host every
+        # few seconds for as long as the dashboard stayed open -- enough to
+        # trip the replay protection and rate limiting that knock daemons
+        # have. The first launch still knocks; it is the one that builds the
+        # master.
+        if argv and self._rides_live_master(argv, environment):
+            logger.info(
+                "pre-connection command skipped kind=%s reason=multiplex_master",
+                intent.kind.value,
+            )
+            return
         from sshpilot.api.models.pre_command import PreCommandLaunchKind
 
         try:
@@ -805,6 +825,22 @@ class SshLauncher:
             logger.debug("launch kind has no pre-connection command identity")
             return
         runner.run(connection_id, scope_id=str(scope_id), kind=kind)
+
+    @staticmethod
+    def _rides_live_master(
+        argv: Sequence[str], environment: Mapping[str, str]
+    ) -> bool:
+        """Whether this launch would reuse an existing authenticated transport."""
+
+        from .control_masters import launch_rides_live_master
+
+        try:
+            return launch_rides_live_master(argv, environment)
+        except Exception:
+            # Never let a probe decide a launch. An unanswerable question
+            # means the step runs, which is the safe direction.
+            logger.debug("multiplex master probe failed", exc_info=True)
+            return False
 
     def _session_builder(
         self, intent: "LaunchIntent", policy: _KindPolicy

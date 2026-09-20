@@ -57,6 +57,7 @@ from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMix
 from .plugins.registry import protocol_registry
 
 from gettext import gettext as _
+from .i18n import N_
 
 logger = logging.getLogger(__name__)
 
@@ -3162,6 +3163,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
                 self._load_shared_meta_rows()
                 self._load_plugin_field_values()
+                if hasattr(self, 'pre_command_row'):
+                    # Plugin protocols keep their fields in connections.json
+                    # rather than the ssh config, so this reads the same
+                    # ``data`` mapping the SSH branch falls back to.
+                    value = ''
+                    try:
+                        data = getattr(self.connection, 'data', None)
+                        value = getattr(self.connection, 'pre_command', '') or (
+                            data.get('pre_command') if isinstance(data, dict) else ''
+                        ) or ''
+                    except Exception:
+                        value = ''
+                    self.pre_command_row.set_text(
+                        value if isinstance(value, str) else ''
+                    )
             finally:
                 self._loading_connection_data = False
             return
@@ -4063,18 +4079,30 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             x11_group,
         ]
 
+    _COMMANDS_DESCRIPTION_SSH = N_(
+        "Run a command automatically on connect.\n\n"
+        "• Pre-Connection Command: Runs locally before connecting.\n"
+        "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
+        "• Remote Command: Runs on the remote host (RequestTTY is configured separately)."
+    )
+    #: Plugin protocols get only the pre-connection command: the other two are
+    #: OpenSSH directives, and sshPilot does not build an ssh command line for
+    #: these connections. The pre-connection command is a plain local command,
+    #: so it applies regardless of what opens the connection afterwards.
+    _COMMANDS_DESCRIPTION_PLUGIN = N_(
+        "Run a command automatically on connect.\n\n"
+        "• Pre-Connection Command: Runs locally before connecting — a port "
+        "knock or a VPN dial-up that has to open the way to the host first."
+    )
+
     def build_commands_group(self):
         """Build PreferencesGroup for configuring connection commands"""
 
         commands_group = Adw.PreferencesGroup(
             title=_("Connection Commands"),
-            description=_(
-                "Run a command automatically on connect.\n\n"
-                "• Pre-Connection Command: Runs locally before connecting.\n"
-                "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
-                "• Remote Command: Runs on the remote host (RequestTTY is configured separately)."
-            )
+            description=_(self._COMMANDS_DESCRIPTION_SSH),
         )
+        self._commands_group = commands_group
         self.pre_command_row = Adw.EntryRow(title=_("Pre-Connection Command"))
         try:
             self.pre_command_row.set_subtitle(_("Executed locally before connecting"))
@@ -4102,7 +4130,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     
     # --- Protocol selector / plugin protocol support ----------------------
 
-    _SSH_ONLY_PAGES = ("authentication", "forwarding", "commands", "advanced", "wol")
+    # "commands" is not here: every protocol that dials out can need a
+    # pre-connection command (a port knock, a VPN dial-up), including the
+    # plugin ones -- Docker over ``ssh://`` and Mosh both open a real SSH
+    # connection. The two OpenSSH-directive rows on that page are hidden
+    # per protocol instead; see _apply_protocol_to_ui.
+    _SSH_ONLY_PAGES = ("authentication", "forwarding", "advanced", "wol")
+    #: Rows on the Commands page that are OpenSSH directives, so they mean
+    #: nothing to a protocol sshPilot does not build an ssh command for.
+    _SSH_ONLY_COMMAND_ROWS = ("local_command_row", "remote_command_row")
 
     def _selected_protocol_backend(self):
         """The ProtocolBackend chosen in the selector (None -> SSH default)."""
@@ -4199,6 +4235,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
         for page_name in self._SSH_ONLY_PAGES:
             self._set_page_visible(page_name, is_ssh)
+        for row_name in self._SSH_ONLY_COMMAND_ROWS:
+            row = getattr(self, row_name, None)
+            if row is not None:
+                try:
+                    row.set_visible(is_ssh)
+                except Exception:
+                    pass
+        group = getattr(self, '_commands_group', None)
+        if group is not None:
+            try:
+                group.set_description(
+                    self._COMMANDS_DESCRIPTION_SSH
+                    if is_ssh
+                    else self._COMMANDS_DESCRIPTION_PLUGIN
+                )
+            except Exception:
+                pass
         # A single remaining page (non-SSH protocols) shouldn't show a lone tab.
         self._update_switcher_visibility()
 
@@ -4417,6 +4470,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         data = {
             'nickname': nickname,
             'protocol': backend.protocol_id,
+            # Every protocol that dials out can sit behind a port knock, and
+            # the daemon launcher runs this for plugin sessions exactly as it
+            # does for SSH ones -- they share the launch provider.
+            'pre_command': (
+                self.pre_command_row.get_text().strip()
+                if hasattr(self, 'pre_command_row')
+                else ''
+            ),
         }
         for key, (spec, row, getter, _setter) in (
                 getattr(self, '_plugin_field_widgets', None) or {}).items():

@@ -310,6 +310,15 @@ class ConnectionApplicationService:
             secret_autofill_supported=False,
         )
 
+    #: The only key a plugin connection may carry in ``config_patch``.
+    #: ``pre_command`` is not an SSH directive at all -- it is a local command
+    #: run before the connection opens, usually a port knock or a VPN dial-up.
+    #: Protocols sshPilot does not build an ssh command line for still open
+    #: real connections (Docker over ``ssh://``, Mosh), and a host behind port
+    #: knocking has to be reachable from those too. Everything else in
+    #: ``config_patch`` is an ssh directive and stays refused.
+    _PLUGIN_ALLOWED_CONFIG_KEYS = frozenset({"pre_command"})
+
     # SSH directive each editable core field authors when set explicitly.
     _FIELD_DIRECTIVES = {"hostname": "hostname", "username": "user", "port": "port"}
 
@@ -1222,11 +1231,15 @@ class ConnectionApplicationService:
                 details={"field": "plugin_data"},
             )
         if request.protocol != "ssh" and request.config_patch:
-            raise SshPilotError(
-                ErrorCode.VALIDATION_FAILED,
-                "Plugin connections cannot contain SSH configuration",
-                details={"field": "config_patch"},
+            unsupported = (
+                set(request.config_patch) - self._PLUGIN_ALLOWED_CONFIG_KEYS
             )
+            if unsupported:
+                raise SshPilotError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "Plugin connections cannot contain SSH configuration",
+                    details={"field": "config_patch"},
+                )
         data = self._build_create_data(request)
         try:
             record = self._repository.create_connection(data)
@@ -1576,11 +1589,15 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         if protocol != "ssh" and request.config_patch:
-            raise SshPilotError(
-                ErrorCode.VALIDATION_FAILED,
-                "Plugin connections cannot contain SSH configuration",
-                connection_id=connection_id,
+            unsupported = (
+                set(request.config_patch) - self._PLUGIN_ALLOWED_CONFIG_KEYS
             )
+            if unsupported:
+                raise SshPilotError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "Plugin connections cannot contain SSH configuration",
+                    connection_id=connection_id,
+                )
         display_only = (
             request.display_name is not UNSET
             and request.display_name is not None
