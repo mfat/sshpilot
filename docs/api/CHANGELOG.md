@@ -32,6 +32,16 @@ notes remain separate.
   carries a stable reason code, an exit status and a duration — never the
   command text, its output, or a rendered sentence. Frontends show the running
   phase inline and alert on a finished phase whose reason is not `ok`.
+- Plugin-protocol connections may now carry `pre_command` in `config_patch`,
+  which `connections.create`/`connections.update` previously refused outright
+  for any non-SSH protocol. New `PLUGIN_EDITABLE_CONFIG_FIELDS` names that
+  subset so a client filter and the daemon's validation cannot disagree; every
+  other key in `EDITABLE_CONFIG_FIELDS` stays refused for them. Docker over
+  `ssh://` and Mosh open real SSH connections, so a host behind port knocking
+  has to be reachable from those too. `extract_plugin_data` excludes the same
+  keys, so the value is stored as configuration and never also as plugin data.
+  This widens what a request may contain and rejects nothing that was
+  previously accepted, so no client has to change.
 - The step never fails a launch, so no existing failure vocabulary changed:
   `SessionFailure`, `SftpFailureCode`, `ScpFailureCode` and
   `IdentityFailureCode` are untouched, and no `ErrorCode` was added.
