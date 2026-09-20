@@ -90,8 +90,11 @@ class SshCopyIdWindow(Adw.Window):
         # routed message can be aimed at. Done here rather than at the four
         # call sites that build this window.
         associate_window_with_parent_application(self, parent)
-        # Deploying a key starts a launch, so a pre-connection command can run
-        # while this window is in front.
+        # This window closes as soon as the deployment is handed off, so it
+        # never shows a pre-connection command progress line -- there is no
+        # window left to show one in, and the operation's own result lands
+        # on the main window. The overlay is kept for the error paths that
+        # leave this window open.
         install_toast_overlay(self)
 
         self._parent = parent

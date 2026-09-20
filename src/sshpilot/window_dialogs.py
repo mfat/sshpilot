@@ -15,7 +15,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 from gettext import gettext as _
@@ -305,6 +305,44 @@ def install_toast_overlay(window) -> None:
         window.toast_overlay = overlay
     except Exception as exc:
         logger.debug("Could not install a toast overlay: %s", exc)
+
+
+def bind_pre_command_status(scope_id, setter) -> Callable[[], None]:
+    """Claim the pre-connection command status line for one launch scope.
+
+    The daemon publishes one notice per launch and the application holds the
+    single subscription; a surface says which scope it owns and what to do
+    with the text. Returns the unbind callable, which is always safe to call
+    -- including when the bind never happened.
+
+    Failures are swallowed: a surface that cannot show a progress line must
+    still work, and the alert on failure does not depend on this binding.
+    """
+    if not scope_id or not callable(setter):
+        return lambda: None
+    application = Gtk.Application.get_default()
+    register = getattr(application, "register_pre_command_status", None)
+    if not callable(register):
+        return lambda: None
+    key = str(scope_id)
+    try:
+        register(key, setter)
+    except Exception:
+        logger.debug("Could not bind the pre-command status", exc_info=True)
+        return lambda: None
+
+    def _unbind() -> None:
+        unregister = getattr(
+            Gtk.Application.get_default(), "unregister_pre_command_status", None
+        )
+        if not callable(unregister):
+            return
+        try:
+            unregister(key)
+        except Exception:
+            logger.debug("Could not release the pre-command status", exc_info=True)
+
+    return _unbind
 
 
 def present_for_modal_dialog(window: Gtk.Window) -> None:

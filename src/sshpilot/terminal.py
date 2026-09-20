@@ -290,6 +290,7 @@ class TerminalWidget(Gtk.Box):
         self._daemon_interaction_dialogs = None
         #: Launch scope this tab claims pre-connection command notices for.
         self._pre_command_scope = None
+        self._unbind_pre_command = None
         self._connecting_detail_announced = False
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
@@ -4644,35 +4645,25 @@ class TerminalWidget(Gtk.Box):
         """
         if session_id is None or session_id == self._pre_command_scope:
             return
-        application = Gtk.Application.get_default()
-        register = getattr(application, "register_pre_command_status", None)
-        if not callable(register):
-            return
+        from .window_dialogs import bind_pre_command_status
+
         self._unregister_pre_command_scope()
         # A new scope is a new launch, so the once-per-run guard starts over.
         # Without this a reconnect could inherit a guard left set by a finish
         # notice that arrived after the widget had already rebound, and the
         # next run would announce nothing.
         self._connecting_detail_announced = False
-        try:
-            register(str(session_id), self.set_connecting_detail)
-            self._pre_command_scope = session_id
-        except Exception:
-            logger.debug("Could not register the pre-command scope", exc_info=True)
+        self._unbind_pre_command = bind_pre_command_status(
+            str(session_id), self.set_connecting_detail
+        )
+        self._pre_command_scope = session_id
 
     def _unregister_pre_command_scope(self) -> None:
-        scope = getattr(self, "_pre_command_scope", None)
-        if scope is None:
-            return
+        unbind = getattr(self, "_unbind_pre_command", None)
+        self._unbind_pre_command = None
         self._pre_command_scope = None
-        application = Gtk.Application.get_default()
-        unregister = getattr(application, "unregister_pre_command_status", None)
-        if not callable(unregister):
-            return
-        try:
-            unregister(str(scope))
-        except Exception:
-            logger.debug("Could not release the pre-command scope", exc_info=True)
+        if callable(unbind):
+            unbind()
 
     def _on_destroy(self, widget):
         """Handle widget destruction"""

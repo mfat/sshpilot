@@ -212,3 +212,97 @@ def test_a_failure_leaves_the_window_openable(monkeypatch):
 
     assert window.toast_overlay is None
     assert window._content == "original"
+
+
+# --- bind_pre_command_status -------------------------------------------------
+#
+# Three surfaces claim a launch scope this way -- a terminal tab, the SCP
+# transfer dialog and the copy-key window. The binding is best effort by
+# design: it drives a progress line only, and the failure alert is raised from
+# the application regardless, so nothing here may raise into a surface's
+# start-up path.
+
+
+class FakeApp:
+    def __init__(self):
+        self.registered = {}
+        self.unregistered = []
+
+    def register_pre_command_status(self, scope_id, setter):
+        self.registered[scope_id] = setter
+
+    def unregister_pre_command_status(self, scope_id):
+        self.unregistered.append(scope_id)
+
+
+class BareApp:
+    """An application without the registry -- a plugin host, or a test."""
+
+
+def _with_app(monkeypatch, app):
+    from sshpilot import window_dialogs
+
+    monkeypatch.setattr(
+        window_dialogs.Gtk.Application, "get_default", staticmethod(lambda: app)
+    )
+    return window_dialogs
+
+
+def test_binding_registers_the_setter_and_unbinding_releases_it(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+    setter = lambda _text: None
+
+    unbind = window_dialogs.bind_pre_command_status("scope-1", setter)
+
+    assert app.registered == {"scope-1": setter}
+    unbind()
+    assert app.unregistered == ["scope-1"]
+
+
+def test_a_scope_id_is_always_bound_as_text(monkeypatch):
+    """Scope ids arrive as SessionId/TransferId/OperationId, not str."""
+
+    class _Id(str):
+        pass
+
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    window_dialogs.bind_pre_command_status(_Id("scope-2"), lambda _t: None)
+
+    assert list(app.registered) == ["scope-2"]
+    assert type(next(iter(app.registered))) is str
+
+
+def test_an_empty_scope_or_setter_binds_nothing(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    window_dialogs.bind_pre_command_status("", lambda _t: None)()
+    window_dialogs.bind_pre_command_status("scope-3", None)()
+
+    assert app.registered == {}
+    assert app.unregistered == []
+
+
+def test_an_application_that_cannot_register_is_tolerated(monkeypatch):
+    """Plugin hosts and tests run without the full application."""
+
+    app = BareApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    unbind = window_dialogs.bind_pre_command_status("scope-4", lambda _t: None)
+
+    unbind()  # must not raise
+
+
+def test_unbinding_twice_is_safe(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    unbind = window_dialogs.bind_pre_command_status("scope-5", lambda _t: None)
+    unbind()
+    unbind()
+
+    assert app.unregistered == ["scope-5", "scope-5"]
