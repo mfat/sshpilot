@@ -167,3 +167,89 @@ def test_plugin_payload_filter_matches_the_daemon_projection():
     assert request.plugin_data == extract_plugin_data("serial", payload)
     # display_name still rides its own core column rather than plugin_data.
     assert request.display_name == "Serial demo"
+
+
+# --- pre-connection command on plugin protocols ------------------------------
+#
+# Docker over ``ssh://`` and Mosh open real SSH connections, so a host behind
+# port knocking has to be reachable from them. The daemon runs the command for
+# plugin sessions already -- they share the launch provider -- and the editor
+# now offers the field. This layer used to send ``config_patch={}`` for every
+# non-SSH protocol, which silently discarded whatever the user had just typed.
+
+
+def test_a_plugin_save_keeps_the_pre_connection_command():
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "dockerbox",
+            "hostname": "localhost",
+            "protocol": "docker",
+            "container": "web",
+            "pre_command": "knock host 1000 2000",
+        }
+    )
+
+    assert client.created.config_patch == {"pre_command": "knock host 1000 2000"}
+    assert client.created.plugin_data == {"container": "web"}
+
+
+def test_a_plugin_save_still_strips_ssh_directives():
+    """Everything else in the patch is an ssh directive, and sshPilot builds
+    no ssh command line for these connections -- the daemon would refuse the
+    whole request."""
+
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "dockerbox",
+            "hostname": "localhost",
+            "protocol": "docker",
+            "container": "web",
+            "pre_command": "knock host",
+            "proxy_jump": ["bastion"],
+            "x11_forwarding": True,
+            "remote_command": "uptime",
+        }
+    )
+
+    assert client.created.config_patch == {"pre_command": "knock host"}
+
+
+def test_an_ssh_save_is_unchanged_by_the_plugin_filter():
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "sshbox",
+            "hostname": "example.com",
+            "protocol": "ssh",
+            "pre_command": "knock host",
+            "x11_forwarding": True,
+        }
+    )
+
+    assert client.created.config_patch == {
+        "pre_command": "knock host",
+        "x11_forwarding": True,
+    }
+
+
+def test_editing_a_plugin_connection_keeps_the_pre_connection_command():
+    facade, client = services()
+    connection = Projection().connection
+
+    facade.update_connection(
+        connection,
+        {
+            "nickname": "dockerbox",
+            "protocol": "docker",
+            "container": "web",
+            "pre_command": "knock host",
+        },
+    )
+
+    _connection_id, request = client.updated
+    assert request.config_patch == {"pre_command": "knock host"}

@@ -17,7 +17,10 @@ from sshpilot.api.models import (
     StoreConnectionPasswordRequest,
     UpdateConnectionRequest,
 )
-from sshpilot.api.models.connections import extract_plugin_data
+from sshpilot.api.models.connections import (
+    PLUGIN_EDITABLE_CONFIG_FIELDS,
+    extract_plugin_data,
+)
 
 
 # The columns a connection carries outside its config patch.  Narrower than
@@ -78,11 +81,23 @@ class DaemonConnectionServices:
         return extract_plugin_data(protocol, data)
 
     @staticmethod
-    def _config_patch(data):
+    def _config_patch(data, protocol="ssh"):
+        """The editable SSH configuration this save carries.
+
+        A plugin protocol keeps only the keys the daemon accepts for one --
+        today just the pre-connection command, which is a local command rather
+        than an ssh directive, so Docker over ``ssh://`` and Mosh can sit
+        behind a port knock like any other host. Sending the rest would be
+        refused outright, and dropping the patch wholesale (which this used to
+        do) silently discarded the field the editor had just shown.
+        """
+        allowed = EDITABLE_CONFIG_FIELDS
+        if protocol != "ssh":
+            allowed = allowed & PLUGIN_EDITABLE_CONFIG_FIELDS
         return {
             key: value
             for key, value in dict(data).items()
-            if key in EDITABLE_CONFIG_FIELDS and key not in _CORE_FIELDS
+            if key in allowed and key not in _CORE_FIELDS
         }
 
     def add_connection_from_data(self, data):
@@ -96,7 +111,7 @@ class DaemonConnectionServices:
             port=int(values.get("port", 22) or 22),
             protocol=protocol,
             display_name=str(values.get("display_name", "") or ""),
-            config_patch=self._config_patch(values) if protocol == "ssh" else {},
+            config_patch=self._config_patch(values, protocol),
             plugin_data=self._plugin_data(protocol, values),
         )
         result = client.create_connection(request)
@@ -127,7 +142,7 @@ class DaemonConnectionServices:
             username=values.get("username", getattr(connection, "username", "")),
             port=int(values.get("port", getattr(connection, "port", 22)) or 22),
             display_name=(values["display_name"] if "display_name" in values else UNSET),
-            config_patch=self._config_patch(values) if protocol == "ssh" else {},
+            config_patch=self._config_patch(values, protocol),
             plugin_data=self._plugin_data(protocol, values),
         )
         connection_id = connection_id_for(connection)

@@ -120,6 +120,15 @@ EDITABLE_CONFIG_FIELDS = frozenset({
     "extra_ssh_config",
 })
 
+#: The subset of :data:`EDITABLE_CONFIG_FIELDS` a *plugin protocol* connection
+#: may carry. ``pre_command`` is not an SSH directive at all -- it is a local
+#: command run before the connection opens, usually a port knock or a VPN
+#: dial-up. Protocols sshPilot does not build an ssh command line for still
+#: open real connections (Docker over ``ssh://``, Mosh), and a host behind
+#: port knocking has to be reachable from those too. Every other key here is
+#: an ssh directive and stays refused for them.
+PLUGIN_EDITABLE_CONFIG_FIELDS = frozenset({"pre_command"})
+
 FORBIDDEN_IN_PATCH = frozenset({
     "password", "passphrase", "secret", "token",
     "credential", "cookie", "private_key",
@@ -311,6 +320,12 @@ def extract_plugin_data(
     result: Dict[str, Any] = {}
     for key, value in dict(data or {}).items():
         if key in CONNECTION_CORE_DATA_FIELDS or key.startswith("__"):
+            continue
+        # A key a plugin connection carries as *configuration* is not one of
+        # its FieldSpec values. Letting the pre-connection command through
+        # here too would store it twice -- once as config, once as plugin data
+        # -- and surface it to the protocol as a field it never declared.
+        if key in PLUGIN_EDITABLE_CONFIG_FIELDS:
             continue
         if is_sensitive_field_name(key):
             continue

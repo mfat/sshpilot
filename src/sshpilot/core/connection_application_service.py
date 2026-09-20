@@ -31,6 +31,7 @@ from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
 from ..api.models.connections import (
+    PLUGIN_EDITABLE_CONFIG_FIELDS,
     AsbruImportMode,
     AsbruImportPreview,
     AsbruImportRequest,
@@ -309,15 +310,6 @@ class ConnectionApplicationService:
             display_name=details.nickname,
             secret_autofill_supported=False,
         )
-
-    #: The only key a plugin connection may carry in ``config_patch``.
-    #: ``pre_command`` is not an SSH directive at all -- it is a local command
-    #: run before the connection opens, usually a port knock or a VPN dial-up.
-    #: Protocols sshPilot does not build an ssh command line for still open
-    #: real connections (Docker over ``ssh://``, Mosh), and a host behind port
-    #: knocking has to be reachable from those too. Everything else in
-    #: ``config_patch`` is an ssh directive and stays refused.
-    _PLUGIN_ALLOWED_CONFIG_KEYS = frozenset({"pre_command"})
 
     # SSH directive each editable core field authors when set explicitly.
     _FIELD_DIRECTIVES = {"hostname": "hostname", "username": "user", "port": "port"}
@@ -1232,7 +1224,7 @@ class ConnectionApplicationService:
             )
         if request.protocol != "ssh" and request.config_patch:
             unsupported = (
-                set(request.config_patch) - self._PLUGIN_ALLOWED_CONFIG_KEYS
+                set(request.config_patch) - PLUGIN_EDITABLE_CONFIG_FIELDS
             )
             if unsupported:
                 raise SshPilotError(
@@ -1590,7 +1582,7 @@ class ConnectionApplicationService:
             )
         if protocol != "ssh" and request.config_patch:
             unsupported = (
-                set(request.config_patch) - self._PLUGIN_ALLOWED_CONFIG_KEYS
+                set(request.config_patch) - PLUGIN_EDITABLE_CONFIG_FIELDS
             )
             if unsupported:
                 raise SshPilotError(
