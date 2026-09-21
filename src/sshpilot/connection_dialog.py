@@ -62,6 +62,13 @@ from .accessibility import set_accessible_name
 
 logger = logging.getLogger(__name__)
 
+#: How far the fields under each pre-connection radio are inset, on both
+#: sides. Left so a field sits under its radio's label rather than its circle,
+#: which is what marks it as belonging to that choice; right by the same
+#: amount, so the field is evenly placed in the row instead of running flush
+#: into the card edge while the left side is indented.
+_PRE_COMMAND_INDENT = 16
+
 
 def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
     """Run ``start_worker`` once the secret backend is confirmed unlocked.
@@ -4119,8 +4126,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.pre_command_knock_row = Gtk.Entry()
         self.pre_command_knock_row.set_placeholder_text(_("7000,8000,9000"))
         self.pre_command_knock_row.set_hexpand(True)
-        # Indented under its radio, so it plainly belongs to that choice.
-        self.pre_command_knock_row.set_margin_start(28)
+        # Indented under its radio, so it plainly belongs to that choice, and
+        # inset by the same amount on the right so the field sits evenly in
+        # the row rather than running flush into the card edge.
+        self.pre_command_knock_row.set_margin_start(_PRE_COMMAND_INDENT)
+        self.pre_command_knock_row.set_margin_end(_PRE_COMMAND_INDENT)
         set_accessible_name(self.pre_command_knock_row, _("Port knock sequence"))
         self.pre_command_knock_row.connect(
             "changed", self._on_pre_command_knock_changed
@@ -4131,7 +4141,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         knock_hint.add_css_class("dim-label")
         knock_hint.add_css_class("caption")
         knock_hint.set_wrap(True)
-        knock_hint.set_margin_start(28)
+        knock_hint.set_margin_start(_PRE_COMMAND_INDENT)
+        knock_hint.set_margin_end(_PRE_COMMAND_INDENT)
         self._pre_command_knock_hint = knock_hint
         knock_box.append(knock_hint)
 
@@ -4184,7 +4195,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         command_box.set_margin_top(6)
         command_box.set_margin_bottom(6)
         command_box.append(self.pre_command_command_radio)
-        scrolled.set_margin_start(28)
+        scrolled.set_margin_start(_PRE_COMMAND_INDENT)
+        scrolled.set_margin_end(_PRE_COMMAND_INDENT)
         command_box.append(scrolled)
 
         # The hint and the Test row sit with the command, not under the
@@ -4202,7 +4214,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._pre_command_result.set_wrap(True)
         self._pre_command_result.set_hexpand(True)
         self._pre_command_result.set_valign(Gtk.Align.CENTER)
-        self._pre_command_result.set_margin_start(4)
+        self._pre_command_result.set_margin_start(_PRE_COMMAND_INDENT)
 
         hint = Gtk.Label(label=_(self._PRE_COMMAND_TOKENS), xalign=0)
         hint.add_css_class("dim-label")
@@ -4210,7 +4222,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         hint.set_hexpand(True)
         # Both line up with the command text above rather than the group
         # edge, so the answer reads as belonging to the box it is under.
-        hint.set_margin_start(28)
+        hint.set_margin_start(_PRE_COMMAND_INDENT)
+        hint.set_margin_end(_PRE_COMMAND_INDENT)
 
         # The tokens belong to the command, so they stay with it and grey out
         # with it.
@@ -4229,6 +4242,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         action_row.set_valign(Gtk.Align.CENTER)
         action_row.set_margin_top(6)
         action_row.set_margin_bottom(6)
+        # Test lines up with the right edge of the fields it tries.
+        action_row.set_margin_end(_PRE_COMMAND_INDENT)
         action_row.append(self._pre_command_result)
         action_row.append(self.pre_command_test_button)
         test_row = Adw.PreferencesRow()
