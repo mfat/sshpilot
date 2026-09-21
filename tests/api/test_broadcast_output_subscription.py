@@ -17,7 +17,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
 
 from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.events import CoreEvent, EventType

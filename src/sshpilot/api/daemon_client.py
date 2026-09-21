@@ -12,7 +12,16 @@ import time
 from sshpilot.runtime_identity import new_unique_client_id, new_request_id
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NoReturn, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    NoReturn,
+    Optional,
+    Union,
+)
 
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.logging_support import log_context
@@ -296,6 +305,9 @@ from .transport.secret_frames import (
     encode_secret_payload,
 )
 from .version import PROTOCOL_VERSION
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .models.pre_command import PreCommandTestResult
 
 logger = logging.getLogger(__name__)
 

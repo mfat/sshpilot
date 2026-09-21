@@ -17,8 +17,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from sshpilot.api import DaemonClient, EventType
 from sshpilot.api.models.pre_command import (
     PreCommandLaunchKind,
@@ -122,7 +120,9 @@ def test_a_failing_command_is_narrated_and_the_launch_still_succeeds(tmp_path):
 
         assert spec.argv[0] == "ssh"
         assert _wait(lambda: any(n.phase is PreCommandPhase.FINISHED for n in notices))
-        finished = [n for n in notices if n.phase is PreCommandPhase.FINISHED][0]
+        finished = next(
+            n for n in notices if n.phase is PreCommandPhase.FINISHED
+        )
         assert finished.reason is PreCommandReason.NONZERO_EXIT
         assert finished.exit_code == 5
     finally:

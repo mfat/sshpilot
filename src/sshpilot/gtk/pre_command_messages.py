@@ -130,7 +130,9 @@ def format_pre_command_test(result: PreCommandTestResult) -> tuple:
     try:
         template = _TEST_TEMPLATES[result.reason]
     except KeyError:
-        raise ValueError("pre-connection command test result has no presentation")
+        raise ValueError(
+            "pre-connection command test result has no presentation"
+        ) from None
     text = _(template).format(
         code=result.exit_code if result.exit_code is not None else "?",
         seconds=f"{result.duration_ms / 1000:.1f}",

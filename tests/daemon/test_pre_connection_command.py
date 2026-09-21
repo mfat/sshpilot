@@ -18,6 +18,8 @@ make the move worth making, plus the one that must *not* change:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
 import subprocess
 import threading
@@ -135,6 +137,11 @@ def _ran(returncode=0, stdout="", stderr=""):
             handle = kwargs.get(stream)
             if handle is not None and text:
                 handle.write(text)
+                # A real child writes straight to the descriptor, so the size
+                # is visible to fstat the moment it returns. A buffered
+                # write from in-process is not, and the runner reads the
+                # size that way.
+                handle.flush()
         return SimpleNamespace(returncode=returncode)
 
     return _run
@@ -635,6 +642,25 @@ def test_a_failed_run_is_not_coalesced_over():
 LOGGER = "sshpilot.daemon.pre_connection_command"
 
 
+@contextlib.contextmanager
+def caplog_at_info():
+    """Collect this module's INFO records without depending on caplog order."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    target = logging.getLogger(LOGGER)
+    previous = target.level
+    target.addHandler(handler)
+    target.setLevel(logging.INFO)
+    lines: list = []
+    try:
+        yield lines
+    finally:
+        target.removeHandler(handler)
+        target.setLevel(previous)
+        lines.extend(stream.getvalue().splitlines())
+
+
 def test_lifecycle_is_logged_and_the_command_is_not(caplog):
     """INFO/WARNING carry lifecycle; content stays at DEBUG."""
 
@@ -867,12 +893,15 @@ def test_a_connection_timeout_overrides_the_app_default():
 
     def _record(argv, **kwargs):
         seen["timeout"] = kwargs.get("timeout")
-        return _ran()(args, **kwargs)
+        return _ran()(argv, **kwargs)
 
-    runner, _ = _runner("knock", timeout=30, per_connection_timeout=5, runner=_record)
+    runner, notices = _runner(
+        "knock", timeout=30, per_connection_timeout=5, runner=_record
+    )
     runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
 
     assert seen["timeout"] == 5
+    assert notices[-1].reason is PreCommandReason.OK
 
 
 def test_no_connection_timeout_follows_the_app_default():
@@ -882,12 +911,15 @@ def test_no_connection_timeout_follows_the_app_default():
 
     def _record(argv, **kwargs):
         seen["timeout"] = kwargs.get("timeout")
-        return _ran()(args, **kwargs)
+        return _ran()(argv, **kwargs)
 
-    runner, _ = _runner("knock", timeout=30, per_connection_timeout=0, runner=_record)
+    runner, notices = _runner(
+        "knock", timeout=30, per_connection_timeout=0, runner=_record
+    )
     runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
 
     assert seen["timeout"] == 30
+    assert notices[-1].reason is PreCommandReason.OK
 
 
 # --- backgrounding behaves the way a terminal does ---------------------------
@@ -1002,3 +1034,55 @@ def test_the_launch_and_test_paths_agree_about_output():
     tested = runner.test(command)
 
     assert notices[-1].output == tested.output
+
+
+# --- a noisy command cannot size our memory ----------------------------------
+#
+# A misconfigured command can loop printing until its timeout. Reading the
+# whole file to then keep 4000 characters of it would make our memory a
+# function of how badly someone's command misbehaves.
+
+
+def test_a_flood_of_output_is_read_only_up_to_the_bound():
+    from sshpilot.daemon.pre_connection_command import _CAPTURE_READ_LIMIT
+
+    runner, notices = _runner(
+        f"head -c {_CAPTURE_READ_LIMIT * 20} /dev/zero | tr '\\\\0' 'x'; exit 1",
+        timeout=10,
+    )
+
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert len(notices[-1].output) <= _CAPTURE_READ_LIMIT
+
+
+def test_the_logged_size_is_what_was_written_not_what_was_read():
+    """Bounding the read must not start under-reporting what happened."""
+
+    from sshpilot.daemon.pre_connection_command import _CAPTURE_READ_LIMIT
+
+    written = _CAPTURE_READ_LIMIT * 3
+    runner, _ = _runner(
+        f"head -c {written} /dev/zero | tr '\\\\0' 'x'", timeout=10
+    )
+
+    with caplog_at_info() as records:
+        runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert f"stdout_bytes={written}" in "\n".join(records)
+
+
+
+# --- %p is the SSH default when nothing names a port -------------------------
+
+
+def test_an_unset_port_expands_to_the_ssh_default():
+    """`knock %h %p` has to knock a port, not pass an empty argument."""
+
+    from sshpilot.api.models.pre_command import expand_pre_command_tokens
+
+    assert expand_pre_command_tokens("knock %h %p", hostname="h", port=0) == "knock h 22"
+    assert (
+        expand_pre_command_tokens("knock %h %p", hostname="h", port=None)
+        == "knock h 22"
+    )

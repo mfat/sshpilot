@@ -38,7 +38,7 @@ def application():
         # keeps this test free of a display while still running every branch
         # that decides *whether* to alert.
         window=SimpleNamespace(_is_quitting=False, toast_overlay=None),
-        get_windows=lambda: [],
+        get_windows=list,
         get_active_window=lambda: None,
     )
     for name in (

@@ -39,6 +39,7 @@ someone out of their own host.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -66,9 +67,14 @@ from .bootstrap_settings import (
 
 logger = logging.getLogger(__name__)
 
-#: Cap on how much captured stderr is written to the debug log. Output is
-#: content, so it is never logged above DEBUG and never crosses the wire.
+#: Cap on how much captured output is written to the debug log. Output is
+#: content, so it is never logged above DEBUG.
 _STDERR_LOG_LIMIT = 800
+
+#: How much of each stream is ever read into memory. The notice and the
+#: Test result are both bounded at this, so reading more would only be
+#: thrown away -- and a looping command can write without limit.
+_CAPTURE_READ_LIMIT = PreConnectionCommandNotice.MAX_OUTPUT_CHARS
 
 
 class PreConnectionCommandRunner:
@@ -262,14 +268,34 @@ class PreConnectionCommandRunner:
             yield out, err
 
     @staticmethod
-    def _read_capture(handle) -> str:
-        """Whatever the command wrote before we stopped waiting for it."""
+    def _read_capture(handle, limit: int = _CAPTURE_READ_LIMIT) -> str:
+        """A bounded prefix of what the command wrote.
+
+        Bounded at the source rather than after the fact: a misconfigured
+        command can loop printing until its timeout, and reading the whole
+        file to then keep 4000 characters of it would size our memory by how
+        badly the user's command misbehaves.
+        """
         try:
             handle.seek(0)
-            return handle.read()
+            return handle.read(limit)
         except Exception:
             logger.debug("pre-connection command output was unreadable", exc_info=True)
             return ""
+
+    @staticmethod
+    def _capture_bytes(handle) -> int:
+        """How much the command actually wrote, without reading any of it.
+
+        ``fstat`` on the handle answers for the whole file even though the
+        read above stops early, so the logged counts stay true to what
+        happened rather than to what we chose to look at.
+        """
+        try:
+            return os.fstat(handle.fileno()).st_size
+        except Exception:
+            logger.debug("pre-connection command output size unknown", exc_info=True)
+            return 0
 
     def _execute(
         self,
@@ -351,8 +377,8 @@ class PreConnectionCommandRunner:
             exit_code = getattr(result, "returncode", None)
             if type(exit_code) is not int:
                 exit_code = None
-            stdout_bytes = _text_length(self._read_capture(out_file))
-            stderr_text = self._read_capture(err_file)
+            stdout_bytes = self._capture_bytes(out_file)
+            stderr_bytes = self._capture_bytes(err_file)
             merged = self._merged_capture(out_file, err_file)
         if exit_code == 0:
             logger.info(
@@ -360,7 +386,7 @@ class PreConnectionCommandRunner:
                 "stdout_bytes=%d stderr_bytes=%d kind=%s",
                 duration_ms,
                 stdout_bytes,
-                _text_length(stderr_text),
+                stderr_bytes,
                 kind.value,
             )
             return PreCommandReason.OK, exit_code, duration_ms, ""
@@ -561,16 +587,6 @@ class PreConnectionCommandRunner:
 def _elapsed_ms(started: float, now: float) -> int:
     elapsed = now - started
     return int(elapsed * 1000) if elapsed > 0 else 0
-
-
-def _text_length(value: Any) -> int:
-    """Byte count of captured output -- never the output itself."""
-
-    if isinstance(value, str):
-        return len(value.encode("utf-8", "replace"))
-    if isinstance(value, (bytes, bytearray)):
-        return len(value)
-    return 0
 
 
 __all__ = ["PreConnectionCommandRunner"]

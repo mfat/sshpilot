@@ -1210,7 +1210,7 @@ class TerminalWidget(Gtk.Box):
         if backend is None:
             return
         try:
-            backend.feed(f"\x1b[36m{value}\x1b[0m\r\n".encode("utf-8"))
+            backend.feed(f"\x1b[36m{value}\x1b[0m\r\n".encode())
         except Exception:
             logger.debug("Could not announce the connecting detail", exc_info=True)
 
@@ -1233,7 +1233,7 @@ class TerminalWidget(Gtk.Box):
             return
         try:
             body = value.replace("\r\n", "\n").replace("\n", "\r\n")
-            backend.feed(f"{body}\r\n".encode("utf-8"))
+            backend.feed(f"{body}\r\n".encode())
         except Exception:
             logger.debug("Could not print the pre-command output", exc_info=True)
 

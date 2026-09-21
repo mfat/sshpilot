@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import AbstractSet, Any, Dict, Iterable, Mapping, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    AbstractSet,
+    Any,
+    Dict,
+    Iterable,
+    Mapping,
+    Optional,
+    Union,
+)
 
 from .._safe_values import copy_transport_value
 from ..capabilities import Capabilities, Capability
@@ -5056,6 +5065,13 @@ def cancel_transfer_request_from_wire(value: Any) -> CancelTransferRequest:
         context="cancel transfer request",
     )
     return CancelTransferRequest(transfer_id=_transfer_id(data["transfer_id"], "transfer id"))
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..models.pre_command import (
+        PreCommandTestResult,
+        PreConnectionCommandNotice,
+    )
 
 
 def pre_command_test_result_to_wire(result: "PreCommandTestResult") -> Dict[str, Any]:

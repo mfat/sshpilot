@@ -46,6 +46,9 @@ from .common import ConnectionId, require_identifier
 #: kind of thing, an app-owned action that runs before connecting -- already
 #: stores itself this way, and metadata applies to every protocol, so SSH and
 #: plugin connections need no separate arrangement.
+#: What ``%p`` means when a connection names no port, matching OpenSSH.
+DEFAULT_SSH_PORT = 22
+
 PRE_COMMAND_METADATA_KEYS = ("pre_command", "pre_command_timeout", "pre_command_abort")
 
 
@@ -112,6 +115,13 @@ def expand_pre_command_tokens(
     space or a quote in one should stay a hostname rather than becoming
     another argument. ``%%`` is a literal percent, and an unknown ``%x`` is
     left alone -- ``date +%H`` must survive being written here.
+
+    An unset port expands to 22, not to nothing. A connection that never names
+    a port is using the default, and ``knock %h %p`` has to knock a port
+    rather than pass an empty argument. The config loader already fills 22 in,
+    so this matters for the editor's Test button, which reads the field as it
+    stands and would otherwise disagree with the launch it is meant to
+    rehearse.
     """
     import shlex
 
@@ -119,7 +129,7 @@ def expand_pre_command_tokens(
         return command if isinstance(command, str) else ""
     replacements = {
         "h": shlex.quote(str(hostname or "")),
-        "p": shlex.quote(str(port or "")),
+        "p": shlex.quote(str(port or DEFAULT_SSH_PORT)),
         "u": shlex.quote(str(username or "")),
         "%": "%",
     }
