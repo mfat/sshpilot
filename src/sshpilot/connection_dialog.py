@@ -4116,10 +4116,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.pre_command_view.set_right_margin(12)
         self.pre_command_view.set_size_request(-1, 92)
         self.pre_command_view.set_accessible_role(Gtk.AccessibleRole.TEXT_BOX)
-        set_accessible_name(self.pre_command_view, _("Pre-Connection Command"))
 
+        # A port sequence has its own field now, so suggesting the knock tool
+        # here would point people at the one path that needs a binary
+        # installed -- and that is missing in the Flatpak.
         self._pre_command_placeholder = Gtk.Label(
-            label=_("knock %h 7000 8000 9000 && sleep 1"),
+            label=_("fwknop -n %h"),
             xalign=0,
             yalign=0,
         )
@@ -4136,9 +4138,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         scrolled.set_size_request(-1, 92)
         scrolled.add_css_class("card")
 
+        # The knock row above carries a title, so an untitled box under it
+        # reads as a continuation of that field rather than a separate one.
+        # Styled like a row title, not a heading: it names a sibling field.
+        command_title = Gtk.Label(label=_("Command"), xalign=0)
+        command_title.add_css_class("caption")
+        command_title.add_css_class("dim-label")
+        command_title.set_margin_start(12)
+        set_accessible_name(self.pre_command_view, _("Command"))
+
         command_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         command_box.set_margin_top(6)
         command_box.set_margin_bottom(6)
+        command_box.append(command_title)
         command_box.append(scrolled)
 
         # The hint and the Test row sit with the command, not under the
