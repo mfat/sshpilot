@@ -4056,10 +4056,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             x11_group,
         ]
 
+    #: Carries the knock syntax because an ``Adw.EntryRow`` has no subtitle to
+    #: put it in, and the syntax is the one thing a user cannot guess. The
+    #: bullets mirror the SSH Commands group below, so the two read as a pair.
     _PRE_COMMAND_HELP = N_(
-        "Runs on this computer before SSH Pilot connects — a port knock "
-        "(knock, fwknop) or a VPN dial-up that has to open the way to the "
-        "host first."
+        "Opens the way to the host before SSH Pilot connects. The knock "
+        "sequence is sent first.\n\n"
+        "• Port Knock Sequence: ports to reach for, in order, such as "
+        "7000,8000,9000. Add :udp to a port for UDP. Sent by SSH Pilot "
+        "itself, so no knock tool has to be installed.\n"
+        "• Command: anything else that has to run first — fwknop, a VPN "
+        "dial-up."
     )
     _SSH_COMMANDS_HELP = N_(
         "Sent to OpenSSH.\n\n"
@@ -4088,6 +4095,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             description=_(self._PRE_COMMAND_HELP),
         )
         self._pre_command_group = pre_group
+
+        # First in the group because it happens first, and because it is what
+        # most people opening this page came for.
+        # An EntryRow shows its title as the placeholder while it is empty,
+        # so the syntax lives in the group description above rather than in a
+        # subtitle the row does not have.
+        self.pre_command_knock_row = Adw.EntryRow(title=_("Port Knock Sequence"))
+        self.pre_command_knock_row.connect(
+            "changed", self._on_pre_command_knock_changed
+        )
+        pre_group.add(self.pre_command_knock_row)
 
         self.pre_command_view = Gtk.TextView()
         self.pre_command_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -4245,6 +4263,43 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             logger.debug("Could not set the pre-command text", exc_info=True)
 
+    def _on_pre_command_knock_changed(self, row) -> None:
+        """Mark a sequence that will not parse, while it can still be fixed.
+
+        The launcher is deliberately forgiving about a sequence it cannot
+        read -- refusing to connect over a typo helps nobody at that point --
+        so this is the only place the mistake can be caught. Pressing Test
+        gives the precise reason; this just says which field to look at.
+        """
+        from .api.models.pre_command import parse_knock_sequence
+
+        try:
+            text = (row.get_text() or "").strip()
+        except Exception:
+            return
+        valid = True
+        if text:
+            try:
+                parse_knock_sequence(text)
+            except ValueError:
+                valid = False
+        try:
+            if valid:
+                row.remove_css_class("error")
+            else:
+                row.add_css_class("error")
+        except Exception:
+            logger.debug("Could not mark the knock sequence field", exc_info=True)
+
+    def get_pre_command_knock_text(self) -> str:
+        row = getattr(self, 'pre_command_knock_row', None)
+        if row is None:
+            return ""
+        try:
+            return (row.get_text() or "").strip()
+        except Exception:
+            return ""
+
     def _on_pre_command_test(self, _button) -> None:
         """Run the command the user is looking at, and say what happened.
 
@@ -4255,8 +4310,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         from .gtk.pre_command_messages import format_pre_command_test
 
         command = self.get_pre_command_text()
-        if not command:
-            self._show_pre_command_result(_("Enter a command first."), ok=False)
+        knock = self.get_pre_command_knock_text()
+        if not command and not knock:
+            self._show_pre_command_result(
+                _("Enter a knock sequence or a command first."), ok=False
+            )
             return
         client = getattr(self.parent_window, 'client', None)
         bridge = getattr(self.parent_window, 'client_bridge', None)
@@ -4301,6 +4359,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 lambda: tester(
                     command,
                     timeout,
+                    knock=knock,
                     hostname=hostname,
                     port=port,
                     username=username,
@@ -4632,6 +4691,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     # which is the whole migration.
                     command = self._legacy_pre_command()
                 self.set_pre_command_text(command or '')
+                knock = meta.get('pre_command_knock')
+                self.pre_command_knock_row.set_text(
+                    knock.strip() if isinstance(knock, str) else ''
+                )
                 timeout = meta.get('pre_command_timeout')
                 self.pre_command_timeout_row.set_value(
                     timeout if isinstance(timeout, int) and timeout >= 0 else 0
@@ -4776,6 +4839,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # metadata is JSON, so a multi-line command needs no escaping scheme.
         if hasattr(self, 'pre_command_view'):
             meta['pre_command'] = self.get_pre_command_text()
+            meta['pre_command_knock'] = self.get_pre_command_knock_text()
             try:
                 meta['pre_command_timeout'] = int(
                     self.pre_command_timeout_row.get_value()

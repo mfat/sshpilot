@@ -35,6 +35,8 @@ from sshpilot.api.models.pre_command import (
     PreCommandSettings,
     PreCommandPhase,
     PreCommandReason,
+    PreCommandStage,
+    parse_knock_sequence,
 )
 from sshpilot.daemon.pre_connection_command import PreConnectionCommandRunner
 from sshpilot.daemon.ssh_launch import (
@@ -1148,3 +1150,258 @@ def test_the_login_shell_is_kept_in_both_cases(monkeypatch):
     for sandboxed in (True, False):
         argv = _argv_for(monkeypatch, "knock host", sandboxed=sandboxed)
         assert "-lc" in argv
+
+
+# --- the knock stage ----------------------------------------------------------
+#
+# A connection may knock, run a command, or both. The knock goes first, because
+# the command is the half that needs the way already open -- an ``fwknop`` SPA
+# or a VPN dial-up is what you reach for when a port sequence is not enough,
+# not instead of it.
+
+
+def _knock_runner(
+    sequence="7000,8000",
+    command="",
+    *,
+    hostname="knock.example",
+    abort=False,
+    coalesce=0,
+    outcome=None,
+    error=None,
+    subprocess_runner=None,
+):
+    """A runner whose knocking is faked, plus its notices and what it knocked."""
+
+    from sshpilot.daemon import pre_connection_command as module
+    from sshpilot.daemon.port_knock import KnockOutcome
+
+    knocks = []
+
+    def fake_knock(host, steps, **kwargs):
+        knocks.append((host, tuple(steps)))
+        if error is not None:
+            raise error
+        return outcome or KnockOutcome(
+            sent=len(steps), failed=(), address="203.0.113.7", duration_ms=12
+        )
+
+    notices = []
+    instance = PreConnectionCommandRunner(
+        settings=_settings(5, coalesce),
+        lookup=lambda connection_id: PreCommandSettings(
+            command=command,
+            knock_sequence=sequence,
+            hostname=hostname,
+            abort_on_failure=abort,
+        ),
+        **({"runner": subprocess_runner} if subprocess_runner is not None else {}),
+    )
+    instance._knock_calls = knocks
+    instance.subscribe_events(lambda event: notices.append(event.payload))
+    return instance, notices, knocks, module, fake_knock
+
+
+def _run_knock(fixture, monkeypatch, *, kind=PreCommandLaunchKind.TERMINAL):
+    instance, notices, knocks, module, fake_knock = fixture
+    monkeypatch.setattr(module, "send_knock", fake_knock)
+    proceed = instance.run(
+        ConnectionId("c1"), scope_id="s1", kind=kind
+    )
+    return proceed, notices, knocks
+
+
+def test_a_knock_only_connection_knocks_and_runs_no_process(monkeypatch):
+    """The common case: a sequence and nothing else, with no tool installed."""
+
+    ran = []
+    fixture = _knock_runner(subprocess_runner=lambda *a, **k: ran.append(a))
+    proceed, notices, knocks = _run_knock(fixture, monkeypatch)
+
+    assert proceed is True
+    assert ran == [], "a knock must not shell out to anything"
+    assert knocks == [("knock.example", parse_knock_sequence("7000,8000"))]
+    assert [n.phase for n in notices] == [
+        PreCommandPhase.RUNNING,
+        PreCommandPhase.FINISHED,
+    ]
+    assert all(n.stage is PreCommandStage.KNOCK for n in notices)
+    assert notices[-1].reason is PreCommandReason.OK
+
+
+def test_the_knock_goes_before_the_command(monkeypatch):
+    """Order is the whole contract: the command needs the way already open."""
+
+    order = []
+    fixture = _knock_runner(
+        command="true",
+        subprocess_runner=lambda *a, **k: (
+            order.append("command"), SimpleNamespace(returncode=0)
+        )[1],
+    )
+    instance = fixture[0]
+    original = fixture[4]
+
+    def recording_knock(host, steps, **kwargs):
+        order.append("knock")
+        return original(host, steps, **kwargs)
+
+    fixture = (instance, fixture[1], fixture[2], fixture[3], recording_knock)
+    proceed, notices, _ = _run_knock(fixture, monkeypatch)
+
+    assert proceed is True
+    assert order == ["knock", "command"]
+
+
+def test_both_halves_each_announce_themselves(monkeypatch):
+    """So the status text can name the half that is actually running.
+
+    "Running pre-connection command…" during a knock sends a user looking for
+    a field they left empty.
+    """
+
+    fixture = _knock_runner(
+        command="true", subprocess_runner=lambda *a, **k: SimpleNamespace(returncode=0)
+    )
+    _, notices, _ = _run_knock(fixture, monkeypatch)
+
+    running = [n for n in notices if n.phase is PreCommandPhase.RUNNING]
+    finished = [n for n in notices if n.phase is PreCommandPhase.FINISHED]
+    assert [n.stage for n in running] == [
+        PreCommandStage.KNOCK,
+        PreCommandStage.COMMAND,
+    ]
+    # Exactly one finished notice, so "clear the status on finished" stays a
+    # correct rule for the frontend.
+    assert len(finished) == 1
+    assert finished[0].stage is PreCommandStage.COMMAND
+
+
+def test_a_knock_that_cannot_be_sent_does_not_run_the_command(monkeypatch):
+    """Nothing opened the way, so the command would run into a closed door.
+
+    It also keeps the report honest: one failure, named as the knock, rather
+    than a knock failure plus whatever the command made of the situation.
+    """
+
+    from sshpilot.daemon.port_knock import KnockOutcome
+    from sshpilot.api.models.pre_command import KnockStep
+
+    ran = []
+    fixture = _knock_runner(
+        command="true",
+        outcome=KnockOutcome(
+            sent=0,
+            failed=((KnockStep(port=7000), "ENETUNREACH"),),
+            address="203.0.113.7",
+            duration_ms=4,
+        ),
+        subprocess_runner=lambda *a, **k: ran.append(a),
+    )
+    proceed, notices, _ = _run_knock(fixture, monkeypatch)
+
+    assert ran == []
+    assert proceed is True, "a failed pre-step still never blocks by default"
+    assert notices[-1].reason is PreCommandReason.START_FAILED
+    assert notices[-1].stage is PreCommandStage.KNOCK
+    assert notices[-1].aborted is False
+    assert "ENETUNREACH" in notices[-1].output
+
+
+def test_a_connection_gated_on_its_knock_refuses_the_launch(monkeypatch):
+    from sshpilot.daemon.port_knock import KnockResolutionError
+
+    fixture = _knock_runner(
+        abort=True, error=KnockResolutionError("Name or service not known")
+    )
+    proceed, notices, _ = _run_knock(fixture, monkeypatch)
+
+    assert proceed is False
+    assert notices[-1].aborted is True
+    assert notices[-1].stage is PreCommandStage.KNOCK
+
+
+def test_an_unresolvable_host_is_reported_not_raised(monkeypatch):
+    from sshpilot.daemon.port_knock import KnockResolutionError
+
+    fixture = _knock_runner(error=KnockResolutionError("no such host"))
+    proceed, notices, _ = _run_knock(fixture, monkeypatch)
+
+    assert proceed is True
+    assert notices[-1].reason is PreCommandReason.START_FAILED
+    assert "no such host" in notices[-1].output
+
+
+def test_a_bug_in_the_knocker_never_strands_a_launch(monkeypatch):
+    fixture = _knock_runner(error=RuntimeError("boom"))
+    proceed, notices, _ = _run_knock(fixture, monkeypatch)
+
+    assert proceed is True
+    assert notices[-1].reason is PreCommandReason.START_FAILED
+
+
+def test_a_knock_notice_never_claims_an_exit_code(monkeypatch):
+    """A knock runs no process, so "failed (exit 1)" would be a fiction."""
+
+    fixture = _knock_runner(error=RuntimeError("boom"))
+    _, notices, _ = _run_knock(fixture, monkeypatch)
+    assert all(n.exit_code is None for n in notices)
+
+
+def test_an_unparseable_sequence_is_skipped_rather_than_blocking(monkeypatch):
+    """Forgiving at launch, strict in the editor.
+
+    Refusing to connect over a typo in an optional field helps nobody at the
+    moment someone is trying to reach a host.
+    """
+
+    ran = []
+    fixture = _knock_runner(
+        sequence="not-a-port",
+        command="true",
+        subprocess_runner=lambda *a, **k: (
+            ran.append(a), SimpleNamespace(returncode=0)
+        )[1],
+    )
+    proceed, notices, knocks = _run_knock(fixture, monkeypatch)
+
+    assert proceed is True
+    assert knocks == [], "nothing sendable was configured"
+    assert len(ran) == 1, "the command still runs"
+    assert all(n.stage is PreCommandStage.COMMAND for n in notices)
+
+
+def test_a_knock_only_connection_coalesces_like_a_command(monkeypatch):
+    """Three tabs at once must still produce one sequence.
+
+    An interleaved sequence is scored as a *failed* sequence by some ``knockd``
+    configurations, so this is a correctness property, not an optimisation.
+    """
+
+    fixture = _knock_runner(coalesce=60)
+    instance, _, knocks, module, fake_knock = fixture
+    monkeypatch.setattr(module, "send_knock", fake_knock)
+    for _ in range(3):
+        instance.run(
+            ConnectionId("c1"), scope_id="s1", kind=PreCommandLaunchKind.TERMINAL
+        )
+    assert len(knocks) == 1
+
+
+def test_the_sequence_is_never_logged_above_debug(monkeypatch, caplog):
+    """A knock sequence is a door code: anyone who reads it can open the way."""
+
+    fixture = _knock_runner(sequence="17001,17002,17003")
+    with caplog.at_level(logging.INFO):
+        _run_knock(fixture, monkeypatch)
+    assert "17001" not in caplog.text
+    assert "port knock starting" in caplog.text
+    assert "ports=3" in caplog.text
+
+
+def test_a_connection_with_neither_half_does_nothing(monkeypatch):
+    fixture = _knock_runner(sequence="", command="")
+    proceed, notices, knocks = _run_knock(fixture, monkeypatch)
+    assert proceed is True
+    assert notices == []
+    assert knocks == []

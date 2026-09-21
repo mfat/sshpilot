@@ -1434,12 +1434,15 @@ class RequestDispatcher:
         saved value would answer a question they did not ask.
         """
         params = dict(request.params)
-        allowed = {"command", "timeout", "hostname", "port", "username"}
+        allowed = {"command", "knock", "timeout", "hostname", "port", "username"}
         if set(params) - allowed:
             raise ValueError("connections.test_pre_command received unknown fields")
         command = params.get("command")
         if type(command) is not str:
             raise ValueError("command must be a string")
+        knock = params.get("knock", "")
+        if type(knock) is not str:
+            raise ValueError("knock must be a string")
         timeout = params.get("timeout", 0)
         if type(timeout) is not int or isinstance(timeout, bool) or timeout < 0:
             raise ValueError("timeout must be a non-negative integer")
@@ -1465,9 +1468,14 @@ class RequestDispatcher:
                 ErrorCode.UNSUPPORTED_CAPABILITY,
                 "Pre-connection commands are unavailable",
             )
+        # The knock needs no token expansion: its only variable is the host,
+        # which it is handed directly.
+        hostname = params.get("hostname", "")
         return DeferredResult(
             operation=lambda: pre_command_test_result_to_wire(
-                runner.test(command, timeout)
+                runner.test(
+                    command, timeout, knock_sequence=knock, hostname=hostname
+                )
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

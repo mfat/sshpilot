@@ -16,7 +16,40 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.61 (current)
+## API 0.62 (current)
+
+### API 0.62 Native port-knock sequences
+
+- Per-connection metadata gains `pre_command_knock`, a knock sequence in
+  `knock(1)` syntax (`7000,8000,9000`, or `7000:udp 8000:tcp`). The daemon
+  sends it itself with plain sockets before the pre-connection command runs;
+  the two compose, sequence first. `PreCommandSettings` gains `knock_sequence`
+  and `hostname`, and exposes the parsed `knock_steps`.
+- Knocking natively rather than shelling out to `knock` is what makes the
+  feature work in the Flatpak at all: no knock tool is installed in the
+  sandbox and none can be, so the command path has to leave via
+  `flatpak-spawn --host` and hope the user installed one there. A knock is
+  only a TCP SYN or a UDP datagram to a closed port, so a socket reproduces
+  it exactly, on every platform, with nothing to install. The command field
+  stays for `fwknop`, whose encrypted single-packet authorisation is a real
+  protocol and not a port sequence.
+- New models `KnockProtocol`, `KnockStep` and `PreCommandStage`, plus
+  `parse_knock_sequence`/`format_knock_sequence`. `PreConnectionCommandNotice`
+  and `PreCommandTestResult` gain `stage`, so a frontend can say "Sending the
+  port knock…" rather than naming a command the connection never configured.
+  A knock notice carries no exit code — a knock runs no process — and that is
+  enforced by the model.
+- `test_pre_command` gains an optional `knock` parameter, so the editor's Test
+  button exercises the sequence the same way a launch would. Additive: an
+  older caller that omits it is unaffected.
+- A knock that cannot be sent reports `START_FAILED`, the existing reason for
+  "nothing ran", rather than adding one every frontend would have to learn.
+  A *refused* or *dropped* knock is not a failure: a knocked port is meant to
+  be silent, so refusal and timeout both prove delivery and are the normal
+  case. Only the unreachable family (`ENETUNREACH` and friends) counts as a
+  failure to send.
+
+## API 0.61
 
 ### API 0.61 Pre-connection command settings and Test
 

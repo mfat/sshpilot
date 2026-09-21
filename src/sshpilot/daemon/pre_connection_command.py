@@ -53,13 +53,16 @@ from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.pre_command import (
     PreCommandLaunchKind,
     PreCommandSettings,
+    PreCommandStage,
     PreCommandTestResult,
     PreCommandPhase,
     PreCommandReason,
     PreConnectionCommandNotice,
+    parse_knock_sequence,
 )
 from sshpilot.logging_support import log_context
 
+from .port_knock import KnockResolutionError, knock as send_knock
 from .bootstrap_settings import (
     DEFAULT_PRE_COMMAND_COALESCE_SECONDS,
     DEFAULT_PRE_COMMAND_TIMEOUT_SECONDS,
@@ -154,7 +157,8 @@ class PreConnectionCommandRunner:
     ) -> bool:
         settings = self._read_settings(connection_id)
         command = settings.command
-        if not command:
+        steps = settings.knock_steps
+        if not command and not steps:
             logger.debug("no pre-connection command configured kind=%s", kind.value)
             return True
 
@@ -192,6 +196,22 @@ class PreConnectionCommandRunner:
                     reason=PreCommandReason.COALESCED,
                 )
                 return True
+
+            if steps:
+                proceed = self._knock_stage(
+                    settings,
+                    steps,
+                    connection_id=connection_id,
+                    scope_id=scope_id,
+                    kind=kind,
+                    has_command=bool(command),
+                )
+                if proceed is not None:
+                    # The knock either failed, or was the whole step. Either
+                    # way it has published its own finished notice.
+                    if proceed:
+                        self._last_run[connection_id] = self._clock()
+                    return proceed
 
             logger.info(
                 "pre-connection command starting kind=%s timeout_s=%s coalesce_s=%s",
@@ -233,6 +253,148 @@ class PreConnectionCommandRunner:
             return not aborted
         finally:
             lock.release()
+
+    # -- knocking --------------------------------------------------------------
+
+    def _knock_stage(
+        self,
+        settings: PreCommandSettings,
+        steps,
+        *,
+        connection_id: ConnectionId,
+        scope_id: str,
+        kind: PreCommandLaunchKind,
+        has_command: bool,
+    ) -> Optional[bool]:
+        """Send the knock sequence. Returns ``None`` to carry on to the command.
+
+        A return value means the step is over and a finished notice has been
+        published: ``True`` when the knock was the whole step and worked,
+        ``False`` when it failed and the connection asked to be gated on it.
+        Returning ``None`` is the "knock succeeded, now run the command" path,
+        which keeps exactly one finished notice per run and so leaves the
+        frontend's state machine as simple as it was -- show on running, clear
+        on finished.
+        """
+        logger.info(
+            "port knock starting kind=%s ports=%d",
+            kind.value,
+            len(steps),
+        )
+        # The sequence is the secret here, in the same way a door code is:
+        # anyone who reads it can open the firewall. Ports are content, so
+        # DEBUG only, exactly as the command text is.
+        logger.debug(
+            "port knock sequence: %s",
+            " ".join(str(step) for step in steps),
+        )
+        self._publish(
+            connection_id,
+            scope_id=scope_id,
+            kind=kind,
+            phase=PreCommandPhase.RUNNING,
+            stage=PreCommandStage.KNOCK,
+        )
+        started = self._clock()
+        try:
+            outcome = send_knock(settings.hostname, steps)
+        except KnockResolutionError as error:
+            duration_ms = _elapsed_ms(started, self._clock())
+            logger.warning("port knock could not resolve the host kind=%s", kind.value)
+            logger.debug("port knock resolution failure: %s", error)
+            return self._knock_failed(
+                connection_id,
+                scope_id=scope_id,
+                kind=kind,
+                settings=settings,
+                duration_ms=duration_ms,
+                detail=str(error),
+            )
+        except Exception:
+            # Never strand a launch on the optional half of an optional step.
+            duration_ms = _elapsed_ms(started, self._clock())
+            logger.exception("port knock failed unexpectedly")
+            return self._knock_failed(
+                connection_id,
+                scope_id=scope_id,
+                kind=kind,
+                settings=settings,
+                duration_ms=duration_ms,
+                detail="",
+            )
+
+        if not outcome.succeeded:
+            logger.warning(
+                "port knock incomplete sent=%d failed=%d duration_ms=%d kind=%s",
+                outcome.sent,
+                len(outcome.failed),
+                outcome.duration_ms,
+                kind.value,
+            )
+            # Which host and which reason -- content, so DEBUG only, but it is
+            # the line that actually identifies the fault.
+            logger.debug("port knock: %s", outcome.log_summary)
+            return self._knock_failed(
+                connection_id,
+                scope_id=scope_id,
+                kind=kind,
+                settings=settings,
+                duration_ms=outcome.duration_ms,
+                detail=outcome.failure_reason,
+            )
+
+        logger.info(
+            "port knock finished ports=%d duration_ms=%d kind=%s",
+            outcome.sent,
+            outcome.duration_ms,
+            kind.value,
+        )
+        # The address is content -- it is the user's own host -- so it goes no
+        # higher than DEBUG, alongside the ports.
+        logger.debug("port knock sent to %s", outcome.address)
+        if has_command:
+            return None
+        self._publish(
+            connection_id,
+            scope_id=scope_id,
+            kind=kind,
+            phase=PreCommandPhase.FINISHED,
+            stage=PreCommandStage.KNOCK,
+            duration_ms=outcome.duration_ms,
+        )
+        return True
+
+    def _knock_failed(
+        self,
+        connection_id: ConnectionId,
+        *,
+        scope_id: str,
+        kind: PreCommandLaunchKind,
+        settings: PreCommandSettings,
+        duration_ms: int,
+        detail: str,
+    ) -> bool:
+        """Publish the failure and answer whether the launch may still go on.
+
+        A knock that could not be sent is the same class of fault as a command
+        that could not be started -- nothing ran -- so it reuses that reason
+        rather than adding one the frontend would have to learn.
+        """
+        aborted = settings.abort_on_failure
+        if aborted:
+            logger.warning("port knock refused the launch kind=%s", kind.value)
+        self._publish(
+            connection_id,
+            scope_id=scope_id,
+            kind=kind,
+            phase=PreCommandPhase.FINISHED,
+            reason=PreCommandReason.START_FAILED,
+            stage=PreCommandStage.KNOCK,
+            duration_ms=duration_ms,
+            aborted=aborted,
+            output=detail,
+        )
+        return not aborted
 
     @contextmanager
     def _capture_files(self):
@@ -438,7 +600,14 @@ class PreConnectionCommandRunner:
 
     # -- trying it out ---------------------------------------------------------
 
-    def test(self, command: str, timeout: int = 0) -> PreCommandTestResult:
+    def test(
+        self,
+        command: str,
+        timeout: int = 0,
+        *,
+        knock_sequence: str = "",
+        hostname: str = "",
+    ) -> PreCommandTestResult:
         """Run *command* once and report what happened, for the editor's Test.
 
         Deliberately outside the serialize/coalesce machinery: the user asked
@@ -446,9 +615,20 @@ class PreConnectionCommandRunner:
         queueing behind a launch would answer a different question than the
         one they asked. It also publishes no notice -- nothing is connecting,
         so no surface should show a connection doing anything.
+
+        A configured knock is sent first and, if it fails, reported on its
+        own: a user testing a knock that cannot even be sent is not helped by
+        also being told about the command that followed it.
         """
 
         command = command.strip() if isinstance(command, str) else ""
+        knock_sequence = (
+            knock_sequence.strip() if isinstance(knock_sequence, str) else ""
+        )
+        if knock_sequence:
+            result = self._test_knock(knock_sequence, hostname)
+            if not result.succeeded or not command:
+                return result
         if not command:
             return PreCommandTestResult(reason=PreCommandReason.OK)
         timeout = timeout if type(timeout) is int and timeout > 0 else (
@@ -471,6 +651,64 @@ class PreConnectionCommandRunner:
             exit_code=exit_code,
             duration_ms=duration_ms,
             output=output[:limit],
+        )
+
+    def _test_knock(self, knock_sequence: str, hostname: str) -> PreCommandTestResult:
+        """Send a sequence for the editor's Test button.
+
+        Strict about the syntax where a launch is forgiving, because this is
+        the one moment the user can see the mistake and fix it. Telling them
+        "8OOO is not a port number" here is worth far more than silently
+        knocking two of three ports at connect time.
+        """
+        started = self._clock()
+
+        def failed(detail: str) -> PreCommandTestResult:
+            return PreCommandTestResult(
+                reason=PreCommandReason.START_FAILED,
+                stage=PreCommandStage.KNOCK,
+                duration_ms=_elapsed_ms(started, self._clock()),
+                output=detail[: PreCommandTestResult.MAX_OUTPUT_CHARS],
+            )
+
+        try:
+            steps = parse_knock_sequence(knock_sequence)
+        except ValueError as error:
+            return failed(str(error))
+        if not steps:
+            return PreCommandTestResult(
+                reason=PreCommandReason.OK, stage=PreCommandStage.KNOCK
+            )
+        hostname = hostname.strip() if isinstance(hostname, str) else ""
+        if not hostname:
+            # Testing against nothing would report a success that proves
+            # nothing; the connection has no host yet and the user needs to
+            # know that is why.
+            return failed("this connection has no hostname to knock yet")
+        logger.info("port knock test starting ports=%d", len(steps))
+        try:
+            outcome = send_knock(hostname, steps)
+        except KnockResolutionError as error:
+            return failed(str(error))
+        except Exception as exc:
+            logger.debug("port knock test failed", exc_info=True)
+            return failed(type(exc).__name__)
+        logger.info(
+            "port knock test finished sent=%d failed=%d duration_ms=%d",
+            outcome.sent,
+            len(outcome.failed),
+            outcome.duration_ms,
+        )
+        logger.debug("port knock test sent to %s", outcome.address)
+        if not outcome.succeeded:
+            return failed(outcome.failure_reason)
+        # No output on success. The frontend's own "Sent in 0.6s." says it,
+        # in the user's language; a sentence composed here could not be
+        # translated. What was sent and where is in the debug log.
+        return PreCommandTestResult(
+            reason=PreCommandReason.OK,
+            stage=PreCommandStage.KNOCK,
+            duration_ms=outcome.duration_ms,
         )
 
     def _execute_captured(self, command: str, timeout: int) -> tuple:
@@ -584,6 +822,7 @@ class PreConnectionCommandRunner:
         kind: PreCommandLaunchKind,
         phase: PreCommandPhase,
         reason: PreCommandReason = PreCommandReason.OK,
+        stage: PreCommandStage = PreCommandStage.COMMAND,
         exit_code: Optional[int] = None,
         duration_ms: int = 0,
         aborted: bool = False,
@@ -595,6 +834,7 @@ class PreConnectionCommandRunner:
             kind=kind,
             phase=phase,
             reason=reason,
+            stage=stage,
             exit_code=exit_code,
             duration_ms=duration_ms,
             aborted=aborted,

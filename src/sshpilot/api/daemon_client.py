@@ -837,6 +837,7 @@ class DaemonClient:
         command: str,
         timeout: int = 0,
         *,
+        knock: str = "",
         hostname: str = "",
         port: int = 0,
         username: str = "",
@@ -852,6 +853,7 @@ class DaemonClient:
             "connections.test_pre_command",
             {
                 "command": str(command),
+                "knock": str(knock),
                 "timeout": int(timeout),
                 "hostname": str(hostname),
                 "port": int(port),

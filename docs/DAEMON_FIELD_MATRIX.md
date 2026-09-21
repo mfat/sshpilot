@@ -69,16 +69,30 @@ migration. Every phase of the implementation references it by row number.
 
 | # | Widget | data key | Conn attr | SSH directive | Formatter | Parser | Domain | Guarded |
 |---|--------|----------|-----------|---------------|-----------|--------|--------|---------|
-| 21 | `pre_command_row` | `pre_command` | `pre_command` | `# sshpilot:PreCommand <value>` (comment) | `f"    # sshpilot:PreCommand {pre_cmd}"` | Comment prefix parsed in loader | config (comment) | **Yes** |
+| 21 | `pre_command_view` | `pre_command` (metadata) | — | none | Not written to `~/.ssh/config` | `record.data['pre_command']` read as a legacy fallback | metadata | **Yes** |
+| 21a | `pre_command_knock_row` | `pre_command_knock` (metadata) | — | none | Not written to `~/.ssh/config` | — | metadata | **Yes** |
 | 22 | `local_command_row` | `local_command` | `local_command` | `PermitLocalCommand yes` + `LocalCommand <value>` | Both emitted when non-empty | `config.get('localcommand')` | config | **Yes** |
 | 23 | `remote_command_row` | `remote_command` | `remote_command` | `RemoteCommand <value>`; `RequestTTY <token>` only when explicitly selected/authored | Preserved exactly as entered | `config.get('remotecommand')` + `config.get('requesttty')` | config | **Yes** |
 
-Row 21 is executed by the daemon, not by the frontend. `SshLauncher` runs it
-for every launch kind (`_POLICIES[...].pre_connection_command`) plus the
-external-terminal launch, serialized and coalesced per connection by
-`sshpilot.daemon.pre_connection_command`. It never fails a launch; outcomes
-travel to the user as `connection.pre_command` events. Rows 22 and 23 remain
-plain OpenSSH directives and are not executed by SSH Pilot at all.
+Rows 21 and 21a are executed by the daemon, not by the frontend, and they live
+in per-connection **metadata** rather than in `~/.ssh/config`. They are SSH
+Pilot actions that happen before connecting, not SSH directives, and the old
+`# sshpilot:PreCommand` comment invited the reader to believe OpenSSH honoured
+it; `record.data` is still read as a fallback so older connections keep
+working. Because they are metadata they apply to every protocol, not only SSH.
+
+`SshLauncher` runs both for every launch kind
+(`_POLICIES[...].pre_connection_command`) plus the external-terminal launch,
+serialized and coalesced per connection by
+`sshpilot.daemon.pre_connection_command`. **Row 21a is sent first**, with
+plain sockets by `sshpilot.daemon.port_knock` — no `knock` binary is involved,
+which is what makes it work in the Flatpak, where none is installed. Row 21
+then runs for whatever a port sequence cannot express, such as an `fwknop`
+SPA. Neither fails a launch unless the connection sets `pre_command_abort`;
+outcomes travel to the user as `connection.pre_command` events.
+
+Rows 22 and 23 remain plain OpenSSH directives and are not executed by SSH
+Pilot at all.
 
 ## Advanced
 

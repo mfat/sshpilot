@@ -1176,7 +1176,7 @@ class SshPilotApplication(Adw.Application):
         part of connecting and interrupting for it would train people to
         ignore the toast that matters.
         """
-        from .api.models.pre_command import PreCommandPhase
+        from .api.models.pre_command import PreCommandPhase, PreCommandStage
         from .gtk.pre_command_messages import (
             format_pre_command_failure,
             format_pre_command_running,
@@ -1187,8 +1187,13 @@ class SshPilotApplication(Adw.Application):
         if window is None or getattr(window, '_is_quitting', False):
             return False
         if getattr(notice, 'phase', None) is PreCommandPhase.RUNNING:
+            # Named after the half that is actually running: a connection
+            # that only knocks never configured a "command", and telling it
+            # one is running sends the user looking for a field they left
+            # empty.
+            stage = getattr(notice, 'stage', PreCommandStage.COMMAND)
             self._set_pre_command_status(
-                notice.scope_id, format_pre_command_running()
+                notice.scope_id, format_pre_command_running(stage)
             )
             return False
         # Finished, however it finished: the overlay line goes away either way.

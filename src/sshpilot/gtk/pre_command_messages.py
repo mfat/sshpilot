@@ -20,6 +20,7 @@ from gettext import gettext as _
 from ..api.models.pre_command import (
     PreCommandPhase,
     PreCommandReason,
+    PreCommandStage,
     PreCommandTestResult,
     PreConnectionCommandNotice,
 )
@@ -29,6 +30,33 @@ from ..i18n import N_
 #: Shown while the command is still running, so a slow knock or VPN dial-up is
 #: not a silent multi-second hang on connect.
 PRE_COMMAND_RUNNING = N_("Running pre-connection command…")
+
+#: The knock half, which most connections using this feature are the *only*
+#: user of. Calling that "a pre-connection command" would name a thing they
+#: never configured.
+PRE_COMMAND_KNOCKING = N_("Sending the port knock…")
+
+_RUNNING_TEXTS = {
+    PreCommandStage.KNOCK: PRE_COMMAND_KNOCKING,
+    PreCommandStage.COMMAND: PRE_COMMAND_RUNNING,
+}
+
+#: A knock has no process, so it cannot exit non-zero or time out; the only
+#: way it fails is by not being sendable at all. One entry is therefore the
+#: whole table, and the ``.get`` below falls back to the command wording if a
+#: future reason ever reaches here.
+_KNOCK_ABORTED_TEMPLATES = {
+    PreCommandReason.START_FAILED: N_(
+        "The port knock for “{name}” could not be sent, so SSH Pilot did not "
+        "connect."
+    ),
+}
+
+_KNOCK_FAILURE_TEMPLATES = {
+    PreCommandReason.START_FAILED: N_(
+        "The port knock for “{name}” could not be sent. Connecting anyway."
+    ),
+}
 
 #: Said instead of "Connecting anyway" when the connection asked to be gated
 #: on this command. Telling someone the connection continues when it did not
@@ -97,6 +125,13 @@ def format_pre_command_failure(
         if notice.aborted
         else _PRE_COMMAND_FAILURE_TEMPLATES
     )
+    if notice.stage is PreCommandStage.KNOCK:
+        knock_templates = (
+            _KNOCK_ABORTED_TEMPLATES
+            if notice.aborted
+            else _KNOCK_FAILURE_TEMPLATES
+        )
+        templates = {**templates, **knock_templates}
     template = templates[notice.reason]
     name = display_name.strip() or str(notice.connection_id)
     return _(template).format(
@@ -105,9 +140,21 @@ def format_pre_command_failure(
     )
 
 
-def format_pre_command_running() -> str:
-    return _(PRE_COMMAND_RUNNING)
+def format_pre_command_running(
+    stage: PreCommandStage = PreCommandStage.COMMAND,
+) -> str:
+    """The status text for whichever half is actually running."""
 
+    return _(_RUNNING_TEXTS.get(stage, PRE_COMMAND_RUNNING))
+
+
+#: The knock's own Test wording. "Ran successfully" would overclaim: a knock
+#: is never acknowledged, so all we can honestly report is that the packets
+#: went out. Whether the firewall opened is only knowable by connecting.
+_KNOCK_TEST_TEMPLATES = {
+    PreCommandReason.OK: N_("Sent in {seconds}s."),
+    PreCommandReason.START_FAILED: N_("Could not be sent."),
+}
 
 _TEST_TEMPLATES = {
     PreCommandReason.OK: N_("Ran successfully in {seconds}s."),
@@ -127,8 +174,11 @@ def format_pre_command_test(result: PreCommandTestResult) -> tuple:
 
     if type(result) is not PreCommandTestResult:
         raise ValueError("invalid pre-connection command test result")
+    templates = _TEST_TEMPLATES
+    if result.stage is PreCommandStage.KNOCK:
+        templates = {**_TEST_TEMPLATES, **_KNOCK_TEST_TEMPLATES}
     try:
-        template = _TEST_TEMPLATES[result.reason]
+        template = templates[result.reason]
     except KeyError:
         raise ValueError(
             "pre-connection command test result has no presentation"
@@ -144,6 +194,7 @@ def format_pre_command_test(result: PreCommandTestResult) -> tuple:
 
 
 __all__ = [
+    "PRE_COMMAND_KNOCKING",
     "PRE_COMMAND_RUNNING",
     "format_pre_command_failure",
     "format_pre_command_running",

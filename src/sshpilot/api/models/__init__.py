@@ -258,6 +258,7 @@ if TYPE_CHECKING:
         PreCommandLaunchKind,
         PreCommandPhase,
         PreCommandReason,
+        PreCommandStage,
         PreConnectionCommandNotice,
     )
     from .interactions import ExecutionInteractionMode
@@ -501,6 +502,7 @@ __all__ = [
     "PreCommandLaunchKind",
     "PreCommandPhase",
     "PreCommandReason",
+    "PreCommandStage",
     "PreConnectionCommandNotice",
     "PresencePrompt",
     "PressureStall",
@@ -786,6 +788,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "PreCommandLaunchKind": ("pre_command", "PreCommandLaunchKind"),
     "PreCommandPhase": ("pre_command", "PreCommandPhase"),
     "PreCommandReason": ("pre_command", "PreCommandReason"),
+    "PreCommandStage": ("pre_command", "PreCommandStage"),
     "PreConnectionCommandNotice": ("pre_command", "PreConnectionCommandNotice"),
     "PluginSessionFailure": ("sessions", "PluginSessionFailure"),
     "PluginSessionFailureCode": ("sessions", "PluginSessionFailureCode"),

@@ -244,6 +244,7 @@ class SshPilotClient(Protocol):
         command: str,
         timeout: int = 0,
         *,
+        knock: str = "",
         hostname: str = "",
         port: int = 0,
         username: str = "",

@@ -306,20 +306,26 @@ class ConnectionApplicationService:
                 return settings
             settings = PreCommandSettings(
                 command=legacy.strip(),
+                knock_sequence=settings.knock_sequence,
                 timeout=settings.timeout,
                 abort_on_failure=settings.abort_on_failure,
             )
         if record is None:
             return settings
         # Expanded here, where the connection's own values are, so the runner
-        # never has to know what a connection is.
+        # never has to know what a connection is. The hostname rides along for
+        # the same reason: the knock needs a target and nothing downstream can
+        # look one up.
+        hostname = getattr(record, "hostname", "") or ""
         return PreCommandSettings(
             command=expand_pre_command_tokens(
                 settings.command,
-                hostname=getattr(record, "hostname", "") or "",
+                hostname=hostname,
                 port=getattr(record, "port", "") or "",
                 username=getattr(record, "username", "") or "",
             ),
+            knock_sequence=settings.knock_sequence,
+            hostname=hostname,
             timeout=settings.timeout,
             abort_on_failure=settings.abort_on_failure,
         )

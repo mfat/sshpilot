@@ -5087,6 +5087,7 @@ def pre_command_test_result_to_wire(result: "PreCommandTestResult") -> Dict[str,
         raise TypeError("pre-connection command test result is required")
     return {
         "reason": result.reason.value,
+        "stage": result.stage.value,
         "exit_code": result.exit_code,
         "duration_ms": result.duration_ms,
         "output": result.output,
@@ -5094,11 +5095,15 @@ def pre_command_test_result_to_wire(result: "PreCommandTestResult") -> Dict[str,
 
 
 def pre_command_test_result_from_wire(value: Any) -> "PreCommandTestResult":
-    from ..models.pre_command import PreCommandReason, PreCommandTestResult
+    from ..models.pre_command import (
+        PreCommandReason,
+        PreCommandStage,
+        PreCommandTestResult,
+    )
 
     data = _strict_fields(
         value,
-        required={"reason", "exit_code", "duration_ms", "output"},
+        required={"reason", "stage", "exit_code", "duration_ms", "output"},
         context="pre-connection command test result",
     )
     try:
@@ -5107,11 +5112,18 @@ def pre_command_test_result_from_wire(value: Any) -> "PreCommandTestResult":
         raise ValueError(
             "pre-connection command test result contains an unknown reason"
         ) from None
+    try:
+        stage = PreCommandStage(data["stage"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command test result contains an unknown stage"
+        ) from None
     exit_code = data["exit_code"]
     if exit_code is not None:
         exit_code = _integer(exit_code, "pre-connection command test exit code")
     return PreCommandTestResult(
         reason=reason,
+        stage=stage,
         exit_code=exit_code,
         duration_ms=_integer(data["duration_ms"], "pre-connection command test duration"),
         output=_text(data["output"], "pre-connection command test output", allow_empty=True),
@@ -5137,6 +5149,7 @@ def pre_connection_command_notice_to_wire(
         "kind": notice.kind.value,
         "phase": notice.phase.value,
         "reason": notice.reason.value,
+        "stage": notice.stage.value,
         "exit_code": notice.exit_code,
         "duration_ms": notice.duration_ms,
         "aborted": notice.aborted,
@@ -5151,6 +5164,7 @@ def pre_connection_command_notice_from_wire(
         PreCommandLaunchKind,
         PreCommandPhase,
         PreCommandReason,
+        PreCommandStage,
         PreConnectionCommandNotice,
     )
 
@@ -5162,6 +5176,7 @@ def pre_connection_command_notice_from_wire(
             "kind",
             "phase",
             "reason",
+            "stage",
             "exit_code",
             "duration_ms",
             "aborted",
@@ -5187,6 +5202,12 @@ def pre_connection_command_notice_from_wire(
         raise ValueError(
             "pre-connection command notice contains an unknown reason"
         ) from None
+    try:
+        stage = PreCommandStage(data["stage"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown stage"
+        ) from None
     exit_code = data["exit_code"]
     if exit_code is not None:
         exit_code = _integer(exit_code, "pre-connection command exit code")
@@ -5198,6 +5219,7 @@ def pre_connection_command_notice_from_wire(
         kind=kind,
         phase=phase,
         reason=reason,
+        stage=stage,
         exit_code=exit_code,
         duration_ms=_integer(data["duration_ms"], "pre-connection command duration"),
         aborted=_boolean(data["aborted"], "pre-connection command abort flag"),

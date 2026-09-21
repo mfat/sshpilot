@@ -46,10 +46,90 @@ from .common import ConnectionId, require_identifier
 #: kind of thing, an app-owned action that runs before connecting -- already
 #: stores itself this way, and metadata applies to every protocol, so SSH and
 #: plugin connections need no separate arrangement.
+class KnockProtocol(str, Enum):
+    TCP = "tcp"
+    UDP = "udp"
+
+
+@dataclass(frozen=True)
+class KnockStep:
+    """One port in a knock sequence."""
+
+    port: int
+    protocol: KnockProtocol = KnockProtocol.TCP
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.port) is not int
+            or isinstance(self.port, bool)
+            or not 1 <= self.port <= 65535
+        ):
+            raise ValueError("a knock port must be between 1 and 65535")
+        if not isinstance(self.protocol, KnockProtocol):
+            raise TypeError("a knock protocol must be a KnockProtocol")
+
+    def __str__(self) -> str:
+        return f"{self.port}:{self.protocol.value}"
+
+
+#: Enough for any real sequence; a longer one is a typo or a paste accident,
+#: and each step costs a packet and a delay.
+MAX_KNOCK_STEPS = 32
+
+
+def parse_knock_sequence(text) -> tuple:
+    """Parse ``7000,8000,9000`` or ``7000:udp 8000:tcp`` into steps.
+
+    The syntax ``knock(1)`` uses, so a sequence can be pasted from whatever
+    the user already has in their notes or their knockd config. Separators are
+    commas or whitespace, protocol defaults to TCP, and an empty string is no
+    sequence rather than an error.
+
+    Raises ``ValueError`` with a specific message for anything malformed: this
+    parses what a person typed, and "that is not a port" has to be sayable.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return ()
+    steps = []
+    for token in text.replace(",", " ").split():
+        port_text, separator, protocol_text = token.partition(":")
+        try:
+            port = int(port_text)
+        except ValueError:
+            raise ValueError(f"{port_text!r} is not a port number") from None
+        # A bare port means TCP, but a trailing colon does not: "7000:" is a
+        # half-typed ":udp", and quietly reading it as TCP would knock the
+        # wrong protocol for a sequence the user believes they finished.
+        protocol_text = protocol_text.lower() if separator else "tcp"
+        try:
+            protocol = KnockProtocol(protocol_text)
+        except ValueError:
+            raise ValueError(
+                f"{protocol_text!r} is not a protocol; use tcp or udp"
+            ) from None
+        steps.append(KnockStep(port=port, protocol=protocol))
+        if len(steps) > MAX_KNOCK_STEPS:
+            raise ValueError(f"a knock sequence may have at most {MAX_KNOCK_STEPS} ports")
+    return tuple(steps)
+
+
+def format_knock_sequence(steps) -> str:
+    """Render steps back to the syntax :func:`parse_knock_sequence` accepts."""
+    return " ".join(
+        str(step.port) if step.protocol is KnockProtocol.TCP else str(step)
+        for step in steps
+    )
+
+
 #: What ``%p`` means when a connection names no port, matching OpenSSH.
 DEFAULT_SSH_PORT = 22
 
-PRE_COMMAND_METADATA_KEYS = ("pre_command", "pre_command_timeout", "pre_command_abort")
+PRE_COMMAND_METADATA_KEYS = (
+    "pre_command",
+    "pre_command_knock",
+    "pre_command_timeout",
+    "pre_command_abort",
+)
 
 
 @dataclass(frozen=True)
@@ -57,9 +137,21 @@ class PreCommandSettings:
     """One connection's pre-connection command and how to run it."""
 
     command: str = ""
+    #: A port-knock sequence in ``knock(1)`` syntax, sent by the daemon itself
+    #: before the command runs. Kept separate from :attr:`command` because it
+    #: needs no external tool and no shell, so it works in the Flatpak where
+    #: ``knock`` cannot be installed. The two compose: sequence first, then
+    #: command, which is what a host wanting both a knock and an fwknop SPA
+    #: or a VPN dial-up needs.
+    knock_sequence: str = ""
     #: Seconds before the command is killed. ``0`` defers to the daemon-wide
     #: default, so a connection that never set one follows the app.
     timeout: int = 0
+    #: The host the knock sequence is sent to. Not user-authored config: the
+    #: lookup resolves it from the connection, the same way it expands ``%h``,
+    #: so the runner stays ignorant of what a connection is. A knock needs no
+    #: ``%h`` of its own -- there is only ever one host worth knocking.
+    hostname: str = ""
     #: Refuse the launch when the command does not succeed. Off by default:
     #: SSH's own error tells the user far more than a pre-step veto, which is
     #: the behaviour this feature shipped with. On, it is a hard gate.
@@ -68,6 +160,10 @@ class PreCommandSettings:
     def __post_init__(self) -> None:
         if type(self.command) is not str:
             raise TypeError("pre-connection command must be a string")
+        if type(self.knock_sequence) is not str:
+            raise TypeError("knock sequence must be a string")
+        if type(self.hostname) is not str:
+            raise TypeError("pre-connection hostname must be a string")
         if type(self.timeout) is not int or isinstance(self.timeout, bool):
             raise TypeError("pre-connection command timeout must be an integer")
         if self.timeout < 0:
@@ -77,7 +173,21 @@ class PreCommandSettings:
 
     @property
     def configured(self) -> bool:
-        return bool(self.command.strip())
+        return bool(self.command.strip() or self.knock_sequence.strip())
+
+    @property
+    def knock_steps(self) -> tuple:
+        """The parsed sequence, or none at all if it does not parse.
+
+        Tolerant here and strict in the editor: the dialog rejects a bad
+        sequence while the user can still see and fix it, so anything that
+        reaches a launch was either valid when saved or was edited by hand.
+        Refusing to connect over it at that point helps nobody.
+        """
+        try:
+            return parse_knock_sequence(self.knock_sequence)
+        except ValueError:
+            return ()
 
     @classmethod
     def from_metadata(cls, values) -> "PreCommandSettings":
@@ -89,12 +199,15 @@ class PreCommandSettings:
         values = values if isinstance(values, Mapping) else {}
         command = values.get("pre_command")
         command = command.strip() if isinstance(command, str) else ""
+        sequence = values.get("pre_command_knock")
+        sequence = sequence.strip() if isinstance(sequence, str) else ""
         timeout = values.get("pre_command_timeout")
         if type(timeout) is not int or isinstance(timeout, bool) or timeout < 0:
             timeout = 0
         abort = values.get("pre_command_abort")
         return cls(
             command=command,
+            knock_sequence=sequence,
             timeout=timeout,
             abort_on_failure=abort is True,
         )
@@ -154,6 +267,19 @@ def expand_pre_command_tokens(
     return "".join(out)
 
 
+class PreCommandStage(str, Enum):
+    """Which half of the pre-connection step a notice is about.
+
+    A connection may configure a knock sequence, a shell command, or both, and
+    "Running pre-connection command…" is simply wrong on a host that only
+    knocks. Since port knocking is the feature most people come here for, the
+    UI has to be able to name it.
+    """
+
+    KNOCK = "knock"
+    COMMAND = "command"
+
+
 @dataclass(frozen=True)
 class PreCommandTestResult:
     """What happened when the user asked to try the command now.
@@ -168,12 +294,17 @@ class PreCommandTestResult:
     exit_code: Optional[int] = None
     duration_ms: int = 0
     output: str = ""
+    #: Which half failed, so the Test result can say "knock" rather than
+    #: blaming a command the user may not even have set.
+    stage: PreCommandStage = PreCommandStage.COMMAND
 
     MAX_OUTPUT_CHARS = 4000
 
     def __post_init__(self) -> None:
         if not isinstance(self.reason, PreCommandReason):
             raise TypeError("reason must be a PreCommandReason")
+        if not isinstance(self.stage, PreCommandStage):
+            raise TypeError("stage must be a PreCommandStage")
         if self.exit_code is not None and (
             type(self.exit_code) is not int or isinstance(self.exit_code, bool)
         ):
@@ -261,6 +392,10 @@ class PreConnectionCommandNotice:
     kind: PreCommandLaunchKind
     phase: PreCommandPhase
     reason: PreCommandReason = PreCommandReason.OK
+    #: Which half of the step this notice is about. A connection that both
+    #: knocks and runs a command produces a running notice for each, so the
+    #: status text follows what is actually happening.
+    stage: PreCommandStage = PreCommandStage.COMMAND
     #: Exit status of the shell, when it ran to completion.
     exit_code: Optional[int] = None
     #: Wall-clock duration of the attempt. Zero for a coalesced notice.
@@ -288,6 +423,13 @@ class PreConnectionCommandNotice:
             raise TypeError("phase must be a PreCommandPhase")
         if not isinstance(self.reason, PreCommandReason):
             raise TypeError("reason must be a PreCommandReason")
+        if not isinstance(self.stage, PreCommandStage):
+            raise TypeError("stage must be a PreCommandStage")
+        if self.stage is PreCommandStage.KNOCK and self.exit_code is not None:
+            # A knock has no process and so no exit status. Carrying one would
+            # let the UI render "failed (exit 1)" for something that never ran
+            # a program at all.
+            raise ValueError("a knock notice carries no exit code")
         if self.phase is PreCommandPhase.RUNNING:
             # A running command has not finished, so it cannot have a verdict
             # or an exit status yet. Allowing one would let a frontend render
