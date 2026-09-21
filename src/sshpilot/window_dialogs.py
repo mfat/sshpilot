@@ -307,13 +307,18 @@ def install_toast_overlay(window) -> None:
         logger.debug("Could not install a toast overlay: %s", exc)
 
 
-def bind_pre_command_status(scope_id, setter) -> Callable[[], None]:
+def bind_pre_command_status(scope_id, setter, *, on_output=None) -> Callable[[], None]:
     """Claim the pre-connection command status line for one launch scope.
 
     The daemon publishes one notice per launch and the application holds the
     single subscription; a surface says which scope it owns and what to do
     with the text. Returns the unbind callable, which is always safe to call
     -- including when the bind never happened.
+
+    *on_output* is optional and takes the command's own output when it failed.
+    A terminal tab has somewhere to put that -- a shell would have shown it --
+    and the surfaces that do not simply leave it out; their users read it in
+    the log viewer instead.
 
     Failures are swallowed: a surface that cannot show a progress line must
     still work, and the alert on failure does not depend on this binding.
@@ -326,7 +331,7 @@ def bind_pre_command_status(scope_id, setter) -> Callable[[], None]:
         return lambda: None
     key = str(scope_id)
     try:
-        register(key, setter)
+        register(key, setter, on_output=on_output)
     except Exception:
         logger.debug("Could not bind the pre-command status", exc_info=True)
         return lambda: None

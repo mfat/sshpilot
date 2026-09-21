@@ -32,6 +32,7 @@ def application():
 
     app = SimpleNamespace(
         _pre_command_status_targets={},
+        _pre_command_output_targets={},
         _pre_command_active={},
         # No overlay: the handler then logs instead of building a toast, which
         # keeps this test free of a display while still running every branch
@@ -45,6 +46,7 @@ def application():
         "unregister_pre_command_status",
         "_set_pre_command_status",
         "_deliver_pre_command_status",
+        "_show_pre_command_output",
         "_handle_pre_command_event",
         "_pre_command_toast_overlay",
         "_connection_display_name",
@@ -267,3 +269,88 @@ def test_a_broken_window_lookup_still_alerts_on_the_main_window():
     )
 
     assert app._pre_command_toast_overlay() == "main"
+
+
+# --- a failed command's own output -------------------------------------------
+#
+# A shell shows you a failing knock's words; the terminal tab is where the user
+# is already looking, so the same output goes there. Surfaces without a
+# terminal register no sink and their users read the log viewer instead.
+
+
+def _failed(reason=PreCommandReason.NONZERO_EXIT, output="denied", scope_id="scope-1"):
+    return PreConnectionCommandNotice(
+        connection_id="conn-1",
+        scope_id=scope_id,
+        kind=PreCommandLaunchKind.TERMINAL,
+        phase=PreCommandPhase.FINISHED,
+        reason=reason,
+        exit_code=9,
+        output=output,
+    )
+
+
+def test_a_failed_command_s_output_reaches_the_surface(application):
+    printed = []
+    application.register_pre_command_status(
+        "scope-1", lambda _t: None, on_output=printed.append
+    )
+
+    application._handle_pre_command_event(_failed())
+
+    assert printed == ["denied"]
+
+
+def test_a_successful_command_prints_nothing(application):
+    printed = []
+    application.register_pre_command_status(
+        "scope-1", lambda _t: None, on_output=printed.append
+    )
+
+    application._handle_pre_command_event(
+        _notice(PreCommandPhase.FINISHED, PreCommandReason.OK)
+    )
+
+    assert printed == []
+
+
+def test_a_surface_with_no_sink_is_fine(application):
+    """SFTP, transfers and key deployment have nowhere to print it."""
+
+    application.register_pre_command_status("scope-1", lambda _t: None)
+
+    application._handle_pre_command_event(_failed())  # must not raise
+
+
+def test_another_scope_s_output_is_not_printed(application):
+    printed = []
+    application.register_pre_command_status(
+        "scope-1", lambda _t: None, on_output=printed.append
+    )
+
+    application._handle_pre_command_event(_failed(scope_id="scope-9"))
+
+    assert printed == []
+
+
+def test_a_broken_output_sink_does_not_stop_the_alert(application):
+    def _explode(_text):
+        raise RuntimeError("widget is gone")
+
+    application.register_pre_command_status(
+        "scope-1", lambda _t: None, on_output=_explode
+    )
+
+    application._handle_pre_command_event(_failed())  # must not raise
+
+
+def test_unregistering_removes_the_output_sink_too(application):
+    printed = []
+    application.register_pre_command_status(
+        "scope-1", lambda _t: None, on_output=printed.append
+    )
+    application.unregister_pre_command_status("scope-1")
+
+    application._handle_pre_command_event(_failed())
+
+    assert printed == []

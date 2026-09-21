@@ -1214,6 +1214,29 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("Could not announce the connecting detail", exc_info=True)
 
+    def show_pre_command_output(self, text) -> None:
+        """Print what a failed pre-connection command said, into the tab.
+
+        A shell shows you a failing knock's own words -- you typed the command,
+        so its output lands in front of you. The terminal tab is where a user
+        of this app is already looking when a connection is being made, so the
+        same output goes there rather than only into the log.
+
+        Printed plainly, because it is the command's output rather than ours:
+        the cyan line above already said what SSH Pilot was doing, and red is
+        the connection-failure banner. Nothing is printed when the command
+        succeeds, which is also what a shell does.
+        """
+        value = text.strip() if isinstance(text, str) else ""
+        backend = getattr(self, "backend", None)
+        if not value or backend is None:
+            return
+        try:
+            body = value.replace("\r\n", "\n").replace("\n", "\r\n")
+            backend.feed(f"{body}\r\n".encode("utf-8"))
+        except Exception:
+            logger.debug("Could not print the pre-command output", exc_info=True)
+
     def _set_session_overlay_mode(self, mode: str) -> None:
         """Overlay modes: ``connecting``, ``forwarding``, or ``none``."""
         if mode not in ("connecting", "forwarding", "none"):
@@ -4658,7 +4681,9 @@ class TerminalWidget(Gtk.Box):
         # next run would announce nothing.
         self._connecting_detail_announced = False
         self._unbind_pre_command = bind_pre_command_status(
-            str(session_id), self.set_connecting_detail
+            str(session_id),
+            self.set_connecting_detail,
+            on_output=self.show_pre_command_output,
         )
         self._pre_command_scope = session_id
 

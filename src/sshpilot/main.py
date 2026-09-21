@@ -211,6 +211,9 @@ class SshPilotApplication(Adw.Application):
         #: scope id -> callable(text|None) for the inline pre-connection
         #: command status. Surfaces register while they own a launch scope.
         self._pre_command_status_targets = {}
+        #: scope id -> callable(text) for a failed command's own output,
+        #: for surfaces that have somewhere to show it.
+        self._pre_command_output_targets = {}
         #: scope id -> the status text currently in force, so a surface
         #: that binds its scope late can still pick the line up.
         self._pre_command_active = {}
@@ -1102,7 +1105,7 @@ class SshPilotApplication(Adw.Application):
             except Exception:
                 logger.warning("Application API event unsubscription failed")
 
-    def register_pre_command_status(self, scope_id: str, setter) -> None:
+    def register_pre_command_status(self, scope_id: str, setter, *, on_output=None) -> None:
         """Let the surface owning *scope_id* show the running status inline.
 
         The registry exists because there is one subscription for these
@@ -1115,6 +1118,8 @@ class SshPilotApplication(Adw.Application):
             return
         scope_id = str(scope_id)
         self._pre_command_status_targets[scope_id] = setter
+        if callable(on_output):
+            self._pre_command_output_targets[scope_id] = on_output
         # Replay, for the same reason the interaction presenter reconciles
         # against a live snapshot: the daemon starts the command on a worker
         # as soon as the open is accepted, which is routinely *before* the
@@ -1127,6 +1132,7 @@ class SshPilotApplication(Adw.Application):
 
     def unregister_pre_command_status(self, scope_id: str) -> None:
         self._pre_command_status_targets.pop(str(scope_id), None)
+        self._pre_command_output_targets.pop(str(scope_id), None)
 
     def _set_pre_command_status(self, scope_id: str, text) -> None:
         scope_id = str(scope_id)
@@ -1138,6 +1144,22 @@ class SshPilotApplication(Adw.Application):
         if setter is None:
             return
         self._deliver_pre_command_status(scope_id, setter, text)
+
+    def _show_pre_command_output(self, notice) -> None:
+        """Echo a failed command's output to the surface that owns the scope."""
+        output = (getattr(notice, 'output', '') or '').strip()
+        if not output:
+            return
+        sink = self._pre_command_output_targets.get(str(notice.scope_id))
+        if sink is None:
+            # No surface for this kind of launch -- an SFTP or transfer
+            # failure is read in the log viewer instead. The toast still
+            # names what happened.
+            return
+        try:
+            sink(output)
+        except Exception:
+            logger.debug("Pre-connection command output target failed", exc_info=True)
 
     def _deliver_pre_command_status(self, scope_id: str, setter, text) -> None:
         try:
@@ -1171,6 +1193,9 @@ class SshPilotApplication(Adw.Application):
             return False
         # Finished, however it finished: the overlay line goes away either way.
         self._set_pre_command_status(notice.scope_id, None)
+        # A shell would have shown a failing command's own words. Put them
+        # where the user is already looking, before the toast summarises.
+        self._show_pre_command_output(notice)
         try:
             if not pre_command_is_failure(notice):
                 return False

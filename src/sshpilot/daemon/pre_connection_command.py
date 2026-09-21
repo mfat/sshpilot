@@ -200,7 +200,9 @@ class PreConnectionCommandRunner:
                 kind=kind,
                 phase=PreCommandPhase.RUNNING,
             )
-            reason, exit_code, duration_ms = self._execute(command, timeout, kind)
+            reason, exit_code, duration_ms, output = self._execute(
+                command, timeout, kind
+            )
             succeeded = reason is PreCommandReason.OK
             if succeeded:
                 self._last_run[connection_id] = self._clock()
@@ -220,6 +222,7 @@ class PreConnectionCommandRunner:
                 exit_code=exit_code,
                 duration_ms=duration_ms,
                 aborted=aborted,
+                output="" if succeeded else output,
             )
             return not aborted
         finally:
@@ -274,7 +277,12 @@ class PreConnectionCommandRunner:
         timeout: int,
         kind: PreCommandLaunchKind,
     ) -> tuple:
-        """Run *command* and classify the outcome. Returns (reason, exit, ms)."""
+        """Run *command*. Returns (reason, exit, ms, output).
+
+        ``output`` is non-empty only on failure: a shell shows you a failing
+        knock's own words and stays quiet on success, and the terminal tab
+        mirrors that.
+        """
 
         # ``sh -lc`` rather than a bare ``sh -c``: the string is user-authored
         # and legitimately uses substitutions such as
@@ -313,7 +321,12 @@ class PreConnectionCommandRunner:
                         _STDERR_LOG_LIMIT,
                         partial,
                     )
-                return PreCommandReason.TIMED_OUT, None, duration_ms
+                return (
+                    PreCommandReason.TIMED_OUT,
+                    None,
+                    duration_ms,
+                    partial,
+                )
             except Exception as exc:
                 duration_ms = _elapsed_ms(started, self._clock())
                 # The exception *text* is content -- it can quote the command
@@ -324,7 +337,12 @@ class PreConnectionCommandRunner:
                     kind.value,
                 )
                 logger.debug("pre-connection command start failure", exc_info=True)
-                return PreCommandReason.START_FAILED, None, duration_ms
+                return (
+                    PreCommandReason.START_FAILED,
+                    None,
+                    duration_ms,
+                    type(exc).__name__,
+                )
 
             duration_ms = _elapsed_ms(started, self._clock())
             exit_code = getattr(result, "returncode", None)
@@ -332,6 +350,7 @@ class PreConnectionCommandRunner:
                 exit_code = None
             stdout_bytes = _text_length(self._read_capture(out_file))
             stderr_text = self._read_capture(err_file)
+            merged = self._merged_capture(out_file, err_file)
         if exit_code == 0:
             logger.info(
                 "pre-connection command finished exit=0 duration_ms=%d "
@@ -341,7 +360,7 @@ class PreConnectionCommandRunner:
                 _text_length(stderr_text),
                 kind.value,
             )
-            return PreCommandReason.OK, exit_code, duration_ms
+            return PreCommandReason.OK, exit_code, duration_ms, ""
 
         logger.warning(
             "pre-connection command failed exit=%s duration_ms=%d kind=%s",
@@ -357,7 +376,7 @@ class PreConnectionCommandRunner:
                 _STDERR_LOG_LIMIT,
                 trimmed,
             )
-        return PreCommandReason.NONZERO_EXIT, exit_code, duration_ms
+        return PreCommandReason.NONZERO_EXIT, exit_code, duration_ms, merged
 
     # -- trying it out ---------------------------------------------------------
 
@@ -510,6 +529,7 @@ class PreConnectionCommandRunner:
         exit_code: Optional[int] = None,
         duration_ms: int = 0,
         aborted: bool = False,
+        output: str = "",
     ) -> None:
         notice = PreConnectionCommandNotice(
             connection_id=connection_id,
@@ -520,6 +540,7 @@ class PreConnectionCommandRunner:
             exit_code=exit_code,
             duration_ms=duration_ms,
             aborted=aborted,
+            output=output[: PreConnectionCommandNotice.MAX_OUTPUT_CHARS],
         )
         try:
             self._publisher.publish(

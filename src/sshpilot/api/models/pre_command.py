@@ -252,6 +252,16 @@ class PreConnectionCommandNotice:
     #: The launch was refused because this command did not succeed and the
     #: connection asked for that. Only ever true on a finished, failed notice.
     aborted: bool = False
+    #: What the command printed, carried only when it failed.
+    #:
+    #: A shell shows you a failing knock's own words; the terminal tab is
+    #: where a user of this app is already looking, so the same output goes
+    #: there. Success is silent, exactly as it is in a shell -- a clean
+    #: ``knock`` prints nothing -- which also keeps the wire lean and means
+    #: output crosses only when it is the thing being asked about.
+    output: str = ""
+
+    MAX_OUTPUT_CHARS = 4000
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
@@ -282,6 +292,18 @@ class PreConnectionCommandNotice:
             raise ValueError("duration_ms must not be negative")
         if type(self.aborted) is not bool:
             raise TypeError("aborted must be a boolean")
+        if type(self.output) is not str:
+            raise TypeError("output must be a string")
+        if len(self.output) > self.MAX_OUTPUT_CHARS:
+            raise ValueError("pre-command notice output exceeds the size limit")
+        if self.output and (
+            self.phase is not PreCommandPhase.FINISHED
+            or self.reason in (PreCommandReason.OK, PreCommandReason.COALESCED)
+        ):
+            # Output is carried to explain a failure. Attaching it to anything
+            # else would put a command's words on screen for a connection that
+            # is working.
+            raise ValueError("only a failed pre-command notice carries output")
         if self.aborted and self.reason in (
             PreCommandReason.OK,
             PreCommandReason.COALESCED,

@@ -31,7 +31,10 @@ notes remain separate.
   unnecessary. `record.data` is still read as a fallback, so connections
   written by an older build keep working.
 - New models `PreCommandSettings` and `PreCommandTestResult`.
-  `PreConnectionCommandNotice` gains `aborted`.
+  `PreConnectionCommandNotice` gains `aborted` and `output`. `output` is
+  carried only on a finished, failed notice and is bounded: a shell shows
+  you a failing command's own words, and the terminal tab is where a user
+  is already looking. Success stays silent, as it does in a shell.
 - New client method `test_pre_command` with wire method
   `connections.test_pre_command` (capability `connections.config.read`). It
   runs a supplied command once and returns its reason, exit status, duration

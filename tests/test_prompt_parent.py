@@ -226,10 +226,12 @@ def test_a_failure_leaves_the_window_openable(monkeypatch):
 class FakeApp:
     def __init__(self):
         self.registered = {}
+        self.output_sinks = {}
         self.unregistered = []
 
-    def register_pre_command_status(self, scope_id, setter):
+    def register_pre_command_status(self, scope_id, setter, *, on_output=None):
         self.registered[scope_id] = setter
+        self.output_sinks[scope_id] = on_output
 
     def unregister_pre_command_status(self, scope_id):
         self.unregistered.append(scope_id)
@@ -306,3 +308,26 @@ def test_unbinding_twice_is_safe(monkeypatch):
     unbind()
 
     assert app.unregistered == ["scope-5", "scope-5"]
+
+
+def test_an_output_sink_is_passed_through_when_given(monkeypatch):
+    """A terminal tab can print a failed command's words; other surfaces
+    register no sink and their users read the log viewer."""
+
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+    sink = lambda _text: None
+
+    window_dialogs.bind_pre_command_status("scope-6", lambda _t: None, on_output=sink)
+
+    assert app.output_sinks == {"scope-6": sink}
+
+
+def test_no_output_sink_is_the_default(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    window_dialogs.bind_pre_command_status("scope-7", lambda _t: None)
+
+    assert app.output_sinks == {"scope-7": None}
+
