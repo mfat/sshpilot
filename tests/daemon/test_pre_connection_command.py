@@ -121,6 +121,25 @@ class RecordingRunner:
         self.calls.append((connection_id, scope_id, kind))
 
 
+def _ran(returncode=0, stdout="", stderr=""):
+    """A stand-in for ``subprocess.run`` that writes where it is told.
+
+    The runner captures into files rather than pipes, so a double that only
+    returns ``stdout``/``stderr`` on the result object would be testing an
+    interface the real thing does not have. Writing into the handles keeps
+    these honest -- and the file, not the return value, is what the code reads.
+    """
+
+    def _run(argv, **kwargs):
+        for stream, text in (("stdout", stdout), ("stderr", stderr)):
+            handle = kwargs.get(stream)
+            if handle is not None and text:
+                handle.write(text)
+        return SimpleNamespace(returncode=returncode)
+
+    return _run
+
+
 def _settings(timeout=5, coalesce=0):
     return SimpleNamespace(
         pre_command_timeout_seconds=timeout,
@@ -508,7 +527,7 @@ def test_concurrent_launches_to_one_connection_never_overlap():
             order.append("enter")
             time.sleep(0.05)
             order.append("exit")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", runner=_slow)
     threads = [
@@ -532,7 +551,7 @@ def test_a_repeat_inside_the_window_reuses_the_last_run():
 
     def _record(*args, **kwargs):
         runs.append(args)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, notices = _runner("knock", coalesce=60, runner=_record)
 
@@ -552,7 +571,7 @@ def test_a_repeat_outside_the_window_runs_again():
 
     def _record(*args, **kwargs):
         runs.append(args)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", coalesce=5, runner=_record, clock=lambda: now[0])
 
@@ -568,7 +587,7 @@ def test_a_zero_window_disables_coalescing():
 
     def _record(*args, **kwargs):
         runs.append(args)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", coalesce=0, runner=_record)
 
@@ -583,7 +602,7 @@ def test_different_connections_do_not_coalesce_with_each_other():
 
     def _record(*args, **kwargs):
         runs.append(args)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", coalesce=60, runner=_record)
 
@@ -596,20 +615,17 @@ def test_different_connections_do_not_coalesce_with_each_other():
 def test_a_failed_run_is_not_coalesced_over():
     """A knock that failed opened nothing, so the next launch must retry it."""
 
-    results = [
-        SimpleNamespace(returncode=1, stdout="", stderr=""),
-        SimpleNamespace(returncode=0, stdout="", stderr=""),
-    ]
+    codes = [1, 0]
 
     def _record(*args, **kwargs):
-        return results.pop(0)
+        return _ran(codes.pop(0))(args, **kwargs)
 
     runner, notices = _runner("knock", coalesce=60, runner=_record)
 
     runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
     runner.run("c1", scope_id="s2", kind=PreCommandLaunchKind.TERMINAL)
 
-    assert results == []
+    assert codes == []
     assert notices[-1].reason is PreCommandReason.OK
 
 
@@ -623,7 +639,7 @@ def test_lifecycle_is_logged_and_the_command_is_not(caplog):
     """INFO/WARNING carry lifecycle; content stays at DEBUG."""
 
     def _fail(*args, **kwargs):
-        return SimpleNamespace(returncode=9, stdout="", stderr=f"denied {SECRET}")
+        return _ran(9, stderr=f"denied {SECRET}")(args, **kwargs)
 
     runner, _ = _runner(f"knock --token {SECRET}", runner=_fail)
 
@@ -639,7 +655,7 @@ def test_content_is_available_at_debug(caplog):
     """The trace has to be complete for a bug report, just not by default."""
 
     def _fail(*args, **kwargs):
-        return SimpleNamespace(returncode=9, stdout="", stderr="permission denied")
+        return _ran(9, stderr="permission denied")(args, **kwargs)
 
     runner, _ = _runner("knock", runner=_fail)
 
@@ -652,7 +668,7 @@ def test_content_is_available_at_debug(caplog):
 
 def test_captured_output_is_logged_as_a_byte_count_not_as_output(caplog):
     def _succeed(*args, **kwargs):
-        return SimpleNamespace(returncode=0, stdout=SECRET, stderr="")
+        return _ran(0, stdout=SECRET)(args, **kwargs)
 
     runner, _ = _runner("knock", runner=_succeed)
 
@@ -665,7 +681,7 @@ def test_captured_output_is_logged_as_a_byte_count_not_as_output(caplog):
 
 def test_a_coalesced_run_says_so_in_the_log(caplog):
     def _succeed(*args, **kwargs):
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", coalesce=60, runner=_succeed)
 
@@ -690,7 +706,7 @@ def test_records_carry_the_connection_and_scope_ids():
     from sshpilot.logging_support import SanitizingFormatter
 
     def _succeed(*args, **kwargs):
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", runner=_succeed)
     stream = io.StringIO()
@@ -851,7 +867,7 @@ def test_a_connection_timeout_overrides_the_app_default():
 
     def _record(argv, **kwargs):
         seen["timeout"] = kwargs.get("timeout")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", timeout=30, per_connection_timeout=5, runner=_record)
     runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
@@ -866,9 +882,77 @@ def test_no_connection_timeout_follows_the_app_default():
 
     def _record(argv, **kwargs):
         seen["timeout"] = kwargs.get("timeout")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return _ran()(args, **kwargs)
 
     runner, _ = _runner("knock", timeout=30, per_connection_timeout=0, runner=_record)
     runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
 
     assert seen["timeout"] == 30
+
+
+# --- backgrounding behaves the way a terminal does ---------------------------
+#
+# Capturing through a pipe means waiting for that pipe to reach end-of-file,
+# and a command the user deliberately backgrounded -- `openvpn --config x &` --
+# hands the same pipe to a process that holds it open for its whole life. The
+# shell exits at once, but the read does not finish, so the step blocked for
+# the full timeout and then reported a timeout for a command that had started
+# fine. With the hard gate on that turned a working VPN into a host nobody
+# could connect to.
+#
+# A shell does not capture output, which is why `&` behaves as expected in a
+# terminal. These use the real subprocess, because the bug lived entirely in
+# how the output was collected -- a double cannot show it.
+
+
+@pytest.mark.parametrize("command", ["sleep 5 &", "sleep 5 >/dev/null 2>&1 &"])
+def test_a_backgrounded_command_returns_immediately(command):
+    runner, notices = _runner(command, timeout=3)
+
+    started = time.monotonic()
+    proceed = runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+    elapsed = time.monotonic() - started
+
+    assert proceed is True
+    assert elapsed < 2, f"backgrounding blocked for {elapsed:.1f}s"
+    assert notices[-1].reason is PreCommandReason.OK
+
+
+def test_a_foreground_command_is_still_waited_for():
+    """The ordering guarantee the whole feature rests on."""
+
+    runner, notices = _runner("sleep 1", timeout=5)
+
+    started = time.monotonic()
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+    elapsed = time.monotonic() - started
+
+    assert elapsed >= 1
+    assert notices[-1].reason is PreCommandReason.OK
+
+
+def test_a_genuinely_slow_command_still_times_out():
+    runner, notices = _runner("sleep 30", timeout=1)
+
+    proceed = runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert proceed is True
+    assert notices[-1].reason is PreCommandReason.TIMED_OUT
+
+
+def test_output_is_still_captured():
+    runner, _ = _runner("echo out; echo err >&2; exit 3", timeout=5)
+
+    result = runner.test("echo out; echo err >&2; exit 3")
+
+    assert result.exit_code == 3
+    assert "out" in result.output and "err" in result.output
+
+
+def test_test_shows_what_a_hanging_command_printed_before_the_timeout():
+    """For a command that hangs, what it managed to say is the only clue."""
+
+    result = _runner("x", timeout=1)[0].test("echo starting; sleep 30", timeout=1)
+
+    assert result.reason is PreCommandReason.TIMED_OUT
+    assert "starting" in result.output

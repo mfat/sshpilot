@@ -41,8 +41,10 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, Optional
 
 from sshpilot.api.events import EventPublisher, EventType
@@ -223,6 +225,49 @@ class PreConnectionCommandRunner:
         finally:
             lock.release()
 
+    @contextmanager
+    def _capture_files(self):
+        """Temporary files to capture the command's output into.
+
+        Files, not pipes, and that choice is load-bearing. Capturing through a
+        pipe means waiting for the pipe to reach end-of-file, and a command the
+        user deliberately backgrounded -- ``openvpn --config x.ovpn &`` -- hands
+        that same pipe to a process that holds it open for its whole life. The
+        shell exits immediately, but the read does not finish, so the step
+        blocked for the full timeout and then reported a timeout for a command
+        that had in fact started fine. With the hard gate on, that turned a
+        working VPN into a host that could never be connected to.
+
+        A shell does not capture output, which is why ``&`` behaves as expected
+        in a terminal; this restores that. Writing to a file means the wait is
+        for the shell to exit, which is the thing we actually asked for.
+
+        The files are unlinked on creation, so the output never appears in the
+        filesystem for another user to read -- it can quote whatever the
+        command printed, including a token.
+
+        One residual: a backgrounded grandchild keeps its inherited handle and
+        goes on writing into a file nothing will read, holding that space until
+        it exits. Bounded by how long and how loudly it runs, and strictly
+        better than blocking every connection for the timeout.
+        """
+        with tempfile.TemporaryFile(
+            mode="w+", encoding="utf-8", errors="replace"
+        ) as out, tempfile.TemporaryFile(
+            mode="w+", encoding="utf-8", errors="replace"
+        ) as err:
+            yield out, err
+
+    @staticmethod
+    def _read_capture(handle) -> str:
+        """Whatever the command wrote before we stopped waiting for it."""
+        try:
+            handle.seek(0)
+            return handle.read()
+        except Exception:
+            logger.debug("pre-connection command output was unreadable", exc_info=True)
+            return ""
+
     def _execute(
         self,
         command: str,
@@ -241,41 +286,52 @@ class PreConnectionCommandRunner:
         # the reason holds here exactly as it did in the frontend.
         shell = shutil.which("sh") or "/bin/sh"
         started = self._clock()
-        try:
-            result = self._runner(
-                [shell, "-lc", command],
-                timeout=timeout,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.TimeoutExpired:
-            duration_ms = _elapsed_ms(started, self._clock())
-            logger.warning(
-                "pre-connection command timed out after_s=%s kind=%s; "
-                "descendants of the shell may still be running",
-                timeout,
-                kind.value,
-            )
-            logger.debug("pre-connection command timed out: %s", command)
-            return PreCommandReason.TIMED_OUT, None, duration_ms
-        except Exception as exc:
-            duration_ms = _elapsed_ms(started, self._clock())
-            # The exception *text* is content -- it can quote the command line
-            # -- so only its type is logged above DEBUG.
-            logger.warning(
-                "pre-connection command could not start type=%s kind=%s",
-                type(exc).__name__,
-                kind.value,
-            )
-            logger.debug("pre-connection command start failure", exc_info=True)
-            return PreCommandReason.START_FAILED, None, duration_ms
+        with self._capture_files() as (out_file, err_file):
+            try:
+                result = self._runner(
+                    [shell, "-lc", command],
+                    timeout=timeout,
+                    stdout=out_file,
+                    stderr=err_file,
+                    text=True,
+                )
+            except subprocess.TimeoutExpired:
+                duration_ms = _elapsed_ms(started, self._clock())
+                logger.warning(
+                    "pre-connection command timed out after_s=%s kind=%s; "
+                    "descendants of the shell may still be running",
+                    timeout,
+                    kind.value,
+                )
+                logger.debug("pre-connection command timed out: %s", command)
+                # Whatever it managed to say before it was killed is often the
+                # only clue why it hung.
+                partial = self._read_capture(err_file).strip()
+                if partial:
+                    logger.debug(
+                        "pre-connection command output before the timeout: %.*s",
+                        _STDERR_LOG_LIMIT,
+                        partial,
+                    )
+                return PreCommandReason.TIMED_OUT, None, duration_ms
+            except Exception as exc:
+                duration_ms = _elapsed_ms(started, self._clock())
+                # The exception *text* is content -- it can quote the command
+                # line -- so only its type is logged above DEBUG.
+                logger.warning(
+                    "pre-connection command could not start type=%s kind=%s",
+                    type(exc).__name__,
+                    kind.value,
+                )
+                logger.debug("pre-connection command start failure", exc_info=True)
+                return PreCommandReason.START_FAILED, None, duration_ms
 
-        duration_ms = _elapsed_ms(started, self._clock())
-        exit_code = getattr(result, "returncode", None)
-        if type(exit_code) is not int:
-            exit_code = None
-        stdout_bytes = _text_length(getattr(result, "stdout", ""))
-        stderr_text = getattr(result, "stderr", "") or ""
+            duration_ms = _elapsed_ms(started, self._clock())
+            exit_code = getattr(result, "returncode", None)
+            if type(exit_code) is not int:
+                exit_code = None
+            stdout_bytes = _text_length(self._read_capture(out_file))
+            stderr_text = self._read_capture(err_file)
         if exit_code == 0:
             logger.info(
                 "pre-connection command finished exit=0 duration_ms=%d "
@@ -345,41 +401,46 @@ class PreConnectionCommandRunner:
 
         shell = shutil.which("sh") or "/bin/sh"
         started = self._clock()
-        try:
-            result = self._runner(
-                [shell, "-lc", command],
-                timeout=timeout,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.TimeoutExpired:
-            return (
-                PreCommandReason.TIMED_OUT,
-                None,
-                _elapsed_ms(started, self._clock()),
-                "",
-            )
-        except Exception as exc:
-            return (
-                PreCommandReason.START_FAILED,
-                None,
-                _elapsed_ms(started, self._clock()),
-                type(exc).__name__,
-            )
-        duration_ms = _elapsed_ms(started, self._clock())
-        exit_code = getattr(result, "returncode", None)
-        if type(exit_code) is not int:
-            exit_code = None
-        merged = "".join(
-            part for part in (
-                getattr(result, "stdout", "") or "",
-                getattr(result, "stderr", "") or "",
-            )
-        ).strip()
+        with self._capture_files() as (out_file, err_file):
+            try:
+                result = self._runner(
+                    [shell, "-lc", command],
+                    timeout=timeout,
+                    stdout=out_file,
+                    stderr=err_file,
+                    text=True,
+                )
+            except subprocess.TimeoutExpired:
+                # Show what it printed before it was killed: for a command
+                # that hangs, that is usually the only clue.
+                return (
+                    PreCommandReason.TIMED_OUT,
+                    None,
+                    _elapsed_ms(started, self._clock()),
+                    self._merged_capture(out_file, err_file),
+                )
+            except Exception as exc:
+                return (
+                    PreCommandReason.START_FAILED,
+                    None,
+                    _elapsed_ms(started, self._clock()),
+                    type(exc).__name__,
+                )
+            duration_ms = _elapsed_ms(started, self._clock())
+            exit_code = getattr(result, "returncode", None)
+            if type(exit_code) is not int:
+                exit_code = None
+            merged = self._merged_capture(out_file, err_file)
         reason = (
             PreCommandReason.OK if exit_code == 0 else PreCommandReason.NONZERO_EXIT
         )
         return reason, exit_code, duration_ms, merged
+
+    def _merged_capture(self, out_file, err_file) -> str:
+        """Both streams in one blob, which is what the Test result shows."""
+        return "".join(
+            (self._read_capture(out_file), self._read_capture(err_file))
+        ).strip()
 
     # -- helpers -------------------------------------------------------------
 
