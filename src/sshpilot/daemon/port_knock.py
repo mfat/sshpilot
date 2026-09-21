@@ -43,7 +43,19 @@ logger = logging.getLogger(__name__)
 
 #: Pause between knocks. ``knockd`` reads a sequence out of its own packet log,
 #: and packets sent back to back can be logged out of order, which scores as a
-#: *failed* sequence. This is the delay ``knock(1)`` itself defaults to.
+#: *failed* sequence.
+#:
+#: Deliberately more than ``knock(1)``, which paces nothing at all by default
+#: and sends a whole sequence in under ten milliseconds; so does the ``nmap``
+#: loop the Arch wiki gives as a client. The published advice that does pace
+#: goes further than this -- Teleport's walkthrough uses ``-d 500``.
+#:
+#: The ceiling is what stops this being tuned upwards to be safe: a knock
+#: sequence is often tracked by per-stage expiry, and the nftables wiki's
+#: first example expires each stage after ``timeout 1s``. Past that a slower
+#: knock does not merely lag, it *fails*, so the delay has to stay a small
+#: fraction of a second. 0.2s is enough to keep the packet log ordered with
+#: room under a one-second stage.
 DEFAULT_KNOCK_DELAY_SECONDS = 0.2
 
 #: How long to wait for a single knock before moving on. A knocked port is
@@ -165,8 +177,17 @@ def knock(
 
     for index, step in enumerate(steps):
         if index:
-            # Between knocks only. The caller adds its own settle time after
-            # the last one, where it can be accounted for separately.
+            # Between knocks only, and nothing is slept after the last one.
+            # A pause before connecting is a plausible-sounding thing to add
+            # -- the firewall has to run its rule command once the sequence
+            # lands -- but none of the field does it: ``knock(1)``, the Arch
+            # wiki's client, Teleport's walkthrough and the nftables examples
+            # all go straight from the final knock to ``ssh``. It would also
+            # be spent out of the wrong budget. What the server grants is a
+            # window to *connect* in, and the short configurations are short:
+            # ``cmd_timeout = 5`` in knockd's own examples, ``timeout 10s``
+            # in the nftables one. A settle would spend a tenth of that
+            # guarding a race the SSH SYN's own retransmit already covers.
             sleep(delay)
         error = _send_one(resolved_family, sockaddr, step, timeout)
         if error is None:
