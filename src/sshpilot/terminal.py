@@ -4486,7 +4486,7 @@ class TerminalWidget(Gtk.Box):
                             return True  # Consume the event
                 except Exception as e:
                     logger.debug(f"Error in mouse wheel zoom: {e}")
-                return False  # Don't consume the event if modifier not pressed
+                return self._on_history_scroll(controller, dx, dy)
 
             scroll_controller.connect('scroll', _on_scroll)
             host = self.controller_host()
@@ -4497,6 +4497,64 @@ class TerminalWidget(Gtk.Box):
 
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
+
+    def _wheel_scroll_lines(self) -> int:
+        """Return the configured number of lines per discrete wheel notch, clamped."""
+        config = getattr(self, "config", None)
+        raw = None
+        if config is not None:
+            try:
+                raw = config.get_setting("terminal.scroll_lines", 3)
+            except Exception:
+                raw = 3
+        try:
+            val = int(raw) if raw is not None else 3
+        except (ValueError, TypeError):
+            val = 3
+        return max(1, min(20, val))
+
+    def _history_scroll_delta(self, vte, controller, dy: float) -> float:
+        """Calculate scroll delta in adjustment units based on scroll device type."""
+        try:
+            cell_height = vte.get_char_height()
+        except Exception:
+            cell_height = 0
+        if cell_height <= 0:
+            return 0.0
+
+        try:
+            unit = controller.get_unit()
+        except Exception:
+            unit = getattr(getattr(Gdk, "ScrollUnit", None), "WHEEL", None)
+
+        try:
+            in_pixels = bool(vte.get_scroll_unit_is_pixels())
+        except Exception:
+            in_pixels = False
+
+        if unit == getattr(getattr(Gdk, "ScrollUnit", None), "SURFACE", None):
+            if in_pixels:
+                return float(dy)
+            return float(dy) / cell_height
+
+        lines = dy * self._wheel_scroll_lines()
+        if in_pixels:
+            return float(lines * cell_height)
+        return float(lines)
+
+    def _on_history_scroll(self, controller, dx: float, dy: float) -> bool:
+        """Scroll the terminal viewport in response to a scroll gesture."""
+        widget = getattr(self, "terminal_widget", None)
+        if not isinstance(widget, Gtk.Scrollable):
+            return False
+        adj = widget.get_vadjustment()
+        if adj is None:
+            return False
+        delta = self._history_scroll_delta(widget, controller, dy)
+        if delta == 0.0:
+            return False
+        adj.set_value(adj.get_value() + delta)
+        return True
 
     def _on_latin_fallback_key(self, controller, keyval, keycode, state):
         """Match the terminal accelerators through the layout's Latin group.

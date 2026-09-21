@@ -529,7 +529,8 @@ class VTETerminalBackend:
             ("scroll on output", lambda: self.vte.set_scroll_on_output(False)),
             ("mouse autohide", lambda: self.vte.set_mouse_autohide(True)),
             ("OSC 8 hyperlinks", lambda: self.vte.set_allow_hyperlink(True)),
-            ("fallback scrolling", lambda: self.vte.set_enable_fallback_scrolling(True)),
+            ("fallback scrolling", lambda: self.vte.set_enable_fallback_scrolling(False)),
+            ("scroll unit is pixels", lambda: self.vte.set_scroll_unit_is_pixels(True)),
             ("visibility", lambda: self.vte.show()),
         )
         for name, operation in operations:
