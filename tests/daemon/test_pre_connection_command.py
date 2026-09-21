@@ -956,3 +956,49 @@ def test_test_shows_what_a_hanging_command_printed_before_the_timeout():
 
     assert result.reason is PreCommandReason.TIMED_OUT
     assert "starting" in result.output
+
+
+# --- both streams, on every path ---------------------------------------------
+#
+# Knock helpers are not consistent about which stream they complain on. The
+# timeout path used to read stderr alone while every other path merged both,
+# so a stdout-only complaint vanished from the terminal and the log but showed
+# up under Test -- which reads as the two disagreeing about what happened.
+
+
+def test_a_stdout_complaint_survives_a_timeout():
+    runner, notices = _runner("echo 'sequence rejected'; sleep 30", timeout=1)
+
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert notices[-1].reason is PreCommandReason.TIMED_OUT
+    assert "sequence rejected" in notices[-1].output
+
+
+def test_a_stdout_complaint_survives_a_non_zero_exit():
+    runner, notices = _runner("echo 'sequence rejected'; exit 4")
+
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert "sequence rejected" in notices[-1].output
+
+
+def test_both_streams_reach_the_notice():
+    runner, notices = _runner("echo out; echo err >&2; exit 1")
+
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert "out" in notices[-1].output
+    assert "err" in notices[-1].output
+
+
+def test_the_launch_and_test_paths_agree_about_output():
+    """They are near-duplicates; the point is that they cannot drift."""
+
+    command = "echo out; echo err >&2; exit 5"
+    runner, notices = _runner(command)
+
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+    tested = runner.test(command)
+
+    assert notices[-1].output == tested.output

@@ -312,9 +312,12 @@ class PreConnectionCommandRunner:
                     kind.value,
                 )
                 logger.debug("pre-connection command timed out: %s", command)
-                # Whatever it managed to say before it was killed is often the
-                # only clue why it hung.
-                partial = self._read_capture(err_file).strip()
+                # Whatever it managed to say before it was killed is often
+                # the only clue why it hung. Both streams: knock helpers are
+                # not consistent about which one they complain on, and a
+                # stdout-only complaint used to vanish here while showing up
+                # under Test, which reads as the two disagreeing.
+                partial = self._merged_capture(out_file, err_file)
                 if partial:
                     logger.debug(
                         "pre-connection command output before the timeout: %.*s",
@@ -368,13 +371,13 @@ class PreConnectionCommandRunner:
             duration_ms,
             kind.value,
         )
-        trimmed = stderr_text.strip()
-        if trimmed:
-            # Output is content: DEBUG only, truncated, and never published.
+        if merged:
+            # Content, so DEBUG only -- but the same text the terminal tab and
+            # the Test result show, rather than a narrower slice of it.
             logger.debug(
-                "pre-connection command stderr: %.*s",
+                "pre-connection command output: %.*s",
                 _STDERR_LOG_LIMIT,
-                trimmed,
+                merged,
             )
         return PreCommandReason.NONZERO_EXIT, exit_code, duration_ms, merged
 

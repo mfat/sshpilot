@@ -1,14 +1,16 @@
 """Frontend-owned presentation of pre-connection command notices.
 
-The daemon publishes codes and numbers only (see
-:mod:`sshpilot.api.models.pre_command`); the wording lives here, so it can be
-translated and so the command text and its output -- which may carry a token or
-a password -- never have to cross the wire to be rendered.
+The daemon publishes codes and numbers, plus a failed command's own output
+(see :mod:`sshpilot.api.models.pre_command`). The *wording* lives here, so it
+can be translated and so the command text -- which may carry a token or a
+password -- never has to cross the wire to be rendered.
 
-Every failure sentence ends by saying the connection continues. That is not
-padding: the step deliberately never vetoes a launch, and a user who reads
-"the pre-connection command failed" without that clause will reasonably assume
-the connection was abandoned and stop waiting for it.
+Each failure sentence says what happened next, because that is the part a user
+cannot infer. By default the connection continues, and someone reading "the
+pre-connection command failed" without that clause will reasonably assume it
+was abandoned and stop waiting. When the connection asked to be gated on the
+command, the opposite is true and the sentence has to say so -- telling someone
+the connection continues when it did not is worse than saying nothing.
 """
 
 from __future__ import annotations

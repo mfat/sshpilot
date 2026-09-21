@@ -18,10 +18,16 @@ do not travel through ``SessionFailure``/``SftpFailure``/``ScpFailure`` or any
 other per-domain failure vocabulary -- a pre-command that exits non-zero must
 not make a connection that then succeeds look like it failed.
 
-What travels is a stable reason code plus numbers. The daemon never sends the
-command text, its output, or a rendered sentence: the command line can embed a
-token or a password, and the wording belongs to the frontend
-(``sshpilot.gtk.pre_command_messages``), which owns translation.
+What travels is a stable reason code plus numbers, and -- only when the
+command failed -- what it printed. The command *text* never travels: it can
+embed a token or a password, and nothing on the frontend needs it. Neither does
+a rendered sentence; the wording belongs to
+``sshpilot.gtk.pre_command_messages``, which owns translation.
+
+Output is the exception, added deliberately: a shell shows you a failing
+knock's own words, and the terminal tab is where the user is already looking.
+It is bounded, sent only on a finished failure, and goes to the same clients
+that already receive terminal content.
 """
 
 from __future__ import annotations
