@@ -1,3 +1,10 @@
+sshpilot (6.1.9-1) unstable; urgency=medium
+
+  * Release v6.1.9.
+  * New port-knocking/pre-connect command configuration dialog
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 21 Sep 2026 17:58:11 +0000
+
 sshpilot (6.1.8-1) unstable; urgency=medium
 
   * Release v6.1.8.
