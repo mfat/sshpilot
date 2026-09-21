@@ -32,6 +32,11 @@ from gi.repository import Gtk, GObject, GLib, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
+# Lines moved per discrete wheel notch.  Fixed on purpose: VTE's own fallback
+# used max(1, ceil(rows/10)), which is ~4 lines in a small window and ~7
+# maximised, and that inconsistency is most of what read as "too fast".
+WHEEL_SCROLL_LINES = 3
+
 # SSHProcessManager and the process_manager singleton were extracted to
 # ssh_process_manager.py (GTK-free). Re-exported here so existing
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
@@ -334,6 +339,7 @@ class TerminalWidget(Gtk.Box):
         # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
+        self._zoom_controller = None
         self._latin_fallback_controller = None
         self._latin_fallback_bindings = []
         self._config_handler = None
@@ -4435,7 +4441,7 @@ class TerminalWidget(Gtk.Box):
                 self._latin_fallback_controller = fallback_controller
 
             if getattr(self, '_shortcut_controller', None) is not None:
-                self._setup_mouse_wheel_zoom()
+                self._setup_scroll_controllers()
 
         except Exception as e:
             logger.debug(f"Failed to install shortcuts: {e}")
@@ -4453,65 +4459,78 @@ class TerminalWidget(Gtk.Box):
         else:
             logger.warning("Search key controller not installed: _search missing at shortcut setup")
 
-    def _setup_mouse_wheel_zoom(self):
-        """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
-        if getattr(self, '_scroll_controller', None) is not None:
-            return
+    def _setup_scroll_controllers(self):
+        """Install the zoom and history-scroll controllers.
 
+        Two controllers on two different widgets, deliberately.
+
+        ``gtk_widget_add_controller()`` *prepends*, and ``run_controllers()``
+        iterates forward and stops at the first non-gesture handler that returns
+        TRUE.  A scroll controller added to the VTE widget therefore runs
+        *before* VTE's own ``vte-scroll-controller``, not after it.  VTE still
+        drives the wheel itself in two states even with fallback scrolling
+        disabled — the alternate screen sends ESC[A/ESC[B (less, vim, htop) and
+        mouse tracking sends button 4/5 reports (tmux) — so a handler that
+        consumed every delta there left the wheel doing nothing at all.
+
+        Hence the split:
+
+        * zoom stays on the terminal widget but in CAPTURE, which GTK runs
+          root-to-target ahead of every bubble handler, so Ctrl/Cmd+wheel keeps
+          zooming even while a full-screen application owns the wheel;
+        * history scroll goes on ``terminal_container``, the widget's parent, in
+          BUBBLE, so it only ever sees events VTE declined.  That restores VTE's
+          precedence structurally instead of re-deriving its screen and mouse
+          modes here.
+        """
         try:
             mac = is_macos()
 
-            scroll_controller = Gtk.EventControllerScroll()
-            scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+            if getattr(self, '_zoom_controller', None) is None:
+                zoom_controller = Gtk.EventControllerScroll()
+                zoom_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+                zoom_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
-            def _on_scroll(controller, dx, dy):
-                try:
-                    # Check if Command key (macOS) or Ctrl key (Linux/Windows) is pressed
-                    modifiers = controller.get_current_event_state()
-                    if mac:
-                        # Check for Command key (Meta modifier)
-                        if modifiers & Gdk.ModifierType.META_MASK:
+                def _on_zoom_scroll(controller, dx, dy):
+                    try:
+                        # Check if Command key (macOS) or Ctrl key (Linux/Windows) is pressed
+                        modifiers = controller.get_current_event_state()
+                        mask = (
+                            Gdk.ModifierType.META_MASK if mac
+                            else Gdk.ModifierType.CONTROL_MASK
+                        )
+                        if modifiers & mask:
                             if dy > 0:
                                 self.zoom_out()
                             elif dy < 0:
                                 self.zoom_in()
                             return True  # Consume the event
-                    else:
-                        # Check for Ctrl key
-                        if modifiers & Gdk.ModifierType.CONTROL_MASK:
-                            if dy > 0:
-                                self.zoom_out()
-                            elif dy < 0:
-                                self.zoom_in()
-                            return True  # Consume the event
-                except Exception as e:
-                    logger.debug(f"Error in mouse wheel zoom: {e}")
-                return self._on_history_scroll(controller, dx, dy)
+                    except Exception as e:
+                        logger.debug(f"Error in mouse wheel zoom: {e}")
+                    return False
 
-            scroll_controller.connect('scroll', _on_scroll)
-            host = self.controller_host()
-            if host is not None:
-                host.add_controller(scroll_controller)
-            self._scroll_controller = scroll_controller
-            logger.debug("Mouse wheel zoom functionality installed")
+                zoom_controller.connect('scroll', _on_zoom_scroll)
+                host = self.controller_host()
+                if host is not None:
+                    host.add_controller(zoom_controller)
+                    self._zoom_controller = zoom_controller
+
+            # Separate guard: the zoom controller lives on the backend widget and
+            # is reinstalled on every swap, while this one lives on the container
+            # and outlives them.
+            if getattr(self, '_scroll_controller', None) is None:
+                scroll_controller = Gtk.EventControllerScroll()
+                scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+                scroll_controller.connect('scroll', self._on_history_scroll)
+                container = getattr(self, 'terminal_container', None)
+                if container is not None:
+                    container.add_controller(scroll_controller)
+                    self._scroll_controller = scroll_controller
+
+            logger.debug("Terminal scroll controllers installed")
 
         except Exception as e:
-            logger.debug(f"Failed to setup mouse wheel zoom: {e}")
-
-    def _wheel_scroll_lines(self) -> int:
-        """Return the configured number of lines per discrete wheel notch, clamped."""
-        config = getattr(self, "config", None)
-        raw = None
-        if config is not None:
-            try:
-                raw = config.get_setting("terminal.scroll_lines", 3)
-            except Exception:
-                raw = 3
-        try:
-            val = int(raw) if raw is not None else 3
-        except (ValueError, TypeError):
-            val = 3
-        return max(1, min(20, val))
+            logger.debug(f"Failed to setup terminal scroll controllers: {e}")
 
     def _history_scroll_delta(self, vte, controller, dy: float) -> float:
         """Calculate scroll delta in adjustment units based on scroll device type."""
@@ -4522,22 +4541,31 @@ class TerminalWidget(Gtk.Box):
         if cell_height <= 0:
             return 0.0
 
-        try:
-            unit = controller.get_unit()
-        except Exception:
-            unit = getattr(getattr(Gdk, "ScrollUnit", None), "WHEEL", None)
+        # get_unit() is GTK >= 4.8 and the packaging only requires 4.6, so an
+        # older GTK raises here and Gdk.ScrollUnit does not exist either.  Both
+        # sides of the comparison would then be None, which is equal, and every
+        # wheel notch would take the pixel branch below and scroll 1px.  Fall
+        # back to the wheel branch explicitly instead: every X11 scroll event is
+        # a wheel event anyway.
+        scroll_unit = getattr(Gdk, "ScrollUnit", None)
+        unit = None
+        if scroll_unit is not None:
+            try:
+                unit = controller.get_unit()
+            except Exception:
+                unit = scroll_unit.WHEEL
 
         try:
             in_pixels = bool(vte.get_scroll_unit_is_pixels())
         except Exception:
             in_pixels = False
 
-        if unit == getattr(getattr(Gdk, "ScrollUnit", None), "SURFACE", None):
+        if scroll_unit is not None and unit == scroll_unit.SURFACE:
             if in_pixels:
                 return float(dy)
             return float(dy) / cell_height
 
-        lines = dy * self._wheel_scroll_lines()
+        lines = dy * WHEEL_SCROLL_LINES
         if in_pixels:
             return float(lines * cell_height)
         return float(lines)
@@ -4622,18 +4650,43 @@ class TerminalWidget(Gtk.Box):
                 self._latin_fallback_controller = None
                 self._latin_fallback_bindings = []
 
-        scroll = getattr(self, '_scroll_controller', None)
-        if scroll is not None:
+        zoom = getattr(self, '_zoom_controller', None)
+        if zoom is not None:
             try:
                 if hasattr(host, 'remove_controller'):
-                    host.remove_controller(scroll)
+                    host.remove_controller(zoom)
             except Exception as exc:
-                logger.debug("Failed to remove scroll controller: %s", exc)
+                logger.debug("Failed to remove zoom controller: %s", exc)
             finally:
-                self._scroll_controller = None
+                self._zoom_controller = None
+
+        # The history-scroll controller is deliberately *not* removed here.  It
+        # is not a shortcut: it is how the wheel moves the scrollback at all,
+        # now that VTE's own fallback scrolling is off.  Tearing it down for
+        # pass-through mode left that mode with no wheel scrolling whatsoever,
+        # and it lives on terminal_container rather than the backend widget, so
+        # a backend swap never strands it either.  See _remove_scroll_controller.
 
         if getattr(self, '_search', None) is not None:
             self._search.teardown_key_controller()
+
+    def _remove_scroll_controller(self):
+        """Detach the history-scroll controller from ``terminal_container``.
+
+        Only for real teardown.  Unlike the shortcut controllers this one has to
+        come off the container it was added to, not off controller_host().
+        """
+        scroll = getattr(self, '_scroll_controller', None)
+        if scroll is None:
+            return
+        container = getattr(self, 'terminal_container', None)
+        try:
+            if hasattr(container, 'remove_controller'):
+                container.remove_controller(scroll)
+        except Exception as exc:
+            logger.debug("Failed to remove scroll controller: %s", exc)
+        finally:
+            self._scroll_controller = None
 
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
@@ -4781,6 +4834,11 @@ class TerminalWidget(Gtk.Box):
         # Remove custom controllers and disconnect config listeners
         try:
             self._remove_custom_shortcut_controllers()
+        except Exception:
+            pass
+
+        try:
+            self._remove_scroll_controller()
         except Exception:
             pass
 

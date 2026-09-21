@@ -16,23 +16,15 @@ pytest.importorskip("gi")
 
 from gi.repository import Gdk
 
+from sshpilot import terminal as terminal_mod
 from sshpilot.terminal import TerminalWidget
 from sshpilot.terminal_backends import VTETerminalBackend
 
 CELL_HEIGHT = 20
 
 
-def _terminal(scroll_lines=None):
-    widget = TerminalWidget.__new__(TerminalWidget)
-    if scroll_lines is None:
-        widget.config = None
-    else:
-        widget.config = types.SimpleNamespace(
-            get_setting=lambda key, default=None: (
-                scroll_lines if key == 'terminal.scroll_lines' else default
-            )
-        )
-    return widget
+def _terminal():
+    return TerminalWidget.__new__(TerminalWidget)
 
 
 def _vte(in_pixels=True, cell_height=CELL_HEIGHT):
@@ -69,22 +61,6 @@ def test_a_wheel_notch_moves_a_fixed_number_of_lines():
         _vte(), _controller(Gdk.ScrollUnit.WHEEL), 1.0
     )
     assert delta == 3 * CELL_HEIGHT
-
-
-def test_wheel_step_is_configurable():
-    terminal = _terminal(scroll_lines=5)
-    delta = terminal._history_scroll_delta(
-        _vte(), _controller(Gdk.ScrollUnit.WHEEL), 1.0
-    )
-    assert delta == 5 * CELL_HEIGHT
-
-
-@pytest.mark.parametrize(
-    "value,expected", [(0, 1), (-4, 1), (999, 20), ("nonsense", 3)]
-)
-def test_wheel_step_survives_a_hostile_setting(value, expected):
-    """A zero or negative step would freeze scrolling outright."""
-    assert _terminal(scroll_lines=value)._wheel_scroll_lines() == expected
 
 
 def test_line_valued_adjustments_are_converted():
@@ -143,6 +119,21 @@ def test_a_controller_without_a_unit_is_treated_as_a_wheel():
     assert terminal._history_scroll_delta(_vte(), controller, 1.0) == 3 * CELL_HEIGHT
 
 
+def test_a_gtk_without_scroll_units_at_all_is_treated_as_a_wheel(monkeypatch):
+    """get_unit() is GTK >= 4.8 and the packaging asks only for 4.6.  There
+    Gdk.ScrollUnit is missing too, so the SURFACE comparison used to be
+    ``None == None`` and a wheel notch scrolled a single pixel.  The test above
+    cannot catch that: Gdk.ScrollUnit exists in the test environment, so it
+    never reaches this branch.
+    """
+    monkeypatch.delattr(Gdk, "ScrollUnit", raising=False)
+    terminal = _terminal()
+    controller = types.SimpleNamespace(
+        get_unit=lambda: (_ for _ in ()).throw(RuntimeError("no unit")),
+    )
+    assert terminal._history_scroll_delta(_vte(), controller, 1.0) == 3 * CELL_HEIGHT
+
+
 def test_non_scrollable_backends_are_left_alone():
     """PyXterm is a WebKit view: it scrolls inside the page and exposes no
     adjustment to drive.
@@ -156,8 +147,12 @@ def test_non_scrollable_backends_are_left_alone():
 
 
 def test_vte_backend_hands_scrolling_over_to_us():
-    """The two flags the fix turns on.  Leaving fallback scrolling enabled would
-    mean VTE consumes the event and our unit-aware controller never runs.
+    """The two flags the fix turns on.  Fallback scrolling is VTE's unit-blind
+    history scroll; turning it off makes VTE decline plain scroll events so they
+    bubble out to our unit-aware controller.  It does *not* stop VTE handling
+    the wheel in the alternate screen or under mouse tracking -- both branches
+    sit above the fallback check -- which is why the controller must not be on
+    the VTE widget (see test_history_scrolling_stays_behind_vte).
     """
     backend = VTETerminalBackend.__new__(VTETerminalBackend)
     calls = {}
@@ -167,3 +162,90 @@ def test_vte_backend_hands_scrolling_over_to_us():
     )
     backend.configure()
     assert calls == {"fallback": False, "pixels": True}
+
+
+def test_history_scrolling_stays_behind_vte(monkeypatch):
+    """The ordering the fix rests on, pinned where a unit test can hold it.
+
+    ``add_controller`` prepends and ``run_controllers`` stops at the first
+    non-gesture TRUE, so a scroll controller on the VTE widget runs *ahead* of
+    vte-scroll-controller and swallows the events VTE needs for ESC[A/ESC[B in
+    the alternate screen and for button 4/5 mouse reports.  Attaching to the
+    parent container is what keeps VTE first; zoom stays on the widget in
+    CAPTURE so Ctrl+wheel still works inside a full-screen app.
+    """
+
+    class FakeController:
+        def __init__(self):
+            self.phase = None
+
+        def set_flags(self, _flags):
+            pass
+
+        def set_propagation_phase(self, phase):
+            self.phase = phase
+
+        def connect(self, _signal, _handler):
+            pass
+
+    monkeypatch.setattr(
+        terminal_mod.Gtk, 'EventControllerScroll', FakeController, raising=False
+    )
+    monkeypatch.setattr(terminal_mod, 'is_macos', lambda: False, raising=False)
+
+    terminal = _terminal()
+    added = []
+
+    def _host(name):
+        return types.SimpleNamespace(
+            add_controller=lambda c: added.append((name, c)),
+        )
+
+    terminal.terminal_widget = _host('widget')
+    terminal.terminal_container = _host('container')
+    terminal._scroll_controller = None
+    terminal._zoom_controller = None
+
+    terminal._setup_scroll_controllers()
+
+    hosts = dict(added)
+    assert set(hosts) == {'widget', 'container'}
+    assert hosts['widget'] is terminal._zoom_controller
+    assert hosts['container'] is terminal._scroll_controller
+    # Capture runs root-to-target, ahead of VTE's own bubble-phase controller.
+    assert terminal._zoom_controller.phase is terminal_mod.Gtk.PropagationPhase.CAPTURE
+    # The history controller must stay in the default bubble phase.
+    assert terminal._scroll_controller.phase is None
+
+
+def test_pass_through_mode_keeps_the_wheel_working():
+    """Pass-through stops SSH Pilot stealing *shortcuts*; it must not stop the
+    wheel moving the scrollback.  With VTE's fallback scrolling disabled, our
+    controller is the only thing left doing that, so tearing it down alongside
+    the shortcut controllers left pass-through with no scrolling at all.
+    """
+    terminal = _terminal()
+    removed = []
+
+    def _host(name):
+        return types.SimpleNamespace(
+            remove_controller=lambda c: removed.append((name, c)),
+        )
+
+    terminal.terminal_widget = _host('widget')
+    terminal.terminal_container = _host('container')
+    terminal._shortcut_controller = 'shortcut'
+    terminal._latin_fallback_controller = None
+    terminal._zoom_controller = 'zoom'
+    terminal._scroll_controller = 'scroll'
+    terminal._search = None
+
+    terminal._remove_custom_shortcut_controllers()
+
+    assert removed == [('widget', 'shortcut'), ('widget', 'zoom')]
+    assert terminal._scroll_controller == 'scroll'
+
+    # Real teardown does take it down, and off the container it was added to.
+    terminal._remove_scroll_controller()
+    assert removed[-1] == ('container', 'scroll')
+    assert terminal._scroll_controller is None

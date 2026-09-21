@@ -42,24 +42,33 @@ def _bare_terminal():
     terminal = terminal_cls.__new__(terminal_cls)
     terminal._pass_through_mode = False
     terminal._shortcut_controller = 'shortcut-controller'
+    terminal._zoom_controller = 'zoom-controller'
     terminal._scroll_controller = 'scroll-controller'
     terminal._search = None
     return terminal
 
 
 def test_teardown_targets_terminal_widget_when_no_vte():
-    """PyXterm has no `vte`; the controllers must come off `terminal_widget`."""
+    """PyXterm has no `vte`; the widget's controllers must come off
+    `terminal_widget`.  The history-scroll controller is the exception: it lives
+    on the container, which outlives the backend swap.
+    """
     terminal = _bare_terminal()
     terminal.vte = None
     terminal.terminal_widget = DummyWidget('pyxterm')
+    terminal.terminal_container = DummyWidget('container')
 
     assert terminal.controller_host() is terminal.terminal_widget
 
     terminal._remove_custom_shortcut_controllers()
 
-    assert terminal.terminal_widget.removed == ['shortcut-controller', 'scroll-controller']
+    assert terminal.terminal_widget.removed == ['shortcut-controller', 'zoom-controller']
     assert terminal._shortcut_controller is None
-    assert terminal._scroll_controller is None
+    assert terminal._zoom_controller is None
+    # Lives on the container, so a swap leaves it in place -- see
+    # test_pass_through_mode_keeps_the_wheel_working.
+    assert terminal.terminal_container.removed == []
+    assert terminal._scroll_controller == 'scroll-controller'
 
 
 def test_backend_switch_detaches_from_old_widget_and_reinstalls(monkeypatch):
@@ -90,6 +99,10 @@ def test_backend_switch_detaches_from_old_widget_and_reinstalls(monkeypatch):
 
         def __init__(self):
             self.children = [old_widget]
+            self.removed = []
+
+        def remove_controller(self, controller):
+            self.removed.append(controller)
 
         def get_first_child(self):
             return self.children[0] if self.children else None
@@ -129,7 +142,8 @@ def test_backend_switch_detaches_from_old_widget_and_reinstalls(monkeypatch):
     terminal.ensure_backend('pyxterm')
 
     # Detached from the widget the controllers were actually on...
-    assert old_widget.removed == ['shortcut-controller', 'scroll-controller']
+    assert old_widget.removed == ['shortcut-controller', 'zoom-controller']
+    assert terminal.terminal_container.removed == []
     assert new_widget.removed == []
     # ...and reinstalled on the new one.
     assert installed_on == [new_widget]
