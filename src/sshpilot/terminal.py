@@ -1183,10 +1183,14 @@ class TerminalWidget(Gtk.Box):
 
         Two surfaces, because a daemon-backed tab uses neither the way a local
         one does. The overlay label covers the paths that show "Connecting";
-        the dim line written into the terminal covers the daemon route, which
-        opens straight into an empty pane and would otherwise sit blank and
-        silent for the whole pre-command. The line is written once per run so
-        a repeated status push cannot spam the transcript.
+        the coloured line written into the terminal covers the daemon route,
+        which opens straight into an empty pane and would otherwise sit blank
+        and silent for the whole pre-command. The line is written once per run
+        so a repeated status push cannot spam the transcript.
+
+        Cyan rather than dim: this is SSH Pilot speaking, not the host, and it
+        has to stand apart from whatever the session prints next without
+        reading as a problem -- red is already the connection-failure line.
         """
         value = text.strip() if isinstance(text, str) else ""
         label = getattr(self, "connecting_detail_label", None)
@@ -1206,7 +1210,7 @@ class TerminalWidget(Gtk.Box):
         if backend is None:
             return
         try:
-            backend.feed(f"\x1b[2m{value}\x1b[0m\r\n".encode("utf-8"))
+            backend.feed(f"\x1b[36m{value}\x1b[0m\r\n".encode("utf-8"))
         except Exception:
             logger.debug("Could not announce the connecting detail", exc_info=True)
 

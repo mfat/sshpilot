@@ -2942,9 +2942,17 @@ class DaemonClient:
                 return
             if event.type is EventType.OPERATION_STATE_CHANGED:
                 summary = event.payload
-                if str(summary.id) != str(operation_id) or summary.state.value not in {
-                    "succeeded", "failed", "cancelled"
-                }:
+                # ``operation_id``, not ``id``: OperationSummary has no ``id``,
+                # so this raised AttributeError inside the subscriber for every
+                # operation event. The failure was invisible -- the event bus
+                # logs and continues -- but it meant a streamed command never
+                # reported completion, and each one left a subscriber that
+                # threw again on every later operation event. Short commands
+                # still worked because the snapshot check below caught them.
+                if str(summary.operation_id) != str(operation_id) or (
+                    summary.state.value
+                    not in {"succeeded", "failed", "cancelled"}
+                ):
                     return
                 try:
                     result = self.get_broadcast_command(operation_id)
