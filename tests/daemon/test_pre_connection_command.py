@@ -1086,3 +1086,65 @@ def test_an_unset_port_expands_to_the_ssh_default():
         expand_pre_command_tokens("knock %h %p", hostname="h", port=None)
         == "knock h 22"
     )
+
+
+# --- reaching the user's tools under Flatpak ---------------------------------
+#
+# The daemon lives in the sandbox, and a port knock is the one thing certainly
+# not in there: knock, fwknop and openvpn are host tools and this app bundles
+# none of them. Running the command in the sandbox fails with "command not
+# found", the knock never happens, and with the hard gate on the host becomes
+# unreachable for a reason that looks like the user's mistake. Remmina solves
+# the same problem the same way (remmina_utils_get_flatpak_command).
+
+
+def _argv_for(monkeypatch, command, *, sandboxed, spawner="/usr/bin/flatpak-spawn"):
+    import sshpilot.daemon.pre_connection_command as mod
+
+    monkeypatch.setattr(
+        mod.os.path, "exists", lambda p: sandboxed if p == "/.flatpak-info" else False
+    )
+    monkeypatch.setattr(
+        mod.shutil,
+        "which",
+        lambda name: spawner if name == "flatpak-spawn" else "/bin/sh",
+    )
+    runner, _ = _runner(command)
+    return runner._shell_argv(command)
+
+
+def test_outside_a_sandbox_the_command_runs_here(monkeypatch):
+    argv = _argv_for(monkeypatch, "knock host", sandboxed=False)
+
+    assert argv == ["/bin/sh", "-lc", "knock host"]
+
+
+def test_inside_a_sandbox_the_command_runs_on_the_host(monkeypatch):
+    argv = _argv_for(monkeypatch, "knock host", sandboxed=True)
+
+    assert argv == ["/usr/bin/flatpak-spawn", "--host", "sh", "-lc", "knock host"]
+
+
+def test_the_host_resolves_its_own_shell(monkeypatch):
+    """Not the sandbox's /bin/sh path: the point is to leave the sandbox, and
+    an unqualified `sh` is also what makes -lc source the host's profile."""
+
+    argv = _argv_for(monkeypatch, "knock host", sandboxed=True)
+
+    assert argv[2] == "sh"
+
+
+def test_a_sandbox_with_no_way_out_still_runs_and_reports(monkeypatch):
+    """Failing loudly beats not running it: the outcome is reported either way."""
+
+    argv = _argv_for(monkeypatch, "knock host", sandboxed=True, spawner=None)
+
+    assert argv == ["/bin/sh", "-lc", "knock host"]
+
+
+def test_the_login_shell_is_kept_in_both_cases(monkeypatch):
+    """-lc sources the profile, which is how knock/fwknop are found at all."""
+
+    for sandboxed in (True, False):
+        argv = _argv_for(monkeypatch, "knock host", sandboxed=sandboxed)
+        assert "-lc" in argv

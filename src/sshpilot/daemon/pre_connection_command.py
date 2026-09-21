@@ -297,6 +297,43 @@ class PreConnectionCommandRunner:
             logger.debug("pre-connection command output size unknown", exc_info=True)
             return 0
 
+    @staticmethod
+    def _shell_argv(command: str) -> list:
+        """The argv that runs *command* where the user's tools actually are.
+
+        Under Flatpak the daemon lives in the sandbox, and a port knock is the
+        one thing that is certainly *not* in there: ``knock``, ``fwknop`` and
+        ``openvpn`` are host tools, and this app bundles none of them. Running
+        the command in the sandbox therefore fails with "command not found",
+        the knock never happens, and -- with the hard gate on -- the host
+        becomes unreachable for a reason that looks like the user's mistake.
+
+        ``flatpak-spawn --host`` is how Remmina solves the same problem, and
+        the permission it needs (``--talk-name=org.freedesktop.Flatpak``) is
+        already in our manifest. The shell is left unqualified in that case so
+        the *host* resolves it, which is also what makes ``-lc`` source the
+        host's profile rather than the sandbox's.
+        """
+        if os.path.exists("/.flatpak-info"):
+            spawner = shutil.which("flatpak-spawn")
+            if spawner:
+                return [spawner, "--host", "sh", "-lc", command]
+            # Sandboxed with no way out. Running it here will almost certainly
+            # fail, but failing loudly beats not running it at all: the
+            # outcome is reported either way.
+            logger.warning(
+                "flatpak-spawn is unavailable; the pre-connection command "
+                "will run inside the sandbox"
+            )
+        # ``sh -lc`` rather than a bare ``sh -c``: the string is user-authored
+        # and legitimately uses substitutions such as
+        # ``fwknop -n host --wget-cmd "$(which wget)"``, and a *login* shell
+        # also sources the user's profile. That matters in the packaged app --
+        # a bundle launched from Finder inherits a minimal PATH that does not
+        # include Homebrew, so a non-login shell would not find the knock
+        # helper at all.
+        return [shutil.which("sh") or "/bin/sh", "-lc", command]
+
     def _execute(
         self,
         command: str,
@@ -310,20 +347,12 @@ class PreConnectionCommandRunner:
         mirrors that.
         """
 
-        # ``sh -lc`` rather than a bare ``sh -c``: the string is user-authored
-        # and legitimately uses substitutions such as
-        # ``fwknop -n host --wget-cmd "$(which wget)"``, and a *login* shell
-        # also sources the user's profile. That matters in the packaged app --
-        # a bundle launched from Finder inherits a minimal PATH that does not
-        # include Homebrew, so a non-login shell would not find the knock
-        # helper at all. The daemon inherits the same minimal environment, so
-        # the reason holds here exactly as it did in the frontend.
-        shell = shutil.which("sh") or "/bin/sh"
+        argv = self._shell_argv(command)
         started = self._clock()
         with self._capture_files() as (out_file, err_file):
             try:
                 result = self._runner(
-                    [shell, "-lc", command],
+                    argv,
                     timeout=timeout,
                     stdout=out_file,
                     stderr=err_file,
@@ -447,12 +476,12 @@ class PreConnectionCommandRunner:
     def _execute_captured(self, command: str, timeout: int) -> tuple:
         """Like :meth:`_execute`, but keeps the output for the caller."""
 
-        shell = shutil.which("sh") or "/bin/sh"
+        argv = self._shell_argv(command)
         started = self._clock()
         with self._capture_files() as (out_file, err_file):
             try:
                 result = self._runner(
-                    [shell, "-lc", command],
+                    argv,
                     timeout=timeout,
                     stdout=out_file,
                     stderr=err_file,
