@@ -256,6 +256,7 @@ if TYPE_CHECKING:
     )
     from .pre_command import (
         PreCommandLaunchKind,
+        PreCommandMode,
         PreCommandPhase,
         PreCommandReason,
         PreCommandStage,
@@ -500,6 +501,7 @@ __all__ = [
     "PluginSessionFailureCode",
     "PortForwardSummary",
     "PreCommandLaunchKind",
+    "PreCommandMode",
     "PreCommandPhase",
     "PreCommandReason",
     "PreCommandStage",
@@ -786,6 +788,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "PluginOperationRequest": ("operations", "PluginOperationRequest"),
     "PluginOperationResult": ("operations", "PluginOperationResult"),
     "PreCommandLaunchKind": ("pre_command", "PreCommandLaunchKind"),
+    "PreCommandMode": ("pre_command", "PreCommandMode"),
     "PreCommandPhase": ("pre_command", "PreCommandPhase"),
     "PreCommandReason": ("pre_command", "PreCommandReason"),
     "PreCommandStage": ("pre_command", "PreCommandStage"),

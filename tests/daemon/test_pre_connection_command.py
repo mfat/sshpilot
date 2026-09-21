@@ -34,6 +34,7 @@ from sshpilot.api.models.pre_command import (
     PreCommandLaunchKind,
     PreCommandSettings,
     PreCommandPhase,
+    PreCommandMode,
     PreCommandReason,
     PreCommandStage,
     parse_knock_sequence,
@@ -167,6 +168,9 @@ def _runner(
         settings=_settings(timeout, coalesce),
         lookup=lambda connection_id: PreCommandSettings(
             command=command,
+            # These all exercise the command half, which is only live in
+            # command mode -- a connection runs one or the other.
+            mode=PreCommandMode.COMMAND,
             timeout=per_connection_timeout,
             abort_on_failure=abort,
         ),
@@ -1154,10 +1158,11 @@ def test_the_login_shell_is_kept_in_both_cases(monkeypatch):
 
 # --- the knock stage ----------------------------------------------------------
 #
-# A connection may knock, run a command, or both. The knock goes first, because
-# the command is the half that needs the way already open -- an ``fwknop`` SPA
-# or a VPN dial-up is what you reach for when a port sequence is not enough,
-# not instead of it.
+# A connection knocks *or* runs a command, never both. The sequence is the
+# simple case and needs nothing installed; the command is the escape hatch,
+# and someone who needs a knock and a VPN writes both into one shell line
+# themselves. Offering the two together would ask every user to reason about
+# an ordering question that only the escape hatch's users have.
 
 
 def _knock_runner(
@@ -1193,6 +1198,9 @@ def _knock_runner(
             command=command,
             knock_sequence=sequence,
             hostname=hostname,
+            mode=(
+                PreCommandMode.KNOCK if sequence else PreCommandMode.COMMAND
+            ),
             abort_on_failure=abort,
         ),
         **({"runner": subprocess_runner} if subprocess_runner is not None else {}),
@@ -1229,78 +1237,94 @@ def test_a_knock_only_connection_knocks_and_runs_no_process(monkeypatch):
     assert notices[-1].reason is PreCommandReason.OK
 
 
-def test_the_knock_goes_before_the_command(monkeypatch):
-    """Order is the whole contract: the command needs the way already open."""
+def test_knock_mode_never_runs_the_command(monkeypatch):
+    """Both halves are stored; only the selected one runs.
 
-    order = []
+    Switching between them in the editor must not destroy what was typed, so
+    the other half stays saved. The mode is what decides, not emptiness.
+    """
+
+    ran = []
     fixture = _knock_runner(
+        sequence="7000,8000",
         command="true",
-        subprocess_runner=lambda *a, **k: (
-            order.append("command"), SimpleNamespace(returncode=0)
-        )[1],
+        subprocess_runner=lambda *a, **k: ran.append(a),
     )
-    instance = fixture[0]
-    original = fixture[4]
-
-    def recording_knock(host, steps, **kwargs):
-        order.append("knock")
-        return original(host, steps, **kwargs)
-
-    fixture = (instance, fixture[1], fixture[2], fixture[3], recording_knock)
-    proceed, notices, _ = _run_knock(fixture, monkeypatch)
+    proceed, notices, knocks = _run_knock(fixture, monkeypatch)
 
     assert proceed is True
-    assert order == ["knock", "command"]
+    assert len(knocks) == 1
+    assert ran == [], "the stored command must stay dormant in knock mode"
+    assert all(n.stage is PreCommandStage.KNOCK for n in notices)
 
 
-def test_both_halves_each_announce_themselves(monkeypatch):
-    """So the status text can name the half that is actually running.
+def test_command_mode_never_knocks(monkeypatch):
+    """The mirror: a stored sequence is dormant while the command is live."""
 
-    "Running pre-connection command…" during a knock sends a user looking for
-    a field they left empty.
+    from sshpilot.daemon import pre_connection_command as module
+
+    ran = []
+    knocks = []
+    notices = []
+    instance = PreConnectionCommandRunner(
+        settings=_settings(5, 0),
+        lookup=lambda connection_id: PreCommandSettings(
+            command="true",
+            knock_sequence="7000,8000",
+            hostname="knock.example",
+            mode=PreCommandMode.COMMAND,
+        ),
+        runner=lambda *a, **k: (
+            ran.append(a), SimpleNamespace(returncode=0)
+        )[1],
+    )
+    instance.subscribe_events(lambda event: notices.append(event.payload))
+    monkeypatch.setattr(
+        module, "send_knock", lambda *a, **k: knocks.append(a)
+    )
+    proceed = instance.run(
+        ConnectionId("c1"), scope_id="s1", kind=PreCommandLaunchKind.TERMINAL
+    )
+
+    assert proceed is True
+    assert knocks == [], "the stored sequence must stay dormant in command mode"
+    assert len(ran) == 1
+    assert all(n.stage is PreCommandStage.COMMAND for n in notices)
+
+
+def test_only_the_selected_half_announces_itself(monkeypatch):
+    """One running notice and one finished notice, whichever half runs.
+
+    That is what keeps the frontend's rule -- show on running, clear on
+    finished -- correct without it having to know which half is configured.
     """
 
-    fixture = _knock_runner(
-        command="true", subprocess_runner=lambda *a, **k: SimpleNamespace(returncode=0)
-    )
+    fixture = _knock_runner(command="true")
     _, notices, _ = _run_knock(fixture, monkeypatch)
 
-    running = [n for n in notices if n.phase is PreCommandPhase.RUNNING]
-    finished = [n for n in notices if n.phase is PreCommandPhase.FINISHED]
-    assert [n.stage for n in running] == [
-        PreCommandStage.KNOCK,
-        PreCommandStage.COMMAND,
+    assert [n.phase for n in notices] == [
+        PreCommandPhase.RUNNING,
+        PreCommandPhase.FINISHED,
     ]
-    # Exactly one finished notice, so "clear the status on finished" stays a
-    # correct rule for the frontend.
-    assert len(finished) == 1
-    assert finished[0].stage is PreCommandStage.COMMAND
+    assert all(n.stage is PreCommandStage.KNOCK for n in notices)
 
 
-def test_a_knock_that_cannot_be_sent_does_not_run_the_command(monkeypatch):
-    """Nothing opened the way, so the command would run into a closed door.
-
-    It also keeps the report honest: one failure, named as the knock, rather
-    than a knock failure plus whatever the command made of the situation.
-    """
+def test_a_knock_that_cannot_be_sent_is_reported_as_the_knock(monkeypatch):
+    """One failure, named as the knock, carrying the raw reason."""
 
     from sshpilot.daemon.port_knock import KnockOutcome
     from sshpilot.api.models.pre_command import KnockStep
 
-    ran = []
     fixture = _knock_runner(
-        command="true",
         outcome=KnockOutcome(
             sent=0,
             failed=((KnockStep(port=7000), "ENETUNREACH"),),
             address="203.0.113.7",
             duration_ms=4,
         ),
-        subprocess_runner=lambda *a, **k: ran.append(a),
     )
     proceed, notices, _ = _run_knock(fixture, monkeypatch)
 
-    assert ran == []
     assert proceed is True, "a failed pre-step still never blocks by default"
     assert notices[-1].reason is PreCommandReason.START_FAILED
     assert notices[-1].stage is PreCommandStage.KNOCK
@@ -1352,23 +1376,22 @@ def test_an_unparseable_sequence_is_skipped_rather_than_blocking(monkeypatch):
     """Forgiving at launch, strict in the editor.
 
     Refusing to connect over a typo in an optional field helps nobody at the
-    moment someone is trying to reach a host.
+    moment someone is trying to reach a host. The command is not a fallback
+    either -- it is the other mode, and this connection did not choose it.
     """
 
     ran = []
     fixture = _knock_runner(
         sequence="not-a-port",
         command="true",
-        subprocess_runner=lambda *a, **k: (
-            ran.append(a), SimpleNamespace(returncode=0)
-        )[1],
+        subprocess_runner=lambda *a, **k: ran.append(a),
     )
     proceed, notices, knocks = _run_knock(fixture, monkeypatch)
 
     assert proceed is True
     assert knocks == [], "nothing sendable was configured"
-    assert len(ran) == 1, "the command still runs"
-    assert all(n.stage is PreCommandStage.COMMAND for n in notices)
+    assert ran == []
+    assert notices == []
 
 
 def test_a_knock_only_connection_coalesces_like_a_command(monkeypatch):

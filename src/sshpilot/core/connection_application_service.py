@@ -31,6 +31,7 @@ from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
 from ..api.models.pre_command import (
+    PreCommandMode,
     PreCommandSettings,
     expand_pre_command_tokens,
 )
@@ -307,6 +308,9 @@ class ConnectionApplicationService:
             settings = PreCommandSettings(
                 command=legacy.strip(),
                 knock_sequence=settings.knock_sequence,
+                # A connection whose command still lives in the old config
+                # comment has no stored mode, and a command is what it has.
+                mode=PreCommandMode.COMMAND,
                 timeout=settings.timeout,
                 abort_on_failure=settings.abort_on_failure,
             )
@@ -325,6 +329,7 @@ class ConnectionApplicationService:
                 username=getattr(record, "username", "") or "",
             ),
             knock_sequence=settings.knock_sequence,
+            mode=settings.mode,
             hostname=hostname,
             timeout=settings.timeout,
             abort_on_failure=settings.abort_on_failure,

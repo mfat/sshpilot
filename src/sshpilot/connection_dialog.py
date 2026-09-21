@@ -4056,17 +4056,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             x11_group,
         ]
 
-    #: Carries the knock syntax because an ``Adw.EntryRow`` has no subtitle to
-    #: put it in, and the syntax is the one thing a user cannot guess. The
-    #: bullets mirror the SSH Commands group below, so the two read as a pair.
+    #: Names the choice, because the whole group is one either/or and a user
+    #: who does not see that will look for the interaction between the two.
     _PRE_COMMAND_HELP = N_(
-        "Opens the way to the host before SSH Pilot connects. The knock "
-        "sequence is sent first.\n\n"
-        "• Port Knock Sequence: ports to reach for, in order, such as "
-        "7000,8000,9000. Add :udp to a port for UDP. Sent by SSH Pilot "
-        "itself, so no knock tool has to be installed.\n"
-        "• Command: anything else that has to run first — fwknop, a VPN "
-        "dial-up."
+        "Opens the way to the host before SSH Pilot connects. Choose one."
+    )
+    #: Carries the knock syntax: an Adw.EntryRow has no subtitle to put it in,
+    #: and the syntax is the one thing a user cannot guess.
+    _KNOCK_HELP = N_(
+        "Ports to reach for, in order, such as 7000,8000,9000. Add :udp to a "
+        "port for UDP. Sent by SSH Pilot itself, so no knock tool has to be "
+        "installed."
+    )
+    _COMMAND_HELP = N_(
+        "Anything else that has to run first — fwknop, a VPN dial-up, or a "
+        "knock and a VPN together in one line."
     )
     _SSH_COMMANDS_HELP = N_(
         "Sent to OpenSSH.\n\n"
@@ -4096,16 +4100,45 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         self._pre_command_group = pre_group
 
-        # First in the group because it happens first, and because it is what
-        # most people opening this page came for.
-        # An EntryRow shows its title as the placeholder while it is empty,
-        # so the syntax lives in the group description above rather than in a
-        # subtitle the row does not have.
-        self.pre_command_knock_row = Adw.EntryRow(title=_("Port Knock Sequence"))
+        # The two halves are alternatives, so each is introduced by a radio
+        # rather than simply stacked: stacked fields read as "fill in both",
+        # which raises an ordering question only the command's users have.
+        # Knock first because it is the simple case and what most people
+        # opening this page came for.
+        self.pre_command_knock_radio = Gtk.CheckButton(
+            label=_("Port knock sequence")
+        )
+        self.pre_command_knock_radio.connect(
+            "toggled", self._on_pre_command_mode_toggled
+        )
+        knock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        knock_box.set_margin_top(6)
+        knock_box.set_margin_bottom(6)
+        knock_box.append(self.pre_command_knock_radio)
+
+        self.pre_command_knock_row = Gtk.Entry()
+        self.pre_command_knock_row.set_placeholder_text(_("7000,8000,9000"))
+        self.pre_command_knock_row.set_hexpand(True)
+        # Indented under its radio, so it plainly belongs to that choice.
+        self.pre_command_knock_row.set_margin_start(28)
+        set_accessible_name(self.pre_command_knock_row, _("Port knock sequence"))
         self.pre_command_knock_row.connect(
             "changed", self._on_pre_command_knock_changed
         )
-        pre_group.add(self.pre_command_knock_row)
+        knock_box.append(self.pre_command_knock_row)
+
+        knock_hint = Gtk.Label(label=_(self._KNOCK_HELP), xalign=0)
+        knock_hint.add_css_class("dim-label")
+        knock_hint.add_css_class("caption")
+        knock_hint.set_wrap(True)
+        knock_hint.set_margin_start(28)
+        self._pre_command_knock_hint = knock_hint
+        knock_box.append(knock_hint)
+
+        knock_row = Adw.PreferencesRow()
+        knock_row.set_activatable(False)
+        knock_row.set_child(knock_box)
+        pre_group.add(knock_row)
 
         self.pre_command_view = Gtk.TextView()
         self.pre_command_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -4138,19 +4171,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         scrolled.set_size_request(-1, 92)
         scrolled.add_css_class("card")
 
-        # The knock row above carries a title, so an untitled box under it
-        # reads as a continuation of that field rather than a separate one.
-        # Styled like a row title, not a heading: it names a sibling field.
-        command_title = Gtk.Label(label=_("Command"), xalign=0)
-        command_title.add_css_class("caption")
-        command_title.add_css_class("dim-label")
-        command_title.set_margin_start(12)
+        # Its radio is the label, which also puts the name outside the box
+        # rather than sitting inside the card looking like part of the field.
+        self.pre_command_command_radio = Gtk.CheckButton(label=_("Run a command"))
+        self.pre_command_command_radio.set_group(self.pre_command_knock_radio)
+        self.pre_command_command_radio.connect(
+            "toggled", self._on_pre_command_mode_toggled
+        )
         set_accessible_name(self.pre_command_view, _("Command"))
 
         command_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         command_box.set_margin_top(6)
         command_box.set_margin_bottom(6)
-        command_box.append(command_title)
+        command_box.append(self.pre_command_command_radio)
+        scrolled.set_margin_start(28)
         command_box.append(scrolled)
 
         # The hint and the Test row sit with the command, not under the
@@ -4159,6 +4193,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # read as unrelated.
         self.pre_command_test_button = Gtk.Button(label=_("Test"))
         self.pre_command_test_button.set_valign(Gtk.Align.CENTER)
+        self.pre_command_test_button.set_halign(Gtk.Align.END)
         self.pre_command_test_button.connect("clicked", self._on_pre_command_test)
 
         self._pre_command_result = Gtk.Label(xalign=0)
@@ -4166,8 +4201,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._pre_command_result.add_css_class("caption")
         self._pre_command_result.set_wrap(True)
         self._pre_command_result.set_hexpand(True)
-        self._pre_command_result.set_visible(False)
-        self._pre_command_result.set_margin_start(12)
+        self._pre_command_result.set_valign(Gtk.Align.CENTER)
+        self._pre_command_result.set_margin_start(4)
 
         hint = Gtk.Label(label=_(self._PRE_COMMAND_TOKENS), xalign=0)
         hint.add_css_class("dim-label")
@@ -4175,22 +4210,31 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         hint.set_hexpand(True)
         # Both line up with the command text above rather than the group
         # edge, so the answer reads as belonging to the box it is under.
-        hint.set_margin_start(12)
+        hint.set_margin_start(28)
 
-        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        action_row.set_valign(Gtk.Align.CENTER)
-        # The hint is replaced by the result once there is one, so the row
-        # never grows and the answer appears where the user just looked.
+        # The tokens belong to the command, so they stay with it and grey out
+        # with it.
         self._pre_command_hint = hint
-        action_row.append(hint)
-        action_row.append(self._pre_command_result)
-        action_row.append(self.pre_command_test_button)
-        command_box.append(action_row)
+        command_box.append(hint)
 
         command_row = Adw.PreferencesRow()
         command_row.set_activatable(False)
         command_row.set_child(command_box)
         pre_group.add(command_row)
+
+        # Test gets its own band rather than living inside the command
+        # section. It tries whichever half is selected, so sitting in the
+        # greyed-out half -- still enabled -- read as a bug.
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        action_row.set_valign(Gtk.Align.CENTER)
+        action_row.set_margin_top(6)
+        action_row.set_margin_bottom(6)
+        action_row.append(self._pre_command_result)
+        action_row.append(self.pre_command_test_button)
+        test_row = Adw.PreferencesRow()
+        test_row.set_activatable(False)
+        test_row.set_child(action_row)
+        pre_group.add(test_row)
 
         buffer = self.pre_command_view.get_buffer()
         buffer.connect("changed", self._on_pre_command_changed)
@@ -4275,6 +4319,43 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             logger.debug("Could not set the pre-command text", exc_info=True)
 
+    def _on_pre_command_mode_toggled(self, _radio) -> None:
+        """Grey out the half that is not live, without clearing it.
+
+        Both halves stay saved, so switching to compare the two and switching
+        back does not destroy what was typed. Only the selected one runs.
+        """
+        self._apply_pre_command_mode()
+
+    def _apply_pre_command_mode(self) -> None:
+        knocking = self.get_pre_command_mode_is_knock()
+        for widget, live in (
+            (getattr(self, 'pre_command_knock_row', None), knocking),
+            (getattr(self, '_pre_command_knock_hint', None), knocking),
+            (getattr(self, 'pre_command_view', None), not knocking),
+            # The tokens and the timeout describe the command only, so they
+            # dim with it rather than sitting bright beside a dead field.
+            (getattr(self, '_pre_command_hint', None), not knocking),
+            (getattr(self, 'pre_command_timeout_row', None), not knocking),
+        ):
+            if widget is not None:
+                try:
+                    widget.set_sensitive(live)
+                except Exception:
+                    logger.debug("Could not set pre-command sensitivity", exc_info=True)
+        # A result from the other half would now be answering a question
+        # about a field the user just switched away from.
+        self._show_pre_command_result("", ok=None)
+
+    def get_pre_command_mode_is_knock(self) -> bool:
+        radio = getattr(self, 'pre_command_knock_radio', None)
+        if radio is None:
+            return True
+        try:
+            return bool(radio.get_active())
+        except Exception:
+            return True
+
     def _on_pre_command_knock_changed(self, row) -> None:
         """Mark a sequence that will not parse, while it can still be fixed.
 
@@ -4321,11 +4402,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """
         from .gtk.pre_command_messages import format_pre_command_test
 
-        command = self.get_pre_command_text()
-        knock = self.get_pre_command_knock_text()
+        # Only the live half, because that is the only one that will run.
+        knocking = self.get_pre_command_mode_is_knock()
+        command = "" if knocking else self.get_pre_command_text()
+        knock = self.get_pre_command_knock_text() if knocking else ""
         if not command and not knock:
             self._show_pre_command_result(
-                _("Enter a knock sequence or a command first."), ok=False
+                _("Enter a knock sequence first.") if knocking
+                else _("Enter a command first."),
+                ok=False,
             )
             return
         client = getattr(self.parent_window, 'client', None)
@@ -4389,10 +4474,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
         try:
             label.set_text(text)
-            label.set_visible(bool(text))
-            hint = getattr(self, '_pre_command_hint', None)
-            if hint is not None:
-                hint.set_visible(not text)
             for css in ('success', 'error', 'dim-label'):
                 label.remove_css_class(css)
             label.add_css_class(
@@ -4707,6 +4788,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.pre_command_knock_row.set_text(
                     knock.strip() if isinstance(knock, str) else ''
                 )
+                # Derived by the model, which knows that a connection written
+                # before the mode existed and carrying a command is in
+                # command mode -- reading those as knock mode would silently
+                # stop running something the user relies on.
+                from .api.models.pre_command import (
+                    PreCommandMode,
+                    PreCommandSettings,
+                )
+
+                stored = PreCommandSettings.from_metadata(
+                    {**meta, 'pre_command': command or ''}
+                )
+                if stored.mode is PreCommandMode.KNOCK:
+                    self.pre_command_knock_radio.set_active(True)
+                else:
+                    self.pre_command_command_radio.set_active(True)
+                self._apply_pre_command_mode()
                 timeout = meta.get('pre_command_timeout')
                 self.pre_command_timeout_row.set_value(
                     timeout if isinstance(timeout, int) and timeout >= 0 else 0
@@ -4850,8 +4948,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # config: it is an SSH Pilot action, it applies to every protocol, and
         # metadata is JSON, so a multi-line command needs no escaping scheme.
         if hasattr(self, 'pre_command_view'):
+            # Both halves are stored even though one runs, so switching back
+            # does not lose what was typed. The mode says which is live.
+            from .api.models.pre_command import PreCommandMode
+
             meta['pre_command'] = self.get_pre_command_text()
             meta['pre_command_knock'] = self.get_pre_command_knock_text()
+            meta['pre_command_mode'] = (
+                PreCommandMode.KNOCK if self.get_pre_command_mode_is_knock()
+                else PreCommandMode.COMMAND
+            ).value
             try:
                 meta['pre_command_timeout'] = int(
                     self.pre_command_timeout_row.get_value()

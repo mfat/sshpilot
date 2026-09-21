@@ -156,7 +156,10 @@ class PreConnectionCommandRunner:
         kind: PreCommandLaunchKind,
     ) -> bool:
         settings = self._read_settings(connection_id)
-        command = settings.command
+        # A connection uses one or the other, never both: see
+        # :class:`~sshpilot.api.models.pre_command.PreCommandMode`. Someone
+        # who needs a knock *and* a VPN writes that as one shell line.
+        command = settings.command if settings.runs_command else ""
         steps = settings.knock_steps
         if not command and not steps:
             logger.debug("no pre-connection command configured kind=%s", kind.value)
@@ -204,14 +207,10 @@ class PreConnectionCommandRunner:
                     connection_id=connection_id,
                     scope_id=scope_id,
                     kind=kind,
-                    has_command=bool(command),
                 )
-                if proceed is not None:
-                    # The knock either failed, or was the whole step. Either
-                    # way it has published its own finished notice.
-                    if proceed:
-                        self._last_run[connection_id] = self._clock()
-                    return proceed
+                if proceed:
+                    self._last_run[connection_id] = self._clock()
+                return proceed
 
             logger.info(
                 "pre-connection command starting kind=%s timeout_s=%s coalesce_s=%s",
@@ -264,17 +263,14 @@ class PreConnectionCommandRunner:
         connection_id: ConnectionId,
         scope_id: str,
         kind: PreCommandLaunchKind,
-        has_command: bool,
-    ) -> Optional[bool]:
-        """Send the knock sequence. Returns ``None`` to carry on to the command.
+    ) -> bool:
+        """Send the knock sequence. Returns whether the launch may proceed.
 
-        A return value means the step is over and a finished notice has been
-        published: ``True`` when the knock was the whole step and worked,
-        ``False`` when it failed and the connection asked to be gated on it.
-        Returning ``None`` is the "knock succeeded, now run the command" path,
-        which keeps exactly one finished notice per run and so leaves the
-        frontend's state machine as simple as it was -- show on running, clear
-        on finished.
+        This is the whole pre-connection step when it runs: a connection
+        knocks or runs a command, never both, so exactly one running notice
+        and one finished notice are published either way. That keeps the
+        frontend's state machine trivial -- show on running, clear on
+        finished.
         """
         logger.info(
             "port knock starting kind=%s ports=%d",
@@ -352,8 +348,6 @@ class PreConnectionCommandRunner:
         # The address is content -- it is the user's own host -- so it goes no
         # higher than DEBUG, alongside the ports.
         logger.debug("port knock sent to %s", outcome.address)
-        if has_command:
-            return None
         self._publish(
             connection_id,
             scope_id=scope_id,

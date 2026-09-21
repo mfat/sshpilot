@@ -127,9 +127,29 @@ DEFAULT_SSH_PORT = 22
 PRE_COMMAND_METADATA_KEYS = (
     "pre_command",
     "pre_command_knock",
+    "pre_command_mode",
     "pre_command_timeout",
     "pre_command_abort",
 )
+
+
+class PreCommandMode(str, Enum):
+    """Which of the two ways of opening the way to a host this connection uses.
+
+    They are alternatives, not layers. A port sequence is the simple case and
+    needs nothing installed; a command is the escape hatch, and someone who
+    needs both a knock and a VPN writes that themselves in one shell line.
+    Offering both at once would ask every user to understand an ordering
+    question that only the escape hatch's users have.
+
+    Stored explicitly rather than inferred from which field is empty, because
+    inference cannot tell "I chose a command and have not written it yet" from
+    "I chose a knock": clearing a command to disable it would silently reopen
+    the connection in knock mode.
+    """
+
+    KNOCK = "knock"
+    COMMAND = "command"
 
 
 @dataclass(frozen=True)
@@ -152,6 +172,9 @@ class PreCommandSettings:
     #: so the runner stays ignorant of what a connection is. A knock needs no
     #: ``%h`` of its own -- there is only ever one host worth knocking.
     hostname: str = ""
+    #: Which field is live. The other is kept, so switching back and forth
+    #: does not destroy what was typed.
+    mode: PreCommandMode = PreCommandMode.KNOCK
     #: Refuse the launch when the command does not succeed. Off by default:
     #: SSH's own error tells the user far more than a pre-step veto, which is
     #: the behaviour this feature shipped with. On, it is a hard gate.
@@ -164,6 +187,8 @@ class PreCommandSettings:
             raise TypeError("knock sequence must be a string")
         if type(self.hostname) is not str:
             raise TypeError("pre-connection hostname must be a string")
+        if not isinstance(self.mode, PreCommandMode):
+            raise TypeError("mode must be a PreCommandMode")
         if type(self.timeout) is not int or isinstance(self.timeout, bool):
             raise TypeError("pre-connection command timeout must be an integer")
         if self.timeout < 0:
@@ -172,8 +197,16 @@ class PreCommandSettings:
             raise TypeError("pre-connection command abort flag must be a boolean")
 
     @property
+    def runs_knock(self) -> bool:
+        return self.mode is PreCommandMode.KNOCK and bool(self.knock_sequence.strip())
+
+    @property
+    def runs_command(self) -> bool:
+        return self.mode is PreCommandMode.COMMAND and bool(self.command.strip())
+
+    @property
     def configured(self) -> bool:
-        return bool(self.command.strip() or self.knock_sequence.strip())
+        return self.runs_knock or self.runs_command
 
     @property
     def knock_steps(self) -> tuple:
@@ -184,6 +217,8 @@ class PreCommandSettings:
         reaches a launch was either valid when saved or was edited by hand.
         Refusing to connect over it at that point helps nobody.
         """
+        if not self.runs_knock:
+            return ()
         try:
             return parse_knock_sequence(self.knock_sequence)
         except ValueError:
@@ -208,9 +243,29 @@ class PreCommandSettings:
         return cls(
             command=command,
             knock_sequence=sequence,
+            mode=_mode_from_metadata(values.get("pre_command_mode"), command, sequence),
             timeout=timeout,
             abort_on_failure=abort is True,
         )
+
+
+def _mode_from_metadata(value, command: str, sequence: str) -> PreCommandMode:
+    """The stored mode, or the one a connection written before it implies.
+
+    Every existing connection predates this key and has only a command, so the
+    fallback has to be ``COMMAND`` whenever one is present -- reading those as
+    knock-mode would silently stop running a command someone relies on.
+    """
+    try:
+        return PreCommandMode(value)
+    except (TypeError, ValueError):
+        pass
+    if sequence.strip():
+        return PreCommandMode.KNOCK
+    if command.strip():
+        return PreCommandMode.COMMAND
+    # Nothing configured: offer the simple case, which needs nothing installed.
+    return PreCommandMode.KNOCK
 
 
 def expand_pre_command_tokens(

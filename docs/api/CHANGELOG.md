@@ -16,7 +16,30 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.62 (current)
+## API 0.63 (current)
+
+### API 0.63 A knock or a command, not both
+
+- New metadata key `pre_command_mode` and model `PreCommandMode`
+  (`knock`/`command`). A connection uses one half or the other; both are
+  stored, so switching between them in the editor does not destroy what was
+  typed, but only the selected one runs. `PreCommandSettings` gains `mode`
+  and the derived `runs_knock`/`runs_command`, and `configured` now answers
+  for the live half alone.
+- Alternatives rather than layers because composing them is the rare case and
+  the escape hatch already covers it: someone who needs a knock *and* a VPN
+  writes both into one shell line. Offering the two together would have asked
+  every user to reason about an ordering question that only the escape
+  hatch's users have — and that ordering was wrong in 0.62, which ran the
+  sequence first even though a command that brings up a VPN has to run before
+  a host behind it can be knocked at all.
+- The mode is stored rather than inferred from which field is empty, because
+  inference cannot tell "I chose a command and have not written it yet" from
+  "I chose a knock": clearing a command to disable it would silently reopen
+  the connection in knock mode. An absent key resolves to whichever half is
+  set, so every connection written before this keeps running what it ran.
+
+## API 0.62
 
 ### API 0.62 Native port-knock sequences
 

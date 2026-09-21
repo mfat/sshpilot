@@ -55,8 +55,9 @@ pre-connection command starting kind=terminal timeout_s=30 coalesce_s=5 [connect
 pre-connection command finished exit=0 duration_ms=412 stdout_bytes=0 stderr_bytes=0 kind=terminal
 ```
 
-A knock is sent first and traces separately, with no exit status of its own
-because it runs no process:
+A connection uses a knock *or* a command, never both, so exactly one of these
+traces appears per launch. A knock has no exit status of its own, because it
+runs no process:
 
 ```
 port knock starting kind=terminal ports=3 [connection=… session=…]

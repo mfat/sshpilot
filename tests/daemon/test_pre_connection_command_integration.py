@@ -231,8 +231,13 @@ def test_a_knock_sequence_is_sent_in_order_before_the_launch(tmp_path):
             handle.close()
 
 
-def test_a_knock_and_a_command_both_run_in_that_order(tmp_path):
-    """They compose: the sequence opens the way, the command uses it."""
+def test_the_stored_mode_decides_which_half_runs(tmp_path):
+    """Both are stored so switching loses nothing; one runs.
+
+    Through the real daemon, because the mode is read by the connection
+    service and acted on by the launcher, and neither is exercised by a unit
+    test of the runner alone.
+    """
 
     import socket
 
@@ -244,21 +249,22 @@ def test_a_knock_and_a_command_both_run_in_that_order(tmp_path):
 
     def watch():
         try:
-            client, _ = handle.accept()
+            client_socket, _ = handle.accept()
         except OSError:
             return
         knocked.set()
-        client.close()
+        client_socket.close()
 
     threading.Thread(target=watch, daemon=True).start()
 
-    marker = tmp_path / "after-knock"
+    marker = tmp_path / "command-ran"
     server = _daemon(
         tmp_path,
-        f"touch {marker}",
+        "",
         metadata={
             "pre_command": f"touch {marker}",
             "pre_command_knock": str(port),
+            "pre_command_mode": "knock",
         },
         hostname="127.0.0.1",
     )
@@ -266,13 +272,39 @@ def test_a_knock_and_a_command_both_run_in_that_order(tmp_path):
     try:
         connection_id = client.list_connections()[0].id
         client.prepare_external_terminal_launch(connection_id)
-        assert _wait(knocked.is_set), "the knock never arrived"
-        assert _wait(marker.exists), "the command did not run after the knock"
+        assert knocked.wait(2.0), "the selected knock never arrived"
+        # The command is stored, so switching back in the editor would find
+        # it intact -- but it is not the live half and must not run.
+        assert not _wait(marker.exists, timeout=0.5)
     finally:
         client.close()
         server.shutdown()
         server.wait_stopped()
         handle.close()
+
+
+def test_a_connection_written_before_the_mode_existed_still_runs(tmp_path):
+    """Every existing connection has a command and no mode key.
+
+    Reading those as knock mode would silently stop running something people
+    depend on, so the absent key has to resolve to the half that is set.
+    """
+
+    marker = tmp_path / "legacy-ran"
+    server = _daemon(
+        tmp_path,
+        "",
+        metadata={"pre_command": f"touch {marker}"},
+    )
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        connection_id = client.list_connections()[0].id
+        client.prepare_external_terminal_launch(connection_id)
+        assert _wait(marker.exists), "a pre-mode connection stopped running"
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
 def test_the_editor_s_test_button_sends_a_real_knock(tmp_path):
