@@ -61,6 +61,7 @@ from .models.identity import (
     UpdateIdentityConfigurationRequest,
     UpdateIdentitySelectionRequest,
 )
+from .models.pre_command import PreCommandTestResult
 from .models.interactions import (
     InteractionClaim,
     InteractionDecisionRequest,
@@ -236,6 +237,17 @@ class SshPilotClient(Protocol):
     def get_launch_command(
         self, connection_id: ConnectionId
     ) -> ExternalTerminalLaunchSpec:
+        ...
+
+    def test_pre_command(
+        self,
+        command: str,
+        timeout: int = 0,
+        *,
+        hostname: str = "",
+        port: int = 0,
+        username: str = "",
+    ) -> PreCommandTestResult:
         ...
 
     def save_ssh_config_text(

@@ -725,7 +725,6 @@ def test_a_plugin_connection_may_carry_a_pre_connection_command():
     from sshpilot.api.models.connections import CreateConnectionRequest
 
     service = make_test_connection_service()
-
     service.create_connection(
         CreateConnectionRequest(
             nickname="dockerbox",
@@ -734,18 +733,21 @@ def test_a_plugin_connection_may_carry_a_pre_connection_command():
             port=22,
             protocol="docker",
             plugin_data={"container": "web", "command": "sh", "runtime": "docker"},
-            config_patch={"pre_command": "knock host 1000 2000"},
         )
+    )
+    service.update_connection_metadata(
+        "dockerbox",
+        {"pre_command": "knock host 1000 2000", "pre_command_abort": True},
     )
 
     settings = service.get_pre_connection_settings("dockerbox")
     assert settings.command == "knock host 1000 2000"
+    assert settings.abort_on_failure is True
 
 
 def test_a_plugin_connection_still_refuses_ssh_directives():
-    """Only the pre-connection command is allowed through: it is a local
-    command, not an ssh directive, and sshPilot builds no ssh command line for
-    these connections."""
+    """Metadata is the only channel: sshPilot builds no ssh command line for
+    these connections, so config_patch stays refused outright."""
 
     from tests.helpers.fake_connection_repository import make_test_connection_service
     from sshpilot.api.errors import SshPilotError
@@ -762,7 +764,7 @@ def test_a_plugin_connection_still_refuses_ssh_directives():
                 port=22,
                 protocol="docker",
                 plugin_data={"container": "web"},
-                config_patch={"pre_command": "knock host", "proxy_jump": ["bastion"]},
+                config_patch={"proxy_jump": ["bastion"]},
             )
         )
 

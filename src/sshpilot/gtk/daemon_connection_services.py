@@ -17,10 +17,7 @@ from sshpilot.api.models import (
     StoreConnectionPasswordRequest,
     UpdateConnectionRequest,
 )
-from sshpilot.api.models.connections import (
-    PLUGIN_EDITABLE_CONFIG_FIELDS,
-    extract_plugin_data,
-)
+from sshpilot.api.models.connections import extract_plugin_data
 
 
 # The columns a connection carries outside its config patch.  Narrower than
@@ -84,20 +81,17 @@ class DaemonConnectionServices:
     def _config_patch(data, protocol="ssh"):
         """The editable SSH configuration this save carries.
 
-        A plugin protocol keeps only the keys the daemon accepts for one --
-        today just the pre-connection command, which is a local command rather
-        than an ssh directive, so Docker over ``ssh://`` and Mosh can sit
-        behind a port knock like any other host. Sending the rest would be
-        refused outright, and dropping the patch wholesale (which this used to
-        do) silently discarded the field the editor had just shown.
+        Plugin protocols carry none: sshPilot builds no ssh command line for
+        them, and the daemon refuses the patch outright. What they *can* carry
+        -- the pre-connection command -- travels as metadata instead, which is
+        protocol-agnostic and needs no allowance here.
         """
-        allowed = EDITABLE_CONFIG_FIELDS
         if protocol != "ssh":
-            allowed = allowed & PLUGIN_EDITABLE_CONFIG_FIELDS
+            return {}
         return {
             key: value
             for key, value in dict(data).items()
-            if key in allowed and key not in _CORE_FIELDS
+            if key in EDITABLE_CONFIG_FIELDS and key not in _CORE_FIELDS
         }
 
     def add_connection_from_data(self, data):

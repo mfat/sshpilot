@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.60",
+  "api_implementation_version": "0.61",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -597,6 +597,10 @@
       "capability": "terminal.output",
       "status": "daemon-only"
     },
+    "test_pre_command": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "unlock_secrets": {
       "capability": "secrets.operate",
       "status": "daemon-only"
@@ -759,6 +763,9 @@
     },
     "connections.store_plugin_secret": {
       "capability": "connections.secrets.write"
+    },
+    "connections.test_pre_command": {
+      "capability": "connections.config.read"
     },
     "connections.update": {
       "capability": "connections.write"

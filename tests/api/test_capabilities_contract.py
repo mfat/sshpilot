@@ -10,6 +10,7 @@ def test_connection_service_only_declares_connection_operations():
     assert set(IMPLEMENTED_CLIENT_METHOD_CAPABILITIES) == {
         "close", "get_capabilities", "get_connection", "get_connection_editor",
         "get_ssh_config_text", "get_effective_config", "check_unsaved_host", "prepare_external_terminal_launch", "get_launch_command",
+        "test_pre_command",
         "save_ssh_config_text",
         "list_connections", "create_connection", "preview_asbru_import", "import_asbru",
         "duplicate_connection",

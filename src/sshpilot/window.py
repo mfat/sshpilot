@@ -7687,7 +7687,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             values.update(
                 {
                     key: meta[key]
-                    for key in ("wol_mac", "wol_broadcast_ip", "wol_port")
+                    for key in (
+                        "wol_mac", "wol_broadcast_ip", "wol_port",
+                        "pre_command", "pre_command_timeout", "pre_command_abort",
+                    )
                     if key in meta
                 }
             )

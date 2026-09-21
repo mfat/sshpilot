@@ -179,6 +179,7 @@ from .transport.codec import (
     unsaved_host_check_request_to_wire,
     unsaved_host_check_result_from_wire,
     external_terminal_launch_spec_from_wire,
+    pre_command_test_result_from_wire,
     connection_summary_from_wire,
     ssh_config_text_from_wire,
     connection_store_snapshot_from_wire,
@@ -363,6 +364,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_operation_mode": Capability.OPERATION_MODE,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
     "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
@@ -817,6 +819,34 @@ class DaemonClient:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid SSH config text")
+
+    def test_pre_command(
+        self,
+        command: str,
+        timeout: int = 0,
+        *,
+        hostname: str = "",
+        port: int = 0,
+        username: str = "",
+    ) -> "PreCommandTestResult":
+        """Run a pre-connection command once and report what happened.
+
+        The command is sent rather than read from a saved connection: the
+        editor offers Test while the user is still typing, and testing the
+        stored value would answer a question they did not ask.
+        """
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request(
+            "connections.test_pre_command",
+            {
+                "command": str(command),
+                "timeout": int(timeout),
+                "hostname": str(hostname),
+                "port": int(port),
+                "username": str(username),
+            },
+        )
+        return pre_command_test_result_from_wire(result)
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId

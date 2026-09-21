@@ -5058,6 +5058,50 @@ def cancel_transfer_request_from_wire(value: Any) -> CancelTransferRequest:
     return CancelTransferRequest(transfer_id=_transfer_id(data["transfer_id"], "transfer id"))
 
 
+def pre_command_test_result_to_wire(result: "PreCommandTestResult") -> Dict[str, Any]:
+    """Encode one Test-button result.
+
+    This one does carry output: the user asked to see it, and a knock that
+    failed is usually only diagnosable from what the tool printed. It is
+    bounded by the model, and it is never logged above DEBUG.
+    """
+    from ..models.pre_command import PreCommandTestResult
+
+    if type(result) is not PreCommandTestResult:
+        raise TypeError("pre-connection command test result is required")
+    return {
+        "reason": result.reason.value,
+        "exit_code": result.exit_code,
+        "duration_ms": result.duration_ms,
+        "output": result.output,
+    }
+
+
+def pre_command_test_result_from_wire(value: Any) -> "PreCommandTestResult":
+    from ..models.pre_command import PreCommandReason, PreCommandTestResult
+
+    data = _strict_fields(
+        value,
+        required={"reason", "exit_code", "duration_ms", "output"},
+        context="pre-connection command test result",
+    )
+    try:
+        reason = PreCommandReason(data["reason"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command test result contains an unknown reason"
+        ) from None
+    exit_code = data["exit_code"]
+    if exit_code is not None:
+        exit_code = _integer(exit_code, "pre-connection command test exit code")
+    return PreCommandTestResult(
+        reason=reason,
+        exit_code=exit_code,
+        duration_ms=_integer(data["duration_ms"], "pre-connection command test duration"),
+        output=_text(data["output"], "pre-connection command test output", allow_empty=True),
+    )
+
+
 def pre_connection_command_notice_to_wire(
     notice: "PreConnectionCommandNotice",
 ) -> Dict[str, Any]:

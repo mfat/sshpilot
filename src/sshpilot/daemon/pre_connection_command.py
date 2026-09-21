@@ -50,6 +50,7 @@ from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.pre_command import (
     PreCommandLaunchKind,
     PreCommandSettings,
+    PreCommandTestResult,
     PreCommandPhase,
     PreCommandReason,
     PreConnectionCommandNotice,
@@ -301,6 +302,84 @@ class PreConnectionCommandRunner:
                 trimmed,
             )
         return PreCommandReason.NONZERO_EXIT, exit_code, duration_ms
+
+    # -- trying it out ---------------------------------------------------------
+
+    def test(self, command: str, timeout: int = 0) -> PreCommandTestResult:
+        """Run *command* once and report what happened, for the editor's Test.
+
+        Deliberately outside the serialize/coalesce machinery: the user asked
+        for this exact command to run now, and reusing a recent result or
+        queueing behind a launch would answer a different question than the
+        one they asked. It also publishes no notice -- nothing is connecting,
+        so no surface should show a connection doing anything.
+        """
+
+        command = command.strip() if isinstance(command, str) else ""
+        if not command:
+            return PreCommandTestResult(reason=PreCommandReason.OK)
+        timeout = timeout if type(timeout) is int and timeout > 0 else (
+            self._timeout_seconds()
+        )
+        logger.info("pre-connection command test starting timeout_s=%s", timeout)
+        logger.debug("pre-connection command test text: %s", command)
+        reason, exit_code, duration_ms, output = self._execute_captured(
+            command, timeout
+        )
+        logger.info(
+            "pre-connection command test finished reason=%s exit=%s duration_ms=%d",
+            reason.value,
+            exit_code,
+            duration_ms,
+        )
+        limit = PreCommandTestResult.MAX_OUTPUT_CHARS
+        return PreCommandTestResult(
+            reason=reason,
+            exit_code=exit_code,
+            duration_ms=duration_ms,
+            output=output[:limit],
+        )
+
+    def _execute_captured(self, command: str, timeout: int) -> tuple:
+        """Like :meth:`_execute`, but keeps the output for the caller."""
+
+        shell = shutil.which("sh") or "/bin/sh"
+        started = self._clock()
+        try:
+            result = self._runner(
+                [shell, "-lc", command],
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                PreCommandReason.TIMED_OUT,
+                None,
+                _elapsed_ms(started, self._clock()),
+                "",
+            )
+        except Exception as exc:
+            return (
+                PreCommandReason.START_FAILED,
+                None,
+                _elapsed_ms(started, self._clock()),
+                type(exc).__name__,
+            )
+        duration_ms = _elapsed_ms(started, self._clock())
+        exit_code = getattr(result, "returncode", None)
+        if type(exit_code) is not int:
+            exit_code = None
+        merged = "".join(
+            part for part in (
+                getattr(result, "stdout", "") or "",
+                getattr(result, "stderr", "") or "",
+            )
+        ).strip()
+        reason = (
+            PreCommandReason.OK if exit_code == 0 else PreCommandReason.NONZERO_EXIT
+        )
+        return reason, exit_code, duration_ms, merged
 
     # -- helpers -------------------------------------------------------------
 

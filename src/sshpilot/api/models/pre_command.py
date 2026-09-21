@@ -91,6 +91,93 @@ class PreCommandSettings:
         )
 
 
+def expand_pre_command_tokens(
+    command: str, *, hostname: str = "", port: object = "", username: str = ""
+) -> str:
+    """Expand ``%h``/``%p``/``%u`` in *command*, shell-quoted.
+
+    The same three tokens OpenSSH uses, so the vocabulary is one a user of
+    this app already knows. Without them a knock has to hardcode the host it
+    is knocking for, and then rots silently the first time the connection is
+    re-pointed or renamed.
+
+    Values are shell-quoted because the result is handed to ``sh -lc``: a
+    hostname is the user's own configuration rather than hostile input, but a
+    space or a quote in one should stay a hostname rather than becoming
+    another argument. ``%%`` is a literal percent, and an unknown ``%x`` is
+    left alone -- ``date +%H`` must survive being written here.
+    """
+    import shlex
+
+    if not isinstance(command, str) or "%" not in command:
+        return command if isinstance(command, str) else ""
+    replacements = {
+        "h": shlex.quote(str(hostname or "")),
+        "p": shlex.quote(str(port or "")),
+        "u": shlex.quote(str(username or "")),
+        "%": "%",
+    }
+    out = []
+    index = 0
+    length = len(command)
+    while index < length:
+        char = command[index]
+        if char != "%" or index + 1 >= length:
+            out.append(char)
+            index += 1
+            continue
+        token = command[index + 1]
+        if token in replacements:
+            out.append(replacements[token])
+            index += 2
+        else:
+            # Not ours. Leave it exactly as written -- strftime and printf
+            # formats are ordinary things to find in a shell command.
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+@dataclass(frozen=True)
+class PreCommandTestResult:
+    """What happened when the user asked to try the command now.
+
+    Unlike a launch notice this *does* carry output: the user asked to see it,
+    it is on screen only for them, and a knock that fails is usually only
+    diagnosable from what the tool printed. It is still bounded, and the
+    daemon never logs it above DEBUG.
+    """
+
+    reason: "PreCommandReason"
+    exit_code: Optional[int] = None
+    duration_ms: int = 0
+    output: str = ""
+
+    MAX_OUTPUT_CHARS = 4000
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, PreCommandReason):
+            raise TypeError("reason must be a PreCommandReason")
+        if self.exit_code is not None and (
+            type(self.exit_code) is not int or isinstance(self.exit_code, bool)
+        ):
+            raise TypeError("exit_code must be an integer or None")
+        if (
+            type(self.duration_ms) is not int
+            or isinstance(self.duration_ms, bool)
+            or self.duration_ms < 0
+        ):
+            raise ValueError("duration_ms must not be negative")
+        if type(self.output) is not str:
+            raise TypeError("output must be a string")
+        if len(self.output) > self.MAX_OUTPUT_CHARS:
+            raise ValueError("test output exceeds the size limit")
+
+    @property
+    def succeeded(self) -> bool:
+        return self.reason is PreCommandReason.OK
+
+
 class PreCommandLaunchKind(str, Enum):
     """Which kind of launch the pre-connection command is running for.
 

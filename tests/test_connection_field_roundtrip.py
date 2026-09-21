@@ -96,10 +96,6 @@ CASES = {
              "enabled": True},
         ]},
     ),
-    "pre_command": (
-        {"pre_command": "echo hi"},
-        {"pre_command": "echo hi"},
-    ),
     "local_command": (
         {"local_command": "notify-send connected"},
         {"local_command": "notify-send connected"},
@@ -167,3 +163,46 @@ def test_remote_command_does_not_invent_request_tty(tmp_path):
 
     assert "    RemoteCommand printf ready" in entry
     assert "RequestTTY" not in entry
+
+
+# --- the pre-connection command is not an SSH config field -------------------
+#
+# It used to round-trip here as a ``# sshpilot:PreCommand`` comment inside the
+# Host block, which reads like a directive OpenSSH honours. It lives in
+# connections.json metadata now. The loader still reads the old comment so an
+# existing one keeps working, but nothing writes one again, which is how it
+# disappears.
+
+
+def test_the_pre_connection_command_is_never_written_to_the_ssh_config():
+    entry = format_ssh_config_entry(
+        {
+            "nickname": "demo",
+            "hostname": "example.com",
+            "username": "alice",
+            "port": 22,
+            "pre_command": "knock example.com 7000",
+        }
+    )
+
+    assert "PreCommand" not in entry
+    assert "knock example.com 7000" not in entry
+
+
+def test_an_existing_comment_is_still_read(tmp_path):
+    """Until the block is next written, the old value has to keep working."""
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host demo\n"
+        "    HostName example.com\n"
+        "    User alice\n"
+        "    # sshpilot:PreCommand knock example.com 7000\n",
+        encoding="utf-8",
+    )
+
+    result = load_ssh_configuration(path, isolated=False)
+    record = next(c for c in result.connections if c.id == "demo")
+
+    assert _get(record, "pre_command") == "knock example.com 7000"
+

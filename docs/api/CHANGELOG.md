@@ -16,7 +16,31 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.60 (current)
+## API 0.61 (current)
+
+### API 0.61 Pre-connection command settings and Test
+
+- The pre-connection command moves out of `config_patch` and into per-connection
+  **metadata** (`pre_command`, `pre_command_timeout`, `pre_command_abort`),
+  where Wake-on-LAN already lives. It is an app-owned action that happens
+  before connecting, not an SSH directive, and a `# sshpilot:PreCommand`
+  comment in `~/.ssh/config` invited the reader to believe OpenSSH honoured
+  it. Metadata is JSON, so a multi-line command needs no escaping, and it
+  applies to every protocol — `PLUGIN_EDITABLE_CONFIG_FIELDS` and the
+  plugin-specific `config_patch` allowance added in 0.60 are withdrawn as
+  unnecessary. `record.data` is still read as a fallback, so connections
+  written by an older build keep working.
+- New models `PreCommandSettings` and `PreCommandTestResult`.
+  `PreConnectionCommandNotice` gains `aborted`.
+- New client method `test_pre_command` with wire method
+  `connections.test_pre_command` (capability `connections.config.read`). It
+  runs a supplied command once and returns its reason, exit status, duration
+  and bounded output, so the editor's Test button exercises the same path a
+  launch would rather than a frontend-local imitation.
+- A connection may now refuse its launch when the command fails
+  (`pre_command_abort`, off by default). Protocol stays v1.
+
+## API 0.60
 
 ### API 0.60 Pre-connection command notices
 

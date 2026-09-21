@@ -227,10 +227,14 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     elif data.get('x11_forwarding_explicit_no'):
         lines.append("    ForwardX11 no")
 
-    # Add PreCommand (sshpilot-specific, stored as a comment)
-    pre_cmd = (data.get('pre_command') or '').strip()
-    if pre_cmd:
-        lines.append(f"    # sshpilot:PreCommand {pre_cmd}")
+    # The pre-connection command is deliberately *not* written here any more.
+    # It lived as a ``# sshpilot:PreCommand`` comment inside the Host block,
+    # which reads like a directive OpenSSH honours and is not one. It is an
+    # SSH Pilot action that happens before connecting, so it belongs with
+    # Wake-on-LAN in connections.json metadata. The loader still parses the
+    # old comment (see ssh_config_loader), so an existing one keeps working
+    # until the block is next written -- at which point it disappears, which
+    # is the migration.
 
     # Add LocalCommand if specified, ensure PermitLocalCommand (write exactly as provided)
     local_cmd = (data.get('local_command') or '').strip()
@@ -412,7 +416,11 @@ def merged_block_lines(old_block: Optional[HostBlock],
             continue
         if stripped.startswith('#'):
             if stripped.startswith('# sshpilot:PreCommand '):
-                _insert_managed()  # re-emitted from data
+                # Dropped, not re-emitted: the managed block no longer
+                # writes this and the value now lives in metadata. An
+                # existing comment therefore disappears the first time
+                # its Host block is edited.
+                _insert_managed()
             elif stripped.startswith(SSH_UUID_MARKER):
                 # Ignore legacy ConnectionUUID comments safely on edit (do not re-emit)
                 continue

@@ -82,6 +82,7 @@ from sshpilot.api.transport.codec import (
     unsaved_host_check_request_from_wire,
     unsaved_host_check_result_to_wire,
     external_terminal_launch_spec_to_wire,
+    pre_command_test_result_to_wire,
     connection_mutation_result_to_wire,
     connection_store_snapshot_to_wire,
     set_group_color_request_from_wire,
@@ -214,6 +215,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "connections.test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.set_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -461,6 +463,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.check_unsaved_host",
         "connections.prepare_external_terminal_launch",
         "connections.get_launch_command",
+        "connections.test_pre_command",
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
         "daemon.set_operation_mode",
@@ -727,6 +730,7 @@ class RequestDispatcher:
             "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.get_launch_command": self._handle_get_launch_command,
+            "connections.test_pre_command": self._handle_test_pre_command,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
         "connections.set_session_password": self._handle_set_session_connection_password,
@@ -1416,6 +1420,57 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_id,
+        )
+
+    def _handle_test_pre_command(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        """Run a pre-connection command once so the editor can report on it.
+
+        Takes the command from the request rather than the stored connection:
+        the user presses Test while editing, before saving, and testing the
+        saved value would answer a question they did not ask.
+        """
+        params = dict(request.params)
+        allowed = {"command", "timeout", "hostname", "port", "username"}
+        if set(params) - allowed:
+            raise ValueError("connections.test_pre_command received unknown fields")
+        command = params.get("command")
+        if type(command) is not str:
+            raise ValueError("command must be a string")
+        timeout = params.get("timeout", 0)
+        if type(timeout) is not int or isinstance(timeout, bool) or timeout < 0:
+            raise ValueError("timeout must be a non-negative integer")
+        for name in ("hostname", "username"):
+            if type(params.get(name, "")) is not str:
+                raise ValueError(f"{name} must be a string")
+        port = params.get("port", "")
+        if type(port) not in (str, int) or isinstance(port, bool):
+            raise ValueError("port must be a string or an integer")
+        from sshpilot.api.models.pre_command import expand_pre_command_tokens
+
+        # Expanded the same way a launch expands it, so Test runs the command
+        # that would actually run rather than a near-miss with %h still in it.
+        command = expand_pre_command_tokens(
+            command,
+            hostname=params.get("hostname", ""),
+            port=port,
+            username=params.get("username", ""),
+        )
+        runner = self._pre_command_runner
+        if runner is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Pre-connection commands are unavailable",
+            )
+        return DeferredResult(
+            operation=lambda: pre_command_test_result_to_wire(
+                runner.test(command, timeout)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _run_pre_connection_command(self, connection_id: ConnectionId) -> None:

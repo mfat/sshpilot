@@ -169,16 +169,14 @@ def test_plugin_payload_filter_matches_the_daemon_projection():
     assert request.display_name == "Serial demo"
 
 
-# --- pre-connection command on plugin protocols ------------------------------
+# --- the pre-connection command is metadata, not configuration ----------------
 #
-# Docker over ``ssh://`` and Mosh open real SSH connections, so a host behind
-# port knocking has to be reachable from them. The daemon runs the command for
-# plugin sessions already -- they share the launch provider -- and the editor
-# now offers the field. This layer used to send ``config_patch={}`` for every
-# non-SSH protocol, which silently discarded whatever the user had just typed.
+# It briefly travelled in ``config_patch`` with a plugin-specific allowance.
+# It now lives in per-connection metadata, where Wake-on-LAN already is: one
+# protocol-agnostic path, so this layer needs no allowance at all.
 
 
-def test_a_plugin_save_keeps_the_pre_connection_command():
+def test_a_plugin_save_carries_no_ssh_configuration():
     facade, client = services()
 
     facade.add_connection_from_data(
@@ -187,18 +185,17 @@ def test_a_plugin_save_keeps_the_pre_connection_command():
             "hostname": "localhost",
             "protocol": "docker",
             "container": "web",
-            "pre_command": "knock host 1000 2000",
+            "pre_command": "knock host",
+            "x11_forwarding": True,
         }
     )
 
-    assert client.created.config_patch == {"pre_command": "knock host 1000 2000"}
-    assert client.created.plugin_data == {"container": "web"}
+    assert client.created.config_patch == {}
 
 
-def test_a_plugin_save_still_strips_ssh_directives():
-    """Everything else in the patch is an ssh directive, and sshPilot builds
-    no ssh command line for these connections -- the daemon would refuse the
-    whole request."""
+def test_the_pre_connection_command_is_never_smuggled_into_plugin_data():
+    """It would then be handed to the protocol as a FieldSpec it never
+    declared, and saved back as one."""
 
     facade, client = services()
 
@@ -209,16 +206,15 @@ def test_a_plugin_save_still_strips_ssh_directives():
             "protocol": "docker",
             "container": "web",
             "pre_command": "knock host",
-            "proxy_jump": ["bastion"],
-            "x11_forwarding": True,
-            "remote_command": "uptime",
+            "pre_command_timeout": 5,
+            "pre_command_abort": True,
         }
     )
 
-    assert client.created.config_patch == {"pre_command": "knock host"}
+    assert client.created.plugin_data == {"container": "web"}
 
 
-def test_an_ssh_save_is_unchanged_by_the_plugin_filter():
+def test_an_ssh_save_still_carries_its_own_configuration():
     facade, client = services()
 
     facade.add_connection_from_data(
@@ -226,30 +222,8 @@ def test_an_ssh_save_is_unchanged_by_the_plugin_filter():
             "nickname": "sshbox",
             "hostname": "example.com",
             "protocol": "ssh",
-            "pre_command": "knock host",
             "x11_forwarding": True,
         }
     )
 
-    assert client.created.config_patch == {
-        "pre_command": "knock host",
-        "x11_forwarding": True,
-    }
-
-
-def test_editing_a_plugin_connection_keeps_the_pre_connection_command():
-    facade, client = services()
-    connection = Projection().connection
-
-    facade.update_connection(
-        connection,
-        {
-            "nickname": "dockerbox",
-            "protocol": "docker",
-            "container": "web",
-            "pre_command": "knock host",
-        },
-    )
-
-    _connection_id, request = client.updated
-    assert request.config_patch == {"pre_command": "knock host"}
+    assert client.created.config_patch == {"x11_forwarding": True}

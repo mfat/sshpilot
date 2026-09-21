@@ -30,9 +30,11 @@ from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
-from ..api.models.pre_command import PreCommandSettings
+from ..api.models.pre_command import (
+    PreCommandSettings,
+    expand_pre_command_tokens,
+)
 from ..api.models.connections import (
-    PLUGIN_EDITABLE_CONFIG_FIELDS,
     AsbruImportMode,
     AsbruImportPreview,
     AsbruImportRequest,
@@ -84,6 +86,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
@@ -294,16 +297,29 @@ class ConnectionApplicationService:
             except Exception:
                 logger.debug("Connection metadata unavailable", exc_info=True)
         settings = PreCommandSettings.from_metadata(metadata)
-        if settings.configured:
-            return settings
         record = self._repository.get_editor_record(connection_id)
+        if not settings.configured:
+            if record is None:
+                return settings
+            legacy = (record.data or {}).get("pre_command")
+            if not isinstance(legacy, str) or not legacy.strip():
+                return settings
+            settings = PreCommandSettings(
+                command=legacy.strip(),
+                timeout=settings.timeout,
+                abort_on_failure=settings.abort_on_failure,
+            )
         if record is None:
             return settings
-        legacy = (record.data or {}).get("pre_command")
-        if not isinstance(legacy, str) or not legacy.strip():
-            return settings
+        # Expanded here, where the connection's own values are, so the runner
+        # never has to know what a connection is.
         return PreCommandSettings(
-            command=legacy.strip(),
+            command=expand_pre_command_tokens(
+                settings.command,
+                hostname=getattr(record, "hostname", "") or "",
+                port=getattr(record, "port", "") or "",
+                username=getattr(record, "username", "") or "",
+            ),
             timeout=settings.timeout,
             abort_on_failure=settings.abort_on_failure,
         )
@@ -1244,15 +1260,11 @@ class ConnectionApplicationService:
                 details={"field": "plugin_data"},
             )
         if request.protocol != "ssh" and request.config_patch:
-            unsupported = (
-                set(request.config_patch) - PLUGIN_EDITABLE_CONFIG_FIELDS
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "Plugin connections cannot contain SSH configuration",
+                details={"field": "config_patch"},
             )
-            if unsupported:
-                raise SshPilotError(
-                    ErrorCode.VALIDATION_FAILED,
-                    "Plugin connections cannot contain SSH configuration",
-                    details={"field": "config_patch"},
-                )
         data = self._build_create_data(request)
         try:
             record = self._repository.create_connection(data)
@@ -1602,15 +1614,11 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         if protocol != "ssh" and request.config_patch:
-            unsupported = (
-                set(request.config_patch) - PLUGIN_EDITABLE_CONFIG_FIELDS
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "Plugin connections cannot contain SSH configuration",
+                connection_id=connection_id,
             )
-            if unsupported:
-                raise SshPilotError(
-                    ErrorCode.VALIDATION_FAILED,
-                    "Plugin connections cannot contain SSH configuration",
-                    connection_id=connection_id,
-                )
         display_only = (
             request.display_name is not UNSET
             and request.display_name is not None
