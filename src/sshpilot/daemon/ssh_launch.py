@@ -832,7 +832,7 @@ class SshLauncher:
             # runtime anyway, and the alert carries the detail.
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,
-                "The pre-connection command did not succeed",
+                "The pre-connect command did not succeed",
                 connection_id=connection_id,
             )
 

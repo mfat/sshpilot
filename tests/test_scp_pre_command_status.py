@@ -21,7 +21,7 @@ from sshpilot.scp_window import make_pre_command_status_setter
 
 
 IDLE = "Starting SCP transfer…"
-RUNNING = "Running pre-connection command…"
+RUNNING = "Running pre-connect command…"
 
 
 class FakeLabel:

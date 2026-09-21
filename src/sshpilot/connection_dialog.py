@@ -4102,7 +4102,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # "and", not "&": Adw.PreferencesGroup renders its title as
             # Pango markup, and a bare ampersand makes the parse fail, so
             # GTK drops the whole title silently.
-            title=_("Port Knocking and Pre-Connection"),
+            title=_("Port Knocking and Pre-Connect"),
             description=_(self._PRE_COMMAND_HELP),
         )
         self._pre_command_group = pre_group
@@ -4264,7 +4264,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         pre_group.add(self.pre_command_timeout_row)
 
         self.pre_command_abort_row = Adw.SwitchRow()
-        self.pre_command_abort_row.set_title(_("Do not connect if it fails"))
+        self.pre_command_abort_row.set_title(
+            _("Do not connect if pre-connect command fails")
+        )
         self.pre_command_abort_row.set_subtitle(
             _("Off: SSH Pilot warns and connects anyway, so the SSH error is "
               "the one you see.")

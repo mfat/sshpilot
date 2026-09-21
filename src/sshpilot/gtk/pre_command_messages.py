@@ -1,4 +1,4 @@
-"""Frontend-owned presentation of pre-connection command notices.
+"""Frontend-owned presentation of pre-connect command notices.
 
 The daemon publishes codes and numbers, plus a failed command's own output
 (see :mod:`sshpilot.api.models.pre_command`). The *wording* lives here, so it
@@ -7,7 +7,7 @@ password -- never has to cross the wire to be rendered.
 
 Each failure sentence says what happened next, because that is the part a user
 cannot infer. By default the connection continues, and someone reading "the
-pre-connection command failed" without that clause will reasonably assume it
+pre-connect command failed" without that clause will reasonably assume it
 was abandoned and stop waiting. When the connection asked to be gated on the
 command, the opposite is true and the sentence has to say so -- telling someone
 the connection continues when it did not is worse than saying nothing.
@@ -29,10 +29,10 @@ from ..i18n import N_
 
 #: Shown while the command is still running, so a slow knock or VPN dial-up is
 #: not a silent multi-second hang on connect.
-PRE_COMMAND_RUNNING = N_("Running pre-connection command…")
+PRE_COMMAND_RUNNING = N_("Running pre-connect command…")
 
 #: The knock half, which most connections using this feature are the *only*
-#: user of. Calling that "a pre-connection command" would name a thing they
+#: user of. Calling that "a pre-connect command" would name a thing they
 #: never configured.
 PRE_COMMAND_KNOCKING = N_("Sending the port knock…")
 
@@ -63,29 +63,29 @@ _KNOCK_FAILURE_TEMPLATES = {
 #: is worse than saying nothing.
 _PRE_COMMAND_ABORTED_TEMPLATES = {
     PreCommandReason.NONZERO_EXIT: N_(
-        "The pre-connection command for “{name}” failed (exit {code}), so "
+        "The pre-connect command for “{name}” failed (exit {code}), so "
         "SSH Pilot did not connect."
     ),
     PreCommandReason.TIMED_OUT: N_(
-        "The pre-connection command for “{name}” timed out, so SSH Pilot did "
+        "The pre-connect command for “{name}” timed out, so SSH Pilot did "
         "not connect."
     ),
     PreCommandReason.START_FAILED: N_(
-        "The pre-connection command for “{name}” could not be started, so "
+        "The pre-connect command for “{name}” could not be started, so "
         "SSH Pilot did not connect."
     ),
 }
 
 _PRE_COMMAND_FAILURE_TEMPLATES = {
     PreCommandReason.NONZERO_EXIT: N_(
-        "The pre-connection command for “{name}” failed (exit {code}). "
+        "The pre-connect command for “{name}” failed (exit {code}). "
         "Connecting anyway."
     ),
     PreCommandReason.TIMED_OUT: N_(
-        "The pre-connection command for “{name}” timed out. Connecting anyway."
+        "The pre-connect command for “{name}” timed out. Connecting anyway."
     ),
     PreCommandReason.START_FAILED: N_(
-        "The pre-connection command for “{name}” could not be started. "
+        "The pre-connect command for “{name}” could not be started. "
         "Connecting anyway."
     ),
 }
@@ -99,7 +99,7 @@ def pre_command_is_failure(notice: PreConnectionCommandNotice) -> bool:
     """
 
     if type(notice) is not PreConnectionCommandNotice:
-        raise ValueError("invalid pre-connection command notice")
+        raise ValueError("invalid pre-connect command notice")
     return (
         notice.phase is PreCommandPhase.FINISHED
         and notice.reason in _PRE_COMMAND_FAILURE_TEMPLATES
@@ -111,7 +111,7 @@ def format_pre_command_failure(
     *,
     display_name: str = "",
 ) -> str:
-    """Translate one failed pre-connection command notice.
+    """Translate one failed pre-connect command notice.
 
     *display_name* is the connection's nickname when the caller has it; the
     connection id is a poor substitute but better than an unnamed host, and a
@@ -119,7 +119,7 @@ def format_pre_command_failure(
     """
 
     if not pre_command_is_failure(notice):
-        raise ValueError("pre-connection command notice is not a failure")
+        raise ValueError("pre-connect command notice is not a failure")
     templates = (
         _PRE_COMMAND_ABORTED_TEMPLATES
         if notice.aborted
@@ -173,7 +173,7 @@ def format_pre_command_test(result: PreCommandTestResult) -> tuple:
     """
 
     if type(result) is not PreCommandTestResult:
-        raise ValueError("invalid pre-connection command test result")
+        raise ValueError("invalid pre-connect command test result")
     templates = _TEST_TEMPLATES
     if result.stage is PreCommandStage.KNOCK:
         templates = {**_TEST_TEMPLATES, **_KNOCK_TEST_TEMPLATES}
@@ -181,7 +181,7 @@ def format_pre_command_test(result: PreCommandTestResult) -> tuple:
         template = templates[result.reason]
     except KeyError:
         raise ValueError(
-            "pre-connection command test result has no presentation"
+            "pre-connect command test result has no presentation"
         ) from None
     text = _(template).format(
         code=result.exit_code if result.exit_code is not None else "?",
