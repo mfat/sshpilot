@@ -3134,6 +3134,13 @@ class TerminalWidget(Gtk.Box):
             self._on_selection_changed,
         )
         self._apply_pass_through_mode(self._pass_through_mode)
+        # Deliberately outside _install_shortcuts(): that early-returns while
+        # pass-through mode is on, and _apply_pass_through_mode() above only
+        # tears controllers down when the mode is already set.  A terminal born
+        # with terminal.pass_through_mode true would otherwise never get a
+        # history-scroll controller, and VTE's own fallback scrolling is off.
+        # Idempotent, so the _install_shortcuts() call is harmless duplication.
+        self._setup_scroll_controllers()
         self._setup_context_menu()
         # Apply macOS Option key passthrough
         if is_macos():
@@ -4486,7 +4493,13 @@ class TerminalWidget(Gtk.Box):
         try:
             mac = is_macos()
 
-            if getattr(self, '_zoom_controller', None) is None:
+            # Zoom is a shortcut, so pass-through mode leaves Ctrl/Cmd+wheel to
+            # the remote application.  The history scroll below is not, and is
+            # installed either way -- see the note on the call in
+            # setup_terminal().
+            pass_through = bool(getattr(self, '_pass_through_mode', False))
+
+            if not pass_through and getattr(self, '_zoom_controller', None) is None:
                 zoom_controller = Gtk.EventControllerScroll()
                 zoom_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
                 zoom_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -4515,9 +4528,9 @@ class TerminalWidget(Gtk.Box):
                     host.add_controller(zoom_controller)
                     self._zoom_controller = zoom_controller
 
-            # Separate guard: the zoom controller lives on the backend widget and
-            # is reinstalled on every swap, while this one lives on the container
-            # and outlives them.
+            # Separate guard: the zoom controller lives on the backend widget,
+            # is reinstalled on every swap and is skipped under pass-through,
+            # while this one lives on the container and outlives all of that.
             if getattr(self, '_scroll_controller', None) is None:
                 scroll_controller = Gtk.EventControllerScroll()
                 scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
@@ -4627,7 +4640,11 @@ class TerminalWidget(Gtk.Box):
         )
 
     def _remove_custom_shortcut_controllers(self):
-        """Detach any custom shortcut or scroll controllers from the terminal widget."""
+        """Detach the custom shortcut controllers from the terminal widget.
+
+        Shortcuts only: zoom counts, the history-scroll controller does not and
+        is left alone here.  See _remove_scroll_controller.
+        """
         host = self.controller_host()
         ctrl = getattr(self, '_shortcut_controller', None)
         if ctrl is not None:

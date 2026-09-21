@@ -249,3 +249,55 @@ def test_pass_through_mode_keeps_the_wheel_working():
     terminal._remove_scroll_controller()
     assert removed[-1] == ('container', 'scroll')
     assert terminal._scroll_controller is None
+
+
+def test_pass_through_on_at_startup_still_installs_the_wheel(monkeypatch):
+    """The other half of pass-through: not "does the toggle tear it down?" but
+    "does a terminal born with pass-through already on ever get it?".
+
+    _install_shortcuts() early-returns while pass-through is on, so hanging the
+    scroll controller off the tail of it meant a terminal created with
+    terminal.pass_through_mode set in config never installed one -- and with
+    VTE's fallback scrolling off, nothing scrolled the scrollback until the user
+    toggled pass-through off and back on.  Zoom is a shortcut and stays absent;
+    the wheel is not.
+    """
+
+    class FakeController:
+        def __init__(self):
+            self.phase = None
+
+        def set_flags(self, _flags):
+            pass
+
+        def set_propagation_phase(self, phase):
+            self.phase = phase
+
+        def connect(self, _signal, _handler):
+            pass
+
+    monkeypatch.setattr(
+        terminal_mod.Gtk, 'EventControllerScroll', FakeController, raising=False
+    )
+    monkeypatch.setattr(terminal_mod, 'is_macos', lambda: False, raising=False)
+
+    terminal = _terminal()
+    added = []
+
+    def _host(name):
+        return types.SimpleNamespace(
+            add_controller=lambda c: added.append((name, c)),
+        )
+
+    terminal.terminal_widget = _host('widget')
+    terminal.terminal_container = _host('container')
+    terminal._scroll_controller = None
+    terminal._zoom_controller = None
+    terminal._pass_through_mode = True
+
+    terminal._setup_scroll_controllers()
+
+    assert terminal._scroll_controller is not None
+    assert dict(added).get('container') is terminal._scroll_controller
+    assert terminal._zoom_controller is None
+    assert 'widget' not in dict(added)
