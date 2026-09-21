@@ -28,9 +28,12 @@ nothing else. Every outcome here is published as a
 :class:`~sshpilot.api.models.pre_command.PreConnectionCommandNotice` so the user
 is told what happened.
 
-What this module deliberately does **not** do is fail a launch. SSH's own error
-tells the user far more than a pre-step veto, which is the behaviour this
-feature shipped with; :meth:`PreConnectionCommandRunner.run` never raises.
+By default this module does **not** fail a launch: SSH's own error tells the
+user far more than a pre-step veto, which is the behaviour this feature shipped
+with. A connection can opt into the opposite, and
+:meth:`PreConnectionCommandRunner.run` then answers ``False`` so the launcher
+refuses. It never raises either way -- a fault in here must not be able to lock
+someone out of their own host.
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ from sshpilot.api.events import EventPublisher, EventType
 from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.pre_command import (
     PreCommandLaunchKind,
+    PreCommandSettings,
     PreCommandPhase,
     PreCommandReason,
     PreConnectionCommandNotice,
@@ -76,7 +80,7 @@ class PreConnectionCommandRunner:
         self,
         *,
         settings: Any,
-        lookup: Callable[[ConnectionId], str],
+        lookup: Callable[[ConnectionId], PreCommandSettings],
         runner: Callable[..., Any] = subprocess.run,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -105,8 +109,13 @@ class PreConnectionCommandRunner:
         *,
         scope_id: str,
         kind: PreCommandLaunchKind,
-    ) -> None:
+    ) -> bool:
         """Run the connection's pre-command, if it has one. Never raises.
+
+        Returns whether the launch may proceed. That is ``True`` unless the
+        connection asked for a hard gate and the command did not succeed --
+        an internal fault here always answers ``True``, because a bug in this
+        module must not be able to lock someone out of their own host.
 
         Blocking by design: the caller is a launch preparation already running
         on a :class:`~sshpilot.daemon.command_executor.BoundedCommandExecutor`
@@ -115,16 +124,17 @@ class PreConnectionCommandRunner:
         """
 
         if not connection_id or not scope_id:
-            return
+            return True
         with log_context(connection=connection_id, session=scope_id):
             try:
-                self._run_guarded(connection_id, scope_id=scope_id, kind=kind)
+                return self._run_guarded(connection_id, scope_id=scope_id, kind=kind)
             except Exception:
                 # A connection must never be stranded by an optional pre-step.
                 # The helper below already handles every expected failure, so
                 # reaching here means a bug in this module -- log it with a
                 # traceback and let the launch continue regardless.
                 logger.exception("pre-connection command handling failed")
+                return True
 
     def _run_guarded(
         self,
@@ -132,13 +142,16 @@ class PreConnectionCommandRunner:
         *,
         scope_id: str,
         kind: PreCommandLaunchKind,
-    ) -> None:
-        command = self._read_command(connection_id)
+    ) -> bool:
+        settings = self._read_settings(connection_id)
+        command = settings.command
         if not command:
             logger.debug("no pre-connection command configured kind=%s", kind.value)
-            return
+            return True
 
-        timeout = self._timeout_seconds()
+        # A per-connection timeout wins; 0 means "follow the app default", so
+        # a connection that never set one moves with the preference.
+        timeout = settings.timeout or self._timeout_seconds()
         coalesce = self._coalesce_seconds()
         lock = self._lock_for(connection_id)
 
@@ -169,7 +182,7 @@ class PreConnectionCommandRunner:
                     phase=PreCommandPhase.FINISHED,
                     reason=PreCommandReason.COALESCED,
                 )
-                return
+                return True
 
             logger.info(
                 "pre-connection command starting kind=%s timeout_s=%s coalesce_s=%s",
@@ -185,8 +198,16 @@ class PreConnectionCommandRunner:
                 phase=PreCommandPhase.RUNNING,
             )
             reason, exit_code, duration_ms = self._execute(command, timeout, kind)
-            if reason is PreCommandReason.OK:
+            succeeded = reason is PreCommandReason.OK
+            if succeeded:
                 self._last_run[connection_id] = self._clock()
+            aborted = not succeeded and settings.abort_on_failure
+            if aborted:
+                logger.warning(
+                    "pre-connection command refused the launch kind=%s reason=%s",
+                    kind.value,
+                    reason.value,
+                )
             self._publish(
                 connection_id,
                 scope_id=scope_id,
@@ -195,7 +216,9 @@ class PreConnectionCommandRunner:
                 reason=reason,
                 exit_code=exit_code,
                 duration_ms=duration_ms,
+                aborted=aborted,
             )
+            return not aborted
         finally:
             lock.release()
 
@@ -281,7 +304,7 @@ class PreConnectionCommandRunner:
 
     # -- helpers -------------------------------------------------------------
 
-    def _read_command(self, connection_id: ConnectionId) -> str:
+    def _read_settings(self, connection_id: ConnectionId) -> PreCommandSettings:
         try:
             value = self._lookup(connection_id)
         except Exception as exc:
@@ -290,8 +313,8 @@ class PreConnectionCommandRunner:
                 "pre-connection command lookup failed type=%s",
                 type(exc).__name__,
             )
-            return ""
-        return value.strip() if isinstance(value, str) else ""
+            return PreCommandSettings()
+        return value if type(value) is PreCommandSettings else PreCommandSettings()
 
     def _lock_for(self, connection_id: ConnectionId) -> threading.Lock:
         with self._state_lock:
@@ -346,6 +369,7 @@ class PreConnectionCommandRunner:
         reason: PreCommandReason = PreCommandReason.OK,
         exit_code: Optional[int] = None,
         duration_ms: int = 0,
+        aborted: bool = False,
     ) -> None:
         notice = PreConnectionCommandNotice(
             connection_id=connection_id,
@@ -355,6 +379,7 @@ class PreConnectionCommandRunner:
             reason=reason,
             exit_code=exit_code,
             duration_ms=duration_ms,
+            aborted=aborted,
         )
         try:
             self._publisher.publish(

@@ -30,6 +30,7 @@ from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
+from ..api.models.pre_command import PreCommandSettings
 from ..api.models.connections import (
     PLUGIN_EDITABLE_CONFIG_FIELDS,
     AsbruImportMode,
@@ -263,29 +264,49 @@ class ConnectionApplicationService:
     def pre_command_runner(self) -> Any:
         return getattr(self, "_pre_command_runner", None)
 
-    def get_pre_connection_command(self, connection_id: ConnectionId) -> str:
-        """Return the connection's pre-connection command, or ``''``.
+    def get_pre_connection_settings(
+        self, connection_id: ConnectionId
+    ) -> PreCommandSettings:
+        """The connection's pre-connection command and how to run it.
 
-        Daemon-internal: the launcher runs this command locally before every
-        launch (see :mod:`sshpilot.daemon.pre_connection_command`), and it is
-        the only caller. It is deliberately not a client method -- the value
-        already reaches the editor through
-        :meth:`get_connection_editor`, and a frontend has no reason to read
-        it now that execution lives behind the launcher.
+        Daemon-internal: the launcher runs this before every launch (see
+        :mod:`sshpilot.daemon.pre_connection_command`), and it is the only
+        caller.
 
-        Narrower than building a whole ``ConnectionEditorDetails`` for one
-        string, and it never raises for an unknown connection: a launch whose
-        connection vanished mid-flight has a real error of its own coming,
-        and an optional pre-step must not pre-empt it.
+        Metadata is the home -- the same place Wake-on-LAN keeps itself, and
+        for the same reason: this is an app-owned action that happens before
+        connecting, not an SSH directive. ``record.data`` is still read as a
+        fallback so a connection whose ``# sshpilot:PreCommand`` comment has
+        not been migrated yet, or one saved by an older build, keeps working
+        until it is next written.
+
+        Never raises for an unknown connection: a launch whose connection
+        vanished mid-flight has a real error of its own coming, and an
+        optional pre-step must not pre-empt it.
         """
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        getter = getattr(self._repository, "get_connection_metadata", None)
+        metadata = {}
+        if callable(getter):
+            try:
+                metadata = getter(connection_id) or {}
+            except Exception:
+                logger.debug("Connection metadata unavailable", exc_info=True)
+        settings = PreCommandSettings.from_metadata(metadata)
+        if settings.configured:
+            return settings
         record = self._repository.get_editor_record(connection_id)
         if record is None:
-            return ""
-        data = record.data or {}
-        value = data.get("pre_command")
-        return value.strip() if isinstance(value, str) else ""
+            return settings
+        legacy = (record.data or {}).get("pre_command")
+        if not isinstance(legacy, str) or not legacy.strip():
+            return settings
+        return PreCommandSettings(
+            command=legacy.strip(),
+            timeout=settings.timeout,
+            abort_on_failure=settings.abort_on_failure,
+        )
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId

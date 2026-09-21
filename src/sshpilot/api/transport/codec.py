@@ -5079,6 +5079,7 @@ def pre_connection_command_notice_to_wire(
         "reason": notice.reason.value,
         "exit_code": notice.exit_code,
         "duration_ms": notice.duration_ms,
+        "aborted": notice.aborted,
     }
 
 
@@ -5102,6 +5103,7 @@ def pre_connection_command_notice_from_wire(
             "reason",
             "exit_code",
             "duration_ms",
+            "aborted",
         },
         context="pre-connection command notice",
     )
@@ -5136,6 +5138,7 @@ def pre_connection_command_notice_from_wire(
         reason=reason,
         exit_code=exit_code,
         duration_ms=_integer(data["duration_ms"], "pre-connection command duration"),
+        aborted=_boolean(data["aborted"], "pre-connection command abort flag"),
     )
 
 

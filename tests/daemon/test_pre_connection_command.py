@@ -26,9 +26,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ConnectionId, SessionId
 from sshpilot.api.models.pre_command import (
     PreCommandLaunchKind,
+    PreCommandSettings,
     PreCommandPhase,
     PreCommandReason,
 )
@@ -126,13 +128,20 @@ def _settings(timeout=5, coalesce=0):
     )
 
 
-def _runner(command="true", *, timeout=5, coalesce=0, runner=None, clock=None):
+def _runner(
+    command="true", *, timeout=5, coalesce=0, runner=None, clock=None,
+    abort=False, per_connection_timeout=0,
+):
     """A real runner plus the list its notices land in."""
 
     notices = []
     instance = PreConnectionCommandRunner(
         settings=_settings(timeout, coalesce),
-        lookup=lambda connection_id: command,
+        lookup=lambda connection_id: PreCommandSettings(
+            command=command,
+            timeout=per_connection_timeout,
+            abort_on_failure=abort,
+        ),
         **({"runner": runner} if runner is not None else {}),
         **({"clock": clock} if clock is not None else {}),
     )
@@ -729,7 +738,8 @@ def test_a_plugin_connection_may_carry_a_pre_connection_command():
         )
     )
 
-    assert service.get_pre_connection_command("dockerbox") == "knock host 1000 2000"
+    settings = service.get_pre_connection_settings("dockerbox")
+    assert settings.command == "knock host 1000 2000"
 
 
 def test_a_plugin_connection_still_refuses_ssh_directives():
@@ -755,3 +765,108 @@ def test_a_plugin_connection_still_refuses_ssh_directives():
                 config_patch={"pre_command": "knock host", "proxy_jump": ["bastion"]},
             )
         )
+
+
+# --- the hard gate -----------------------------------------------------------
+#
+# Off by default: SSH's own error tells the user far more than a pre-step veto.
+# On, the launch is refused -- Royal TS offers the same choice for its connect
+# tasks, and a VPN dial-up that failed genuinely means "do not dial".
+
+
+def test_a_failing_command_does_not_stop_the_launch_by_default():
+    runner, notices = _runner("knock", runner=lambda *a, **k: SimpleNamespace(
+        returncode=3, stdout="", stderr=""))
+
+    assert runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL) is True
+    assert notices[-1].aborted is False
+
+
+def test_a_failing_command_stops_the_launch_when_asked():
+    runner, notices = _runner("knock", abort=True, runner=lambda *a, **k: SimpleNamespace(
+        returncode=3, stdout="", stderr=""))
+
+    assert runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL) is False
+    assert notices[-1].aborted is True
+    assert notices[-1].reason is PreCommandReason.NONZERO_EXIT
+
+
+def test_a_timeout_stops_the_launch_when_asked():
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="sh", timeout=1)
+
+    runner, notices = _runner("sleep 600", abort=True, runner=_timeout)
+
+    assert runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL) is False
+    assert notices[-1].aborted is True
+
+
+def test_a_successful_command_never_reports_an_abort():
+    runner, notices = _runner("true", abort=True, runner=lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout="", stderr=""))
+
+    assert runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL) is True
+    assert notices[-1].aborted is False
+
+
+def test_a_connection_with_no_command_is_never_gated():
+    """An empty command is not a failed one, whatever the flag says."""
+
+    runner, _ = _runner("", abort=True)
+
+    assert runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL) is True
+
+
+def test_an_internal_fault_never_locks_the_user_out():
+    """The gate must not be reachable by accident."""
+
+    runner, _ = _runner("knock", abort=True)
+    runner._run_guarded = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug"))
+
+    assert runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL) is True
+
+
+def test_the_launcher_refuses_a_gated_launch():
+    class _Gate:
+        def run(self, connection_id, *, scope_id, kind):
+            return False
+
+    launcher = SshLauncher(
+        RecordingProvider(), RecordingBroker(), pre_command_runner=_Gate()
+    )
+
+    with pytest.raises(SshPilotError) as caught:
+        launcher.prepare_session(Spec(), TerminalLaunch())
+
+    assert caught.value.code is ErrorCode.SESSION_STARTUP_FAILED
+
+
+# --- per-connection timeout --------------------------------------------------
+
+
+def test_a_connection_timeout_overrides_the_app_default():
+    seen = {}
+
+    def _record(argv, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    runner, _ = _runner("knock", timeout=30, per_connection_timeout=5, runner=_record)
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert seen["timeout"] == 5
+
+
+def test_no_connection_timeout_follows_the_app_default():
+    """Zero means "move with the preference", not "no timeout"."""
+
+    seen = {}
+
+    def _record(argv, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    runner, _ = _runner("knock", timeout=30, per_connection_timeout=0, runner=_record)
+    runner.run("c1", scope_id="s1", kind=PreCommandLaunchKind.TERMINAL)
+
+    assert seen["timeout"] == 30

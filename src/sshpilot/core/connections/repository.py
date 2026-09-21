@@ -2445,6 +2445,21 @@ class ConnectionRepository:
     # Metadata operations
     # ------------------------------------------------------------------
 
+    def get_connection_metadata(self, connection_id: str) -> Mapping[str, Any]:
+        """The app-owned metadata for one connection, or ``{}``.
+
+        Unlike the mutating counterpart this never raises for an unknown
+        connection: callers read metadata to decide whether an optional
+        feature applies, and a connection that vanished mid-flight has a real
+        error of its own coming.
+        """
+        with self._lock:
+            try:
+                connection_id = self._resolve_internal_id_locked(connection_id)
+            except Exception:
+                return {}
+            return thaw_safe_metadata(self._metadata.get(connection_id, {}))
+
     def update_connection_metadata(
         self, connection_id: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]:

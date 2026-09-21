@@ -6,12 +6,17 @@ or a VPN dial-up that authorises a short access window. The daemon launcher
 owns it (:mod:`sshpilot.daemon.pre_connection_command`), and it runs for every
 launch kind, not just terminals.
 
-The step **never fails a launch**: SSH's own error tells the user far more
-than a pre-step veto, which is the behaviour this feature shipped with. So
-these notices are not failures in the domain sense and deliberately do not
-travel through ``SessionFailure``/``SftpFailure``/``ScpFailure`` or any other
-per-domain failure vocabulary -- a pre-command that exits non-zero must not
-make a connection that then succeeds look like it failed.
+By default the step **does not fail a launch**: SSH's own error tells the user
+far more than a pre-step veto, which is the behaviour this feature shipped
+with. A connection may opt into the opposite with
+:attr:`PreCommandSettings.abort_on_failure`, and the notice then reports
+:attr:`PreConnectionCommandNotice.aborted` so the frontend does not tell
+someone the connection continues when it did not.
+
+Either way these notices are not failures in the domain sense and deliberately
+do not travel through ``SessionFailure``/``SftpFailure``/``ScpFailure`` or any
+other per-domain failure vocabulary -- a pre-command that exits non-zero must
+not make a connection that then succeeds look like it failed.
 
 What travels is a stable reason code plus numbers. The daemon never sends the
 command text, its output, or a rendered sentence: the command line can embed a
@@ -23,9 +28,67 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Mapping, Optional
 
 from .common import ConnectionId, require_identifier
+
+
+#: Metadata keys the pre-connection command occupies on a connection. It
+#: lives in ``connections.json`` metadata rather than as a comment in
+#: ``~/.ssh/config``: it is not an SSH directive, and a comment shaped like one
+#: invites the reader to believe OpenSSH honours it. Wake-on-LAN -- the same
+#: kind of thing, an app-owned action that runs before connecting -- already
+#: stores itself this way, and metadata applies to every protocol, so SSH and
+#: plugin connections need no separate arrangement.
+PRE_COMMAND_METADATA_KEYS = ("pre_command", "pre_command_timeout", "pre_command_abort")
+
+
+@dataclass(frozen=True)
+class PreCommandSettings:
+    """One connection's pre-connection command and how to run it."""
+
+    command: str = ""
+    #: Seconds before the command is killed. ``0`` defers to the daemon-wide
+    #: default, so a connection that never set one follows the app.
+    timeout: int = 0
+    #: Refuse the launch when the command does not succeed. Off by default:
+    #: SSH's own error tells the user far more than a pre-step veto, which is
+    #: the behaviour this feature shipped with. On, it is a hard gate.
+    abort_on_failure: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.command) is not str:
+            raise TypeError("pre-connection command must be a string")
+        if type(self.timeout) is not int or isinstance(self.timeout, bool):
+            raise TypeError("pre-connection command timeout must be an integer")
+        if self.timeout < 0:
+            raise ValueError("pre-connection command timeout must not be negative")
+        if type(self.abort_on_failure) is not bool:
+            raise TypeError("pre-connection command abort flag must be a boolean")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.command.strip())
+
+    @classmethod
+    def from_metadata(cls, values) -> "PreCommandSettings":
+        """Read the settings out of one connection's metadata mapping.
+
+        Tolerant by design: metadata is a free-form JSON mapping, so a value
+        of the wrong shape reads as "unset" rather than failing a launch.
+        """
+        values = values if isinstance(values, Mapping) else {}
+        command = values.get("pre_command")
+        command = command.strip() if isinstance(command, str) else ""
+        timeout = values.get("pre_command_timeout")
+        if type(timeout) is not int or isinstance(timeout, bool) or timeout < 0:
+            timeout = 0
+        abort = values.get("pre_command_abort")
+        return cls(
+            command=command,
+            timeout=timeout,
+            abort_on_failure=abort is True,
+        )
 
 
 class PreCommandLaunchKind(str, Enum):
@@ -99,6 +162,9 @@ class PreConnectionCommandNotice:
     exit_code: Optional[int] = None
     #: Wall-clock duration of the attempt. Zero for a coalesced notice.
     duration_ms: int = 0
+    #: The launch was refused because this command did not succeed and the
+    #: connection asked for that. Only ever true on a finished, failed notice.
+    aborted: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
@@ -127,3 +193,13 @@ class PreConnectionCommandNotice:
             or self.duration_ms < 0
         ):
             raise ValueError("duration_ms must not be negative")
+        if type(self.aborted) is not bool:
+            raise TypeError("aborted must be a boolean")
+        if self.aborted and self.reason in (
+            PreCommandReason.OK,
+            PreCommandReason.COALESCED,
+        ):
+            # Nothing went wrong, so nothing can have been refused. Allowing
+            # it would let a frontend announce a cancelled connection that is
+            # in fact opening.
+            raise ValueError("a successful pre-command notice cannot be aborted")

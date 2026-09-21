@@ -995,7 +995,7 @@ class DaemonServer:
         not care) simply disables the step rather than failing a launch.
         """
         lookup = getattr(
-            self._connection_service, "get_pre_connection_command", None
+            self._connection_service, "get_pre_connection_settings", None
         )
         if not callable(lookup):
             return None

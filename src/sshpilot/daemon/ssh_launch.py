@@ -824,7 +824,17 @@ class SshLauncher:
             # the user, so it does not get the step either.
             logger.debug("launch kind has no pre-connection command identity")
             return
-        runner.run(connection_id, scope_id=str(scope_id), kind=kind)
+        if runner.run(connection_id, scope_id=str(scope_id), kind=kind) is False:
+            # The connection asked for a hard gate and the command did not
+            # succeed. The notice already told the user why -- this only has
+            # to stop the launch, so the message stays deliberately plain:
+            # a session raised from here is restated generically by the
+            # runtime anyway, and the alert carries the detail.
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The pre-connection command did not succeed",
+                connection_id=connection_id,
+            )
 
     @staticmethod
     def _rides_live_master(
