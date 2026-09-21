@@ -4059,7 +4059,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     _PRE_COMMAND_HELP = N_(
         "Runs on this computer before SSH Pilot connects — a port knock "
         "(knock, fwknop) or a VPN dial-up that has to open the way to the "
-        "host first. This is an SSH Pilot feature, not an SSH setting."
+        "host first."
     )
     _SSH_COMMANDS_HELP = N_(
         "Sent to OpenSSH.\n\n"
@@ -4123,10 +4123,39 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         command_box.set_margin_bottom(6)
         command_box.append(scrolled)
 
+        # The hint and the Test row sit with the command, not under the
+        # options: the result answers a question about the text directly
+        # above it, and at the bottom of the group it was far enough away to
+        # read as unrelated.
+        self.pre_command_test_button = Gtk.Button(label=_("Test"))
+        self.pre_command_test_button.set_valign(Gtk.Align.CENTER)
+        self.pre_command_test_button.connect("clicked", self._on_pre_command_test)
+
+        self._pre_command_result = Gtk.Label(xalign=0)
+        self._pre_command_result.add_css_class("dim-label")
+        self._pre_command_result.add_css_class("caption")
+        self._pre_command_result.set_wrap(True)
+        self._pre_command_result.set_hexpand(True)
+        self._pre_command_result.set_visible(False)
+        self._pre_command_result.set_margin_start(12)
+
         hint = Gtk.Label(label=_(self._PRE_COMMAND_TOKENS), xalign=0)
         hint.add_css_class("dim-label")
         hint.add_css_class("caption")
-        command_box.append(hint)
+        hint.set_hexpand(True)
+        # Both line up with the command text above rather than the group
+        # edge, so the answer reads as belonging to the box it is under.
+        hint.set_margin_start(12)
+
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        action_row.set_valign(Gtk.Align.CENTER)
+        # The hint is replaced by the result once there is one, so the row
+        # never grows and the answer appears where the user just looked.
+        self._pre_command_hint = hint
+        action_row.append(hint)
+        action_row.append(self._pre_command_result)
+        action_row.append(self.pre_command_test_button)
+        command_box.append(action_row)
 
         command_row = Adw.PreferencesRow()
         command_row.set_activatable(False)
@@ -4154,23 +4183,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.pre_command_abort_row.set_active(False)
         pre_group.add(self.pre_command_abort_row)
 
-        self.pre_command_test_button = Gtk.Button(label=_("Test"))
-        self.pre_command_test_button.set_halign(Gtk.Align.END)
-        self.pre_command_test_button.set_margin_top(6)
-        self.pre_command_test_button.set_margin_bottom(6)
-        self.pre_command_test_button.connect("clicked", self._on_pre_command_test)
-        self._pre_command_result = Gtk.Label(xalign=0)
-        self._pre_command_result.add_css_class("dim-label")
-        self._pre_command_result.set_wrap(True)
-        self._pre_command_result.set_visible(False)
-        test_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        test_box.append(self.pre_command_test_button)
-        test_box.append(self._pre_command_result)
-        test_row = Adw.PreferencesRow()
-        test_row.set_activatable(False)
-        test_row.set_child(test_box)
-        pre_group.add(test_row)
-
         ssh_group = Adw.PreferencesGroup(
             title=_("SSH Commands"),
             description=_(self._SSH_COMMANDS_HELP),
@@ -4194,15 +4206,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         return [pre_group, ssh_group]
 
     def _on_pre_command_changed(self, buffer):
-        """Keep the placeholder visible only while the box is empty."""
+        """Track the empty state, and drop a result the edit has invalidated.
+
+        A "Ran successfully" sitting beside a command that has since been
+        changed answers a question nobody asked any more, and it also brings
+        back the token hint it replaced.
+        """
         placeholder = getattr(self, "_pre_command_placeholder", None)
-        if placeholder is None:
+        if placeholder is not None:
+            try:
+                placeholder.set_visible(buffer.get_char_count() == 0)
+            except Exception:
+                logger.debug(
+                    "Could not update the pre-command placeholder", exc_info=True
+                )
+        if getattr(self, "_loading_connection_data", False):
             return
-        try:
-            has_text = buffer.get_char_count() > 0
-            placeholder.set_visible(not has_text)
-        except Exception:
-            logger.debug("Could not update the pre-command placeholder", exc_info=True)
+        self._show_pre_command_result("", ok=None)
 
     def get_pre_command_text(self) -> str:
         view = getattr(self, "pre_command_view", None)
@@ -4299,6 +4319,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             label.set_text(text)
             label.set_visible(bool(text))
+            hint = getattr(self, '_pre_command_hint', None)
+            if hint is not None:
+                hint.set_visible(not text)
             for css in ('success', 'error', 'dim-label'):
                 label.remove_css_class(css)
             label.add_css_class(
