@@ -4489,6 +4489,10 @@ class TerminalWidget(Gtk.Box):
           BUBBLE, so it only ever sees events VTE declined.  That restores VTE's
           precedence structurally instead of re-deriving its screen and mouse
           modes here.
+
+        docs/architecture/terminal-input-routing.md has the dispatch rules, the
+        rest of the terminal's controllers, and the probe recipe for checking a
+        change against a real VteTerminal.
         """
         try:
             mac = is_macos()
