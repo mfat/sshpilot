@@ -173,6 +173,11 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.DAEMON_STATE_CHANGED,
         EventType.BROADCAST_OUTPUT,
         EventType.OPERATION_STATE_CHANGED,
+        # Broadcast to every client, not only the one that started the launch:
+        # a pre-connection command runs per *connection*, and a second client
+        # connecting to the same host is about to be affected by whether the
+        # knock landed.
+        EventType.PRE_CONNECTION_COMMAND,
     }
 )
 
@@ -376,6 +381,8 @@ class DaemonServer:
         self._transfer_subscription: Optional[Subscription] = None
         self._forward_subscription: Optional[Subscription] = None
         self._operation_subscription: Optional[Subscription] = None
+        self._pre_command_runner: Optional[Any] = None
+        self._pre_command_subscription: Optional[Subscription] = None
         self._broadcast_publisher = EventPublisher()
         self._broadcast_subscription: Optional[Subscription] = None
         self._command_input_condition = threading.Condition()
@@ -800,6 +807,18 @@ class DaemonServer:
                         broadcast_service=self._broadcast_service,
                     )
                 )
+            self._pre_command_runner = self._build_pre_command_runner()
+            if self._pre_command_runner is not None:
+                # Hang it off the launch provider, which every one of the
+                # five SshLauncher call sites already holds -- sessions,
+                # SCP, ssh-copy-id, one-shot remote commands and
+                # privileged file reads. Passing it to each service
+                # instead would leave the next one to forget it.
+                attach = getattr(
+                    self._connection_service, "attach_pre_command_runner", None
+                )
+                if callable(attach):
+                    attach(self._pre_command_runner)
             self._dispatcher = RequestDispatcher(
                 self._connection_service,
                 self._session_runtime,
@@ -819,6 +838,7 @@ class DaemonServer:
                 command_input_waiter=self._wait_command_input,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
+                pre_command_runner=self._pre_command_runner,
             )
             self._session_executor = BoundedCommandExecutor(
                 max_workers=self.session_command_workers,
@@ -861,6 +881,10 @@ class DaemonServer:
         self._operation_subscription = self._operation_runtime.subscribe_events(
             self._on_core_event
         )
+        if self._pre_command_runner is not None:
+            self._pre_command_subscription = (
+                self._pre_command_runner.subscribe_events(self._on_core_event)
+            )
         self._broadcast_subscription = self._broadcast_publisher.subscribe(
             self._on_core_event
         )
@@ -958,6 +982,29 @@ class DaemonServer:
                 remote_command=getattr(spec, "remote_command", None),
                 force_tty=bool(getattr(spec, "force_tty", False)),
             ),
+        )
+
+    def _build_pre_command_runner(self) -> Optional[Any]:
+        """Wire the launcher's pre-connection command step, or return None.
+
+        One runner per daemon: the launcher is rebuilt per call, and the
+        serialization and coalescing state has to outlive a single launch --
+        three tabs opening at once are three launches and must be one knock.
+
+        A connection service without the lookup (every test double that does
+        not care) simply disables the step rather than failing a launch.
+        """
+        lookup = getattr(
+            self._connection_service, "get_pre_connection_settings", None
+        )
+        if not callable(lookup):
+            return None
+        from .bootstrap_settings import DaemonBootstrapSettings
+        from .pre_connection_command import PreConnectionCommandRunner
+
+        return PreConnectionCommandRunner(
+            settings=DaemonBootstrapSettings(),
+            lookup=lookup,
         )
 
     def _build_privileged_file_runner(self) -> Optional[Any]:
@@ -2619,6 +2666,8 @@ class DaemonServer:
             self._forward_subscription = None
             operation_subscription = self._operation_subscription
             self._operation_subscription = None
+            pre_command_subscription = self._pre_command_subscription
+            self._pre_command_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
         if session_subscription is not None:
@@ -2635,3 +2684,5 @@ class DaemonServer:
             forward_subscription.unsubscribe()
         if operation_subscription is not None:
             operation_subscription.unsubscribe()
+        if pre_command_subscription is not None:
+            pre_command_subscription.unsubscribe()

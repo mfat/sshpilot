@@ -30,6 +30,11 @@ from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
+from ..api.models.pre_command import (
+    PreCommandMode,
+    PreCommandSettings,
+    expand_pre_command_tokens,
+)
 from ..api.models.connections import (
     AsbruImportMode,
     AsbruImportPreview,
@@ -82,6 +87,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
@@ -223,6 +229,111 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         return result
+
+    def attach_pre_command_runner(self, runner: Any) -> None:
+        """Inject the launcher's pre-connection command runner after startup.
+
+        Five places build an :class:`~sshpilot.daemon.ssh_launch.SshLauncher`
+        -- sessions, SCP, ``ssh-copy-id``, one-shot remote commands and
+        privileged file reads -- and each is constructed by a different
+        service. Threading a runner through four constructors would put the
+        same wiring in four places and guarantee that the fifth one added
+        later forgets it, which is precisely how this feature shipped broken
+        the first time.
+
+        Instead it hangs off the one object every launcher already holds: the
+        launch provider. There is exactly one runner per daemon, which is also
+        a requirement rather than a convenience -- serialization and
+        coalescing are worthless if each service keeps its own state.
+
+        Two objects answer to "the launch provider" and the launchers are
+        split between them: sessions pass *this* service, while SCP,
+        ``ssh-copy-id``, broadcast and privileged reads pass the inner
+        :class:`DaemonConnectionLaunchProvider` they were handed separately.
+        Both carry the runner, so a launcher needs one lookup and does not
+        have to know which kind of provider it was built with.
+        """
+        self._pre_command_runner = runner
+        inner = getattr(self, "_launch_provider", None)
+        if inner is not None:
+            try:
+                inner.pre_command_runner = runner
+            except Exception:
+                logger.debug(
+                    "Launch provider cannot carry the pre-command runner",
+                    exc_info=True,
+                )
+
+    @property
+    def pre_command_runner(self) -> Any:
+        return getattr(self, "_pre_command_runner", None)
+
+    def get_pre_connection_settings(
+        self, connection_id: ConnectionId
+    ) -> PreCommandSettings:
+        """The connection's pre-connection command and how to run it.
+
+        Daemon-internal: the launcher runs this before every launch (see
+        :mod:`sshpilot.daemon.pre_connection_command`), and it is the only
+        caller.
+
+        Metadata is the home -- the same place Wake-on-LAN keeps itself, and
+        for the same reason: this is an app-owned action that happens before
+        connecting, not an SSH directive. ``record.data`` is still read as a
+        fallback so a connection whose ``# sshpilot:PreCommand`` comment has
+        not been migrated yet, or one saved by an older build, keeps working
+        until it is next written.
+
+        Never raises for an unknown connection: a launch whose connection
+        vanished mid-flight has a real error of its own coming, and an
+        optional pre-step must not pre-empt it.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        getter = getattr(self._repository, "get_connection_metadata", None)
+        metadata = {}
+        if callable(getter):
+            try:
+                metadata = getter(connection_id) or {}
+            except Exception:
+                logger.debug("Connection metadata unavailable", exc_info=True)
+        settings = PreCommandSettings.from_metadata(metadata)
+        record = self._repository.get_editor_record(connection_id)
+        if not settings.configured:
+            if record is None:
+                return settings
+            legacy = (record.data or {}).get("pre_command")
+            if not isinstance(legacy, str) or not legacy.strip():
+                return settings
+            settings = PreCommandSettings(
+                command=legacy.strip(),
+                knock_sequence=settings.knock_sequence,
+                # A connection whose command still lives in the old config
+                # comment has no stored mode, and a command is what it has.
+                mode=PreCommandMode.COMMAND,
+                timeout=settings.timeout,
+                abort_on_failure=settings.abort_on_failure,
+            )
+        if record is None:
+            return settings
+        # Expanded here, where the connection's own values are, so the runner
+        # never has to know what a connection is. The hostname rides along for
+        # the same reason: the knock needs a target and nothing downstream can
+        # look one up.
+        hostname = getattr(record, "hostname", "") or ""
+        return PreCommandSettings(
+            command=expand_pre_command_tokens(
+                settings.command,
+                hostname=hostname,
+                port=getattr(record, "port", "") or "",
+                username=getattr(record, "username", "") or "",
+            ),
+            knock_sequence=settings.knock_sequence,
+            mode=settings.mode,
+            hostname=hostname,
+            timeout=settings.timeout,
+            abort_on_failure=settings.abort_on_failure,
+        )
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId

@@ -7,6 +7,7 @@ from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple, Union
 
 from .common import ConnectionId, SessionId, require_identifier, validate_ssh_host_alias
 from .connection_store import validate_safe_metadata
+from .pre_command import PRE_COMMAND_METADATA_KEYS
 
 MAX_DISPLAY_NAME_LENGTH = 512
 
@@ -311,6 +312,12 @@ def extract_plugin_data(
     result: Dict[str, Any] = {}
     for key, value in dict(data or {}).items():
         if key in CONNECTION_CORE_DATA_FIELDS or key.startswith("__"):
+            continue
+        # Metadata keys are not FieldSpec values. A connection written by an
+        # older build may still carry the pre-connection command in ``data``;
+        # surfacing it here would hand the protocol a field it never declared
+        # and save it back as one.
+        if key in PRE_COMMAND_METADATA_KEYS:
             continue
         if is_sensitive_field_name(key):
             continue

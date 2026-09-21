@@ -59,64 +59,6 @@ from .terminal_display_pause import (
 _terminal_padding_css_installed = False
 
 
-PRE_CONNECTION_COMMAND_TIMEOUT = 30
-
-
-def run_pre_connection_command(command: str) -> None:
-    """Run a connection's pre-connection command locally, before SSH dials out.
-
-    Typically a port knock (fwknop) or a VPN dial-up that authorises a short
-    access window, so it has to complete before the session opens.
-
-    Runs through ``sh -lc`` rather than a bare ``sh -c``: the command is a
-    user-authored shell string that legitimately uses substitutions such as
-    ``fwknop -n host --wget-cmd "$(which wget)"``, and a *login* shell also
-    sources the user's profile. That matters in the packaged app -- a bundle
-    launched from Finder inherits a minimal PATH that does not include
-    Homebrew, so a non-login shell would not find the knock helper at all.
-
-    Blocking; call it from a worker thread. Failures are logged and swallowed:
-    SSH's own error tells the user far more than a pre-step veto, which is the
-    behaviour this feature shipped with.
-
-    The command string may embed user secrets (a token or password on the
-    command line), so its content -- and any command output -- is logged at
-    debug only, matching ``PluginContext.run_local_command``. INFO/WARNING
-    carry lifecycle signals without content.
-    """
-    command = (command or "").strip()
-    if not command:
-        return
-
-    shell = shutil.which("sh") or "/bin/sh"
-    logger.info("Running pre-connection command")
-    logger.debug("Pre-connection command: %s", command)
-    try:
-        result = subprocess.run(
-            [shell, "-lc", command],
-            timeout=PRE_CONNECTION_COMMAND_TIMEOUT,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            logger.warning(
-                "Pre-connection command exited with code %s",
-                result.returncode,
-            )
-            stderr = (getattr(result, "stderr", "") or "").strip()
-            if stderr:
-                logger.debug(
-                    "Pre-connection command failure output: %.800s",
-                    stderr,
-                )
-    except subprocess.TimeoutExpired:
-        logger.warning("Pre-connection command timed out")
-        logger.debug("Pre-connection command timed out: %s", command)
-    except Exception as exc:
-        logger.warning("Pre-connection command failed")
-        logger.debug("Pre-connection command failed: %s", exc, exc_info=True)
-
-
 def _finish_capture_gesture(gesture, handled: bool) -> None:
     """Resolve a capture gesture without leaving it competing with VTE."""
     state = (
@@ -346,6 +288,10 @@ class TerminalWidget(Gtk.Box):
         self._daemon_controller = None
         self._daemon_tab_state = None
         self._daemon_interaction_dialogs = None
+        #: Launch scope this tab claims pre-connection command notices for.
+        self._pre_command_scope = None
+        self._unbind_pre_command = None
+        self._connecting_detail_announced = False
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
         self._mouse_tracking = MouseTrackingState()
@@ -451,8 +397,16 @@ class TerminalWidget(Gtk.Box):
         spinner.start()
         label = Gtk.Label(label=_("Connecting"))
         label.add_css_class("title-2")
+        # Second line under "Connecting", empty and hidden unless something
+        # slow is happening that the user would otherwise read as a hang --
+        # today only the daemon's pre-connection command (a port knock or a
+        # VPN dial-up), which can legitimately take tens of seconds.
+        self.connecting_detail_label = Gtk.Label(label="")
+        self.connecting_detail_label.add_css_class("dim-label")
+        self.connecting_detail_label.set_visible(False)
         self.connecting_box.append(spinner)
         self.connecting_box.append(label)
+        self.connecting_box.append(self.connecting_detail_label)
 
         # Forwarding-only status (SessionType none): same opaque veil as
         # Connecting, backend-agnostic above VTE / PyXterm.
@@ -1217,6 +1171,71 @@ class TerminalWidget(Gtk.Box):
             self._set_session_overlay_mode("connecting")
         else:
             self._set_session_overlay_mode("none")
+
+    def set_connecting_detail(self, text) -> None:
+        """Say that something slow is happening before the session opens.
+
+        Called from the application's pre-connection command handler, which
+        owns the one subscription that sees those notices. Failures are not
+        announced here: the connection continues, so a failed pre-step belongs
+        in a toast rather than in the transcript of a session that is about to
+        work.
+
+        Two surfaces, because a daemon-backed tab uses neither the way a local
+        one does. The overlay label covers the paths that show "Connecting";
+        the coloured line written into the terminal covers the daemon route,
+        which opens straight into an empty pane and would otherwise sit blank
+        and silent for the whole pre-command. The line is written once per run
+        so a repeated status push cannot spam the transcript.
+
+        Cyan rather than dim: this is SSH Pilot speaking, not the host, and it
+        has to stand apart from whatever the session prints next without
+        reading as a problem -- red is already the connection-failure line.
+        """
+        value = text.strip() if isinstance(text, str) else ""
+        label = getattr(self, "connecting_detail_label", None)
+        if label is not None:
+            try:
+                label.set_text(value)
+                label.set_visible(bool(value))
+            except Exception:
+                logger.debug("Could not update the connecting detail", exc_info=True)
+        if not value:
+            self._connecting_detail_announced = False
+            return
+        if getattr(self, "_connecting_detail_announced", False):
+            return
+        self._connecting_detail_announced = True
+        backend = getattr(self, "backend", None)
+        if backend is None:
+            return
+        try:
+            backend.feed(f"\x1b[36m{value}\x1b[0m\r\n".encode())
+        except Exception:
+            logger.debug("Could not announce the connecting detail", exc_info=True)
+
+    def show_pre_command_output(self, text) -> None:
+        """Print what a failed pre-connection command said, into the tab.
+
+        A shell shows you a failing knock's own words -- you typed the command,
+        so its output lands in front of you. The terminal tab is where a user
+        of this app is already looking when a connection is being made, so the
+        same output goes there rather than only into the log.
+
+        Printed plainly, because it is the command's output rather than ours:
+        the cyan line above already said what SSH Pilot was doing, and red is
+        the connection-failure banner. Nothing is printed when the command
+        succeeds, which is also what a shell does.
+        """
+        value = text.strip() if isinstance(text, str) else ""
+        backend = getattr(self, "backend", None)
+        if not value or backend is None:
+            return
+        try:
+            body = value.replace("\r\n", "\n").replace("\n", "\r\n")
+            backend.feed(f"{body}\r\n".encode())
+        except Exception:
+            logger.debug("Could not print the pre-command output", exc_info=True)
 
     def _set_session_overlay_mode(self, mode: str) -> None:
         """Overlay modes: ``connecting``, ``forwarding``, or ``none``."""
@@ -2311,6 +2330,7 @@ class TerminalWidget(Gtk.Box):
                 and getattr(dialogs, "_session_id", None) != tab.session_id
             ):
                 dialogs.set_session(tab.session_id)
+                self._register_pre_command_scope(tab.session_id)
 
             if daemon_state == TerminalSessionState.ACTIVE:
                 from .connection_model import ConnectionState
@@ -4642,9 +4662,42 @@ class TerminalWidget(Gtk.Box):
 
         return None
 
+    def _register_pre_command_scope(self, session_id) -> None:
+        """Claim pre-connection command notices for this tab's session.
+
+        Mirrors how the interaction presenter binds its scope, and for the
+        same reason: several tabs and a file-manager connect can be opening at
+        once under one client, so a notice belongs to whichever surface owns
+        that scope id -- never to whoever happens to be listening.
+        """
+        if session_id is None or session_id == self._pre_command_scope:
+            return
+        from .window_dialogs import bind_pre_command_status
+
+        self._unregister_pre_command_scope()
+        # A new scope is a new launch, so the once-per-run guard starts over.
+        # Without this a reconnect could inherit a guard left set by a finish
+        # notice that arrived after the widget had already rebound, and the
+        # next run would announce nothing.
+        self._connecting_detail_announced = False
+        self._unbind_pre_command = bind_pre_command_status(
+            str(session_id),
+            self.set_connecting_detail,
+            on_output=self.show_pre_command_output,
+        )
+        self._pre_command_scope = session_id
+
+    def _unregister_pre_command_scope(self) -> None:
+        unbind = getattr(self, "_unbind_pre_command", None)
+        self._unbind_pre_command = None
+        self._pre_command_scope = None
+        if callable(unbind):
+            unbind()
+
     def _on_destroy(self, widget):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
+        self._unregister_pre_command_scope()
         # Suppress any in-flight VTE interactions (motion/enter callbacks still
         # queued on the motion controller) before the screen state is released.
         self._destroyed = True

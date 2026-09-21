@@ -78,7 +78,16 @@ class DaemonConnectionServices:
         return extract_plugin_data(protocol, data)
 
     @staticmethod
-    def _config_patch(data):
+    def _config_patch(data, protocol="ssh"):
+        """The editable SSH configuration this save carries.
+
+        Plugin protocols carry none: sshPilot builds no ssh command line for
+        them, and the daemon refuses the patch outright. What they *can* carry
+        -- the pre-connection command -- travels as metadata instead, which is
+        protocol-agnostic and needs no allowance here.
+        """
+        if protocol != "ssh":
+            return {}
         return {
             key: value
             for key, value in dict(data).items()
@@ -96,7 +105,7 @@ class DaemonConnectionServices:
             port=int(values.get("port", 22) or 22),
             protocol=protocol,
             display_name=str(values.get("display_name", "") or ""),
-            config_patch=self._config_patch(values) if protocol == "ssh" else {},
+            config_patch=self._config_patch(values, protocol),
             plugin_data=self._plugin_data(protocol, values),
         )
         result = client.create_connection(request)
@@ -127,7 +136,7 @@ class DaemonConnectionServices:
             username=values.get("username", getattr(connection, "username", "")),
             port=int(values.get("port", getattr(connection, "port", 22)) or 22),
             display_name=(values["display_name"] if "display_name" in values else UNSET),
-            config_patch=self._config_patch(values) if protocol == "ssh" else {},
+            config_patch=self._config_patch(values, protocol),
             plugin_data=self._plugin_data(protocol, values),
         )
         connection_id = connection_id_for(connection)

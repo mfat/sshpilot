@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.63",
+  "api_implementation_version": "0.60",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -689,10 +689,6 @@
       "capability": "terminal.output",
       "status": "daemon-only"
     },
-    "test_pre_command": {
-      "capability": "connections.config.read",
-      "status": "implemented"
-    },
     "unlock_secrets": {
       "capability": "secrets.operate",
       "status": "daemon-only"
@@ -888,7 +884,6 @@
     "subscribe_broadcast_output",
     "subscribe_events",
     "subscribe_terminal",
-    "test_pre_command",
     "unlock_secrets",
     "update_connection",
     "update_connection_metadata",
@@ -2460,41 +2455,6 @@
       ],
       "return": "TerminalSubscription"
     },
-    "test_pre_command": {
-      "parameters": [
-        {
-          "kind": "positional_or_keyword",
-          "name": "command",
-          "type": "str"
-        },
-        {
-          "kind": "positional_or_keyword",
-          "name": "timeout",
-          "type": "int"
-        },
-        {
-          "kind": "keyword_only",
-          "name": "knock",
-          "type": "str"
-        },
-        {
-          "kind": "keyword_only",
-          "name": "hostname",
-          "type": "str"
-        },
-        {
-          "kind": "keyword_only",
-          "name": "port",
-          "type": "int"
-        },
-        {
-          "kind": "keyword_only",
-          "name": "username",
-          "type": "str"
-        }
-      ],
-      "return": "PreCommandTestResult"
-    },
     "unlock_secrets": {
       "parameters": [],
       "return": "SecretUnlockResult"
@@ -2724,9 +2684,6 @@
     },
     "connections.store_plugin_secret": {
       "capability": "connections.secrets.write"
-    },
-    "connections.test_pre_command": {
-      "capability": "connections.config.read"
     },
     "connections.update": {
       "capability": "connections.write"
@@ -3431,10 +3388,8 @@
     "PluginSessionFailureCode",
     "PortForwardSummary",
     "PreCommandLaunchKind",
-    "PreCommandMode",
     "PreCommandPhase",
     "PreCommandReason",
-    "PreCommandStage",
     "PreConnectionCommandNotice",
     "PresencePrompt",
     "PressureStall",

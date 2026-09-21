@@ -46,6 +46,7 @@ class _AsyncPage:
         WelcomePage._recent_read_error_message
     )
     _render_recent_connections = WelcomePage._render_recent_connections
+    _dashboard_callback = WelcomePage._dashboard_callback
     schedule_connection_refresh = WelcomePage.schedule_connection_refresh
     _run_scheduled_connection_refresh = WelcomePage._run_scheduled_connection_refresh
     close = WelcomePage.close
@@ -79,6 +80,7 @@ def test_recent_listing_reads_dtos_from_client_not_manager():
         ),
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle, callback),
         _min_section=lambda title, rows: (title, rows),
+        _dashboard_callback=lambda connection: None,
         _connect_connection_summary=lambda connection_summary: None,
     )
 

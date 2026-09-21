@@ -37,6 +37,7 @@ class FakeConnectionRepository:
     def __init__(self, records: Optional[List[ConnectionRecord]] = None) -> None:
         self._records: Dict[str, ConnectionRecord] = {}
         self._groups: Dict[str, GroupRecord] = {}
+        self._metadata: Dict[str, Dict[str, Any]] = {}
         self._listeners: list = []
         self._generation = 0
         self.fail_next: bool = False
@@ -293,9 +294,25 @@ class FakeConnectionRepository:
     def update_connection_metadata(
         self, connection_id: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]:
+        """Merge metadata the way the real repository does.
+
+        This used to return the patch and forget it, which made every test
+        that wrote metadata pass without anything being stored -- including
+        the ones covering features that read it back.
+        """
         self._maybe_fail()
         self._bump()
-        return dict(values)
+        current = dict(self._metadata.get(connection_id, {}))
+        for key, value in dict(values).items():
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
+        self._metadata[connection_id] = current
+        return dict(current)
+
+    def get_connection_metadata(self, connection_id: str) -> Mapping[str, Any]:
+        return dict(self._metadata.get(connection_id, {}))
 
     def rename_tag(self, old_tag: str, new_tag: str) -> int:
         self._maybe_fail()

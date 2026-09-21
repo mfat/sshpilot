@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.63",
+  "api_implementation_version": "0.61",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -2474,11 +2474,6 @@
         },
         {
           "kind": "keyword_only",
-          "name": "knock",
-          "type": "str"
-        },
-        {
-          "kind": "keyword_only",
           "name": "hostname",
           "type": "str"
         },
@@ -3431,10 +3426,8 @@
     "PluginSessionFailureCode",
     "PortForwardSummary",
     "PreCommandLaunchKind",
-    "PreCommandMode",
     "PreCommandPhase",
     "PreCommandReason",
-    "PreCommandStage",
     "PreConnectionCommandNotice",
     "PresencePrompt",
     "PressureStall",

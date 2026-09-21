@@ -32,6 +32,28 @@ DEFAULT_SSH_CONFIG: Dict[str, Any] = {
     "default_keepalive_count": 3,
 }
 
+#: Defaults for the launcher's pre-connection command step. They live in the
+#: ``daemon.`` namespace rather than ``ssh.`` because the command is a local
+#: shell string, not an OpenSSH option.
+DEFAULT_PRE_COMMAND_TIMEOUT_SECONDS = 30
+DEFAULT_PRE_COMMAND_COALESCE_SECONDS = 5
+
+
+def _positive_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _non_negative_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed >= 0 else fallback
+
 
 class DaemonBootstrapSettings:
     """Read-only settings view backed by ``config.json``.
@@ -111,6 +133,40 @@ class DaemonBootstrapSettings:
         return bool(
             self.get_setting("daemon.service_mode", False)
             or os.environ.get("SSHPILOT_DAEMON_SERVICE_MODE")
+        )
+
+    @property
+    def pre_command_timeout_seconds(self) -> int:
+        """Seconds a pre-connection command may run before it is killed.
+
+        A VPN dial-up can legitimately outlast the 30 s this feature shipped
+        with, so it is configurable; a non-positive or unreadable value falls
+        back to the default rather than disabling the bound, because an
+        unbounded local command would hold a daemon command worker forever.
+        """
+        return _positive_int(
+            self.get_setting(
+                "daemon.pre_command_timeout_seconds",
+                DEFAULT_PRE_COMMAND_TIMEOUT_SECONDS,
+            ),
+            DEFAULT_PRE_COMMAND_TIMEOUT_SECONDS,
+        )
+
+    @property
+    def pre_command_coalesce_seconds(self) -> int:
+        """Window in which a repeated pre-connection command is reused.
+
+        Opening three tabs at once, or restoring a session set on daemon
+        start, otherwise fires three port knocks concurrently -- which some
+        ``knockd`` configurations score as a *failed* sequence. ``0`` disables
+        coalescing and every launch runs the command again.
+        """
+        return _non_negative_int(
+            self.get_setting(
+                "daemon.pre_command_coalesce_seconds",
+                DEFAULT_PRE_COMMAND_COALESCE_SECONDS,
+            ),
+            DEFAULT_PRE_COMMAND_COALESCE_SECONDS,
         )
 
     @property

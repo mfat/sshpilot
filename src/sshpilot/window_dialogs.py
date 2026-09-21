@@ -15,7 +15,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 from gettext import gettext as _
@@ -276,6 +276,78 @@ def associate_window_with_parent_application(window, parent) -> None:
         window.set_application(app)
     except Exception:
         pass
+
+
+def install_toast_overlay(window) -> None:
+    """Give *window* a ``toast_overlay``, wrapping whatever content it has.
+
+    A secondary window that can start a launch -- the SCP picker, the
+    copy-key window -- needs somewhere to show a message the daemon sends
+    while that launch runs. Without one, an alert routed to it by
+    :func:`resolve_topmost_prompt_parent` has to fall back to the main window,
+    which is behind it.
+
+    Done here rather than in each ``.ui`` template because it is the same six
+    lines every time and the templates are shared with other callers. Safe to
+    call on a window that already has an overlay, and a failure leaves the
+    window exactly as it was -- a missing toast surface must never stop a
+    window from opening.
+    """
+    if getattr(window, "toast_overlay", None) is not None:
+        return
+    try:
+        content = window.get_content()
+        if content is None:
+            return
+        overlay = Adw.ToastOverlay()
+        window.set_content(overlay)
+        overlay.set_child(content)
+        window.toast_overlay = overlay
+    except Exception as exc:
+        logger.debug("Could not install a toast overlay: %s", exc)
+
+
+def bind_pre_command_status(scope_id, setter, *, on_output=None) -> Callable[[], None]:
+    """Claim the pre-connection command status line for one launch scope.
+
+    The daemon publishes one notice per launch and the application holds the
+    single subscription; a surface says which scope it owns and what to do
+    with the text. Returns the unbind callable, which is always safe to call
+    -- including when the bind never happened.
+
+    *on_output* is optional and takes the command's own output when it failed.
+    A terminal tab has somewhere to put that -- a shell would have shown it --
+    and the surfaces that do not simply leave it out; their users read it in
+    the log viewer instead.
+
+    Failures are swallowed: a surface that cannot show a progress line must
+    still work, and the alert on failure does not depend on this binding.
+    """
+    if not scope_id or not callable(setter):
+        return lambda: None
+    application = Gtk.Application.get_default()
+    register = getattr(application, "register_pre_command_status", None)
+    if not callable(register):
+        return lambda: None
+    key = str(scope_id)
+    try:
+        register(key, setter, on_output=on_output)
+    except Exception:
+        logger.debug("Could not bind the pre-command status", exc_info=True)
+        return lambda: None
+
+    def _unbind() -> None:
+        unregister = getattr(
+            Gtk.Application.get_default(), "unregister_pre_command_status", None
+        )
+        if not callable(unregister):
+            return
+        try:
+            unregister(key)
+        except Exception:
+            logger.debug("Could not release the pre-command status", exc_info=True)
+
+    return _unbind
 
 
 def present_for_modal_dialog(window: Gtk.Window) -> None:

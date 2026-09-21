@@ -14,6 +14,8 @@ from .api.errors import SshPilotError
 from .connection_display import hosts_hidden, mask_host_display
 from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .platform_utils import is_macos
+from .plugins.api import Capability
+from .plugins.registry import capabilities_for
 from . import icon_utils
 
 logger = logging.getLogger(__name__)
@@ -572,7 +574,7 @@ class WelcomePage(Gtk.Overlay):
             self._min_row(
                 conn.nickname, mask_host_display(conn.display_target, hide),
                 lambda _b, c=conn: self._connect_connection_summary(c),
-                on_info=lambda c=conn: self._open_connection_dashboard(c),
+                on_info=self._dashboard_callback(conn),
             )
             for conn in recent
         ]
@@ -667,6 +669,19 @@ class WelcomePage(Gtk.Overlay):
         if connection is not None:
             self.window.terminal_manager.connect_to_host(connection)
 
+    def _dashboard_callback(self, connection_or_summary):
+        """The row's info-button callback, or None when there is nothing to show.
+
+        The Dashboard gathers by running a read-only shell probe on the host,
+        so it means something only for a protocol that can run remote commands
+        -- the same gate the sidebar context menu uses.  A summary DTO carries
+        its own ``protocol``, so this needs no lookup.
+        """
+
+        if Capability.REMOTE_COMMAND not in capabilities_for(connection_or_summary):
+            return None
+        return lambda c=connection_or_summary: self._open_connection_dashboard(c)
+
     def _open_connection_dashboard(self, connection_or_summary):
         """Open the Host Info / Dashboard tab for a start-page connection row."""
 
@@ -728,7 +743,7 @@ class WelcomePage(Gtk.Overlay):
                 row = self._min_row(
                     conn.nickname, mask_host_display(self._conn_target(conn), hide),
                     lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c),
-                    on_info=lambda c=conn: self._open_connection_dashboard(c),
+                    on_info=self._dashboard_callback(conn),
                 )
                 self._attach_pinned_context_menu(row, conn)
                 rows.append(row)

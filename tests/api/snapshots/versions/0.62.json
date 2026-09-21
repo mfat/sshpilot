@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.63",
+  "api_implementation_version": "0.62",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3431,7 +3431,6 @@
     "PluginSessionFailureCode",
     "PortForwardSummary",
     "PreCommandLaunchKind",
-    "PreCommandMode",
     "PreCommandPhase",
     "PreCommandReason",
     "PreCommandStage",

@@ -12,7 +12,16 @@ import time
 from sshpilot.runtime_identity import new_unique_client_id, new_request_id
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NoReturn, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    NoReturn,
+    Optional,
+    Union,
+)
 
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.logging_support import log_context
@@ -179,6 +188,7 @@ from .transport.codec import (
     unsaved_host_check_request_to_wire,
     unsaved_host_check_result_from_wire,
     external_terminal_launch_spec_from_wire,
+    pre_command_test_result_from_wire,
     connection_summary_from_wire,
     ssh_config_text_from_wire,
     connection_store_snapshot_from_wire,
@@ -296,6 +306,9 @@ from .transport.secret_frames import (
 )
 from .version import PROTOCOL_VERSION
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .models.pre_command import PreCommandTestResult
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REQUEST_TIMEOUT = 5.0
@@ -363,6 +376,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_operation_mode": Capability.OPERATION_MODE,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
     "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
@@ -817,6 +831,36 @@ class DaemonClient:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid SSH config text")
+
+    def test_pre_command(
+        self,
+        command: str,
+        timeout: int = 0,
+        *,
+        knock: str = "",
+        hostname: str = "",
+        port: int = 0,
+        username: str = "",
+    ) -> "PreCommandTestResult":
+        """Run a pre-connection command once and report what happened.
+
+        The command is sent rather than read from a saved connection: the
+        editor offers Test while the user is still typing, and testing the
+        stored value would answer a question they did not ask.
+        """
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request(
+            "connections.test_pre_command",
+            {
+                "command": str(command),
+                "knock": str(knock),
+                "timeout": int(timeout),
+                "hostname": str(hostname),
+                "port": int(port),
+                "username": str(username),
+            },
+        )
+        return pre_command_test_result_from_wire(result)
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId
@@ -2912,9 +2956,17 @@ class DaemonClient:
                 return
             if event.type is EventType.OPERATION_STATE_CHANGED:
                 summary = event.payload
-                if str(summary.id) != str(operation_id) or summary.state.value not in {
-                    "succeeded", "failed", "cancelled"
-                }:
+                # ``operation_id``, not ``id``: OperationSummary has no ``id``,
+                # so this raised AttributeError inside the subscriber for every
+                # operation event. The failure was invisible -- the event bus
+                # logs and continues -- but it meant a streamed command never
+                # reported completion, and each one left a subscriber that
+                # threw again on every later operation event. Short commands
+                # still worked because the snapshot check below caught them.
+                if str(summary.operation_id) != str(operation_id) or (
+                    summary.state.value
+                    not in {"succeeded", "failed", "cancelled"}
+                ):
                     return
                 try:
                     result = self.get_broadcast_command(operation_id)

@@ -16,7 +16,123 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.59 (current)
+## API 0.63 (current)
+
+### API 0.63 A knock or a command, not both
+
+- New metadata key `pre_command_mode` and model `PreCommandMode`
+  (`knock`/`command`). A connection uses one half or the other; both are
+  stored, so switching between them in the editor does not destroy what was
+  typed, but only the selected one runs. `PreCommandSettings` gains `mode`
+  and the derived `runs_knock`/`runs_command`, and `configured` now answers
+  for the live half alone.
+- Alternatives rather than layers because composing them is the rare case and
+  the escape hatch already covers it: someone who needs a knock *and* a VPN
+  writes both into one shell line. Offering the two together would have asked
+  every user to reason about an ordering question that only the escape
+  hatch's users have — and that ordering was wrong in 0.62, which ran the
+  sequence first even though a command that brings up a VPN has to run before
+  a host behind it can be knocked at all.
+- The mode is stored rather than inferred from which field is empty, because
+  inference cannot tell "I chose a command and have not written it yet" from
+  "I chose a knock": clearing a command to disable it would silently reopen
+  the connection in knock mode. An absent key resolves to whichever half is
+  set, so every connection written before this keeps running what it ran.
+
+## API 0.62
+
+### API 0.62 Native port-knock sequences
+
+- Per-connection metadata gains `pre_command_knock`, a knock sequence in
+  `knock(1)` syntax (`7000,8000,9000`, or `7000:udp 8000:tcp`). The daemon
+  sends it itself with plain sockets before the pre-connection command runs;
+  the two compose, sequence first. `PreCommandSettings` gains `knock_sequence`
+  and `hostname`, and exposes the parsed `knock_steps`.
+- Knocking natively rather than shelling out to `knock` is what makes the
+  feature work in the Flatpak at all: no knock tool is installed in the
+  sandbox and none can be, so the command path has to leave via
+  `flatpak-spawn --host` and hope the user installed one there. A knock is
+  only a TCP SYN or a UDP datagram to a closed port, so a socket reproduces
+  it exactly, on every platform, with nothing to install. The command field
+  stays for `fwknop`, whose encrypted single-packet authorisation is a real
+  protocol and not a port sequence.
+- New models `KnockProtocol`, `KnockStep` and `PreCommandStage`, plus
+  `parse_knock_sequence`/`format_knock_sequence`. `PreConnectionCommandNotice`
+  and `PreCommandTestResult` gain `stage`, so a frontend can say "Sending the
+  port knock…" rather than naming a command the connection never configured.
+  A knock notice carries no exit code — a knock runs no process — and that is
+  enforced by the model.
+- `test_pre_command` gains an optional `knock` parameter, so the editor's Test
+  button exercises the sequence the same way a launch would. Additive: an
+  older caller that omits it is unaffected.
+- A knock that cannot be sent reports `START_FAILED`, the existing reason for
+  "nothing ran", rather than adding one every frontend would have to learn.
+  A *refused* or *dropped* knock is not a failure: a knocked port is meant to
+  be silent, so refusal and timeout both prove delivery and are the normal
+  case. Only the unreachable family (`ENETUNREACH` and friends) counts as a
+  failure to send.
+
+## API 0.61
+
+### API 0.61 Pre-connection command settings and Test
+
+- The pre-connection command moves out of `config_patch` and into per-connection
+  **metadata** (`pre_command`, `pre_command_timeout`, `pre_command_abort`),
+  where Wake-on-LAN already lives. It is an app-owned action that happens
+  before connecting, not an SSH directive, and a `# sshpilot:PreCommand`
+  comment in `~/.ssh/config` invited the reader to believe OpenSSH honoured
+  it. Metadata is JSON, so a multi-line command needs no escaping, and it
+  applies to every protocol — `PLUGIN_EDITABLE_CONFIG_FIELDS` and the
+  plugin-specific `config_patch` allowance added in 0.60 are withdrawn as
+  unnecessary. `record.data` is still read as a fallback, so connections
+  written by an older build keep working.
+- New models `PreCommandSettings` and `PreCommandTestResult`.
+  `PreConnectionCommandNotice` gains `aborted` and `output`. `output` is
+  carried only on a finished, failed notice and is bounded: a shell shows
+  you a failing command's own words, and the terminal tab is where a user
+  is already looking. Success stays silent, as it does in a shell.
+- New client method `test_pre_command` with wire method
+  `connections.test_pre_command` (capability `connections.config.read`). It
+  runs a supplied command once and returns its reason, exit status, duration
+  and bounded output, so the editor's Test button exercises the same path a
+  launch would rather than a frontend-local imitation.
+- A connection may now refuse its launch when the command fails
+  (`pre_command_abort`, off by default). Protocol stays v1.
+
+## API 0.60
+
+### API 0.60 Pre-connection command notices
+
+- The connection's pre-connection command (`pre_command`, stored as the
+  `# sshpilot:PreCommand` config comment) is now executed by the daemon
+  launcher rather than by the GTK frontend, and it runs for every launch kind
+  — terminal, SFTP, forward, SCP, remote command and `ssh-copy-id` — plus the
+  external-terminal launch. Previously only in-app terminal tabs ran it, so a
+  knock-gated host refused every other path.
+- New event `connection.pre_command` (`EventType.PRE_CONNECTION_COMMAND`)
+  carrying `PreConnectionCommandNotice`, with new enums
+  `PreCommandLaunchKind`, `PreCommandPhase` and `PreCommandReason`. The notice
+  carries a stable reason code, an exit status and a duration — never the
+  command text, its output, or a rendered sentence. Frontends show the running
+  phase inline and alert on a finished phase whose reason is not `ok`.
+- Plugin-protocol connections may now carry `pre_command` in `config_patch`,
+  which `connections.create`/`connections.update` previously refused outright
+  for any non-SSH protocol. New `PLUGIN_EDITABLE_CONFIG_FIELDS` names that
+  subset so a client filter and the daemon's validation cannot disagree; every
+  other key in `EDITABLE_CONFIG_FIELDS` stays refused for them. Docker over
+  `ssh://` and Mosh open real SSH connections, so a host behind port knocking
+  has to be reachable from those too. `extract_plugin_data` excludes the same
+  keys, so the value is stored as configuration and never also as plugin data.
+  This widens what a request may contain and rejects nothing that was
+  previously accepted, so no client has to change.
+- The step never fails a launch, so no existing failure vocabulary changed:
+  `SessionFailure`, `SftpFailureCode`, `ScpFailureCode` and
+  `IdentityFailureCode` are untouched, and no `ErrorCode` was added.
+- Bumped `API_IMPLEMENTATION_VERSION` because the event inventory and the
+  model surface grew. `PROTOCOL_VERSION` stays `1.0`: the framing, the
+  envelope shapes and every existing method are unchanged.
+
+## API 0.59
 
 ### API 0.59 Public keys from online identities
 

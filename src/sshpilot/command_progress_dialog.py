@@ -202,8 +202,16 @@ def build_progress_status_row(
     Callable[[], None],
     Callable[[], None],
     Callable[[], None],
+    Callable[[object], None],
 ]:
-    """Build spinner + status label row for a command progress dialog."""
+    """Build spinner + status label row for a command progress dialog.
+
+    The last returned callable replaces the running text -- the daemon can say
+    something more specific than "working" while a command is still going, such
+    as that it is running this host's pre-connection command. Passing anything
+    that is not text restores *running_text*, so a caller can hand it a status
+    value straight through without deciding what "cleared" means.
+    """
     from . import icon_utils
 
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -293,6 +301,53 @@ def build_progress_status_row(
         except Exception:
             pass
 
+    def set_running(text: object) -> None:
+        value = text.strip() if isinstance(text, str) else ""
+        try:
+            label.set_label(value or running_text)
+        except Exception:
+            pass
+
     spinner.connect('map', lambda *_: spinner.start())
 
-    return row, start, stop, mark_success, mark_failure
+    return row, start, stop, mark_success, mark_failure, set_running
+
+
+def present_operation_progress(
+    parent,
+    *,
+    title: str,
+    running_text: str,
+    success_text: str,
+    failure_text: str,
+):
+    """Show a spinner-and-status dialog for one long-running daemon operation.
+
+    Returns ``(dialog, set_running)``: the caller closes the dialog when the
+    operation reaches a terminal state, and feeds ``set_running`` whatever the
+    daemon says it is doing in the meantime.
+
+    Chrome only, deliberately: no Cancel, because an operation that offers one
+    already offers it where it was started, and a second control for the same
+    thing in a transient dialog is a new way to leave work half finished.
+    """
+    from gi.repository import Adw
+
+    row, start, _stop, _mark_success, _mark_failure, set_running = (
+        build_progress_status_row(running_text, success_text, failure_text)
+    )
+    dialog = Adw.Dialog()
+    dialog.set_title(title)
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    for setter in (
+        box.set_margin_top,
+        box.set_margin_bottom,
+        box.set_margin_start,
+        box.set_margin_end,
+    ):
+        setter(24)
+    box.append(row)
+    dialog.set_child(box)
+    dialog.present(parent)
+    start()
+    return dialog, set_running

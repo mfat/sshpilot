@@ -114,6 +114,13 @@ class _KindPolicy:
     trailing_args: Tuple[str, ...]
     registry_kind: str
     diagnostics: bool
+    #: Run the connection's pre-connection command before this launch. It is a
+    #: column rather than a blanket rule so a seventh kind cannot inherit the
+    #: answer by accident: the step is a port knock or a VPN dial-up, and
+    #: "does this launch open a socket to the host" is a decision, not a
+    #: default. Every kind that dials out answers ``True`` today -- running it
+    #: for terminals alone is the bug this column exists to prevent.
+    pre_connection_command: bool
     #: Provider methods to try in order. The ``prepare_daemon_*`` variants add
     #: a command-thread assertion and are preferred when the provider offers
     #: them; the bare names are the same call without it.
@@ -129,6 +136,7 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         trailing_args=(),
         registry_kind=KIND_SESSION,
         diagnostics=True,
+        pre_connection_command=True,
         provider_methods=("prepare_daemon_terminal_launch", "prepare_terminal_launch"),
     ),
     LaunchKind.SFTP: _KindPolicy(
@@ -138,6 +146,7 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         trailing_args=("sftp",),
         registry_kind=KIND_SFTP,
         diagnostics=False,
+        pre_connection_command=True,
         provider_methods=("prepare_daemon_sftp_launch", "prepare_sftp_launch"),
     ),
     LaunchKind.FORWARD: _KindPolicy(
@@ -150,6 +159,7 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         trailing_args=(),
         registry_kind=KIND_FORWARD,
         diagnostics=False,
+        pre_connection_command=True,
         provider_methods=("prepare_daemon_forward_launch", "prepare_forward_launch"),
     ),
     LaunchKind.SCP: _KindPolicy(
@@ -159,6 +169,7 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         trailing_args=(),
         registry_kind=KIND_TRANSFER,
         diagnostics=False,
+        pre_connection_command=True,
         provider_methods=("prepare_daemon_scp_launch", "prepare_scp_launch"),
     ),
     LaunchKind.REMOTE_COMMAND: _KindPolicy(
@@ -172,6 +183,7 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         # what the child actually is.
         registry_kind=KIND_HELPER,
         diagnostics=False,
+        pre_connection_command=True,
         provider_methods=("prepare_remote_command_launch",),
     ),
     LaunchKind.COPY_ID: _KindPolicy(
@@ -181,6 +193,7 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         trailing_args=(),
         registry_kind=KIND_HELPER,
         diagnostics=False,
+        pre_connection_command=True,
         provider_methods=("prepare_copy_id_launch",),
     ),
 }
@@ -523,6 +536,15 @@ class LaunchScope:
             interaction_mode=interaction_mode,
             **options,
         )
+        logger.debug("launch prepared kind=%s", intent.kind.value)
+        self._launcher._run_pre_connection_command(
+            policy,
+            intent,
+            connection_id=target_connection,
+            scope_id=self._scope_id,
+            argv=argv,
+            environment=environment,
+        )
         return PreparedLaunch(argv, environment, self)
 
     # -- owning children -----------------------------------------------------
@@ -632,11 +654,16 @@ class SshLauncher:
         interaction_broker: Any,
         *,
         readiness_manager: Any = None,
+        pre_command_runner: Any = None,
         popen: Callable[..., Any] = subprocess.Popen,
     ) -> None:
         self._provider = launch_provider
         self._broker = interaction_broker
         self._readiness = readiness_manager
+        # Usually None: the daemon hangs the one runner off the launch
+        # provider instead, so every launcher finds it without each service
+        # passing it along. This parameter is the injection seam for tests.
+        self._pre_command = pre_command_runner
         self._popen = popen
 
     # -- one-shot operations -------------------------------------------------
@@ -721,9 +748,109 @@ class SshLauncher:
                 from .ssh_readiness import insert_ssh_diagnostics_options
 
                 argv = insert_ssh_diagnostics_options(argv, diagnostics_path)
+        logger.debug("launch prepared kind=%s", intent.kind.value)
+        self._run_pre_connection_command(
+            policy,
+            intent,
+            connection_id=getattr(spec, "connection_id", None),
+            scope_id=getattr(spec, "session_id", None),
+            argv=argv,
+            environment=environment,
+        )
         return argv, environment
 
     # -- internals -----------------------------------------------------------
+
+    def _run_pre_connection_command(
+        self,
+        policy: _KindPolicy,
+        intent: "LaunchIntent",
+        *,
+        connection_id: Optional[ConnectionId],
+        scope_id: Optional[ScopeId],
+        argv: Sequence[str] = (),
+        environment: Mapping[str, str] = {},
+    ) -> None:
+        """Run the connection's pre-connection command for this launch.
+
+        Called at the *end* of preparation, not the start. The command is
+        typically a port knock or a VPN dial-up authorising a short access
+        window, so it has to sit as close to the spawn as possible -- and
+        after brokering, so a keyring unlock can never land between the knock
+        and the connect and outlast the window the knock opened. That ordering
+        was a deliberate frontend decision before this moved; it survives the
+        move. Preparation and spawn are milliseconds apart (``PtySessionProcessRunner.start``
+        calls the builder and then immediately allocates the PTY), so "end of
+        preparation" really is "just before the child".
+
+        Blocking, and safe to be: every caller is already on a
+        ``BoundedCommandExecutor`` worker, never the dispatch thread. The step
+        never raises -- an optional pre-step must not strand a launch, and
+        SSH's own error tells the user far more than a pre-step veto.
+        """
+
+        if not policy.pre_connection_command:
+            return
+        # Injected for tests; in the daemon it rides the launch provider, so
+        # every launcher finds the one runner without four services having to
+        # pass it along. See ConnectionApplicationService.attach_pre_command_runner.
+        runner = self._pre_command
+        if runner is None:
+            runner = getattr(self._provider, "pre_command_runner", None)
+        if runner is None:
+            return
+        if connection_id is None or scope_id is None:
+            return
+        # A launch that rides a live multiplex master opens no connection, so
+        # there is nothing for a port knock or a VPN dial-up to authorise.
+        # Host Info made this impossible to ignore: it samples every two
+        # seconds over a master it already holds, which knocked the host every
+        # few seconds for as long as the dashboard stayed open -- enough to
+        # trip the replay protection and rate limiting that knock daemons
+        # have. The first launch still knocks; it is the one that builds the
+        # master.
+        if argv and self._rides_live_master(argv, environment):
+            logger.info(
+                "pre-connection command skipped kind=%s reason=multiplex_master",
+                intent.kind.value,
+            )
+            return
+        from sshpilot.api.models.pre_command import PreCommandLaunchKind
+
+        try:
+            kind = PreCommandLaunchKind(intent.kind.value)
+        except ValueError:
+            # A launch kind with no public counterpart cannot be narrated to
+            # the user, so it does not get the step either.
+            logger.debug("launch kind has no pre-connection command identity")
+            return
+        if runner.run(connection_id, scope_id=str(scope_id), kind=kind) is False:
+            # The connection asked for a hard gate and the command did not
+            # succeed. The notice already told the user why -- this only has
+            # to stop the launch, so the message stays deliberately plain:
+            # a session raised from here is restated generically by the
+            # runtime anyway, and the alert carries the detail.
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The pre-connect command did not succeed",
+                connection_id=connection_id,
+            )
+
+    @staticmethod
+    def _rides_live_master(
+        argv: Sequence[str], environment: Mapping[str, str]
+    ) -> bool:
+        """Whether this launch would reuse an existing authenticated transport."""
+
+        from .control_masters import launch_rides_live_master
+
+        try:
+            return launch_rides_live_master(argv, environment)
+        except Exception:
+            # Never let a probe decide a launch. An unanswerable question
+            # means the step runs, which is the safe direction.
+            logger.debug("multiplex master probe failed", exc_info=True)
+            return False
 
     def _session_builder(
         self, intent: "LaunchIntent", policy: _KindPolicy

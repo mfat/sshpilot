@@ -17,6 +17,7 @@ from .models.connections import ConnectionSummary
 from .models.interactions import InteractionRequest, InteractionSummary
 from .models.operations import ForwardSummary, OperationSummary, SftpServiceSummary
 from .models.broadcast import BroadcastCommandOutput
+from .models.pre_command import PreConnectionCommandNotice
 from .models.sessions import SessionExitInfo, SessionSummary
 from .models.terminal import TerminalOutput
 from .models.daemon import DaemonStatus
@@ -33,6 +34,7 @@ class EventType(str, Enum):
     CONNECTION_UPDATED = "connection.updated"
     CONNECTION_DELETED = "connection.deleted"
     CONNECTION_STORE_CHANGED = "connection_store.changed"
+    PRE_CONNECTION_COMMAND = "connection.pre_command"
     SESSION_CREATED = "session.created"
     SESSION_STATE_CHANGED = "session.state_changed"
     SESSION_OUTPUT = "session.output"
@@ -134,6 +136,7 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.OPERATION_STATE_CHANGED: OperationSummary,
     EventType.BROADCAST_OUTPUT: BroadcastCommandOutput,
     EventType.DAEMON_STATE_CHANGED: DaemonStatus,
+    EventType.PRE_CONNECTION_COMMAND: PreConnectionCommandNotice,
     EventType.ERROR_OCCURRED: Mapping,
 }
 

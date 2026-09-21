@@ -69,9 +69,39 @@ migration. Every phase of the implementation references it by row number.
 
 | # | Widget | data key | Conn attr | SSH directive | Formatter | Parser | Domain | Guarded |
 |---|--------|----------|-----------|---------------|-----------|--------|--------|---------|
-| 21 | `pre_command_row` | `pre_command` | `pre_command` | `# sshpilot:PreCommand <value>` (comment) | `f"    # sshpilot:PreCommand {pre_cmd}"` | Comment prefix parsed in loader | config (comment) | **Yes** |
+| 21 | `pre_command_view` | `pre_command` (metadata) | — | none | Not written to `~/.ssh/config` | `record.data['pre_command']` read as a legacy fallback | metadata | **Yes** |
+| 21a | `pre_command_knock_row` | `pre_command_knock` (metadata) | — | none | Not written to `~/.ssh/config` | — | metadata | **Yes** |
+| 21b | `pre_command_knock_radio` | `pre_command_mode` (metadata) | — | none | Not written to `~/.ssh/config` | — | metadata | **Yes** |
 | 22 | `local_command_row` | `local_command` | `local_command` | `PermitLocalCommand yes` + `LocalCommand <value>` | Both emitted when non-empty | `config.get('localcommand')` | config | **Yes** |
 | 23 | `remote_command_row` | `remote_command` | `remote_command` | `RemoteCommand <value>`; `RequestTTY <token>` only when explicitly selected/authored | Preserved exactly as entered | `config.get('remotecommand')` + `config.get('requesttty')` | config | **Yes** |
+
+Rows 21 and 21a are executed by the daemon, not by the frontend, and they live
+in per-connection **metadata** rather than in `~/.ssh/config`. They are SSH
+Pilot actions that happen before connecting, not SSH directives, and the old
+`# sshpilot:PreCommand` comment invited the reader to believe OpenSSH honoured
+it; `record.data` is still read as a fallback so older connections keep
+working. Because they are metadata they apply to every protocol, not only SSH.
+
+They are **alternatives, not layers**: `pre_command_mode` (`knock`/`command`)
+says which one runs. Both are stored, so switching between them in the editor
+loses nothing, but only the selected one executes. A connection needing a
+knock *and* a VPN writes both into one shell line in row 21 — offering the two
+together would ask every user to reason about an ordering question that only
+row 21's users have. An absent `pre_command_mode` resolves to whichever half
+is set, so connections written before it keep running what they ran.
+
+`SshLauncher` runs the selected half for every launch kind
+(`_POLICIES[...].pre_connection_command`) plus the external-terminal launch,
+serialized and coalesced per connection by
+`sshpilot.daemon.pre_connection_command`. Row 21a is sent with plain sockets
+by `sshpilot.daemon.port_knock` — no `knock` binary is involved, which is what
+makes it work in the Flatpak, where none is installed. Row 21 covers whatever
+a port sequence cannot express, such as an `fwknop` SPA. Neither fails a
+launch unless the connection sets `pre_command_abort`; outcomes travel to the
+user as `connection.pre_command` events.
+
+Rows 22 and 23 remain plain OpenSSH directives and are not executed by SSH
+Pilot at all.
 
 ## Advanced
 

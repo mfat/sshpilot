@@ -12,6 +12,12 @@ from .connection_display import (
     get_connection_host as _get_connection_host,
 )
 from .shortcut_utils import install_esc_to_close
+from .command_progress_dialog import present_operation_progress
+from .window_dialogs import (
+    associate_window_with_parent_application,
+    bind_pre_command_status,
+    install_toast_overlay,
+)
 from .i18n import N_
 
 logger = logging.getLogger(__name__)
@@ -81,6 +87,17 @@ class SshCopyIdWindow(Adw.Window):
         super().__init__()
         self.set_transient_for(parent)
         install_esc_to_close(self)
+        # A bare Adw.Window is absent from Gtk.Application.get_windows() until
+        # it is associated, and a window the app cannot see is a window no
+        # routed message can be aimed at. Done here rather than at the four
+        # call sites that build this window.
+        associate_window_with_parent_application(self, parent)
+        # This window closes as soon as a deployment is handed off, so the
+        # deployment's own progress lives in a dialog on the main window
+        # (_present_deployment_progress). The overlay is for messages
+        # raised while this window is still up -- key generation, and the
+        # error paths that leave it open.
+        install_toast_overlay(self)
 
         self._parent = parent
         self._conn = connection
@@ -981,6 +998,8 @@ class SshCopyIdRunner:
         self._operation_id = None
         self._poll_id = None
         self._interaction_dialogs = None
+        self._progress_dialog = None
+        self._unbind_pre_command = lambda: None
 
     def run(
         self,
@@ -1110,7 +1129,65 @@ class SshCopyIdRunner:
             dialogs.set_session(SessionId(str(summary.operation_id)))
         self._interaction_dialogs = dialogs
         self._operation_id = summary.operation_id
+        self._present_deployment_progress(summary.operation_id, connection)
         self._poll_operation()
+
+    def _present_deployment_progress(self, operation_id, connection) -> None:
+        """Show what the deployment is doing, after this window has closed.
+
+        Key deployment used to have no progress surface at all: this window
+        closes the moment the operation is handed off, and nothing else
+        appeared until the result dialog. A pre-connection command -- a port
+        knock or a VPN dial-up -- can hold that gap open for tens of seconds
+        with nothing on screen to explain it.
+
+        The dialog is presented on the main window, not on this one, precisely
+        because this one is about to close. It carries no Cancel: the
+        operation already has one on the window, and adding a second control
+        for the same thing in a transient dialog would be a new way to leave a
+        half-finished deployment behind.
+        """
+        parent = getattr(self, "window", None)
+        if parent is None:
+            return
+        name = getattr(connection, "nickname", "") or getattr(
+            connection, "host", ""
+        )
+        try:
+            dialog, set_running = present_operation_progress(
+                parent,
+                title=_("Copy Key to Server"),
+                running_text=(
+                    _("Copying the public key to “{name}”…").format(name=name)
+                    if name
+                    else _("Copying the public key…")
+                ),
+                success_text=_("The public key was installed."),
+                failure_text=_("Public-key deployment failed."),
+            )
+        except Exception:
+            logger.debug("Could not present the deployment progress", exc_info=True)
+            return
+        self._progress_dialog = dialog
+        # The operation id is the scope the daemon runs the pre-connection
+        # command under; ``set_running`` restores the default text when the
+        # command finishes, so this needs no clearing logic of its own.
+        self._unbind_pre_command = bind_pre_command_status(
+            str(operation_id), set_running
+        )
+
+    def _dismiss_deployment_progress(self) -> None:
+        unbind = self._unbind_pre_command
+        self._unbind_pre_command = lambda: None
+        unbind()
+        dialog = self._progress_dialog
+        self._progress_dialog = None
+        if dialog is None:
+            return
+        try:
+            dialog.close()
+        except Exception:
+            logger.debug("Could not close the deployment progress", exc_info=True)
 
     def _poll_operation(self):
         if self._operation_id is None:
@@ -1160,6 +1237,10 @@ class SshCopyIdRunner:
 
     def _dispose_interaction_dialogs(self):
         """Close and detach the presenter; never claim interactions after teardown."""
+        # The progress dialog shares the operation's scope and lifetime, so it
+        # is dismissed here rather than from a second teardown path that could
+        # drift from this one.
+        self._dismiss_deployment_progress()
         if self._interaction_dialogs is not None:
             self._interaction_dialogs.close()
             self._interaction_dialogs = None

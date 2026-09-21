@@ -82,6 +82,7 @@ from sshpilot.api.transport.codec import (
     unsaved_host_check_request_from_wire,
     unsaved_host_check_result_to_wire,
     external_terminal_launch_spec_to_wire,
+    pre_command_test_result_to_wire,
     connection_mutation_result_to_wire,
     connection_store_snapshot_to_wire,
     set_group_color_request_from_wire,
@@ -214,6 +215,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "connections.test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.set_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -461,6 +463,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.check_unsaved_host",
         "connections.prepare_external_terminal_launch",
         "connections.get_launch_command",
+        "connections.test_pre_command",
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
         "daemon.set_operation_mode",
@@ -644,6 +647,7 @@ class RequestDispatcher:
         *,
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
+        pre_command_runner: Optional[Any] = None,
         ssh_overrides_service: Any = None,
         secrets_service: Any = None,
         identity_service: Any = None,
@@ -676,6 +680,11 @@ class RequestDispatcher:
         self._plugin_settings = plugin_settings
         self._command_input_waiter = command_input_waiter
         self._diagnostics_provider = diagnostics_provider
+        # Only the external-terminal route needs this here. Every in-app
+        # launch reaches the pre-connection command through SshLauncher;
+        # an external terminal is handed a bare argv and spawned by the
+        # frontend, so it never touches the launcher at all.
+        self._pre_command_runner = pre_command_runner
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
             if lifecycle_controller is not None
@@ -721,6 +730,7 @@ class RequestDispatcher:
             "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.get_launch_command": self._handle_get_launch_command,
+            "connections.test_pre_command": self._handle_test_pre_command,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
         "connections.set_session_password": self._handle_set_session_connection_password,
@@ -1392,13 +1402,101 @@ class RequestDispatcher:
         if type(connection_id) is not str or not connection_id.strip():
             raise ValueError("connection_id must be a non-empty string")
         typed_id = ConnectionId(connection_id)
-        return DeferredResult(
-            operation=lambda: external_terminal_launch_spec_to_wire(
+
+        def _prepare():
+            spec = external_terminal_launch_spec_to_wire(
                 self._connections.prepare_external_terminal_launch(typed_id)
-            ),
+            )
+            # After the spec is built, mirroring the in-app ordering: the
+            # knock or VPN dial-up authorises a short window, so it belongs as
+            # close to the spawn as possible. ``get_launch_command`` is
+            # deliberately *not* given this step -- it answers "what does this
+            # connection run" for the clipboard and must not dial anything.
+            self._run_pre_connection_command(typed_id)
+            return spec
+
+        return DeferredResult(
+            operation=_prepare,
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_id,
+        )
+
+    def _handle_test_pre_command(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        """Run a pre-connection command once so the editor can report on it.
+
+        Takes the command from the request rather than the stored connection:
+        the user presses Test while editing, before saving, and testing the
+        saved value would answer a question they did not ask.
+        """
+        params = dict(request.params)
+        allowed = {"command", "knock", "timeout", "hostname", "port", "username"}
+        if set(params) - allowed:
+            raise ValueError("connections.test_pre_command received unknown fields")
+        command = params.get("command")
+        if type(command) is not str:
+            raise ValueError("command must be a string")
+        knock = params.get("knock", "")
+        if type(knock) is not str:
+            raise ValueError("knock must be a string")
+        timeout = params.get("timeout", 0)
+        if type(timeout) is not int or isinstance(timeout, bool) or timeout < 0:
+            raise ValueError("timeout must be a non-negative integer")
+        for name in ("hostname", "username"):
+            if type(params.get(name, "")) is not str:
+                raise ValueError(f"{name} must be a string")
+        port = params.get("port", "")
+        if type(port) not in (str, int) or isinstance(port, bool):
+            raise ValueError("port must be a string or an integer")
+        from sshpilot.api.models.pre_command import expand_pre_command_tokens
+
+        # Expanded the same way a launch expands it, so Test runs the command
+        # that would actually run rather than a near-miss with %h still in it.
+        command = expand_pre_command_tokens(
+            command,
+            hostname=params.get("hostname", ""),
+            port=port,
+            username=params.get("username", ""),
+        )
+        runner = self._pre_command_runner
+        if runner is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Pre-connection commands are unavailable",
+            )
+        # The knock needs no token expansion: its only variable is the host,
+        # which it is handed directly.
+        hostname = params.get("hostname", "")
+        return DeferredResult(
+            operation=lambda: pre_command_test_result_to_wire(
+                runner.test(
+                    command, timeout, knock_sequence=knock, hostname=hostname
+                )
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _run_pre_connection_command(self, connection_id: ConnectionId) -> None:
+        """Run the pre-connection command for an external-terminal launch."""
+
+        runner = self._pre_command_runner
+        if runner is None:
+            return
+        from sshpilot.api.models.pre_command import PreCommandLaunchKind
+
+        # The external terminal runs the same ``ssh`` the in-app terminal
+        # would, so it reports as a terminal launch. Its scope is the
+        # connection: there is no session id, because the daemon never owns
+        # the child.
+        runner.run(
+            connection_id,
+            scope_id=str(connection_id),
+            kind=PreCommandLaunchKind.TERMINAL,
         )
 
     def _handle_get_launch_command(

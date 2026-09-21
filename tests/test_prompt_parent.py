@@ -126,3 +126,208 @@ def test_associate_handles_none_parent():
     window = _RegisteringFakeWin()
     associate_window_with_parent_application(window, parent=None)
     assert window._application is None
+
+
+# --- install_toast_overlay ---------------------------------------------------
+#
+# A secondary window that can start a launch needs somewhere to show a message
+# the daemon sends while that launch runs. Without one, an alert routed to it
+# falls back to the main window -- which is behind it, where nobody looks.
+
+
+class FakeOverlay:
+    def __init__(self):
+        self.child = None
+
+    def set_child(self, child):
+        self.child = child
+
+
+class FakeContentWindow:
+    def __init__(self, content="content"):
+        self._content = content
+        self.toast_overlay = None
+
+    def get_content(self):
+        return self._content
+
+    def set_content(self, content):
+        self._content = content
+
+
+def test_the_window_gets_an_overlay_wrapping_its_existing_content(monkeypatch):
+    from sshpilot import window_dialogs
+
+    overlay = FakeOverlay()
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", lambda: overlay)
+    window = FakeContentWindow("original")
+
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is overlay
+    assert overlay.child == "original", "the window's content must be kept"
+    assert window._content is overlay
+
+
+def test_installing_twice_keeps_the_first_overlay(monkeypatch):
+    """Re-running must not nest overlays or orphan the window's content."""
+
+    from sshpilot import window_dialogs
+
+    first = FakeOverlay()
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", lambda: first)
+    window = FakeContentWindow("original")
+    window_dialogs.install_toast_overlay(window)
+
+    second = FakeOverlay()
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", lambda: second)
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is first
+    assert second.child is None
+
+
+def test_a_window_with_no_content_is_left_alone():
+    from sshpilot import window_dialogs
+
+    window = FakeContentWindow(None)
+
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is None
+
+
+def test_a_failure_leaves_the_window_openable(monkeypatch):
+    """A missing toast surface must never stop a window from opening."""
+
+    from sshpilot import window_dialogs
+
+    def _explode():
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr(window_dialogs.Adw, "ToastOverlay", _explode)
+    window = FakeContentWindow("original")
+
+    window_dialogs.install_toast_overlay(window)
+
+    assert window.toast_overlay is None
+    assert window._content == "original"
+
+
+# --- bind_pre_command_status -------------------------------------------------
+#
+# Three surfaces claim a launch scope this way -- a terminal tab, the SCP
+# transfer dialog and the copy-key window. The binding is best effort by
+# design: it drives a progress line only, and the failure alert is raised from
+# the application regardless, so nothing here may raise into a surface's
+# start-up path.
+
+
+class FakeApp:
+    def __init__(self):
+        self.registered = {}
+        self.output_sinks = {}
+        self.unregistered = []
+
+    def register_pre_command_status(self, scope_id, setter, *, on_output=None):
+        self.registered[scope_id] = setter
+        self.output_sinks[scope_id] = on_output
+
+    def unregister_pre_command_status(self, scope_id):
+        self.unregistered.append(scope_id)
+
+
+class BareApp:
+    """An application without the registry -- a plugin host, or a test."""
+
+
+def _with_app(monkeypatch, app):
+    from sshpilot import window_dialogs
+
+    monkeypatch.setattr(
+        window_dialogs.Gtk.Application, "get_default", staticmethod(lambda: app)
+    )
+    return window_dialogs
+
+
+def test_binding_registers_the_setter_and_unbinding_releases_it(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+    setter = lambda _text: None
+
+    unbind = window_dialogs.bind_pre_command_status("scope-1", setter)
+
+    assert app.registered == {"scope-1": setter}
+    unbind()
+    assert app.unregistered == ["scope-1"]
+
+
+def test_a_scope_id_is_always_bound_as_text(monkeypatch):
+    """Scope ids arrive as SessionId/TransferId/OperationId, not str."""
+
+    class _Id(str):
+        pass
+
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    window_dialogs.bind_pre_command_status(_Id("scope-2"), lambda _t: None)
+
+    assert list(app.registered) == ["scope-2"]
+    assert type(next(iter(app.registered))) is str
+
+
+def test_an_empty_scope_or_setter_binds_nothing(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    window_dialogs.bind_pre_command_status("", lambda _t: None)()
+    window_dialogs.bind_pre_command_status("scope-3", None)()
+
+    assert app.registered == {}
+    assert app.unregistered == []
+
+
+def test_an_application_that_cannot_register_is_tolerated(monkeypatch):
+    """Plugin hosts and tests run without the full application."""
+
+    app = BareApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    unbind = window_dialogs.bind_pre_command_status("scope-4", lambda _t: None)
+
+    unbind()  # must not raise
+
+
+def test_unbinding_twice_is_safe(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    unbind = window_dialogs.bind_pre_command_status("scope-5", lambda _t: None)
+    unbind()
+    unbind()
+
+    assert app.unregistered == ["scope-5", "scope-5"]
+
+
+def test_an_output_sink_is_passed_through_when_given(monkeypatch):
+    """A terminal tab can print a failed command's words; other surfaces
+    register no sink and their users read the log viewer."""
+
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+    sink = lambda _text: None
+
+    window_dialogs.bind_pre_command_status("scope-6", lambda _t: None, on_output=sink)
+
+    assert app.output_sinks == {"scope-6": sink}
+
+
+def test_no_output_sink_is_the_default(monkeypatch):
+    app = FakeApp()
+    window_dialogs = _with_app(monkeypatch, app)
+
+    window_dialogs.bind_pre_command_status("scope-7", lambda _t: None)
+
+    assert app.output_sinks == {"scope-7": None}
+

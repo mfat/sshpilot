@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import AbstractSet, Any, Dict, Iterable, Mapping, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    AbstractSet,
+    Any,
+    Dict,
+    Iterable,
+    Mapping,
+    Optional,
+    Union,
+)
 
 from .._safe_values import copy_transport_value
 from ..capabilities import Capabilities, Capability
@@ -529,6 +538,11 @@ _OPERATION_EVENT_TYPES = frozenset(
     }
 )
 _BROADCAST_EVENT_TYPES = frozenset({EventType.BROADCAST_OUTPUT})
+#: The launcher's pre-connection command step. Deliberately its own set
+#: rather than part of _CONNECTION_EVENT_TYPES: those all carry a
+#: ConnectionSummary, and connection_event_from_envelope would decode this
+#: payload as one.
+_PRE_COMMAND_EVENT_TYPES = frozenset({EventType.PRE_CONNECTION_COMMAND})
 _FORWARDED_EVENT_TYPES = (
     _CONNECTION_EVENT_TYPES
     | _SESSION_EVENT_TYPES
@@ -539,6 +553,7 @@ _FORWARDED_EVENT_TYPES = (
     | _DAEMON_EVENT_TYPES
     | _OPERATION_EVENT_TYPES
     | _BROADCAST_EVENT_TYPES
+    | _PRE_COMMAND_EVENT_TYPES
 )
 
 
@@ -596,6 +611,14 @@ def public_event_to_envelope(
         if type(event.payload) is not OperationSummary:
             raise TypeError("operation event payload must be OperationSummary")
         payload = operation_summary_to_wire(event.payload)
+    elif event.type in _PRE_COMMAND_EVENT_TYPES:
+        from ..models.pre_command import PreConnectionCommandNotice
+
+        if type(event.payload) is not PreConnectionCommandNotice:
+            raise TypeError(
+                "pre-connection command event payload is invalid"
+            )
+        payload = pre_connection_command_notice_to_wire(event.payload)
     elif event.type in _BROADCAST_EVENT_TYPES:
         from ..models.broadcast import BroadcastCommandOutput
 
@@ -711,6 +734,15 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             payload=operation_summary,
             sequence=envelope.sequence,
             connection_id=operation_summary.connection_id,
+        )
+    if event_type in _PRE_COMMAND_EVENT_TYPES:
+        notice = pre_connection_command_notice_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=notice,
+            sequence=envelope.sequence,
+            connection_id=notice.connection_id,
+            session_id=SessionId(notice.scope_id),
         )
     if event_type in _BROADCAST_EVENT_TYPES:
         from ..models.broadcast import BroadcastCommandOutput
@@ -5033,6 +5065,168 @@ def cancel_transfer_request_from_wire(value: Any) -> CancelTransferRequest:
         context="cancel transfer request",
     )
     return CancelTransferRequest(transfer_id=_transfer_id(data["transfer_id"], "transfer id"))
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..models.pre_command import (
+        PreCommandTestResult,
+        PreConnectionCommandNotice,
+    )
+
+
+def pre_command_test_result_to_wire(result: "PreCommandTestResult") -> Dict[str, Any]:
+    """Encode one Test-button result.
+
+    This one does carry output: the user asked to see it, and a knock that
+    failed is usually only diagnosable from what the tool printed. It is
+    bounded by the model, and it is never logged above DEBUG.
+    """
+    from ..models.pre_command import PreCommandTestResult
+
+    if type(result) is not PreCommandTestResult:
+        raise TypeError("pre-connection command test result is required")
+    return {
+        "reason": result.reason.value,
+        "stage": result.stage.value,
+        "exit_code": result.exit_code,
+        "duration_ms": result.duration_ms,
+        "output": result.output,
+    }
+
+
+def pre_command_test_result_from_wire(value: Any) -> "PreCommandTestResult":
+    from ..models.pre_command import (
+        PreCommandReason,
+        PreCommandStage,
+        PreCommandTestResult,
+    )
+
+    data = _strict_fields(
+        value,
+        required={"reason", "stage", "exit_code", "duration_ms", "output"},
+        context="pre-connection command test result",
+    )
+    try:
+        reason = PreCommandReason(data["reason"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command test result contains an unknown reason"
+        ) from None
+    try:
+        stage = PreCommandStage(data["stage"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command test result contains an unknown stage"
+        ) from None
+    exit_code = data["exit_code"]
+    if exit_code is not None:
+        exit_code = _integer(exit_code, "pre-connection command test exit code")
+    return PreCommandTestResult(
+        reason=reason,
+        stage=stage,
+        exit_code=exit_code,
+        duration_ms=_integer(data["duration_ms"], "pre-connection command test duration"),
+        output=_text(data["output"], "pre-connection command test output", allow_empty=True),
+    )
+
+
+def pre_connection_command_notice_to_wire(
+    notice: "PreConnectionCommandNotice",
+) -> Dict[str, Any]:
+    """Encode one pre-connection command notice.
+
+    Codes and numbers only. The command text, its output and any rendered
+    sentence stay in the daemon: the command line can embed a token or a
+    password, and the wording belongs to the frontend, which owns translation.
+    """
+    from ..models.pre_command import PreConnectionCommandNotice
+
+    if type(notice) is not PreConnectionCommandNotice:
+        raise TypeError("pre-connection command notice is required")
+    return {
+        "connection_id": notice.connection_id,
+        "scope_id": notice.scope_id,
+        "kind": notice.kind.value,
+        "phase": notice.phase.value,
+        "reason": notice.reason.value,
+        "stage": notice.stage.value,
+        "exit_code": notice.exit_code,
+        "duration_ms": notice.duration_ms,
+        "aborted": notice.aborted,
+        "output": notice.output,
+    }
+
+
+def pre_connection_command_notice_from_wire(
+    value: Any,
+) -> "PreConnectionCommandNotice":
+    from ..models.pre_command import (
+        PreCommandLaunchKind,
+        PreCommandPhase,
+        PreCommandReason,
+        PreCommandStage,
+        PreConnectionCommandNotice,
+    )
+
+    data = _strict_fields(
+        value,
+        required={
+            "connection_id",
+            "scope_id",
+            "kind",
+            "phase",
+            "reason",
+            "stage",
+            "exit_code",
+            "duration_ms",
+            "aborted",
+            "output",
+        },
+        context="pre-connection command notice",
+    )
+    try:
+        kind = PreCommandLaunchKind(data["kind"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown launch kind"
+        ) from None
+    try:
+        phase = PreCommandPhase(data["phase"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown phase"
+        ) from None
+    try:
+        reason = PreCommandReason(data["reason"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown reason"
+        ) from None
+    try:
+        stage = PreCommandStage(data["stage"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "pre-connection command notice contains an unknown stage"
+        ) from None
+    exit_code = data["exit_code"]
+    if exit_code is not None:
+        exit_code = _integer(exit_code, "pre-connection command exit code")
+    return PreConnectionCommandNotice(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "pre-connection command connection id")
+        ),
+        scope_id=_identifier(data["scope_id"], "pre-connection command scope id"),
+        kind=kind,
+        phase=phase,
+        reason=reason,
+        stage=stage,
+        exit_code=exit_code,
+        duration_ms=_integer(data["duration_ms"], "pre-connection command duration"),
+        aborted=_boolean(data["aborted"], "pre-connection command abort flag"),
+        output=_text(
+            data["output"], "pre-connection command output", allow_empty=True
+        ),
+    )
 
 
 def forward_summary_to_wire(summary: ForwardSummary) -> Dict[str, Any]:

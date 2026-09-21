@@ -57,8 +57,17 @@ from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMix
 from .plugins.registry import protocol_registry
 
 from gettext import gettext as _
+from .i18n import N_
+from .accessibility import set_accessible_name
 
 logger = logging.getLogger(__name__)
+
+#: How far the fields under each pre-connection radio are inset, on both
+#: sides. Left so a field sits under its radio's label rather than its circle,
+#: which is what marks it as belonging to that choice; right by the same
+#: amount, so the field is evenly placed in the row instead of running flush
+#: into the card edge while the left side is indented.
+_PRE_COMMAND_INDENT = 16
 
 
 def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
@@ -1962,7 +1971,8 @@ class ConnectionDialog(
             forwarding_page.append(group)
 
         commands_page = _page_box()
-        commands_page.append(self.build_commands_group())
+        for group in self.build_commands_groups():
+            commands_page.append(group)
 
         advanced_page = _page_box()
         self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager, parent_dialog=self)
@@ -3068,7 +3078,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "identity_agent": self._selected_identity_agent(),
             "pkcs11_provider": text("pkcs11_provider_row"),
             "security_key_provider": text("security_key_provider_row"),
-            "pre_command": text("pre_command_row"),
             "local_command": text("local_command_row"),
             "remote_command": text("remote_command_row"),
             "extra_ssh_config": getattr(self.advanced_tab, "get_extra_ssh_config", lambda: "")() if hasattr(self, "advanced_tab") else "",
@@ -3381,15 +3390,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         return ''
                     return val
 
-                if hasattr(self, 'pre_command_row'):
-                    pre_cmd_val = ''
-                    try:
-                        pre_cmd_val = getattr(self.connection, 'pre_command', '') or (
-                            self.connection.data.get('pre_command') if hasattr(self.connection, 'data') else ''
-                        ) or ''
-                    except Exception:
-                        pre_cmd_val = ''
-                    self.pre_command_row.set_text(_display_safe(pre_cmd_val))
                 if hasattr(self, 'local_command_row'):
                     local_cmd_val = ''
                     try:
@@ -4063,23 +4063,222 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             x11_group,
         ]
 
-    def build_commands_group(self):
-        """Build PreferencesGroup for configuring connection commands"""
+    #: Names the choice, because the whole group is one either/or and a user
+    #: who does not see that will look for the interaction between the two.
+    _PRE_COMMAND_HELP = N_(
+        "Opens the way to the host before SSH Pilot connects. Choose one."
+    )
+    #: Carries the knock syntax: an Adw.EntryRow has no subtitle to put it in,
+    #: and the syntax is the one thing a user cannot guess.
+    _KNOCK_HELP = N_(
+        "Ports to reach for, in order, such as 7000,8000,9000. Add :udp to a "
+        "port for UDP. Sent by SSH Pilot itself, so no knock tool has to be "
+        "installed."
+    )
+    _COMMAND_HELP = N_(
+        "Anything else that has to run first — fwknop, a VPN dial-up, or a "
+        "knock and a VPN together in one line."
+    )
+    _SSH_COMMANDS_HELP = N_(
+        "Sent to OpenSSH.\n\n"
+        "• Local Command: runs on your machine after connecting (requires PermitLocalCommand).\n"
+        "• Remote Command: runs on the host (RequestTTY is configured separately)."
+    )
+    #: Shown under the command box. These are expanded before the command runs,
+    #: so a knock does not have to hardcode a hostname that later changes.
+    _PRE_COMMAND_TOKENS = N_("%h host · %p port · %u user")
 
-        commands_group = Adw.PreferencesGroup(
-            title=_("Connection Commands"),
-            description=_(
-                "Run a command automatically on connect.\n\n"
-                "• Pre-Connection Command: Runs locally before connecting.\n"
-                "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
-                "• Remote Command: Runs on the remote host (RequestTTY is configured separately)."
-            )
+    def build_commands_groups(self):
+        """Two groups: what SSH Pilot runs first, and what OpenSSH is told.
+
+        They were one group, which put a port knock next to ``LocalCommand``
+        and ``RemoteCommand`` as though all three were the same kind of
+        setting. Only the last two are OpenSSH directives; the first is an
+        action this app takes before OpenSSH is involved at all, and it is the
+        only one that applies to connections that are not SSH.
+        """
+
+        pre_group = Adw.PreferencesGroup(
+            # "and", not "&": Adw.PreferencesGroup renders its title as
+            # Pango markup, and a bare ampersand makes the parse fail, so
+            # GTK drops the whole title silently.
+            title=_("Port Knocking and Pre-Connect"),
+            description=_(self._PRE_COMMAND_HELP),
         )
-        self.pre_command_row = Adw.EntryRow(title=_("Pre-Connection Command"))
-        try:
-            self.pre_command_row.set_subtitle(_("Executed locally before connecting"))
-        except Exception:
-            pass
+        self._pre_command_group = pre_group
+
+        # The two halves are alternatives, so each is introduced by a radio
+        # rather than simply stacked: stacked fields read as "fill in both",
+        # which raises an ordering question only the command's users have.
+        # Knock first because it is the simple case and what most people
+        # opening this page came for.
+        self.pre_command_knock_radio = Gtk.CheckButton(
+            label=_("Port knock sequence")
+        )
+        self.pre_command_knock_radio.connect(
+            "toggled", self._on_pre_command_mode_toggled
+        )
+        knock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        knock_box.set_margin_top(6)
+        knock_box.set_margin_bottom(6)
+        knock_box.append(self.pre_command_knock_radio)
+
+        self.pre_command_knock_row = Gtk.Entry()
+        self.pre_command_knock_row.set_placeholder_text(_("7000,8000,9000"))
+        self.pre_command_knock_row.set_hexpand(True)
+        # Indented under its radio, so it plainly belongs to that choice, and
+        # inset by the same amount on the right so the field sits evenly in
+        # the row rather than running flush into the card edge.
+        self.pre_command_knock_row.set_margin_start(_PRE_COMMAND_INDENT)
+        self.pre_command_knock_row.set_margin_end(_PRE_COMMAND_INDENT)
+        set_accessible_name(self.pre_command_knock_row, _("Port knock sequence"))
+        self.pre_command_knock_row.connect(
+            "changed", self._on_pre_command_knock_changed
+        )
+        knock_box.append(self.pre_command_knock_row)
+
+        knock_hint = Gtk.Label(label=_(self._KNOCK_HELP), xalign=0)
+        knock_hint.add_css_class("dim-label")
+        knock_hint.add_css_class("caption")
+        knock_hint.set_wrap(True)
+        knock_hint.set_margin_start(_PRE_COMMAND_INDENT)
+        knock_hint.set_margin_end(_PRE_COMMAND_INDENT)
+        self._pre_command_knock_hint = knock_hint
+        knock_box.append(knock_hint)
+
+        knock_row = Adw.PreferencesRow()
+        knock_row.set_activatable(False)
+        knock_row.set_child(knock_box)
+        pre_group.add(knock_row)
+
+        self.pre_command_view = Gtk.TextView()
+        self.pre_command_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.pre_command_view.set_monospace(True)
+        self.pre_command_view.set_top_margin(10)
+        self.pre_command_view.set_bottom_margin(10)
+        self.pre_command_view.set_left_margin(12)
+        self.pre_command_view.set_right_margin(12)
+        self.pre_command_view.set_size_request(-1, 92)
+        self.pre_command_view.set_accessible_role(Gtk.AccessibleRole.TEXT_BOX)
+
+        # A port sequence has its own field now, so suggesting the knock tool
+        # here would point people at the one path that needs a binary
+        # installed -- and that is missing in the Flatpak.
+        self._pre_command_placeholder = Gtk.Label(
+            label=_("fwknop -n %h"),
+            xalign=0,
+            yalign=0,
+        )
+        self._pre_command_placeholder.add_css_class("dim-label")
+        self._pre_command_placeholder.set_margin_start(12)
+        self._pre_command_placeholder.set_margin_top(10)
+        self._pre_command_placeholder.set_can_target(False)
+        overlay = Gtk.Overlay()
+        overlay.set_child(self.pre_command_view)
+        overlay.add_overlay(self._pre_command_placeholder)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_child(overlay)
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(-1, 92)
+        scrolled.add_css_class("card")
+
+        # Its radio is the label, which also puts the name outside the box
+        # rather than sitting inside the card looking like part of the field.
+        self.pre_command_command_radio = Gtk.CheckButton(label=_("Run a command"))
+        self.pre_command_command_radio.set_group(self.pre_command_knock_radio)
+        self.pre_command_command_radio.connect(
+            "toggled", self._on_pre_command_mode_toggled
+        )
+        set_accessible_name(self.pre_command_view, _("Command"))
+
+        command_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        command_box.set_margin_top(6)
+        command_box.set_margin_bottom(6)
+        command_box.append(self.pre_command_command_radio)
+        scrolled.set_margin_start(_PRE_COMMAND_INDENT)
+        scrolled.set_margin_end(_PRE_COMMAND_INDENT)
+        command_box.append(scrolled)
+
+        # The hint and the Test row sit with the command, not under the
+        # options: the result answers a question about the text directly
+        # above it, and at the bottom of the group it was far enough away to
+        # read as unrelated.
+        self.pre_command_test_button = Gtk.Button(label=_("Test"))
+        self.pre_command_test_button.set_valign(Gtk.Align.CENTER)
+        self.pre_command_test_button.set_halign(Gtk.Align.END)
+        self.pre_command_test_button.connect("clicked", self._on_pre_command_test)
+
+        self._pre_command_result = Gtk.Label(xalign=0)
+        self._pre_command_result.add_css_class("dim-label")
+        self._pre_command_result.add_css_class("caption")
+        self._pre_command_result.set_wrap(True)
+        self._pre_command_result.set_hexpand(True)
+        self._pre_command_result.set_valign(Gtk.Align.CENTER)
+        self._pre_command_result.set_margin_start(_PRE_COMMAND_INDENT)
+
+        hint = Gtk.Label(label=_(self._PRE_COMMAND_TOKENS), xalign=0)
+        hint.add_css_class("dim-label")
+        hint.add_css_class("caption")
+        hint.set_hexpand(True)
+        # Both line up with the command text above rather than the group
+        # edge, so the answer reads as belonging to the box it is under.
+        hint.set_margin_start(_PRE_COMMAND_INDENT)
+        hint.set_margin_end(_PRE_COMMAND_INDENT)
+
+        # The tokens belong to the command, so they stay with it and grey out
+        # with it.
+        self._pre_command_hint = hint
+        command_box.append(hint)
+
+        command_row = Adw.PreferencesRow()
+        command_row.set_activatable(False)
+        command_row.set_child(command_box)
+        pre_group.add(command_row)
+
+        # Test gets its own band rather than living inside the command
+        # section. It tries whichever half is selected, so sitting in the
+        # greyed-out half -- still enabled -- read as a bug.
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        action_row.set_valign(Gtk.Align.CENTER)
+        action_row.set_margin_top(6)
+        action_row.set_margin_bottom(6)
+        # Test lines up with the right edge of the fields it tries.
+        action_row.set_margin_end(_PRE_COMMAND_INDENT)
+        action_row.append(self._pre_command_result)
+        action_row.append(self.pre_command_test_button)
+        test_row = Adw.PreferencesRow()
+        test_row.set_activatable(False)
+        test_row.set_child(action_row)
+        pre_group.add(test_row)
+
+        buffer = self.pre_command_view.get_buffer()
+        buffer.connect("changed", self._on_pre_command_changed)
+        self._on_pre_command_changed(buffer)
+
+        self.pre_command_timeout_row = Adw.SpinRow.new_with_range(0, 3600, 5)
+        self.pre_command_timeout_row.set_title(_("Timeout"))
+        self.pre_command_timeout_row.set_subtitle(
+            _("Seconds before the command is stopped. 0 uses the app default.")
+        )
+        self.pre_command_timeout_row.set_value(0)
+        pre_group.add(self.pre_command_timeout_row)
+
+        self.pre_command_abort_row = Adw.SwitchRow()
+        self.pre_command_abort_row.set_title(
+            _("Do not connect if pre-connect command fails")
+        )
+        self.pre_command_abort_row.set_subtitle(
+            _("Off: SSH Pilot warns and connects anyway, so the SSH error is "
+              "the one you see.")
+        )
+        self.pre_command_abort_row.set_active(False)
+        pre_group.add(self.pre_command_abort_row)
+
+        ssh_group = Adw.PreferencesGroup(
+            title=_("SSH Commands"),
+            description=_(self._SSH_COMMANDS_HELP),
+        )
+        self._ssh_commands_group = ssh_group
         self.local_command_row = Adw.EntryRow(title=_("Local Command"))
         try:
             self.local_command_row.set_subtitle(_("Executed locally after connect"))
@@ -4087,22 +4286,258 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             pass
         self.remote_command_row = Adw.EntryRow(title=_("Remote Command"))
         try:
-            self.remote_command_row.set_subtitle(_("Executed on remote; TTY requested for interactivity"))
+            self.remote_command_row.set_subtitle(
+                _("Executed on remote; TTY requested for interactivity")
+            )
         except Exception:
             pass
-        commands_group.add(self.pre_command_row)
-        commands_group.add(self.local_command_row)
-        commands_group.add(self.remote_command_row)
+        ssh_group.add(self.local_command_row)
+        ssh_group.add(self.remote_command_row)
 
-        return commands_group
-    
+        return [pre_group, ssh_group]
+
+    def _on_pre_command_changed(self, buffer):
+        """Track the empty state, and drop a result the edit has invalidated.
+
+        A "Ran successfully" sitting beside a command that has since been
+        changed answers a question nobody asked any more, and it also brings
+        back the token hint it replaced.
+        """
+        placeholder = getattr(self, "_pre_command_placeholder", None)
+        if placeholder is not None:
+            try:
+                placeholder.set_visible(buffer.get_char_count() == 0)
+            except Exception:
+                logger.debug(
+                    "Could not update the pre-command placeholder", exc_info=True
+                )
+        if getattr(self, "_loading_connection_data", False):
+            return
+        self._show_pre_command_result("", ok=None)
+
+    def get_pre_command_text(self) -> str:
+        view = getattr(self, "pre_command_view", None)
+        if view is None:
+            return ""
+        try:
+            buffer = view.get_buffer()
+            start, end = buffer.get_bounds()
+            return buffer.get_text(start, end, False).strip()
+        except Exception:
+            logger.debug("Could not read the pre-command text", exc_info=True)
+            return ""
+
+    def set_pre_command_text(self, value) -> None:
+        view = getattr(self, "pre_command_view", None)
+        if view is None:
+            return
+        try:
+            view.get_buffer().set_text(value if isinstance(value, str) else "")
+        except Exception:
+            logger.debug("Could not set the pre-command text", exc_info=True)
+
+    def _on_pre_command_mode_toggled(self, _radio) -> None:
+        """Grey out the half that is not live, without clearing it.
+
+        Both halves stay saved, so switching to compare the two and switching
+        back does not destroy what was typed. Only the selected one runs.
+        """
+        self._apply_pre_command_mode()
+
+    def _apply_pre_command_mode(self) -> None:
+        knocking = self.get_pre_command_mode_is_knock()
+        for widget, live in (
+            (getattr(self, 'pre_command_knock_row', None), knocking),
+            (getattr(self, '_pre_command_knock_hint', None), knocking),
+            (getattr(self, 'pre_command_view', None), not knocking),
+            # The tokens and the timeout describe the command only, so they
+            # dim with it rather than sitting bright beside a dead field.
+            (getattr(self, '_pre_command_hint', None), not knocking),
+            (getattr(self, 'pre_command_timeout_row', None), not knocking),
+        ):
+            if widget is not None:
+                try:
+                    widget.set_sensitive(live)
+                except Exception:
+                    logger.debug("Could not set pre-command sensitivity", exc_info=True)
+        # A result from the other half would now be answering a question
+        # about a field the user just switched away from.
+        self._show_pre_command_result("", ok=None)
+
+    def get_pre_command_mode_is_knock(self) -> bool:
+        radio = getattr(self, 'pre_command_knock_radio', None)
+        if radio is None:
+            return True
+        try:
+            return bool(radio.get_active())
+        except Exception:
+            return True
+
+    def _on_pre_command_knock_changed(self, row) -> None:
+        """Mark a sequence that will not parse, while it can still be fixed.
+
+        The launcher is deliberately forgiving about a sequence it cannot
+        read -- refusing to connect over a typo helps nobody at that point --
+        so this is the only place the mistake can be caught. Pressing Test
+        gives the precise reason; this just says which field to look at.
+        """
+        from .api.models.pre_command import parse_knock_sequence
+
+        try:
+            text = (row.get_text() or "").strip()
+        except Exception:
+            return
+        valid = True
+        if text:
+            try:
+                parse_knock_sequence(text)
+            except ValueError:
+                valid = False
+        try:
+            if valid:
+                row.remove_css_class("error")
+            else:
+                row.add_css_class("error")
+        except Exception:
+            logger.debug("Could not mark the knock sequence field", exc_info=True)
+
+    def get_pre_command_knock_text(self) -> str:
+        row = getattr(self, 'pre_command_knock_row', None)
+        if row is None:
+            return ""
+        try:
+            return (row.get_text() or "").strip()
+        except Exception:
+            return ""
+
+    def _on_pre_command_test(self, _button) -> None:
+        """Run the command the user is looking at, and say what happened.
+
+        Through the daemon, not here: the frontend does not run this command
+        during a connection either, and a Test that took a different path
+        would not be testing the thing that actually runs.
+        """
+        from .gtk.pre_command_messages import format_pre_command_test
+
+        # Only the live half, because that is the only one that will run.
+        knocking = self.get_pre_command_mode_is_knock()
+        command = "" if knocking else self.get_pre_command_text()
+        knock = self.get_pre_command_knock_text() if knocking else ""
+        if not command and not knock:
+            self._show_pre_command_result(
+                _("Enter a knock sequence first.") if knocking
+                else _("Enter a command first."),
+                ok=False,
+            )
+            return
+        client = getattr(self.parent_window, 'client', None)
+        bridge = getattr(self.parent_window, 'client_bridge', None)
+        tester = getattr(client, 'test_pre_command', None)
+        if bridge is None or not callable(tester):
+            self._show_pre_command_result(
+                _("The background service is unavailable."), ok=False
+            )
+            return
+        try:
+            timeout = int(self.pre_command_timeout_row.get_value())
+        except Exception:
+            timeout = 0
+        # From the fields as they stand, not from what was last saved: Test is
+        # pressed mid-edit, and expanding %h to the stored hostname would test
+        # a command the user is in the middle of changing.
+        hostname = username = ""
+        port = 0
+        try:
+            hostname = (self.hostname_row.get_text() or "").strip()
+            username = (self.username_row.get_text() or "").strip()
+            port = int((self.port_row.get_text() or "0").strip() or 0)
+        except Exception:
+            logger.debug("Could not read the host fields for Test", exc_info=True)
+        self.pre_command_test_button.set_sensitive(False)
+        self._show_pre_command_result(_("Running…"), ok=None)
+
+        def _done(result):
+            self.pre_command_test_button.set_sensitive(True)
+            try:
+                text, ok = format_pre_command_test(result)
+            except ValueError:
+                text, ok = _("The test could not be interpreted."), False
+            self._show_pre_command_result(text, ok=ok)
+
+        def _failed(error):
+            self.pre_command_test_button.set_sensitive(True)
+            self._show_pre_command_result(str(error), ok=False)
+
+        try:
+            bridge.submit(
+                lambda: tester(
+                    command,
+                    timeout,
+                    knock=knock,
+                    hostname=hostname,
+                    port=port,
+                    username=username,
+                ),
+                on_success=_done,
+                on_error=_failed,
+            )
+        except Exception as exc:
+            self.pre_command_test_button.set_sensitive(True)
+            self._show_pre_command_result(str(exc), ok=False)
+
+    def _show_pre_command_result(self, text: str, *, ok) -> None:
+        label = getattr(self, '_pre_command_result', None)
+        if label is None:
+            return
+        try:
+            label.set_text(text)
+            for css in ('success', 'error', 'dim-label'):
+                label.remove_css_class(css)
+            label.add_css_class(
+                'dim-label' if ok is None else ('success' if ok else 'error')
+            )
+        except Exception:
+            logger.debug("Could not show the pre-command test result", exc_info=True)
+
+    def _legacy_pre_command(self) -> str:
+        """The pre-connection command from before it moved to metadata."""
+        try:
+            data = getattr(self.connection, 'data', None)
+            value = getattr(self.connection, 'pre_command', '') or (
+                data.get('pre_command') if isinstance(data, dict) else ''
+            )
+            return value.strip() if isinstance(value, str) else ''
+        except Exception:
+            return ''
+
+    def _connection_metadata(self):
+        """This connection's stored app metadata, or ``{}``."""
+        try:
+            store = getattr(self.parent_window, 'connection_manager', None)
+            nickname = getattr(self.connection, 'nickname', '').strip()
+            if store and nickname:
+                return store.get_metadata(nickname) or {}
+        except Exception:
+            logger.debug("Connection metadata unavailable", exc_info=True)
+        return {}
+
     def on_cancel_clicked(self, button):
         """Handle cancel button click"""
         self.close()
     
     # --- Protocol selector / plugin protocol support ----------------------
 
-    _SSH_ONLY_PAGES = ("authentication", "forwarding", "commands", "advanced", "wol")
+    # "commands" is not here: every protocol that dials out can need a
+    # pre-connection command (a port knock, a VPN dial-up), including the
+    # plugin ones -- Docker over ``ssh://`` and Mosh both open a real SSH
+    # connection. The two OpenSSH-directive rows on that page are hidden
+    # per protocol instead; see _apply_protocol_to_ui.
+    _SSH_ONLY_PAGES = ("authentication", "forwarding", "advanced", "wol")
+    #: Groups on the Commands page that are OpenSSH directives, so they mean
+    #: nothing to a protocol sshPilot does not build an ssh command for. The
+    #: pre-connection group stays: Docker over ``ssh://`` and Mosh open real
+    #: SSH connections, so they can sit behind a port knock too.
+    _SSH_ONLY_GROUPS = ("_ssh_commands_group",)
 
     def _selected_protocol_backend(self):
         """The ProtocolBackend chosen in the selector (None -> SSH default)."""
@@ -4199,6 +4634,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
         for page_name in self._SSH_ONLY_PAGES:
             self._set_page_visible(page_name, is_ssh)
+        for group_name in self._SSH_ONLY_GROUPS:
+            group = getattr(self, group_name, None)
+            if group is not None:
+                try:
+                    group.set_visible(is_ssh)
+                except Exception:
+                    pass
         # A single remaining page (non-SSH protocols) shouldn't show a lone tab.
         self._update_switcher_visibility()
 
@@ -4342,7 +4784,54 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         return ordered_groups
 
     def _load_shared_meta_rows(self):
-        """Load protocol-agnostic app metadata (Wake-on-LAN, tags) into rows."""
+        """Load protocol-agnostic app metadata into rows.
+
+        Called on both the SSH and the plugin-protocol branches, which is why
+        the pre-connection command reads from here: one path for every
+        protocol, rather than the two this used to need.
+        """
+        if hasattr(self, 'pre_command_view'):
+            try:
+                meta = self._connection_metadata()
+                command = meta.get('pre_command')
+                if not (isinstance(command, str) and command.strip()):
+                    # A connection written before this moved to metadata still
+                    # carries it from the old config comment. Showing it means
+                    # the editor does not look empty, and saving moves it --
+                    # which is the whole migration.
+                    command = self._legacy_pre_command()
+                self.set_pre_command_text(command or '')
+                knock = meta.get('pre_command_knock')
+                self.pre_command_knock_row.set_text(
+                    knock.strip() if isinstance(knock, str) else ''
+                )
+                # Derived by the model, which knows that a connection written
+                # before the mode existed and carrying a command is in
+                # command mode -- reading those as knock mode would silently
+                # stop running something the user relies on.
+                from .api.models.pre_command import (
+                    PreCommandMode,
+                    PreCommandSettings,
+                )
+
+                stored = PreCommandSettings.from_metadata(
+                    {**meta, 'pre_command': command or ''}
+                )
+                if stored.mode is PreCommandMode.KNOCK:
+                    self.pre_command_knock_radio.set_active(True)
+                else:
+                    self.pre_command_command_radio.set_active(True)
+                self._apply_pre_command_mode()
+                timeout = meta.get('pre_command_timeout')
+                self.pre_command_timeout_row.set_value(
+                    timeout if isinstance(timeout, int) and timeout >= 0 else 0
+                )
+                self.pre_command_abort_row.set_active(
+                    meta.get('pre_command_abort') is True
+                )
+            except Exception as e:
+                logger.debug("Load pre-connection meta: %s", e)
+
         if hasattr(self, 'wol_mac_row'):
             try:
                 store = getattr(self.parent_window, 'connection_manager', None)
@@ -4468,10 +4957,33 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # asynchronously (or already did synchronously).
 
     def _collect_connection_meta(self):
-        """Collect Wake-on-LAN and tags metadata (protocol-agnostic app meta)
-        for the save payload; the window persists it only after the config
-        write succeeds."""
+        """Collect Wake-on-LAN, tags and pre-connection metadata (protocol-
+        agnostic app meta) for the save payload; the window persists it only
+        after the config write succeeds."""
         meta = {}
+        # The pre-connection command belongs here rather than in the SSH
+        # config: it is an SSH Pilot action, it applies to every protocol, and
+        # metadata is JSON, so a multi-line command needs no escaping scheme.
+        if hasattr(self, 'pre_command_view'):
+            # Both halves are stored even though one runs, so switching back
+            # does not lose what was typed. The mode says which is live.
+            from .api.models.pre_command import PreCommandMode
+
+            meta['pre_command'] = self.get_pre_command_text()
+            meta['pre_command_knock'] = self.get_pre_command_knock_text()
+            meta['pre_command_mode'] = (
+                PreCommandMode.KNOCK if self.get_pre_command_mode_is_knock()
+                else PreCommandMode.COMMAND
+            ).value
+            try:
+                meta['pre_command_timeout'] = int(
+                    self.pre_command_timeout_row.get_value()
+                )
+            except Exception:
+                meta['pre_command_timeout'] = 0
+            meta['pre_command_abort'] = bool(
+                self.pre_command_abort_row.get_active()
+            )
         if hasattr(self, 'wol_mac_row'):
             meta['wol_mac'] = (self.wol_mac_row.get_text() or '').strip()
             meta['wol_broadcast_ip'] = (self.wol_broadcast_row.get_text() or '').strip()
@@ -4610,7 +5122,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             **self._selected_forward_agent_fields(),
 
             'forwarding_rules': forwarding_rules,
-            'pre_command': (self.pre_command_row.get_text() if hasattr(self, 'pre_command_row') else ''),
+            # Always empty, never read back: the pre-connection command is
+            # metadata now, and sending '' here is what finally removes a
+            # leftover ``# sshpilot:PreCommand`` comment from a config
+            # written by an older build. A save that changes nothing else
+            # would not rewrite the Host block at all, so the stale line
+            # would otherwise outlive every edit the user makes.
+            'pre_command': '',
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,

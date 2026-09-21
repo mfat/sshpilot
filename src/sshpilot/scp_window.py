@@ -20,6 +20,7 @@ from .connection_display import (
 )
 from .platform_utils import is_flatpak
 from .shortcut_utils import install_esc_to_close
+from .window_dialogs import bind_pre_command_status, install_toast_overlay
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.scp_failure_messages import format_scp_failure
 from .file_manager.format_utils import safe_display_text
@@ -182,6 +183,10 @@ class ScpDownloadWindow(Adw.Window):
         super().__init__()
         self.set_transient_for(parent)
         install_esc_to_close(self)
+        # Browsing the remote host starts a launch, so a pre-connection
+        # command can run while this window is in front. Give it somewhere to
+        # say so, instead of alerting on the main window behind it.
+        install_toast_overlay(self)
         self.window_title.set_subtitle(subtitle)
 
     @Gtk.Template.Callback()
@@ -213,6 +218,34 @@ class ScpTransferDialog(Adw.Dialog):
     @Gtk.Template.Callback()
     def _on_close(self, _button):
         self.close()
+
+
+def make_pre_command_status_setter(label, idle_text):
+    """A setter that shows the pre-connection command line in a status label.
+
+    Only ever clears text it wrote itself. A transfer summary can land while
+    the command is still running, and the summary is the authority -- this is
+    filling the gap before the first one arrives, so it must not overwrite a
+    real update on the way out.
+    """
+    shown = {"text": None}
+
+    def _set(text):
+        value = text.strip() if isinstance(text, str) else ""
+        if value:
+            shown["text"] = value
+            label.set_text(value)
+            return
+        if shown["text"] is None:
+            return
+        was = shown["text"]
+        shown["text"] = None
+        # Anything else in the label is a real update that arrived while the
+        # command ran; leave it alone.
+        if label.get_text() == was:
+            label.set_text(idle_text)
+
+    return _set
 
 
 class ScpWindowController:
@@ -1257,6 +1290,7 @@ class ScpWindowController:
         to_label.set_tooltip_text(initial_destination)
 
         transfer_id = {"value": None}
+        unbind_pre_command = {"value": (lambda: None)}
         closed = {"value": False}
         cancel_requested = {"value": False}
         event_subscription = {"value": None}
@@ -1394,15 +1428,27 @@ class ScpWindowController:
         def finish_close(*_args):
             closed["value"] = True
             stop_observing()
+            unbind_pre_command["value"]()
             dispose_dialogs()
             cancel_active_transfer()
 
         dlg.connect("closed", finish_close)
         dlg.present(self.window)
-        status.set_text(_("Starting SCP transfer…"))
+        starting_text = _("Starting SCP transfer…")
+        status.set_text(starting_text)
+
+        show_pre_command_status = make_pre_command_status_setter(
+            status, starting_text
+        )
 
         def on_started(summary):
             transfer_id["value"] = summary.id
+            # The transfer id is the scope the daemon runs the pre-connection
+            # command under, so this is the earliest point the dialog can
+            # claim it. A notice that arrived first is replayed on bind.
+            unbind_pre_command["value"] = bind_pre_command_status(
+                str(summary.id), show_pre_command_status
+            )
             dialogs = dialogs_holder["value"]
             if dialogs is not None:
                 # Bind the presenter to the transfer's public ID (the one

@@ -254,6 +254,14 @@ if TYPE_CHECKING:
         HostCommandResult,
         HostCommandState,
     )
+    from .pre_command import (
+        PreCommandLaunchKind,
+        PreCommandMode,
+        PreCommandPhase,
+        PreCommandReason,
+        PreCommandStage,
+        PreConnectionCommandNotice,
+    )
     from .interactions import ExecutionInteractionMode
     from .sessions import (
         AttachSessionRequest,
@@ -492,6 +500,12 @@ __all__ = [
     "PluginSessionFailure",
     "PluginSessionFailureCode",
     "PortForwardSummary",
+    "PreCommandLaunchKind",
+    "PreCommandMode",
+    "PreCommandPhase",
+    "PreCommandReason",
+    "PreCommandStage",
+    "PreConnectionCommandNotice",
     "PresencePrompt",
     "PressureStall",
     "ProcessCounts",
@@ -773,6 +787,12 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "PluginArgument": ("operations", "PluginArgument"),
     "PluginOperationRequest": ("operations", "PluginOperationRequest"),
     "PluginOperationResult": ("operations", "PluginOperationResult"),
+    "PreCommandLaunchKind": ("pre_command", "PreCommandLaunchKind"),
+    "PreCommandMode": ("pre_command", "PreCommandMode"),
+    "PreCommandPhase": ("pre_command", "PreCommandPhase"),
+    "PreCommandReason": ("pre_command", "PreCommandReason"),
+    "PreCommandStage": ("pre_command", "PreCommandStage"),
+    "PreConnectionCommandNotice": ("pre_command", "PreConnectionCommandNotice"),
     "PluginSessionFailure": ("sessions", "PluginSessionFailure"),
     "PluginSessionFailureCode": ("sessions", "PluginSessionFailureCode"),
     "PortForwardSummary": ("operations", "PortForwardSummary"),

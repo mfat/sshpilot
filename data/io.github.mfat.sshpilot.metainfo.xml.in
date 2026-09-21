@@ -61,6 +61,11 @@
 
 
 
+    <release version="6.1.9" date="2026-09-21">
+      <description>
+        <p>New port-knocking/pre-connect command configuration dialog</p>
+      </description>
+    </release>
     <release version="6.1.8" date="2026-09-20">
       <description>
         <p>Fixed arrow keys not working on macOS after recent GTK update</p>

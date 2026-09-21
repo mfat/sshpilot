@@ -167,3 +167,63 @@ def test_plugin_payload_filter_matches_the_daemon_projection():
     assert request.plugin_data == extract_plugin_data("serial", payload)
     # display_name still rides its own core column rather than plugin_data.
     assert request.display_name == "Serial demo"
+
+
+# --- the pre-connection command is metadata, not configuration ----------------
+#
+# It briefly travelled in ``config_patch`` with a plugin-specific allowance.
+# It now lives in per-connection metadata, where Wake-on-LAN already is: one
+# protocol-agnostic path, so this layer needs no allowance at all.
+
+
+def test_a_plugin_save_carries_no_ssh_configuration():
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "dockerbox",
+            "hostname": "localhost",
+            "protocol": "docker",
+            "container": "web",
+            "pre_command": "knock host",
+            "x11_forwarding": True,
+        }
+    )
+
+    assert client.created.config_patch == {}
+
+
+def test_the_pre_connection_command_is_never_smuggled_into_plugin_data():
+    """It would then be handed to the protocol as a FieldSpec it never
+    declared, and saved back as one."""
+
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "dockerbox",
+            "hostname": "localhost",
+            "protocol": "docker",
+            "container": "web",
+            "pre_command": "knock host",
+            "pre_command_timeout": 5,
+            "pre_command_abort": True,
+        }
+    )
+
+    assert client.created.plugin_data == {"container": "web"}
+
+
+def test_an_ssh_save_still_carries_its_own_configuration():
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "sshbox",
+            "hostname": "example.com",
+            "protocol": "ssh",
+            "x11_forwarding": True,
+        }
+    )
+
+    assert client.created.config_patch == {"x11_forwarding": True}

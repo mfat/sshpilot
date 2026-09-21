@@ -285,3 +285,126 @@ def test_runner_gates_on_vault_unlock(monkeypatch):
 
     window.client.deploy_key.assert_called_once()
     terminal_manager._maybe_unlock_secrets_then.assert_called_once()
+
+
+# --- deployment progress -----------------------------------------------------
+#
+# The copy-key window closes the moment a deployment is handed off, so the
+# operation used to run with nothing on screen until the result dialog. A
+# pre-connection command -- a port knock or a VPN dial-up -- can hold that gap
+# open for tens of seconds. The progress dialog fills it, and is bound to the
+# operation id so the daemon can say what it is waiting on.
+
+
+class _Recorder:
+    """Captures what the runner does with the progress dialog and its binding."""
+
+    def __init__(self):
+        self.running_texts = []
+        self.bound = []
+        self.unbound = 0
+        self.dialog = MagicMock()
+        self.presented = []
+
+    def present(self, parent, *, title, running_text, success_text, failure_text):
+        self.presented.append((parent, title, running_text))
+        return self.dialog, self.running_texts.append
+
+    def bind(self, scope_id, setter):
+        self.bound.append((scope_id, setter))
+
+        def _unbind():
+            self.unbound += 1
+
+        return _unbind
+
+
+@pytest.fixture
+def recorder(monkeypatch):
+    rec = _Recorder()
+    monkeypatch.setattr(win_mod, "present_operation_progress", rec.present)
+    monkeypatch.setattr(win_mod, "bind_pre_command_status", rec.bind)
+    return rec
+
+
+def test_a_deployment_shows_progress_bound_to_its_operation(monkeypatch, recorder):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:11")
+    _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    assert len(recorder.presented) == 1
+    assert [scope for scope, _setter in recorder.bound] == ["op:11"]
+
+
+def test_the_progress_dialog_is_dismissed_when_the_operation_ends(
+    monkeypatch, recorder
+):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:12")
+    window.client.get_operation.return_value = _summary(
+        state="succeeded", operation_id="op:12"
+    )
+    _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    recorder.dialog.close.assert_called_once()
+    assert recorder.unbound == 1
+
+
+def test_the_progress_dialog_is_dismissed_when_the_operation_fails(
+    monkeypatch, recorder
+):
+    """A failed deployment must not leave a spinner running behind its error."""
+
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:13")
+    window.client.get_operation.return_value = _summary(
+        state="failed",
+        operation_id="op:13",
+        failure=IdentityFailure(
+            code=IdentityFailureCode.CONNECTION_REFUSED,
+            error_code=ErrorCode.SESSION_STARTUP_FAILED,
+        ),
+    )
+    _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    recorder.dialog.close.assert_called_once()
+    assert recorder.unbound == 1
+    window._error_dialog.assert_called_once()
+
+
+def test_a_deployment_that_never_starts_shows_no_progress(monkeypatch, recorder):
+    window = _window()
+    window.client.deploy_key.side_effect = SshPilotError(
+        ErrorCode.DAEMON_UNAVAILABLE, "no daemon"
+    )
+    _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    assert recorder.presented == []
+    assert recorder.bound == []
+
+
+def test_the_daemon_can_replace_the_running_text(monkeypatch, recorder):
+    """This is the whole point: "running a port knock", not just "working"."""
+
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:14")
+    _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+    _scope, setter = recorder.bound[0]
+    setter("Running pre-connection command…")
+
+    assert recorder.running_texts == ["Running pre-connection command…"]
