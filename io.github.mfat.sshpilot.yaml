@@ -11,7 +11,10 @@ finish-args:
   - --socket=fallback-x11
   - --socket=wayland
   - --socket=ssh-auth
-  - --device=dri
+  # --device=all, not dri: this manifest builds libfido2 and an OpenSSH
+  # with security-key support, and a FIDO2 key needs hidraw access that
+  # dri alone does not grant. Matches the Flathub manifest.
+  - --device=all
   - --filesystem=~/.ssh:create
   - --talk-name=org.freedesktop.Flatpak
 

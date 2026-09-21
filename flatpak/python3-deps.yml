@@ -148,7 +148,11 @@ modules:
   - name: python3-lxml
     buildsystem: simple
     build-commands:
-      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "lxml==6.1.1" --no-build-isolation --no-deps
+      # --ignore-installed: the GNOME 50 runtime ships its own lxml, and
+      # without this pip tries to uninstall it from the read-only /usr
+      # before installing ours, which fails the build outright. Matches
+      # the Flathub manifest.
+      - pip3 install --verbose --exists-action=i --ignore-installed --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "lxml==6.1.1" --no-build-isolation --no-deps
     sources:
       - type: file
         url: https://files.pythonhosted.org/packages/6b/55/a0c72851dfee5ecc689f949723a73dea457758912542cb955b108eaf0d8f/lxml-6.1.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
