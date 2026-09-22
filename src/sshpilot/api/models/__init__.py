@@ -34,6 +34,8 @@ if TYPE_CHECKING:
         SetGroupColorRequest,
     )
     from .connections import (
+        AsbruImportMessage,
+        AsbruImportMessageCode,
         AsbruImportMode,
         AsbruImportPreview,
         AsbruImportRequest,
@@ -339,6 +341,8 @@ __all__ = [
     "AgentKey",
     "AgentKeyList",
     "AgentKeyMutationRequest",
+    "AsbruImportMessage",
+    "AsbruImportMessageCode",
     "AsbruImportMode",
     "AsbruImportPreview",
     "AsbruImportRequest",
@@ -628,6 +632,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "AgentKey": ("identity", "AgentKey"),
     "AgentKeyList": ("identity", "AgentKeyList"),
     "AgentKeyMutationRequest": ("identity", "AgentKeyMutationRequest"),
+    "AsbruImportMessage": ("connections", "AsbruImportMessage"),
+    "AsbruImportMessageCode": ("connections", "AsbruImportMessageCode"),
     "AsbruImportMode": ("connections", "AsbruImportMode"),
     "AsbruImportPreview": ("connections", "AsbruImportPreview"),
     "AsbruImportRequest": ("connections", "AsbruImportRequest"),

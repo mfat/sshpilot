@@ -215,6 +215,18 @@ propagate that unknown rather than inventing a zero.
 Field-by-field types, defaults, and examples are in
 [`generated/model-index.md`](generated/model-index.md).
 
+## Ásbrú import models
+
+Ásbrú import previews and results keep their connection and group name tuples
+as source data. Their `warnings` and `errors` now contain ordered
+`AsbruImportMessage` values; result `partial_failures` uses the same type and
+`message` is optional. Each message has an `AsbruImportMessageCode`, the exact
+string parameters for that reason, and a separate opaque `diagnostic`. GTK
+translates only the code-owned reason and formats the parameters afterward.
+The `IMPORTED` result reason uses the lengths of `connections_added` and
+`groups_added` for independent gettext plurals. Unknown message codes and
+malformed parameters are rejected by the daemon codec.
+
 ## Public enums
 
 Enum values are serialized as the exact lowercase strings below. Unknown-enum

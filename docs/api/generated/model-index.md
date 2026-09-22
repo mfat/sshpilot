@@ -33,6 +33,32 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: AsbruImportMessage -->
+## `AsbruImportMessage`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One Ásbrú reason, exact parameters, and optional opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `AsbruImportMessageCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": "export_not_found",
+  "diagnostic": "",
+  "parameters": {}
+}
+```
+
 <!-- api-model: AsbruImportPreview -->
 ## `AsbruImportPreview`
 
@@ -51,8 +77,8 @@ Synthetic representation:
 | `connections_to_skip` | `tuple[str, ...]` | No | `[]` | No |
 | `groups_to_add` | `tuple[str, ...]` | No | `[]` | No |
 | `groups_to_reuse` | `tuple[str, ...]` | No | `[]` | No |
-| `warnings` | `tuple[str, ...]` | No | `[]` | No |
-| `errors` | `tuple[str, ...]` | No | `[]` | No |
+| `warnings` | `tuple[AsbruImportMessage, ...]` | No | `[]` | No |
+| `errors` | `tuple[AsbruImportMessage, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -111,10 +137,10 @@ Synthetic representation:
 | `connections_skipped` | `tuple[str, ...]` | No | `[]` | No |
 | `groups_added` | `tuple[str, ...]` | No | `[]` | No |
 | `groups_reused` | `tuple[str, ...]` | No | `[]` | No |
-| `warnings` | `tuple[str, ...]` | No | `[]` | No |
-| `errors` | `tuple[str, ...]` | No | `[]` | No |
-| `partial_failures` | `tuple[str, ...]` | No | `[]` | No |
-| `message` | `str` | No | `` | No |
+| `warnings` | `tuple[AsbruImportMessage, ...]` | No | `[]` | No |
+| `errors` | `tuple[AsbruImportMessage, ...]` | No | `[]` | No |
+| `partial_failures` | `tuple[AsbruImportMessage, ...]` | No | `[]` | No |
+| `message` | `AsbruImportMessage | None` | No | `null` | No |
 
 Synthetic representation:
 
@@ -125,7 +151,7 @@ Synthetic representation:
   "errors": [],
   "groups_added": [],
   "groups_reused": [],
-  "message": "",
+  "message": null,
   "ok": false,
   "partial_failures": [],
   "source": "example",

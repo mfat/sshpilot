@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from sshpilot.api.models.connections import AsbruImportMessageCode as Code
 from sshpilot.core.errors import CoreError
 from sshpilot.core.import_export.asbru import (
     build_proxy_jump,
@@ -97,7 +98,11 @@ def test_parse_export_maps_fields_and_skips_non_ssh(tmp_path: Path):
     assert key_only.username == "keyuser"
 
     assert all(c.nickname != "Desktop" for c in result.connections)
-    assert any("non-SSH" in w for w in result.warnings)
+    assert any(
+        w.code is Code.SKIPPED_NON_SSH
+        and w.parameters == {"name": "Desktop", "method": "VNC"}
+        for w in result.warnings
+    )
 
 
 def test_prefer_user_over_passphrase_user():
@@ -156,8 +161,11 @@ def test_prunes_groups_with_only_non_ssh_children():
         }
     )
     assert [g.name for g in result.groups] == ["SSH Folder"]
-    assert any("RDP Folder" in w for w in result.warnings)
-    assert any("non-SSH" in w for w in result.warnings)
+    assert any(
+        w.code is Code.SKIPPED_EMPTY_GROUP and w.parameters == {"name": "RDP Folder"}
+        for w in result.warnings
+    )
+    assert any(w.code is Code.SKIPPED_NON_SSH for w in result.warnings)
     assert len(result.connections) == 1
 
 
@@ -200,3 +208,35 @@ def test_parse_text_requires_pyyaml_or_works():
     assert result.ok
     assert result.groups[0].name == "G"
     assert result.connections[0].nickname == "box"
+
+
+@pytest.mark.parametrize(("data", "code"), [
+    (None, Code.EXPORT_EMPTY),
+    ([], Code.EXPORT_NOT_MAPPING),
+    ({}, Code.NO_ENTRIES),
+    ({"defaults": {}}, Code.LIVE_CONFIG),
+])
+def test_invalid_export_has_structured_reason(data, code):
+    result = parse_asbru_export(data)
+    assert not result.ok
+    assert result.errors[0].code is code
+    assert result.errors[0].diagnostic == ""
+
+
+def test_parser_warnings_preserve_import_data_as_parameters():
+    result = parse_asbru_export({
+        "environments": {
+            "missing-host": {"_is_group": 0, "name": "No Host", "method": "SSH"},
+            "ssh": {
+                "_is_group": 0, "name": "My Host!", "method": "SSH",
+                "ip": "192.0.2.10", "expect": "opaque export content",
+            },
+        },
+    })
+    by_code = {warning.code: warning for warning in result.warnings}
+    assert by_code[Code.FULL_CONFIG_SECTION].parameters == {}
+    assert by_code[Code.SKIPPED_MISSING_HOST].parameters == {"name": "No Host"}
+    assert by_code[Code.EXPECT_NOT_IMPORTED].parameters == {"name": "My Host!"}
+    assert by_code[Code.RENAMED_ALIAS].parameters == {
+        "name": "My Host!", "nickname": "My-Host",
+    }
