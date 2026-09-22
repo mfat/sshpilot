@@ -1760,6 +1760,9 @@ def test_keepassxc_create_database(tmp_path):
         for kind, *args in calls
     )
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+    # Create persists the path so unlock (and later sessions) see the new file.
+    assert service.get_configuration().keepassxc_database == "/home/u/vault.kdbx"
+    assert os.environ.get("SSHPILOT_KDBX_DATABASE") == "/home/u/vault.kdbx"
 
 
 def test_keepassxc_create_database_when_no_database_exists_yet(tmp_path):
@@ -1776,6 +1779,8 @@ def test_keepassxc_create_database_when_no_database_exists_yet(tmp_path):
     result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
     assert result.state == SecretOperationState.SUCCESS
     assert any(kind == "create_database" for kind, *_ in keepassxc.calls)
+    assert service.get_configuration().keepassxc_database == "/home/u/new.kdbx"
+    assert os.environ.get("SSHPILOT_KDBX_DATABASE") == "/home/u/new.kdbx"
 
 
 def test_keepassxc_create_database_without_pykeepass(tmp_path):

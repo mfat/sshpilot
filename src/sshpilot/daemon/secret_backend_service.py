@@ -892,22 +892,43 @@ class SecretBackendService:
             password_text = password.decode("utf-8", "replace")
         finally:
             _clear_secret(password)
+        keyfile_text = (keyfile or "").strip() or None
         try:
             with self._locked_operation():
                 try:
                     ok = backend.create_database(
-                        path, password_text, keyfile=(keyfile or None)
+                        path, password_text, keyfile=keyfile_text
                     )
-                    # Mirror the GUI "create and unlock in one step": the password
-                    # is in hand, so unlock so it isn't asked again.
-                    if ok and not self._safe_is_unlocked(backend):
+                    if ok:
+                        # Point config + env at the new file before unlock.
+                        # create_database takes an explicit path; unlock reads
+                        # SSHPILOT_KDBX_DATABASE from secrets.keepassxc.database.
+                        patch: Dict[str, Any] = {"keepassxc_database": path}
+                        if keyfile_text is not None:
+                            patch["keepassxc_keyfile"] = keyfile_text
                         try:
-                            ok = bool(backend.unlock(password_text))
+                            self.update_configuration(
+                                UpdateSecretConfigurationRequest(patch=patch)
+                            )
                         except Exception:
                             logger.debug(
-                                "KDBX auto-unlock after create failed", exc_info=True
+                                "Persisting KeePass database path failed",
+                                exc_info=True,
                             )
-                            ok = False
+                            os.environ["SSHPILOT_KDBX_DATABASE"] = path
+                            if keyfile_text is not None:
+                                os.environ["SSHPILOT_KDBX_KEYFILE"] = keyfile_text
+                        # Mirror the GUI "create and unlock in one step": the
+                        # password is in hand, so unlock so it isn't asked again.
+                        if not self._safe_is_unlocked(backend):
+                            try:
+                                ok = bool(backend.unlock(password_text))
+                            except Exception:
+                                logger.debug(
+                                    "KDBX auto-unlock after create failed",
+                                    exc_info=True,
+                                )
+                                ok = False
                 except Exception:
                     logger.debug("KDBX database creation failed", exc_info=True)
                     ok = False
