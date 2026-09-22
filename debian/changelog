@@ -1,3 +1,21 @@
+sshpilot (6.2.1-1) unstable; urgency=medium
+
+  * Release v6.2.1.
+  * Fixed KeePass database creation failing with a false "pykeepass is
+    not installed" error
+  * Fixed auto-unlock after creating a KeePass database
+  * Fixed Bitwarden US cloud setup leaving a previous EU or self-hosted
+    server URL in place
+  * Secret vault sessions now lock when the database or account target
+    changes
+  * Bitwarden idle timeout is now enforced on credential lookups
+  * New preference to set how many lines the mouse wheel scrolls in the
+    terminal
+  * Localized File Manager, text editor, session failure, and Ásbrú
+    import messages
+
+ -- Mehdi <mah.fat@gmail.com>  Tue, 22 Sep 2026 22:37:11 +0000
+
 sshpilot (6.2.0-1) unstable; urgency=medium
 
   * Release v6.2.0.
