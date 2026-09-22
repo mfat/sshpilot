@@ -280,6 +280,7 @@ if TYPE_CHECKING:
         SessionCapabilities,
         SessionExitInfo,
         SessionFailure,
+        SessionFailureCode,
         SessionState,
         SessionSummary,
     )
@@ -558,6 +559,7 @@ __all__ = [
     "SessionCapabilities",
     "SessionExitInfo",
     "SessionFailure",
+    "SessionFailureCode",
     "SessionId",
     "SessionState",
     "SessionSummary",
@@ -852,6 +854,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "SessionCapabilities": ("sessions", "SessionCapabilities"),
     "SessionExitInfo": ("sessions", "SessionExitInfo"),
     "SessionFailure": ("sessions", "SessionFailure"),
+    "SessionFailureCode": ("sessions", "SessionFailureCode"),
     "SessionId": ("common", "SessionId"),
     "SessionState": ("sessions", "SessionState"),
     "SessionSummary": ("sessions", "SessionSummary"),

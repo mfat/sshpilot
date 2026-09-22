@@ -262,7 +262,7 @@ def test_connection_evidence_gate_turns_unconfirmed_failure_into_failed_state():
     assert SessionState.RUNNING not in states
     assert failed.state is SessionState.CLOSED
     assert failed.failure is not None
-    assert failed.failure.message == "permission denied (publickey,password)."
+    assert failed.failure.diagnostic == "permission denied (publickey,password)."
 
     runtime.shutdown()
     core.close()

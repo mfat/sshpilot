@@ -11,12 +11,14 @@ from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
 from sshpilot.api.models.sessions import (
     PluginSessionFailure,
     SessionExitInfo,
+    SessionFailure,
     SessionState,
     SessionSummary,
 )
 from sshpilot.connection_model import ConnectionState
 
 from .plugin_session_failure_messages import format_plugin_session_failure
+from .session_failure_messages import format_session_failure
 from .sftp_failure_messages import format_sftp_failure
 
 
@@ -288,8 +290,12 @@ class ConnectionRuntimeStatusStore:
                     reason = format_sftp_failure(latest.failure)
                 elif type(latest.failure) is PluginSessionFailure:
                     reason = format_plugin_session_failure(latest.failure)
+                elif type(latest.failure) is SessionFailure:
+                    reason = format_session_failure(
+                        latest.failure, include_diagnostic=True
+                    )
                 else:
-                    reason = latest.failure.message
+                    raise TypeError("unsupported session failure")
                 return ConnectionRuntimeStatus(ConnectionState.FAILED, reason)
             exit_info = getattr(latest, "exit_info", None)
             reason = exit_info.reason if exit_info is not None else ""

@@ -23,6 +23,7 @@ from sshpilot.api.models.sessions import (
     SessionCapabilities,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureCode,
     SessionState,
     SessionSummary,
 )
@@ -111,8 +112,9 @@ def test_session_summary_codec_round_trip_includes_safe_failure_and_exit():
         _summary(SessionState.FAILED),
         exit_info=SessionExitInfo(exit_code=2, reason="process_exit"),
         failure=SessionFailure(
-            code="session_startup_failed",
-            message="The session could not start",
+            code=SessionFailureCode.SSH_DIAGNOSTIC,
+            error_code=ErrorCode.SESSION_STARTUP_FAILED,
+            diagnostic="opaque OpenSSH line",
         ),
     )
 
@@ -134,10 +136,48 @@ def test_session_summary_codec_round_trip_includes_safe_failure_and_exit():
     assert "command" not in repr(encoded)
     assert "environment" not in repr(encoded)
     assert encoded["failure"] == {
-        "code": "session_startup_failed",
-        "message": "The session could not start",
+        "code": "ssh_diagnostic",
+        "error_code": "session_startup_failed",
+        "parameters": {},
+        "diagnostic": "opaque OpenSSH line",
     }
+    assert "message" not in encoded["failure"]
     assert "kind" not in encoded["failure"]
+
+
+def test_session_exit_status_parameter_round_trips():
+    failure = SessionFailure(
+        SessionFailureCode.SSH_EXITED,
+        ErrorCode.SESSION_STARTUP_FAILED,
+        {"status": 255},
+    )
+    summary = replace(_summary(SessionState.FAILED), failure=failure)
+
+    encoded = session_summary_to_wire(summary)
+
+    assert encoded["failure"]["parameters"] == {"status": 255}
+    assert session_summary_from_wire(encoded) == summary
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"code": "unknown", "error_code": "session_startup_failed", "parameters": {}, "diagnostic": ""},
+        {"code": "start_failed", "error_code": "unknown", "parameters": {}, "diagnostic": ""},
+        {"code": "start_failed", "error_code": "session_startup_failed", "parameters": {"status": 255}, "diagnostic": ""},
+        {"code": "ssh_exited", "error_code": "session_startup_failed", "parameters": {}, "diagnostic": ""},
+        {"code": "ssh_exited", "error_code": "session_startup_failed", "parameters": {"status": "255"}, "diagnostic": ""},
+        {"code": "ssh_exited", "error_code": "session_startup_failed", "parameters": {"status": -1}, "diagnostic": ""},
+        {"code": "start_failed", "error_code": "session_startup_failed", "parameters": {}, "diagnostic": {"text": "opaque"}},
+        {"code": "start_failed", "error_code": "session_startup_failed", "parameters": {}, "diagnostic": "", "message": "old wire"},
+    ],
+)
+def test_session_failure_codec_rejects_unknown_or_invalid_payload(failure):
+    encoded = session_summary_to_wire(_summary())
+    encoded["failure"] = failure
+
+    with pytest.raises((TypeError, ValueError)):
+        session_summary_from_wire(encoded)
 
 
 def test_plugin_session_failure_codec_round_trip_is_discriminated():

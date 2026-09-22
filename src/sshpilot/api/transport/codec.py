@@ -158,6 +158,7 @@ from ..models.sessions import (
     SessionCapabilities,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureCode,
     SessionState,
     SessionSummary,
 )
@@ -3156,7 +3157,12 @@ def _session_failure_to_wire(failure: Any) -> Optional[Dict[str, Any]]:
     if failure is None:
         return None
     if type(failure) is SessionFailure:
-        return {"code": failure.code, "message": failure.message}
+        return {
+            "code": failure.code.value,
+            "error_code": failure.error_code.value,
+            "parameters": dict(failure.parameters),
+            "diagnostic": failure.diagnostic,
+        }
     if type(failure) is PluginSessionFailure:
         return {
             "kind": "plugin_launch",
@@ -3214,14 +3220,31 @@ def _session_failure_from_wire(value: Any) -> Any:
         )
     failure_fields = _strict_fields(
         value,
-        required={"code", "message"},
+        required={"code", "error_code", "parameters", "diagnostic"},
         context="session failure",
     )
+    try:
+        code = SessionFailureCode(failure_fields["code"])
+    except (TypeError, ValueError):
+        raise ValueError("session failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(failure_fields["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("session failure contains an unknown error code") from None
+    parameters = failure_fields["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("session failure parameters must be an object")
     return SessionFailure(
-        code=_identifier(failure_fields["code"], "session failure code"),
-        message=_identifier(
-            failure_fields["message"],
-            "session failure message",
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "session failure parameter name"): _integer(
+                parameter, "session failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            failure_fields["diagnostic"], "session failure diagnostic", allow_empty=True
         ),
     )
 

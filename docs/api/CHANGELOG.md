@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- Generic daemon session failures now carry a strict `SessionFailureCode`,
+  separate machine `ErrorCode`, exact parameters, and an optional opaque
+  diagnostic. GTK translates known startup, authentication, queue, termination,
+  and SSH exit reasons before formatting; OpenSSH and PTY diagnostics remain
+  untranslated. This replaces the generic `{code, message}` session failure
+  wire shape in API 0.66. `PluginSessionFailure` and Protocol 1.0 are unchanged.
 - Ásbrú import previews and results now carry `AsbruImportMessage` values in
   `warnings`, `errors`, `partial_failures`, and the result `message`. Each value
   has a stable `AsbruImportMessageCode`, exact string parameters, and a separate

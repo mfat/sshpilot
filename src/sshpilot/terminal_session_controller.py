@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from gettext import gettext as _
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +20,7 @@ from .api.models.sessions import (
     OpenSessionRequest,
     PluginSessionFailure,
     SessionExitInfo,
+    SessionFailure,
     SessionSummary,
     SessionState,
 )
@@ -29,6 +31,7 @@ from .api.models.terminal import (
     TerminalInput,
 )
 from .gtk.plugin_session_failure_messages import format_plugin_session_failure
+from .gtk.session_failure_messages import format_session_failure
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +41,11 @@ _RECOVERY_REPLAY_CHUNK_BYTES = 512 * 1024
 def _session_failure_presentation(failure) -> tuple[ErrorCode, str]:
     if type(failure) is PluginSessionFailure:
         return failure.error_code, format_plugin_session_failure(failure)
-    try:
-        code = ErrorCode(failure.code)
-    except ValueError:
-        code = ErrorCode.SESSION_STARTUP_FAILED
-    return code, failure.message
+    if type(failure) is SessionFailure:
+        return failure.error_code, format_session_failure(
+            failure, include_diagnostic=True
+        )
+    raise TypeError("unsupported session failure")
 
 
 class TerminalSessionState(str, Enum):
@@ -535,7 +538,7 @@ class DaemonTerminalSessionController:
                 self._on_error(
                     SshPilotError(
                         ErrorCode.SESSION_STARTUP_FAILED,
-                        "The session could not be started",
+                        _("The session could not be started"),
                         session_id=summary.id,
                     )
                 )
@@ -670,7 +673,7 @@ class DaemonTerminalSessionController:
                 self._on_error(
                     SshPilotError(
                         ErrorCode.SESSION_STARTUP_FAILED,
-                        "The session process could not be started",
+                        _("The session process could not be started"),
                         session_id=self._tab_state.session_id,
                     )
                 )
@@ -1175,7 +1178,7 @@ class DaemonTerminalSessionController:
             self._finish_attach_error(
                 SshPilotError(
                     ErrorCode.SESSION_STARTUP_FAILED,
-                    "The daemon session failed before attachment",
+                    _("The daemon session failed before attachment"),
                     session_id=self._tab_state.session_id,
                 )
             )

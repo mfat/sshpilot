@@ -86,14 +86,51 @@ class SessionExitInfo:
             raise TypeError("session exit reason must be a string")
 
 
+class SessionFailureCode(str, Enum):
+    """Stable presentation reasons for daemon session failures."""
+
+    START_FAILED = "start_failed"
+    AUTH_CANCELLED = "auth_cancelled"
+    AUTH_INCOMPLETE = "auth_incomplete"
+    COMMAND_QUEUE_FULL = "command_queue_full"
+    TERMINATION_FAILED = "termination_failed"
+    ENDED_BEFORE_OUTPUT = "ended_before_output"
+    SSH_EXITED = "ssh_exited"
+    SSH_DIAGNOSTIC = "ssh_diagnostic"
+
+
+_SESSION_FAILURE_PARAMETER_KEYS = {
+    code: frozenset() for code in SessionFailureCode
+}
+_SESSION_FAILURE_PARAMETER_KEYS[SessionFailureCode.SSH_EXITED] = frozenset({"status"})
+
+
 @dataclass(frozen=True)
 class SessionFailure:
-    code: str
-    message: str
+    """One localizable session reason and optional opaque diagnostic."""
+
+    code: SessionFailureCode
+    error_code: ErrorCode
+    parameters: Mapping[str, int] = field(default_factory=dict)
+    diagnostic: str = ""
 
     def __post_init__(self) -> None:
-        require_identifier(self.code, "session failure code")
-        require_identifier(self.message, "session failure message")
+        if not isinstance(self.code, SessionFailureCode):
+            raise TypeError("session failure code is invalid")
+        if not isinstance(self.error_code, ErrorCode):
+            raise TypeError("session failure error code is invalid")
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("session failure parameters must be a mapping")
+        parameters = dict(self.parameters)
+        if set(parameters) != _SESSION_FAILURE_PARAMETER_KEYS[self.code]:
+            raise ValueError("session failure parameters do not match the code")
+        if "status" in parameters and (
+            type(parameters["status"]) is not int or parameters["status"] <= 0
+        ):
+            raise ValueError("session failure exit status must be positive")
+        if type(self.diagnostic) is not str or "\x00" in self.diagnostic:
+            raise ValueError("session failure diagnostic must be a string without NUL")
+        object.__setattr__(self, "parameters", MappingProxyType(parameters))
 
 
 class PluginSessionFailureCode(str, Enum):

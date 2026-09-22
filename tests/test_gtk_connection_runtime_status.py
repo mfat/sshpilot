@@ -14,6 +14,7 @@ from sshpilot.api.models.sessions import (
     PluginSessionFailureCode,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureCode,
     SessionState,
     SessionSummary,
 )
@@ -142,7 +143,10 @@ def test_live_session_events_follow_connection_wide_priority():
         "failed",
         "connection-1",
         SessionState.FAILED,
-        failure=SessionFailure("session_startup_failed", "Authentication failed"),
+        failure=SessionFailure(
+            SessionFailureCode.AUTH_INCOMPLETE,
+            ErrorCode.SESSION_STARTUP_FAILED,
+        ),
     )
     client.emit(EventType.SESSION_CREATED, failed, 2)
     # Any running session wins over another failed attempt.
@@ -156,7 +160,7 @@ def test_live_session_events_follow_connection_wide_priority():
     )
     assert store.status_for("connection-1") == ConnectionRuntimeStatus(
         ConnectionState.FAILED,
-        "Authentication failed",
+        "The session did not complete authentication",
     )
 
     closed = session("failed", "connection-1", SessionState.CLOSED)
@@ -191,8 +195,9 @@ def test_closed_failed_session_retains_its_authoritative_failure():
                     "connection-1",
                     SessionState.CLOSED,
                     failure=SessionFailure(
-                        "session_startup_failed",
-                        "permission denied (publickey,password).",
+                        SessionFailureCode.SSH_DIAGNOSTIC,
+                        ErrorCode.SESSION_STARTUP_FAILED,
+                        diagnostic="permission denied (publickey,password).",
                     ),
                     exit_info=SessionExitInfo(exit_code=255, reason="process_exit"),
                 )
@@ -202,8 +207,41 @@ def test_closed_failed_session_retains_its_authoritative_failure():
 
     assert store.status_for("connection-1") == ConnectionRuntimeStatus(
         ConnectionState.FAILED,
-        "permission denied (publickey,password).",
+        "The SSH session failed.\n\npermission denied (publickey,password).",
     )
+
+
+def test_session_failure_uses_frontend_presenter(monkeypatch):
+    import sshpilot.gtk.connection_runtime_status as runtime_status
+
+    seen = []
+    monkeypatch.setattr(
+        runtime_status,
+        "format_session_failure",
+        lambda failure, *, include_diagnostic: (
+            seen.append((failure.code, include_diagnostic)), "translated reason"
+        )[1],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [
+                session(
+                    "failed",
+                    "connection-1",
+                    SessionState.FAILED,
+                    failure=SessionFailure(
+                        SessionFailureCode.COMMAND_QUEUE_FULL,
+                        ErrorCode.SERVER_BUSY,
+                    ),
+                )
+            ],
+        )
+    )
+
+    assert store.status_for("connection-1").reason == "translated reason"
+    assert seen == [(SessionFailureCode.COMMAND_QUEUE_FULL, True)]
 
 
 def test_plugin_session_failure_uses_frontend_formatter(monkeypatch):
@@ -251,8 +289,9 @@ def test_newer_clean_close_supersedes_retained_failure():
                     "connection-1",
                     SessionState.CLOSED,
                     failure=SessionFailure(
-                        "session_startup_failed",
-                        "permission denied",
+                        SessionFailureCode.SSH_DIAGNOSTIC,
+                        ErrorCode.SESSION_STARTUP_FAILED,
+                        diagnostic="permission denied",
                     ),
                     exit_info=SessionExitInfo(exit_code=255, reason="process_exit"),
                     created_at=now,
@@ -408,7 +447,11 @@ def test_live_sftp_service_outranks_a_failed_session():
                     "session-1",
                     "connection-1",
                     SessionState.FAILED,
-                    failure=SessionFailure("session_startup_failed", "no route"),
+                    failure=SessionFailure(
+                        SessionFailureCode.SSH_DIAGNOSTIC,
+                        ErrorCode.SESSION_STARTUP_FAILED,
+                        diagnostic="no route",
+                    ),
                 )
             ],
             [sftp("sftp-1", "connection-1", SftpServiceState.READY)],

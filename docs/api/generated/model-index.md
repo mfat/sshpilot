@@ -4478,22 +4478,26 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Frontend-neutral `SessionFailure` record.
+**Purpose:** One localizable session reason and optional opaque diagnostic.
 
 **Related methods:** None
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
-| `code` | `str` | Yes | — | No |
-| `message` | `str` | Yes | — | No |
+| `code` | `SessionFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, int]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "code": "example",
-  "message": "Example request"
+  "code": "start_failed",
+  "diagnostic": "",
+  "error_code": "unsupported_capability",
+  "parameters": {}
 }
 ```
 
