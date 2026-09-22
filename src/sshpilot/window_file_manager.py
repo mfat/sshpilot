@@ -79,7 +79,9 @@ class WindowFileManagerMixin:
             except Exception as exc:
                 logger.error("File manager with host picker failed: %s", exc, exc_info=True)
                 self._handle_file_manager_placeholder_error(
-                    placeholder_info, _('Files'), str(exc)
+                    placeholder_info, _('Files'),
+                    _('Failed to open file manager: {error}').format(error=exc)
+                    if str(exc) else _('Failed to open file manager'),
                 )
                 return False
 
@@ -153,14 +155,14 @@ class WindowFileManagerMixin:
                 if terminal_manager._maybe_unlock_secrets_then(_retry):
                     return
 
-        nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
+        nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', _('Remote Host'))
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         username = getattr(connection, 'username', '') or ''
         port_value = getattr(connection, 'port', 22)
         effective_port = port_value if port_value and port_value != 22 else None
 
         def error_callback(error_msg):
-            message = error_msg or "Failed to open file manager"
+            message = error_msg or _("Failed to open file manager")
             logger.error(f"Failed to open file manager for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
@@ -203,7 +205,8 @@ class WindowFileManagerMixin:
                 self._handle_file_manager_placeholder_error(
                     placeholder_info,
                     str(nickname or host_value or _('Remote Host')),
-                    str(exc) or _('Failed to open file manager'),
+                    _('Failed to open file manager: {error}').format(error=exc)
+                    if str(exc) else _('Failed to open file manager'),
                 )
             else:
                 self._register_file_manager_tab(
@@ -235,7 +238,8 @@ class WindowFileManagerMixin:
             self._handle_file_manager_placeholder_error(
                 fallback_placeholder,
                 str(nickname or host_value or _('Remote Host')),
-                str(exc) or _('Failed to open file manager'),
+                _('Failed to open file manager: {error}').format(error=exc)
+                if str(exc) else _('Failed to open file manager'),
             )
         else:
             self._register_file_manager_tab(
