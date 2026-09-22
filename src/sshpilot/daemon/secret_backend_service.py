@@ -233,6 +233,7 @@ class SecretBackendService:
                 if not request.patch:
                     return current
 
+                previous = self._normalize(config)
                 for key, value in request.patch.items():
                     config_key = self._field_to_config_key(key)
                     set_nested(config, config_key, value)
@@ -248,7 +249,36 @@ class SecretBackendService:
                         details={"code": SETTINGS_PERSISTENCE_FAILED},
                     ) from exc
                 self._apply_environment(config)
+                self._lock_sessions_for_changed_targets(previous, semantic)
                 return self._snapshot(config)
+
+    #: Backend -> semantic fields that pick *which* vault/account it opens. An
+    #: unlocked session is not bound to these, so changing one must drop it or
+    #: the backend keeps serving the old database/account under the new config.
+    _SESSION_TARGET_FIELDS = {
+        "keepassxc": ("keepassxc_database", "keepassxc_keyfile"),
+        "bitwarden": ("bitwarden_profile",),
+    }
+
+    def _lock_sessions_for_changed_targets(
+        self, previous: Dict[str, Any], current: Dict[str, Any]
+    ) -> None:
+        """Lock each backend whose vault/account settings changed. Caller holds the lock."""
+        locked_any = False
+        for name, fields in self._SESSION_TARGET_FIELDS.items():
+            if all(previous.get(f) == current.get(f) for f in fields):
+                continue
+            backend = self._manager.get_backend(name)
+            if backend is None:
+                continue
+            try:
+                backend.lock()
+                locked_any = True
+            except Exception:
+                logger.debug("%s lock after configuration change failed", name,
+                             exc_info=True)
+        if locked_any:
+            self._clear_cached_manifests()
 
     def update_selection(
         self,
@@ -782,6 +812,12 @@ class SecretBackendService:
     def rbw_configure(self, email: str, base_url: str) -> RbwStatus:
         with self._lock:
             ok = self._apply_rbw_config(email=email, base_url=base_url)
+            # The email/server pick the account; values cached from the previous
+            # one must not be served once the agent is unlocked for the new one.
+            rbw = self._manager.get_backend("rbw")
+            if rbw is not None:
+                self._safe(rbw.lock)
+            self._clear_cached_manifests()
             status = self.rbw_status()
             if not ok:
                 return RbwStatus(
