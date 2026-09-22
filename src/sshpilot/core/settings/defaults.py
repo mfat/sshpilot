@@ -34,6 +34,8 @@ def get_default_config() -> Dict[str, Any]:
             'pass_through_mode': False,
             'copy_on_select': False,
             'paste_on_right_click': False,
+            # Discrete mouse-wheel notches (VTE history scroll only).
+            'wheel_scroll_lines': 1,
             'encoding': 'UTF-8',
             'macos_option_key_passthrough': False,
         },

@@ -4825,10 +4825,22 @@ class TerminalWidget(Gtk.Box):
                 return float(dy)
             return float(dy) / cell_height
 
-        lines = dy * WHEEL_SCROLL_LINES
+        lines = dy * self._wheel_scroll_lines()
         if in_pixels:
             return float(lines * cell_height)
         return float(lines)
+
+    def _wheel_scroll_lines(self) -> int:
+        """Lines per discrete mouse-wheel notch (VTE history scroll)."""
+        default = WHEEL_SCROLL_LINES
+        config = getattr(self, 'config', None)
+        if config is None:
+            return default
+        try:
+            value = int(config.get_setting('terminal.wheel_scroll_lines', default))
+        except (TypeError, ValueError):
+            return default
+        return max(1, min(value, 10))
 
     def _on_history_scroll(self, controller, dx: float, dy: float) -> bool:
         """Scroll the terminal viewport in response to a scroll gesture."""

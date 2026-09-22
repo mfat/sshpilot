@@ -763,6 +763,30 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         mouse_group.add(self.paste_on_right_click_switch)
 
+        # VTE-only: PyXterm scrolls inside the page and ignores this.
+        wheel_lines = int(self.config.get_setting('terminal.wheel_scroll_lines', 1) or 1)
+        wheel_lines = max(1, min(wheel_lines, 10))
+        self.wheel_scroll_lines_row = Adw.SpinRow(
+            adjustment=Gtk.Adjustment(
+                value=float(wheel_lines),
+                lower=1,
+                upper=10,
+                step_increment=1,
+                page_increment=1,
+            ),
+            digits=0,
+        )
+        self.wheel_scroll_lines_row.set_title(_("Mouse wheel scroll lines"))
+        self.wheel_scroll_lines_row.set_subtitle(
+            _("Lines moved per discrete mouse-wheel notch. "
+              "Touchpads still scroll pixel-for-pixel.")
+        )
+        self.wheel_scroll_lines_row.connect(
+            'notify::value', self.on_wheel_scroll_lines_changed
+        )
+        mouse_group.add(self.wheel_scroll_lines_row)
+        self._update_wheel_scroll_visibility()
+
         terminal_page.add(mouse_group)
 
     def _add_terminal_preferred_group(self, terminal_page):
@@ -3925,6 +3949,14 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update paste-on-right-click mode: %s", exc)
 
+    def on_wheel_scroll_lines_changed(self, row, _pspec):
+        """Persist VTE mouse-wheel lines-per-notch (applies immediately)."""
+        try:
+            value = max(1, min(int(row.get_value()), 10))
+            self.config.set_setting('terminal.wheel_scroll_lines', value)
+        except Exception as exc:
+            logger.error("Failed to update wheel scroll lines: %s", exc)
+
     def on_tab_close_policy_changed(self, row, _pspec):
         """Persist the tab close policy preference."""
         try:
@@ -6413,6 +6445,12 @@ class PreferencesWindow(Adw.NavigationPage):
         if hasattr(self, 'autocomplete_remote_switch') and self.autocomplete_remote_switch:
             self.autocomplete_remote_switch.set_visible(is_pyxterm)
 
+    def _update_wheel_scroll_visibility(self):
+        """Show mouse-wheel scroll lines only for the VTE backend."""
+        row = getattr(self, 'wheel_scroll_lines_row', None)
+        if row is not None:
+            row.set_visible(not self._is_pyxterm_backend())
+
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
             return
@@ -6586,6 +6624,9 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Update autocomplete visibility (only available with PyXterm)
         self._update_autocomplete_visibility()
+
+        # Wheel scroll lines only apply to VTE history scrolling
+        self._update_wheel_scroll_visibility()
 
         # Note: We do NOT call refresh_backends() here
         # This ensures existing terminals keep their current backend

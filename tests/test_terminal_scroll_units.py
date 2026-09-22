@@ -63,6 +63,28 @@ def test_a_wheel_notch_moves_a_fixed_number_of_lines():
     assert delta == 1 * CELL_HEIGHT
 
 
+def test_wheel_scroll_lines_pref_is_honoured():
+    """Preferences ▸ Terminal ▸ Mouse can raise the notch size; touchpads stay
+    pixel-for-pixel and are unaffected.
+    """
+    terminal = _terminal()
+    terminal.config = types.SimpleNamespace(
+        get_setting=lambda key, default=None: 5 if key == 'terminal.wheel_scroll_lines' else default,
+    )
+    assert (
+        terminal._history_scroll_delta(
+            _vte(), _controller(Gdk.ScrollUnit.WHEEL), 1.0
+        )
+        == 5 * CELL_HEIGHT
+    )
+    assert (
+        terminal._history_scroll_delta(
+            _vte(), _controller(Gdk.ScrollUnit.SURFACE), 30.0
+        )
+        == 30.0
+    )
+
+
 def test_line_valued_adjustments_are_converted():
     """set_scroll_unit_is_pixels() is VTE >= 0.66 and configure() applies it
     best-effort, so the adjustment may still be counting lines.  Ask, do not
