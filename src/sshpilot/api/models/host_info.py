@@ -16,10 +16,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Tuple
+from types import MappingProxyType
+from typing import Mapping, Optional, Tuple
 
+from ..errors import ErrorCode
 from .common import ConnectionId, require_identifier
-from .operations import OperationSummary, ServiceFailure
+from .operations import OperationSummary
 
 MAX_HOST_INFO_FILESYSTEMS = 256
 MAX_HOST_INFO_INTERFACES = 256
@@ -751,6 +753,54 @@ class HostInfoRequest:
             raise TypeError("probe must be a HostInfoProbe")
 
 
+class HostInfoFailureCode(str, Enum):
+    """Stable presentation reasons for a failed host-information probe."""
+
+    TIMED_OUT = "timed_out"
+    REMOTE_COMMAND_FAILED = "remote_command_failed"
+    START_FAILED = "start_failed"
+    UNREADABLE_INFORMATION = "unreadable_information"
+    PROBE_FAILED = "probe_failed"
+    CANCELLED = "cancelled"
+
+
+_HOST_INFO_FAILURE_PARAMETER_KEYS = {
+    code: frozenset() for code in HostInfoFailureCode
+}
+_HOST_INFO_FAILURE_PARAMETER_KEYS[HostInfoFailureCode.REMOTE_COMMAND_FAILED] = (
+    frozenset({"exit_code"})
+)
+
+
+@dataclass(frozen=True)
+class HostInfoFailure:
+    """A localizable reason, exact parameters, and an opaque diagnostic."""
+
+    code: HostInfoFailureCode
+    error_code: ErrorCode
+    parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, HostInfoFailureCode):
+            raise TypeError("host info failure code is invalid")
+        if not isinstance(self.error_code, ErrorCode):
+            raise TypeError("host info failure error code is invalid")
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("host info failure parameters must be a mapping")
+        parameters = dict(self.parameters)
+        if set(parameters) != _HOST_INFO_FAILURE_PARAMETER_KEYS[self.code]:
+            raise ValueError("host info failure parameters do not match the code")
+        if any(
+            type(value) is not str or not value or "\x00" in value
+            for value in parameters.values()
+        ):
+            raise ValueError("host info failure parameters must be non-empty strings")
+        if type(self.diagnostic) is not str or "\x00" in self.diagnostic:
+            raise ValueError("host info failure diagnostic must be text without NUL")
+        object.__setattr__(self, "parameters", MappingProxyType(parameters))
+
+
 @dataclass(frozen=True)
 class HostInfoSummary:
     """A host-info operation plus whatever it has produced so far.
@@ -765,7 +815,7 @@ class HostInfoSummary:
     probe: HostInfoProbe = HostInfoProbe.FULL
     snapshot: Optional[HostInfoSnapshot] = None
     counters: Tuple[InterfaceCounters, ...] = ()
-    failure: Optional[ServiceFailure] = None
+    failure: Optional[HostInfoFailure] = None
     live: Optional[LiveSample] = None
 
     def __post_init__(self) -> None:
@@ -781,7 +831,7 @@ class HostInfoSummary:
             raise TypeError("counters must be a tuple of InterfaceCounters")
         if len(self.counters) > MAX_HOST_INFO_INTERFACES:
             raise ValueError("host info counters exceed the supported length")
-        if self.failure is not None and type(self.failure) is not ServiceFailure:
-            raise TypeError("failure must be a ServiceFailure or None")
+        if self.failure is not None and type(self.failure) is not HostInfoFailure:
+            raise TypeError("failure must be a HostInfoFailure or None")
         if self.live is not None and type(self.live) is not LiveSample:
             raise TypeError("live must be a LiveSample or None")

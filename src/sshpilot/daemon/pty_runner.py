@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import logging
 import os
 import queue
 import select
@@ -30,6 +31,8 @@ from .session_runtime import (
     SessionProcessHandle,
 )
 from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process_or_abandon
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TERMINAL_INPUT_BYTES = 256 * 1024
 DEFAULT_PTY_READ_CHUNK = 32 * 1024
@@ -298,6 +301,17 @@ class PtyIoManager:
         try:
             fcntl.ioctl(handle.master_fd, termios.TIOCSWINSZ, packed)
         except OSError:
+            # A failure here is the one way a resize can be accepted
+            # everywhere above and still never reach the remote, so it must
+            # not be silent -- that blind spot is what made GH #1270
+            # untriageable from a reporter's log. A dead master is routine
+            # during teardown, so this stays debug and still swallows.
+            logger.debug(
+                "terminal resize ioctl failed rows=%d columns=%d",
+                dimensions.rows,
+                dimensions.columns,
+                exc_info=True,
+            )
             return
 
 

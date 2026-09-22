@@ -17,6 +17,9 @@ import subprocess
 import struct
 import select
 import signal
+import socket
+import array
+import time
 import pwd
 import json
 import logging
@@ -63,6 +66,11 @@ else:
     logging.basicConfig(level=_log_level, handlers=[logging.NullHandler()])
 logger = logging.getLogger(__name__)
 
+# How often the agent re-reads its own terminal size. Fast enough that a drag
+# looks live, cheap enough to ignore: one ioctl, and only when it changed does
+# anything happen.
+SIZE_POLL_INTERVAL = 0.25
+
 
 class PTYAgent:
     """Agent that manages PTY creation and shell spawning on the host"""
@@ -72,7 +80,8 @@ class PTYAgent:
         self.slave_fd: Optional[int] = None
         self.shell_pid: Optional[int] = None
         self.original_termios = None
-        
+        self._last_applied_size: Optional[Tuple[int, int]] = None
+
     def discover_shell(self) -> str:
         """Discover the user's preferred shell on the host system"""
         try:
@@ -149,22 +158,58 @@ class PTYAgent:
         """Set the PTY size"""
         if self.master_fd is None:
             return
-        
+
         try:
             winsize = struct.pack('HHHH', rows, cols, 0, 0)
             fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
             logger.debug(f"Set PTY size to {rows}x{cols}")
         except Exception as e:
             logger.error(f"Failed to set PTY size: {e}")
+
+    def sync_size_from_terminal(self):
+        """Copy our own terminal's size onto the shell's PTY.
+
+        The agent sits on the PTY that VTE owns, so when the window is resized
+        the kernel updates that PTY and signals us. The shell, however, lives
+        on a *second* PTY that only this process can resize -- without this,
+        it keeps its spawn-time size for the life of the tab, and every
+        full-screen program (and any ssh started here, which passes the size
+        on to the remote) draws into stale geometry.
+        """
+        if self.master_fd is None:
+            return
+        try:
+            packed = fcntl.ioctl(
+                sys.stdin.fileno(), termios.TIOCGWINSZ, b'\0' * 8
+            )
+        except OSError as e:
+            logger.debug(f"Could not read our own terminal size: {e}")
+            return
+        rows, cols, _, _ = struct.unpack('HHHH', packed)
+        if not rows or not cols:
+            return
+        if (rows, cols) == self._last_applied_size:
+            return
+        self._last_applied_size = (rows, cols)
+        self.set_pty_size(rows, cols)
     
-    def spawn_shell(self, shell: str, cwd: Optional[str] = None) -> int:
+    def spawn_shell(
+        self,
+        shell: str,
+        cwd: Optional[str] = None,
+        tty_fd: Optional[int] = None,
+    ) -> int:
         """
         Spawn the user's shell with proper PTY setup.
         
-        This runs the shell as a child process with the PTY slave as its
-        controlling terminal, ensuring proper job control.
+        This runs the shell as a child process with *tty_fd* as its
+        controlling terminal, ensuring proper job control. *tty_fd* defaults
+        to ``self.slave_fd``; both the handoff and the relay path pass the
+        slave of the pair they just created.
         """
-        if self.slave_fd is None:
+        if tty_fd is None:
+            tty_fd = self.slave_fd
+        if tty_fd is None:
             raise RuntimeError("PTY not created yet")
 
         try:
@@ -205,23 +250,26 @@ class PTYAgent:
                 # Child process
                 try:
                     # Create new session and make this process the session leader
+                    # setsid() already makes this a session and process
+                    # group leader; a setpgid(0, 0) after it fails EPERM.
                     os.setsid()
-                    
+
                     # Close master FD in child
-                    os.close(self.master_fd)
+                    if self.master_fd is not None:
+                        os.close(self.master_fd)
                     
                     # Make the PTY slave the controlling terminal
                     # This is the critical operation that fixes job control
-                    fcntl.ioctl(self.slave_fd, termios.TIOCSCTTY, 0)
+                    fcntl.ioctl(tty_fd, termios.TIOCSCTTY, 0)
                     
                     # Redirect stdin, stdout, stderr to PTY slave
-                    os.dup2(self.slave_fd, 0)
-                    os.dup2(self.slave_fd, 1)
-                    os.dup2(self.slave_fd, 2)
+                    os.dup2(tty_fd, 0)
+                    os.dup2(tty_fd, 1)
+                    os.dup2(tty_fd, 2)
                     
                     # Close the original slave FD if it's not one of stdin/stdout/stderr
-                    if self.slave_fd > 2:
-                        os.close(self.slave_fd)
+                    if tty_fd > 2:
+                        os.close(tty_fd)
                     
                     # Change to working directory
                     os.chdir(cwd)
@@ -241,8 +289,9 @@ class PTYAgent:
             else:
                 # Parent process
                 # Close slave FD in parent (child has its own copy)
-                os.close(self.slave_fd)
-                self.slave_fd = None
+                if self.slave_fd is not None and tty_fd == self.slave_fd:
+                    os.close(self.slave_fd)
+                    self.slave_fd = None
                 
                 self.shell_pid = pid
                 logger.info(f"Spawned shell: {shell} (PID: {pid})")
@@ -286,21 +335,40 @@ class PTYAgent:
         """
         if self.master_fd is None:
             raise RuntimeError("PTY not created yet")
-        
+
         # Set stdin to raw mode to pass through all data
         try:
             self.original_termios = termios.tcgetattr(sys.stdin.fileno())
             tty.setraw(sys.stdin.fileno())
         except Exception as e:
             logger.debug(f"Could not set raw mode on stdin: {e}")
-        
+
         logger.debug("Starting I/O loop")
-        
+
+        # The window size is polled, not taken from SIGWINCH, because this
+        # process never receives one. Under Flatpak the agent is started by
+        # flatpak-spawn and runs on the host as a child of the portal helper:
+        # it holds the terminal's fd, but it is not in that terminal's
+        # foreground process group -- and the kernel signals the group, not
+        # whoever holds the fd. Confirmed against a real build: the agent's
+        # own winsize tracked every resize while no SIGWINCH ever arrived.
+        # Reading the size ourselves is what actually works here.
+        last_size_check = 0.0
+
         try:
             while True:
                 # Use select to wait for data on either stdin or master_fd
-                readable, _, _ = select.select([sys.stdin, self.master_fd], [], [])
-                
+                readable, _, _ = select.select(
+                    [sys.stdin, self.master_fd], [], [], SIZE_POLL_INTERVAL
+                )
+
+                # Checked on every pass, not just on an idle timeout: a resize
+                # during heavy output must not wait for the shell to go quiet.
+                now = time.monotonic()
+                if now - last_size_check >= SIZE_POLL_INTERVAL:
+                    last_size_check = now
+                    self.sync_size_from_terminal()
+
                 for fd in readable:
                     if fd == sys.stdin:
                         # Data from VTE -> forward to shell
@@ -362,14 +430,97 @@ class PTYAgent:
                 os.close(self.slave_fd)
             except Exception:
                 pass
-    
-    def run(self, rows: int = 24, cols: int = 80, cwd: Optional[str] = None):
+
+
+    def _run_with_pty_handoff(
+        self, shell: str, cwd: Optional[str], sock_fd: int,
+        rows: int = 24, cols: int = 80,
+    ) -> int:
+        """Create the PTY here and give its master to the terminal.
+
+        The terminal then owns a real PTY and drives it directly: resizing,
+        job control and flow control become the kernel's business instead of
+        something this process has to mirror. No second PTY, no I/O loop --
+        the agent only spawns the shell and waits for it, which is all the
+        Ptyxis agent does too.
+
+        The master cannot simply be created on the terminal's side: its
+        /dev/pts lives in the sandbox's devpts instance, which the host
+        cannot open. Nor can the shell take over the terminal's existing PTY
+        -- that one is already flatpak-spawn's controlling terminal, and
+        TIOCSCTTY on it fails with EPERM. So the host makes a fresh pair and
+        passes the master back through a socket flatpak-spawn forwarded.
+        """
+        master_fd, slave_fd = pty.openpty()
+        self.master_fd = master_fd
+        self.slave_fd = slave_fd
+
+        # openpty() leaves the winsize at 0x0. The terminal will set the real
+        # one as soon as it adopts the master, but the shell starts before
+        # that and would otherwise read 0x0 for its first prompt.
+        self.set_pty_size(rows, cols)
+
+        sock = socket.socket(
+            fileno=sock_fd, family=socket.AF_UNIX, type=socket.SOCK_STREAM
+        )
+        try:
+            sock.sendmsg(
+                [b"P"],
+                [(socket.SOL_SOCKET, socket.SCM_RIGHTS,
+                  array.array("i", [master_fd]))],
+            )
+        except OSError as e:
+            logger.error(f"Could not hand the PTY to the terminal: {e}")
+            raise
+        finally:
+            # Closes the fd too; the terminal has its own copy by now.
+            sock.close()
+        logger.debug("Handed PTY master to the terminal")
+
+        shell_pid = self.spawn_shell(shell, cwd, tty_fd=slave_fd)
+        # The terminal owns the master now; holding a copy here would keep
+        # the PTY alive (and the shell unaware of hangup) after it closes.
+        os.close(master_fd)
+        self.master_fd = None
+        self._send_status('ready', pid=shell_pid)
+        logger.debug("Waiting on shell %s (handed-off PTY)", shell_pid)
+        try:
+            _, status = os.waitpid(shell_pid, 0)
+        except OSError as e:
+            logger.debug(f"waitpid failed: {e}")
+            return 0
+        self.shell_pid = None
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return 128 + os.WTERMSIG(status) if os.WIFSIGNALED(status) else 0
+
+    def run(
+        self,
+        rows: int = 24,
+        cols: int = 80,
+        cwd: Optional[str] = None,
+        pty_socket_fd: Optional[int] = None,
+    ):
         """Main entry point: create PTY, spawn shell, run I/O loop"""
         try:
             # Discover shell
             shell = self.discover_shell()
             logger.info(f"Using shell: {shell}")
-            
+
+            # Preferred: make the PTY here and give the terminal its master,
+            # so the terminal drives it directly. This agent used to create a
+            # second PTY and copy bytes between the two, which buys nothing
+            # and costs correctness -- only the relay could mirror the size
+            # inward, so the shell's geometry silently lagged the window.
+            # Ptyxis does it this way too: its agent never touches terminal
+            # data, it only spawns the child on the PTY and waits.
+            if pty_socket_fd is not None:
+                return self._run_with_pty_handoff(
+                    shell, cwd, pty_socket_fd, rows, cols
+                )
+
+            logger.debug("No PTY socket given; falling back to a relayed PTY")
+
             # Create PTY with proper flags
             self.create_pty()
             
@@ -381,6 +532,11 @@ class PTYAgent:
 
             if shell_pid:
                 self._send_status('ready', pid=shell_pid)
+
+            # rows/cols were measured by the UI before the tab finished its
+            # layout, so they can already be a row or two stale by now. Our
+            # own PTY has the settled size -- adopt it before any resize.
+            self.sync_size_from_terminal()
 
             # Close stderr to prevent log messages from appearing in terminal
             # unless in verbose/debug mode
@@ -410,12 +566,6 @@ class PTYAgent:
         return 0
 
 
-def handle_resize_signal(signum, frame):
-    """Handle SIGWINCH for terminal resize"""
-    # In a real implementation, we'd need to communicate resize events
-    # from the UI to the agent, possibly via a control channel
-
-
 def main():
     """Main entry point for the agent"""
     import argparse
@@ -425,15 +575,15 @@ def main():
     parser.add_argument('--cols', type=int, default=80, help='Terminal columns')
     parser.add_argument('--cwd', type=str, default=None, help='Working directory')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
+    parser.add_argument('--pty-socket', type=int, default=None,
+                        help='FD of a socket to hand the new PTY master back over')
     
     args = parser.parse_args()
     
-    # Set up signal handlers
-    signal.signal(signal.SIGWINCH, handle_resize_signal)
-    
     # Create and run agent
     agent = PTYAgent()
-    return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd)
+    return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd,
+                     pty_socket_fd=args.pty_socket)
 
 
 if __name__ == '__main__':

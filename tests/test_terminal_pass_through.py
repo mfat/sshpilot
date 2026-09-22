@@ -18,7 +18,9 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
             removed_controllers.append(controller)
 
     terminal.terminal_widget = DummyVte()
+    terminal.terminal_container = DummyVte()
     terminal._shortcut_controller = 'shortcut-controller'
+    terminal._zoom_controller = 'zoom-controller'
     terminal._scroll_controller = 'scroll-controller'
     terminal._pass_through_mode = False
     backend_modes = []
@@ -26,7 +28,7 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
         set_shortcut_passthrough=backend_modes.append)
 
     monkeypatch.setattr(terminal_mod, 'is_macos', lambda: False)
-    monkeypatch.setattr(terminal_cls, '_setup_mouse_wheel_zoom', lambda self: None, raising=False)
+    monkeypatch.setattr(terminal_cls, '_setup_scroll_controllers', lambda self: None, raising=False)
 
     installs = []
 
@@ -38,9 +40,11 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
 
     terminal._apply_pass_through_mode(True)
 
-    assert removed_controllers == ['shortcut-controller', 'scroll-controller']
+    assert removed_controllers == ['shortcut-controller', 'zoom-controller']
     assert terminal._shortcut_controller is None
-    assert terminal._scroll_controller is None
+    assert terminal._zoom_controller is None
+    # The wheel keeps scrolling the scrollback in pass-through mode.
+    assert terminal._scroll_controller == 'scroll-controller'
     assert terminal._pass_through_mode is True
     assert backend_modes == [True]
     assert installs == []

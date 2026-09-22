@@ -1432,6 +1432,15 @@ class SessionRuntime:
             resize = getattr(handle, "resize", None)
             if not callable(resize):
                 return False
+            # The size itself, not just the fact of a resize: a report of
+            # "the remote PTY never changes" is otherwise indistinguishable
+            # in the log from a healthy stream of resizes (GH #1270).
+            with log_context(session=session_id):
+                logger.debug(
+                    "terminal resize dispatched rows=%d columns=%d",
+                    dimensions.rows,
+                    dimensions.columns,
+                )
             resize(dimensions)
             return True
 

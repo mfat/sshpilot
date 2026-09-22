@@ -32,6 +32,11 @@ from gi.repository import Gtk, GObject, GLib, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
+# Lines moved per discrete wheel notch.  Fixed on purpose: VTE's own fallback
+# used max(1, ceil(rows/10)), which is ~4 lines in a small window and ~7
+# maximised, and that inconsistency is most of what read as "too fast".
+WHEEL_SCROLL_LINES = 3
+
 # SSHProcessManager and the process_manager singleton were extracted to
 # ssh_process_manager.py (GTK-free). Re-exported here so existing
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
@@ -294,6 +299,8 @@ class TerminalWidget(Gtk.Box):
         self._connecting_detail_announced = False
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
+        self._pty_handoff = None
+        self._local_shell_agent_pid = None
         self._mouse_tracking = MouseTrackingState()
         # PTY-less VTE cannot disconnect_pty_read() during drag-select the way
         # Ptyxis does; buffer daemon output instead (see DeferredDisplayFeed).
@@ -334,6 +341,7 @@ class TerminalWidget(Gtk.Box):
         # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
+        self._zoom_controller = None
         self._latin_fallback_controller = None
         self._latin_fallback_bindings = []
         self._config_handler = None
@@ -3128,6 +3136,13 @@ class TerminalWidget(Gtk.Box):
             self._on_selection_changed,
         )
         self._apply_pass_through_mode(self._pass_through_mode)
+        # Deliberately outside _install_shortcuts(): that early-returns while
+        # pass-through mode is on, and _apply_pass_through_mode() above only
+        # tears controllers down when the mode is already set.  A terminal born
+        # with terminal.pass_through_mode true would otherwise never get a
+        # history-scroll controller, and VTE's own fallback scrolling is off.
+        # Idempotent, so the _install_shortcuts() call is harmless duplication.
+        self._setup_scroll_controllers()
         self._setup_context_menu()
         # Apply macOS Option key passthrough
         if is_macos():
@@ -3608,6 +3623,233 @@ class TerminalWidget(Gtk.Box):
             logger.warning(f"Failed to setup agent-based shell: {e}")
             return False
 
+    def _local_shell_env(self) -> dict:
+        """Environment for a locally spawned shell (both agent routes)."""
+        from .identity import get_identity_manager
+
+        env = sanitize_local_shell_env(
+            get_identity_manager().apply_selected_to_env(os.environ.copy())
+        )
+        # Set TERM to a proper value only if missing or set to "dumb"
+        if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
+            env['TERM'] = 'xterm-256color'
+        return env
+
+    def _spawn_agent_shell_with_pty_handoff(
+        self, client, cwd: str, rows: int, cols: int, verbose: bool
+    ) -> bool:
+        """Let the host agent make the PTY and give VTE its master.
+
+        Returns False if the route is unavailable *before* anything was
+        spawned, leaving the caller to use the relayed agent. Once the agent
+        is running the handover is awaited on the main loop rather than
+        inline -- blocking here would freeze the UI for as long as the host
+        takes to start, and for the full timeout if it never answers. A
+        failure after that point falls back from the callback.
+        """
+        backend = getattr(self, 'backend', None)
+        adopt = getattr(backend, 'adopt_pty', None)
+        if not callable(adopt) or not getattr(backend, 'supports_pty_adoption', False):
+            return False
+
+        import socket as _socket
+
+        parent_sock, child_sock = _socket.socketpair(
+            _socket.AF_UNIX, _socket.SOCK_STREAM
+        )
+        try:
+            child_fd = child_sock.fileno()
+            os.set_inheritable(child_fd, True)
+            command = client.build_agent_command(
+                rows=rows, cols=cols, cwd=cwd, verbose=verbose,
+                pty_socket_fd=child_fd,
+            )
+            if not command:
+                return False
+
+            env = self._local_shell_env()
+            # DO_NOT_REAP_CHILD because VTE reaps it: watch_child() is what
+            # turns the agent's exit into this tab's child-exited.
+            pid, _, _, _ = GLib.spawn_async(
+                command,
+                [f"{k}={v}" for k, v in env.items()],
+                cwd,
+                GLib.SpawnFlags.DO_NOT_REAP_CHILD
+                | GLib.SpawnFlags.SEARCH_PATH
+                | GLib.SpawnFlags.LEAVE_DESCRIPTORS_OPEN,
+                None,
+                None,
+            )
+        except Exception as e:
+            logger.info(f"PTY handoff unavailable, using relayed agent: {e}")
+            parent_sock.close()
+            return False
+        finally:
+            child_sock.close()
+
+        self._pty_handoff = {
+            'sock': parent_sock,
+            'pid': pid,
+            'client': client,
+            'cwd': cwd,
+            'rows': rows,
+            'cols': cols,
+            'verbose': verbose,
+            'watch': None,
+            'timeout': None,
+        }
+        self._pty_handoff['watch'] = GLib.unix_fd_add_full(
+            GLib.PRIORITY_DEFAULT,
+            parent_sock.fileno(),
+            GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+            self._on_pty_handoff_ready,
+            None,
+        )
+        self._pty_handoff['timeout'] = GLib.timeout_add_seconds(
+            10, self._on_pty_handoff_timeout
+        )
+        return True
+
+    def _finish_pty_handoff(self) -> dict:
+        """Disarm the handover watch and return its state.
+
+        The socket is left open: the ready callback still has to read the
+        descriptor off it. Callers close it when they are done.
+        """
+        state = getattr(self, '_pty_handoff', None) or {}
+        self._pty_handoff = None
+        for key in ('watch', 'timeout'):
+            source = state.get(key)
+            if source:
+                try:
+                    GLib.source_remove(source)
+                except Exception:
+                    pass
+        return state
+
+    @staticmethod
+    def _close_handoff_socket(state: dict) -> None:
+        sock = state.get('sock')
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _on_pty_handoff_ready(self, fd, condition, _user_data=None) -> bool:
+        state = self._finish_pty_handoff()
+        if not state:
+            return False
+        pid = state['pid']
+
+        try:
+            master_fd = self._receive_pty_master(state['sock'])
+        except Exception as e:
+            logger.warning(f"Agent did not hand over a PTY: {e}")
+            self._abandon_agent(pid)
+            self._spawn_agent_shell_relayed(state)
+            return False
+        finally:
+            self._close_handoff_socket(state)
+
+        try:
+            # Takes ownership of master_fd even when it raises.
+            self.backend.adopt_pty(master_fd, pid)
+        except Exception as e:
+            logger.warning(f"Backend could not adopt the PTY: {e}")
+            self._abandon_agent(pid)
+            self._spawn_agent_shell_relayed(state)
+            return False
+
+        self._local_shell_agent_pid = pid
+        logger.info("Local shell running on a handed-over PTY (agent pid %s)", pid)
+        self._on_agent_spawn_complete(self.backend, pid, None, None)
+        return False
+
+    def _on_pty_handoff_timeout(self) -> bool:
+        state = self._finish_pty_handoff()
+        if not state:
+            return False
+        logger.warning("Agent did not hand over a PTY in time; using the relay")
+        self._close_handoff_socket(state)
+        self._abandon_agent(state['pid'])
+        self._spawn_agent_shell_relayed(state)
+        return False
+
+    def _spawn_agent_shell_relayed(self, state: dict) -> None:
+        """Fall back to the relayed agent after a handover failed."""
+        try:
+            self._spawn_agent_shell_via_backend(
+                state['client'], state['cwd'],
+                state['rows'], state['cols'], state['verbose'],
+            )
+        except Exception as e:
+            logger.error(f"Relayed agent fallback failed: {e}")
+            self.emit('connection-failed', str(e))
+
+    @staticmethod
+    def _abandon_agent(pid: int) -> None:
+        """Stop an agent we spawned but are not going to use.
+
+        Otherwise it sits on the host holding a PTY nobody will ever read,
+        which is exactly how the relayed agents leaked. SIGTERM goes to the
+        sandbox-side flatpak-spawn, which forwards it to the host process
+        (verified: the host child dies, flatpak-spawn exits 143).
+
+        The child watch is what reaps it -- the spawn asked for
+        DO_NOT_REAP_CHILD, so without this the pid stays a zombie.
+        """
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError) as e:
+            logger.debug(f"Could not stop unused agent {pid}: {e}")
+        try:
+            GLib.child_watch_add(
+                GLib.PRIORITY_DEFAULT,
+                pid,
+                lambda p, status, *_: GLib.spawn_close_pid(p),
+                None,
+            )
+        except Exception:
+            try:
+                GLib.spawn_close_pid(pid)
+            except Exception:
+                pass
+
+    #: Payload byte the agent sends alongside the PTY descriptor.
+    PTY_HANDOFF_MARKER = b"P"
+
+    @classmethod
+    def _receive_pty_master(cls, sock) -> int:
+        """Read the single SCM_RIGHTS fd the agent sends."""
+        import array as _array
+        import socket as _socket
+
+        fds = _array.array("i")
+        msg, ancdata, _flags, _addr = sock.recvmsg(
+            len(cls.PTY_HANDOFF_MARKER), _socket.CMSG_SPACE(fds.itemsize)
+        )
+        received = []
+        for level, kind, data in ancdata:
+            if level == _socket.SOL_SOCKET and kind == _socket.SCM_RIGHTS:
+                chunk = _array.array("i")
+                chunk.frombytes(data[: len(data) - (len(data) % chunk.itemsize)])
+                received.extend(chunk)
+        if not received:
+            raise RuntimeError(f"no PTY descriptor in handover message {msg!r}")
+        # Anything unexpected on this socket means we are not talking to the
+        # agent we think we are, so refuse it rather than adopt a stray fd.
+        if msg != cls.PTY_HANDOFF_MARKER or len(received) != 1:
+            for fd in received:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise RuntimeError(
+                f"unexpected handover message {msg!r} with {len(received)} fds"
+            )
+        return received[0]
+
     def _spawn_agent_shell(self, client, cols: int, rows: int) -> bool:
         """
         Actually spawn the agent shell with the given size.
@@ -3627,6 +3869,25 @@ class TerminalWidget(Gtk.Box):
             # Check if verbose mode is enabled
             verbose = logger.getEffectiveLevel() <= logging.DEBUG
 
+            # Preferred path: the agent creates the PTY on the host and
+            # hands the master back, so VTE drives it directly and the
+            # agent never sits between the shell and the terminal.
+            if self._spawn_agent_shell_with_pty_handoff(client, cwd, rows, cols, verbose):
+                return True
+
+            return self._spawn_agent_shell_via_backend(
+                client, cwd, rows, cols, verbose
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to spawn agent shell: {e}")
+            return False
+
+    def _spawn_agent_shell_via_backend(
+        self, client, cwd: str, rows: int, cols: int, verbose: bool
+    ) -> bool:
+        """Relayed agent: it owns a PTY of its own and copies bytes."""
+        try:
             # Build agent command
             command = client.build_agent_command(
                 rows=rows,
@@ -3641,16 +3902,10 @@ class TerminalWidget(Gtk.Box):
 
             logger.info(f"Launching agent-based shell via flatpak-spawn with size {cols}x{rows}...")
 
-            # Environment for agent. Route env injection through the selected identity
-            # provider so child processes (e.g. ssh run from this shell) reach the
+            # Env injection is routed through the selected identity provider
+            # so child processes (e.g. ssh run from this shell) reach the
             # user's ssh-agent via the same seam as SSH connections.
-            from .identity import get_identity_manager
-            env = sanitize_local_shell_env(
-                get_identity_manager().apply_selected_to_env(os.environ.copy())
-            )
-            # Set TERM to a proper value only if missing or set to "dumb"
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
+            env = self._local_shell_env()
 
             # Convert to list for VTE
             env_list = [f"{k}={v}" for k, v in env.items()]
@@ -4435,7 +4690,7 @@ class TerminalWidget(Gtk.Box):
                 self._latin_fallback_controller = fallback_controller
 
             if getattr(self, '_shortcut_controller', None) is not None:
-                self._setup_mouse_wheel_zoom()
+                self._setup_scroll_controllers()
 
         except Exception as e:
             logger.debug(f"Failed to install shortcuts: {e}")
@@ -4453,50 +4708,140 @@ class TerminalWidget(Gtk.Box):
         else:
             logger.warning("Search key controller not installed: _search missing at shortcut setup")
 
-    def _setup_mouse_wheel_zoom(self):
-        """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
-        if getattr(self, '_scroll_controller', None) is not None:
-            return
+    def _setup_scroll_controllers(self):
+        """Install the zoom and history-scroll controllers.
 
+        Two controllers on two different widgets, deliberately.
+
+        ``gtk_widget_add_controller()`` *prepends*, and ``run_controllers()``
+        iterates forward and stops at the first non-gesture handler that returns
+        TRUE.  A scroll controller added to the VTE widget therefore runs
+        *before* VTE's own ``vte-scroll-controller``, not after it.  VTE still
+        drives the wheel itself in two states even with fallback scrolling
+        disabled — the alternate screen sends ESC[A/ESC[B (less, vim, htop) and
+        mouse tracking sends button 4/5 reports (tmux) — so a handler that
+        consumed every delta there left the wheel doing nothing at all.
+
+        Hence the split:
+
+        * zoom stays on the terminal widget but in CAPTURE, which GTK runs
+          root-to-target ahead of every bubble handler, so Ctrl/Cmd+wheel keeps
+          zooming even while a full-screen application owns the wheel;
+        * history scroll goes on ``terminal_container``, the widget's parent, in
+          BUBBLE, so it only ever sees events VTE declined.  That restores VTE's
+          precedence structurally instead of re-deriving its screen and mouse
+          modes here.
+
+        docs/architecture/terminal-input-routing.md has the dispatch rules, the
+        rest of the terminal's controllers, and the probe recipe for checking a
+        change against a real VteTerminal.
+        """
         try:
             mac = is_macos()
 
-            scroll_controller = Gtk.EventControllerScroll()
-            scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+            # Zoom is a shortcut, so pass-through mode leaves Ctrl/Cmd+wheel to
+            # the remote application.  The history scroll below is not, and is
+            # installed either way -- see the note on the call in
+            # setup_terminal().
+            pass_through = bool(getattr(self, '_pass_through_mode', False))
 
-            def _on_scroll(controller, dx, dy):
-                try:
-                    # Check if Command key (macOS) or Ctrl key (Linux/Windows) is pressed
-                    modifiers = controller.get_current_event_state()
-                    if mac:
-                        # Check for Command key (Meta modifier)
-                        if modifiers & Gdk.ModifierType.META_MASK:
+            if not pass_through and getattr(self, '_zoom_controller', None) is None:
+                zoom_controller = Gtk.EventControllerScroll()
+                zoom_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+                zoom_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+                def _on_zoom_scroll(controller, dx, dy):
+                    try:
+                        # Check if Command key (macOS) or Ctrl key (Linux/Windows) is pressed
+                        modifiers = controller.get_current_event_state()
+                        mask = (
+                            Gdk.ModifierType.META_MASK if mac
+                            else Gdk.ModifierType.CONTROL_MASK
+                        )
+                        if modifiers & mask:
                             if dy > 0:
                                 self.zoom_out()
                             elif dy < 0:
                                 self.zoom_in()
                             return True  # Consume the event
-                    else:
-                        # Check for Ctrl key
-                        if modifiers & Gdk.ModifierType.CONTROL_MASK:
-                            if dy > 0:
-                                self.zoom_out()
-                            elif dy < 0:
-                                self.zoom_in()
-                            return True  # Consume the event
-                except Exception as e:
-                    logger.debug(f"Error in mouse wheel zoom: {e}")
-                return False  # Don't consume the event if modifier not pressed
+                    except Exception as e:
+                        logger.debug(f"Error in mouse wheel zoom: {e}")
+                    return False
 
-            scroll_controller.connect('scroll', _on_scroll)
-            host = self.controller_host()
-            if host is not None:
-                host.add_controller(scroll_controller)
-            self._scroll_controller = scroll_controller
-            logger.debug("Mouse wheel zoom functionality installed")
+                zoom_controller.connect('scroll', _on_zoom_scroll)
+                host = self.controller_host()
+                if host is not None:
+                    host.add_controller(zoom_controller)
+                    self._zoom_controller = zoom_controller
+
+            # Separate guard: the zoom controller lives on the backend widget,
+            # is reinstalled on every swap and is skipped under pass-through,
+            # while this one lives on the container and outlives all of that.
+            if getattr(self, '_scroll_controller', None) is None:
+                scroll_controller = Gtk.EventControllerScroll()
+                scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+                scroll_controller.connect('scroll', self._on_history_scroll)
+                container = getattr(self, 'terminal_container', None)
+                if container is not None:
+                    container.add_controller(scroll_controller)
+                    self._scroll_controller = scroll_controller
+
+            logger.debug("Terminal scroll controllers installed")
 
         except Exception as e:
-            logger.debug(f"Failed to setup mouse wheel zoom: {e}")
+            logger.debug(f"Failed to setup terminal scroll controllers: {e}")
+
+    def _history_scroll_delta(self, vte, controller, dy: float) -> float:
+        """Calculate scroll delta in adjustment units based on scroll device type."""
+        try:
+            cell_height = vte.get_char_height()
+        except Exception:
+            cell_height = 0
+        if cell_height <= 0:
+            return 0.0
+
+        # get_unit() is GTK >= 4.8 and the packaging only requires 4.6, so an
+        # older GTK raises here and Gdk.ScrollUnit does not exist either.  Both
+        # sides of the comparison would then be None, which is equal, and every
+        # wheel notch would take the pixel branch below and scroll 1px.  Fall
+        # back to the wheel branch explicitly instead: every X11 scroll event is
+        # a wheel event anyway.
+        scroll_unit = getattr(Gdk, "ScrollUnit", None)
+        unit = None
+        if scroll_unit is not None:
+            try:
+                unit = controller.get_unit()
+            except Exception:
+                unit = scroll_unit.WHEEL
+
+        try:
+            in_pixels = bool(vte.get_scroll_unit_is_pixels())
+        except Exception:
+            in_pixels = False
+
+        if scroll_unit is not None and unit == scroll_unit.SURFACE:
+            if in_pixels:
+                return float(dy)
+            return float(dy) / cell_height
+
+        lines = dy * WHEEL_SCROLL_LINES
+        if in_pixels:
+            return float(lines * cell_height)
+        return float(lines)
+
+    def _on_history_scroll(self, controller, dx: float, dy: float) -> bool:
+        """Scroll the terminal viewport in response to a scroll gesture."""
+        widget = getattr(self, "terminal_widget", None)
+        if not isinstance(widget, Gtk.Scrollable):
+            return False
+        adj = widget.get_vadjustment()
+        if adj is None:
+            return False
+        delta = self._history_scroll_delta(widget, controller, dy)
+        if delta == 0.0:
+            return False
+        adj.set_value(adj.get_value() + delta)
+        return True
 
     def _on_latin_fallback_key(self, controller, keyval, keycode, state):
         """Match the terminal accelerators through the layout's Latin group.
@@ -4541,7 +4886,11 @@ class TerminalWidget(Gtk.Box):
         )
 
     def _remove_custom_shortcut_controllers(self):
-        """Detach any custom shortcut or scroll controllers from the terminal widget."""
+        """Detach the custom shortcut controllers from the terminal widget.
+
+        Shortcuts only: zoom counts, the history-scroll controller does not and
+        is left alone here.  See _remove_scroll_controller.
+        """
         host = self.controller_host()
         ctrl = getattr(self, '_shortcut_controller', None)
         if ctrl is not None:
@@ -4564,18 +4913,43 @@ class TerminalWidget(Gtk.Box):
                 self._latin_fallback_controller = None
                 self._latin_fallback_bindings = []
 
-        scroll = getattr(self, '_scroll_controller', None)
-        if scroll is not None:
+        zoom = getattr(self, '_zoom_controller', None)
+        if zoom is not None:
             try:
                 if hasattr(host, 'remove_controller'):
-                    host.remove_controller(scroll)
+                    host.remove_controller(zoom)
             except Exception as exc:
-                logger.debug("Failed to remove scroll controller: %s", exc)
+                logger.debug("Failed to remove zoom controller: %s", exc)
             finally:
-                self._scroll_controller = None
+                self._zoom_controller = None
+
+        # The history-scroll controller is deliberately *not* removed here.  It
+        # is not a shortcut: it is how the wheel moves the scrollback at all,
+        # now that VTE's own fallback scrolling is off.  Tearing it down for
+        # pass-through mode left that mode with no wheel scrolling whatsoever,
+        # and it lives on terminal_container rather than the backend widget, so
+        # a backend swap never strands it either.  See _remove_scroll_controller.
 
         if getattr(self, '_search', None) is not None:
             self._search.teardown_key_controller()
+
+    def _remove_scroll_controller(self):
+        """Detach the history-scroll controller from ``terminal_container``.
+
+        Only for real teardown.  Unlike the shortcut controllers this one has to
+        come off the container it was added to, not off controller_host().
+        """
+        scroll = getattr(self, '_scroll_controller', None)
+        if scroll is None:
+            return
+        container = getattr(self, 'terminal_container', None)
+        try:
+            if hasattr(container, 'remove_controller'):
+                container.remove_controller(scroll)
+        except Exception as exc:
+            logger.debug("Failed to remove scroll controller: %s", exc)
+        finally:
+            self._scroll_controller = None
 
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
@@ -4723,6 +5097,11 @@ class TerminalWidget(Gtk.Box):
         # Remove custom controllers and disconnect config listeners
         try:
             self._remove_custom_shortcut_controllers()
+        except Exception:
+            pass
+
+        try:
+            self._remove_scroll_controller()
         except Exception:
             pass
 
@@ -5084,9 +5463,16 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 exit_code = status
 
-        # If user explicitly typed 'exit' (clean status 0), update status and close tab immediately
+        # A local shell has no connection to lose: whatever status it exits
+        # with is just the shell's own last status (typing exit after Ctrl+C
+        # gives 130), so treat any exit as the end of the session rather than
+        # a failed ssh run.
+        is_local = self._is_local_terminal()
+
+        # Session over (a clean status 0, or any local-shell exit): update
+        # status and close the tab immediately.
         try:
-            if exit_code == 0 and hasattr(self, 'get_root'):
+            if (exit_code == 0 or is_local) and hasattr(self, 'get_root'):
                 # Update connection status BEFORE closing the tab
                 logger.debug("Clean exit detected, updating connection status before closing tab")
                 self.connection_state = ConnectionState.DISCONNECTED
@@ -5181,9 +5567,10 @@ class TerminalWidget(Gtk.Box):
                 self._set_connecting_overlay_visible(False)
                 banner_text = self.last_error_message or exit_reason
                 if not banner_text:
-                    if exit_code and exit_code != 0:
+                    if exit_code and exit_code != 0 and not is_local:
                         banner_text = _('SSH exited with status {code}').format(code=exit_code)
                     else:
+                        # A local shell's exit status is never an ssh error.
                         banner_text = _('Session ended.')
                 self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
                 self._set_disconnected_banner_visible(True, banner_text)

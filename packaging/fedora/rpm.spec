@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.1.9}
+Version:        %{?version}%{!?version:6.2.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -145,6 +145,12 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Tue Sep 22 2026 mFat <newmfat@gmail.com> - 6.2.0-1
+- Local shell now follows the window size, so full-screen programs use the whole terminal
+- Fixed scrolling being far too fast with a touchpad on macOS
+- Fixed the scroll wheel not working while terminal shortcut pass-through is on
+- Fixed a local terminal tab staying open with an SSH error after pressing Ctrl+C and typing exit
+
 * Mon Sep 21 2026 mFat <newmfat@gmail.com> - 6.1.9-1
 - New port-knocking/pre-connect command configuration dialog
 

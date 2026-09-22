@@ -12,7 +12,6 @@ src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_field_helpers.py
 src/sshpilot/connection_dialog_port_forwarding.py
 src/sshpilot/connection_dialog_validation.py
-src/sshpilot/connection_display.py
 src/sshpilot/connection_manager.py
 src/sshpilot/connection_sort.py
 src/sshpilot/core/validation/connection.py
@@ -27,7 +26,7 @@ src/sshpilot/file_manager/pane_controls.py
 src/sshpilot/file_manager/progress_dialog.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
-src/sshpilot/forwarding_only_ui.py
+src/sshpilot/gtk/host_info_failure_messages.py
 src/sshpilot/gtk/identity_failure_messages.py
 src/sshpilot/gtk/plugin_session_failure_messages.py
 src/sshpilot/gtk/pre_command_messages.py

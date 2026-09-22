@@ -186,6 +186,23 @@ class BaseTerminalBackend(Protocol):
     ) -> None:
         """Spawn a new process attached to the backend terminal."""
 
+    # Whether adopt_pty() works. Checked *before* anything is spawned: the
+    # handoff cannot be probed by trying it, because by then a host agent is
+    # already running and holding a PTY nobody would read.
+    supports_pty_adoption = False
+
+    def adopt_pty(self, master_fd: int, watch_pid: int) -> None:
+        """Render an existing PTY instead of spawning a child on a new one.
+
+        Takes ownership of *master_fd* unconditionally: on success the
+        backend closes it with the terminal, and on failure before returning.
+        Callers must not close it after calling this, even if it raises.
+        *watch_pid* is the process whose exit ends the session.
+        """
+        raise TerminalBackendCapabilityError(
+            "This backend cannot adopt an existing PTY"
+        )
+
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         """Connect to the child exited signal for the backend."""
 
@@ -529,7 +546,8 @@ class VTETerminalBackend:
             ("scroll on output", lambda: self.vte.set_scroll_on_output(False)),
             ("mouse autohide", lambda: self.vte.set_mouse_autohide(True)),
             ("OSC 8 hyperlinks", lambda: self.vte.set_allow_hyperlink(True)),
-            ("fallback scrolling", lambda: self.vte.set_enable_fallback_scrolling(True)),
+            ("fallback scrolling", lambda: self.vte.set_enable_fallback_scrolling(False)),
+            ("scroll unit is pixels", lambda: self.vte.set_scroll_unit_is_pixels(True)),
             ("visibility", lambda: self.vte.show()),
         )
         for name, operation in operations:
@@ -973,6 +991,30 @@ class VTETerminalBackend:
             self.vte.grab_focus()
         except Exception:
             logger.debug("Failed to grab focus for VTE backend", exc_info=True)
+
+    supports_pty_adoption = True
+
+    def adopt_pty(self, master_fd: int, watch_pid: int) -> None:
+        """Give VTE a PTY someone else created, and a child to watch.
+
+        VTE then owns the terminal end outright, so it applies TIOCSWINSZ on
+        its own allocation exactly as it does for a local tab -- nothing has
+        to relay the size, and nothing can get it wrong.
+
+        Takes ownership of *master_fd*: vte_pty_new_foreign_sync() adopts the
+        descriptor rather than duplicating it (verified -- get_fd() returns
+        the same number and finalizing the VtePty closes it), so once it has
+        succeeded the fd must not be closed here. Before it succeeds, it is
+        still ours to close.
+        """
+        try:
+            pty = Vte.Pty.new_foreign_sync(master_fd, None)
+        except Exception:
+            os.close(master_fd)
+            raise
+        # From here the VtePty owns the fd; dropping it closes the PTY.
+        self.vte.set_pty(pty)
+        self.vte.watch_child(watch_pid)
 
     def spawn_async(
         self,
@@ -1477,6 +1519,10 @@ class PyXtermTerminalBackend:
     using the backend and fall back to :class:`VTETerminalBackend` when it is
     ``False``.
     """
+
+    # xterm.js renders in a WebView; it cannot take a PTY descriptor,
+    # so local shells here keep the relayed agent.
+    supports_pty_adoption = False
 
     def __init__(self, owner: "TerminalWidget") -> None:
         self.owner = owner

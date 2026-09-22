@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- Host Info summary failures now carry a strict `HostInfoFailure` with a stable
+  reason, machine `ErrorCode`, exact parameters, and a separate opaque
+  diagnostic. GTK and WebKit translate the same reason before formatting;
+  unreadable remote output is returned as a structured failure instead of a
+  rendered daemon exception. This changes the Host Info wire model, so the
+  API implementation version is 0.64. Protocol remains 1.0, and the shared
+  `ServiceFailure` contract is unchanged.
 - Direct SFTP RPC failures now use their existing `ErrorCode` values as the
   presentation contract instead of transporting rendered English messages.
   GTK maps those codes to gettext messages and keeps an optional raw SFTP

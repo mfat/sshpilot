@@ -10,6 +10,7 @@ platform documentation that versions with the code:
 | [running-from-source.md](running-from-source.md) | Running from source on Linux: the hybrid (system PyGObject + venv) and pure-venv (pip-built PyGObject) approaches, plus dev/test setup and troubleshooting. |
 | [INSTALL-macos.md](INSTALL-macos.md) | Installing and running from source on macOS (Homebrew GTK stack). |
 | [keyboard-shortcuts.md](keyboard-shortcuts.md) | Full shortcut reference for Linux and macOS. |
+| [architecture/terminal-input-routing.md](architecture/terminal-input-routing.md) | How pointer and scroll events are shared between VTE and SSH Pilot's own controllers, and where each controller must be attached. Read this before touching terminal controllers. |
 | [accessibility-automation.md](accessibility-automation.md) | What SSH Pilot exposes over AT-SPI, the rules for accessible names, and what UI automation can and cannot drive through it (Wayland, VTE, drag-and-drop). |
 | [diagnostics.md](diagnostics.md) | Where the logs live, the crash report, the `--diagnostics` flags and the bug-report bundle. |
 | [agent-architecture.md](agent-architecture.md) | The Ptyxis-style agent that provides host shells with job control under Flatpak. |
