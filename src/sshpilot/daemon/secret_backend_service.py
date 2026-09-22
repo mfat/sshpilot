@@ -927,7 +927,7 @@ class SecretBackendService:
                         # A session is not bound to a path: drop any database
                         # still open from before so the unlock below opens the
                         # new file instead of short-circuiting on the old one.
-                        self._run_safely(backend.lock)
+                        self._safe(backend.lock)
                         # Mirror the GUI "create and unlock in one step": the
                         # password is in hand, so unlock so it isn't asked again.
                         try:
