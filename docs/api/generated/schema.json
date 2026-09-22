@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.63",
+  "api_implementation_version": "0.64",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1432,6 +1432,14 @@
       "local",
       "remote",
       "dynamic"
+    ],
+    "HostInfoFailureCode": [
+      "timed_out",
+      "remote_command_failed",
+      "start_failed",
+      "unreadable_information",
+      "probe_failed",
+      "cancelled"
     ],
     "HostInfoProbe": [
       "full",
@@ -4692,6 +4700,39 @@
       ],
       "status": "Implemented"
     },
+    "HostInfoFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "HostInfoFailureCode"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "HostInfoRequest": {
       "fields": [
         {
@@ -5026,7 +5067,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[ServiceFailure]"
+          "type": "Optional[HostInfoFailure]"
         },
         {
           "default": null,

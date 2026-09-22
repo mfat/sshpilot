@@ -191,7 +191,13 @@ are classified potentially sensitive because result semantics are plugin-defined
 `HostInfoRequest` names a connection and a `HostInfoProbe`. `HostInfoSummary`
 pairs the operation with what it has produced: a `HostInfoSnapshot` for a
 completed full probe, `InterfaceCounters` for either probe, and a
-`ServiceFailure` when the probe failed.
+`HostInfoFailure` when the probe failed. Its `HostInfoFailureCode` is a stable
+presentation reason; `error_code` keeps the machine error category,
+`parameters` contains only the fields required by that reason (an `exit_code`
+for a failed remote command), and `diagnostic` is opaque stderr or launch
+detail. A frontend translates the reason before formatting its parameters and
+may append the diagnostic unchanged. Neither the diagnostic nor a daemon
+message is a gettext msgid.
 
 `HostInfoSnapshot` aggregates `CpuInfo`, `MemoryInfo`, `LoadAverage`, and
 tuples of `FilesystemUsage`, `NetworkInterface`, `TemperatureReading`,
