@@ -3621,6 +3621,117 @@ class TerminalWidget(Gtk.Box):
             logger.warning(f"Failed to setup agent-based shell: {e}")
             return False
 
+    def _spawn_agent_shell_with_pty_handoff(
+        self, client, cwd: str, rows: int, cols: int, verbose: bool
+    ) -> bool:
+        """Let the host agent make the PTY and give VTE its master.
+
+        Returns False if this route is unavailable, leaving the caller to
+        fall back to the relayed agent. The gain is that VTE owns a real
+        PTY: resizes reach the shell through the kernel, with nothing in
+        between to mirror them (and get them wrong).
+        """
+        backend = getattr(self, 'backend', None)
+        adopt = getattr(backend, 'adopt_pty', None)
+        if not callable(adopt) or not getattr(backend, 'supports_pty_adoption', False):
+            return False
+
+        import socket as _socket
+
+        parent_sock, child_sock = _socket.socketpair(
+            _socket.AF_UNIX, _socket.SOCK_STREAM
+        )
+        child_fd = child_sock.fileno()
+        try:
+            os.set_inheritable(child_fd, True)
+            command = client.build_agent_command(
+                rows=rows, cols=cols, cwd=cwd, verbose=verbose,
+                pty_socket_fd=child_fd,
+            )
+            if not command:
+                return False
+
+            from .identity import get_identity_manager
+            env = sanitize_local_shell_env(
+                get_identity_manager().apply_selected_to_env(os.environ.copy())
+            )
+            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
+                env['TERM'] = 'xterm-256color'
+
+            # DO_NOT_REAP_CHILD because VTE reaps it: watch_child() is what
+            # turns the agent's exit into this tab's child-exited.
+            pid, _, _, _ = GLib.spawn_async(
+                command,
+                [f"{k}={v}" for k, v in env.items()],
+                cwd,
+                GLib.SpawnFlags.DO_NOT_REAP_CHILD
+                | GLib.SpawnFlags.SEARCH_PATH
+                | GLib.SpawnFlags.LEAVE_DESCRIPTORS_OPEN,
+                None,
+                None,
+            )
+        except Exception as e:
+            logger.info(f"PTY handoff unavailable, using relayed agent: {e}")
+            parent_sock.close()
+            child_sock.close()
+            return False
+        finally:
+            child_sock.close()
+
+        try:
+            parent_sock.settimeout(10)
+            master_fd = self._receive_pty_master(parent_sock)
+        except Exception as e:
+            logger.warning(f"Agent did not hand over a PTY: {e}")
+            self._abandon_agent(pid)
+            return False
+        finally:
+            parent_sock.close()
+
+        try:
+            adopt(master_fd, pid)
+        except Exception as e:
+            logger.warning(f"Backend could not adopt the PTY: {e}")
+            os.close(master_fd)
+            self._abandon_agent(pid)
+            return False
+
+        self._local_shell_agent_pid = pid
+        logger.info("Local shell running on a handed-over PTY (agent pid %s)", pid)
+        self._on_agent_spawn_complete(self.backend, pid, None, None)
+        return True
+
+    @staticmethod
+    def _abandon_agent(pid: int) -> None:
+        """Stop an agent we spawned but are not going to use.
+
+        Otherwise it sits on the host holding a PTY nobody will ever read,
+        which is exactly how the relayed agents leaked.
+        """
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError) as e:
+            logger.debug(f"Could not stop unused agent {pid}: {e}")
+        try:
+            GLib.spawn_close_pid(pid)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _receive_pty_master(sock) -> int:
+        """Read the single SCM_RIGHTS fd the agent sends."""
+        import array as _array
+        import socket as _socket
+
+        msg, ancdata, _flags, _addr = sock.recvmsg(1, _socket.CMSG_SPACE(4))
+        for level, kind, data in ancdata:
+            if level == _socket.SOL_SOCKET and kind == _socket.SCM_RIGHTS:
+                fds = _array.array("i")
+                fds.frombytes(data[: len(data) - (len(data) % fds.itemsize)])
+                if fds:
+                    return fds[0]
+        raise RuntimeError(f"no PTY descriptor in handover message {msg!r}")
+
     def _spawn_agent_shell(self, client, cols: int, rows: int) -> bool:
         """
         Actually spawn the agent shell with the given size.
@@ -3639,6 +3750,12 @@ class TerminalWidget(Gtk.Box):
 
             # Check if verbose mode is enabled
             verbose = logger.getEffectiveLevel() <= logging.DEBUG
+
+            # Preferred path: the agent creates the PTY on the host and
+            # hands the master back, so VTE drives it directly and the
+            # agent never sits between the shell and the terminal.
+            if self._spawn_agent_shell_with_pty_handoff(client, cwd, rows, cols, verbose):
+                return True
 
             # Build agent command
             command = client.build_agent_command(

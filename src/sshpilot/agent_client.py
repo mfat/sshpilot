@@ -88,7 +88,8 @@ class AgentClient:
         rows: int = 24,
         cols: int = 80,
         cwd: Optional[str] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        pty_socket_fd: Optional[int] = None,
     ) -> Optional[List[str]]:
         """
         Build the command to launch the agent.
@@ -104,7 +105,9 @@ class AgentClient:
         """
         # In Flatpak, use embedded agent code approach
         if is_flatpak():
-            return self._build_flatpak_agent_command(rows, cols, cwd, verbose)
+            return self._build_flatpak_agent_command(
+                rows, cols, cwd, verbose, pty_socket_fd
+            )
         
         # Not in Flatpak, run directly
         python_path, agent_path = self.find_agent()
@@ -133,7 +136,8 @@ class AgentClient:
         rows: int = 24,
         cols: int = 80,
         cwd: Optional[str] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        pty_socket_fd: Optional[int] = None,
     ) -> Optional[List[str]]:
         """
         Build agent command for Flatpak environment.
@@ -176,7 +180,10 @@ class AgentClient:
         
         if verbose:
             agent_args.append('--verbose')
-        
+
+        if pty_socket_fd is not None:
+            agent_args.extend(['--pty-socket', str(pty_socket_fd)])
+
         args_str = ' '.join(agent_args)
         
         # Create bash script that decodes and runs the agent
@@ -191,6 +198,12 @@ class AgentClient:
         cmd = [
             flatpak_spawn,
             '--host',
+        ]
+        if pty_socket_fd is not None:
+            # Hands the socket to the host process at the same fd number, so
+            # the agent can pass the PTY master back through it.
+            cmd.append(f'--forward-fd={pty_socket_fd}')
+        cmd += [
             f'--env=SSHPILOT_AGENT={agent_b64}',
             'bash',
             '-c',

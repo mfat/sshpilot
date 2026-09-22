@@ -186,6 +186,21 @@ class BaseTerminalBackend(Protocol):
     ) -> None:
         """Spawn a new process attached to the backend terminal."""
 
+    # Whether adopt_pty() works. Checked *before* anything is spawned: the
+    # handoff cannot be probed by trying it, because by then a host agent is
+    # already running and holding a PTY nobody would read.
+    supports_pty_adoption = False
+
+    def adopt_pty(self, master_fd: int, watch_pid: int) -> None:
+        """Render an existing PTY instead of spawning a child on a new one.
+
+        *master_fd* is handed to the backend, which owns it from then on.
+        *watch_pid* is the process whose exit ends the session.
+        """
+        raise TerminalBackendCapabilityError(
+            "This backend cannot adopt an existing PTY"
+        )
+
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         """Connect to the child exited signal for the backend."""
 
@@ -974,6 +989,19 @@ class VTETerminalBackend:
             self.vte.grab_focus()
         except Exception:
             logger.debug("Failed to grab focus for VTE backend", exc_info=True)
+
+    supports_pty_adoption = True
+
+    def adopt_pty(self, master_fd: int, watch_pid: int) -> None:
+        """Give VTE a PTY someone else created, and a child to watch.
+
+        VTE then owns the terminal end outright, so it applies TIOCSWINSZ on
+        its own allocation exactly as it does for a local tab -- nothing has
+        to relay the size, and nothing can get it wrong.
+        """
+        pty = Vte.Pty.new_foreign_sync(master_fd, None)
+        self.vte.set_pty(pty)
+        self.vte.watch_child(watch_pid)
 
     def spawn_async(
         self,

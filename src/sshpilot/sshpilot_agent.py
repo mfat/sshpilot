@@ -17,6 +17,8 @@ import subprocess
 import struct
 import select
 import signal
+import socket
+import array
 import time
 import pwd
 import json
@@ -191,14 +193,23 @@ class PTYAgent:
         self._last_applied_size = (rows, cols)
         self.set_pty_size(rows, cols)
     
-    def spawn_shell(self, shell: str, cwd: Optional[str] = None) -> int:
+    def spawn_shell(
+        self,
+        shell: str,
+        cwd: Optional[str] = None,
+        tty_fd: Optional[int] = None,
+    ) -> int:
         """
         Spawn the user's shell with proper PTY setup.
         
-        This runs the shell as a child process with the PTY slave as its
-        controlling terminal, ensuring proper job control.
+        This runs the shell as a child process with *tty_fd* as its
+        controlling terminal, ensuring proper job control. *tty_fd* defaults
+        to this agent's own PTY slave; the direct path passes the terminal
+        flatpak-spawn already handed us instead.
         """
-        if self.slave_fd is None:
+        if tty_fd is None:
+            tty_fd = self.slave_fd
+        if tty_fd is None:
             raise RuntimeError("PTY not created yet")
 
         try:
@@ -239,23 +250,26 @@ class PTYAgent:
                 # Child process
                 try:
                     # Create new session and make this process the session leader
+                    # setsid() already makes this a session and process
+                    # group leader; a setpgid(0, 0) after it fails EPERM.
                     os.setsid()
-                    
+
                     # Close master FD in child
-                    os.close(self.master_fd)
+                    if self.master_fd is not None:
+                        os.close(self.master_fd)
                     
                     # Make the PTY slave the controlling terminal
                     # This is the critical operation that fixes job control
-                    fcntl.ioctl(self.slave_fd, termios.TIOCSCTTY, 0)
+                    fcntl.ioctl(tty_fd, termios.TIOCSCTTY, 0)
                     
                     # Redirect stdin, stdout, stderr to PTY slave
-                    os.dup2(self.slave_fd, 0)
-                    os.dup2(self.slave_fd, 1)
-                    os.dup2(self.slave_fd, 2)
+                    os.dup2(tty_fd, 0)
+                    os.dup2(tty_fd, 1)
+                    os.dup2(tty_fd, 2)
                     
                     # Close the original slave FD if it's not one of stdin/stdout/stderr
-                    if self.slave_fd > 2:
-                        os.close(self.slave_fd)
+                    if tty_fd > 2:
+                        os.close(tty_fd)
                     
                     # Change to working directory
                     os.chdir(cwd)
@@ -275,8 +289,9 @@ class PTYAgent:
             else:
                 # Parent process
                 # Close slave FD in parent (child has its own copy)
-                os.close(self.slave_fd)
-                self.slave_fd = None
+                if self.slave_fd is not None and tty_fd == self.slave_fd:
+                    os.close(self.slave_fd)
+                    self.slave_fd = None
                 
                 self.shell_pid = pid
                 logger.info(f"Spawned shell: {shell} (PID: {pid})")
@@ -417,13 +432,85 @@ class PTYAgent:
                 pass
 
 
-    def run(self, rows: int = 24, cols: int = 80, cwd: Optional[str] = None):
+    def _run_with_pty_handoff(
+        self, shell: str, cwd: Optional[str], sock_fd: int
+    ) -> int:
+        """Create the PTY here and give its master to the terminal.
+
+        The terminal then owns a real PTY and drives it directly: resizing,
+        job control and flow control become the kernel's business instead of
+        something this process has to mirror. No second PTY, no I/O loop --
+        the agent only spawns the shell and waits for it, which is all the
+        Ptyxis agent does too.
+
+        The master cannot simply be created on the terminal's side: its
+        /dev/pts lives in the sandbox's devpts instance, which the host
+        cannot open. Nor can the shell take over the terminal's existing PTY
+        -- that one is already flatpak-spawn's controlling terminal, and
+        TIOCSCTTY on it fails with EPERM. So the host makes a fresh pair and
+        passes the master back through a socket flatpak-spawn forwarded.
+        """
+        master_fd, slave_fd = pty.openpty()
+        self.master_fd = master_fd
+        self.slave_fd = slave_fd
+
+        sock = socket.socket(
+            fileno=sock_fd, family=socket.AF_UNIX, type=socket.SOCK_STREAM
+        )
+        try:
+            sock.sendmsg(
+                [b"P"],
+                [(socket.SOL_SOCKET, socket.SCM_RIGHTS,
+                  array.array("i", [master_fd]))],
+            )
+        except OSError as e:
+            logger.error(f"Could not hand the PTY to the terminal: {e}")
+            raise
+        logger.debug("Handed PTY master to the terminal")
+
+        shell_pid = self.spawn_shell(shell, cwd, tty_fd=slave_fd)
+        # The terminal owns the master now; holding a copy here would keep
+        # the PTY alive (and the shell unaware of hangup) after it closes.
+        os.close(master_fd)
+        self.master_fd = None
+        self._send_status('ready', pid=shell_pid)
+        logger.debug("Waiting on shell %s (handed-off PTY)", shell_pid)
+        try:
+            _, status = os.waitpid(shell_pid, 0)
+        except OSError as e:
+            logger.debug(f"waitpid failed: {e}")
+            return 0
+        self.shell_pid = None
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        return 128 + os.WTERMSIG(status) if os.WIFSIGNALED(status) else 0
+
+    def run(
+        self,
+        rows: int = 24,
+        cols: int = 80,
+        cwd: Optional[str] = None,
+        pty_socket_fd: Optional[int] = None,
+    ):
         """Main entry point: create PTY, spawn shell, run I/O loop"""
         try:
             # Discover shell
             shell = self.discover_shell()
             logger.info(f"Using shell: {shell}")
-            
+
+            # flatpak-spawn hands us the terminal's own PTY on stdin, so the
+            # shell can simply be given that. Creating a second PTY here and
+            # copying bytes between the two -- which is what this agent used
+            # to do -- buys nothing and costs correctness: only the relay can
+            # mirror the size inward, so the shell's geometry silently lagged
+            # the window (GH #1270 neighbourhood). Ptyxis does the same thing
+            # the same way: its agent never touches terminal data, it only
+            # puts the child on the terminal it was given.
+            if pty_socket_fd is not None:
+                return self._run_with_pty_handoff(shell, cwd, pty_socket_fd)
+
+            logger.debug("No PTY socket given; falling back to a relayed PTY")
+
             # Create PTY with proper flags
             self.create_pty()
             
@@ -478,12 +565,15 @@ def main():
     parser.add_argument('--cols', type=int, default=80, help='Terminal columns')
     parser.add_argument('--cwd', type=str, default=None, help='Working directory')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
+    parser.add_argument('--pty-socket', type=int, default=None,
+                        help='FD of a socket to hand the new PTY master back over')
     
     args = parser.parse_args()
     
     # Create and run agent
     agent = PTYAgent()
-    return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd)
+    return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd,
+                     pty_socket_fd=args.pty_socket)
 
 
 if __name__ == '__main__':
