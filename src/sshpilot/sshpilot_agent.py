@@ -204,8 +204,8 @@ class PTYAgent:
         
         This runs the shell as a child process with *tty_fd* as its
         controlling terminal, ensuring proper job control. *tty_fd* defaults
-        to this agent's own PTY slave; the direct path passes the terminal
-        flatpak-spawn already handed us instead.
+        to ``self.slave_fd``; both the handoff and the relay path pass the
+        slave of the pair they just created.
         """
         if tty_fd is None:
             tty_fd = self.slave_fd
@@ -433,7 +433,8 @@ class PTYAgent:
 
 
     def _run_with_pty_handoff(
-        self, shell: str, cwd: Optional[str], sock_fd: int
+        self, shell: str, cwd: Optional[str], sock_fd: int,
+        rows: int = 24, cols: int = 80,
     ) -> int:
         """Create the PTY here and give its master to the terminal.
 
@@ -454,6 +455,11 @@ class PTYAgent:
         self.master_fd = master_fd
         self.slave_fd = slave_fd
 
+        # openpty() leaves the winsize at 0x0. The terminal will set the real
+        # one as soon as it adopts the master, but the shell starts before
+        # that and would otherwise read 0x0 for its first prompt.
+        self.set_pty_size(rows, cols)
+
         sock = socket.socket(
             fileno=sock_fd, family=socket.AF_UNIX, type=socket.SOCK_STREAM
         )
@@ -466,6 +472,9 @@ class PTYAgent:
         except OSError as e:
             logger.error(f"Could not hand the PTY to the terminal: {e}")
             raise
+        finally:
+            # Closes the fd too; the terminal has its own copy by now.
+            sock.close()
         logger.debug("Handed PTY master to the terminal")
 
         shell_pid = self.spawn_shell(shell, cwd, tty_fd=slave_fd)
@@ -498,16 +507,17 @@ class PTYAgent:
             shell = self.discover_shell()
             logger.info(f"Using shell: {shell}")
 
-            # flatpak-spawn hands us the terminal's own PTY on stdin, so the
-            # shell can simply be given that. Creating a second PTY here and
-            # copying bytes between the two -- which is what this agent used
-            # to do -- buys nothing and costs correctness: only the relay can
-            # mirror the size inward, so the shell's geometry silently lagged
-            # the window (GH #1270 neighbourhood). Ptyxis does the same thing
-            # the same way: its agent never touches terminal data, it only
-            # puts the child on the terminal it was given.
+            # Preferred: make the PTY here and give the terminal its master,
+            # so the terminal drives it directly. This agent used to create a
+            # second PTY and copy bytes between the two, which buys nothing
+            # and costs correctness -- only the relay could mirror the size
+            # inward, so the shell's geometry silently lagged the window.
+            # Ptyxis does it this way too: its agent never touches terminal
+            # data, it only spawns the child on the PTY and waits.
             if pty_socket_fd is not None:
-                return self._run_with_pty_handoff(shell, cwd, pty_socket_fd)
+                return self._run_with_pty_handoff(
+                    shell, cwd, pty_socket_fd, rows, cols
+                )
 
             logger.debug("No PTY socket given; falling back to a relayed PTY")
 

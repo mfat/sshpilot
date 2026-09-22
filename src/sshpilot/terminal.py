@@ -299,6 +299,8 @@ class TerminalWidget(Gtk.Box):
         self._connecting_detail_announced = False
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
+        self._pty_handoff = None
+        self._local_shell_agent_pid = None
         self._mouse_tracking = MouseTrackingState()
         # PTY-less VTE cannot disconnect_pty_read() during drag-select the way
         # Ptyxis does; buffer daemon output instead (see DeferredDisplayFeed).
@@ -3621,15 +3623,29 @@ class TerminalWidget(Gtk.Box):
             logger.warning(f"Failed to setup agent-based shell: {e}")
             return False
 
+    def _local_shell_env(self) -> dict:
+        """Environment for a locally spawned shell (both agent routes)."""
+        from .identity import get_identity_manager
+
+        env = sanitize_local_shell_env(
+            get_identity_manager().apply_selected_to_env(os.environ.copy())
+        )
+        # Set TERM to a proper value only if missing or set to "dumb"
+        if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
+            env['TERM'] = 'xterm-256color'
+        return env
+
     def _spawn_agent_shell_with_pty_handoff(
         self, client, cwd: str, rows: int, cols: int, verbose: bool
     ) -> bool:
         """Let the host agent make the PTY and give VTE its master.
 
-        Returns False if this route is unavailable, leaving the caller to
-        fall back to the relayed agent. The gain is that VTE owns a real
-        PTY: resizes reach the shell through the kernel, with nothing in
-        between to mirror them (and get them wrong).
+        Returns False if the route is unavailable *before* anything was
+        spawned, leaving the caller to use the relayed agent. Once the agent
+        is running the handover is awaited on the main loop rather than
+        inline -- blocking here would freeze the UI for as long as the host
+        takes to start, and for the full timeout if it never answers. A
+        failure after that point falls back from the callback.
         """
         backend = getattr(self, 'backend', None)
         adopt = getattr(backend, 'adopt_pty', None)
@@ -3641,8 +3657,8 @@ class TerminalWidget(Gtk.Box):
         parent_sock, child_sock = _socket.socketpair(
             _socket.AF_UNIX, _socket.SOCK_STREAM
         )
-        child_fd = child_sock.fileno()
         try:
+            child_fd = child_sock.fileno()
             os.set_inheritable(child_fd, True)
             command = client.build_agent_command(
                 rows=rows, cols=cols, cwd=cwd, verbose=verbose,
@@ -3651,13 +3667,7 @@ class TerminalWidget(Gtk.Box):
             if not command:
                 return False
 
-            from .identity import get_identity_manager
-            env = sanitize_local_shell_env(
-                get_identity_manager().apply_selected_to_env(os.environ.copy())
-            )
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
-
+            env = self._local_shell_env()
             # DO_NOT_REAP_CHILD because VTE reaps it: watch_child() is what
             # turns the agent's exit into this tab's child-exited.
             pid, _, _, _ = GLib.spawn_async(
@@ -3673,64 +3683,172 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.info(f"PTY handoff unavailable, using relayed agent: {e}")
             parent_sock.close()
-            child_sock.close()
             return False
         finally:
             child_sock.close()
 
+        self._pty_handoff = {
+            'sock': parent_sock,
+            'pid': pid,
+            'client': client,
+            'cwd': cwd,
+            'rows': rows,
+            'cols': cols,
+            'verbose': verbose,
+            'watch': None,
+            'timeout': None,
+        }
+        self._pty_handoff['watch'] = GLib.unix_fd_add_full(
+            GLib.PRIORITY_DEFAULT,
+            parent_sock.fileno(),
+            GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+            self._on_pty_handoff_ready,
+            None,
+        )
+        self._pty_handoff['timeout'] = GLib.timeout_add_seconds(
+            10, self._on_pty_handoff_timeout
+        )
+        return True
+
+    def _finish_pty_handoff(self) -> dict:
+        """Disarm the handover watch and return its state.
+
+        The socket is left open: the ready callback still has to read the
+        descriptor off it. Callers close it when they are done.
+        """
+        state = getattr(self, '_pty_handoff', None) or {}
+        self._pty_handoff = None
+        for key in ('watch', 'timeout'):
+            source = state.get(key)
+            if source:
+                try:
+                    GLib.source_remove(source)
+                except Exception:
+                    pass
+        return state
+
+    @staticmethod
+    def _close_handoff_socket(state: dict) -> None:
+        sock = state.get('sock')
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _on_pty_handoff_ready(self, fd, condition, _user_data=None) -> bool:
+        state = self._finish_pty_handoff()
+        if not state:
+            return False
+        pid = state['pid']
+
         try:
-            parent_sock.settimeout(10)
-            master_fd = self._receive_pty_master(parent_sock)
+            master_fd = self._receive_pty_master(state['sock'])
         except Exception as e:
             logger.warning(f"Agent did not hand over a PTY: {e}")
             self._abandon_agent(pid)
+            self._spawn_agent_shell_relayed(state)
             return False
         finally:
-            parent_sock.close()
+            self._close_handoff_socket(state)
 
         try:
-            adopt(master_fd, pid)
+            # Takes ownership of master_fd even when it raises.
+            self.backend.adopt_pty(master_fd, pid)
         except Exception as e:
             logger.warning(f"Backend could not adopt the PTY: {e}")
-            os.close(master_fd)
             self._abandon_agent(pid)
+            self._spawn_agent_shell_relayed(state)
             return False
 
         self._local_shell_agent_pid = pid
         logger.info("Local shell running on a handed-over PTY (agent pid %s)", pid)
         self._on_agent_spawn_complete(self.backend, pid, None, None)
-        return True
+        return False
+
+    def _on_pty_handoff_timeout(self) -> bool:
+        state = self._finish_pty_handoff()
+        if not state:
+            return False
+        logger.warning("Agent did not hand over a PTY in time; using the relay")
+        self._close_handoff_socket(state)
+        self._abandon_agent(state['pid'])
+        self._spawn_agent_shell_relayed(state)
+        return False
+
+    def _spawn_agent_shell_relayed(self, state: dict) -> None:
+        """Fall back to the relayed agent after a handover failed."""
+        try:
+            self._spawn_agent_shell_via_backend(
+                state['client'], state['cwd'],
+                state['rows'], state['cols'], state['verbose'],
+            )
+        except Exception as e:
+            logger.error(f"Relayed agent fallback failed: {e}")
+            self.emit('connection-failed', str(e))
 
     @staticmethod
     def _abandon_agent(pid: int) -> None:
         """Stop an agent we spawned but are not going to use.
 
         Otherwise it sits on the host holding a PTY nobody will ever read,
-        which is exactly how the relayed agents leaked.
+        which is exactly how the relayed agents leaked. SIGTERM goes to the
+        sandbox-side flatpak-spawn, which forwards it to the host process
+        (verified: the host child dies, flatpak-spawn exits 143).
+
+        The child watch is what reaps it -- the spawn asked for
+        DO_NOT_REAP_CHILD, so without this the pid stays a zombie.
         """
         try:
             os.kill(pid, signal.SIGTERM)
         except (OSError, ProcessLookupError) as e:
             logger.debug(f"Could not stop unused agent {pid}: {e}")
         try:
-            GLib.spawn_close_pid(pid)
+            GLib.child_watch_add(
+                GLib.PRIORITY_DEFAULT,
+                pid,
+                lambda p, status, *_: GLib.spawn_close_pid(p),
+                None,
+            )
         except Exception:
-            pass
+            try:
+                GLib.spawn_close_pid(pid)
+            except Exception:
+                pass
 
-    @staticmethod
-    def _receive_pty_master(sock) -> int:
+    #: Payload byte the agent sends alongside the PTY descriptor.
+    PTY_HANDOFF_MARKER = b"P"
+
+    @classmethod
+    def _receive_pty_master(cls, sock) -> int:
         """Read the single SCM_RIGHTS fd the agent sends."""
         import array as _array
         import socket as _socket
 
-        msg, ancdata, _flags, _addr = sock.recvmsg(1, _socket.CMSG_SPACE(4))
+        fds = _array.array("i")
+        msg, ancdata, _flags, _addr = sock.recvmsg(
+            len(cls.PTY_HANDOFF_MARKER), _socket.CMSG_SPACE(fds.itemsize)
+        )
+        received = []
         for level, kind, data in ancdata:
             if level == _socket.SOL_SOCKET and kind == _socket.SCM_RIGHTS:
-                fds = _array.array("i")
-                fds.frombytes(data[: len(data) - (len(data) % fds.itemsize)])
-                if fds:
-                    return fds[0]
-        raise RuntimeError(f"no PTY descriptor in handover message {msg!r}")
+                chunk = _array.array("i")
+                chunk.frombytes(data[: len(data) - (len(data) % chunk.itemsize)])
+                received.extend(chunk)
+        if not received:
+            raise RuntimeError(f"no PTY descriptor in handover message {msg!r}")
+        # Anything unexpected on this socket means we are not talking to the
+        # agent we think we are, so refuse it rather than adopt a stray fd.
+        if msg != cls.PTY_HANDOFF_MARKER or len(received) != 1:
+            for fd in received:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise RuntimeError(
+                f"unexpected handover message {msg!r} with {len(received)} fds"
+            )
+        return received[0]
 
     def _spawn_agent_shell(self, client, cols: int, rows: int) -> bool:
         """
@@ -3757,6 +3875,19 @@ class TerminalWidget(Gtk.Box):
             if self._spawn_agent_shell_with_pty_handoff(client, cwd, rows, cols, verbose):
                 return True
 
+            return self._spawn_agent_shell_via_backend(
+                client, cwd, rows, cols, verbose
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to spawn agent shell: {e}")
+            return False
+
+    def _spawn_agent_shell_via_backend(
+        self, client, cwd: str, rows: int, cols: int, verbose: bool
+    ) -> bool:
+        """Relayed agent: it owns a PTY of its own and copies bytes."""
+        try:
             # Build agent command
             command = client.build_agent_command(
                 rows=rows,
@@ -3771,16 +3902,10 @@ class TerminalWidget(Gtk.Box):
 
             logger.info(f"Launching agent-based shell via flatpak-spawn with size {cols}x{rows}...")
 
-            # Environment for agent. Route env injection through the selected identity
-            # provider so child processes (e.g. ssh run from this shell) reach the
+            # Env injection is routed through the selected identity provider
+            # so child processes (e.g. ssh run from this shell) reach the
             # user's ssh-agent via the same seam as SSH connections.
-            from .identity import get_identity_manager
-            env = sanitize_local_shell_env(
-                get_identity_manager().apply_selected_to_env(os.environ.copy())
-            )
-            # Set TERM to a proper value only if missing or set to "dumb"
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
+            env = self._local_shell_env()
 
             # Convert to list for VTE
             env_list = [f"{k}={v}" for k, v in env.items()]

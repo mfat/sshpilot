@@ -194,7 +194,9 @@ class BaseTerminalBackend(Protocol):
     def adopt_pty(self, master_fd: int, watch_pid: int) -> None:
         """Render an existing PTY instead of spawning a child on a new one.
 
-        *master_fd* is handed to the backend, which owns it from then on.
+        Takes ownership of *master_fd* unconditionally: on success the
+        backend closes it with the terminal, and on failure before returning.
+        Callers must not close it after calling this, even if it raises.
         *watch_pid* is the process whose exit ends the session.
         """
         raise TerminalBackendCapabilityError(
@@ -998,8 +1000,19 @@ class VTETerminalBackend:
         VTE then owns the terminal end outright, so it applies TIOCSWINSZ on
         its own allocation exactly as it does for a local tab -- nothing has
         to relay the size, and nothing can get it wrong.
+
+        Takes ownership of *master_fd*: vte_pty_new_foreign_sync() adopts the
+        descriptor rather than duplicating it (verified -- get_fd() returns
+        the same number and finalizing the VtePty closes it), so once it has
+        succeeded the fd must not be closed here. Before it succeeds, it is
+        still ours to close.
         """
-        pty = Vte.Pty.new_foreign_sync(master_fd, None)
+        try:
+            pty = Vte.Pty.new_foreign_sync(master_fd, None)
+        except Exception:
+            os.close(master_fd)
+            raise
+        # From here the VtePty owns the fd; dropping it closes the PTY.
         self.vte.set_pty(pty)
         self.vte.watch_child(watch_pid)
 
@@ -1506,6 +1519,10 @@ class PyXtermTerminalBackend:
     using the backend and fall back to :class:`VTETerminalBackend` when it is
     ``False``.
     """
+
+    # xterm.js renders in a WebView; it cannot take a PTY descriptor,
+    # so local shells here keep the relayed agent.
+    supports_pty_adoption = False
 
     def __init__(self, owner: "TerminalWidget") -> None:
         self.owner = owner
