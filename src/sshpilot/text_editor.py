@@ -1065,7 +1065,7 @@ class RemoteFileEditorWindow(Adw.Window):
                             self._save_button.set_sensitive(False)
                         except Exception:
                             pass
-                        self._show_toast("Read-only file", timeout=3)
+                        self._show_toast(_("Read-only file"), timeout=3)
                     GLib.idle_add(self._load_file_content)
                 except Exception as e:
                     logger.error("Failed to read daemon file for editing", exc_info=True)
@@ -1090,7 +1090,11 @@ class RemoteFileEditorWindow(Adw.Window):
         """Load the file content into the editor (downloaded for remote, direct for local)."""
         try:
             if not self._temp_file.exists():
-                error_msg = "File not found" if self._is_local else "Downloaded file not found"
+                error_msg = (
+                    _("File not found")
+                    if self._is_local
+                    else _("Downloaded file not found")
+                )
                 self._show_error(error_msg)
                 return
             
@@ -1133,7 +1137,9 @@ class RemoteFileEditorWindow(Adw.Window):
             
         except Exception as e:
             logger.error(f"Failed to load file content: {e}", exc_info=True)
-            self._show_error(f"Failed to load file: {e}")
+            self._show_error(
+                _("Failed to load file: {error}").format(error=str(e))
+            )
             # Ensure loading flag is reset even on error
             self._is_loading = False
     
@@ -1232,7 +1238,7 @@ class RemoteFileEditorWindow(Adw.Window):
                        box.set_margin_start, box.set_margin_end):
                 fn(6)
             if kind == "match":
-                tag = Gtk.Label(label="Match")
+                tag = Gtk.Label(label=_("Match"))
                 tag.add_css_class("dim-label")
                 tag.add_css_class("caption")
                 box.append(tag)
@@ -1305,7 +1311,7 @@ class RemoteFileEditorWindow(Adw.Window):
     def _on_save_clicked(self, _button: Gtk.Button) -> None:
         """Handle save button click - save buffer content locally, upload if remote."""
         if not self._temp_file:
-            self._show_error("File not found")
+            self._show_error(_("File not found"))
             return
 
         # Always save buffer content to file
@@ -1318,16 +1324,23 @@ class RemoteFileEditorWindow(Adw.Window):
         if self._is_local and self._pre_save_validator is not None:
             error = self._pre_save_validator(text)
             if error:
-                self._show_error(f"Not saved — invalid SSH config:\n\n{error}")
+                self._show_error(
+                    _("Not saved — invalid SSH config:\n\n{error}").format(
+                        error=str(error)
+                    )
+                )
                 return
 
         # Guard against clobbering a change made on disk since we loaded/last
         # saved (e.g. the connection editor rewrote ~/.ssh/config).
         if self._is_local and getattr(self, '_externally_modified', False):
             dlg = Adw.AlertDialog.new(
-                "File changed on disk",
-                "This file was modified outside the editor since you opened it. "
-                "Saving now overwrites those changes.")
+                _("File changed on disk"),
+                _(
+                    "This file was modified outside the editor since you opened it. "
+                    "Saving now overwrites those changes."
+                ),
+            )
             dlg.add_response("cancel", _("Cancel"))
             dlg.add_response("overwrite", _("Overwrite"))
             dlg.set_response_appearance("overwrite", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -1375,7 +1388,7 @@ class RemoteFileEditorWindow(Adw.Window):
                 return
         except Exception as e:
             self._show_error(
-                _("Failed to save file: {error}").format(error=e)
+                _("Failed to save file: {error}").format(error=str(e))
             )
             return
 
@@ -1738,14 +1751,20 @@ class RemoteFileEditorWindow(Adw.Window):
             # and discarding the very changes we are asking about.
             display_name = _display(self._file_name)
             if self._is_local:
-                dialog_text = f"You have unsaved changes to {display_name}. Save changes before closing?"
+                dialog_text = _(
+                    "You have unsaved changes to {file_name}. "
+                    "Save changes before closing?"
+                ).format(file_name=display_name)
                 save_label = _("Save")
             else:
-                dialog_text = f"You have unsaved changes to {display_name}. Upload changes before closing?"
+                dialog_text = _(
+                    "You have unsaved changes to {file_name}. "
+                    "Upload changes before closing?"
+                ).format(file_name=display_name)
                 save_label = _("Save & Upload")
             
             dialog = Adw.AlertDialog.new(
-                "Unsaved Changes",
+                _("Unsaved Changes"),
                 dialog_text
             )
             dialog.add_response("cancel", _("Cancel"))
