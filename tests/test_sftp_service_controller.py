@@ -293,18 +293,147 @@ def test_directory_size_future_cancel_before_operation_id_is_known_still_cancels
     controller.cancel_operation.assert_called_once_with(OperationId("operation-2"))
 
 
-def test_directory_size_progress_is_surfaced_through_progress_signal():
+def test_directory_size_progress_uses_frontend_status_not_wire_message(monkeypatch):
+    from sshpilot import daemon_sftp_backend as backend_module
+
     controller = Mock()
     controller.state = SftpControllerState.READY
     controller.service_id = SftpServiceId("svc-1")
     manager = _bound_manager(controller)
+    translated = []
+
+    def _translate(message):
+        translated.append(message)
+        return "measuring-localized"
+
+    monkeypatch.setattr(backend_module, "_", _translate)
 
     def _directory_size(path, *, on_success=None, on_error=None, on_operation_started=None, on_progress=None):
-        on_progress(SimpleNamespace(progress=0.5, message="Measuring directory"))
+        on_progress(SimpleNamespace(progress=0.25, message="wire message one"))
+        on_progress(SimpleNamespace(progress=0.5, message="wire message two /private"))
 
     controller.directory_size.side_effect = _directory_size
     DaemonSftpManager.directory_size(manager, "/tree")
-    manager.emit.assert_called_once_with("progress", 0.5, "Measuring directory")
+    assert manager.emit.call_args_list == [
+        (("progress", 0.25, "measuring-localized"), {}),
+        (("progress", 0.5, "measuring-localized"), {}),
+    ]
+    assert translated == ["Measuring directory…"]
+
+
+@pytest.mark.parametrize(
+    ("move", "msgid", "localized"),
+    [
+        (False, "Copying…", "copying-localized"),
+        (True, "Moving…", "moving-localized"),
+    ],
+)
+def test_recursive_copy_progress_uses_structured_operation_not_wire_message(
+    monkeypatch, move, msgid, localized
+):
+    from sshpilot import daemon_sftp_backend as backend_module
+
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    translated = []
+
+    def _translate(message):
+        translated.append(message)
+        return localized
+
+    monkeypatch.setattr(backend_module, "_", _translate)
+    expected_move = move
+
+    def _copy(
+        source_path,
+        destination_path,
+        *,
+        recursive,
+        move,
+        on_success=None,
+        on_error=None,
+        on_operation_started=None,
+        on_progress=None,
+    ):
+        assert recursive is True
+        assert move is expected_move
+        on_progress(SimpleNamespace(progress=0.25, message="wire message one"))
+        on_progress(SimpleNamespace(progress=0.75, message="wire message two /private"))
+
+    controller.copy.side_effect = _copy
+    DaemonSftpManager.copy_remote(
+        manager, "/tree", "/destination", recursive=True, move=move
+    )
+
+    assert manager.emit.call_args_list == [
+        (("progress", 0.25, localized), {}),
+        (("progress", 0.75, localized), {}),
+    ]
+    assert translated == [msgid]
+
+
+def test_recursive_remove_progress_uses_frontend_status_not_wire_message(monkeypatch):
+    from sshpilot import daemon_sftp_backend as backend_module
+
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    translated = []
+
+    def _translate(message):
+        translated.append(message)
+        return "deleting-localized"
+
+    monkeypatch.setattr(backend_module, "_", _translate)
+
+    def _remove(
+        path,
+        *,
+        recursive,
+        on_success=None,
+        on_error=None,
+        on_operation_started=None,
+        on_progress=None,
+    ):
+        assert recursive is True
+        on_progress(SimpleNamespace(progress=0.4, message="wire message one"))
+        on_progress(SimpleNamespace(progress=0.8, message="wire message two /private"))
+
+    controller.remove.side_effect = _remove
+    DaemonSftpManager.remove(manager, "/tree")
+
+    assert manager.emit.call_args_list == [
+        (("progress", 0.4, "deleting-localized"), {}),
+        (("progress", 0.8, "deleting-localized"), {}),
+    ]
+    assert translated == ["Deleting…"]
+
+
+def test_terminal_operation_summary_message_remains_opaque_diagnostic(monkeypatch):
+    from sshpilot import daemon_sftp_backend as backend_module
+
+    monkeypatch.setattr(
+        backend_module,
+        "_",
+        lambda message: pytest.fail(f"diagnostic passed to gettext: {message}"),
+    )
+    diagnostic = "opaque server diagnostic /private"
+    summary = OperationSummary(
+        operation_id=OperationId("operation-failed-1"),
+        kind=OperationKind.SFTP_REMOVE_TREE,
+        state=OperationState.FAILED,
+        message=diagnostic,
+        created_at=utc_now(),
+        owner_client_id=ClientId("client-1"),
+    )
+
+    error = DaemonSftpServiceController._operation_failure(summary)
+
+    assert error.code is ErrorCode.SFTP_COMMAND_FAILED
+    assert str(error) == diagnostic
 
 
 def test_directory_size_cancelled_operation_resolves_as_transfer_cancelled():

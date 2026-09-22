@@ -4,6 +4,9 @@ import os
 
 def test_drop_rejects_stale_drag_metadata(load_file_manager_window, monkeypatch):
     module = load_file_manager_window()
+    from sshpilot.file_manager import pane as pane_module
+
+    monkeypatch.setattr(pane_module, "_", lambda msg: f"translated:{msg}")
 
     FilePane = module.FilePane
     FileEntry = module.FileEntry
@@ -60,7 +63,7 @@ def test_drop_rejects_stale_drag_metadata(load_file_manager_window, monkeypatch)
     assert result is False
     assert download_calls == []
     assert toasts
-    assert toasts[-1] == "Dragged item is no longer available"
+    assert toasts[-1] == "translated:Dragged item is no longer available"
 
 
 def test_drag_payload_with_colons_is_parsed(load_file_manager_window, monkeypatch):
