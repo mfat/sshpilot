@@ -5463,9 +5463,16 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 exit_code = status
 
-        # If user explicitly typed 'exit' (clean status 0), update status and close tab immediately
+        # A local shell has no connection to lose: whatever status it exits
+        # with is just the shell's own last status (typing exit after Ctrl+C
+        # gives 130), so treat any exit as the end of the session rather than
+        # a failed ssh run.
+        is_local = self._is_local_terminal()
+
+        # Session over (a clean status 0, or any local-shell exit): update
+        # status and close the tab immediately.
         try:
-            if exit_code == 0 and hasattr(self, 'get_root'):
+            if (exit_code == 0 or is_local) and hasattr(self, 'get_root'):
                 # Update connection status BEFORE closing the tab
                 logger.debug("Clean exit detected, updating connection status before closing tab")
                 self.connection_state = ConnectionState.DISCONNECTED
@@ -5560,9 +5567,10 @@ class TerminalWidget(Gtk.Box):
                 self._set_connecting_overlay_visible(False)
                 banner_text = self.last_error_message or exit_reason
                 if not banner_text:
-                    if exit_code and exit_code != 0:
+                    if exit_code and exit_code != 0 and not is_local:
                         banner_text = _('SSH exited with status {code}').format(code=exit_code)
                     else:
+                        # A local shell's exit status is never an ssh error.
                         banner_text = _('Session ended.')
                 self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
                 self._set_disconnected_banner_visible(True, banner_text)
