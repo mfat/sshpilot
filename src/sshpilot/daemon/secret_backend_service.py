@@ -903,32 +903,41 @@ class SecretBackendService:
                         # Point config + env at the new file before unlock.
                         # create_database takes an explicit path; unlock reads
                         # SSHPILOT_KDBX_DATABASE from secrets.keepassxc.database.
-                        patch: Dict[str, Any] = {"keepassxc_database": path}
-                        if keyfile_text is not None:
-                            patch["keepassxc_keyfile"] = keyfile_text
+                        # Always write the key file too: the new database was
+                        # created with exactly ``keyfile_text``, so a previously
+                        # configured key file must be cleared, not inherited.
+                        patch: Dict[str, Any] = {
+                            "keepassxc_database": path,
+                            "keepassxc_keyfile": keyfile_text or "",
+                        }
                         try:
                             self.update_configuration(
                                 UpdateSecretConfigurationRequest(patch=patch)
                             )
                         except Exception:
-                            logger.debug(
-                                "Persisting KeePass database path failed",
+                            logger.warning(
+                                "Persisting KeePass database path failed; the new "
+                                "database is unlocked for this session only",
                                 exc_info=True,
                             )
-                            os.environ["SSHPILOT_KDBX_DATABASE"] = path
-                            if keyfile_text is not None:
-                                os.environ["SSHPILOT_KDBX_KEYFILE"] = keyfile_text
+                            _apply_profile_env("SSHPILOT_KDBX_DATABASE", path)
+                            _apply_profile_env(
+                                "SSHPILOT_KDBX_KEYFILE", keyfile_text or ""
+                            )
+                        # A session is not bound to a path: drop any database
+                        # still open from before so the unlock below opens the
+                        # new file instead of short-circuiting on the old one.
+                        self._run_safely(backend.lock)
                         # Mirror the GUI "create and unlock in one step": the
                         # password is in hand, so unlock so it isn't asked again.
-                        if not self._safe_is_unlocked(backend):
-                            try:
-                                ok = bool(backend.unlock(password_text))
-                            except Exception:
-                                logger.debug(
-                                    "KDBX auto-unlock after create failed",
-                                    exc_info=True,
-                                )
-                                ok = False
+                        try:
+                            ok = bool(backend.unlock(password_text))
+                        except Exception:
+                            logger.debug(
+                                "KDBX auto-unlock after create failed",
+                                exc_info=True,
+                            )
+                            ok = False
                 except Exception:
                     logger.debug("KDBX database creation failed", exc_info=True)
                     ok = False

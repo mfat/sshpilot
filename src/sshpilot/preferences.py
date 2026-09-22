@@ -2240,7 +2240,8 @@ class PreferencesWindow(Adw.NavigationPage):
         kdbx_db_btn.set_tooltip_text(_("Choose database file"))
         kdbx_db_btn.connect('clicked', self.on_kdbx_database_browse)
         self.kdbx_db_row.add_suffix(kdbx_db_btn)
-        self.kdbx_db_row.connect('changed', self.on_kdbx_database_changed)
+        self._kdbx_db_changed_id = self.kdbx_db_row.connect(
+            'changed', self.on_kdbx_database_changed)
         secrets_group.add(self.kdbx_db_row)
 
         self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
@@ -3859,10 +3860,19 @@ class PreferencesWindow(Adw.NavigationPage):
                              "installed and the location is writable."))
             return
         # Point the row at the new file; the daemon already persists the path via
-        # the create flow, and unlocking happened inside the daemon.
+        # the create flow, and unlocking happened inside the daemon. Block the
+        # ``changed`` handler: it would re-persist the path and lock the database
+        # that was just unlocked.
         if hasattr(self, 'kdbx_db_row'):
+            handler_id = getattr(self, '_kdbx_db_changed_id', None)
             try:
-                self.kdbx_db_row.set_text(path)
+                if handler_id is not None:
+                    self.kdbx_db_row.handler_block(handler_id)
+                try:
+                    self.kdbx_db_row.set_text(path)
+                finally:
+                    if handler_id is not None:
+                        self.kdbx_db_row.handler_unblock(handler_id)
             except Exception:
                 pass
         self._kdbx_message(_("Database Created"),

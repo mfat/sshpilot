@@ -1783,6 +1783,41 @@ def test_keepassxc_create_database_when_no_database_exists_yet(tmp_path):
     assert os.environ.get("SSHPILOT_KDBX_DATABASE") == "/home/u/new.kdbx"
 
 
+def test_keepassxc_create_database_relocks_previous_database(tmp_path):
+    # An open session on the old database must not satisfy the post-create
+    # unlock: the session is not bound to a path, so it would keep serving it.
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    keepassxc = backends["keepassxc"]
+    keepassxc._unlocked = True
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.SUCCESS
+    kinds = [kind for kind, *_ in keepassxc.calls]
+    assert "lock" in kinds and "unlock" in kinds
+    assert kinds.index("lock") < kinds.index("unlock")
+
+
+def test_keepassxc_create_database_clears_stale_keyfile(tmp_path):
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={
+            "backend": "keepassxc",
+            "session_timeout": 0,
+            "keepassxc": {"database": "/home/u/old.kdbx", "keyfile": "/home/u/old.key"},
+        },
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.SUCCESS
+    config = service.get_configuration()
+    assert config.keepassxc_database == "/home/u/new.kdbx"
+    assert config.keepassxc_keyfile == ""
+    assert "SSHPILOT_KDBX_KEYFILE" not in os.environ
+
+
 def test_keepassxc_create_database_without_pykeepass(tmp_path):
     service, manager, backends, broker, _ = _make_service(
         tmp_path,
