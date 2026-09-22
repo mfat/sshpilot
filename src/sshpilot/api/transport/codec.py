@@ -90,6 +90,8 @@ from ..models.connection_store import (
 )
 from ..models.connections import (
     EDITABLE_CONFIG_FIELDS,
+    AsbruImportMessage,
+    AsbruImportMessageCode,
     AsbruImportMode,
     AsbruImportPreview,
     AsbruImportRequest,
@@ -2417,6 +2419,47 @@ def asbru_import_request_from_wire(value: Any) -> AsbruImportRequest:
     )
 
 
+def _asbru_message_to_wire(message: AsbruImportMessage) -> Dict[str, Any]:
+    if type(message) is not AsbruImportMessage:
+        raise TypeError("Ásbrú import message is required")
+    return {
+        "code": message.code.value,
+        "parameters": dict(message.parameters),
+        "diagnostic": message.diagnostic,
+    }
+
+
+def _asbru_message_from_wire(value: Any) -> AsbruImportMessage:
+    data = _strict_fields(
+        value,
+        required={"code", "parameters", "diagnostic"},
+        context="Ásbrú import message",
+    )
+    try:
+        code = AsbruImportMessageCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("Ásbrú import message contains an unknown code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("Ásbrú import message parameters must be an object")
+    return AsbruImportMessage(
+        code,
+        {
+            _identifier(key, "Ásbrú import parameter name"): _text(
+                item, "Ásbrú import parameter", allow_empty=True
+            )
+            for key, item in parameters.items()
+        },
+        _text(data["diagnostic"], "Ásbrú import diagnostic", allow_empty=True),
+    )
+
+
+def _asbru_messages_from_wire(value: Any) -> tuple[AsbruImportMessage, ...]:
+    if type(value) is not list:
+        raise ValueError("Ásbrú import messages must be an array")
+    return tuple(_asbru_message_from_wire(item) for item in value)
+
+
 def asbru_import_preview_to_wire(preview: AsbruImportPreview) -> Dict[str, Any]:
     if type(preview) is not AsbruImportPreview:
         raise TypeError("Ásbrú import preview is required")
@@ -2427,8 +2470,8 @@ def asbru_import_preview_to_wire(preview: AsbruImportPreview) -> Dict[str, Any]:
         "connections_to_skip": list(preview.connections_to_skip),
         "groups_to_add": list(preview.groups_to_add),
         "groups_to_reuse": list(preview.groups_to_reuse),
-        "warnings": list(preview.warnings),
-        "errors": list(preview.errors),
+        "warnings": [_asbru_message_to_wire(item) for item in preview.warnings],
+        "errors": [_asbru_message_to_wire(item) for item in preview.errors],
     }
 
 
@@ -2461,8 +2504,8 @@ def asbru_import_preview_from_wire(value: Any) -> AsbruImportPreview:
         groups_to_reuse=tuple(
             _text(item, "group name") for item in (data.get("groups_to_reuse") or ())
         ),
-        warnings=tuple(_text(item, "warning", allow_empty=True) for item in (data.get("warnings") or ())),
-        errors=tuple(_text(item, "error", allow_empty=True) for item in (data.get("errors") or ())),
+        warnings=_asbru_messages_from_wire(data.get("warnings", [])),
+        errors=_asbru_messages_from_wire(data.get("errors", [])),
     )
 
 
@@ -2476,10 +2519,10 @@ def asbru_import_result_to_wire(result: AsbruImportResult) -> Dict[str, Any]:
         "connections_skipped": list(result.connections_skipped),
         "groups_added": list(result.groups_added),
         "groups_reused": list(result.groups_reused),
-        "warnings": list(result.warnings),
-        "errors": list(result.errors),
-        "partial_failures": list(result.partial_failures),
-        "message": result.message,
+        "warnings": [_asbru_message_to_wire(item) for item in result.warnings],
+        "errors": [_asbru_message_to_wire(item) for item in result.errors],
+        "partial_failures": [_asbru_message_to_wire(item) for item in result.partial_failures],
+        "message": _asbru_message_to_wire(result.message) if result.message else None,
     }
 
 
@@ -2514,13 +2557,13 @@ def asbru_import_result_from_wire(value: Any) -> AsbruImportResult:
         groups_reused=tuple(
             _text(item, "group name") for item in (data.get("groups_reused") or ())
         ),
-        warnings=tuple(_text(item, "warning", allow_empty=True) for item in (data.get("warnings") or ())),
-        errors=tuple(_text(item, "error", allow_empty=True) for item in (data.get("errors") or ())),
-        partial_failures=tuple(
-            _text(item, "partial failure", allow_empty=True)
-            for item in (data.get("partial_failures") or ())
+        warnings=_asbru_messages_from_wire(data.get("warnings", [])),
+        errors=_asbru_messages_from_wire(data.get("errors", [])),
+        partial_failures=_asbru_messages_from_wire(data.get("partial_failures", [])),
+        message=(
+            _asbru_message_from_wire(data["message"])
+            if data.get("message") is not None else None
         ),
-        message=_text(data.get("message", ""), "Ásbrú import message", allow_empty=True),
     )
 
 

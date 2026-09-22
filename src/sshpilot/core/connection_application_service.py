@@ -36,6 +36,8 @@ from ..api.models.pre_command import (
     expand_pre_command_tokens,
 )
 from ..api.models.connections import (
+    AsbruImportMessage,
+    AsbruImportMessageCode,
     AsbruImportMode,
     AsbruImportPreview,
     AsbruImportRequest,
@@ -1341,7 +1343,7 @@ class ConnectionApplicationService:
                 source=request.source,
                 errors=errors,
                 warnings=tuple(parsed.warnings) if parsed is not None else (),
-                message="Ásbrú import could not be parsed",
+                message=AsbruImportMessage(AsbruImportMessageCode.PARSE_FAILED),
             )
 
         needs_config = any(
@@ -1359,8 +1361,8 @@ class ConnectionApplicationService:
         groups_reused: List[str] = list(plan["groups_to_reuse"])
         connections_added: List[str] = []
         connections_skipped: List[str] = list(plan["connections_to_skip"])
-        warnings: List[str] = list(parsed.warnings) + list(plan["warnings"])
-        partial_failures: List[str] = []
+        warnings: List[AsbruImportMessage] = list(parsed.warnings) + list(plan["warnings"])
+        partial_failures: List[AsbruImportMessage] = []
 
         skip_nicknames = {n.casefold() for n in plan["connections_to_skip"]}
 
@@ -1375,12 +1377,15 @@ class ConnectionApplicationService:
                     group.name, parent_id=parent_id, color=""
                 )
             except SshPilotError as error:
-                partial_failures.append(
-                    f"group {group.name!r}: {error.message or error}"
-                )
+                partial_failures.append(AsbruImportMessage(
+                    AsbruImportMessageCode.GROUP_CREATE_FAILED,
+                    {"name": group.name}, diagnostic=str(error.message or error),
+                ))
                 continue
             if not created_id:
-                partial_failures.append(f"group {group.name!r}: create returned no id")
+                partial_failures.append(AsbruImportMessage(
+                    AsbruImportMessageCode.GROUP_NO_ID, {"name": group.name}
+                ))
                 continue
             source_to_group_id[group.source_id] = created_id
             groups_added.append(group.name)
@@ -1410,9 +1415,10 @@ class ConnectionApplicationService:
             try:
                 created = self.create_connection(create_request)
             except SshPilotError as error:
-                partial_failures.append(
-                    f"connection {draft.nickname!r}: {error.message or error}"
-                )
+                partial_failures.append(AsbruImportMessage(
+                    AsbruImportMessageCode.CONNECTION_CREATE_FAILED,
+                    {"nickname": draft.nickname}, diagnostic=str(error.message or error),
+                ))
                 continue
             connections_added.append(created.nickname)
             group_source = draft.group_source_id
@@ -1423,25 +1429,23 @@ class ConnectionApplicationService:
                         source_to_group_id[group_source],
                     )
                 except SshPilotError as error:
-                    partial_failures.append(
-                        f"assign {created.nickname!r}: {error.message or error}"
-                    )
+                    partial_failures.append(AsbruImportMessage(
+                        AsbruImportMessageCode.ASSIGN_FAILED,
+                        {"nickname": created.nickname}, diagnostic=str(error.message or error),
+                    ))
 
         ok = not plan["errors"] and not partial_failures and (
             bool(connections_added) or bool(groups_added) or bool(connections_skipped)
         )
         if not connections_added and not groups_added and connections_skipped:
-            message = "All Ásbrú connections already exist; nothing imported"
+            message = AsbruImportMessage(AsbruImportMessageCode.ALL_EXIST)
         elif partial_failures:
-            message = "Ásbrú import completed with partial failures"
+            message = AsbruImportMessage(AsbruImportMessageCode.PARTIAL_FAILURES)
             ok = False
         elif connections_added or groups_added:
-            message = (
-                f"Imported {len(connections_added)} connection(s) "
-                f"and {len(groups_added)} group(s)"
-            )
+            message = AsbruImportMessage(AsbruImportMessageCode.IMPORTED)
         else:
-            message = "Ásbrú import produced no changes"
+            message = AsbruImportMessage(AsbruImportMessageCode.NO_CHANGES)
             ok = False
 
         return AsbruImportResult(
@@ -1463,10 +1467,31 @@ class ConnectionApplicationService:
         try:
             return load_asbru_export(source), []
         except CoreError as error:
-            return None, [str(error.message or error)]
+            reasons = {
+                "asbru_export_not_found": AsbruImportMessageCode.EXPORT_NOT_FOUND,
+                "asbru_export_unreadable": AsbruImportMessageCode.EXPORT_UNREADABLE,
+                "pyyaml_missing": AsbruImportMessageCode.PYYAML_MISSING,
+                "asbru_yaml_invalid": AsbruImportMessageCode.YAML_INVALID,
+            }
+            reason = reasons.get(error.details.get("reason"))
+            if reason is None:
+                return None, [AsbruImportMessage(
+                    AsbruImportMessageCode.LOAD_FAILED,
+                    diagnostic=str(error.message or error),
+                )]
+            parameters = {"path": str(error.details["path"])} if reason in (
+                AsbruImportMessageCode.EXPORT_NOT_FOUND,
+                AsbruImportMessageCode.EXPORT_UNREADABLE,
+            ) else {}
+            return None, [AsbruImportMessage(
+                reason, parameters,
+                diagnostic=str(error.details.get("diagnostic", "")),
+            )]
         except Exception as error:
             logger.exception("Failed to load Ásbrú export")
-            return None, [f"Failed to load Ásbrú export: {error}"]
+            return None, [AsbruImportMessage(
+                AsbruImportMessageCode.LOAD_FAILED, diagnostic=str(error)
+            )]
 
     def _plan_asbru_import(self, parsed) -> Dict[str, Any]:
         snapshot = self._repository.snapshot()
@@ -1486,8 +1511,8 @@ class ConnectionApplicationService:
         group_id_by_source: Dict[str, str] = {}
         groups_to_add: List[str] = []
         groups_to_reuse: List[str] = []
-        warnings: List[str] = []
-        errors: List[str] = []
+        warnings: List[AsbruImportMessage] = []
+        errors: List[AsbruImportMessage] = []
 
         for group in parsed.groups:
             parent_name = ""
