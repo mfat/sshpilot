@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.65",
+  "api_implementation_version": "0.66",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1655,6 +1655,16 @@
       "remember_master_password",
       "backup_encrypt",
       "backup_decrypt"
+    ],
+    "SessionFailureCode": [
+      "start_failed",
+      "auth_cancelled",
+      "auth_incomplete",
+      "command_queue_full",
+      "termination_failed",
+      "ended_before_output",
+      "ssh_exited",
+      "ssh_diagnostic"
     ],
     "SessionState": [
       "created",
@@ -7618,12 +7628,26 @@
           "name": "code",
           "required": true,
           "sensitive": false,
-          "type": "str"
+          "type": "SessionFailureCode"
         },
         {
           "default": null,
-          "name": "message",
+          "name": "error_code",
           "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, int]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
           "sensitive": false,
           "type": "str"
         }

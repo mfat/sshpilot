@@ -284,7 +284,9 @@ def test_executor_queue_full_is_safe_and_reads_remain_live(
         assert len(client_b.list_sessions()) == 2
         assert any(
             session.state is SessionState.FAILED
-            and session.failure.code == ErrorCode.SERVER_BUSY.value
+            and session.failure.error_code is ErrorCode.SERVER_BUSY
+            and session.failure.code.value == "command_queue_full"
+            and session.failure.diagnostic == ""
             for session in client_b.list_sessions()
         )
         assert server._session_executor.outstanding == 1

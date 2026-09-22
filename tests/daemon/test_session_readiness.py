@@ -12,6 +12,7 @@ from sshpilot.api.models.sessions import (
     CloseSessionRequest,
     OpenSessionRequest,
     SessionExitInfo,
+    SessionFailureCode,
     SessionState,
 )
 from sshpilot.api.models.terminal import TerminalDimensions
@@ -249,7 +250,8 @@ def test_diagnostic_failure_fails_session_with_trusted_detail():
     failed = runtime.get_session(prepared.id)
     assert failed.state is SessionState.FAILED
     assert failed.failure is not None
-    assert failed.failure.message == "alice@example.test: Permission denied (publickey)."
+    assert failed.failure.code is SessionFailureCode.SSH_DIAGNOSTIC
+    assert failed.failure.diagnostic == "alice@example.test: Permission denied (publickey)."
     assert SessionState.RUNNING not in states
 
     runtime.shutdown()
@@ -292,7 +294,7 @@ def test_diagnostic_failure_while_running_does_not_tear_session_down():
     runner.handle._on_eof()
     closed = runtime.get_session(prepared.id)
     assert closed.failure is not None
-    assert "Permission denied" in closed.failure.message
+    assert "Permission denied" in closed.failure.diagnostic
 
     runtime.shutdown()
     core.close()
@@ -406,7 +408,8 @@ def test_diagnostic_failure_code_preserves_interaction_cancellation():
     )
     failed = runtime.get_session(prepared.id)
     assert failed.failure is not None
-    assert failed.failure.code == ErrorCode.OPERATION_CANCELLED.value
+    assert failed.failure.code is SessionFailureCode.AUTH_CANCELLED
+    assert failed.failure.error_code is ErrorCode.OPERATION_CANCELLED
 
     runtime.shutdown()
     core.close()
@@ -496,7 +499,8 @@ def test_exit_before_authentication_with_zero_output_and_clean_code_still_fails(
     closed = runtime.get_session(prepared.id)
     assert closed.state is SessionState.CLOSED
     assert closed.failure is not None
-    assert closed.failure.message == "The session ended before it produced any output"
+    assert closed.failure.code is SessionFailureCode.ENDED_BEFORE_OUTPUT
+    assert closed.failure.diagnostic == ""
 
     runtime.shutdown()
     core.close()
@@ -845,8 +849,9 @@ def test_exit_on_forward_failure_after_running_sets_session_failure():
     assert closed.exit_info is not None
     assert closed.exit_info.exit_code == 255
     assert closed.failure is not None
-    assert closed.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
-    assert "port forwarding failed" in closed.failure.message
+    assert closed.failure.code is SessionFailureCode.SSH_DIAGNOSTIC
+    assert closed.failure.error_code is ErrorCode.SESSION_STARTUP_FAILED
+    assert "port forwarding failed" in closed.failure.diagnostic
 
     runtime.shutdown()
     core.close()
@@ -917,7 +922,9 @@ def test_exit_255_from_running_with_empty_pty_still_sets_failure():
     closed = runtime.get_session(prepared.id)
     assert closed.state is SessionState.CLOSED
     assert closed.failure is not None
-    assert closed.failure.message == "The SSH session exited with status 255"
+    assert closed.failure.code is SessionFailureCode.SSH_EXITED
+    assert dict(closed.failure.parameters) == {"status": 255}
+    assert closed.failure.diagnostic == ""
 
     runtime.shutdown()
     core.close()

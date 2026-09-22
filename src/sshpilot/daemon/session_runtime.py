@@ -41,6 +41,7 @@ from sshpilot.api.models.sessions import (
     SessionCapabilities,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureCode,
     SessionFailureValue,
     SessionState,
     SessionSummary,
@@ -676,14 +677,14 @@ class SessionRuntime:
             self._startup_failed(
                 record,
                 error.code,
-                "The session process could not be started",
+                SessionFailureCode.START_FAILED,
                 failure=plugin_failure,
             )
         except Exception:
             self._startup_failed(
                 record,
                 ErrorCode.SESSION_STARTUP_FAILED,
-                "The session process could not be started",
+                SessionFailureCode.START_FAILED,
             )
         else:
             authenticated = True
@@ -718,9 +719,9 @@ class SessionRuntime:
                     record,
                     cancel_code,
                     (
-                        "The session authentication was cancelled"
+                        SessionFailureCode.AUTH_CANCELLED
                         if cancel_code is ErrorCode.OPERATION_CANCELLED
-                        else "The session did not complete authentication"
+                        else SessionFailureCode.AUTH_INCOMPLETE
                     ),
                 )
                 self._terminate_handle(
@@ -771,14 +772,13 @@ class SessionRuntime:
                         ):
                             if record.diagnostic_failure_detail is None:
                                 record.diagnostic_failure_detail = result.detail
+                            error_code = self._startup_failure_code(session_id)
                             record.failure = SessionFailure(
-                                code=self._startup_failure_code(
-                                    session_id
-                                ).value,
-                                message=(
-                                    result.detail
-                                    or "The session did not complete authentication"
+                                code=self._diagnostic_failure_reason(
+                                    error_code, result.detail
                                 ),
+                                error_code=error_code,
+                                diagnostic=result.detail,
                             )
                             events.append(
                                 self._transition_locked(
@@ -924,12 +924,13 @@ class SessionRuntime:
                     record.state is SessionState.STARTING
                     and record.diagnostic_primary
                 ):
+                    error_code = self._startup_failure_code(session_id)
                     record.failure = SessionFailure(
-                        code=self._startup_failure_code(session_id).value,
-                        message=(
-                            result.detail
-                            or "The session did not complete authentication"
+                        code=self._diagnostic_failure_reason(
+                            error_code, result.detail
                         ),
+                        error_code=error_code,
+                        diagnostic=result.detail,
                     )
                     events.append(
                         self._transition_locked(record, SessionState.FAILED)
@@ -1045,6 +1046,16 @@ class SessionRuntime:
                 pass
         return ErrorCode.SESSION_STARTUP_FAILED
 
+    @staticmethod
+    def _diagnostic_failure_reason(
+        error_code: ErrorCode, diagnostic: str
+    ) -> SessionFailureCode:
+        if error_code is ErrorCode.OPERATION_CANCELLED:
+            return SessionFailureCode.AUTH_CANCELLED
+        if diagnostic:
+            return SessionFailureCode.SSH_DIAGNOSTIC
+        return SessionFailureCode.AUTH_INCOMPLETE
+
     def reject_pending_start(self, session_id: SessionId) -> None:
         """Mark an unscheduled startup failed after executor saturation."""
 
@@ -1067,13 +1078,19 @@ class SessionRuntime:
 
         if isinstance(error, SshPilotError):
             code = error.code
-            message = error.message
+            reason = (
+                SessionFailureCode.COMMAND_QUEUE_FULL
+                if code is ErrorCode.SERVER_BUSY
+                else SessionFailureCode.START_FAILED
+            )
+            diagnostic = "" if code is ErrorCode.SERVER_BUSY else error.message
             plugin_failure = getattr(error, "session_failure", None)
             if type(plugin_failure) is not PluginSessionFailure:
                 plugin_failure = None
         else:
             code = ErrorCode.SESSION_STARTUP_FAILED
-            message = "The session process could not be started"
+            reason = SessionFailureCode.START_FAILED
+            diagnostic = ""
             plugin_failure = None
         with self._lock:
             try:
@@ -1085,8 +1102,9 @@ class SessionRuntime:
             record.startup_scheduled = False
             record.terminal_capable = False
             record.failure = plugin_failure or SessionFailure(
-                code=code.value,
-                message=message,
+                code=reason,
+                error_code=code,
+                diagnostic=diagnostic,
             )
             event = self._transition_locked(record, SessionState.FAILED)
         self._finish_readiness(session_id)
@@ -1689,8 +1707,8 @@ class SessionRuntime:
             record.close_scheduled = False
             if record.state is SessionState.CLOSING:
                 record.failure = SessionFailure(
-                    code=ErrorCode.SERVER_BUSY.value,
-                    message="The daemon session command queue is full",
+                    code=SessionFailureCode.COMMAND_QUEUE_FULL,
+                    error_code=ErrorCode.SERVER_BUSY,
                 )
                 event = self._transition_locked(record, SessionState.FAILED)
             else:
@@ -1826,8 +1844,8 @@ class SessionRuntime:
                     SessionState.CLOSED,
                 }:
                     record.failure = SessionFailure(
-                        code=ErrorCode.SESSION_TERMINATION_FAILED.value,
-                        message="The session process could not be terminated",
+                        code=SessionFailureCode.TERMINATION_FAILED,
+                        error_code=ErrorCode.SESSION_TERMINATION_FAILED,
                     )
                     events.append(self._transition_locked(record, SessionState.FAILED))
             self._publish(events)
@@ -2006,6 +2024,7 @@ class SessionRuntime:
         ):
             evidence = self._connection_evidence_locked(record)
             failure_reason: Optional[str] = None
+            ended_before_output = False
             if record.diagnostic_failure_detail:
                 failure_reason = record.diagnostic_failure_detail
             elif evidence.verdict == "failed" or exit_info.exit_code not in {
@@ -2021,20 +2040,21 @@ class SessionRuntime:
                 # treating this as an expected close hides genuine failures
                 # (see GH #1166: on the frozen macOS build, a spawn bug made
                 # ssh never launch at all, which looked exactly like this).
-                failure_reason = "The session ended before it produced any output"
-            if failure_reason is not None:
+                ended_before_output = True
+            if failure_reason is not None or ended_before_output:
                 failure_code = self._startup_failure_code(record.session_id)
+                if failure_code is ErrorCode.OPERATION_CANCELLED:
+                    reason = SessionFailureCode.AUTH_CANCELLED
+                elif ended_before_output:
+                    reason = SessionFailureCode.ENDED_BEFORE_OUTPUT
+                else:
+                    reason = self._diagnostic_failure_reason(
+                        failure_code, failure_reason or ""
+                    )
                 record.failure = SessionFailure(
-                    code=failure_code.value,
-                    message=(
-                        failure_reason
-                        or (
-                            "The session authentication was cancelled"
-                            if failure_code is ErrorCode.OPERATION_CANCELLED
-                            else ""
-                        )
-                        or "The session did not complete authentication"
-                    ),
+                    code=reason,
+                    error_code=failure_code,
+                    diagnostic=failure_reason or "",
                 )
                 events.append(self._transition_locked(record, SessionState.FAILED))
         elif (
@@ -2052,12 +2072,20 @@ class SessionRuntime:
             else:
                 failure_reason = post_auth_exit_failure_reason(
                     self._recent_terminal_text_locked(record),
-                    exit_code=exit_info.exit_code,
+                    exit_code=None,
                 )
-            if failure_reason is not None:
+            if failure_reason is not None or exit_info.exit_code == 255:
                 record.failure = SessionFailure(
-                    code=ErrorCode.SESSION_STARTUP_FAILED.value,
-                    message=failure_reason,
+                    code=(
+                        SessionFailureCode.SSH_DIAGNOSTIC
+                        if failure_reason
+                        else SessionFailureCode.SSH_EXITED
+                    ),
+                    error_code=ErrorCode.SESSION_STARTUP_FAILED,
+                    parameters=(
+                        {} if failure_reason else {"status": exit_info.exit_code}
+                    ),
+                    diagnostic=failure_reason or "",
                 )
                 events.append(self._transition_locked(record, SessionState.FAILED))
         record.process_handle = None
@@ -2086,7 +2114,7 @@ class SessionRuntime:
         self,
         record: _SessionRecord,
         code: ErrorCode,
-        message: str,
+        reason: SessionFailureCode,
         *,
         failure: Optional[PluginSessionFailure] = None,
     ) -> None:
@@ -2097,8 +2125,8 @@ class SessionRuntime:
             record.terminal_capable = False
             record.deferred_live_output.clear()
             record.failure = failure or SessionFailure(
-                code=code.value,
-                message=message,
+                code=reason,
+                error_code=code,
             )
             event = self._transition_locked(record, SessionState.FAILED)
         self._finish_readiness(record.session_id)
