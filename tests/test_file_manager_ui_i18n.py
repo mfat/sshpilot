@@ -85,7 +85,7 @@ def test_create_dialog_localizes_heading_body_and_creates_folder(monkeypatch, tm
     window._embedded_parent = None
     dialog = MagicMock()
     alert_dialog = SimpleNamespace(new=MagicMock(return_value=dialog))
-    monkeypatch.setattr(window_module.Adw, "AlertDialog", alert_dialog)
+    monkeypatch.setattr(window_module.Adw, "AlertDialog", alert_dialog, raising=False)
     monkeypatch.setattr(window_module.Gtk, "Entry", _EntryWidget)
     monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
 
@@ -117,7 +117,9 @@ def test_rename_and_delete_dialogs_keep_file_operations(monkeypatch, tmp_path):
         dialogs.append((args, dialog))
         return dialog
 
-    monkeypatch.setattr(window_module.Adw, "AlertDialog", SimpleNamespace(new=new_dialog))
+    monkeypatch.setattr(
+        window_module.Adw, "AlertDialog", SimpleNamespace(new=new_dialog), raising=False
+    )
     monkeypatch.setattr(window_module.Gtk, "Entry", _EntryWidget)
     monkeypatch.setattr(window_module.GLib, "idle_add", lambda fn, *args, **kwargs: 1)
     monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
