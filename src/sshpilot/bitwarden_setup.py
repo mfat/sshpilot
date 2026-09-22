@@ -1242,9 +1242,8 @@ def _prompt_gui_login(window, controller, on_done: Callable[[bool], None]):
         if url is None:
             on_done(False)  # user cancelled the server prompt
             return
-        if not url:
-            _login_wizard(window, controller, on_done)
-            return
+        # "" (US cloud) is configured too: skipping it left a previous EU or
+        # self-hosted server in both the settings and the ``bw`` CLI.
         _set_status, close = progress_dialog(
             window, _("Bitwarden"), _("Configuring server…"),
         )

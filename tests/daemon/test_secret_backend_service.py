@@ -797,6 +797,33 @@ def test_bitwarden_configure_server_does_not_deadlock(tmp_path):
     )
 
 
+def test_bitwarden_configure_us_cloud_points_cli_at_real_url(tmp_path):
+    # US cloud is stored as "" but ``bw config server ""`` is not a reset.
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={
+            "backend": "bitwarden",
+            "session_timeout": 0,
+            "bitwarden": {"profile": "", "server": "https://vault.example.com"},
+        },
+    )
+    service.bitwarden_configure_server("")
+    run_args = [call[1] for call in backends["bitwarden"].calls if call[0] == "_run"]
+    assert (["config", "server", "https://vault.bitwarden.com"],) in run_args
+    assert service.get_configuration().bitwarden_server == ""
+
+
+def test_bitwarden_status_reports_missing_cli(tmp_path):
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path, secrets={"backend": "bitwarden", "session_timeout": 0}
+    )
+    backends["bitwarden"]._available = False
+    status = service.bitwarden_status()
+    assert status.needs_login is True
+    assert status.message_code is SecretMessageCode.BACKEND_UNAVAILABLE
+    assert dict(status.message_parameters) == {"backend": "bitwarden"}
+
+
 def test_native_command_failures_are_not_treated_as_success(tmp_path):
     service, _manager, backends, _broker, path = _make_service(
         tmp_path, secrets={"backend": "bitwarden", "session_timeout": 0}

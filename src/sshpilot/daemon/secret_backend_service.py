@@ -1880,7 +1880,10 @@ class SecretBackendService:
         bw = self._manager.get_backend("bitwarden")
         if bw is None:
             raise self._unavailable("bitwarden")
-        return self._run_safely(lambda: bw._run(["config", "server", url]))
+        # An empty URL means the default US cloud (that is how config stores it),
+        # but ``bw config server ""`` is not a reset — point the CLI at it explicitly.
+        cli_url = url or BITWARDEN_US_SERVER
+        return self._run_safely(lambda: bw._run(["config", "server", cli_url]))
 
     def _selected_decision(self):
         backend = self._manager.selected_backend()
@@ -2228,6 +2231,10 @@ class SecretBackendService:
         return ok
 
 
+#: What ``bw`` is pointed at for the default cloud; config stores it as "".
+BITWARDEN_US_SERVER = "https://vault.bitwarden.com"
+
+
 #: Key under ``SshPilotError.details`` carrying a structured transfer message.
 BACKUP_ERROR_DETAIL_KEY = "transfer_message"
 
@@ -2348,6 +2355,12 @@ def _bitwarden_status(
     diagnostic: str = "",
 ) -> BitwardenStatus:
     if bw is None or not bool(bw.is_available()):
+        # ``needs_login`` stays True for existing callers; the message code is
+        # what distinguishes "bw is not installed" from "signed out".
+        if message_code is None:
+            message_code = SecretMessageCode.BACKEND_UNAVAILABLE
+            message_parameters = {"backend": "bitwarden"}
+            diagnostic = diagnostic or "bw is not installed"
         return BitwardenStatus(
             logged_in=False, unlocked=False, needs_login=True,
             email="", server_url="", profile="",

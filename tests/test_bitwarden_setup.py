@@ -286,6 +286,33 @@ def test_prompt_gui_login_successful_server_result_enters_wizard(monkeypatch):
     assert closed == [True]
 
 
+def test_prompt_gui_login_us_cloud_still_configures_server(monkeypatch):
+    # Choosing US cloud ("") must reset a previous EU/self-hosted server.
+    configured = []
+    entered = []
+
+    class Controller:
+        def bitwarden_configure_server(self, url):
+            configured.append(url)
+            return BitwardenStatus(
+                logged_in=False, unlocked=False, needs_login=True,
+                email="", server_url="", profile="",
+            )
+
+    monkeypatch.setattr(
+        bs, "_prompt_server_url", lambda _window, _controller, callback: callback(""),
+    )
+    monkeypatch.setattr(bs, "progress_dialog", lambda *args, **kwargs: (None, lambda: None))
+    monkeypatch.setattr(bs, "_login_wizard", lambda *args: entered.append(True))
+    monkeypatch.setattr(bs.threading, "Thread", lambda *, target, daemon: SimpleNamespace(start=target))
+    monkeypatch.setattr(bs.GLib, "idle_add", lambda callback: callback())
+
+    bs._prompt_gui_login(object(), Controller(), lambda _ok: None)
+
+    assert configured == [""]
+    assert entered == [True]
+
+
 def test_run_install_binary_plan(monkeypatch):
     plan = bs.InstallPlan(
         argv=(),
