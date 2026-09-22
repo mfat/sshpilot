@@ -167,6 +167,30 @@ def _call_name(node: ast.Call) -> str:
     return ""
 
 
+SSH_TOOL_NAMES = frozenset({"ssh", "scp", "sftp", "ssh_keygen", "ssh_copy_id", "ssh_add"})
+
+
+def _is_self_dispatch(node: ast.Call) -> bool:
+    """True for ``self.…​.name()``: a method reached through the object itself.
+
+    A frontend object asking one of its own collaborators to do something
+    (``self.plugin.ssh(view, machine)``) is in-process dispatch, not a
+    launcher.  Only a callable reached by name or through a module can be the
+    process helper this guard is looking for.
+    """
+
+    if not isinstance(node.func, ast.Attribute):
+        return False
+    root = node.func.value
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    return isinstance(root, ast.Name) and root.id in {"self", "cls"}
+
+
+def _is_ssh_process_call(node: ast.Call, name: str) -> bool:
+    return name in SSH_TOOL_NAMES and not _is_self_dispatch(node)
+
+
 def _function_names(tree: ast.AST):
     return {
         node.name
@@ -456,14 +480,27 @@ def test_active_frontend_has_no_direct_backend_process_or_secret_ownership():
                 name = _call_name(node)
                 if name in {"get_secret_manager", "expire_all_masters"}:
                     violations.append(f"{rel}:{node.lineno}: backend owner {name}")
-                if any(keyword in name for keyword in ("ssh", "scp", "sftp")) and name in {
-                    "ssh", "scp", "sftp", "ssh_keygen", "ssh_copy_id", "ssh_add"
-                }:
+                if _is_ssh_process_call(node, name):
                     violations.append(f"{rel}:{node.lineno}: SSH process call {name}")
             elif isinstance(node, ast.keyword) and node.arg == "shell":
                 if isinstance(node.value, ast.Constant) and node.value.value is True:
                     violations.append(f"{rel}:{node.lineno}: shell=True")
     assert not violations, "new frontend backend ownership detected:\n" + "\n".join(violations)
+
+
+def test_ssh_process_call_guard_separates_launchers_from_dispatch():
+    tree = ast.parse(
+        "ssh(host)\n"
+        "tools.ssh(host)\n"
+        "self.plugin.ssh(view, machine)\n"
+        "self.page.plugin.ssh(view, machine)\n"
+    )
+    flagged = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _is_ssh_process_call(node, _call_name(node))
+    ]
+    assert sorted(flagged) == [1, 2]
 
 
 def test_relative_multiplex_import_is_an_unclassified_backend_edge():

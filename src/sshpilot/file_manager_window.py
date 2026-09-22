@@ -28,7 +28,7 @@ import weakref
 from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
@@ -360,7 +360,7 @@ class FileManagerWindow(Adw.Window):
                 self._load_local(local_home)
                 self._left_pane.push_history(local_home)
             except Exception as exc:
-                self._left_pane.show_toast(f"Failed to load local home: {exc}")
+                self._left_pane.show_toast(_("Failed to load local home: {error}").format(error=exc))
             return False
 
         GLib.idle_add(_deferred_load_local, priority=GLib.PRIORITY_LOW)
@@ -441,14 +441,14 @@ class FileManagerWindow(Adw.Window):
 
         # Show initial progress before connecting
         try:
-            self._show_progress(0.1, "Connecting…")
+            self._show_progress(0.1, _("Connecting…"))
         except Exception as exc:
             logger.exception("Error showing progress: %s", exc)
 
         # Spinner + status in the remote pane while the connection is set up
         try:
             target = (str(self._nickname).strip() if self._nickname else '') or host
-            self._right_pane.show_connecting(f"Connecting to {target}…")
+            self._right_pane.show_connecting(_("Connecting to {host}…").format(host=target))
         except (AttributeError, RuntimeError, GLib.Error):
             pass
 
@@ -765,9 +765,9 @@ class FileManagerWindow(Adw.Window):
             return
         self._password_retry_count = 0
         self._password_dialog_shown = False
-        self._show_progress(0.4, "Connected")
+        self._show_progress(0.4, _("Connected"))
         try:
-            self._right_pane.set_connecting_status("Connected — loading files…")
+            self._right_pane.set_connecting_status(_("Connected — loading files…"))
         except Exception:
             pass
         for pane, pending in self._pending_paths.items():
@@ -790,6 +790,10 @@ class FileManagerWindow(Adw.Window):
         if sender is not None and sender is not manager:
             return
         logger.warning("File manager operation error: %s", message)
+        message = (
+            _("File operation failed: {error}").format(error=safe_display_text(message))
+            if message else _("File operation failed")
+        )
         # Cancel any pending loading toast timeouts since operation failed
         for pane, timeout_id in self._loading_toast_timeouts.items():
             if timeout_id is not None:
@@ -859,6 +863,10 @@ class FileManagerWindow(Adw.Window):
                 ):
                     return False
                 self._clear_progress_toast()
+                display_message = (
+                    _("Connection failed: {error}").format(error=safe_display_text(message))
+                    if message else _("Connection failed")
+                )
 
                 # Show the in-pane error state (with Retry) on the remote pane
                 # so the failure can't be mistaken for an empty directory, and
@@ -879,12 +887,10 @@ class FileManagerWindow(Adw.Window):
                     )
                     self._right_pane.show_load_error(
                         failed_path,
-                        message or "Connection failed",
+                        display_message,
                     )
                 elif hasattr(self, '_toast_overlay') and self._toast_overlay:
-                    toast = Adw.Toast.new(
-                        safe_display_text(message) or "Connection failed"
-                    )
+                    toast = Adw.Toast.new(display_message)
                     toast.set_priority(Adw.ToastPriority.HIGH)
                     self._toast_overlay.add_toast(toast)
             except (AttributeError, RuntimeError, GLib.Error, TypeError) as exc:
@@ -994,7 +1000,7 @@ class FileManagerWindow(Adw.Window):
         # Show success toast if this was a refresh
         if target in self._refreshing_panes:
             try:
-                target.show_toast("Directory refreshed", timeout=2)
+                target.show_toast(_("Directory refreshed"), timeout=2)
                 logger.debug(f"_on_directory_loaded: showed refresh success toast for {('remote' if target._is_remote else 'local')} pane")
             except (AttributeError, RuntimeError, GLib.Error):
                 pass
@@ -1030,7 +1036,7 @@ class FileManagerWindow(Adw.Window):
             if not os.path.isabs(path):
                 path = os.path.abspath(path)
             if not os.path.isdir(path):
-                raise NotADirectoryError(f"Not a directory: {path}")
+                raise NotADirectoryError(_("Not a directory: {path}").format(path=path))
 
             entries: List[FileEntry] = []
             with os.scandir(path) as it:
@@ -1069,14 +1075,14 @@ class FileManagerWindow(Adw.Window):
             # Show success toast if this was a refresh
             if self._left_pane in self._refreshing_panes:
                 try:
-                    self._left_pane.show_toast("Directory reloadeds", timeout=2)
+                    self._left_pane.show_toast(_("Directory reloaded"), timeout=2)
                     logger.debug(f"_load_local: showed refresh success toast for local pane")
                 except (AttributeError, RuntimeError, GLib.Error):
                     pass
                 finally:
                     self._refreshing_panes.discard(self._left_pane)
         except Exception as exc:
-            self._left_pane.show_toast(str(exc))
+            self._left_pane.show_toast(_("Failed to load directory: {error}").format(error=exc))
             # Clear refresh flag on error
             self._refreshing_panes.discard(self._left_pane)
 
@@ -1102,7 +1108,7 @@ class FileManagerWindow(Adw.Window):
                 else:
                     pane.push_history(local_path)
             except Exception as exc:
-                pane.show_toast(str(exc))
+                pane.show_toast(_("Failed to load directory: {error}").format(error=exc))
                 # Clear refresh flag on error
                 self._refreshing_panes.discard(pane)
         else:
@@ -1138,7 +1144,7 @@ class FileManagerWindow(Adw.Window):
                 # Check if this path is still pending (hasn't loaded yet)
                 if self._pending_paths.get(pane) == path:
                     try:
-                        pane.show_toast("Loading directory…", timeout=-1)
+                        pane.show_toast(_("Loading directory…"), timeout=-1)
                         logger.debug(f"Showing loading toast for pane at path: {path}")
                     except (AttributeError, RuntimeError, GLib.Error):
                         pass
@@ -1194,7 +1200,7 @@ class FileManagerWindow(Adw.Window):
                         logger.error("_finalize_conflicts: Manager is None, connection was closed during conflict check")
                         # Try to show error to user - find a pane to show toast
                         if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
+                            self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                         return
                     
                     try:
@@ -1203,12 +1209,12 @@ class FileManagerWindow(Adw.Window):
                                 logger.error("_finalize_conflicts: SFTP connection closed during conflict check")
                                 # Try to show error to user - find a pane to show toast
                                 if hasattr(self, '_right_pane') and self._right_pane:
-                                    self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
+                                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                                 return
                     except Exception as e:
                         logger.error(f"_finalize_conflicts: Error checking connection: {e}")
                         if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast(f"Connection error: {e!s}")
+                            self._right_pane.show_toast(_("Connection error: {error}").format(error=e))
                         return
                 
                 logger.debug("No conflicts, proceeding with transfers")
@@ -1219,7 +1225,7 @@ class FileManagerWindow(Adw.Window):
             if operation_type == "upload" and self._manager is None:
                 logger.error("_finalize_conflicts: Manager is None, connection was closed during conflict check")
                 if hasattr(self, '_right_pane') and self._right_pane:
-                    self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
+                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                 return
             
             # Show conflict resolution dialog
@@ -1228,11 +1234,15 @@ class FileManagerWindow(Adw.Window):
 
             if conflict_count == 1:
                 filename = safe_display_text(os.path.basename(conflicts[0][1]))
-                title = "File Already Exists"
-                message = f"'{filename}' already exists in the destination folder."
+                message = _("'{filename}' already exists in the destination folder.").format(filename=filename)
             else:
-                title = "Files Already Exist"
-                message = f"{conflict_count} of {total_count} files already exist in the destination folder."
+                message = ngettext(
+                    "{count} of {total} file already exists in the destination folder.",
+                    "{count} of {total} files already exist in the destination folder.",
+                    conflict_count,
+                ).format(count=conflict_count, total=total_count)
+
+            title = ngettext("File Already Exists", "Files Already Exist", conflict_count)
 
             dialog = Adw.AlertDialog.new(title, message)
             dialog.add_response("cancel", _("Cancel"))
@@ -1253,7 +1263,7 @@ class FileManagerWindow(Adw.Window):
                 if operation_type == "upload" and self._manager is None:
                     logger.error("_on_conflict_response: Manager is None, connection was closed")
                     if hasattr(self, '_right_pane') and self._right_pane:
-                        self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
+                        self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                     return
 
                 policy = ui_conflict_response_to_policy(response)
@@ -1265,9 +1275,12 @@ class FileManagerWindow(Adw.Window):
                         # Show toast about skipped files
                         if conflict_count == 1:
                             filename = os.path.basename(conflicts[0][1])
-                            self._left_pane.show_toast(f"Skipped existing file: {filename}")
+                            self._left_pane.show_toast(_("Skipped existing file: {filename}").format(filename=filename))
                         else:
-                            self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
+                            self._left_pane.show_toast(ngettext(
+                                "Skipped {count} existing file",
+                                "Skipped {count} existing files", conflict_count,
+                            ).format(count=conflict_count))
                 elif policy is OverwritePolicy.OVERWRITE:
                     # Transfer all files, replacing existing ones
                     callback(files_to_transfer)
@@ -1342,7 +1355,7 @@ class FileManagerWindow(Adw.Window):
                             if self._manager is None:
                                 logger.error("Manager is None, aborting conflict check")
                                 if hasattr(self, '_right_pane') and self._right_pane:
-                                    self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
+                                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                                 return
                         else:
                             logger.warning("Failed to check remote path %s: %s", pair[1], exc)
@@ -1359,7 +1372,7 @@ class FileManagerWindow(Adw.Window):
                         if operation_type == "upload" and self._manager is None:
                             logger.error("Manager is None when finalizing conflicts, connection was closed")
                             if hasattr(self, '_right_pane') and self._right_pane:
-                                self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
+                                self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                             return
                         GLib.idle_add(_idle_finalize, list(conflicts))
 
@@ -1398,7 +1411,7 @@ class FileManagerWindow(Adw.Window):
     def _op_copy_cut(self, pane, action, payload) -> None:
         entries = list(payload.get("entries") or [])
         if not entries:
-            pane.show_toast("Nothing selected")
+            pane.show_toast(_("Nothing selected"))
             return
 
         directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
@@ -1420,14 +1433,20 @@ class FileManagerWindow(Adw.Window):
         self._update_paste_targets()
 
         if len(entries) == 1:
-            message = f"{'Cut' if action == 'cut' else 'Copied'} {entries[0].name}"
+            message = (
+                _("Cut {name}") if action == "cut" else _("Copied {name}")
+            ).format(name=entries[0].name)
         else:
-            message = f"{'Cut' if action == 'cut' else 'Copied'} {len(entries)} items"
+            if action == "cut":
+                template = ngettext("Cut {count} item", "Cut {count} items", len(entries))
+            else:
+                template = ngettext("Copied {count} item", "Copied {count} items", len(entries))
+            message = template.format(count=len(entries))
         pane.show_toast(message)
 
     def _op_paste(self, pane, payload) -> None:
         if not self._clipboard_entries or self._clipboard_source_pane is None:
-            pane.show_toast("Clipboard is empty")
+            pane.show_toast(_("Clipboard is empty"))
             return
 
         destination = ""
@@ -1460,7 +1479,7 @@ class FileManagerWindow(Adw.Window):
         elif source_pane is self._right_pane and pane is self._left_pane:
             self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
         else:
-            pane.show_toast("Paste target is unavailable")
+            pane.show_toast(_("Paste target is unavailable"))
             return
 
         if move_requested:
@@ -1469,7 +1488,7 @@ class FileManagerWindow(Adw.Window):
             self._update_paste_targets()
 
     def _op_mkdir(self, pane) -> None:
-        dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
+        dialog = Adw.AlertDialog.new(_("New Folder"), _("Enter a name for the new folder"))
         entry = Gtk.Entry()
         entry.set_text(_("New Folder"))
         dialog.set_extra_child(entry)
@@ -1492,9 +1511,9 @@ class FileManagerWindow(Adw.Window):
                         try:
                             os.makedirs(new_path, exist_ok=False)
                         except FileExistsError:
-                            pane.show_toast("Folder already exists")
+                            pane.show_toast(_("Folder already exists"))
                         except Exception as exc:
-                            pane.show_toast(str(exc))
+                            pane.show_toast(_("Failed to create folder: {error}").format(error=exc))
                         else:
                             # Refresh local listing
                             self._pending_highlights[self._left_pane] = name
@@ -1530,7 +1549,7 @@ class FileManagerWindow(Adw.Window):
         GLib.idle_add(_focus_entry)
 
     def _op_newfile(self, pane) -> None:
-        dialog = Adw.AlertDialog.new("New File", "Enter a name for the new file")
+        dialog = Adw.AlertDialog.new(_("New File"), _("Enter a name for the new file"))
         entry = Gtk.Entry()
         entry.set_text("untitled.txt")
         dialog.set_extra_child(entry)
@@ -1551,9 +1570,9 @@ class FileManagerWindow(Adw.Window):
                             with open(new_path, "x"):
                                 pass
                         except FileExistsError:
-                            pane.show_toast("File already exists")
+                            pane.show_toast(_("File already exists"))
                         except Exception as exc:
-                            pane.show_toast(str(exc))
+                            pane.show_toast(_("Failed to create file: {error}").format(error=exc))
                         else:
                             self._pending_highlights[self._left_pane] = name
                             self._load_local(os.path.dirname(new_path) or "/")
@@ -1566,10 +1585,10 @@ class FileManagerWindow(Adw.Window):
                             try:
                                 completed_future.result()
                             except FileExistsError:
-                                GLib.idle_add(pane.show_toast, "File already exists")
+                                GLib.idle_add(pane.show_toast, _("File already exists"))
                                 return
                             except Exception as e:
-                                GLib.idle_add(pane.show_toast, f"Failed to create file: {e}")
+                                GLib.idle_add(pane.show_toast, _("Failed to create file: {error}").format(error=e))
                                 return
 
                             def _after() -> bool:
@@ -1616,7 +1635,7 @@ class FileManagerWindow(Adw.Window):
 
         display_name = safe_display_text(entry.name)
         dialog = Adw.AlertDialog.new(
-            "Rename Item", f"Enter a new name for {display_name}"
+            _("Rename Item"), _("Enter a new name for {name}").format(name=display_name)
         )
         name_entry = Gtk.Entry()
         name_entry.set_text(display_name)
@@ -1632,7 +1651,7 @@ class FileManagerWindow(Adw.Window):
                 return
             new_name = name_entry.get_text().strip()
             if not new_name:
-                pane.show_toast("Name cannot be empty")
+                pane.show_toast(_("Name cannot be empty"))
                 dialog.close()
                 return
             if new_name == entry.name:
@@ -1643,9 +1662,9 @@ class FileManagerWindow(Adw.Window):
                 try:
                     os.rename(source, target)
                 except Exception as exc:
-                    pane.show_toast(str(exc))
+                    pane.show_toast(_("Failed to rename item: {error}").format(error=exc))
                 else:
-                    pane.show_toast(f"Renamed to {new_name}")
+                    pane.show_toast(_("Renamed to {name}").format(name=new_name))
                     self._pending_highlights[self._left_pane] = new_name
                     self._load_local(base_dir)
             else:
@@ -1662,7 +1681,7 @@ class FileManagerWindow(Adw.Window):
                         logger.error(f"rename failed: {e}")
                 
                 future.add_done_callback(_on_rename_done)
-                pane.show_toast(f"Renaming to {new_name}…")
+                pane.show_toast(_("Renaming to {name}…").format(name=new_name))
             dialog.close()
 
         def _focus_entry():
@@ -1692,11 +1711,11 @@ class FileManagerWindow(Adw.Window):
 
         count = len(entries)
         if count == 1:
-            message = f"Delete {safe_display_text(entries[0].name)}?"
-            title = "Delete Item"
+            message = _("Delete {name}?").format(name=safe_display_text(entries[0].name))
         else:
-            message = f"Delete {count} items?"
-            title = "Delete Items"
+            message = ngettext("Delete {count} item?", "Delete {count} items?", count).format(count=count)
+
+        title = ngettext("Delete Item", "Delete Items", count)
 
         dialog = Adw.AlertDialog.new(title, message)
         dialog.add_response("cancel", _("Cancel"))
@@ -1720,15 +1739,13 @@ class FileManagerWindow(Adw.Window):
                             os.remove(target_path)
                         deleted += 1
                     except FileNotFoundError:
-                        errors.append(f"{selected_entry.name} no longer exists")
+                        errors.append(_("{name} no longer exists").format(name=selected_entry.name))
                     except Exception as exc:
-                        errors.append(str(exc))
+                        errors.append(_("Failed to delete {name}: {error}").format(
+                            name=selected_entry.name, error=exc
+                        ))
                 if deleted:
-                    message = (
-                        "Deleted 1 item"
-                        if deleted == 1
-                        else f"Deleted {deleted} items"
-                    )
+                    message = ngettext("Deleted {count} item", "Deleted {count} items", deleted).format(count=deleted)
                     pane.show_toast(message)
                     self._load_local(base_dir)
                 if errors:
@@ -1761,7 +1778,7 @@ class FileManagerWindow(Adw.Window):
                             future_result.result()  # Check for errors
                             logger.info(f"Successfully deleted '{entry_name}'")
                         except Exception as e:
-                            error_msg = f"Failed to delete {entry_name}: {e!s}"
+                            error_msg = _("Failed to delete {name}: {error}").format(name=entry_name, error=e)
                             logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
                             errors.append(error_msg)
                         
@@ -1773,14 +1790,14 @@ class FileManagerWindow(Adw.Window):
                         future.add_done_callback(_on_delete_done)
                     except Exception as exc:
                         logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
-                        errors.append(f"Failed to delete {entry_name}: {exc!s}")
+                        errors.append(_("Failed to delete {name}: {error}").format(name=entry_name, error=exc))
                         GLib.idle_add(lambda: _delete_next(index + 1))
                 
                 # Start sequential deletion
                 _delete_next(0)
                 
                 pane.show_toast(
-                    "Deleting 1 item…" if count == 1 else f"Deleting {count} items…"
+                    ngettext("Deleting {count} item…", "Deleting {count} items…", count).format(count=count)
                 )
             dialog.close()
 
@@ -1860,7 +1877,7 @@ class FileManagerWindow(Adw.Window):
         _collect(raw_items)
 
         if not paths:
-            pane.show_toast("No files selected for upload")
+            pane.show_toast(_("No files selected for upload"))
             return
 
         available_paths: List[pathlib.Path] = []
@@ -1875,10 +1892,10 @@ class FileManagerWindow(Adw.Window):
                 missing.append(candidate)
 
         if missing and not available_paths:
-            pane.show_toast("Selected items are not accessible")
+            pane.show_toast(_("Selected items are not accessible"))
             return
         if missing and available_paths:
-            pane.show_toast(f"Skipping inaccessible items: {missing[0].name}")
+            pane.show_toast(_("Skipping inaccessible items: {name}").format(name=missing[0].name))
 
         # Prepare list of files to transfer for conflict checking
         files_to_transfer = []
@@ -1894,7 +1911,7 @@ class FileManagerWindow(Adw.Window):
             
             # Check if manager is still available and connected
             if self._manager is None:
-                pane.show_toast("Upload failed: Connection lost")
+                pane.show_toast(_("Upload failed: Connection lost"))
                 logger.error("_proceed_with_upload: Manager is None")
                 return
             
@@ -1902,12 +1919,12 @@ class FileManagerWindow(Adw.Window):
             try:
                 with self._manager._lock:
                     if self._manager._sftp is None:
-                        pane.show_toast("Upload failed: Connection closed. Please reconnect.")
+                        pane.show_toast(_("Upload failed: Connection closed. Please reconnect."))
                         logger.error("_proceed_with_upload: SFTP connection is None")
                         return
             except Exception as e:
                 logger.error(f"_proceed_with_upload: Error checking connection: {e}")
-                pane.show_toast(f"Upload failed: {e!s}")
+                pane.show_toast(_("Upload failed: {error}").format(error=e))
                 return
             
             total_files = len(resolved_files)
@@ -1944,7 +1961,7 @@ class FileManagerWindow(Adw.Window):
                 except Exception as e:
                     error_msg = str(e)
                     logger.error(f"_proceed_with_upload: Error uploading {path_obj.name}: {error_msg}", exc_info=True)
-                    pane.show_toast(f"Error uploading {path_obj.name}: {error_msg}")
+                    pane.show_toast(_("Error uploading {name}: {error}").format(name=path_obj.name, error=error_msg))
 
         self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
 
@@ -1980,7 +1997,7 @@ class FileManagerWindow(Adw.Window):
         destination_base = payload.get("destination")
 
         if not entries or destination_base is None:
-            pane.show_toast("Invalid download request")
+            pane.show_toast(_("Invalid download request"))
             return
 
         if not isinstance(destination_base, pathlib.Path):
@@ -2031,7 +2048,7 @@ class FileManagerWindow(Adw.Window):
                             move_remote_pane or pane,
                         )
                 except Exception as e:
-                    pane.show_toast(f"Error downloading {entry_name}: {e!s}")
+                    pane.show_toast(_("Error downloading {name}: {error}").format(name=entry_name, error=e))
 
         self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
@@ -2184,11 +2201,7 @@ class FileManagerWindow(Adw.Window):
         success_count = total_count - len(errors)
         
         if success_count > 0:
-            message = (
-                "Deleted 1 item"
-                if success_count == 1
-                else f"Deleted {success_count} items"
-            )
+            message = ngettext("Deleted {count} item", "Deleted {count} items", success_count).format(count=success_count)
             pane.show_toast(message)
         
         if errors:
@@ -2245,10 +2258,10 @@ class FileManagerWindow(Adw.Window):
                     # Try to reconnect and then refresh
                     # The connection should be automatically re-established on next operation
                     # For now, just show a message and let user manually refresh
-                    pane.show_toast("Connection closed. Please refresh manually.", timeout=3)
+                    pane.show_toast(_("Connection closed. Please refresh manually."), timeout=3)
                 else:
                     logger.error(f"_force_refresh_pane: listdir failed: {e}")
-                    pane.show_toast(f"Refresh failed: {e}")
+                    pane.show_toast(_("Refresh failed: {error}").format(error=e))
                 # Clear refresh flag on error
                 self._refreshing_panes.discard(pane)
         else:
@@ -2257,7 +2270,7 @@ class FileManagerWindow(Adw.Window):
                 self._load_local(path)
             except Exception as e:
                 logger.error(f"_force_refresh_pane: local refresh failed: {e}")
-                pane.show_toast(f"Refresh failed: {e}")
+                pane.show_toast(_("Refresh failed: {error}").format(error=e))
                 # Clear refresh flag on error
                 self._refreshing_panes.discard(pane)
 
@@ -2327,11 +2340,11 @@ class FileManagerWindow(Adw.Window):
                 else:
                     if entry.is_dir:
                         if destination_path.exists():
-                            raise FileExistsError(f"{entry.name} already exists")
+                            raise FileExistsError(_("{name} already exists").format(name=entry.name))
                         shutil.copytree(source_path, destination_path)
                     else:
                         if destination_path.exists():
-                            raise FileExistsError(f"{entry.name} already exists")
+                            raise FileExistsError(_("{name} already exists").format(name=entry.name))
                         shutil.copy2(source_path, destination_path)
                 completed += 1
             except FileExistsError as exc:
@@ -2346,18 +2359,13 @@ class FileManagerWindow(Adw.Window):
             if move and destination_dir_norm != source_dir_norm:
                 GLib.idle_add(self._refresh_local_listing, source_dir_norm)
             message = (
-                "Moved 1 item"
-                if move and completed == 1
-                else f"Moved {completed} items"
-                if move
-                else "Copied 1 item"
-                if completed == 1
-                else f"Copied {completed} items"
-            )
+                ngettext("Moved {count} item", "Moved {count} items", completed)
+                if move else ngettext("Copied {count} item", "Copied {count} items", completed)
+            ).format(count=completed)
             self._left_pane.show_toast(message)
 
         if errors:
-            self._left_pane.show_toast(errors[0])
+            self._left_pane.show_toast(_("Local copy or move failed: {error}").format(error=errors[0]))
 
     @staticmethod
     def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
@@ -2384,7 +2392,7 @@ class FileManagerWindow(Adw.Window):
             return
         manager = getattr(self, "_manager", None)
         if manager is None:
-            self._right_pane.show_toast("Remote connection unavailable")
+            self._right_pane.show_toast(_("Remote connection unavailable"))
             return
 
         skipped: List[str] = []
@@ -2396,7 +2404,7 @@ class FileManagerWindow(Adw.Window):
 
             if entry.is_dir and self._is_remote_descendant(source_path, destination_path):
                 skipped.append(
-                    f"Cannot paste '{entry.name}' into its own subdirectory"
+                    _("Cannot paste '{name}' into its own subdirectory").format(name=entry.name)
                 )
                 continue
 
@@ -2451,7 +2459,7 @@ class FileManagerWindow(Adw.Window):
             if path.exists():
                 paths.append(path)
         if not paths:
-            self._left_pane.show_toast("Files are no longer available")
+            self._left_pane.show_toast(_("Files are no longer available"))
             return
 
         payload = {"paths": paths, "destination": destination_dir}
@@ -2477,7 +2485,7 @@ class FileManagerWindow(Adw.Window):
         if not entries:
             return
         if getattr(self, "_manager", None) is None:
-            self._left_pane.show_toast("Remote connection unavailable")
+            self._left_pane.show_toast(_("Remote connection unavailable"))
             return
 
         destination = pathlib.Path(self._normalize_local_path(destination_dir))
@@ -2543,7 +2551,7 @@ class FileManagerWindow(Adw.Window):
             except FileNotFoundError:
                 pass
             except Exception as exc:
-                GLib.idle_add(self._left_pane.show_toast, f"Failed to remove {path.name}: {exc}")
+                GLib.idle_add(self._left_pane.show_toast, _("Failed to remove {name}: {error}").format(name=path.name, error=exc))
             GLib.idle_add(self._refresh_local_listing, base_dir)
 
         future.add_done_callback(_cleanup)
@@ -2785,11 +2793,15 @@ class FileManagerWindow(Adw.Window):
                                             failed_count = len(self._progress_dialog._failed_files)
                                             if failed_count == self._progress_dialog.total_files:
                                                 # All files failed
-                                                error_summary = self._progress_dialog._failed_files[0][1] if self._progress_dialog._failed_files else "Unknown error"
+                                                error_summary = self._progress_dialog._failed_files[0][1] if self._progress_dialog._failed_files else _("Unknown error")
                                                 self._progress_dialog.show_completion(success=False, error_message=error_summary)
                                             else:
                                                 # Some succeeded, some failed
-                                                error_msg = f"{failed_count} of {self._progress_dialog.total_files} files failed"
+                                                error_msg = ngettext(
+                                                    "{count} of {total} file failed",
+                                                    "{count} of {total} files failed",
+                                                    failed_count,
+                                                ).format(count=failed_count, total=self._progress_dialog.total_files)
                                                 self._progress_dialog.show_completion(success=False, error_message=error_msg)
                                         else:
                                             # All files succeeded (shouldn't happen if we're here, but handle it)

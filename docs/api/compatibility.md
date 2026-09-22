@@ -56,14 +56,17 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.51`. Version 0.51 adds the strict
+API implementation 0.51 added the strict
 `PluginSessionFailure` variant to `SessionSummary.failure` for builtin Docker,
 Kubernetes, Mosh, and Serial launch-preparation failures. A 0.50 peer accepts
 only the generic `{code, message}` object there, while a 0.51 peer also accepts
 the discriminated `kind: plugin_launch` object, so mismatched implementations
 are rejected during handshake before session traffic. The generic
-`SessionFailure` wire shape remains unchanged for SSH and every other session
-failure consumer. Version 0.50 introduced strict `ScpFailure` and
+`SessionFailure` wire shape remained `{code, message}` through API 0.65.
+API 0.66 replaces it with strict `{code, error_code, parameters, diagnostic}`;
+exact implementation-version negotiation rejects older peers before session
+traffic. The `PluginSessionFailure` variant remains unchanged. Version 0.50
+introduced strict `ScpFailure` and
 `IdentityFailure`; version 0.49 introduced strict `SftpFailure`; the 0.48
 plugin editor, 0.47 backup/import, 0.46 secret-status, and 0.45 secret-prompt
 contracts remain unchanged.

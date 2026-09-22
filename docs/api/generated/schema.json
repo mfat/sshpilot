@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.64",
+  "api_implementation_version": "0.66",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1156,6 +1156,34 @@
     }
   },
   "enums": {
+    "AsbruImportMessageCode": [
+      "export_not_found",
+      "export_unreadable",
+      "pyyaml_missing",
+      "yaml_invalid",
+      "export_empty",
+      "export_not_mapping",
+      "no_entries",
+      "live_config",
+      "full_config_section",
+      "skipped_non_ssh",
+      "skipped_missing_name",
+      "skipped_missing_host",
+      "expect_not_imported",
+      "renamed_alias",
+      "skipped_empty_group",
+      "groups_only",
+      "load_failed",
+      "group_create_failed",
+      "group_no_id",
+      "connection_create_failed",
+      "assign_failed",
+      "parse_failed",
+      "all_exist",
+      "partial_failures",
+      "imported",
+      "no_changes"
+    ],
     "AsbruImportMode": [
       "skip"
     ],
@@ -1628,6 +1656,16 @@
       "backup_encrypt",
       "backup_decrypt"
     ],
+    "SessionFailureCode": [
+      "start_failed",
+      "auth_cancelled",
+      "auth_incomplete",
+      "command_queue_full",
+      "termination_failed",
+      "ended_before_output",
+      "ssh_exited",
+      "ssh_diagnostic"
+    ],
     "SessionState": [
       "created",
       "starting",
@@ -1763,6 +1801,32 @@
       ],
       "status": "Implemented"
     },
+    "AsbruImportMessage": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "AsbruImportMessageCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "AsbruImportPreview": {
       "fields": [
         {
@@ -1812,14 +1876,14 @@
           "name": "warnings",
           "required": false,
           "sensitive": false,
-          "type": "tuple[str, ...]"
+          "type": "tuple[AsbruImportMessage, ...]"
         },
         {
           "default": [],
           "name": "errors",
           "required": false,
           "sensitive": false,
-          "type": "tuple[str, ...]"
+          "type": "tuple[AsbruImportMessage, ...]"
         }
       ],
       "status": "Implemented"
@@ -1892,28 +1956,28 @@
           "name": "warnings",
           "required": false,
           "sensitive": false,
-          "type": "tuple[str, ...]"
+          "type": "tuple[AsbruImportMessage, ...]"
         },
         {
           "default": [],
           "name": "errors",
           "required": false,
           "sensitive": false,
-          "type": "tuple[str, ...]"
+          "type": "tuple[AsbruImportMessage, ...]"
         },
         {
           "default": [],
           "name": "partial_failures",
           "required": false,
           "sensitive": false,
-          "type": "tuple[str, ...]"
+          "type": "tuple[AsbruImportMessage, ...]"
         },
         {
-          "default": "",
+          "default": null,
           "name": "message",
           "required": false,
           "sensitive": false,
-          "type": "str"
+          "type": "AsbruImportMessage | None"
         }
       ],
       "status": "Implemented"
@@ -7564,12 +7628,26 @@
           "name": "code",
           "required": true,
           "sensitive": false,
-          "type": "str"
+          "type": "SessionFailureCode"
         },
         {
           "default": null,
-          "name": "message",
+          "name": "error_code",
           "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, int]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
           "sensitive": false,
           "type": "str"
         }

@@ -786,10 +786,10 @@ created = client.create_connection(
   mutating configuration.
 - **Parameters / return:** Absolute or home-relative `source` path; returns
   `AsbruImportPreview`.
-- **Errors:** Parse failures are returned on the preview (`ok=False`,
-  `errors=…`) rather than as transport errors when the file is readable.
-  Missing files and invalid YAML raise `import_error` / mapped persistence
-  errors through the service.
+- **Errors:** Missing files, invalid YAML, and parse failures return
+  `ok=False` with structured `AsbruImportMessage` values in `errors`.
+  Warnings use the same contract. Opaque filesystem/YAML details are kept in
+  each message's `diagnostic`.
 - **Events:** None.
 - **Cancellation / ordering / threading:** Direct core calls use the owner
   thread. Daemon requests are deferred on the configuration command key.
@@ -813,7 +813,8 @@ print(preview.connections_to_add, preview.connections_to_skip)
   skipped (`AsbruImportMode.SKIP`).
 - **Parameters / return:** `AsbruImportRequest`; returns `AsbruImportResult`.
 - **Errors:** Same parse path as preview. Individual create/assign failures are
-  collected in `partial_failures` without aborting the whole batch.
+  collected as `AsbruImportMessage` values in `partial_failures` without
+  aborting the whole batch. `message` is an optional structured summary.
 - **Events:** Normal `connection.created` / group events for each successful
   mutation.
 - **Cancellation / ordering / threading:** Direct core calls use the owner

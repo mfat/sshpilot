@@ -1173,6 +1173,16 @@ class BitwardenBackend(SecretBackend):
         self._folder_id = None
         os.environ.pop("BW_SESSION", None)
 
+    def _session_idle_expired(self) -> bool:
+        """Drop an in-process session that has idled out; True if it was dropped.
+
+        The item cache is part of the session, so reads served from it must honour the
+        timeout like :meth:`is_unlocked` does. Caller holds ``self._lock``."""
+        if self._token is not None and self._expired():
+            self._drop_session()
+            return True
+        return False
+
     def _current_token(self) -> Optional[str]:
         """A usable session token: the one from unlock() in this process (honoring the
         idle timeout), else an inherited ``BW_SESSION`` (so the askpass subprocess works
@@ -1425,7 +1435,11 @@ class BitwardenBackend(SecretBackend):
         spawn). Otherwise (cold cache, e.g. the askpass subprocess) fall back to one
         targeted search and cache the hit."""
         with self._lock:
+            if self._session_idle_expired():
+                return None
             if self._items is not None and account in self._items:
+                if self._token is not None:
+                    self._touch_deadline()   # a cache hit is activity too
                 return self._items[account]
             if self._cache_complete:
                 return None
@@ -1521,6 +1535,8 @@ class BitwardenBackend(SecretBackend):
         locked or not cached. Reconstructs spec attributes from each item's name, using
         ``login.username`` as the hint so email-style usernames split correctly."""
         with self._lock:
+            if self._session_idle_expired():
+                return []
             items = self._items
             snapshot = list(items.items()) if items else []
         out: List[Tuple[Dict[str, str], Optional[str]]] = []
@@ -2108,9 +2124,13 @@ class KdbxBackend(SecretBackend):
     def describe(self) -> str:
         return self.name
 
+    def is_installed(self) -> bool:
+        """True when pykeepass is importable, regardless of whether a database exists yet."""
+        return _get_pykeepass() is not None
+
     def is_available(self) -> bool:
         db = self._database()
-        return _get_pykeepass() is not None and bool(db) and os.path.exists(db)
+        return self.is_installed() and bool(db) and os.path.exists(db)
 
     def _touch_deadline(self) -> None:
         self._idle.touch()

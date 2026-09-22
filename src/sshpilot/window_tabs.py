@@ -802,7 +802,7 @@ class WindowTabsMixin:
             getattr(connection, 'nickname', None)
             or getattr(connection, 'hostname', None)
             or getattr(connection, 'host', None)
-            or getattr(connection, 'username', 'Remote Host')
+            or getattr(connection, 'username', _('Remote Host'))
         )
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         username = getattr(connection, 'username', '') or ''
@@ -810,7 +810,7 @@ class WindowTabsMixin:
         effective_port = port_value if port_value and port_value != 22 else None
 
         def error_callback(error_msg):
-            message = error_msg or "Failed to open file manager"
+            message = error_msg or _("Failed to open file manager")
             logger.error(f"Failed to open file manager for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
@@ -830,7 +830,7 @@ class WindowTabsMixin:
             if window is not None:
                 self._track_internal_file_manager_window(window)
         else:
-            message = error_msg or "Failed to start file manager process"
+            message = error_msg or _("Failed to start file manager process")
             logger.error(f"Failed to start file manager process for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 

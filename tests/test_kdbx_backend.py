@@ -223,6 +223,20 @@ def test_create_database_without_pykeepass(monkeypatch):
     assert ss.KdbxBackend.create_database('/tmp/x.kdbx', 'pw') is False
 
 
+def test_installed_but_unavailable_before_database_exists(monkeypatch, tmp_path):
+    # GH #1281: a missing database must not read as "pykeepass is not installed".
+    monkeypatch.setattr(ss, 'PyKeePass', FakePyKeePass)
+    monkeypatch.setenv('SSHPILOT_KDBX_DATABASE', str(tmp_path / "missing.kdbx"))
+    backend = ss.KdbxBackend()
+    assert backend.is_installed() is True
+    assert backend.is_available() is False
+
+
+def test_not_installed_without_pykeepass(monkeypatch):
+    monkeypatch.setattr(ss, 'PyKeePass', None)
+    assert ss.KdbxBackend().is_installed() is False
+
+
 def test_selected_master_spec_keyed_by_db_path(monkeypatch):
     monkeypatch.setenv('SSHPILOT_KDBX_DATABASE', '/vaults/work.kdbx')
     mgr = ss.SecretManager()

@@ -61,6 +61,17 @@
 
 
 
+    <release version="6.2.1" date="2026-09-22">
+      <description>
+        <p>Fixed KeePass database creation failing with a false &quot;pykeepass is not installed&quot; error</p>
+        <p>Fixed auto-unlock after creating a KeePass database</p>
+        <p>Fixed Bitwarden US cloud setup leaving a previous EU or self-hosted server URL in place</p>
+        <p>Secret vault sessions now lock when the database or account target changes</p>
+        <p>Bitwarden idle timeout is now enforced on credential lookups</p>
+        <p>New preference to set how many lines the mouse wheel scrolls in the terminal</p>
+        <p>Localized File Manager, text editor, session failure, and Ásbrú import messages</p>
+      </description>
+    </release>
     <release version="6.2.0" date="2026-09-22">
       <description>
         <p>Local shell now follows the window size, so full-screen programs use the whole terminal</p>

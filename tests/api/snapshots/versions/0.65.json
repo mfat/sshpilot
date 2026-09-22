@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.66",
+  "api_implementation_version": "0.65",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3484,7 +3484,6 @@
     "SessionCapabilities",
     "SessionExitInfo",
     "SessionFailure",
-    "SessionFailureCode",
     "SessionId",
     "SessionState",
     "SessionSummary",
@@ -4574,9 +4573,7 @@
     ],
     "SessionFailure": [
       "code",
-      "error_code",
-      "parameters",
-      "diagnostic"
+      "message"
     ],
     "SessionSummary": [
       "id",
@@ -5349,16 +5346,6 @@
       "remember_master_password",
       "backup_encrypt",
       "backup_decrypt"
-    ],
-    "SessionFailureCode": [
-      "start_failed",
-      "auth_cancelled",
-      "auth_incomplete",
-      "command_queue_full",
-      "termination_failed",
-      "ended_before_output",
-      "ssh_exited",
-      "ssh_diagnostic"
     ],
     "SessionState": [
       "created",

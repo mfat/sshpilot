@@ -11,6 +11,7 @@ from sshpilot.api.models.sessions import (
     DetachSessionRequest,
     OpenSessionRequest,
     SessionExitInfo,
+    SessionFailureCode,
     SessionState,
 )
 
@@ -159,7 +160,8 @@ def test_default_production_runner_fails_truthfully_without_terminal_transport(
             lambda: client.get_session(opened.id).state is SessionState.FAILED
         )
         failed = client.get_session(opened.id)
-        assert failed.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
+        assert failed.failure.code is SessionFailureCode.START_FAILED
+        assert failed.failure.error_code is ErrorCode.SESSION_STARTUP_FAILED
         assert failed.capabilities.supported == frozenset()
         assert _wait_until(
             lambda: any(

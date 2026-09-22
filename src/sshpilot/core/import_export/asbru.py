@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
+from ...api.models.connections import AsbruImportMessage, AsbruImportMessageCode as Code
 from ..errors import CoreError, ErrorCode
 
 _PAC_ROOT_MARKERS = frozenset({"__PAC__EXPORTED__", "__PAC__ROOT__", "__PAC_SHELL__"})
@@ -50,7 +51,7 @@ class AsbruConnectionDraft:
     proxy_jump: Tuple[str, ...] = ()
     forwarding_rules: Tuple[Dict[str, Any], ...] = ()
     identity_files: Tuple[str, ...] = ()
-    warnings: Tuple[str, ...] = ()
+    warnings: Tuple[AsbruImportMessage, ...] = ()
 
 
 @dataclass
@@ -59,8 +60,8 @@ class AsbruParseResult:
 
     groups: List[AsbruGroupDraft] = field(default_factory=list)
     connections: List[AsbruConnectionDraft] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
+    warnings: List[AsbruImportMessage] = field(default_factory=list)
+    errors: List[AsbruImportMessage] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -82,7 +83,7 @@ def load_asbru_export(path: Union[str, Path]) -> AsbruParseResult:
         raise CoreError(
             ErrorCode.IMPORT_ERROR,
             f"Failed to read Ásbrú export: {exc}",
-            details={"reason": "asbru_export_unreadable", "path": str(file_path)},
+            details={"reason": "asbru_export_unreadable", "path": str(file_path), "diagnostic": str(exc)},
         ) from exc
     return parse_asbru_export_text(text)
 
@@ -103,7 +104,7 @@ def parse_asbru_export_text(text: str) -> AsbruParseResult:
         raise CoreError(
             ErrorCode.IMPORT_ERROR,
             f"Invalid Ásbrú YAML: {exc}",
-            details={"reason": "asbru_yaml_invalid"},
+            details={"reason": "asbru_yaml_invalid", "diagnostic": str(exc)},
         ) from exc
     return parse_asbru_export(data)
 
@@ -115,10 +116,7 @@ def parse_asbru_export(data: Any) -> AsbruParseResult:
     if result.errors:
         return result
     if not entries:
-        result.errors.append(
-            "No connections or groups found. Use Ásbrú's "
-            "'Export selected connections' (not the live asbru.yml)."
-        )
+        result.errors.append(AsbruImportMessage(Code.NO_ENTRIES))
         return result
 
     groups: List[AsbruGroupDraft] = []
@@ -137,9 +135,9 @@ def parse_asbru_export(data: Any) -> AsbruParseResult:
         method = str(entry.get("method") or "SSH")
         if method and not _SSH_METHOD_RE.search(method):
             name = _clean_display_name(entry.get("name") or entry.get("title") or source_id)
-            result.warnings.append(
-                f"Skipped non-SSH connection {name!r} (method={method!r})"
-            )
+            result.warnings.append(AsbruImportMessage(
+                Code.SKIPPED_NON_SSH, {"name": name, "method": method}
+            ))
             continue
 
         draft, warnings = _parse_connection(source_id, entry, used_nicknames)
@@ -169,7 +167,7 @@ def parse_asbru_export(data: Any) -> AsbruParseResult:
     result.groups = _order_groups_parents_first(kept_groups)
     result.connections = connections
     if not connections and not result.warnings and not result.errors:
-        result.warnings.append("Export contained groups only; no SSH connections imported")
+        result.warnings.append(AsbruImportMessage(Code.GROUPS_ONLY))
     return result
 
 
@@ -263,18 +261,15 @@ def _extract_entries(
     data: Any, result: AsbruParseResult
 ) -> Dict[str, Mapping[str, Any]]:
     if data is None:
-        result.errors.append("Ásbrú export is empty")
+        result.errors.append(AsbruImportMessage(Code.EXPORT_EMPTY))
         return {}
     if not isinstance(data, Mapping):
-        result.errors.append("Ásbrú export must be a YAML mapping")
+        result.errors.append(AsbruImportMessage(Code.EXPORT_NOT_MAPPING))
         return {}
 
     # Full asbru.yml wraps connections under ``environments``.
     if "environments" in data and isinstance(data.get("environments"), Mapping):
-        result.warnings.append(
-            "Parsed the environments section from a full Ásbrú config; "
-            "prefer 'Export selected connections' for a clean import"
-        )
+        result.warnings.append(AsbruImportMessage(Code.FULL_CONFIG_SECTION))
         raw = data["environments"]
     else:
         raw = data
@@ -295,10 +290,7 @@ def _extract_entries(
         isinstance(v, Mapping) and ("defaults" in data or "tmp" in data)
         for v in (data,)
     ):
-        result.errors.append(
-            "This looks like a live asbru.yml, not an export. "
-            "In Ásbrú, select connections → right-click → Export."
-        )
+        result.errors.append(AsbruImportMessage(Code.LIVE_CONFIG))
     return entries
 
 
@@ -330,16 +322,16 @@ def _parse_connection(
     source_id: str,
     entry: Mapping[str, Any],
     used_nicknames: set[str],
-) -> Tuple[Optional[AsbruConnectionDraft], List[str]]:
-    warnings: List[str] = []
+) -> Tuple[Optional[AsbruConnectionDraft], List[AsbruImportMessage]]:
+    warnings: List[AsbruImportMessage] = []
     display_name = _clean_display_name(entry.get("name") or entry.get("title") or source_id)
     if not display_name:
-        warnings.append(f"Skipped connection {source_id}: missing name")
+        warnings.append(AsbruImportMessage(Code.SKIPPED_MISSING_NAME, {"source_id": source_id}))
         return None, warnings
 
     hostname = str(entry.get("ip") or entry.get("host") or entry.get("hostname") or "").strip()
     if not hostname:
-        warnings.append(f"Skipped connection {display_name!r}: missing host/IP")
+        warnings.append(AsbruImportMessage(Code.SKIPPED_MISSING_HOST, {"name": display_name}))
         return None, warnings
 
     nickname = sanitize_host_alias(display_name, existing=used_nicknames)
@@ -352,15 +344,15 @@ def _parse_connection(
     proxy_jump = build_proxy_jump(entry)
     identity_files = _resolve_identity_files(entry)
 
-    conn_warnings: List[str] = []
+    conn_warnings: List[AsbruImportMessage] = []
     if entry.get("expect") or entry.get("macros") or entry.get("variables"):
-        conn_warnings.append(
-            f"{display_name!r}: Ásbrú expect/macros/variables are not imported"
-        )
+        conn_warnings.append(AsbruImportMessage(
+            Code.EXPECT_NOT_IMPORTED, {"name": display_name}
+        ))
     if nickname != display_name.replace(" ", "-") and " " in display_name:
-        conn_warnings.append(
-            f"Renamed {display_name!r} → Host alias {nickname!r}"
-        )
+        conn_warnings.append(AsbruImportMessage(
+            Code.RENAMED_ALIAS, {"name": display_name, "nickname": nickname}
+        ))
 
     draft = AsbruConnectionDraft(
         source_id=source_id,
@@ -467,7 +459,7 @@ def _order_groups_parents_first(groups: Sequence[AsbruGroupDraft]) -> List[Asbru
 def _prune_empty_groups(
     groups: Sequence[AsbruGroupDraft],
     connections: Sequence[AsbruConnectionDraft],
-) -> Tuple[List[AsbruGroupDraft], List[str]]:
+) -> Tuple[List[AsbruGroupDraft], List[AsbruImportMessage]]:
     """Keep only groups that contain (or ancestor) an imported SSH connection."""
     by_id = {g.source_id: g for g in groups}
     keep: set[str] = set()
@@ -479,15 +471,15 @@ def _prune_empty_groups(
             keep.add(gid)
             gid = by_id[gid].parent_source_id
 
-    warnings: List[str] = []
+    warnings: List[AsbruImportMessage] = []
     kept: List[AsbruGroupDraft] = []
     for group in groups:
         if group.source_id in keep:
             kept.append(group)
         else:
-            warnings.append(
-                f"Skipped empty group {group.name!r} (no importable SSH connections)"
-            )
+            warnings.append(AsbruImportMessage(
+                Code.SKIPPED_EMPTY_GROUP, {"name": group.name}
+            ))
     return kept, warnings
 
 

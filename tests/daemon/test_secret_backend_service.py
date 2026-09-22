@@ -797,6 +797,33 @@ def test_bitwarden_configure_server_does_not_deadlock(tmp_path):
     )
 
 
+def test_bitwarden_configure_us_cloud_points_cli_at_real_url(tmp_path):
+    # US cloud is stored as "" but ``bw config server ""`` is not a reset.
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={
+            "backend": "bitwarden",
+            "session_timeout": 0,
+            "bitwarden": {"profile": "", "server": "https://vault.example.com"},
+        },
+    )
+    service.bitwarden_configure_server("")
+    run_args = [call[1] for call in backends["bitwarden"].calls if call[0] == "_run"]
+    assert (["config", "server", "https://vault.bitwarden.com"],) in run_args
+    assert service.get_configuration().bitwarden_server == ""
+
+
+def test_bitwarden_status_reports_missing_cli(tmp_path):
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path, secrets={"backend": "bitwarden", "session_timeout": 0}
+    )
+    backends["bitwarden"]._available = False
+    status = service.bitwarden_status()
+    assert status.needs_login is True
+    assert status.message_code is SecretMessageCode.BACKEND_UNAVAILABLE
+    assert dict(status.message_parameters) == {"backend": "bitwarden"}
+
+
 def test_native_command_failures_are_not_treated_as_success(tmp_path):
     service, _manager, backends, _broker, path = _make_service(
         tmp_path, secrets={"backend": "bitwarden", "session_timeout": 0}
@@ -841,7 +868,7 @@ def test_rbw_configure_uses_exact_set_and_unset_argv(tmp_path):
     backend = backends["rbw"]
 
     service.rbw_configure("alice@example.com", "https://vault.example.com")
-    run_calls = [args for kind, args in backend.calls if kind == "_run"]
+    run_calls = [call[1] for call in backend.calls if call[0] == "_run"]
     assert run_calls[:2] == [
         ("config", "set", "email", "alice@example.com"),
         ("config", "set", "base_url", "https://vault.example.com"),
@@ -849,11 +876,54 @@ def test_rbw_configure_uses_exact_set_and_unset_argv(tmp_path):
 
     backend.calls.clear()
     service.rbw_configure("alice@example.com", "")
-    run_calls = [args for kind, args in backend.calls if kind == "_run"]
+    run_calls = [call[1] for call in backend.calls if call[0] == "_run"]
     assert run_calls[:2] == [
         ("config", "set", "email", "alice@example.com"),
         ("config", "unset", "base_url"),
     ]
+
+
+def test_rbw_configure_drops_cached_values_from_previous_account(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    service.rbw_configure("bob@example.com", "")
+    assert ("lock",) in backends["rbw"].calls
+
+
+@pytest.mark.parametrize(
+    ("patch", "locked"),
+    [
+        ({"keepassxc_database": "/home/u/other.kdbx"}, "keepassxc"),
+        ({"keepassxc_keyfile": "/home/u/other.key"}, "keepassxc"),
+        ({"bitwarden_profile": "/home/u/bw-work"}, "bitwarden"),
+    ],
+)
+def test_changing_vault_target_locks_that_backend(tmp_path, patch, locked):
+    # Sessions are not bound to their database/account, so the daemon itself
+    # must drop them when the target changes — not rely on a GUI lock call.
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "keepassxc", "session_timeout": 0}
+    )
+    for backend in backends.values():
+        backend._unlocked = True
+    from sshpilot.api.models.secrets import UpdateSecretConfigurationRequest
+    service.update_configuration(UpdateSecretConfigurationRequest(patch=patch))
+    assert backends[locked]._unlocked is False
+    others = [n for n in ("keepassxc", "bitwarden") if n != locked]
+    assert all(backends[n]._unlocked for n in others)
+
+
+def test_unrelated_configuration_change_keeps_sessions(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "keepassxc", "session_timeout": 0}
+    )
+    backends["keepassxc"]._unlocked = True
+    backends["bitwarden"]._unlocked = True
+    from sshpilot.api.models.secrets import UpdateSecretConfigurationRequest
+    service.update_configuration(UpdateSecretConfigurationRequest(patch={"session_timeout": 5}))
+    assert backends["keepassxc"]._unlocked is True
+    assert backends["bitwarden"]._unlocked is True
 
 
 def test_rbw_configure_unset_failure_returns_typed_failure(tmp_path):
@@ -1643,8 +1713,8 @@ def test_rbw_status_reads_config_show_json(tmp_path):
     assert status.configured is False
     assert ("_run", ("config", "show")) in backend.calls
     assert not any(
-        kind == "_run" and args[:2] == ("config", "get")
-        for kind, args in backend.calls
+        call[0] == "_run" and call[1][:2] == ("config", "get")
+        for call in backend.calls
     )
 
     backend.calls.clear()
@@ -1654,8 +1724,8 @@ def test_rbw_status_reads_config_show_json(tmp_path):
     assert status.base_url == "https://vault.example.com"
     assert ("_run", ("config", "show")) in backend.calls
     assert not any(
-        kind == "_run" and args[:2] == ("config", "get")
-        for kind, args in backend.calls
+        call[0] == "_run" and call[1][:2] == ("config", "get")
+        for call in backend.calls
     )
 
 
@@ -1670,7 +1740,7 @@ def test_rbw_status_configure_unlock_sync_lock(tmp_path):
     status = service.rbw_configure("alice@example.com", "https://vault.example.com")
     assert status.email == "alice@example.com"
     calls = backends["rbw"].calls
-    assert ("config", "set", "email", "alice@example.com") in [a for _k, a in calls if _k == "_run"]
+    assert ("config", "set", "email", "alice@example.com") in [c[1] for c in calls if c[0] == "_run"]
 
     status = service.rbw_unlock()
     assert status.unlocked is True
@@ -1760,6 +1830,73 @@ def test_keepassxc_create_database(tmp_path):
         for kind, *args in calls
     )
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+    # Create persists the path so unlock (and later sessions) see the new file.
+    assert service.get_configuration().keepassxc_database == "/home/u/vault.kdbx"
+    assert os.environ.get("SSHPILOT_KDBX_DATABASE") == "/home/u/vault.kdbx"
+
+
+def test_keepassxc_create_database_when_no_database_exists_yet(tmp_path):
+    # GH #1281: is_available() is False until the .kdbx exists; creation must
+    # still proceed as long as pykeepass itself is installed.
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    keepassxc = backends["keepassxc"]
+    keepassxc._available = False
+    keepassxc.is_installed = lambda: True
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.SUCCESS
+    assert any(kind == "create_database" for kind, *_ in keepassxc.calls)
+    assert service.get_configuration().keepassxc_database == "/home/u/new.kdbx"
+    assert os.environ.get("SSHPILOT_KDBX_DATABASE") == "/home/u/new.kdbx"
+
+
+def test_keepassxc_create_database_relocks_previous_database(tmp_path):
+    # An open session on the old database must not satisfy the post-create
+    # unlock: the session is not bound to a path, so it would keep serving it.
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    keepassxc = backends["keepassxc"]
+    keepassxc._unlocked = True
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.SUCCESS
+    kinds = [kind for kind, *_ in keepassxc.calls]
+    assert "lock" in kinds and "unlock" in kinds
+    assert kinds.index("lock") < kinds.index("unlock")
+
+
+def test_keepassxc_create_database_clears_stale_keyfile(tmp_path):
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={
+            "backend": "keepassxc",
+            "session_timeout": 0,
+            "keepassxc": {"database": "/home/u/old.kdbx", "keyfile": "/home/u/old.key"},
+        },
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.SUCCESS
+    config = service.get_configuration()
+    assert config.keepassxc_database == "/home/u/new.kdbx"
+    assert config.keepassxc_keyfile == ""
+    assert "SSHPILOT_KDBX_KEYFILE" not in os.environ
+
+
+def test_keepassxc_create_database_without_pykeepass(tmp_path):
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+    )
+    backends["keepassxc"].is_installed = lambda: False
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.FAILED
+    assert result.message_code is SecretMessageCode.BACKEND_UNAVAILABLE
 
 
 def test_keepassxc_unlock_and_lock(tmp_path):

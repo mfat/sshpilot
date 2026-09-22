@@ -21,6 +21,12 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 from gettext import gettext as _
 
 from .accessibility import set_accessible_name, set_accessible_selected
+from .gtk.asbru_import_messages import (
+    format_asbru_messages,
+    format_asbru_preview_counts,
+    format_asbru_result_message,
+    format_asbru_rpc_error,
+)
 from .gtk.secret_transfer_messages import (
     format_secret_transfer_error,
     format_secret_transfer_message,
@@ -1950,7 +1956,7 @@ class WindowConfigDialogsMixin:
                 payload = ("preview", preview)
             except Exception as e:
                 logger.error("Ásbrú import preview failed: %s", e)
-                payload = ("error", str(e))
+                payload = ("error", e)
             GLib.idle_add(lambda: (_after_preview(payload), False)[1])
 
         def _after_preview(p):
@@ -1958,31 +1964,24 @@ class WindowConfigDialogsMixin:
                 return
             close_spinner()
             if p[0] != "preview":
-                self._simple_dialog(_("Import Failed"), p[1])
+                self._simple_dialog(_("Import Failed"), format_asbru_rpc_error(p[1]))
                 return
             preview = p[1]
             if preview.errors:
                 self._simple_dialog(
                     _("Import Failed"),
-                    "\n".join(preview.errors),
+                    format_asbru_messages(preview.errors),
                 )
                 return
             add_n = len(preview.connections_to_add)
             skip_n = len(preview.connections_to_skip)
             group_n = len(preview.groups_to_add)
+            body = format_asbru_preview_counts(add_n, group_n, skip_n)
             if add_n == 0 and group_n == 0:
-                body = _(
-                    "No new connections to import. "
-                    "{skip} existing nickname(s) would be skipped."
-                ).format(skip=skip_n)
                 self._simple_dialog(_("Nothing to Import"), body)
                 return
-            body = _(
-                "Import {add} connection(s) and {groups} group(s)?\n"
-                "{skip} existing nickname(s) will be skipped."
-            ).format(add=add_n, groups=group_n, skip=skip_n)
             if preview.warnings:
-                body += "\n\n" + "\n".join(preview.warnings[:8])
+                body += "\n\n" + format_asbru_messages(preview.warnings[:8])
                 if len(preview.warnings) > 8:
                     body += "\n…"
 
@@ -2025,7 +2024,7 @@ class WindowConfigDialogsMixin:
                 payload = ("ok", result)
             except Exception as e:
                 logger.error("Ásbrú import failed: %s", e)
-                payload = ("error", str(e))
+                payload = ("error", e)
             GLib.idle_add(lambda: (_after(payload), False)[1])
 
         def _after(p):
@@ -2033,16 +2032,19 @@ class WindowConfigDialogsMixin:
                 return
             close_spinner()
             if p[0] != "ok":
-                self._simple_dialog(_("Import Failed"), p[1])
+                self._simple_dialog(_("Import Failed"), format_asbru_rpc_error(p[1]))
                 return
             result = p[1]
-            lines = [result.message or _("Import finished.")]
+            lines = [format_asbru_result_message(result)]
+            if result.errors:
+                lines.append("")
+                lines.append(format_asbru_messages(result.errors[:10]))
             if result.partial_failures:
                 lines.append("")
-                lines.extend(result.partial_failures[:10])
+                lines.append(format_asbru_messages(result.partial_failures[:10]))
             if result.warnings:
                 lines.append("")
-                lines.extend(result.warnings[:6])
+                lines.append(format_asbru_messages(result.warnings[:6]))
             heading = _("Import Complete") if result.ok else _("Import Completed with Errors")
             self._simple_dialog(heading, "\n".join(lines))
 

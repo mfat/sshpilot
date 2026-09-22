@@ -1384,6 +1384,41 @@ def test_bitwarden_idle_timeout(monkeypatch):
     assert os.environ.get('BW_SESSION') is None
 
 
+def _warm_bw_session(monkeypatch, timeout):
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', timeout)
+    clock = {'t': 1000.0}
+    monkeypatch.setattr(ss.time, 'monotonic', lambda: clock['t'])
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    b._token = 'TOK'
+    b._unlocked = True
+    b._items = {'u@h': {'name': 'u@h', 'id': 'ID1', 'login': {'password': 'cached'}}}
+    b._cache_complete = True
+    b._touch_deadline()
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    return b, clock
+
+
+def test_bitwarden_cache_reads_honour_idle_timeout(monkeypatch):
+    # Reads served from the warm item cache must not outlive the session: once the
+    # idle window passes, lookup/iter_credentials return nothing and drop the cache.
+    b, clock = _warm_bw_session(monkeypatch, '60')
+    assert b.lookup(password_spec('h', 'u')) == 'cached'
+    assert len(b.iter_credentials()) == 1
+    clock['t'] += 61
+    assert b.lookup(password_spec('h', 'u')) is None
+    assert b._items is None and b._token is None
+    assert b.iter_credentials() == []
+
+
+def test_bitwarden_cache_hit_extends_idle_window(monkeypatch):
+    b, clock = _warm_bw_session(monkeypatch, '60')
+    clock['t'] += 50
+    assert b.lookup(password_spec('h', 'u')) == 'cached'   # activity slides the window
+    clock['t'] += 50
+    assert b.lookup(password_spec('h', 'u')) == 'cached'
+
+
 def test_bitwarden_no_idle_timeout_by_default(monkeypatch):
     monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '0')   # default = keep unlocked
     clock = {'t': 1000.0}

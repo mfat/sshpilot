@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
 from .platform_utils import is_flatpak, is_macos
+from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
     VTETerminalBackend,
@@ -32,10 +33,11 @@ from gi.repository import Gtk, GObject, GLib, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
-# Lines moved per discrete wheel notch.  Fixed on purpose: VTE's own fallback
-# used max(1, ceil(rows/10)), which is ~4 lines in a small window and ~7
-# maximised, and that inconsistency is most of what read as "too fast".
-WHEEL_SCROLL_LINES = 3
+# Lines moved per discrete wheel notch when terminal.wheel_scroll_lines is
+# unset.  Fixed rather than VTE's own max(1, ceil(rows/10)), which is ~4 lines
+# in a small window and ~7 maximised; that inconsistency is most of what read
+# as "too fast".  Per-platform value and rationale: DEFAULT_WHEEL_SCROLL_LINES.
+WHEEL_SCROLL_LINES = DEFAULT_WHEEL_SCROLL_LINES
 
 # SSHProcessManager and the process_manager singleton were extracted to
 # ssh_process_manager.py (GTK-free). Re-exported here so existing
@@ -4824,10 +4826,22 @@ class TerminalWidget(Gtk.Box):
                 return float(dy)
             return float(dy) / cell_height
 
-        lines = dy * WHEEL_SCROLL_LINES
+        lines = dy * self._wheel_scroll_lines()
         if in_pixels:
             return float(lines * cell_height)
         return float(lines)
+
+    def _wheel_scroll_lines(self) -> int:
+        """Lines per discrete mouse-wheel notch (VTE history scroll)."""
+        default = WHEEL_SCROLL_LINES
+        config = getattr(self, 'config', None)
+        if config is None:
+            return default
+        try:
+            value = int(config.get_setting('terminal.wheel_scroll_lines', default))
+        except (TypeError, ValueError):
+            return default
+        return max(1, min(value, 10))
 
     def _on_history_scroll(self, controller, dx: float, dy: float) -> bool:
         """Scroll the terminal viewport in response to a scroll gesture."""

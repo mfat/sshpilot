@@ -16,6 +16,7 @@ from sshpilot.api.models.sessions import (
     OpenSessionRequest,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureCode,
     SessionState,
     SessionSummary,
 )
@@ -255,7 +256,8 @@ def test_startup_failure_after_acknowledgement_is_async(
             lambda: client.get_session(opened.id).state is SessionState.FAILED
         )
         failed = client.get_session(opened.id)
-        assert failed.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
+        assert failed.failure.code is SessionFailureCode.START_FAILED
+        assert failed.failure.error_code is ErrorCode.SESSION_STARTUP_FAILED
         assert _wait_until(
             lambda: any(
                 event.type is EventType.SESSION_STATE_CHANGED
@@ -542,8 +544,8 @@ def test_gtk_controller_updates_tab_on_async_startup_failure():
         connection_id=ConnectionId("test"),
         state=SessionState.FAILED,
         failure=SessionFailure(
-            code=ErrorCode.SESSION_STARTUP_FAILED.value,
-            message="The session process could not be started",
+            code=SessionFailureCode.START_FAILED,
+            error_code=ErrorCode.SESSION_STARTUP_FAILED,
         ),
     )
     event = Mock(

@@ -105,6 +105,9 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("key_utils.py", "keys", "looks_like_private_key"),
         # -- terminal-output evidence classification --------------------
         ("terminal.py", "connection_evidence", "classify_connection_evidence"),
+        # -- pure platform default for VTE wheel scroll -----------------
+        ("terminal.py", "settings.defaults", "DEFAULT_WHEEL_SCROLL_LINES"),
+        ("preferences.py", "settings.defaults", "DEFAULT_WHEEL_SCROLL_LINES"),
         # -- counter differencing for the host-info dialog (pure arithmetic) --
         # The daemon is stateless across probes, so the difference between two
         # readings has to be taken by whoever holds both. No I/O, no clock.

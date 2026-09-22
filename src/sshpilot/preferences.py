@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
 from .platform_utils import is_macos
+from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
@@ -762,6 +763,35 @@ class PreferencesWindow(Adw.NavigationPage):
             'notify::active', self.on_paste_on_right_click_toggled
         )
         mouse_group.add(self.paste_on_right_click_switch)
+
+        # VTE-only: PyXterm scrolls inside the page and ignores this.
+        wheel_lines = int(
+            self.config.get_setting(
+                'terminal.wheel_scroll_lines', DEFAULT_WHEEL_SCROLL_LINES
+            )
+            or DEFAULT_WHEEL_SCROLL_LINES
+        )
+        wheel_lines = max(1, min(wheel_lines, 10))
+        self.wheel_scroll_lines_row = Adw.SpinRow(
+            adjustment=Gtk.Adjustment(
+                value=float(wheel_lines),
+                lower=1,
+                upper=10,
+                step_increment=1,
+                page_increment=1,
+            ),
+            digits=0,
+        )
+        self.wheel_scroll_lines_row.set_title(_("Mouse wheel scroll lines"))
+        self.wheel_scroll_lines_row.set_subtitle(
+            _("Lines moved per discrete mouse-wheel notch. "
+              "Touchpads still scroll pixel-for-pixel.")
+        )
+        self.wheel_scroll_lines_row.connect(
+            'notify::value', self.on_wheel_scroll_lines_changed
+        )
+        mouse_group.add(self.wheel_scroll_lines_row)
+        self._update_wheel_scroll_visibility()
 
         terminal_page.add(mouse_group)
 
@@ -2240,7 +2270,8 @@ class PreferencesWindow(Adw.NavigationPage):
         kdbx_db_btn.set_tooltip_text(_("Choose database file"))
         kdbx_db_btn.connect('clicked', self.on_kdbx_database_browse)
         self.kdbx_db_row.add_suffix(kdbx_db_btn)
-        self.kdbx_db_row.connect('changed', self.on_kdbx_database_changed)
+        self._kdbx_db_changed_id = self.kdbx_db_row.connect(
+            'changed', self.on_kdbx_database_changed)
         secrets_group.add(self.kdbx_db_row)
 
         self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
@@ -3859,10 +3890,19 @@ class PreferencesWindow(Adw.NavigationPage):
                              "installed and the location is writable."))
             return
         # Point the row at the new file; the daemon already persists the path via
-        # the create flow, and unlocking happened inside the daemon.
+        # the create flow, and unlocking happened inside the daemon. Block the
+        # ``changed`` handler: it would re-persist the path and lock the database
+        # that was just unlocked.
         if hasattr(self, 'kdbx_db_row'):
+            handler_id = getattr(self, '_kdbx_db_changed_id', None)
             try:
-                self.kdbx_db_row.set_text(path)
+                if handler_id is not None:
+                    self.kdbx_db_row.handler_block(handler_id)
+                try:
+                    self.kdbx_db_row.set_text(path)
+                finally:
+                    if handler_id is not None:
+                        self.kdbx_db_row.handler_unblock(handler_id)
             except Exception:
                 pass
         self._kdbx_message(_("Database Created"),
@@ -3914,6 +3954,14 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('terminal.paste_on_right_click', bool(switch.get_active()))
         except Exception as exc:
             logger.error("Failed to update paste-on-right-click mode: %s", exc)
+
+    def on_wheel_scroll_lines_changed(self, row, _pspec):
+        """Persist VTE mouse-wheel lines-per-notch (applies immediately)."""
+        try:
+            value = max(1, min(int(row.get_value()), 10))
+            self.config.set_setting('terminal.wheel_scroll_lines', value)
+        except Exception as exc:
+            logger.error("Failed to update wheel scroll lines: %s", exc)
 
     def on_tab_close_policy_changed(self, row, _pspec):
         """Persist the tab close policy preference."""
@@ -6403,6 +6451,12 @@ class PreferencesWindow(Adw.NavigationPage):
         if hasattr(self, 'autocomplete_remote_switch') and self.autocomplete_remote_switch:
             self.autocomplete_remote_switch.set_visible(is_pyxterm)
 
+    def _update_wheel_scroll_visibility(self):
+        """Show mouse-wheel scroll lines only for the VTE backend."""
+        row = getattr(self, 'wheel_scroll_lines_row', None)
+        if row is not None:
+            row.set_visible(not self._is_pyxterm_backend())
+
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
             return
@@ -6576,6 +6630,9 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Update autocomplete visibility (only available with PyXterm)
         self._update_autocomplete_visibility()
+
+        # Wheel scroll lines only apply to VTE history scrolling
+        self._update_wheel_scroll_visibility()
 
         # Note: We do NOT call refresh_backends() here
         # This ensures existing terminals keep their current backend

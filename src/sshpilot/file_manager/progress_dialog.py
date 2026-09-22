@@ -11,7 +11,7 @@ from __future__ import annotations
 import collections
 import logging
 import time
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 from typing import Optional
 
 from gi.repository import Adw, GLib, Gtk, Pango
@@ -230,7 +230,9 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         
         # File counter
         self.counter_label = Gtk.Label()
-        self.counter_label.set_text(_("0 of 0 files"))
+        self.counter_label.set_text(ngettext(
+            "{done} of {total} file", "{done} of {total} files", 0
+        ).format(done=0, total=0))
         self.counter_label.set_halign(Gtk.Align.CENTER)
         self.counter_label.add_css_class("caption")
         details_box.append(self.counter_label)
@@ -273,7 +275,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         if total_files > self.total_files:
             self.total_files = total_files
             self.counter_label.set_text(
-                _("{done} of {total} files").format(
+                ngettext("{done} of {total} file", "{done} of {total} files", total_files).format(
                     done=self.files_completed, total=total_files
                 )
             )
@@ -473,7 +475,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 if self._total_bytes > 0 and bps > 0:
                     remaining = max(0, self._total_bytes - self._transferred_bytes)
                     eta_text = (
-                        "Almost done…" if remaining == 0
+                        _("Almost done…") if remaining == 0
                         else self._format_time(remaining / bps)
                     )
         try:
@@ -487,10 +489,10 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     @staticmethod
     def _format_speed(bps: float) -> str:
         if bps >= 1024 * 1024:
-            return f"{bps / (1024 * 1024):.1f} MB/s"
+            return _("{speed:.1f} MB/s").format(speed=bps / (1024 * 1024))
         if bps >= 1024:
-            return f"{bps / 1024:.1f} KB/s"
-        return f"{int(bps)} B/s"
+            return _("{speed:.1f} KB/s").format(speed=bps / 1024)
+        return _("{speed} B/s").format(speed=int(bps))
 
     def _set_dialog_heading(self, text: str) -> None:
         """Set the dialog's primary heading on either base class."""
@@ -507,7 +509,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         """Update file counter (must be called from main thread)"""
         self.files_completed += 1
         self.counter_label.set_text(
-            _("{done} of {total} files").format(
+            ngettext("{done} of {total} file", "{done} of {total} files", self.total_files).format(
                 done=self.files_completed, total=self.total_files
             )
         )
@@ -524,23 +526,23 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         if seconds > 3600:
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
-            return f"{hours}h {minutes}m remaining"
+            return _("{hours}h {minutes}m remaining").format(hours=hours, minutes=minutes)
         elif seconds > 60:
             minutes = int(seconds // 60)
-            return f"{minutes}m remaining"
+            return _("{minutes}m remaining").format(minutes=minutes)
         else:
-            return f"{int(seconds)}s remaining"
+            return _("{seconds}s remaining").format(seconds=int(seconds))
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
         if size_bytes >= 1024 * 1024 * 1024:  # GB
-            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+            return _("{size:.1f} GB").format(size=size_bytes / (1024 * 1024 * 1024))
         elif size_bytes >= 1024 * 1024:  # MB
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
+            return _("{size:.1f} MB").format(size=size_bytes / (1024 * 1024))
         elif size_bytes >= 1024:  # KB
-            return f"{size_bytes / 1024:.1f} KB"
+            return _("{size:.1f} KB").format(size=size_bytes / 1024)
         else:
-            return f"{size_bytes} bytes"
+            return ngettext("{size} byte", "{size} bytes", size_bytes).format(size=size_bytes)
     
     def show_completion(self, success=True, error_message=None):
         """Show completion state"""
@@ -571,13 +573,20 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 self.file_label.set_text("—")
             elif size_bytes > 0 and count > 1:
                 self.status_label.set_text(
-                    _("Successfully transferred {count} files ({size})").format(
+                    ngettext(
+                        "Successfully transferred {count} file ({size})",
+                        "Successfully transferred {count} files ({size})",
+                        count,
+                    ).format(
                         count=count,
                         size=self._format_size(size_bytes),
                     )
                 )
                 self.file_label.set_text(
-                    _("{done} of {total} files").format(
+                    ngettext(
+                        "{done} of {total} file", "{done} of {total} files",
+                        self.total_files or count,
+                    ).format(
                         done=self.files_completed or count,
                         total=self.total_files or count,
                     )
@@ -591,15 +600,23 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 if self.current_file:
                     self.file_label.set_text(safe_display_text(self.current_file))
                 elif count == 1:
-                    self.file_label.set_text(_("1 file"))
+                    self.file_label.set_text(ngettext(
+                        "{count} file", "{count} files", count
+                    ).format(count=count))
                 else:
                     self.file_label.set_text(
-                        _("Successfully transferred {count} files").format(count=count)
+                        ngettext(
+                            "Successfully transferred {count} file",
+                            "Successfully transferred {count} files", count,
+                        ).format(count=count)
                     )
             else:
                 self.status_label.set_text(_("Transfer completed successfully"))
                 self.file_label.set_text(
-                    _("Successfully transferred {count} files").format(count=count)
+                    ngettext(
+                        "Successfully transferred {count} file",
+                        "Successfully transferred {count} files", count,
+                    ).format(count=count)
                 )
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
@@ -607,7 +624,10 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             self.time_label.set_text(_("Finished"))
             if self.total_files:
                 self.counter_label.set_text(
-                    _("{done} of {total} files").format(
+                    ngettext(
+                        "{done} of {total} file", "{done} of {total} files",
+                        self.total_files,
+                    ).format(
                         done=self.files_completed or count,
                         total=self.total_files,
                     )
