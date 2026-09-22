@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 # Lines moved per discrete wheel notch.  Fixed on purpose: VTE's own fallback
 # used max(1, ceil(rows/10)), which is ~4 lines in a small window and ~7
 # maximised, and that inconsistency is most of what read as "too fast".
-WHEEL_SCROLL_LINES = 3
+# Match Terminal.app: one line per notch.
+WHEEL_SCROLL_LINES = 1
 
 # SSHProcessManager and the process_manager singleton were extracted to
 # ssh_process_manager.py (GTK-free). Re-exported here so existing

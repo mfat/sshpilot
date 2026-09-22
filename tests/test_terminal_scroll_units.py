@@ -60,7 +60,7 @@ def test_a_wheel_notch_moves_a_fixed_number_of_lines():
     delta = terminal._history_scroll_delta(
         _vte(), _controller(Gdk.ScrollUnit.WHEEL), 1.0
     )
-    assert delta == 3 * CELL_HEIGHT
+    assert delta == 1 * CELL_HEIGHT
 
 
 def test_line_valued_adjustments_are_converted():
@@ -76,7 +76,7 @@ def test_line_valued_adjustments_are_converted():
         _vte(in_pixels=False), _controller(Gdk.ScrollUnit.WHEEL), 1.0
     )
     assert surface == 30.0 / CELL_HEIGHT
-    assert wheel == 3
+    assert wheel == 1
 
 
 def test_direction_is_preserved():
@@ -91,7 +91,7 @@ def test_direction_is_preserved():
         terminal._history_scroll_delta(
             _vte(), _controller(Gdk.ScrollUnit.WHEEL), -1.0
         )
-        == -3 * CELL_HEIGHT
+        == -1 * CELL_HEIGHT
     )
 
 
@@ -116,7 +116,7 @@ def test_a_controller_without_a_unit_is_treated_as_a_wheel():
     controller = types.SimpleNamespace(
         get_unit=lambda: (_ for _ in ()).throw(RuntimeError("no unit")),
     )
-    assert terminal._history_scroll_delta(_vte(), controller, 1.0) == 3 * CELL_HEIGHT
+    assert terminal._history_scroll_delta(_vte(), controller, 1.0) == 1 * CELL_HEIGHT
 
 
 def test_a_gtk_without_scroll_units_at_all_is_treated_as_a_wheel(monkeypatch):
@@ -131,7 +131,7 @@ def test_a_gtk_without_scroll_units_at_all_is_treated_as_a_wheel(monkeypatch):
     controller = types.SimpleNamespace(
         get_unit=lambda: (_ for _ in ()).throw(RuntimeError("no unit")),
     )
-    assert terminal._history_scroll_delta(_vte(), controller, 1.0) == 3 * CELL_HEIGHT
+    assert terminal._history_scroll_delta(_vte(), controller, 1.0) == 1 * CELL_HEIGHT
 
 
 def test_non_scrollable_backends_are_left_alone():
