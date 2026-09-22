@@ -70,6 +70,12 @@ class _EntryWidget:
     def connect(self, *_args):
         pass
 
+    def grab_focus(self):
+        pass
+
+    def select_region(self, *_args):
+        pass
+
 
 def _dialog_response(dialog):
     return next(call.args[1] for call in dialog.connect.call_args_list if call.args[0] == "response")
