@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 
 import pytest
 
+from sshpilot.api.errors import ErrorCode
 from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.host_info import (
     CpuInfo,
     CpuTimes,
     FailedUnit,
     FilesystemUsage,
+    HostInfoFailure,
+    HostInfoFailureCode,
     HostInfoProbe,
     HostInfoRequest,
     HostInfoSnapshot,
@@ -38,8 +41,11 @@ from sshpilot.api.models.operations import (
     OperationKind,
     OperationState,
     OperationSummary,
+    ServiceFailure,
 )
 from sshpilot.api.transport.codec import (
+    host_command_result_from_wire,
+    host_command_result_to_wire,
     host_info_request_from_wire,
     host_info_request_to_wire,
     host_info_snapshot_from_wire,
@@ -47,6 +53,7 @@ from sshpilot.api.transport.codec import (
     host_info_summary_from_wire,
     host_info_summary_to_wire,
 )
+from sshpilot.api.models.broadcast import HostCommandResult, HostCommandState
 
 
 def _operation() -> OperationSummary:
@@ -205,6 +212,63 @@ def test_summary_round_trips_with_counters_and_no_snapshot():
 def test_summary_round_trips_with_a_full_snapshot():
     summary = HostInfoSummary(_operation(), HostInfoProbe.FULL, _snapshot(), ())
     assert host_info_summary_from_wire(host_info_summary_to_wire(summary)) == summary
+
+
+def test_host_info_failure_round_trips_code_parameters_and_opaque_diagnostic():
+    failure = HostInfoFailure(
+        HostInfoFailureCode.REMOTE_COMMAND_FAILED,
+        ErrorCode.REMOTE_COMMAND_FAILED,
+        {"exit_code": "127"},
+        "sh: ip: not found",
+    )
+    summary = HostInfoSummary(_operation(), failure=failure)
+    wire = host_info_summary_to_wire(summary)
+    assert wire["failure"] == {
+        "kind": "host_info",
+        "code": "remote_command_failed",
+        "error_code": "remote_command_failed",
+        "parameters": {"exit_code": "127"},
+        "diagnostic": "sh: ip: not found",
+    }
+    assert host_info_summary_from_wire(wire) == summary
+    assert not hasattr(failure, "message")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("kind", "generic"),
+        ("code", "unknown"),
+        ("error_code", "unknown"),
+        ("parameters", {"unexpected": "value"}),
+        ("diagnostic", 123),
+    ],
+)
+def test_host_info_failure_rejects_unknown_or_invalid_wire_values(field, value):
+    summary = HostInfoSummary(
+        _operation(),
+        failure=HostInfoFailure(
+            HostInfoFailureCode.PROBE_FAILED, ErrorCode.REMOTE_COMMAND_FAILED
+        ),
+    )
+    wire = host_info_summary_to_wire(summary)
+    wire["failure"][field] = value
+    with pytest.raises((TypeError, ValueError)):
+        host_info_summary_from_wire(wire)
+
+
+def test_shared_service_failure_wire_shape_remains_unchanged():
+    result = HostCommandResult(
+        ConnectionId("conn-1"),
+        HostCommandState.FAILED,
+        failure=ServiceFailure("broadcast_timeout", "The remote command timed out"),
+    )
+    wire = host_command_result_to_wire(result)
+    assert wire["failure"] == {
+        "code": "broadcast_timeout",
+        "message": "The remote command timed out",
+    }
+    assert host_command_result_from_wire(wire) == result
 
 
 def test_unknown_fields_are_rejected():

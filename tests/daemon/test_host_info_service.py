@@ -14,13 +14,18 @@ from sshpilot.api.models.broadcast import (
     HostCommandState,
 )
 from sshpilot.api.models.common import ClientId, ConnectionId
-from sshpilot.api.models.host_info import HostInfoProbe, HostInfoRequest
+from sshpilot.api.models.host_info import (
+    HostInfoFailureCode,
+    HostInfoProbe,
+    HostInfoRequest,
+)
 from sshpilot.api.models.interactions import ExecutionInteractionMode
 from sshpilot.api.models.operations import (
     OperationId,
     OperationKind,
     OperationState,
     OperationSummary,
+    ServiceFailure,
 )
 from sshpilot.core.host_info import (
     FULL_PROBE_COMMAND,
@@ -153,7 +158,67 @@ def test_a_failed_probe_surfaces_the_remote_error():
 
     assert summary.snapshot is None
     assert summary.failure is not None
-    assert summary.failure.message == "sh: ip: not found"
+    assert summary.failure.code is HostInfoFailureCode.PROBE_FAILED
+    assert summary.failure.error_code is ErrorCode.REMOTE_COMMAND_FAILED
+    assert summary.failure.diagnostic == "sh: ip: not found"
+
+
+@pytest.mark.parametrize(
+    ("source", "exit_code", "expected_code", "expected_error", "parameters"),
+    [
+        ("broadcast_timeout", None, HostInfoFailureCode.TIMED_OUT, ErrorCode.OPERATION_TIMED_OUT, {}),
+        ("broadcast_nonzero_exit", 23, HostInfoFailureCode.REMOTE_COMMAND_FAILED, ErrorCode.REMOTE_COMMAND_FAILED, {"exit_code": "23"}),
+        ("broadcast_launch_failed", None, HostInfoFailureCode.START_FAILED, ErrorCode.SESSION_STARTUP_FAILED, {}),
+        ("connection_not_found", None, HostInfoFailureCode.START_FAILED, ErrorCode.CONNECTION_NOT_FOUND, {}),
+    ],
+)
+def test_broadcast_failures_become_host_info_reasons(
+    source, exit_code, expected_code, expected_error, parameters
+):
+    target = HostCommandResult(
+        CONNECTION,
+        HostCommandState.FAILED,
+        exit_code,
+        "",
+        "ssh: remote diagnostic",
+        failure=ServiceFailure(source, "English broadcast or launcher message"),
+    )
+    summary = HostInfoService(FakeBroadcastService(target, OperationState.FAILED)).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+    assert summary.failure.code is expected_code
+    assert summary.failure.error_code is expected_error
+    assert dict(summary.failure.parameters) == parameters
+    assert summary.failure.diagnostic == "ssh: remote diagnostic"
+    assert "English broadcast" not in summary.failure.diagnostic
+
+
+def test_unreadable_output_is_a_structured_host_info_failure(monkeypatch):
+    def unreadable(_output):
+        raise ValueError("parser internals")
+
+    monkeypatch.setattr("sshpilot.daemon.host_info_service.parse_host_info", unreadable)
+    summary = HostInfoService(_succeeded(FULL_OUTPUT)).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+    assert summary.failure.code is HostInfoFailureCode.UNREADABLE_INFORMATION
+    assert summary.failure.error_code is ErrorCode.REMOTE_COMMAND_FAILED
+    assert summary.failure.diagnostic == ""
+    assert summary.snapshot is None
+
+
+def test_unknown_broadcast_failure_code_uses_a_generic_host_info_reason():
+    target = HostCommandResult(
+        CONNECTION,
+        HostCommandState.FAILED,
+        failure=ServiceFailure("future_broadcast_code", "opaque launcher detail"),
+    )
+    summary = HostInfoService(FakeBroadcastService(target, OperationState.FAILED)).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+    assert summary.failure.code is HostInfoFailureCode.PROBE_FAILED
+    assert summary.failure.error_code is ErrorCode.INTERNAL_ERROR
+    assert summary.failure.diagnostic == "opaque launcher detail"
 
 
 def test_get_and_cancel_delegate_to_the_broadcast_operation():
@@ -170,6 +235,19 @@ def test_get_and_cancel_delegate_to_the_broadcast_operation():
     cancelled = service.cancel(operation_id, client_id=CLIENT)
     assert broadcast.cancelled == [operation_id]
     assert cancelled.snapshot is None
+    assert cancelled.failure.code is HostInfoFailureCode.CANCELLED
+
+
+def test_failed_operation_without_a_target_has_a_localizable_reason():
+    broadcast = FakeBroadcastService(
+        HostCommandResult(CONNECTION, HostCommandState.PENDING),
+        state=OperationState.FAILED,
+    )
+    summary = HostInfoService(broadcast).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+    assert summary.failure.code is HostInfoFailureCode.PROBE_FAILED
+    assert summary.failure.error_code is ErrorCode.INTERNAL_ERROR
 
 
 def test_an_unknown_operation_is_rejected():

@@ -22,6 +22,10 @@ from .api.connection_identity import connection_id_for
 from .api.models.common import SessionId
 from .api.models.host_info import HostInfoProbe, LiveSample
 from .gtk.host_info_controller import HostInfoController, HostInfoProbeBusy
+from .gtk.host_info_failure_messages import (
+    format_host_info_error,
+    format_host_info_failure,
+)
 from .host_info_payload import live_payload, snapshot_payload, status_payload
 from .host_info_shell import build_host_info_html
 from .web_tab import webkit_available
@@ -372,10 +376,11 @@ class HostInfoTab(Gtk.Box):
             return False
         if summary.failure is not None:
             logger.warning(
-                "Host info FULL gather failed: %s", summary.failure.message
+                "Host info FULL gather failed: %s", summary.failure.code.value
             )
             self._push_status(
-                _("Could not gather host information.\n\n%s") % summary.failure.message
+                _("Could not gather host information.\n\n%s")
+                % format_host_info_failure(summary.failure)
             )
             return False
         if summary.snapshot is None:
@@ -411,7 +416,7 @@ class HostInfoTab(Gtk.Box):
         if self._closed:
             return False
         logger.warning("Host info gather failed: %s", error)
-        self._push_status(_("Could not gather host information.\n\n%s") % str(error))
+        self._push_status(format_host_info_error(error))
         return False
 
     # -- live sampling --------------------------------------------------

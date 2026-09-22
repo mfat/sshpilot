@@ -1632,8 +1632,9 @@ client.broadcast_terminal_input(
   `HostInfoProbe.NETWORK_COUNTERS` remains a wire value for bandwidth-only
   reads; new callers should use `LIVE`.
 - **Errors:** `unsupported_capability` when broadcast execution is
-  unavailable, `invalid_request` for a malformed request or unreadable remote
-  output, plus connection, authentication, and transport errors.
+  unavailable, `invalid_request` for a malformed request, plus connection,
+  authentication, and transport errors. Unreadable remote output is reported
+  as a structured `HostInfoFailure` in the summary.
 - **Ordering / threading:** Returns as soon as the operation is created.
   Completion is observed through `operation.state_changed`, which the daemon
   delivers to the owning client; the result is then read with `get_host_info`.
@@ -1666,7 +1667,7 @@ summary = client.start_host_info(
   succeeded `FULL` probe carries a `HostInfoSnapshot` in `snapshot` and byte
   counters in `counters`; a `LIVE` probe carries a `LiveSample` in `live`
   (and the same counters on `counters`); a `NETWORK_COUNTERS` probe carries
-  `counters` only. A probe that failed carries a `ServiceFailure` in
+  `counters` only. A probe that failed carries a `HostInfoFailure` in
   `failure` and no snapshot.
 - **Errors:** `operation_not_found` for an unknown or forgotten probe, plus
   transport errors. Finished probes stay readable for a bounded number of
