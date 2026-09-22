@@ -11,13 +11,15 @@ Stability: **stable**.
 
 * `OpenSessionRequest(connection_id, dimensions?, remote_command?, force_tty?)` → `SessionSummary`
 * Summary fields: `id`, `connection_id`, `state`, timestamps, `failure`, `exit_info`
-* `failure` is either the historical strict `SessionFailure(code, message)` or,
-  only for builtin non-SSH launch preparation, a strict
+* `failure` is either `SessionFailure(code, error_code, parameters, diagnostic)`
+  or, only for builtin non-SSH launch preparation, a strict
   `PluginSessionFailure(code, error_code, parameters, diagnostic?)`. The wire
-  discriminator is `kind: plugin_launch`; no rendered message is present in
-  that variant. Parameters contain validated technical terms, and an external
-  or parser diagnostic remains opaque and separate. SSH and all other session
-  failures retain the exact historical `{code, message}` wire shape.
+  discriminator for the plugin variant is `kind: plugin_launch`. The generic
+  session variant has no `kind`; its `code` is a strict `SessionFailureCode`,
+  while `error_code` preserves the machine `ErrorCode`. Only `ssh_exited`
+  requires a parameter (`status`, a positive integer). External OpenSSH,
+  PTY, or exception diagnostics remain opaque and separate; neither variant
+  carries a rendered UI sentence. GTK owns their presentation.
 * `remote_command` (optional): when set, the daemon runs `<ssh> <alias> <remote_command>`
   inside the connection instead of a plain interactive shell. This is how
   container shells (`docker exec -it <container> sh`) and container logs

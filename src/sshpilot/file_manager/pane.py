@@ -15,7 +15,7 @@ import pathlib
 import posixpath
 import time
 from datetime import datetime
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
@@ -173,7 +173,10 @@ class FilePane(Gtk.Box):
     def __init__(self, label: str) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.toolbar = PaneToolbar()
-        self.toolbar._pane_label.set_text(label)
+        self.toolbar._pane_label.set_text(
+            _("Remote") if label.lower() == "remote" else
+            _("Local") if label.lower() == "local" else label
+        )
         self.append(self.toolbar)
 
         self._is_remote = label.lower() == "remote"
@@ -384,49 +387,49 @@ class FilePane(Gtk.Box):
         download_button = _create_action_button(
             "download",
             "document-save-symbolic",
-            "Download",
+            _("Download"),
             lambda _button: self._on_download_clicked(_button),
         )
         upload_button = _create_action_button(
             "upload",
             "document-send-symbolic",
-            "Upload",
+            _("Upload"),
             lambda _button: self._on_upload_clicked(_button),
         )
         copy_button = _create_action_button(
             "copy",
             "edit-copy-symbolic",
-            "Copy",
+            _("Copy"),
             lambda _button: self._emit_entry_operation("copy"),
         )
         cut_button = _create_action_button(
             "cut",
             "edit-cut-symbolic",
-            "Cut",
+            _("Cut"),
             lambda _button: self._emit_entry_operation("cut"),
         )
         paste_button = _create_action_button(
             "paste",
             "edit-paste-symbolic",
-            "Paste",
+            _("Paste"),
             lambda _button: self._emit_paste_operation(),
         )
         edit_button = _create_action_button(
             "edit",
             "text-editor-symbolic",
-            "Edit",
+            _("Edit"),
             lambda _button: self._on_menu_edit(),
         )
         rename_button = _create_action_button(
             "rename",
             "document-edit-symbolic",
-            "Rename",
+            _("Rename"),
             lambda _button: self._emit_entry_operation("rename"),
         )
         delete_button = _create_action_button(
             "delete",
             "user-trash-symbolic",
-            "Delete",
+            _("Delete"),
             lambda _button: self._emit_entry_operation("delete"),
         )
         download_button.set_visible(self._is_remote)
@@ -439,7 +442,7 @@ class FilePane(Gtk.Box):
             request_access_button = _create_action_button(
                 "request_access",
                 "folder-open-symbolic",
-                "Request Access",
+                _("Request Access"),
                 lambda _button: self._on_request_access_clicked(),
             )
             # Use ButtonContent for this special button to make it more prominent
@@ -1574,37 +1577,37 @@ class FilePane(Gtk.Box):
         
         # Add Download/Upload based on pane type and selection
         if self._is_remote and has_selection:
-            _add_menu_item("Download", "document-save-symbolic", "download")
+            _add_menu_item(_("Download"), "document-save-symbolic", "download")
         elif not self._is_remote and has_selection:
-            _add_menu_item("Upload…", "document-send-symbolic", "upload")
+            _add_menu_item(_("Upload…"), "document-send-symbolic", "upload")
         
         # Add Edit for any single file (both local and remote)
         if has_selection:
             selected_entries = self.get_selected_entries()
             if len(selected_entries) == 1 and not selected_entries[0].is_dir:
-                _add_menu_item("Edit", "text-editor-symbolic", "edit")
+                _add_menu_item(_("Edit"), "text-editor-symbolic", "edit")
         
         # Add clipboard operations if items are selected
         if has_selection:
-            _add_menu_item("Copy", "edit-copy-symbolic", "copy")
-            _add_menu_item("Cut", "edit-cut-symbolic", "cut")
+            _add_menu_item(_("Copy"), "edit-copy-symbolic", "copy")
+            _add_menu_item(_("Cut"), "edit-cut-symbolic", "cut")
         
         # Add Paste if clipboard has items
         if getattr(self, "_can_paste", False):
-            _add_menu_item("Paste", "edit-paste-symbolic", "paste")
+            _add_menu_item(_("Paste"), "edit-paste-symbolic", "paste")
         
         # Add management operations if items are selected
         if has_selection:
-            _add_menu_item("Rename…", "document-edit-symbolic", "rename")
-            _add_menu_item("Delete", "user-trash-symbolic", "delete")
+            _add_menu_item(_("Rename…"), "document-edit-symbolic", "rename")
+            _add_menu_item(_("Delete"), "user-trash-symbolic", "delete")
         
         # Add New Folder / New File only if no items are selected (before Properties)
         if not has_selection:
-            _add_menu_item("New Folder", "folder-new-symbolic", "new_folder")
-            _add_menu_item("New File", "document-new-symbolic", "new_file")
+            _add_menu_item(_("New Folder"), "folder-new-symbolic", "new_folder")
+            _add_menu_item(_("New File"), "document-new-symbolic", "new_file")
         
         # Always add Properties (at the end)
-        _add_menu_item("Properties…", "document-properties-symbolic", "properties")
+        _add_menu_item(_("Properties…"), "document-properties-symbolic", "properties")
         
         # Create a rectangle for the popover positioning
         rect = Gdk.Rectangle()
@@ -1746,10 +1749,10 @@ class FilePane(Gtk.Box):
     def _emit_entry_operation(self, action: str) -> None:
         entries = self.get_selected_entries()
         if not entries:
-            self.show_toast("Select at least one item first")
+            self.show_toast(_("Select at least one item first"))
             return
         if action == "rename" and len(entries) != 1:
-            self.show_toast("Select a single item to rename")
+            self.show_toast(_("Select a single item to rename"))
             return
         payload = {"entries": entries, "directory": self._current_path}
         self.emit("request-operation", action, payload)
@@ -1791,7 +1794,7 @@ class FilePane(Gtk.Box):
             return
         entries = self.get_selected_entries()
         if not entries:
-            self.show_toast("Select items to download first")
+            self.show_toast(_("Select items to download first"))
             return
         self._on_download_clicked(None)
 
@@ -1800,7 +1803,7 @@ class FilePane(Gtk.Box):
             return
         entries = self.get_selected_entries()
         if not entries:
-            self.show_toast("Select items to upload first")
+            self.show_toast(_("Select items to upload first"))
             return
         self._on_upload_clicked(None)
 
@@ -1841,12 +1844,12 @@ class FilePane(Gtk.Box):
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
         window = self._get_file_manager_window()
         if not isinstance(window, _file_manager_window_cls()):
-            self.show_toast("File manager is not available")
+            self.show_toast(_("File manager is not available"))
             return
 
         local_pane = getattr(window, "_left_pane", None)
         if not isinstance(local_pane, FilePane):
-            self.show_toast("Local pane is unavailable")
+            self.show_toast(_("Local pane is unavailable"))
             return
 
         destination_pane: Optional[FilePane]
@@ -1858,12 +1861,12 @@ class FilePane(Gtk.Box):
                 destination_pane = None
 
         if destination_pane is None:
-            self.show_toast("Remote pane is unavailable")
+            self.show_toast(_("Remote pane is unavailable"))
             return
 
         entries = local_pane.get_selected_entries()
         if not entries:
-            self.show_toast("Select items in the local pane to upload")
+            self.show_toast(_("Select items in the local pane to upload"))
             return
 
         # Use the actual current path instead of the display path from path entry
@@ -1878,25 +1881,27 @@ class FilePane(Gtk.Box):
         payload = {"paths": source_paths, "destination": destination}
         self.emit("request-operation", "upload", payload)
         if len(entries) == 1:
-            self.show_toast(f"Uploading {entries[0].name}…")
+            self.show_toast(_("Uploading {name}…").format(name=entries[0].name))
         else:
-            self.show_toast(f"Uploading {len(entries)} items…")
+            self.show_toast(ngettext(
+                "Uploading {count} item…", "Uploading {count} items…", len(entries)
+            ).format(count=len(entries)))
 
 
     def _on_download_clicked(self, _button: Gtk.Button) -> None:
         entries = self.get_selected_entries()
         if not entries:
-            self.show_toast("Select items to download")
+            self.show_toast(_("Select items to download"))
             return
 
         window = self._get_file_manager_window()
         if not isinstance(window, _file_manager_window_cls()):
-            self.show_toast("File manager is not available")
+            self.show_toast(_("File manager is not available"))
             return
 
         local_pane = getattr(window, "_left_pane", None)
         if local_pane is None:
-            self.show_toast("Local pane is unavailable")
+            self.show_toast(_("Local pane is unavailable"))
             return
 
         # Use the actual current path instead of the display path from path entry
@@ -1907,7 +1912,7 @@ class FilePane(Gtk.Box):
             destination_root = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
         
         if not os.path.isdir(destination_root):
-            self.show_toast("Local destination is not accessible")
+            self.show_toast(_("Local destination is not accessible"))
             return
         payload = {
             "entries": entries,
@@ -1916,9 +1921,11 @@ class FilePane(Gtk.Box):
         }
         self.emit("request-operation", "download", payload)
         if len(entries) == 1:
-            self.show_toast(f"Downloading {entries[0].name}…")
+            self.show_toast(_("Downloading {name}…").format(name=entries[0].name))
         else:
-            self.show_toast(f"Downloading {len(entries)} items…")
+            self.show_toast(ngettext(
+                "Downloading {count} item…", "Downloading {count} items…", len(entries)
+            ).format(count=len(entries)))
 
     def _on_request_access_clicked(self) -> None:
         """Handle Request Access button click in Flatpak environment."""
@@ -1926,8 +1933,8 @@ class FilePane(Gtk.Box):
         window = self.get_root()
         dialog = Adw.MessageDialog.new(
             window,
-            "Request Folder Access",
-            "You are using the app in a sandbox. Please grant access to your home folder to use the File Manager."
+            _("Request Folder Access"),
+            _("You are using the app in a sandbox. Please grant access to your home folder to use the File Manager.")
         )
         dialog.add_response("cancel", _("Cancel"))
         dialog.add_response("ok", _("OK"))
@@ -1981,7 +1988,7 @@ class FilePane(Gtk.Box):
                         # Switch to it immediately
                         self.toolbar.path_entry.set_text(path)
                         self.toolbar.path_entry.emit("activate")
-                        self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                        self.show_toast(_("Access granted to: {path}").format(path=_pretty_path_for_display(path)))
                         
                         # Hide the Request Access button since access is now granted
                         self._hide_request_access_button()
@@ -1992,7 +1999,7 @@ class FilePane(Gtk.Box):
                         if path:
                             self.toolbar.path_entry.set_text(path)
                             self.toolbar.path_entry.emit("activate")
-                            self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                            self.show_toast(_("Access granted to: {path}").format(path=_pretty_path_for_display(path)))
                             # Hide the Request Access button since access is now granted
                             self._hide_request_access_button()
             dlg.destroy()
@@ -2049,7 +2056,7 @@ class FilePane(Gtk.Box):
             modified_dt = datetime.fromtimestamp(entry.modified)
             modified_text = modified_dt.strftime("%Y-%m-%d %H:%M:%S")
         except (OSError, OverflowError, ValueError, TypeError):
-            modified_text = "Unknown"
+            modified_text = _("Unknown")
 
         return {
             "name": safe_display_text(entry.name),
@@ -2112,24 +2119,24 @@ class FilePane(Gtk.Box):
         """Handle Edit menu action - open file in editor."""
         entry = self.get_selected_entry()
         if entry is None:
-            self.show_toast("No file selected")
+            self.show_toast(_("No file selected"))
             return
         
         if entry.is_dir:
-            self.show_toast("Cannot edit directories")
+            self.show_toast(_("Cannot edit directories"))
             return
         
         # Get file manager window
         window = self._get_file_manager_window()
         if window is None or not isinstance(window, _file_manager_window_cls()):
-            self.show_toast("Cannot edit file - window not available")
+            self.show_toast(_("Cannot edit file - window not available"))
             return
         
         if self._is_remote:
             # Remote file editing
             sftp_manager = getattr(window, '_manager', None)
             if sftp_manager is None:
-                self.show_toast("Cannot edit file - connection not available")
+                self.show_toast(_("Cannot edit file - connection not available"))
                 return
             
             # Build remote path
@@ -2160,7 +2167,7 @@ class FilePane(Gtk.Box):
                 editor.present()
             except Exception as e:
                 logger.error(f"Failed to open editor: {e}", exc_info=True)
-                self.show_toast(f"Failed to open editor: {e}")
+                self.show_toast(_("Failed to open editor: {error}").format(error=e))
         else:
             # Local file editing
             file_path = os.path.join(self._current_path or os.path.expanduser("~"), entry.name)
@@ -2179,7 +2186,7 @@ class FilePane(Gtk.Box):
                 editor.present()
             except Exception as e:
                 logger.error(f"Failed to open editor: {e}", exc_info=True)
-                self.show_toast(f"Failed to open editor: {e}")
+                self.show_toast(_("Failed to open editor: {error}").format(error=e))
 
     def _on_menu_properties(self) -> None:
         entry = self.get_selected_entry()
@@ -2241,11 +2248,11 @@ class FilePane(Gtk.Box):
                         logger.debug(f"_on_menu_properties: Created local directory entry with modified={stat_info.st_mtime}, item_count={item_count}")
                     else:
                         logger.warning(f"_on_menu_properties: Current directory is not accessible: {current_path}")
-                        self.show_toast("Current directory is not accessible")
+                        self.show_toast(_("Current directory is not accessible"))
                         return
             except Exception as e:
                 logger.error(f"Error creating directory entry for properties: {e}", exc_info=True)
-                self.show_toast("Unable to get directory properties")
+                self.show_toast(_("Unable to get directory properties"))
                 return
             
             # Mark that this is the current directory
@@ -2264,7 +2271,7 @@ class FilePane(Gtk.Box):
             self._show_properties_dialog(entry, details, properties_path=properties_path)
         except Exception as e:
             logger.error(f"Error showing properties dialog: {e}", exc_info=True)
-            self.show_toast(f"Failed to show properties: {e}")
+            self.show_toast(_("Failed to show properties: {error}").format(error=e))
 
     def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str], properties_path: Optional[str] = None) -> None:
         """Show modern properties dialog.
@@ -2277,7 +2284,7 @@ class FilePane(Gtk.Box):
         window = self.get_root()
         if window is None:
             logger.error("FilePane: Cannot show properties dialog - window is None")
-            self.show_toast("Cannot show properties - window not available")
+            self.show_toast(_("Cannot show properties - window not available"))
             return
         
         try:
@@ -2311,18 +2318,18 @@ class FilePane(Gtk.Box):
                 self._show_fallback_properties_dialog(entry, details, window)
             except Exception as fallback_error:
                 logger.error(f"FilePane: Fallback properties dialog also failed: {fallback_error}", exc_info=True)
-                self.show_toast(f"Failed to show properties: {e}")
+                self.show_toast(_("Failed to show properties: {error}").format(error=e))
 
     def _show_fallback_properties_dialog(self, entry: FileEntry, details: Dict[str, str], window: Gtk.Window) -> None:
         """Fallback to simple properties dialog if modern dialog fails."""
         display_name = safe_display_text(entry.name)
-        heading = f"{display_name} Properties" if display_name else "Properties"
+        heading = _("{name} Properties").format(name=display_name) if display_name else _("Properties")
         body_lines = [
-            f"Name: {details['name']}",
-            f"Type: {details['type']}",
-            f"Size: {details['size']}",
-            f"Modified: {details['modified']}",
-            f"Location: {details['location']}",
+            _("Name: {value}").format(value=details['name']),
+            _("Type: {value}").format(value=details['type']),
+            _("Size: {value}").format(value=details['size']),
+            _("Modified: {value}").format(value=details['modified']),
+            _("Location: {value}").format(value=details['location']),
         ]
         body_text = "\n".join(body_lines)
 
@@ -2357,7 +2364,7 @@ class FilePane(Gtk.Box):
         failed directory load."""
         self._load_error_path = path
         self._load_error_label.set_text(
-            safe_display_text(message) or "Failed to load directory"
+            safe_display_text(message) or _("Failed to load directory")
         )
         current = self._stack.get_visible_child_name()
         if current not in ("load-error", "connecting"):
@@ -2368,7 +2375,7 @@ class FilePane(Gtk.Box):
     def show_connecting(self, message: str) -> None:
         """Show a spinner + status message while connecting."""
         self._connecting_label.set_text(
-            safe_display_text(message) or "Connecting…"
+            safe_display_text(message) or _("Connecting…")
         )
         current = self._stack.get_visible_child_name()
         if current not in ("load-error", "connecting"):
@@ -2724,7 +2731,7 @@ class FilePane(Gtk.Box):
                 expected_source_path_norm,
                 current_source_path_norm,
             )
-            self.show_toast("Dragged item is no longer available")
+            self.show_toast(_("Dragged item is no longer available"))
             return False
 
         raw_entries = payload.get("entries")
@@ -2741,13 +2748,13 @@ class FilePane(Gtk.Box):
         for item in raw_entries:
             if not isinstance(item, dict):
                 logger.debug("Drop rejected: invalid entry in payload")
-                self.show_toast("Dragged item is no longer available")
+                self.show_toast(_("Dragged item is no longer available"))
                 return False
 
             item_name = item.get("entry_name")
             if not isinstance(item_name, str):
                 logger.debug("Drop rejected: invalid entry name in payload")
-                self.show_toast("Dragged item is no longer available")
+                self.show_toast(_("Dragged item is no longer available"))
                 return False
 
             entry = next(
@@ -2756,7 +2763,7 @@ class FilePane(Gtk.Box):
             )
             if entry is None:
                 logger.debug("Drop rejected: entry %s not found in source pane", item_name)
-                self.show_toast("Dragged item is no longer available")
+                self.show_toast(_("Dragged item is no longer available"))
                 return False
 
             item_entry_path = item.get("entry_path")
@@ -2776,7 +2783,7 @@ class FilePane(Gtk.Box):
                     item_entry_path_norm,
                     current_entry_path_norm,
                 )
-                self.show_toast("Dragged item is no longer available")
+                self.show_toast(_("Dragged item is no longer available"))
                 return False
 
             if item_entry_path is not None:
@@ -2865,7 +2872,7 @@ class FilePane(Gtk.Box):
             # Get the file manager window to access the SFTP manager
             window = self._get_file_manager_window()
             if not isinstance(window, _file_manager_window_cls()):
-                self.show_toast("Upload failed: Invalid window context")
+                self.show_toast(_("Upload failed: Invalid window context"))
                 return
 
             manager = window._manager
@@ -2906,7 +2913,7 @@ class FilePane(Gtk.Box):
             window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
 
         except Exception as e:
-            self.show_toast(f"Upload failed: {e!s}")
+            self.show_toast(_("Upload failed: {error}").format(error=e))
 
     def _handle_download_from_drag(
         self,
@@ -2928,7 +2935,7 @@ class FilePane(Gtk.Box):
             # Get the file manager window to access the SFTP manager
             window = self._get_file_manager_window()
             if not isinstance(window, _file_manager_window_cls()):
-                self.show_toast("Download failed: Invalid window context")
+                self.show_toast(_("Download failed: Invalid window context"))
                 return
 
             manager = window._manager
@@ -2968,7 +2975,7 @@ class FilePane(Gtk.Box):
             window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
         except Exception as e:
-            self.show_toast(f"Download failed: {e!s}")
+            self.show_toast(_("Download failed: {error}").format(error=e))
 
     def _on_drop_enter(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
         """Called when drag enters drop target."""

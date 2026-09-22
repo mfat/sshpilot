@@ -90,7 +90,7 @@ booleans, not paths.
 | `InputOwner` | Reserved input-ownership projection | Schema only |
 | `SessionCapabilities` | Per-session feature strings | Daemon implemented; PTY sessions report narrow terminal features |
 | `SessionExitInfo` | Safe exit code, signal, and reason | Daemon implemented |
-| `SessionFailure` | Sanitised stable failure code and message | Daemon implemented |
+| `SessionFailure` | Strict session presentation code, machine error, validated parameters, and optional opaque diagnostic | Daemon implemented |
 | `PluginSessionFailure` | Strict builtin plugin launch code, machine error, technical parameters, and optional opaque diagnostic | Daemon implemented |
 | `SessionSummary` | Immutable public lifecycle snapshot | Daemon implemented |
 | `AttachSessionRequest` | Logical caller attachment request | Daemon implemented |
@@ -215,6 +215,18 @@ propagate that unknown rather than inventing a zero.
 Field-by-field types, defaults, and examples are in
 [`generated/model-index.md`](generated/model-index.md).
 
+## Ásbrú import models
+
+Ásbrú import previews and results keep their connection and group name tuples
+as source data. Their `warnings` and `errors` now contain ordered
+`AsbruImportMessage` values; result `partial_failures` uses the same type and
+`message` is optional. Each message has an `AsbruImportMessageCode`, the exact
+string parameters for that reason, and a separate opaque `diagnostic`. GTK
+translates only the code-owned reason and formats the parameters afterward.
+The `IMPORTED` result reason uses the lengths of `connections_added` and
+`groups_added` for independent gettext plurals. Unknown message codes and
+malformed parameters are rejected by the daemon codec.
+
 ## Public enums
 
 Enum values are serialized as the exact lowercase strings below. Unknown-enum
@@ -228,6 +240,7 @@ handling is not defined until a transport codec exists.
 | `ConnectionHealth` | `unknown`, `checking`, `reachable`, `unreachable` | DTO runtime always reports `unknown` |
 | `AuthenticationMethod` | `key`, `password` | Implemented safe projection |
 | `SessionState` | `created`, `starting`, `running`, `closing`, `exited`, `failed`, `closed` | Daemon implemented |
+| `SessionFailureCode` | Stable daemon session startup, authentication, queue, termination, and SSH exit presentation reasons | Daemon implemented; strict codec |
 | `PluginSessionFailureCode` | Stable builtin Docker, Kubernetes, Mosh, and Serial launch-presentation reasons | Daemon implemented; strict codec |
 | `InteractionKind` | `password`, `key_passphrase`, `host_key_confirmation`, `keyboard_interactive`, `overwrite_confirmation`, `plugin_question` | Schema only |
 | `InteractionStatus` | `pending`, `answered`, `cancelled`, `timed_out`, `rejected` | Schema only |

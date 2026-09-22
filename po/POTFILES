@@ -18,6 +18,7 @@ src/sshpilot/core/validation/connection.py
 src/sshpilot/daemon_interaction_dialogs.py
 src/sshpilot/daemon_quit_policy.py
 src/sshpilot/daemon_sessions_dialog.py
+src/sshpilot/daemon_sftp_backend.py
 src/sshpilot/daemon_terminal_policy.py
 src/sshpilot/effective_config_dialog.py
 src/sshpilot/file_manager/format_utils.py
@@ -26,11 +27,14 @@ src/sshpilot/file_manager/pane_controls.py
 src/sshpilot/file_manager/progress_dialog.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
+src/sshpilot/file_manager_integration.py
+src/sshpilot/gtk/asbru_import_messages.py
 src/sshpilot/gtk/host_info_failure_messages.py
 src/sshpilot/gtk/identity_failure_messages.py
 src/sshpilot/gtk/plugin_session_failure_messages.py
 src/sshpilot/gtk/pre_command_messages.py
 src/sshpilot/gtk/scp_failure_messages.py
+src/sshpilot/gtk/session_failure_messages.py
 src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/sftp_error_messages.py
 src/sshpilot/gtk/sftp_failure_messages.py
@@ -75,6 +79,7 @@ src/sshpilot/split_view.py
 src/sshpilot/ssh_connection_validator.py
 src/sshpilot/sshcopyid_window.py
 src/sshpilot/terminal.py
+src/sshpilot/terminal_session_controller.py
 src/sshpilot/terminal_manager.py
 src/sshpilot/terminal_search.py
 src/sshpilot/terminal_theme_selector.py

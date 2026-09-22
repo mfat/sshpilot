@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple, Union
 
 from .common import ConnectionId, SessionId, require_identifier, validate_ssh_host_alias
@@ -920,6 +921,123 @@ class SaveSshConfigTextRequest:
 
 # -- Ásbrú import -----------------------------------------------------------
 
+class AsbruImportMessageCode(str, Enum):
+    """Stable presentation reasons limited to the Ásbrú import path."""
+
+    EXPORT_NOT_FOUND = "export_not_found"
+    EXPORT_UNREADABLE = "export_unreadable"
+    PYYAML_MISSING = "pyyaml_missing"
+    YAML_INVALID = "yaml_invalid"
+    EXPORT_EMPTY = "export_empty"
+    EXPORT_NOT_MAPPING = "export_not_mapping"
+    NO_ENTRIES = "no_entries"
+    LIVE_CONFIG = "live_config"
+    FULL_CONFIG_SECTION = "full_config_section"
+    SKIPPED_NON_SSH = "skipped_non_ssh"
+    SKIPPED_MISSING_NAME = "skipped_missing_name"
+    SKIPPED_MISSING_HOST = "skipped_missing_host"
+    EXPECT_NOT_IMPORTED = "expect_not_imported"
+    RENAMED_ALIAS = "renamed_alias"
+    SKIPPED_EMPTY_GROUP = "skipped_empty_group"
+    GROUPS_ONLY = "groups_only"
+    LOAD_FAILED = "load_failed"
+    GROUP_CREATE_FAILED = "group_create_failed"
+    GROUP_NO_ID = "group_no_id"
+    CONNECTION_CREATE_FAILED = "connection_create_failed"
+    ASSIGN_FAILED = "assign_failed"
+    PARSE_FAILED = "parse_failed"
+    ALL_EXIST = "all_exist"
+    PARTIAL_FAILURES = "partial_failures"
+    IMPORTED = "imported"
+    NO_CHANGES = "no_changes"
+
+
+_ASBRU_MESSAGE_PARAMETER_KEYS = {
+    code: frozenset() for code in AsbruImportMessageCode
+}
+_ASBRU_MESSAGE_PARAMETER_KEYS.update({
+    AsbruImportMessageCode.EXPORT_NOT_FOUND: frozenset({"path"}),
+    AsbruImportMessageCode.EXPORT_UNREADABLE: frozenset({"path"}),
+    AsbruImportMessageCode.SKIPPED_NON_SSH: frozenset({"name", "method"}),
+    AsbruImportMessageCode.SKIPPED_MISSING_NAME: frozenset({"source_id"}),
+    AsbruImportMessageCode.SKIPPED_MISSING_HOST: frozenset({"name"}),
+    AsbruImportMessageCode.EXPECT_NOT_IMPORTED: frozenset({"name"}),
+    AsbruImportMessageCode.RENAMED_ALIAS: frozenset({"name", "nickname"}),
+    AsbruImportMessageCode.SKIPPED_EMPTY_GROUP: frozenset({"name"}),
+    AsbruImportMessageCode.GROUP_CREATE_FAILED: frozenset({"name"}),
+    AsbruImportMessageCode.GROUP_NO_ID: frozenset({"name"}),
+    AsbruImportMessageCode.CONNECTION_CREATE_FAILED: frozenset({"nickname"}),
+    AsbruImportMessageCode.ASSIGN_FAILED: frozenset({"nickname"}),
+})
+
+
+@dataclass(frozen=True)
+class AsbruImportMessage:
+    """One Ásbrú reason, exact parameters, and optional opaque diagnostic."""
+
+    code: AsbruImportMessageCode
+    parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, AsbruImportMessageCode):
+            raise TypeError("invalid Ásbrú import message code")
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("Ásbrú import parameters must be a mapping")
+        parameters = dict(self.parameters)
+        if set(parameters) != _ASBRU_MESSAGE_PARAMETER_KEYS[self.code]:
+            raise ValueError("Ásbrú import parameters do not match the code")
+        if any(type(value) is not str or "\x00" in value for value in parameters.values()):
+            raise ValueError("Ásbrú import parameters must be text without NUL")
+        if type(self.diagnostic) is not str or "\x00" in self.diagnostic:
+            raise ValueError("Ásbrú import diagnostic must be text without NUL")
+        object.__setattr__(self, "parameters", MappingProxyType(parameters))
+
+
+_ASBRU_WARNING_CODES = frozenset({
+    AsbruImportMessageCode.FULL_CONFIG_SECTION,
+    AsbruImportMessageCode.SKIPPED_NON_SSH,
+    AsbruImportMessageCode.SKIPPED_MISSING_NAME,
+    AsbruImportMessageCode.SKIPPED_MISSING_HOST,
+    AsbruImportMessageCode.EXPECT_NOT_IMPORTED,
+    AsbruImportMessageCode.RENAMED_ALIAS,
+    AsbruImportMessageCode.SKIPPED_EMPTY_GROUP,
+    AsbruImportMessageCode.GROUPS_ONLY,
+})
+_ASBRU_ERROR_CODES = frozenset({
+    AsbruImportMessageCode.EXPORT_NOT_FOUND,
+    AsbruImportMessageCode.EXPORT_UNREADABLE,
+    AsbruImportMessageCode.PYYAML_MISSING,
+    AsbruImportMessageCode.YAML_INVALID,
+    AsbruImportMessageCode.EXPORT_EMPTY,
+    AsbruImportMessageCode.EXPORT_NOT_MAPPING,
+    AsbruImportMessageCode.NO_ENTRIES,
+    AsbruImportMessageCode.LIVE_CONFIG,
+    AsbruImportMessageCode.LOAD_FAILED,
+})
+_ASBRU_PARTIAL_CODES = frozenset({
+    AsbruImportMessageCode.GROUP_CREATE_FAILED,
+    AsbruImportMessageCode.GROUP_NO_ID,
+    AsbruImportMessageCode.CONNECTION_CREATE_FAILED,
+    AsbruImportMessageCode.ASSIGN_FAILED,
+})
+_ASBRU_SUMMARY_CODES = frozenset({
+    AsbruImportMessageCode.PARSE_FAILED,
+    AsbruImportMessageCode.ALL_EXIST,
+    AsbruImportMessageCode.PARTIAL_FAILURES,
+    AsbruImportMessageCode.IMPORTED,
+    AsbruImportMessageCode.NO_CHANGES,
+})
+
+
+def _require_asbru_messages(values: Tuple[AsbruImportMessage, ...], allowed: frozenset, label: str) -> None:
+    if type(values) is not tuple or any(
+        type(item) is not AsbruImportMessage or item.code not in allowed
+        for item in values
+    ):
+        raise ValueError(f"Ásbrú import {label} contain an invalid reason")
+
+
 class AsbruImportMode(str, Enum):
     """Conflict policy for Ásbrú imports.
 
@@ -955,12 +1073,14 @@ class AsbruImportPreview:
     connections_to_skip: Tuple[str, ...] = ()
     groups_to_add: Tuple[str, ...] = ()
     groups_to_reuse: Tuple[str, ...] = ()
-    warnings: Tuple[str, ...] = ()
-    errors: Tuple[str, ...] = ()
+    warnings: Tuple[AsbruImportMessage, ...] = ()
+    errors: Tuple[AsbruImportMessage, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.source) is not str:
             raise TypeError("Ásbrú import preview source must be a string")
+        _require_asbru_messages(self.warnings, _ASBRU_WARNING_CODES, "warnings")
+        _require_asbru_messages(self.errors, _ASBRU_ERROR_CODES, "errors")
 
 
 @dataclass(frozen=True)
@@ -973,14 +1093,22 @@ class AsbruImportResult:
     connections_skipped: Tuple[str, ...] = ()
     groups_added: Tuple[str, ...] = ()
     groups_reused: Tuple[str, ...] = ()
-    warnings: Tuple[str, ...] = ()
-    errors: Tuple[str, ...] = ()
-    partial_failures: Tuple[str, ...] = ()
-    message: str = ""
+    warnings: Tuple[AsbruImportMessage, ...] = ()
+    errors: Tuple[AsbruImportMessage, ...] = ()
+    partial_failures: Tuple[AsbruImportMessage, ...] = ()
+    message: Optional[AsbruImportMessage] = None
 
     def __post_init__(self) -> None:
         if type(self.source) is not str:
             raise TypeError("Ásbrú import result source must be a string")
+        _require_asbru_messages(self.warnings, _ASBRU_WARNING_CODES, "warnings")
+        _require_asbru_messages(self.errors, _ASBRU_ERROR_CODES, "errors")
+        _require_asbru_messages(self.partial_failures, _ASBRU_PARTIAL_CODES, "partial failures")
+        if self.message is not None and (
+            type(self.message) is not AsbruImportMessage
+            or self.message.code not in _ASBRU_SUMMARY_CODES
+        ):
+            raise ValueError("Ásbrú import result contains an invalid summary")
 
 
 # -- UpdateConnectionMetadataRequest hardening ------------------------------

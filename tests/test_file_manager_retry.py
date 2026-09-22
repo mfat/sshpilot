@@ -132,7 +132,7 @@ def test_connection_error_retry_path_falls_back_to_current(monkeypatch):
     win._on_connection_error(manager, "The SFTP connection was lost")
 
     win._right_pane.show_load_error.assert_called_once_with(
-        "/home/alice", "The SFTP connection was lost"
+        "/home/alice", "Connection failed: The SFTP connection was lost"
     )
     assert win._connection_error_reported is True
 
@@ -163,7 +163,7 @@ def test_direct_operation_error_reaches_retry_pane_localized():
     win._on_operation_error(manager, "Accès refusé")
 
     win._right_pane.show_load_error.assert_called_once_with(
-        "/root-only", "Accès refusé"
+        "/root-only", "File operation failed: Accès refusé"
     )
 
 

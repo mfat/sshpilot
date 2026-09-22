@@ -61,6 +61,14 @@
 
 
 
+    <release version="6.2.0" date="2026-09-22">
+      <description>
+        <p>Local shell now follows the window size, so full-screen programs use the whole terminal</p>
+        <p>Fixed scrolling being far too fast with a touchpad on macOS</p>
+        <p>Fixed the scroll wheel not working while terminal shortcut pass-through is on</p>
+        <p>Fixed a local terminal tab staying open with an SSH error after pressing Ctrl+C and typing exit</p>
+      </description>
+    </release>
     <release version="6.1.9" date="2026-09-21">
       <description>
         <p>New port-knocking/pre-connect command configuration dialog</p>

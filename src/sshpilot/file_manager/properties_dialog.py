@@ -222,7 +222,7 @@ class PropertiesDialog(Adw.Window):
             except Exception:
                 owner_text = "—"
         elif self._sftp_manager is not None:
-            owner_text = "Loading…"  # filled by the async remote stat
+            owner_text = _("Loading…")  # filled by the async remote stat
         row = Adw.ActionRow(title=_("Owner"), subtitle=owner_text)
         row.add_css_class("card")
         self._owner_row = row
@@ -303,7 +303,7 @@ class PropertiesDialog(Adw.Window):
         else:
             # For remote files, fetch typed daemon metadata (mode, uid/gid,
             # mtime) asynchronously; the manager owns all remote I/O.
-            perms_text = "Loading…"
+            perms_text = _("Loading…")
 
             if self._sftp_manager is not None and hasattr(self._sftp_manager, "stat"):
                 remote_path = self._remote_path()
@@ -322,19 +322,19 @@ class PropertiesDialog(Adw.Window):
                         if entry.mode:
                             new_text = f"{_mode_to_str(entry.mode, entry.file_type)} ({_mode_to_octal(entry.mode)})"
                         else:
-                            new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
+                            new_text = _("Create and Delete Files") if self._entry.is_dir else _("Read and Write")
                         if entry.uid is not None and entry.gid is not None:
                             owner_text = self._format_remote_owner(entry.uid, entry.gid)
                         if entry.modified_at is not None:
                             modified_text = _human_time(entry.modified_at.timestamp())
                     else:
-                        new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
+                        new_text = _("Create and Delete Files") if self._entry.is_dir else _("Read and Write")
 
                     def _apply():
                         self._update_permissions_row(new_text)
                         if owner_text is not None and hasattr(self, "_owner_row"):
                             self._owner_row.set_subtitle(owner_text)
-                        elif hasattr(self, "_owner_row") and self._owner_row.get_subtitle() == "Loading…":
+                        elif hasattr(self, "_owner_row") and self._owner_row.get_subtitle() == _("Loading…"):
                             self._owner_row.set_subtitle("—")
                         if modified_text is not None and hasattr(self, "_modified_row"):
                             self._modified_row.set_subtitle(modified_text)
@@ -346,9 +346,9 @@ class PropertiesDialog(Adw.Window):
             else:
                 logger.debug("PropertiesDialog: No SFTP manager available")
                 if self._entry.is_dir:
-                    perms_text = "Create and Delete Files"
+                    perms_text = _("Create and Delete Files")
                 else:
-                    perms_text = "Read and Write"
+                    perms_text = _("Read and Write")
         
         row = Adw.ActionRow(title=_("Permissions"), subtitle=perms_text)
         row.add_css_class("card")

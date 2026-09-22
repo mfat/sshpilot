@@ -52,8 +52,10 @@ failure presentation: `PluginSessionFailure` carries a stable code, strict
 technical parameters, and an optional opaque diagnostic under the
 `plugin_launch` wire discriminator. GTK translates that code at display time.
 Ordinary SSH startup, authentication, readiness, runtime, and termination
-failures keep the historical `SessionFailure(code, message)` model and exact
-wire shape.
+failures use `SessionFailure(code, error_code, parameters, diagnostic)`.
+The code selects frontend gettext presentation; OpenSSH and PTY lines stay in
+the opaque diagnostic. The `ssh_exited` code carries its exit status as a
+validated integer parameter. The plugin failure contract remains separate.
 
 ## State machine
 

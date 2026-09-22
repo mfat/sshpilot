@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from gettext import gettext as _
 from typing import Any, Optional, Tuple
 
 import gi
@@ -340,7 +341,10 @@ def launch_remote_file_manager(
         return True, None, window
     except Exception as exc:
         logger.error("Internal file manager failed: %s", exc)
-        message = str(exc) or "Failed to open internal file manager"
+        message = (
+            _("Failed to open internal file manager: {error}").format(error=exc)
+            if str(exc) else _("Failed to open internal file manager")
+        )
         if error_callback:
             try:
                 error_callback(message)

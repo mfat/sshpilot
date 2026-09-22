@@ -243,7 +243,7 @@ class PaneToolbar(Gtk.Box):
     def _update_show_hidden_icon(self, show_hidden: bool) -> None:
         from sshpilot import icon_utils
         icon_name = "view-reveal-symbolic" if show_hidden else "view-conceal-symbolic"
-        tooltip = "Hide Hidden Files" if show_hidden else "Show Hidden Files"
+        tooltip = _("Hide Hidden Files") if show_hidden else _("Show Hidden Files")
         icon_utils.set_icon_from_name(self._show_hidden_image, icon_name)
         self._show_hidden_button.set_tooltip_text(tooltip)
 

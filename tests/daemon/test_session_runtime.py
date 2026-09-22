@@ -15,6 +15,7 @@ from sshpilot.api.models.sessions import (
     OpenSessionRequest,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureCode,
     SessionState,
 )
 from sshpilot.api.models.terminal import ResizeTerminalRequest, TerminalDimensions
@@ -608,12 +609,46 @@ def test_startup_failure_is_a_real_failed_session_without_sensitive_details():
         )
         assert opened.state is SessionState.FAILED
         assert type(opened.failure) is SessionFailure
-        assert opened.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
-        assert opened.failure.message == "The session process could not be started"
+        assert opened.failure.code is SessionFailureCode.START_FAILED
+        assert opened.failure.error_code is ErrorCode.SESSION_STARTUP_FAILED
+        assert opened.failure.diagnostic == ""
         assert "sensitive" not in repr(opened)
     finally:
         runtime.shutdown()
         core.close()
+
+
+def test_auth_gate_failure_has_a_structured_reason(runtime_parts):
+    runtime, core, _runner = runtime_parts
+    runtime.set_auth_gate(lambda *_args, **_kwargs: False)
+
+    opened = runtime.open_session(
+        OpenSessionRequest(connection_id=core.list_connections()[0].id),
+        client_id=ClientId("client:a"),
+    )
+
+    assert opened.failure is not None
+    assert opened.failure.code is SessionFailureCode.AUTH_INCOMPLETE
+    assert opened.failure.error_code is ErrorCode.SESSION_STARTUP_FAILED
+    assert opened.failure.diagnostic == ""
+
+
+def test_pending_start_error_keeps_machine_code_and_opaque_detail(runtime_parts):
+    runtime, core, _runner = runtime_parts
+    prepared = runtime.prepare_open_session(
+        OpenSessionRequest(connection_id=core.list_connections()[0].id),
+        client_id=ClientId("client:a"),
+    )
+
+    runtime.fail_pending_start(
+        prepared.id,
+        SshPilotError(ErrorCode.SESSION_INVALID_STATE, "opaque executor detail"),
+    )
+
+    failure = runtime.get_session(prepared.id).failure
+    assert failure.code is SessionFailureCode.START_FAILED
+    assert failure.error_code is ErrorCode.SESSION_INVALID_STATE
+    assert failure.diagnostic == "opaque executor detail"
 
 
 def test_open_rejects_missing_connection_and_accepts_provider_protocol():
@@ -758,6 +793,8 @@ def test_failed_termination_retains_owned_handle_for_explicit_retry():
         runtime.close_session(CloseSessionRequest(session_id=session.id))
     assert caught.value.code is ErrorCode.SESSION_TERMINATION_FAILED
     assert runtime.get_session(session.id).state is SessionState.FAILED
+    assert runtime.get_session(session.id).failure.code is SessionFailureCode.TERMINATION_FAILED
+    assert runtime.get_session(session.id).failure.error_code is ErrorCode.SESSION_TERMINATION_FAILED
 
     runner.handles[0].allow_exit = True
     runtime.close_session(CloseSessionRequest(session_id=session.id))

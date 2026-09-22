@@ -25,6 +25,7 @@ import os
 import pathlib
 import threading
 from concurrent.futures import Future
+from gettext import gettext as _
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from gi.repository import GObject
@@ -552,11 +553,13 @@ class DaemonSftpManager(GObject.GObject):
         def _on_error(exc) -> None:
             self._safe_set(future, exc=self._resolve_operation_exception(exc))
 
+        progress_message = _("Measuring directory…")
+
         def _on_progress(summary) -> None:
             self.emit(
                 "progress",
                 summary.progress or 0.0,
-                summary.message or "Measuring directory…",
+                progress_message,
             )
 
         self._sftp_controller.directory_size(
@@ -702,12 +705,10 @@ class DaemonSftpManager(GObject.GObject):
         on_progress = None
         if recursive:
             future, on_operation_started = self._operation_cancellable(future)
-            verb = "Moving" if move else "Copying"
+            progress_message = _("Moving…") if move else _("Copying…")
 
             def on_progress(summary) -> None:
-                self.emit(
-                    "progress", summary.progress or 0.0, summary.message or f"{verb}…"
-                )
+                self.emit("progress", summary.progress or 0.0, progress_message)
 
         def _on_error(exc) -> None:
             resolved = self._resolve_operation_exception(exc)
@@ -737,11 +738,10 @@ class DaemonSftpManager(GObject.GObject):
             return future
 
         future, on_operation_started = self._operation_cancellable(future)
+        progress_message = _("Deleting…")
 
         def _on_progress(summary) -> None:
-            self.emit(
-                "progress", summary.progress or 0.0, summary.message or "Deleting…"
-            )
+            self.emit("progress", summary.progress or 0.0, progress_message)
 
         self._sftp_controller.remove(
             target,
@@ -763,10 +763,17 @@ class DaemonSftpManager(GObject.GObject):
             self.emit(
                 "progress",
                 done / grand_total,
-                f"Transferred {self._format_size(done)} of {self._format_size(grand_total)}",
+                _("Transferred {done} of {total}").format(
+                    done=self._format_size(done),
+                    total=self._format_size(grand_total),
+                ),
             )
         else:
-            self.emit("progress", 0.0, f"Transferred {self._format_size(done)}")
+            self.emit(
+                "progress",
+                0.0,
+                _("Transferred {size}").format(size=self._format_size(done)),
+            )
 
     def upload(self, source: pathlib.Path, destination: str) -> Future:
         future: Future = Future()
@@ -793,7 +800,7 @@ class DaemonSftpManager(GObject.GObject):
         def _on_error(exc) -> None:
             self._safe_set(future, exc=exc)
 
-        self.emit("progress", 0.0, "Starting upload…")
+        self.emit("progress", 0.0, _("Starting upload…"))
         self._transfers.start_transfer(
             StartTransferRequest(
                 connection_id=self._connection_id,
@@ -838,7 +845,7 @@ class DaemonSftpManager(GObject.GObject):
         def _on_error(exc) -> None:
             self._safe_set(future, exc=exc)
 
-        self.emit("progress", 0.0, "Starting download…")
+        self.emit("progress", 0.0, _("Starting download…"))
         self._transfers.start_transfer(
             StartTransferRequest(
                 connection_id=self._connection_id,
@@ -899,7 +906,7 @@ class DaemonSftpManager(GObject.GObject):
         def _on_error(exc) -> None:
             self._safe_set(future, exc=exc)
 
-        self.emit("progress", 0.0, "Starting download…")
+        self.emit("progress", 0.0, _("Starting download…"))
         self._transfers.start_transfer(
             StartTransferRequest(
                 connection_id=self._connection_id,
@@ -939,7 +946,7 @@ class DaemonSftpManager(GObject.GObject):
         def _on_error(exc) -> None:
             self._safe_set(future, exc=exc)
 
-        self.emit("progress", 0.0, "Starting upload…")
+        self.emit("progress", 0.0, _("Starting upload…"))
         self._transfers.start_transfer(
             StartTransferRequest(
                 connection_id=self._connection_id,

@@ -603,6 +603,7 @@ def test_exited_then_closed_with_failure_reports_failure(active_session):
     from sshpilot.api.models.sessions import (
         SessionExitInfo,
         SessionFailure,
+        SessionFailureCode,
         SessionState,
         SessionSummary,
     )
@@ -624,8 +625,9 @@ def test_exited_then_closed_with_failure_reports_failure(active_session):
                 state=SessionState.CLOSED,
                 exit_info=info,
                 failure=SessionFailure(
-                    ErrorCode.SESSION_STARTUP_FAILED.value,
-                    "Error: remote port forwarding failed for listen port 2222.",
+                    SessionFailureCode.SSH_DIAGNOSTIC,
+                    ErrorCode.SESSION_STARTUP_FAILED,
+                    diagnostic="Error: remote port forwarding failed for listen port 2222.",
                 ),
             ),
             controller.tab_state.session_id,
@@ -636,6 +638,85 @@ def test_exited_then_closed_with_failure_reports_failure(active_session):
     assert "port forwarding failed" in str(errors[0])
     # EXITED notified once; CLOSED-with-failure re-notifies to refresh UI.
     assert on_state_changed.call_count == 2
+
+
+def test_session_failure_uses_frontend_presenter(active_session, monkeypatch):
+    from sshpilot.api.errors import ErrorCode
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import (
+        SessionFailure,
+        SessionFailureCode,
+        SessionState,
+        SessionSummary,
+    )
+    import sshpilot.terminal_session_controller as controller_module
+
+    controller, on_event, _on_state_changed = active_session
+    errors = []
+    controller._on_error = errors.append
+    seen = []
+    monkeypatch.setattr(
+        controller_module,
+        "format_session_failure",
+        lambda failure, *, include_diagnostic: (
+            seen.append((failure.code, include_diagnostic)), "translated reason"
+        )[1],
+    )
+    on_event(
+        _session_event(
+            EventType.SESSION_STATE_CHANGED,
+            SessionSummary(
+                id=controller.tab_state.session_id,
+                connection_id=ConnectionId("test-connection"),
+                state=SessionState.FAILED,
+                failure=SessionFailure(
+                    SessionFailureCode.COMMAND_QUEUE_FULL,
+                    ErrorCode.SERVER_BUSY,
+                ),
+            ),
+            controller.tab_state.session_id,
+        )
+    )
+
+    assert len(errors) == 1
+    assert errors[0].code is ErrorCode.SERVER_BUSY
+    assert str(errors[0]) == "translated reason"
+    assert seen == [(SessionFailureCode.COMMAND_QUEUE_FULL, True)]
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("opened", "The session could not be started"),
+        ("state", "The session process could not be started"),
+        ("attach", "The daemon session failed before attachment"),
+    ],
+)
+def test_local_session_failure_fallbacks_use_gettext(
+    active_session, monkeypatch, path, expected
+):
+    from sshpilot.api.models.sessions import SessionState, SessionSummary
+    import sshpilot.terminal_session_controller as controller_module
+
+    controller, _on_event, _on_state_changed = active_session
+    errors = []
+    controller._on_error = errors.append
+    monkeypatch.setattr(controller_module, "_", lambda msgid: f"translated:{msgid}")
+    summary = SessionSummary(
+        id=controller.tab_state.session_id,
+        connection_id=ConnectionId("test-connection"),
+        state=SessionState.FAILED,
+    )
+
+    if path == "opened":
+        controller._on_session_opened(summary)
+    elif path == "state":
+        controller._on_async_session_state(summary)
+    else:
+        controller._on_failed_attach_session(summary)
+
+    assert len(errors) == 1
+    assert str(errors[0]) == f"translated:{expected}"
 
 
 def test_session_events_after_close_ignored(active_session):
