@@ -17,6 +17,7 @@ import subprocess
 import struct
 import select
 import signal
+import time
 import pwd
 import json
 import logging
@@ -63,6 +64,11 @@ else:
     logging.basicConfig(level=_log_level, handlers=[logging.NullHandler()])
 logger = logging.getLogger(__name__)
 
+# How often the agent re-reads its own terminal size. Fast enough that a drag
+# looks live, cheap enough to ignore: one ioctl, and only when it changed does
+# anything happen.
+SIZE_POLL_INTERVAL = 0.25
+
 
 class PTYAgent:
     """Agent that manages PTY creation and shell spawning on the host"""
@@ -72,29 +78,7 @@ class PTYAgent:
         self.slave_fd: Optional[int] = None
         self.shell_pid: Optional[int] = None
         self.original_termios = None
-        self._resize_wakeup_fd: Optional[int] = None
-        self._resize_wakeup_write_fd: Optional[int] = None
-
-    def install_resize_handler(self) -> None:
-        """Arm SIGWINCH so window resizes reach the shell's PTY.
-
-        Must run on the main thread (set_wakeup_fd's requirement). Failing
-        here costs resize propagation, not the shell, so it never raises.
-        """
-        try:
-            read_fd, write_fd = os.pipe()
-            os.set_blocking(read_fd, False)
-            os.set_blocking(write_fd, False)
-            # SIGWINCH's default action is "ignore", so a handler has to be
-            # installed for Python to see it at all -- set_wakeup_fd alone
-            # would never fire.
-            signal.signal(signal.SIGWINCH, handle_resize_signal)
-            signal.set_wakeup_fd(write_fd)
-        except Exception as e:
-            logger.debug(f"Could not install SIGWINCH handler: {e}")
-            return
-        self._resize_wakeup_fd = read_fd
-        self._resize_wakeup_write_fd = write_fd
+        self._last_applied_size: Optional[Tuple[int, int]] = None
 
     def discover_shell(self) -> str:
         """Discover the user's preferred shell on the host system"""
@@ -200,8 +184,12 @@ class PTYAgent:
             logger.debug(f"Could not read our own terminal size: {e}")
             return
         rows, cols, _, _ = struct.unpack('HHHH', packed)
-        if rows and cols:
-            self.set_pty_size(rows, cols)
+        if not rows or not cols:
+            return
+        if (rows, cols) == self._last_applied_size:
+            return
+        self._last_applied_size = (rows, cols)
+        self.set_pty_size(rows, cols)
     
     def spawn_shell(self, shell: str, cwd: Optional[str] = None) -> int:
         """
@@ -342,33 +330,32 @@ class PTYAgent:
 
         logger.debug("Starting I/O loop")
 
-        # SIGWINCH is handled here rather than in the signal handler itself.
-        # A handler runs between bytecodes on this same thread, so calling
-        # anything that takes a lock the interrupted code may already hold --
-        # logging does -- can deadlock. The handler only writes a byte to this
-        # pipe (via set_wakeup_fd); the resize happens below, on the loop.
-        # A bare flag would not work: PEP 475 makes select() resume after a
-        # handler instead of raising EINTR, so nothing would notice the flag
-        # until the next keystroke.
-        wakeup_fd = self._resize_wakeup_fd
-        watch = [sys.stdin, self.master_fd]
-        if wakeup_fd is not None:
-            watch.append(wakeup_fd)
+        # The window size is polled, not taken from SIGWINCH, because this
+        # process never receives one. Under Flatpak the agent is started by
+        # flatpak-spawn and runs on the host as a child of the portal helper:
+        # it holds the terminal's fd, but it is not in that terminal's
+        # foreground process group -- and the kernel signals the group, not
+        # whoever holds the fd. Confirmed against a real build: the agent's
+        # own winsize tracked every resize while no SIGWINCH ever arrived.
+        # Reading the size ourselves is what actually works here.
+        last_size_check = 0.0
 
         try:
             while True:
                 # Use select to wait for data on either stdin or master_fd
-                readable, _, _ = select.select(watch, [], [])
+                readable, _, _ = select.select(
+                    [sys.stdin, self.master_fd], [], [], SIZE_POLL_INTERVAL
+                )
+
+                # Checked on every pass, not just on an idle timeout: a resize
+                # during heavy output must not wait for the shell to go quiet.
+                now = time.monotonic()
+                if now - last_size_check >= SIZE_POLL_INTERVAL:
+                    last_size_check = now
+                    self.sync_size_from_terminal()
 
                 for fd in readable:
-                    if fd == wakeup_fd:
-                        try:
-                            os.read(wakeup_fd, 4096)
-                        except OSError:
-                            pass
-                        self.sync_size_from_terminal()
-
-                    elif fd == sys.stdin:
+                    if fd == sys.stdin:
                         # Data from VTE -> forward to shell
                         try:
                             data = os.read(sys.stdin.fileno(), 4096)
@@ -429,21 +416,6 @@ class PTYAgent:
             except Exception:
                 pass
 
-        # Detach the wakeup fd before closing it; leaving a closed fd armed
-        # would make a later signal write to a stale descriptor.
-        if self._resize_wakeup_write_fd is not None:
-            try:
-                signal.set_wakeup_fd(-1)
-            except Exception:
-                pass
-        for attr in ('_resize_wakeup_fd', '_resize_wakeup_write_fd'):
-            fd = getattr(self, attr)
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except Exception:
-                    pass
-                setattr(self, attr, None)
 
     def run(self, rows: int = 24, cols: int = 80, cwd: Optional[str] = None):
         """Main entry point: create PTY, spawn shell, run I/O loop"""
@@ -464,7 +436,6 @@ class PTYAgent:
             if shell_pid:
                 self._send_status('ready', pid=shell_pid)
 
-            self.install_resize_handler()
             # rows/cols were measured by the UI before the tab finished its
             # layout, so they can already be a row or two stale by now. Our
             # own PTY has the settled size -- adopt it before any resize.
@@ -498,18 +469,6 @@ class PTYAgent:
         return 0
 
 
-def handle_resize_signal(signum, frame):
-    """Handle SIGWINCH for terminal resize.
-
-    Deliberately empty: installing it is what makes Python deliver SIGWINCH
-    at all (its default action is to ignore), and signal.set_wakeup_fd then
-    writes a byte that wakes the I/O loop, which does the actual work in
-    PTYAgent.sync_size_from_terminal(). Nothing belongs here -- a handler
-    runs between bytecodes on the main thread and must not take a lock the
-    interrupted code may hold.
-    """
-
-
 def main():
     """Main entry point for the agent"""
     import argparse
@@ -522,8 +481,6 @@ def main():
     
     args = parser.parse_args()
     
-    # SIGWINCH is armed by the agent itself (PTYAgent.install_resize_handler),
-    # which also owns the wakeup pipe the handler feeds.
     # Create and run agent
     agent = PTYAgent()
     return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd)
