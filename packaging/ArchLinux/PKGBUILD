@@ -1,7 +1,7 @@
 # Maintainer: Patrick Northon <northon_patrick3@yahoo.ca>
 
 pkgname=sshpilot
-pkgver=6.1.9
+pkgver=6.2.0
 pkgrel=1
 pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.'
 url='https://github.com/mfat/sshpilot'
@@ -29,7 +29,7 @@ optdepends=('inetutils: Telnet protocol support'
             'picocom: Serial console protocol support'
             'python-pykeepass: KeePass (.kdbx) secret backend')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('74eaaea1350aa302487a3a9513854d276db41f87cf0801c34861adddb5799410')
+sha256sums=('762bd61270ff8bb67d76fe7b4abefe6b374d5eb00c2d6c5ee72f02f816b0c6ad')
 
 build() {
 	arch-meson "${pkgname}-${pkgver}" build
