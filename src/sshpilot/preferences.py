@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
 from .platform_utils import is_macos
+from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
@@ -764,7 +765,12 @@ class PreferencesWindow(Adw.NavigationPage):
         mouse_group.add(self.paste_on_right_click_switch)
 
         # VTE-only: PyXterm scrolls inside the page and ignores this.
-        wheel_lines = int(self.config.get_setting('terminal.wheel_scroll_lines', 1) or 1)
+        wheel_lines = int(
+            self.config.get_setting(
+                'terminal.wheel_scroll_lines', DEFAULT_WHEEL_SCROLL_LINES
+            )
+            or DEFAULT_WHEEL_SCROLL_LINES
+        )
         wheel_lines = max(1, min(wheel_lines, 10))
         self.wheel_scroll_lines_row = Adw.SpinRow(
             adjustment=Gtk.Adjustment(

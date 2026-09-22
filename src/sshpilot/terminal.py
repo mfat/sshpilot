@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
 from .platform_utils import is_flatpak, is_macos
+from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
     VTETerminalBackend,
@@ -32,11 +33,11 @@ from gi.repository import Gtk, GObject, GLib, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
-# Lines moved per discrete wheel notch.  Fixed on purpose: VTE's own fallback
-# used max(1, ceil(rows/10)), which is ~4 lines in a small window and ~7
-# maximised, and that inconsistency is most of what read as "too fast".
-# Match Terminal.app: one line per notch.
-WHEEL_SCROLL_LINES = 1
+# Lines moved per discrete wheel notch when terminal.wheel_scroll_lines is
+# unset.  Fixed rather than VTE's own max(1, ceil(rows/10)), which is ~4 lines
+# in a small window and ~7 maximised; that inconsistency is most of what read
+# as "too fast".  Per-platform value and rationale: DEFAULT_WHEEL_SCROLL_LINES.
+WHEEL_SCROLL_LINES = DEFAULT_WHEEL_SCROLL_LINES
 
 # SSHProcessManager and the process_manager singleton were extracted to
 # ssh_process_manager.py (GTK-free). Re-exported here so existing

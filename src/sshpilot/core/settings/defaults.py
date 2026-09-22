@@ -5,9 +5,16 @@ Translations and UI state do not belong here.
 """
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict
 
 CONFIG_VERSION = 3
+
+# Lines moved per discrete mouse-wheel notch (VTE history scroll).  macOS
+# already accelerates wheel deltas, so one line per unit matches Terminal.app;
+# X11, Wayland and Windows send an unaccelerated +-1 per notch, where 3 matches
+# Konsole and Alacritty.
+DEFAULT_WHEEL_SCROLL_LINES = 1 if sys.platform == 'darwin' else 3
 
 
 def get_default_config() -> Dict[str, Any]:
@@ -35,7 +42,7 @@ def get_default_config() -> Dict[str, Any]:
             'copy_on_select': False,
             'paste_on_right_click': False,
             # Discrete mouse-wheel notches (VTE history scroll only).
-            'wheel_scroll_lines': 1,
+            'wheel_scroll_lines': DEFAULT_WHEEL_SCROLL_LINES,
             'encoding': 'UTF-8',
             'macos_option_key_passthrough': False,
         },
