@@ -1,3 +1,16 @@
+sshpilot (6.2.0-1) unstable; urgency=medium
+
+  * Release v6.2.0.
+  * Local shell now follows the window size, so full-screen programs use
+    the whole terminal
+  * Fixed scrolling being far too fast with a touchpad on macOS
+  * Fixed the scroll wheel not working while terminal shortcut pass-
+    through is on
+  * Fixed a local terminal tab staying open with an SSH error after
+    pressing Ctrl+C and typing exit
+
+ -- Mehdi <mah.fat@gmail.com>  Tue, 22 Sep 2026 13:35:36 +0000
+
 sshpilot (6.1.9-1) unstable; urgency=medium
 
   * Release v6.1.9.
