@@ -857,7 +857,10 @@ class SecretBackendService:
         """
         with self._locked_operation():
             backend = self._manager.get_backend("keepassxc")
-            if backend is None or not self._safe(lambda: backend.is_available()):
+            # Gate on pykeepass being importable, not ``is_available()``: that also
+            # requires the database file to exist, which it never does before creation.
+            installed = getattr(backend, "is_installed", None) if backend is not None else None
+            if backend is None or not self._safe(installed or backend.is_available):
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend="keepassxc",

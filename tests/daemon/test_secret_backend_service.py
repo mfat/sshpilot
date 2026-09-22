@@ -1762,6 +1762,33 @@ def test_keepassxc_create_database(tmp_path):
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
 
 
+def test_keepassxc_create_database_when_no_database_exists_yet(tmp_path):
+    # GH #1281: is_available() is False until the .kdbx exists; creation must
+    # still proceed as long as pykeepass itself is installed.
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    keepassxc = backends["keepassxc"]
+    keepassxc._available = False
+    keepassxc.is_installed = lambda: True
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.SUCCESS
+    assert any(kind == "create_database" for kind, *_ in keepassxc.calls)
+
+
+def test_keepassxc_create_database_without_pykeepass(tmp_path):
+    service, manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+    )
+    backends["keepassxc"].is_installed = lambda: False
+    result = service.keepassxc_create_database("/home/u/new.kdbx", owner_client_id="client-1")
+    assert result.state == SecretOperationState.FAILED
+    assert result.message_code is SecretMessageCode.BACKEND_UNAVAILABLE
+
+
 def test_keepassxc_unlock_and_lock(tmp_path):
     service, manager, backends, broker, _ = _make_service(
         tmp_path,

@@ -2108,9 +2108,13 @@ class KdbxBackend(SecretBackend):
     def describe(self) -> str:
         return self.name
 
+    def is_installed(self) -> bool:
+        """True when pykeepass is importable, regardless of whether a database exists yet."""
+        return _get_pykeepass() is not None
+
     def is_available(self) -> bool:
         db = self._database()
-        return _get_pykeepass() is not None and bool(db) and os.path.exists(db)
+        return self.is_installed() and bool(db) and os.path.exists(db)
 
     def _touch_deadline(self) -> None:
         self._idle.touch()
