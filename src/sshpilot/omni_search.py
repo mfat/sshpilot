@@ -407,7 +407,7 @@ def _ssh_result(query: str) -> Optional[OmniResult]:
     error = validate_cli_tokens(tokens)
     if error:
         return OmniResult(
-            "validation", _("Invalid SSH command"), _(error),
+            "validation", _("Invalid SSH command"), _format_cli_validation_error(error),
             "dialog-warning-symbolic", 1300, enabled=False,
         )
     display = shlex.join(tokens)
@@ -415,6 +415,22 @@ def _ssh_result(query: str) -> Optional[OmniResult]:
         "ssh", _("Connect using SSH"), display,
         "utilities-terminal-symbolic", 1350, tuple(tokens),
     )
+
+
+def _format_cli_validation_error(error: str) -> str:
+    """Localize stable CLI validation context, preserving opaque details."""
+    if error == "No SSH destination specified":
+        return _("No SSH destination specified")
+    if error == "Only SSH commands are allowed. Example: ssh user@host":
+        return _("Only SSH commands are allowed. Example: ssh user@host")
+    prefix = "Could not parse SSH destination: "
+    if error.startswith(prefix):
+        return _("Could not parse SSH destination: {command}").format(
+            command=error[len(prefix):]
+        )
+    # Field validation is already localized by its frontend-owned validator;
+    # parser-specific errors are opaque diagnostics and must not enter gettext.
+    return error
 
 
 def _ssh_host_suggestions(

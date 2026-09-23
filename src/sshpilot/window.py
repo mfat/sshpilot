@@ -40,7 +40,7 @@ HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 HAS_TOOLBAR_VIEW = hasattr(Adw, 'ToolbarView')
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .accessibility import label_icon_button, set_accessible_name
 from .connection_model import Connection, ConnectionState
@@ -3017,9 +3017,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if len(conns) == 1:
                 msg = _("Unpinned from start page") if all_pinned else _("Pinned to start page")
             elif all_pinned:
-                msg = _("Unpinned {n} connections from start page").format(n=len(conns))
+                msg = ngettext(
+                    "Unpinned {n} connection from start page",
+                    "Unpinned {n} connections from start page",
+                    len(conns),
+                ).format(n=len(conns))
             else:
-                msg = _("Pinned {n} connections to start page").format(n=len(conns))
+                msg = ngettext(
+                    "Pinned {n} connection to start page",
+                    "Pinned {n} connections to start page",
+                    len(conns),
+                ).format(n=len(conns))
             if hasattr(self, 'toast_overlay') and self.toast_overlay:
                 previous = getattr(self, '_pin_status_toast', None)
                 if previous is not None:
@@ -5430,7 +5438,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             host_label = getattr(connection, 'nickname', '')
             other_hosts = max(0, len(block_info.get('hosts') or []) - 1)
-            message = _("\"{host}\" is part of a configuration block with [{count}] other hosts. How would you like to apply your changes?").format(host=host_label, count=other_hosts)
+            message = ngettext(
+                '"{host}" is part of a configuration block with [{count}] other host. '
+                "How would you like to apply your changes?",
+                '"{host}" is part of a configuration block with [{count}] other hosts. '
+                "How would you like to apply your changes?",
+                other_hosts,
+            ).format(host=host_label, count=other_hosts)
 
             dialog = Adw.MessageDialog.new(self, _("Warning"), message)
             dialog.add_response('cancel', _('Cancel'))
@@ -6987,18 +7001,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         active_count = len(connected_items)
 
         if ssh_terminals:
+            message = ngettext(
+                "You have {count} open terminal tab.",
+                "You have {count} open terminal tabs.",
+                active_count,
+            ).format(count=active_count)
             if active_count == 1:
-                message = _("You have 1 open terminal tab.")
                 detail = _("Closing the application will disconnect this connection.")
             else:
-                message = _("You have {count} open terminal tabs.").format(count=active_count)
                 detail = _("Closing the application will disconnect all connections.")
         else:
+            message = ngettext(
+                "You have {count} local terminal with an active job.",
+                "You have {count} local terminals with active jobs.",
+                active_count,
+            ).format(count=active_count)
             if active_count == 1:
-                message = _("You have 1 local terminal with an active job.")
                 detail = _("Closing the application will terminate the running process.")
             else:
-                message = _("You have {count} local terminals with active jobs.").format(count=active_count)
                 detail = _("Closing the application will terminate all running processes.")
 
         # Gtk.AlertDialog: own top-level window so Wayland still maps it when

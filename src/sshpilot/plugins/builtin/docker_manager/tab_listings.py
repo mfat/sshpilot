@@ -49,7 +49,12 @@ class ListingsTabMixin:
     def _inspect_dialog(self, fetch: Callable[[], dict], title: str) -> None:
         def done(data: Optional[dict], err: Optional[Exception]) -> None:
             if err is not None:
-                self._toast(f"{title} failed: {err}")
+                self._toast(
+                    _("{action} failed: {detail}").format(
+                        action=title,
+                        detail=err,
+                    )
+                )
                 return
             text = _json.dumps(data or {}, indent=2, sort_keys=True)
             TextViewDialog(self._window(), title, text).present()
@@ -59,28 +64,29 @@ class ListingsTabMixin:
     # -- Volumes --------------------------------------------------------
     def _build_volumes_section(self) -> Gtk.Widget:
         return self._build_listing_section(
-            "_volumes_list", "_volumes_placeholder", "Loading volumes…")
+            "_volumes_list", "_volumes_placeholder", _("Loading volumes…"))
 
     def _refresh_volumes(self) -> None:
         client = self._client()
         if client is None:
             return
-        self._set_placeholder_loading(self._volumes_placeholder, "Loading volumes…")
+        self._set_placeholder_loading(self._volumes_placeholder, _("Loading volumes…"))
         self._run_async(client.volumes, self._on_volumes)
 
     def _on_volumes(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._populate_listing(self._volumes_list, self._volumes_placeholder,
-                               rows, err, "No volumes", self._volume_row)
+                               rows, err, _("No volumes"), self._volume_row)
 
     def _volume_row(self, v: dict) -> Gtk.Widget:
         name = w.field(v, "Name")
         driver = w.field(v, "Driver")
         row = w.named_row(name, driver)
-        w.add_row_action(row, "dialog-information-symbolic", "Inspect",
+        w.add_row_action(row, "dialog-information-symbolic", _("Inspect"),
                          lambda n=name: self._inspect_dialog(
-                             lambda: self._client().volume_inspect(n), f"volume: {n}"),
+                             lambda: self._client().volume_inspect(n),
+                             _("Volume: {name}").format(name=n)),
                          refreshes=False)
-        w.add_row_action(row, "user-trash-symbolic", "Remove",
+        w.add_row_action(row, "user-trash-symbolic", _("Remove"),
                          lambda n=name: self._remove_volume(n))
         return w.listbox_wrap(row)
 
@@ -92,27 +98,32 @@ class ListingsTabMixin:
         def do(force: bool) -> None:
             self._run_async(
                 lambda: client.remove_volume(name, force=force),
-                lambda res, err: self._on_action(f"remove {name}", res, err, self._refresh_volumes))
+                lambda res, err: self._on_action(
+                    _("Remove {name}").format(name=name),
+                    res,
+                    err,
+                    self._refresh_volumes,
+                ))
 
         self._confirm(heading=_("Remove volume?"), body=_("This will remove “{name}”.").format(name=name),
-                      destructive_label="Remove", on_confirm=do,
-                      force_label="Force (-f)")
+                      destructive_label=_("Remove"), on_confirm=do,
+                      force_label=_("Force (-f)"))
 
     # -- Networks -------------------------------------------------------
     def _build_networks_section(self) -> Gtk.Widget:
         return self._build_listing_section(
-            "_networks_list", "_networks_placeholder", "Loading networks…")
+            "_networks_list", "_networks_placeholder", _("Loading networks…"))
 
     def _refresh_networks(self) -> None:
         client = self._client()
         if client is None:
             return
-        self._set_placeholder_loading(self._networks_placeholder, "Loading networks…")
+        self._set_placeholder_loading(self._networks_placeholder, _("Loading networks…"))
         self._run_async(client.networks, self._on_networks)
 
     def _on_networks(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._populate_listing(self._networks_list, self._networks_placeholder,
-                               rows, err, "No networks", self._network_row)
+                               rows, err, _("No networks"), self._network_row)
 
     # Built-in networks docker won't let you remove — don't offer a dead button.
     _UNREMOVABLE_NETWORKS = {"bridge", "host", "none"}
@@ -121,12 +132,13 @@ class ListingsTabMixin:
         name = w.field(n, "Name")
         sub = " · ".join(p for p in (w.field(n, "Driver"), w.field(n, "Scope")) if p)
         row = w.named_row(name, sub)
-        w.add_row_action(row, "dialog-information-symbolic", "Inspect",
+        w.add_row_action(row, "dialog-information-symbolic", _("Inspect"),
                          lambda nm=name: self._inspect_dialog(
-                             lambda: self._client().network_inspect(nm), f"network: {nm}"),
+                             lambda: self._client().network_inspect(nm),
+                             _("Network: {name}").format(name=nm)),
                          refreshes=False)
         if name not in self._UNREMOVABLE_NETWORKS:
-            w.add_row_action(row, "user-trash-symbolic", "Remove",
+            w.add_row_action(row, "user-trash-symbolic", _("Remove"),
                              lambda nm=name: self._remove_network(nm))
         return w.listbox_wrap(row)
 
@@ -138,8 +150,12 @@ class ListingsTabMixin:
         def do(_force: bool) -> None:
             self._run_async(
                 lambda: client.remove_network(name),
-                lambda res, err: self._on_action(f"remove {name}", res, err, self._refresh_networks))
+                lambda res, err: self._on_action(
+                    _("Remove {name}").format(name=name),
+                    res,
+                    err,
+                    self._refresh_networks,
+                ))
 
         self._confirm(heading=_("Remove network?"), body=_("This will remove “{name}”.").format(name=name),
-                      destructive_label="Remove", on_confirm=do)
-
+                      destructive_label=_("Remove"), on_confirm=do)

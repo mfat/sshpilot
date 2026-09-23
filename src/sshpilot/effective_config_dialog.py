@@ -35,7 +35,7 @@ _FRIENDLY_KEYS = {
     'proxyjump': _('Proxy jump'),
     'proxycommand': _('Proxy command'),
     'forwardagent': _('Forward agent'),
-    'identitiesonly': _('Only use the selected key(s)'),
+    'identitiesonly': _('Only use the selected keys'),
     'identityagent': _('Identity agent'),
     'pubkeyauthentication': _('Public-key authentication'),
     'preferredauthentications': _('Preferred authentications'),

@@ -10,6 +10,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw  # noqa: E402
 
+from ....i18n import N_  # noqa: E402
 from . import widgets as w  # noqa: E402
 
 from gettext import gettext as _  # noqa: E402
@@ -18,12 +19,12 @@ from gettext import gettext as _  # noqa: E402
 class StatsTabMixin:
     # Columns rendered in the stats grid: (header, stat-keys to read).
     _STATS_COLUMNS = (
-        ("Name", ("Name", "Container")),
-        ("CPU %", ("CPUPerc", "CPU")),
-        ("Memory", ("MemUsage", "MemUsageLimit")),
-        ("Mem %", ("MemPerc", "Mem")),
-        ("Net I/O", ("NetIO",)),
-        ("Block I/O", ("BlockIO",)),
+        (N_("Name"), ("Name", "Container")),
+        (N_("CPU %"), ("CPUPerc", "CPU")),
+        (N_("Memory"), ("MemUsage", "MemUsageLimit")),
+        (N_("Mem %"), ("MemPerc", "Mem")),
+        (N_("Net I/O"), ("NetIO",)),
+        (N_("Block I/O"), ("BlockIO",)),
     )
 
     def _build_stats_section(self) -> Gtk.Widget:
@@ -79,9 +80,12 @@ class StatsTabMixin:
         if client is None or not nick:
             return
         ok = self._open_command_terminal(
-            nick, client.stats_stream_command(), title=f"stats: {nick}")
+            nick,
+            client.stats_stream_command(),
+            title=_("Stats: {name}").format(name=nick),
+        )
         if not ok:
-            self._toast("Could not open live stats")
+            self._toast(_("Could not open live stats"))
 
     def _on_stats(self, rows: Optional[List[dict]], err: Optional[Exception],
                   gen: int = 0) -> None:
@@ -97,11 +101,17 @@ class StatsTabMixin:
             self._stats_grid.attach(w.grid_message(w.error_text(err), error=True), 0, 0, span, 1)
             return
         if not rows:
-            self._stats_grid.attach(w.grid_message("No running containers"), 0, 0, span, 1)
+            self._stats_grid.attach(
+                w.grid_message(_("No running containers")),
+                0,
+                0,
+                span,
+                1,
+            )
             return
         # Header row.
         for col, (title, _keys) in enumerate(self._STATS_COLUMNS):
-            head = Gtk.Label(label=title, xalign=0, hexpand=True)
+            head = Gtk.Label(label=_(title), xalign=0, hexpand=True)
             head.add_css_class("heading")
             self._stats_grid.attach(head, col, 0, 1, 1)
         # Data rows — same column index → same column width as the header.
@@ -109,4 +119,3 @@ class StatsTabMixin:
             for col, (_title, keys) in enumerate(self._STATS_COLUMNS):
                 cell = Gtk.Label(label=w.field(s, *keys) or "-", xalign=0, hexpand=True)
                 self._stats_grid.attach(cell, col, r, 1, 1)
-

@@ -77,7 +77,12 @@ class ContainerDetailsDialog(_DialogBase):
 
     def __init__(self, parent: Optional[Gtk.Window], name: str, data: dict,
                  *, initial_page: str = "overview") -> None:
-        super().__init__(parent, f"{name} — details", width=640, height=700)
+        super().__init__(
+            parent,
+            _("{name} — details").format(name=name),
+            width=640,
+            height=700,
+        )
         self._data = data
         self._name = name
 
@@ -174,37 +179,37 @@ class ContainerDetailsDialog(_DialogBase):
     def _build_overview_groups(d: dict) -> List[Adw.PreferencesGroup]:
         name = (_dig(d, "Name", default="") or "").lstrip("/")
         rp = _dig(d, "HostConfig", "RestartPolicy", "Name", default="") or "no"
-        general = _info_group("General", [
-            ("Name", name),
-            ("ID", (_dig(d, "Id", default="") or "")[:12]),
-            ("Image", _dig(d, "Config", "Image", default="")),
-            ("Created", _dig(d, "Created", default="")),
-            ("Restart policy", rp),
-            ("Command", " ".join(_dig(d, "Config", "Cmd", default=[]) or [])),
+        general = _info_group(_("General"), [
+            (_("Name"), name),
+            (_("ID"), (_dig(d, "Id", default="") or "")[:12]),
+            (_("Image"), _dig(d, "Config", "Image", default="")),
+            (_("Created"), _dig(d, "Created", default="")),
+            (_("Restart policy"), rp),
+            (_("Command"), " ".join(_dig(d, "Config", "Cmd", default=[]) or [])),
         ])
         state = _dig(d, "State", default={}) or {}
-        state_group = _info_group("State", [
-            ("Status", state.get("Status", "")),
-            ("Started", state.get("StartedAt", "")),
-            ("Exit code", str(state.get("ExitCode", ""))),
+        state_group = _info_group(_("State"), [
+            (_("Status"), state.get("Status", "")),
+            (_("Started"), state.get("StartedAt", "")),
+            (_("Exit code"), str(state.get("ExitCode", ""))),
         ])
 
         port_rows: List[Tuple[str, str]] = []
         for cport, binds in (_dig(d, "HostConfig", "PortBindings", default={}) or {}).items():
             hosts = ", ".join(
                 f"{b.get('HostIp') or '0.0.0.0'}:{b.get('HostPort', '')}" for b in (binds or []))
-            port_rows.append((cport, hosts or "(published)"))
-        ports = _info_group("Ports", port_rows)
+            port_rows.append((cport, hosts or _("(published)")))
+        ports = _info_group(_("Ports"), port_rows)
 
         nets = list((_dig(d, "NetworkSettings", "Networks", default={}) or {}).keys())
-        networks = _info_group("Networks", [(n, "") for n in nets])
+        networks = _info_group(_("Networks"), [(n, "") for n in nets])
 
         mount_rows = [(m.get("Source", ""), m.get("Destination", ""))
                       for m in (_dig(d, "Mounts", default=[]) or [])]
-        mounts = _info_group("Mounts / volumes", mount_rows)
+        mounts = _info_group(_("Mounts / volumes"), mount_rows)
 
         labels = _dig(d, "Config", "Labels", default={}) or {}
-        labels_group = _info_group("Labels", sorted(labels.items()))
+        labels_group = _info_group(_("Labels"), sorted(labels.items()))
 
         return [general, state_group, ports, networks, mounts, labels_group]
 
@@ -340,7 +345,7 @@ class CreateContainerDialog(_DialogBase):
         body.append(self._section(_("Volumes (host path : container path)"), "_volumes",
                                   _PairList("/host/path", "/container/path", ":")))
         body.append(self._section(_("Environment (KEY = value)"), "_envs",
-                                  _PairList("KEY", "value", "=")))
+                                  _PairList("KEY", _("value"), "=")))
         body.append(self._build_advanced())
 
     def _build_advanced(self) -> Adw.PreferencesGroup:

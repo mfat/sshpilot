@@ -2076,7 +2076,9 @@ class TerminalWidget(Gtk.Box):
             self._view_only_overlay.set_message_type(Gtk.MessageType.INFO)
             self._view_only_overlay.set_show_close_button(False)
 
-            label = Gtk.Label(label="View only - another user controls this terminal")
+            label = Gtk.Label(
+                label=_("View only — another user controls this terminal")
+            )
             self._view_only_overlay.add_child(label)
 
             # Add to top of terminal
@@ -2257,13 +2259,13 @@ class TerminalWidget(Gtk.Box):
                 return
 
             dialog = Adw.AlertDialog.new(
-                "Close Terminal Session",
-                "What should happen to the remote terminal session?"
+                _("Close Terminal Session"),
+                _("What should happen to the remote terminal session?"),
             )
 
-            dialog.add_response("detach", "Detach")
-            dialog.add_response("terminate", "Terminate")
-            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("detach", _("Detach"))
+            dialog.add_response("terminate", _("Terminate"))
+            dialog.add_response("cancel", _("Cancel"))
 
             dialog.set_response_appearance("terminate", Adw.ResponseAppearance.DESTRUCTIVE)
             dialog.set_response_appearance("detach", Adw.ResponseAppearance.SUGGESTED)
@@ -3358,7 +3360,9 @@ class TerminalWidget(Gtk.Box):
             pass
 
     def _notify_invalid_encoding(self, requested, fallback):
-        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
+        message = _(
+            "Encoding '{requested}' is not supported. Using {fallback} instead."
+        ).format(requested=requested, fallback=fallback)
         logger.warning(message)
         self._show_toast(message)
 

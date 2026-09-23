@@ -6,7 +6,7 @@ reconnection feedback.  Extracting them here keeps ``window.py`` a little
 leaner and makes the quit logic reusable.
 """
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 import logging
 
 from gi.repository import Gtk, GLib, Adw
@@ -171,7 +171,11 @@ def _show_cleanup_progress(window, total_connections):
 
     window._progress_label = Gtk.Label()
     window._progress_label.set_text(
-        _("Closing {count} connection(s)...").format(count=total_connections)
+        ngettext(
+            "Closing {count} connection...",
+            "Closing {count} connections...",
+            total_connections,
+        ).format(count=total_connections)
     )
     box.append(window._progress_label)
 
@@ -188,7 +192,11 @@ def _update_cleanup_progress(window, completed, total):
 
     if getattr(window, "_progress_label", None):
         window._progress_label.set_text(
-            _("Closed {completed} of {total} connection(s)...").format(completed=completed, total=total)
+            ngettext(
+                "Closed {completed} of {total} connection...",
+                "Closed {completed} of {total} connections...",
+                total,
+            ).format(completed=completed, total=total)
         )
 
 
@@ -292,4 +300,3 @@ __all__ = [
     "hide_reconnecting_message",
     "show_reconnecting_message",
 ]
-

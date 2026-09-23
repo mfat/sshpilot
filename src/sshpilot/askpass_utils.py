@@ -557,8 +557,8 @@ def _standalone_password_label() -> str:
     hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
     host = next((h.strip() for h in hosts_raw.split("\n") if h.strip()), "")
     if user and host:
-        return f"{user}@{host}'s password:"
-    return "Enter your password:"
+        return _("{user}@{host}'s password:").format(user=user, host=host)
+    return _("Enter your password:")
 
 
 def _run_challenge_dialog(prompt: str, log_fn) -> "str | None":

@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Adw
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .dnd_payload import (
     content_provider_for_payload,
@@ -1386,12 +1386,15 @@ class GroupRow(Gtk.ListBoxRow):
         raw_name = str(self.group_info['name'])
         group_name = GLib.markup_escape_text(raw_name)
         self.name_label.set_markup(f"<b>{group_name}</b>")
-        self.count_label.set_text(_("{count} connections").format(count=count))
+        connection_count = ngettext(
+            "{count} connection", "{count} connections", count
+        ).format(count=count)
+        self.count_label.set_text(connection_count)
         # The header's text lives in child labels, so GTK leaves the list item
         # itself unnamed; say what the row is as well as which group it is.
         set_accessible_name(self, self._accessible_row_name(raw_name))
         set_accessible_description(
-            self, _("{count} connections").format(count=count)
+            self, connection_count
         )
         set_accessible_expanded(self, expanded)
         # The chevron is icon-only; name it after what activating it does, so

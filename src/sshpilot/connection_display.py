@@ -155,6 +155,6 @@ def format_connection_host_display(connection: Any, include_port: bool = False) 
             suffix_display = f"{alias}:{port}"
         if username and not display:
             suffix_display = f"{username}@{suffix_display}"
-        return f"{suffix_display} (alias)"
+        return _("{target} (alias)").format(target=suffix_display)
 
     return display

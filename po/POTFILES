@@ -12,6 +12,7 @@ src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_field_helpers.py
 src/sshpilot/connection_dialog_port_forwarding.py
 src/sshpilot/connection_dialog_validation.py
+src/sshpilot/connection_display.py
 src/sshpilot/connection_manager.py
 src/sshpilot/connection_sort.py
 src/sshpilot/core/validation/connection.py
@@ -28,6 +29,7 @@ src/sshpilot/file_manager/progress_dialog.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
 src/sshpilot/file_manager_integration.py
+src/sshpilot/forwarding_only_ui.py
 src/sshpilot/gtk/asbru_import_messages.py
 src/sshpilot/gtk/host_info_failure_messages.py
 src/sshpilot/gtk/identity_failure_messages.py
@@ -60,11 +62,13 @@ src/sshpilot/plugins/builtin/docker_manager/tab_images.py
 src/sshpilot/plugins/builtin/docker_manager/tab_listings.py
 src/sshpilot/plugins/builtin/docker_manager/tab_logs.py
 src/sshpilot/plugins/builtin/docker_manager/tab_stats.py
+src/sshpilot/plugins/builtin/docker_manager/widgets.py
 src/sshpilot/plugins/builtin/docker_protocol/__init__.py
 src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py
 src/sshpilot/plugins/builtin/mosh_protocol/__init__.py
 src/sshpilot/plugins/builtin/serial_protocol/__init__.py
 src/sshpilot/plugins/builtin/telnet_protocol/__init__.py
+src/sshpilot/plugins/host.py
 src/sshpilot/plugins/registry_client.py
 src/sshpilot/port_utils.py
 src/sshpilot/preferences.py
@@ -75,6 +79,7 @@ src/sshpilot/secret_unlock_dialog.py
 src/sshpilot/shortcut_editor.py
 src/sshpilot/shutdown.py
 src/sshpilot/sidebar.py
+src/sshpilot/sftp_service_controller.py
 src/sshpilot/split_view.py
 src/sshpilot/ssh_connection_validator.py
 src/sshpilot/sshcopyid_window.py
