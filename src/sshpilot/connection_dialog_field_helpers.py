@@ -36,7 +36,7 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
 
 from . import wol
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,11 @@ class ConnectionDialogFieldHelpersMixin:
             lbl.set_hexpand(True)
             lbl.add_css_class('heading')
             box.append(lbl)
-            lbl_count = Gtk.Label(label=_("{n} connections").format(n=count))
+            lbl_count = Gtk.Label(
+                label=ngettext(
+                    "{n} connection", "{n} connections", count
+                ).format(n=count)
+            )
             lbl_count.add_css_class('caption')
             lbl_count.add_css_class('dim-label')
             box.append(lbl_count)

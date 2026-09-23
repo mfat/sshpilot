@@ -5,7 +5,7 @@ import logging
 from typing import List, Optional
 
 from gi.repository import Gtk, Gdk, GLib, Adw
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .shortcut_utils import (
@@ -1735,7 +1735,13 @@ class SplitViewTab(Gtk.Box):
             return
         n = sum(p.get_terminal_count() for p in self._panes)
         if n > 0:
-            self._tab_page.set_title(_("Split View ({n} terminals)").format(n=n))
+            self._tab_page.set_title(
+                ngettext(
+                    "Split View ({n} terminal)",
+                    "Split View ({n} terminals)",
+                    n,
+                ).format(n=n)
+            )
         else:
             self._tab_page.set_title(_("Split View"))
 

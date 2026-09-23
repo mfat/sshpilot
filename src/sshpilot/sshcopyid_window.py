@@ -696,7 +696,7 @@ class SshCopyIdWindow(Adw.Window):
         self.close()
 
     # ---------- OK (main action) ----------
-    def _on_ok_clicked(self, *_):
+    def _on_ok_clicked(self, *_args):
         logger.info("SshCopyIdWindow: OK button clicked")
         # Nothing to do after close, while a listing runs, or while a
         # generation is already in flight (OK is also disabled then, but a
@@ -731,7 +731,11 @@ class SshCopyIdWindow(Adw.Window):
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Operation failed: {e}")
             logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
-            self._error("Operation failed", "Could not start the requested action.", str(e))
+            self._error(
+                _("Operation failed"),
+                _("Could not start the requested action."),
+                str(e),
+            )
 
     # ---------- Mode: existing ----------
     def _do_copy_existing(self):
@@ -767,7 +771,11 @@ class SshCopyIdWindow(Adw.Window):
             self.close()
         except Exception as e:
             logger.error("SshCopyIdWindow: Copy existing failed: %s", type(e).__name__)
-            self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
+            self._error(
+                _("Copy failed"),
+                _("Could not copy the selected key to the server."),
+                str(e),
+            )
 
     # ---------- Mode: paste ----------
     def _do_copy_pasted(self):

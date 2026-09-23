@@ -290,7 +290,7 @@ class DaemonSftpManager(GObject.GObject):
         # per-command failure. A connection-lost SFTP status used to arrive
         # here with the canned "The SFTP command failed" text.
         if message == "The SFTP command failed":
-            message = "The SFTP connection was lost"
+            message = _("The SFTP connection was lost")
         logger.warning(
             "Daemon SFTP service error for %s@%s: %s",
             self._username,

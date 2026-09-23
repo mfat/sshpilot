@@ -26,6 +26,7 @@ Design notes that matter:
 from __future__ import annotations
 
 import logging
+from gettext import gettext as _
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -308,11 +309,15 @@ class UiHost:
             widget = reg.factory()
         except Exception:
             logger.exception("Plugin page factory for %r failed", full_id)
-            self._show_toast(f"Failed to open {reg.title}", 3)
+            self._show_toast(
+                _("Failed to open {title}").format(title=reg.title), 3
+            )
             return
         if widget is None:
             logger.error("Plugin page factory for %r returned None", full_id)
-            self._show_toast(f"Failed to open {reg.title}", 3)
+            self._show_toast(
+                _("Failed to open {title}").format(title=reg.title), 3
+            )
             return
         try:
             if hasattr(window, "show_tab_view"):
@@ -328,7 +333,9 @@ class UiHost:
             reg.tab_page = page
         except Exception:
             logger.exception("Failed to open plugin page %r", full_id)
-            self._show_toast(f"Failed to open {reg.title}", 3)
+            self._show_toast(
+                _("Failed to open {title}").format(title=reg.title), 3
+            )
 
     def open_web_tab(self, url: str, title: str) -> bool:
         """Show ``url`` in an embedded WebKit tab, or in the system default
@@ -524,7 +531,9 @@ class PluginHost:
         except Exception:
             conn = None
         if conn is None:
-            self.ui.notify(f"No connection named {nickname!r}")
+            self.ui.notify(
+                _("No connection named {nickname!r}").format(nickname=nickname)
+            )
             return False
         try:
             self._window.terminal_manager.connect_to_host(conn)
@@ -547,7 +556,9 @@ class PluginHost:
         except Exception:
             conn = None
         if conn is None:
-            self.ui.notify(f"No connection named {nickname!r}")
+            self.ui.notify(
+                _("No connection named {nickname!r}").format(nickname=nickname)
+            )
             return False
         try:
             # The daemon terminal route re-resolves the latest connection

@@ -155,12 +155,20 @@ class DockerConsolePage(
         self.append(switcher)
         self.append(self._stack)
 
-        self._stack.add_titled(self._build_containers_section(), "containers", "Containers")
-        self._stack.add_titled(self._build_stats_section(), "stats", "Stats")
-        self._stack.add_titled(self._build_images_section(), "images", "Images")
-        self._stack.add_titled(self._build_volumes_section(), "volumes", "Volumes")
-        self._stack.add_titled(self._build_networks_section(), "networks", "Networks")
-        self._stack.add_titled(self._build_compose_section(), "compose", "Compose")
+        self._stack.add_titled(
+            self._build_containers_section(), "containers", _("Containers")
+        )
+        self._stack.add_titled(self._build_stats_section(), "stats", _("Stats"))
+        self._stack.add_titled(self._build_images_section(), "images", _("Images"))
+        self._stack.add_titled(
+            self._build_volumes_section(), "volumes", _("Volumes")
+        )
+        self._stack.add_titled(
+            self._build_networks_section(), "networks", _("Networks")
+        )
+        self._stack.add_titled(
+            self._build_compose_section(), "compose", _("Compose")
+        )
         # Container logs live in a dialog opened from each row (not a top tab).
         self._ensure_logs_window()
         # Lazy-load the newly shown tab (e.g. Images doesn't load until viewed).
@@ -273,7 +281,9 @@ class DockerConsolePage(
                 self._mark_texture_cache = None
         return self._mark_texture_cache
 
-    def _make_loading_placeholder(self, text: str = "Loading…") -> Adw.StatusPage:
+    def _make_loading_placeholder(
+        self, text: Optional[str] = None
+    ) -> Adw.StatusPage:
         """Full-bleed opaque placeholder over a list/grid: an Adw.StatusPage.
 
         Must paint an opaque background: as a Gtk.Overlay child it otherwise
@@ -281,6 +291,7 @@ class DockerConsolePage(
         a spinner (Adw.SpinnerPaintable) with the live status feed; failures
         show the Docker mark, a human-readable summary as the title, and the
         raw output inline behind a "Show detailed log" toggle."""
+        text = text or _("Loading…")
         w.ensure_placeholder_css()
         sp = Adw.StatusPage()
         sp.add_css_class("docker-console-placeholder")
@@ -368,7 +379,10 @@ class DockerConsolePage(
         else:
             ph.set_visible(shown)
 
-    def _set_placeholder_loading(self, ph: Adw.StatusPage, text: str = "Loading…") -> None:
+    def _set_placeholder_loading(
+        self, ph: Adw.StatusPage, text: Optional[str] = None
+    ) -> None:
+        text = text or _("Loading…")
         self._reveal_placeholder(ph, True)
         # Targetable so the status feed is mouse-selectable; the opaque fill
         # hides the (empty or stale) list underneath anyway.
@@ -590,7 +604,9 @@ class DockerConsolePage(
 
         # Auto-detect (default) or force docker/podman per host.
         self._RUNTIME_MODES = ("Auto", "docker", "podman")
-        self._runtime_drop = Gtk.DropDown.new_from_strings(list(self._RUNTIME_MODES))
+        self._runtime_drop = Gtk.DropDown.new_from_strings(
+            [_('Auto'), "Docker", "Podman"]
+        )
         self._runtime_drop.set_tooltip_text(_("Container runtime (Auto detects docker/podman)"))
         self._runtime_drop.set_selected(self._runtime_mode_index(self._current_nickname()))
         self._runtime_drop.connect("notify::selected", self._on_runtime_mode_changed)
@@ -745,10 +761,13 @@ class DockerConsolePage(
                 None,
             )
             self._host_label.set_label(
-                getattr(target, "display_name", None) or nick)
+                _("Local")
+                if nick == _LOCAL_TARGET
+                else (getattr(target, "display_name", None) or nick)
+            )
             self._host_btn.set_sensitive(True)
         else:
-            self._host_label.set_label("(no connections)")
+            self._host_label.set_label(_("(no connections)"))
             self._host_btn.set_sensitive(False)
 
     def _show_host_picker(self, _btn: Gtk.Button) -> None:
@@ -756,7 +775,7 @@ class DockerConsolePage(
 
         self._connections = self._list_hosts()
         if not self._connections:
-            self._toast("No SSH connections")
+            self._toast(_("No SSH connections"))
             return
         show_host_picker(
             self._window(),
@@ -962,10 +981,12 @@ class DockerConsolePage(
             self._compose_placeholder,
         ):
             self._set_placeholder_idle(
-                placeholder, "SSH password required — click Refresh to retry")
+                placeholder,
+                _("SSH password required — click Refresh to retry"),
+            )
         self._pulse_stop(self._stats_pulse)
         self._stats_pulse.set_visible(False)
-        self._toast("SSH password required to open Docker Console.")
+        self._toast(_("SSH password required to open Docker Console."))
 
     def _manual_refresh(self) -> None:
         # The Refresh button always re-runs the full host load (probe →
@@ -1011,15 +1032,19 @@ class DockerConsolePage(
         # connection the probe's first command will open.
         self._clear_status()
         if not self._is_local(nick):
-            self._status(f"Connecting to {nick}…")
+            self._status(_("Connecting to {name}…").format(name=nick))
 
         # Drop the previous host's rows and show a spinner immediately (clearing
         # makes each list's placeholder visible) for the whole probe + load.
         self._containers = []
         for lst, ph, text in (
-            (self._containers_list, self._containers_placeholder, "Loading containers…"),
-            (self._images_list, self._images_placeholder, "Loading images…"),
-            (self._compose_list, self._compose_placeholder, "Loading compose projects…"),
+            (self._containers_list, self._containers_placeholder, _("Loading containers…")),
+            (self._images_list, self._images_placeholder, _("Loading images…")),
+            (
+                self._compose_list,
+                self._compose_placeholder,
+                _("Loading compose projects…"),
+            ),
         ):
             w.clear_listbox(lst)
             self._set_placeholder_loading(ph, text)
@@ -1046,14 +1071,24 @@ class DockerConsolePage(
         def probe():
             if mode in ("docker", "podman"):
                 runtime = mode
-                self._status(f"Using {runtime} (set for this host)")
+                self._status(
+                    _("Using {runtime} (set for this host)").format(
+                        runtime=runtime
+                    )
+                )
             else:
-                self._status("Detecting container runtime…")
+                self._status(_("Detecting container runtime…"))
                 detected = DockerClient(rc, nick).detect_runtime()
                 if detected:
-                    self._status(f"{detected.capitalize()} found")
+                    self._status(
+                        _("{runtime} found").format(
+                            runtime=detected.capitalize()
+                        )
+                    )
                 else:
-                    self._status("Neither Docker nor Podman found on this host")
+                    self._status(
+                        _("Neither Docker nor Podman found on this host")
+                    )
                 runtime = detected or "docker"
             # The user explicitly asked for sudo: don't second-guess it on a plain
             # `ps` — the only open question is whether sudo needs a password.
@@ -1062,14 +1097,25 @@ class DockerConsolePage(
                     rc, nick, runtime, session_pw=session_pw))
             # sudo not requested: try plain, and fall back to sudo only on a
             # docker-socket *permission* error (user not in the 'docker' group).
-            self._status(f"Checking {runtime} access…")
+            self._status(
+                _("Checking {runtime} access…").format(runtime=runtime)
+            )
             plain = DockerClient(rc, nick, runtime, use_sudo=False).ping()
             if getattr(plain, "exit_code", 0) == 0:
-                self._status(f"{runtime.capitalize()} is reachable")
+                self._status(
+                    _("{runtime} is reachable").format(
+                        runtime=runtime.capitalize()
+                    )
+                )
                 return runtime, False, None, None
             text = (getattr(plain, "stderr", "") or "") + (getattr(plain, "stdout", "") or "")
             if DockerClient.is_permission_error(text):
-                self._status("Permission denied — the user may not be in the docker group")
+                self._status(
+                    _(
+                        "Permission denied — the user may not be in the "
+                        "docker group"
+                    )
+                )
                 return (runtime, *self._resolve_sudo(
                     rc, nick, runtime, session_pw=session_pw))
             self._status(w.describe_docker_failure(text))
@@ -1089,7 +1135,12 @@ class DockerConsolePage(
             self.ctx.settings.set(f"runtime:{nick}", runtime)
             if status == "not_sudoers":
                 self._disable_sudo(nick)
-                self._toast("Your user isn't allowed to run Docker with sudo on this host.")
+                self._toast(
+                    _(
+                        "Your user isn't allowed to run Docker with sudo on "
+                        "this host."
+                    )
+                )
                 self._finish_probe_and_refresh()
                 return
             # A password is required and we don't have a working one — keep sudo
@@ -1119,24 +1170,24 @@ class DockerConsolePage(
         """Decide how sudo authenticates on this host (runs on a worker thread):
         ``(use_sudo, status, password)`` — passwordless, a verified cached/stored
         password, ``needs_password`` (prompt the user), or ``not_sudoers``."""
-        self._status("Checking sudo access…")
+        self._status(_("Checking sudo access…"))
         sudo = DockerClient(rc, nick, runtime, use_sudo=True).ping()  # sudo -n
         if getattr(sudo, "exit_code", 1) == 0:
-            self._status("Sudo works without a password")
+            self._status(_("Sudo works without a password"))
             return True, None, None  # passwordless sudo
         sudo_text = ((getattr(sudo, "stderr", "") or "")
                      + (getattr(sudo, "stdout", "") or ""))
         if DockerClient.is_sudo_denied_error(sudo_text):
-            self._status("This user isn't allowed to use sudo on this host")
+            self._status(_("This user isn't allowed to use sudo on this host"))
             return True, "not_sudoers", None
         # Sudo credentials are session-only plugin state. The plugin never
         # reads or writes a frontend secret store; a daemon operation may still
         # use the verified value for the current command/session.
         pw = session_pw
         if pw and self._verify_sudo(rc, nick, runtime, pw):
-            self._status("Sudo password accepted")
+            self._status(_("Sudo password accepted"))
             return True, "password", pw
-        self._status("Sudo needs a password")
+        self._status(_("Sudo needs a password"))
         return True, "needs_password", None
 
     @staticmethod
@@ -1197,12 +1248,17 @@ class DockerConsolePage(
                 self._set_sudo_check(True)
             elif result == "not_sudoers":
                 self._disable_sudo(nick)
-                self._toast("Your user isn't allowed to run Docker with sudo on this host.")
+                self._toast(
+                    _(
+                        "Your user isn't allowed to run Docker with sudo on "
+                        "this host."
+                    )
+                )
             else:
                 # Wrong password — drop the session value and back off sudo.
                 self._sudo_passwords.pop(nick, None)
                 self._disable_sudo(nick)
-                self._toast("Sudo password incorrect.")
+                self._toast(_("Sudo password incorrect."))
             self._finish_probe_and_refresh()
 
         self._run_async(verify, after)
@@ -1289,9 +1345,13 @@ class DockerConsolePage(
                    refresh: Callable[[], None]) -> None:
         if err is not None or (res is not None and getattr(res, "exit_code", 0) != 0):
             detail = err or (getattr(res, "stderr", "") or "").strip()
-            self._toast(f"{label} failed: {detail}")
+            self._toast(
+                _("{action} failed: {detail}").format(
+                    action=label, detail=detail
+                )
+            )
         else:
-            self._toast(f"{label} done")
+            self._toast(_("{action} done").format(action=label))
         refresh()
 
     def _dismiss_active_confirm(self) -> None:

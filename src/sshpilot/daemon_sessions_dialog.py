@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .api.connection_identity import connection_id_for
 import logging
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from gi.repository import Adw, Gtk
 from .api.models.sessions import CloseSessionRequest, SessionState
@@ -88,7 +88,11 @@ class DaemonSessionsDialog:
             self._status_label.set_text(_("No daemon sessions"))
             return
         self._status_label.set_text(
-            _("Found {count} daemon session(s)").format(count=len(sessions))
+            ngettext(
+                "Found {count} daemon session",
+                "Found {count} daemon sessions",
+                len(sessions),
+            ).format(count=len(sessions))
         )
         for session in sessions:
             self._add_session_row(session)
@@ -104,12 +108,17 @@ class DaemonSessionsDialog:
         owner = "none"
         if session.input_owner is not None:
             owner = str(session.input_owner.attachment_id)
+        attachments = ngettext(
+            "attachment={count}",
+            "attachments={count}",
+            session.attachment_count,
+        ).format(count=session.attachment_count)
         row.set_subtitle(
             _(
-                "state={state} attachments={count} input_owner={owner}"
+                "state={state} {attachments} input_owner={owner}"
             ).format(
                 state=getattr(session.state, "value", session.state),
-                count=session.attachment_count,
+                attachments=attachments,
                 owner=owner,
             )
         )

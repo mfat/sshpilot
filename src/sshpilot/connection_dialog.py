@@ -70,6 +70,14 @@ logger = logging.getLogger(__name__)
 _PRE_COMMAND_INDENT = 16
 
 
+def _protocol_display_name(backend) -> str:
+    """Return a localized GTK label without changing the plugin contract."""
+    protocol_id = getattr(backend, "protocol_id", "") or ""
+    if protocol_id == "serial":
+        return _("Serial")
+    return getattr(backend, "display_name", "") or protocol_id
+
+
 def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
     """Run ``start_worker`` once the secret backend is confirmed unlocked.
 
@@ -3547,7 +3555,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.key_selection_group = Adw.PreferencesGroup()
         key_select_model = Gtk.StringList()
         key_select_model.append(_("Automatic"))
-        key_select_model.append(_("Use Specific Key(s)"))
+        key_select_model.append(_("Use Specific Keys"))
         self.key_select_row = Adw.ComboRow(title=_("Key selection"))
         self.key_select_row.set_subtitle(_("Use SSH defaults or pick specific keys below."))
         self.key_select_row.set_model(key_select_model)
@@ -3589,7 +3597,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # --- Key handling ---
         self.idonly_group = Adw.PreferencesGroup(title=_("Key handling"))
         self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use the selected key(s)"))
+        self.key_only_row.set_title(_("Only use the selected keys"))
         self.key_only_row.set_subtitle(_("Write IdentitiesOnly yes for this connection."))
         self.key_only_row.set_active(True)
         self.idonly_group.add(self.key_only_row)
@@ -3755,7 +3763,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             names = Gtk.StringList()
             for backend in self._protocol_backends:
-                names.append(backend.display_name or backend.protocol_id)
+                names.append(_protocol_display_name(backend))
             self.protocol_row.set_model(names)
         except Exception:
             pass
@@ -4676,7 +4684,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             group_key = getattr(spec, 'group', 'general') or 'general'
             if group_key not in groups:
                 if group_key == 'general':
-                    title = backend.display_name or backend.protocol_id
+                    title = _protocol_display_name(backend)
                 elif group_key == 'advanced':
                     title = _("Advanced")
                 else:

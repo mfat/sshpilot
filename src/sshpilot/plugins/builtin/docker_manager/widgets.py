@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from gettext import gettext as _
 from typing import Callable, Optional, Tuple
 
 import gi
@@ -159,24 +160,26 @@ def describe_docker_failure(text: str) -> str:
     low = text.lower()
     if ("cannot connect to the docker daemon" in low
             or "is the docker daemon running" in low):
-        return "Docker daemon isn't running on this host"
+        return _("Docker daemon isn't running on this host")
     runtime_missing = re.search(r"\b(docker|podman)\b[^\n]*not found", low)
     if (runtime_missing or "command not found" in low
             or "executable file not found" in low):
         name = runtime_missing.group(1).capitalize() if runtime_missing else "Docker"
-        return f"{name} isn't installed on this host"
+        return _("{runtime} isn't installed on this host").format(runtime=name)
     if "permission denied" in low and ("docker.sock" in low or "dial unix" in low):
-        return "Permission denied talking to Docker — needs sudo or the docker group"
+        return _(
+            "Permission denied talking to Docker — needs sudo or the docker group"
+        )
     if "could not resolve hostname" in low:
-        return "Could not resolve the host name"
+        return _("Could not resolve the host name")
     if "connection refused" in low:
-        return "Connection refused by the host"
+        return _("Connection refused by the host")
     if "timed out" in low:
-        return "Connection timed out"
+        return _("Connection timed out")
     if "permission denied" in low:
-        return "Permission denied"
+        return _("Permission denied")
     first = text.strip().splitlines()
-    return first[0].strip() if first else "Command failed"
+    return first[0].strip() if first else _("Command failed")
 
 
 def truncate_toast(message: str, max_chars: int = _TOAST_MAX_CHARS) -> str:
@@ -256,9 +259,13 @@ def grid_message(text: str, *, error: bool = False) -> Gtk.Widget:
 
 
 def error_text(err: Exception) -> str:
-    msg = str(err) if isinstance(err, DockerError) else f"Error: {err}"
+    msg = (
+        str(err)
+        if isinstance(err, DockerError)
+        else _("Error: {detail}").format(detail=err)
+    )
     if DockerClient.is_permission_error(str(err)):
-        msg += (
+        msg += _(
             "\n\nDocker needs elevated access. Enable the “sudo” toggle "
             "above (you may be prompted for your sudo password), or add your "
             "user to the “docker” group on the host."

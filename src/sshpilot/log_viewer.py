@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import zipfile
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 from typing import List, Optional
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
@@ -740,13 +740,23 @@ class LogViewerWindow(Adw.Window):
         """Refresh the right-aligned ``last N of M lines`` indicator."""
         filtered_count = getattr(self, "_filtered_visible", len(self._current_lines))
         if self._showing_full_file:
-            base = _("{n} lines (full file)").format(n=self._current_total)
+            base = ngettext(
+                "{n} line (full file)",
+                "{n} lines (full file)",
+                self._current_total,
+            ).format(n=self._current_total)
         elif self._current_total > len(self._current_lines):
-            base = _("last {shown} of {total} lines").format(
+            base = ngettext(
+                "last {shown} of {total} line",
+                "last {shown} of {total} lines",
+                self._current_total,
+            ).format(
                 shown=len(self._current_lines), total=self._current_total,
             )
         else:
-            base = _("{n} lines").format(n=self._current_total)
+            base = ngettext(
+                "{n} line", "{n} lines", self._current_total
+            ).format(n=self._current_total)
 
         if self._level_filter_idx > 0 and filtered_count != len(self._current_lines):
             base += _(" · {f} after filter").format(f=filtered_count)

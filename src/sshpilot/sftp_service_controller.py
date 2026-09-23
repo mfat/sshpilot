@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import threading
 from enum import Enum
+from gettext import gettext as _
 from typing import Callable, Dict, Optional
 
 from gi.repository import GLib
@@ -844,10 +845,10 @@ class DaemonSftpServiceController:
                 message = (
                     format_sftp_failure(summary.failure)
                     if summary.failure
-                    else "SFTP failed"
+                    else _("SFTP failed")
                 )
             else:
-                message = "The SFTP service was closed"
+                message = _("The SFTP service was closed")
             logger.warning(
                 "SFTP service %s %s for connection %s: %s",
                 summary.id,

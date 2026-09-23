@@ -22,9 +22,6 @@ logger = logging.getLogger(__name__)
 
 _ICON = "brand-docker-symbolic"
 _LOCAL_TARGET = "__local__"
-_LOCAL_TITLE = _("Local")
-
-
 class Plugin(SshPilotPlugin):
     # activate() is registration only — the window UI does not exist yet, so each
     # per-host page is built lazily by its factory when first opened.
@@ -50,9 +47,11 @@ class Plugin(SshPilotPlugin):
         page_id = f"host-{nickname}"
         if page_id not in self._host_pages:
             try:
-                display_name = _LOCAL_TITLE if nickname == _LOCAL_TARGET else nickname
+                display_name = _("Local") if nickname == _LOCAL_TARGET else nickname
                 self.ctx.ui.register_page(
-                    page_id, f"Docker — {display_name}", _ICON,
+                    page_id,
+                    _("Docker — {name}").format(name=display_name),
+                    _ICON,
                     lambda nk=nickname: self._build_host_page(nk),
                     add_menu_item=False,
                 )

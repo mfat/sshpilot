@@ -340,7 +340,7 @@ class LogsTabMixin:
         return getattr(self, "_selected_cid", None)
 
     def _selected_container_name(self) -> str:
-        return getattr(self, "_selected_name", None) or "container"
+        return getattr(self, "_selected_name", None) or _("container")
 
     def _reload_logs(self) -> None:
         """One-shot snapshot. If Follow is on, restart the stream instead."""
@@ -403,10 +403,10 @@ class LogsTabMixin:
     def _apply_log_filter(self) -> None:
         lines = self._visible_log_lines()
         if not lines and not self._logs_lines:
-            self._logs_buffer.set_text("(no output)", -1)
+            self._logs_buffer.set_text(_("(no output)"), -1)
             self._logs_match_label.set_text("")
             return
-        shown = "\n".join(lines) if lines else "(no matching lines)"
+        shown = "\n".join(lines) if lines else _("(no matching lines)")
         self._logs_buffer.set_text(shown, -1)
         self._recompute_log_matches(shown)
         if self._logs_autoscroll.get_active() and self._logs_match_index < 0:
@@ -456,7 +456,12 @@ class LogsTabMixin:
         m_end = self._logs_buffer.get_iter_at_offset(off + len(needle))
         self._logs_buffer.apply_tag(self._logs_tag_current, m_start, m_end)
         self._logs_view.scroll_to_iter(m_start, 0.2, True, 0.0, 0.3)
-        self._logs_match_label.set_text(f"{self._logs_match_index + 1}/{n}")
+        self._logs_match_label.set_text(
+            _("{index}/{count}").format(
+                index=self._logs_match_index + 1,
+                count=n,
+            )
+        )
 
     def _logs_match_next(self) -> None:
         n = len(self._logs_match_offsets)
@@ -516,7 +521,7 @@ class LogsTabMixin:
                     Gio.FileCreateFlags.REPLACE_DESTINATION, None)
                 self._toast(_("Logs saved"))
             except Exception as exc:  # noqa: BLE001
-                self._toast(f"Save failed: {exc}")
+                self._toast(_("Save failed: {detail}").format(detail=exc))
 
         dialog.save(self._window(), None, done)
 

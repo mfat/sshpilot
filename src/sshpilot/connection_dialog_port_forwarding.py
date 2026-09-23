@@ -36,6 +36,26 @@ from .port_utils import get_port_checker
 logger = logging.getLogger(__name__)
 
 
+def _format_forwarding_validation_error(message: str) -> str:
+    """Localize stable frontend validation copy, preserving unknown details."""
+    if message == "Listen port must be a number":
+        return _("Listen port must be a number")
+    if message == "Listen port must be between 1 and 65535":
+        return _("Listen port must be between 1 and 65535")
+    if message == "Destination host is required":
+        return _("Destination host is required")
+    if message == "Remote port must be a number":
+        return _("Remote port must be a number")
+    if message == "Remote port must be between 1 and 65535":
+        return _("Remote port must be between 1 and 65535")
+    prefix = "Unsupported forwarding type: "
+    if message.startswith(prefix):
+        return _("Unsupported forwarding type: {type}").format(
+            type=message[len(prefix):]
+        )
+    return message
+
+
 class ConnectionDialogPortForwardingMixin:
     def load_port_forwarding_rules(self):
         """Load port forwarding rules from the connection and update UI"""
@@ -367,7 +387,7 @@ class ConnectionDialogPortForwardingMixin:
 
         errors = validate_forwarding_rule(rule)
         if errors:
-            self.show_error(_(errors[0].message))
+            self.show_error(_format_forwarding_validation_error(errors[0].message))
             return
 
         # Check for port conflicts (for local and dynamic forwarding)

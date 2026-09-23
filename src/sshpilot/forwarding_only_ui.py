@@ -6,6 +6,7 @@ sidebar attach ``forwarding_only`` / rule lists onto connection projections.
 
 from __future__ import annotations
 
+from gettext import gettext as _
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 
@@ -122,7 +123,7 @@ def format_bind_endpoint(rule: Mapping[str, Any]) -> str:
 def format_destination_endpoint(rule: Mapping[str, Any]) -> str:
     rtype = str(rule.get("type") or "local").casefold()
     if rtype == "dynamic" or rule.get("socks"):
-        return "dynamic"
+        return _("dynamic")
     if rtype == "remote":
         host = str(rule.get("local_host") or rule.get("remote_host") or "").strip()
         port = rule.get("local_port") or rule.get("remote_port")
@@ -163,23 +164,10 @@ def format_forwarding_rule_rows(
 
 def forwarding_only_tab_title(name: str) -> str:
     """Stable tab title for a forwarding-only session."""
-    # Late import keeps this module importable without gettext wiring in tests.
-    try:
-        from gettext import gettext as _
-    except Exception:  # pragma: no cover
-        def _(s):  # type: ignore[misc]
-            return s
-
     display = (name or "").strip() or _("Connection")
     return _("{name} · forwards").format(name=display)
 
 
 def forwarding_only_subtitle(name: str) -> str:
-    try:
-        from gettext import gettext as _
-    except Exception:  # pragma: no cover
-        def _(s):  # type: ignore[misc]
-            return s
-
     display = (name or "").strip() or _("Connection")
     return _("{name} · no shell (SessionType none)").format(name=display)

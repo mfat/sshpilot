@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .platform_utils import is_macos
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
@@ -2626,7 +2626,7 @@ class PreferencesWindow(Adw.NavigationPage):
         reset_row.set_title(_("Reset Advanced SSH Settings"))
         reset_row.set_subtitle(_("Restore all advanced SSH settings to their default values"))
 
-        reset_btn = Gtk.Button.new_with_label("Reset")
+        reset_btn = Gtk.Button.new_with_label(_("Reset"))
         reset_btn.add_css_class('destructive-action')
         reset_btn.set_valign(Gtk.Align.CENTER)
         reset_btn.connect('clicked', self.on_reset_advanced_ssh)
@@ -4020,15 +4020,25 @@ class PreferencesWindow(Adw.NavigationPage):
                     return False
                 status = client.get_daemon_status()
                 resources = status.resources
+                sessions = ngettext(
+                    "{count} session",
+                    "{count} sessions",
+                    resources.sessions_active,
+                ).format(count=resources.sessions_active)
+                clients = ngettext(
+                    "{count} client",
+                    "{count} clients",
+                    resources.clients,
+                ).format(count=resources.clients)
                 row.set_subtitle(
                     _(
                         "{state} · instance {instance} · "
-                        "{sessions} sessions · {clients} clients"
+                        "{sessions} · {clients}"
                     ).format(
                         state=status.state.value,
                         instance=status.server_instance_id[:8],
-                        sessions=resources.sessions_active,
-                        clients=resources.clients,
+                        sessions=sessions,
+                        clients=clients,
                     )
                 )
             finally:
@@ -6372,7 +6382,9 @@ class PreferencesWindow(Adw.NavigationPage):
             self._update_encoding_config_if_needed(target_code)
 
     def _handle_invalid_encoding_selection(self, requested, fallback):
-        message = f"Encoding '{requested}' is not available. Using {fallback} instead."
+        message = _(
+            "Encoding '{requested}' is not available. Using {fallback} instead."
+        ).format(requested=requested, fallback=fallback)
         logger.warning(message)
         self._show_toast(message)
 
@@ -6593,18 +6605,25 @@ class PreferencesWindow(Adw.NavigationPage):
         backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
         num_terminals = len(open_terminals)
 
+        secondary_text = ngettext(
+            "The terminal backend has been changed to {backend}.\n\n"
+            "This change will only apply to new terminal tabs.\n"
+            "Existing {count} terminal tab will continue using its current backend.\n\n"
+            "To use the new backend for the existing terminal, close and reopen that tab.",
+            "The terminal backend has been changed to {backend}.\n\n"
+            "This change will only apply to new terminal tabs.\n"
+            "Existing {count} terminal tabs will continue using their current backend.\n\n"
+            "To use the new backend for existing terminals, close and reopen those tabs.",
+            num_terminals,
+        ).format(backend=backend_name, count=num_terminals)
+
         dialog = Gtk.MessageDialog(
             transient_for=self.get_root(),
             modal=True,
             message_type=Gtk.MessageType.INFO,
             buttons=Gtk.ButtonsType.OK,
             text=_("Terminal Backend Change"),
-            secondary_text=_(
-                f"The terminal backend has been changed to {backend_name}.\n\n"
-                f"This change will only apply to new terminal tabs.\n"
-                f"Existing {num_terminals} terminal tab{'s' if num_terminals > 1 else ''} will continue using their current backend.\n\n"
-                "To use the new backend for existing terminals, close and reopen those tabs."
-            )
+            secondary_text=secondary_text,
         )
         def _on_info_response(d, response_id):
             d.destroy()
@@ -7094,8 +7113,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 terminals_list.append(label)
                 self.terminal_commands[label] = command
 
-            # Add "Custom" option
-            terminals_list.append("Custom")
+            # The stored value remains the technical identifier ``custom``;
+            # only the dropdown's presentation is localized.
+            terminals_list.append(_("Custom"))
 
             # Set the model
             self.terminal_dropdown.set_model(terminals_list)
@@ -7114,9 +7134,10 @@ class PreferencesWindow(Adw.NavigationPage):
             if not model:
                 return
 
-            # Handle the case where terminal_name is 'custom' but dropdown has 'Custom'
+            custom_label = _("Custom")
+            # Map the stored technical identifier to its localized label.
             if terminal_name == 'custom':
-                terminal_label = 'Custom'
+                terminal_label = custom_label
             else:
                 # Try to find corresponding label for stored command
                 terminal_label = None
@@ -7134,7 +7155,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
                     # Show/hide custom path entry based on selection
                     if hasattr(self, 'custom_terminal_box'):
-                        if terminal_label == "Custom":
+                        if terminal_label == custom_label:
                             self.custom_terminal_box.set_visible(True)
                         else:
                             self.custom_terminal_box.set_visible(False)

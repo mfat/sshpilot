@@ -192,7 +192,11 @@ class ConnectionDialogValidationMixin:
     def _validate_required_row(self, row, label_text: str):
         text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
         if not text:
-            self._row_set_message(row, _(f"{label_text} is required"), is_error=True)
+            self._row_set_message(
+                row,
+                _("{field} is required").format(field=label_text),
+                is_error=True,
+            )
             return False
         self._row_clear_message(row)
         return True

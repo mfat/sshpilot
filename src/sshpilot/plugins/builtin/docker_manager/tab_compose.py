@@ -25,7 +25,9 @@ class ComposeTabMixin:
         self._compose_list.add_css_class("boxed-list")
         self._compose_list.set_selection_mode(Gtk.SelectionMode.NONE)
         scroller.set_child(self._compose_list)
-        self._compose_placeholder = self._make_loading_placeholder("Loading compose projects…")
+        self._compose_placeholder = self._make_loading_placeholder(
+            _("Loading compose projects…")
+        )
         box.append(w.wrap_with_overlay(scroller, self._compose_placeholder))
         return box
 
@@ -33,7 +35,9 @@ class ComposeTabMixin:
         client = self._client()
         if client is None:
             return
-        self._set_placeholder_loading(self._compose_placeholder, "Loading compose projects…")
+        self._set_placeholder_loading(
+            self._compose_placeholder, _("Loading compose projects…")
+        )
         self._run_async(client.compose_ls, self._on_compose)
 
     def _on_compose(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
@@ -41,12 +45,16 @@ class ComposeTabMixin:
         if err is not None:
             msg = w.error_text(err)
             if "compose" in str(err).lower() or "is not a docker command" in str(err).lower():
-                msg = ("Docker Compose is not available on this host.\n"
-                       "Install the Compose plugin to manage stacks here.")
+                msg = _(
+                    "Docker Compose is not available on this host.\n"
+                    "Install the Compose plugin to manage stacks here."
+                )
             self._set_placeholder_idle(self._compose_placeholder, msg, error=True)
             return
         if not rows:
-            self._set_placeholder_idle(self._compose_placeholder, "No compose projects")
+            self._set_placeholder_idle(
+                self._compose_placeholder, _("No compose projects")
+            )
             return
         self._hide_placeholder(self._compose_placeholder)
         for proj in rows:
@@ -77,21 +85,21 @@ class ComposeTabMixin:
         # Up/redeploy is streamed (needs the config file); start/stop/restart are
         # captured; down is destructive (confirm) and streamed.
         first_config = (config or "").split(",")[0].strip()
-        w.add_row_action(row, "view-refresh-symbolic", "Up / redeploy (compose up -d)",
+        w.add_row_action(row, "view-refresh-symbolic", _("Up / redeploy (compose up -d)"),
                          lambda f=first_config: self._compose_up(name, f), refreshes=False)
-        w.add_row_action(row, "media-playback-start-symbolic", "Start",
+        w.add_row_action(row, "media-playback-start-symbolic", _("Start"),
                          lambda: self._compose_action(name, "start"))
-        w.add_row_action(row, "media-playback-stop-symbolic", "Stop",
+        w.add_row_action(row, "media-playback-stop-symbolic", _("Stop"),
                          lambda: self._compose_action(name, "stop"))
-        w.add_row_action(row, "system-reboot-symbolic", "Restart",
+        w.add_row_action(row, "system-reboot-symbolic", _("Restart"),
                          lambda: self._compose_action(name, "restart"))
-        w.add_row_action(row, "view-list-symbolic", "Services (compose ps)",
+        w.add_row_action(row, "view-list-symbolic", _("Services (compose ps)"),
                          lambda: self._compose_services(name), refreshes=False)
         if first_config:
-            w.add_row_action(row, "document-open-symbolic", "View compose file",
+            w.add_row_action(row, "document-open-symbolic", _("View compose file"),
                              lambda f=first_config: self._compose_view_file(f),
                              refreshes=False)
-        w.add_row_action(row, "user-trash-symbolic", "Down (stop & remove)",
+        w.add_row_action(row, "user-trash-symbolic", _("Down (stop & remove)"),
                          lambda: self._compose_down(name), refreshes=False)
         return w.listbox_wrap(row)
 
@@ -107,13 +115,17 @@ class ComposeTabMixin:
                 state = w.field(s, "State", "Status", default="")
                 ports = w.field(s, "Publishers", "Ports", default="")
                 lines.append(" · ".join(p for p in (svc, state, ports) if p))
-            return "\n".join(lines) or "(no services)"
+            return "\n".join(lines) or _("(no services)")
 
         def done(rows: Optional[List[dict]], err: Optional[Exception]) -> None:
             if err is not None:
-                self._toast(f"compose ps {project} failed: {err}")
+                self._toast(
+                    _("compose ps {project} failed: {detail}").format(
+                        project=project, detail=err
+                    )
+                )
                 return
-            TextViewDialog(self._window(), f"{project} — services",
+            TextViewDialog(self._window(), _("{project} — services").format(project=project),
                            render(rows or [])).present()
 
         self._run_async(lambda: client.compose_ps(project), done)
@@ -122,9 +134,16 @@ class ComposeTabMixin:
         client = self._client()
         if client is None:
             return
+        action_label = {
+            "start": _("Start {name}"),
+            "stop": _("Stop {name}"),
+            "restart": _("Restart {name}"),
+        }.get(action, _("Run {action} on {name}")).format(
+            action=action, name=project
+        )
         self._run_async(
             lambda: client.compose(project, action),
-            lambda res, err: self._on_action(f"{action} {project}", res, err,
+            lambda res, err: self._on_action(action_label, res, err,
                                              self._refresh_compose),
         )
 
@@ -134,12 +153,15 @@ class ComposeTabMixin:
         if client is None or not nick:
             return
         if not config_file:
-            self._toast("No compose file path for this project")
+            self._toast(_("No compose file path for this project"))
             return
         ok = self._open_command_terminal(
-            nick, client.compose_up_command(config_file), title=f"compose up: {project}")
+            nick,
+            client.compose_up_command(config_file),
+            title=_("compose up: {project}").format(project=project),
+        )
         if not ok:
-            self._toast("Could not start compose up")
+            self._toast(_("Could not start compose up"))
 
     def _compose_down(self, project: str) -> None:
         client = self._client()
@@ -149,14 +171,17 @@ class ComposeTabMixin:
 
         def do(_force: bool) -> None:
             ok = self._open_command_terminal(
-                nick, client.compose_down_command(project), title=f"compose down: {project}")
+                nick,
+                client.compose_down_command(project),
+                title=_("compose down: {project}").format(project=project),
+            )
             if not ok:
-                self._toast("Could not start compose down")
+                self._toast(_("Could not start compose down"))
 
         self._confirm(
             heading=_("Tear down stack?"),
             body=_("This stops and removes all containers, networks for “{name}”.").format(name=project),
-            destructive_label="Down",
+            destructive_label=_("Down"),
             on_confirm=do,
         )
 
@@ -167,9 +192,12 @@ class ComposeTabMixin:
 
         def done(text: Optional[str], err: Optional[Exception]) -> None:
             if err is not None:
-                self._toast(f"Read {path} failed: {err}")
+                self._toast(
+                    _("Read {path} failed: {detail}").format(
+                        path=path, detail=err
+                    )
+                )
                 return
             TextViewDialog(self._window(), path, text or "").present()
 
         self._run_async(lambda: client.read_file(path), done)
-

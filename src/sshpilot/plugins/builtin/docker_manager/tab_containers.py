@@ -53,7 +53,9 @@ class ContainersTabMixin:
         self._containers_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._containers_list.connect("row-selected", self._on_container_row_selected)
         scroller.set_child(self._containers_list)
-        self._containers_placeholder = self._make_loading_placeholder("Loading containers…")
+        self._containers_placeholder = self._make_loading_placeholder(
+            _("Loading containers…")
+        )
         box.append(w.wrap_with_overlay(scroller, self._containers_placeholder))
         return box
 
@@ -66,7 +68,9 @@ class ContainersTabMixin:
         # auto-refresh of an already-loaded view (even an empty or errored one)
         # updates silently (no flashing).
         if not self._containers_loaded:
-            self._set_placeholder_loading(self._containers_placeholder, "Loading containers…")
+            self._set_placeholder_loading(
+                self._containers_placeholder, _("Loading containers…")
+            )
         show_all = self._show_all_check.get_active()
         gen = self._load_gen
         self._run_async(lambda: client.ps(all=show_all),
@@ -118,7 +122,7 @@ class ContainersTabMixin:
                 first = self._containers[0]
                 self._set_selected_container(
                     self._container_cid(first),
-                    w.field(first, "Names", "Name", default="container"),
+                    w.field(first, "Names", "Name", default=_("container")),
                     source="auto")
             return
         child = self._containers_list.get_first_child()
@@ -133,7 +137,7 @@ class ContainersTabMixin:
             first = self._containers[0]
             self._set_selected_container(
                 self._container_cid(first),
-                w.field(first, "Names", "Name", default="container"),
+                w.field(first, "Names", "Name", default=_("container")),
                 source="auto")
         else:
             self._set_selected_container(None, None, source="auto")
@@ -171,7 +175,9 @@ class ContainersTabMixin:
         """Full rebuild — used by tests; polling uses ``_sync_containers_list``."""
         w.clear_listbox(self._containers_list)
         if not self._containers:
-            self._set_placeholder_idle(self._containers_placeholder, "No containers")
+            self._set_placeholder_idle(
+                self._containers_placeholder, _("No containers")
+            )
             return
         for c in self._containers:
             self._containers_list.append(self._container_row(c))
@@ -181,7 +187,9 @@ class ContainersTabMixin:
         """Merge polled container data into the list without a full clear."""
         if not self._containers:
             w.clear_listbox(self._containers_list)
-            self._set_placeholder_idle(self._containers_placeholder, "No containers")
+            self._set_placeholder_idle(
+                self._containers_placeholder, _("No containers")
+            )
             return
 
         existing: dict[str, Gtk.ListBoxRow] = {}
@@ -235,7 +243,9 @@ class ContainersTabMixin:
         if visible == 0:
             self._set_placeholder_idle(
                 self._containers_placeholder,
-                "No matching containers" if self._container_query else "No containers",
+                _("No matching containers")
+                if self._container_query
+                else _("No containers"),
             )
         else:
             self._hide_placeholder(self._containers_placeholder)
@@ -262,9 +272,13 @@ class ContainersTabMixin:
                 row._health_badge = None
             return
         hicon, hcls, htip = {
-            "healthy": ("emblem-ok-symbolic", "success", "Healthy"),
-            "unhealthy": ("dialog-warning-symbolic", "error", "Unhealthy"),
-            "starting": ("content-loading-symbolic", "warning", "Health check starting"),
+            "healthy": ("emblem-ok-symbolic", "success", _("Healthy")),
+            "unhealthy": ("dialog-warning-symbolic", "error", _("Unhealthy")),
+            "starting": (
+                "content-loading-symbolic",
+                "warning",
+                _("Health check starting"),
+            ),
         }[health]
         if badge is None:
             badge = Gtk.Image.new_from_icon_name(hicon)
@@ -315,35 +329,35 @@ class ContainersTabMixin:
             self._add_web_menu(row, name, published)
 
         if running or paused:
-            w.add_row_action(row, "media-playback-stop-symbolic", "Stop",
+            w.add_row_action(row, "media-playback-stop-symbolic", _("Stop"),
                              lambda: self._lifecycle("stop", cid, name))
-            w.add_row_action(row, "view-refresh-symbolic", "Restart",
+            w.add_row_action(row, "view-refresh-symbolic", _("Restart"),
                              lambda: self._lifecycle("restart", cid, name))
             if paused:
-                w.add_row_action(row, "media-playback-start-symbolic", "Resume",
+                w.add_row_action(row, "media-playback-start-symbolic", _("Resume"),
                                  lambda: self._lifecycle("unpause", cid, name))
             else:
-                w.add_row_action(row, "media-playback-pause-symbolic", "Pause",
+                w.add_row_action(row, "media-playback-pause-symbolic", _("Pause"),
                                  lambda: self._lifecycle("pause", cid, name))
-            w.add_row_action(row, "process-stop-symbolic", "Kill",
+            w.add_row_action(row, "process-stop-symbolic", _("Kill"),
                              lambda: self._lifecycle("kill", cid, name))
-            w.add_row_action(row, "utilities-terminal-symbolic", "Open shell",
+            w.add_row_action(row, "utilities-terminal-symbolic", _("Open shell"),
                              lambda: self._open_shell(cid, name), refreshes=False)
-            w.add_row_action(row, "view-paged-symbolic", "Logs",
+            w.add_row_action(row, "view-paged-symbolic", _("Logs"),
                              lambda: self._open_container_logs(cid, name, follow=True),
                              refreshes=False)
         else:
-            w.add_row_action(row, "media-playback-start-symbolic", "Start",
+            w.add_row_action(row, "media-playback-start-symbolic", _("Start"),
                              lambda: self._lifecycle("start", cid, name))
-            w.add_row_action(row, "view-paged-symbolic", "Logs",
+            w.add_row_action(row, "view-paged-symbolic", _("Logs"),
                              lambda: self._open_container_logs(cid, name),
                              refreshes=False)
-        w.add_row_action(row, "dialog-information-symbolic", "Details",
+        w.add_row_action(row, "dialog-information-symbolic", _("Details"),
                          lambda: self._show_details(cid, name), refreshes=False)
-        w.add_row_action(row, "preferences-system-symbolic", "Env",
+        w.add_row_action(row, "preferences-system-symbolic", _("Env"),
                          lambda: self._show_details(cid, name, page="env"),
                          refreshes=False)
-        w.add_row_action(row, "user-trash-symbolic", "Remove",
+        w.add_row_action(row, "user-trash-symbolic", _("Remove"),
                          lambda: self._remove_container(cid, name))
 
     def _update_container_row_box(self, row: Gtk.Box, c: dict) -> bool:
@@ -387,10 +401,14 @@ class ContainersTabMixin:
     def _on_details(self, name: str, data: Optional[dict], err: Optional[Exception],
                     *, page: str = "overview") -> None:
         if err is not None:
-            self._toast(f"Inspect {name} failed: {err}")
+            self._toast(
+                _("Inspect {name} failed: {detail}").format(
+                    name=name, detail=err
+                )
+            )
             return
         if not data:
-            self._toast(f"No details for {name}")
+            self._toast(_("No details for {name}").format(name=name))
             return
         ContainerDetailsDialog(
             self._window(), name, data, initial_page=page).present()
@@ -399,7 +417,7 @@ class ContainersTabMixin:
     def _create_container(self) -> None:
         client = self._client()
         if client is None:
-            self._toast("Select a host first")
+            self._toast(_("Select a host first"))
             return
         images = [f"{w.field(i, 'Repository')}:{w.field(i, 'Tag')}"
                   for i in self._cached_images
@@ -409,7 +427,7 @@ class ContainersTabMixin:
             self._run_async(
                 lambda: client.create_container(spec.pop("image"), **spec),
                 lambda res, err: self._on_action(
-                    "create container", res, err, self._refresh_containers),
+                    _("Create container"), res, err, self._refresh_containers),
             )
 
         # Fetch the host's networks first so the dialog's Network picker is
@@ -430,7 +448,17 @@ class ContainersTabMixin:
 
         def done(res: Any, err: Optional[Exception]) -> None:
             self._busy_cids.discard(cid)
-            self._on_action(f"{action} {name}", res, err, self._refresh_containers)
+            action_label = {
+                "start": _("Start {name}"),
+                "stop": _("Stop {name}"),
+                "restart": _("Restart {name}"),
+                "unpause": _("Resume {name}"),
+                "pause": _("Pause {name}"),
+                "kill": _("Kill {name}"),
+            }.get(action, _("Run {action} on {name}")).format(
+                action=action, name=name
+            )
+            self._on_action(action_label, res, err, self._refresh_containers)
 
         self._run_async(lambda: client.lifecycle(action, cid), done)
 
@@ -446,16 +474,21 @@ class ContainersTabMixin:
 
             def done(res: Any, err: Optional[Exception]) -> None:
                 self._busy_cids.discard(cid)
-                self._on_action(f"remove {name}", res, err, self._refresh_containers)
+                self._on_action(
+                    _("Remove {name}").format(name=name),
+                    res,
+                    err,
+                    self._refresh_containers,
+                )
 
             self._run_async(lambda: client.lifecycle("rm", cid, force=force), done)
 
         self._confirm(
             heading=_("Remove container?"),
             body=_("This will remove “{name}”.").format(name=name),
-            destructive_label="Remove",
+            destructive_label=_("Remove"),
             on_confirm=do,
-            force_label="Force (-f) — remove even if running",
+            force_label=_("Force (-f) — remove even if running"),
         )
 
     # --- discovered web UIs (published TCP ports) ----------------------
@@ -474,8 +507,8 @@ class ContainersTabMixin:
                             xalign=0, hexpand=True)
             line.append(lbl)
             for icon, tip, in_tab in (
-                    ("tab-new-symbolic", "Open in tab", True),
-                    ("adw-external-link-symbolic", "Open in browser", False)):
+                    ("tab-new-symbolic", _("Open in tab"), True),
+                    ("adw-external-link-symbolic", _("Open in browser"), False)):
                 b = Gtk.Button.new_from_icon_name(icon)
                 b.add_css_class("flat")
                 b.set_tooltip_text(tip)
@@ -501,7 +534,9 @@ class ContainersTabMixin:
 
         def done(lp: Any, err: Optional[Exception]) -> None:
             if err is not None:
-                self._toast(f"Port forward failed: {err}")
+                self._toast(
+                    _("Port forward failed: {detail}").format(detail=err)
+                )
             else:
                 self._present_service(name, f"{scheme}://localhost:{lp}",
                                       in_tab)
@@ -515,7 +550,7 @@ class ContainersTabMixin:
                 return
         from ....web_tab import open_url_in_browser  # noqa: PLC0415
         if not open_url_in_browser(url):
-            self._toast("Could not open browser")
+            self._toast(_("Could not open browser"))
 
     def _open_shell(self, cid: str, name: str) -> None:
         client = self._client()
@@ -524,10 +559,12 @@ class ContainersTabMixin:
             return
 
         ok = self._open_command_terminal(
-            nick, client.exec_shell_command(cid), title=f"sh: {name}"
+            nick,
+            client.exec_shell_command(cid),
+            title=_("sh: {name}").format(name=name),
         )
         if not ok:
-            self._toast("Could not open shell")
+            self._toast(_("Could not open shell"))
 
     def _follow_logs(self, cid: str, name: str) -> None:
         client = self._client()
@@ -538,8 +575,10 @@ class ContainersTabMixin:
             cid, tail=int(self._tail_spin.get_value()),
             timestamps=self._ts_switch.get_active(),
         )
-        ok = self._open_command_terminal(nick, cmd, title=f"logs: {name}")
+        ok = self._open_command_terminal(
+            nick, cmd, title=_("logs: {name}").format(name=name)
+        )
         if not ok:
-            self._toast("Could not open logs")
+            self._toast(_("Could not open logs"))
 
     # ================================================================
