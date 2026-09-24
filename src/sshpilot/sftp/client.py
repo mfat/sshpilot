@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from typing import Deque, Dict, Iterator, List, Optional, Tuple
 
@@ -18,9 +19,15 @@ logger = logging.getLogger(__name__)
 _CHUNK = 32768  # 32 KiB — within the SFTP max packet for reads/writes.
 # Upper bound on a read/write chunk, whatever limits@openssh.com advertises.
 _MAX_CHUNK = 4 * 1024 * 1024
-# Reads/writes a file keeps in flight, so a transfer costs about one round
-# trip per window instead of one per chunk.
-_PIPELINE_DEPTH = 16
+# Starting READ/WRITE window. FileZilla uses the same initial depth, then grows
+# it from measured RTT so a high-latency link still keeps the pipe full.
+_INITIAL_PIPELINE_DEPTH = 16
+# Target outstanding data as a multiple of one RTT (FileZilla's 500 ms aim).
+_TARGET_WINDOW_MS = 500
+# Hard ceiling on request count (FileZilla uses 16384); we also bound by bytes.
+_MAX_PENDING_REQUESTS = 16 * 1024
+# Cap bytes in flight so adaptive growth cannot pin tens of MiB of buffers.
+_MAX_BYTES_IN_FLIGHT = 32 * 1024 * 1024
 # Mass ``FXP_REMOVE`` window. FileZilla uses 100 for the same reason: deletes
 # are tiny requests, so a deeper window hides RTT better than the transfer
 # depth without saturating the channel the way large READ/WRITE payloads would.
@@ -35,6 +42,64 @@ class _Pending:
     def __init__(self) -> None:
         self.event = threading.Event()
         self.response: Optional[Tuple[int, bytes]] = None
+
+
+class _AdaptivePipeline:
+    """FileZilla-style outstanding-request window grown from measured RTT.
+
+    When the window is full, a probe marks the end of the in-flight range. Once
+    replies catch up to that marker, the elapsed time estimates one RTT and the
+    window grows or shrinks toward ``_TARGET_WINDOW_MS`` of outstanding work.
+    """
+
+    __slots__ = (
+        "max_pending",
+        "peak_pending",
+        "_chunk_size",
+        "_hard_cap",
+        "_probe_started",
+        "_probe_marker",
+    )
+
+    def __init__(self, chunk_size: int) -> None:
+        self._chunk_size = max(1, int(chunk_size))
+        by_bytes = max(
+            _INITIAL_PIPELINE_DEPTH,
+            _MAX_BYTES_IN_FLIGHT // self._chunk_size,
+        )
+        self._hard_cap = min(_MAX_PENDING_REQUESTS, by_bytes)
+        self.max_pending = _INITIAL_PIPELINE_DEPTH
+        self.peak_pending = _INITIAL_PIPELINE_DEPTH
+        self._probe_started: Optional[float] = None
+        self._probe_marker: Optional[int] = None
+
+    def note_full(self, marker: int) -> None:
+        """Start an RTT probe once the window is saturated."""
+        if self._probe_started is not None:
+            return
+        self._probe_started = time.monotonic()
+        self._probe_marker = marker
+
+    def on_catch_up(self, marker: int) -> None:
+        """Adjust depth when replies reach the probe marker."""
+        if self._probe_started is None or marker != self._probe_marker:
+            return
+        elapsed_ms = max(1, int((time.monotonic() - self._probe_started) * 1000))
+        self._probe_started = None
+        self._probe_marker = None
+        ideal = self.max_pending * _TARGET_WINDOW_MS // elapsed_ms
+        if ideal > self.max_pending:
+            divisor = 2 if ideal > self.max_pending * 2 else 8
+            self.max_pending += max(1, self.max_pending // divisor)
+            if self.max_pending > self._hard_cap:
+                self.max_pending = self._hard_cap
+        elif ideal < self.max_pending:
+            divisor = 2 if ideal * 2 < self.max_pending else 8
+            self.max_pending -= max(1, self.max_pending // divisor)
+            if self.max_pending < _INITIAL_PIPELINE_DEPTH:
+                self.max_pending = _INITIAL_PIPELINE_DEPTH
+        if self.max_pending > self.peak_pending:
+            self.peak_pending = self.max_pending
 
 
 class OpenSSHSFTPClient:
@@ -60,6 +125,9 @@ class OpenSSHSFTPClient:
         # Largest READ/WRITE payload; raised from limits@openssh.com in start().
         self.max_read_length = _CHUNK
         self.max_write_length = _CHUNK
+        # Peak outstanding depth from the most recent transfer pipeline (tests /
+        # diagnostics). Updated by ``iter_read`` and ``PipelinedWriter``.
+        self.last_transfer_peak_pending = _INITIAL_PIPELINE_DEPTH
 
     # -- framing ----------------------------------------------------------
     def _read_exact(self, n: int) -> bytes:
@@ -543,34 +611,46 @@ class OpenSSHSFTPClient:
     ) -> Iterator[bytes]:
         """Yield a file's bytes in order from ``offset``, up to ``length`` or EOF.
 
-        Up to ``_PIPELINE_DEPTH`` reads are in flight at once. A server may
-        return fewer bytes than asked (OpenSSH's sftp-server caps a READ at
-        ~255 KiB), so a short reply is followed up for the rest of its chunk;
-        only an empty reply means EOF.
+        Outstanding READs start at ``_INITIAL_PIPELINE_DEPTH`` and grow from
+        measured RTT (FileZilla-style) so a high-latency link still fills the
+        pipe. A server may return fewer bytes than asked (OpenSSH's sftp-server
+        caps a READ at ~255 KiB), so a short reply is followed up for the rest
+        of its chunk; only an empty reply means EOF.
         """
         step = self.max_read_length
         end = None if length is None else offset + length
+        pipeline = _AdaptivePipeline(step)
         inflight: Deque[Tuple[int, int, _Pending]] = deque()
         next_offset = position = offset
-        while True:
-            while len(inflight) < _PIPELINE_DEPTH and (end is None or next_offset < end):
-                size = step if end is None else min(step, end - next_offset)
-                inflight.append((next_offset, size, self._send_read(handle, next_offset, size)))
-                next_offset += size
-            if not inflight:
-                return
-            chunk_offset, size, slot = inflight.popleft()
-            data = self._read_data(self._wait(slot))
-            chunk_end = chunk_offset + size
-            while data:
-                yield data
-                position += len(data)
-                if position >= chunk_end:
-                    break
-                data = self.read(handle, position, chunk_end - position)
-            if position < chunk_end:
-                # EOF inside this chunk; replies still in flight are past it.
-                return
+        try:
+            while True:
+                while len(inflight) < pipeline.max_pending and (
+                    end is None or next_offset < end
+                ):
+                    size = step if end is None else min(step, end - next_offset)
+                    inflight.append(
+                        (next_offset, size, self._send_read(handle, next_offset, size))
+                    )
+                    next_offset += size
+                    if len(inflight) >= pipeline.max_pending:
+                        pipeline.note_full(next_offset)
+                if not inflight:
+                    return
+                chunk_offset, size, slot = inflight.popleft()
+                data = self._read_data(self._wait(slot))
+                chunk_end = chunk_offset + size
+                while data:
+                    yield data
+                    position += len(data)
+                    if position >= chunk_end:
+                        break
+                    data = self.read(handle, position, chunk_end - position)
+                if position < chunk_end:
+                    # EOF inside this chunk; replies still in flight are past it.
+                    return
+                pipeline.on_catch_up(position)
+        finally:
+            self.last_transfer_peak_pending = pipeline.peak_pending
 
     def pipelined_writer(self, handle: bytes, offset: int = 0) -> "PipelinedWriter":
         return PipelinedWriter(self, handle, offset)
@@ -583,35 +663,56 @@ class OpenSSHSFTPClient:
 
 
 class PipelinedWriter:
-    """Writes to an open handle with up to ``_PIPELINE_DEPTH`` WRITEs in flight.
+    """Writes to an open handle with an RTT-adaptive WRITE window in flight.
 
     Data is split into chunks the server accepts: OpenSSH's sftp-server drops
     the session on a message over 256 KiB. A failed WRITE raises from a later
     ``write()`` or from ``flush()``, which must be called before the handle is
-    closed.
+    closed. Outstanding depth starts at ``_INITIAL_PIPELINE_DEPTH`` and grows
+    toward ~500 ms of in-flight requests (same algorithm as downloads).
     """
 
     def __init__(self, client: "OpenSSHSFTPClient", handle: bytes, offset: int = 0) -> None:
         self._client = client
         self._handle = handle
         self.offset = offset
-        self._inflight: Deque[_Pending] = deque()
+        self._inflight: Deque[Tuple[int, _Pending]] = deque()
+        self._pipeline = _AdaptivePipeline(client.max_write_length)
+        self._acked_through = offset
+
+    @property
+    def peak_pending(self) -> int:
+        return self._pipeline.peak_pending
 
     def write(self, data: bytes) -> None:
         client = self._client
+        pipeline = self._pipeline
         step = client.max_write_length
         view = memoryview(data)
         for start in range(0, len(view), step):
             chunk = bytes(view[start:start + step])
-            self._inflight.append(client._send_write(self._handle, self.offset, chunk))
-            self.offset += len(chunk)
-            if len(self._inflight) >= _PIPELINE_DEPTH:
-                client._expect_ok(client._wait(self._inflight.popleft()))
+            end_offset = self.offset + len(chunk)
+            self._inflight.append(
+                (end_offset, client._send_write(self._handle, self.offset, chunk))
+            )
+            self.offset = end_offset
+            if len(self._inflight) >= pipeline.max_pending:
+                pipeline.note_full(end_offset)
+                self._drain_one()
 
     def flush(self) -> None:
         """Wait until every WRITE is acknowledged."""
-        while self._inflight:
-            self._client._expect_ok(self._client._wait(self._inflight.popleft()))
+        try:
+            while self._inflight:
+                self._drain_one()
+        finally:
+            self._client.last_transfer_peak_pending = self._pipeline.peak_pending
+
+    def _drain_one(self) -> None:
+        end_offset, slot = self._inflight.popleft()
+        self._client._expect_ok(self._client._wait(slot))
+        self._acked_through = end_offset
+        self._pipeline.on_catch_up(end_offset)
 
 
 class OpenSSHSFTPFile:

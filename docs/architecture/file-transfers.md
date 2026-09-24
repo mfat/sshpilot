@@ -32,6 +32,19 @@ These bounds are configurable on `TransferRuntime` construction. Completed
 worker threads are removed; shutdown joins workers within the configured
 deadline.
 
+Concurrent workers share **one** READY SFTP service (one OpenSSH `sftp`
+subsystem session). Per-file throughput comes from pipelining on that session,
+not from opening extra SSH connections.
+
+## Pipelining
+
+`OpenSSHSFTPClient` keeps an outstanding READ/WRITE window that starts at 16
+requests and grows from measured RTT toward roughly 500 ms of in-flight work
+(FileZilla’s adaptive download window), capped by bytes in flight (~32 MiB)
+and a hard request ceiling. Chunk sizes still come from
+`limits@openssh.com` when the server advertises them. Mass deletes use a
+separate fixed depth of 100 `FXP_REMOVE` requests.
+
 ## Atomicity
 
 - Upload: write remote temporary sibling → rename to destination.

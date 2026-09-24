@@ -20,7 +20,11 @@ import time
 import pytest
 
 from sshpilot.sftp import protocol as proto
-from sshpilot.sftp.client import OpenSSHSFTPClient
+from sshpilot.sftp.client import (
+    OpenSSHSFTPClient,
+    _AdaptivePipeline,
+    _INITIAL_PIPELINE_DEPTH,
+)
 
 _SFTP_SERVER = next(
     (
@@ -263,6 +267,97 @@ def test_remove_many_pipelines_over_a_slow_link(tmp_path):
     # 200 removes / depth 100 ≈ 2 windows; leave headroom for handshake jitter.
     # Depth 16 would need ~12.5 windows and fail this bound on a slow link.
     assert round_trips < 5, f"remove_many took {round_trips:.1f} round trips"
+
+
+def test_adaptive_pipeline_grows_on_high_rtt():
+    """FileZilla's 500 ms target grows the window when one RTT is large."""
+    pipeline = _AdaptivePipeline(32768)
+    assert pipeline.max_pending == _INITIAL_PIPELINE_DEPTH
+    pipeline.note_full(marker=32768 * 16)
+    # Simulate a 100 ms RTT: ideal = 16 * 500 / 100 = 80.
+    time.sleep(0.1)
+    pipeline.on_catch_up(marker=32768 * 16)
+    assert pipeline.max_pending > _INITIAL_PIPELINE_DEPTH
+    assert pipeline.peak_pending == pipeline.max_pending
+
+
+def test_adaptive_pipeline_respects_bytes_in_flight_cap():
+    pipeline = _AdaptivePipeline(32768)
+    # Many growth steps as if RTT were tiny; must stop at the hard cap.
+    for marker in range(1, 64):
+        pipeline.note_full(marker=marker)
+        pipeline._probe_started = time.monotonic() - 0.001
+        pipeline.on_catch_up(marker=marker)
+    assert pipeline.max_pending == pipeline._hard_cap
+    assert pipeline.peak_pending == pipeline._hard_cap
+
+
+def test_adaptive_pipeline_never_shrinks_below_initial():
+    pipeline = _AdaptivePipeline(32768)
+    pipeline.max_pending = _INITIAL_PIPELINE_DEPTH
+    pipeline.note_full(marker=1)
+    # Two-second drain → ideal = 16 * 500 / 2000 = 4, so shrink toward floor.
+    pipeline._probe_started = time.monotonic() - 2.0
+    pipeline.on_catch_up(marker=1)
+    assert pipeline.max_pending == _INITIAL_PIPELINE_DEPTH
+
+
+def test_adaptive_read_grows_window_over_a_slow_link(tmp_path):
+    """Multi-MiB download on a slow link must raise outstanding depth above 16.
+
+    Fixed depth 16 with 32 KiB chunks needs one RTT per 512 KiB; adaptive growth
+    toward a 500 ms window uses far fewer windows for the same payload.
+    """
+    delay = 0.05
+    size = 2 * 1024 * 1024
+    content = os.urandom(size)
+    path = tmp_path / "big.bin"
+    path.write_bytes(content)
+    sftp, process, stdout = _start_client(delay)
+    try:
+        # Force small chunks so request count (not OpenSSH's ~255 KiB) dominates.
+        sftp.max_read_length = 32768
+        started = time.monotonic()
+        with sftp.file(str(path), "rb") as handle:
+            assert handle.read(size + 1) == content
+        round_trips = (time.monotonic() - started) / delay
+        peak = sftp.last_transfer_peak_pending
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert peak > _INITIAL_PIPELINE_DEPTH, f"peak pending stayed at {peak}"
+    # 2 MiB / 32 KiB = 64 chunks. Fixed-16 needs ≥4 windows (~4 RTTs of data)
+    # plus open/close; adaptive should finish the data phase in fewer windows.
+    # Bound leaves room for handshake and EOF follow-up.
+    assert round_trips < 10, f"adaptive read took {round_trips:.1f} round trips"
+
+
+def test_adaptive_write_grows_window_over_a_slow_link(tmp_path):
+    delay = 0.05
+    size = 2 * 1024 * 1024
+    content = os.urandom(size)
+    path = tmp_path / "out.bin"
+    sftp, process, stdout = _start_client(delay)
+    try:
+        sftp.max_write_length = 32768
+        started = time.monotonic()
+        with sftp.file(str(path), "wb") as handle:
+            handle.write(content)
+        round_trips = (time.monotonic() - started) / delay
+        peak = sftp.last_transfer_peak_pending
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert path.read_bytes() == content
+    assert peak > _INITIAL_PIPELINE_DEPTH, f"peak pending stayed at {peak}"
+    assert round_trips < 10, f"adaptive write took {round_trips:.1f} round trips"
+
+
+def test_tiny_read_does_not_grow_the_pipeline(client, tmp_path):
+    """A short file never fills the initial window, so depth stays at 16."""
+    path = tmp_path / "tiny.bin"
+    path.write_bytes(b"hello")
+    with client.file(str(path), "rb") as handle:
+        assert handle.read() == b"hello"
+    assert client.last_transfer_peak_pending == _INITIAL_PIPELINE_DEPTH
 
 
 def test_listing_a_large_directory_over_a_slow_link(tmp_path):
