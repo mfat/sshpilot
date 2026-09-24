@@ -172,8 +172,9 @@ class _BlockingSftpClient(_FakeSftpClient):
 
 
 class _FakeSftpHandle:
-    def __init__(self, client):
+    def __init__(self, client, *, remote_software=None):
         self.client = client
+        self.remote_software = remote_software
 
     def terminate(self):
         return None
@@ -307,19 +308,23 @@ class _RecursiveSftpClient(_FakeSftpClient):
 
 
 class _FakeSftpRunner:
-    def __init__(self, client):
+    def __init__(self, client, *, remote_software=None):
         self._client = client
+        self._remote_software = remote_software
 
     def start(self, _spec, _on_exit=None):
-        return _FakeSftpHandle(self._client)
+        return _FakeSftpHandle(self._client, remote_software=self._remote_software)
 
     def close(self):
         return None
 
 
-def _make_ready_sftp_service(owner, client=None):
+def _make_ready_sftp_service(owner, client=None, *, remote_software=None):
     client = client if client is not None else _FakeSftpClient()
-    sftp_runtime = SftpServiceRuntime(_CoreClient(), runner=_FakeSftpRunner(client))
+    sftp_runtime = SftpServiceRuntime(
+        _CoreClient(),
+        runner=_FakeSftpRunner(client, remote_software=remote_software),
+    )
     summary = sftp_runtime.prepare_open_service(
         OpenSftpRequest(connection_id=ConnectionId("demo")),
         client_id=owner,
@@ -810,6 +815,80 @@ def test_constructor_rejects_non_positive_limits():
         TransferRuntime(sftp_runtime, max_concurrent_transfers=0)
     with pytest.raises(ValueError, match="max queued transfers"):
         TransferRuntime(sftp_runtime, max_queued_transfers=0)
+
+
+def test_dropbear_serializes_transfers_despite_global_concurrency():
+    """Dropbear SSH shares one SFTP channel — never run two copy loops on it."""
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(
+        owner, client=client, remote_software="dropbear_2024.85"
+    )
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=4,
+        max_queued_transfers=4,
+    )
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    assert transfer_runtime._records[first.id].service_concurrency_limit == 1
+    assert transfer_runtime._records[second.id].service_concurrency_limit == 1
+
+    transfer_runtime.run_transfer(first.id)
+    _wait_until(
+        client.write_started.is_set,
+        message="first transfer never reached write",
+    )
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: second.id in transfer_runtime._pending_run,
+        message="second transfer was not queued behind Dropbear's single slot",
+    )
+    assert len(transfer_runtime._worker_threads) == 1
+    assert transfer_runtime.get_transfer(second.id).state is TransferState.QUEUED
+
+    client.allow_write.set()
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
+
+
+def test_openssh_allows_parallel_transfers_up_to_global_limit():
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(
+        owner, client=client, remote_software="OpenSSH_9.6"
+    )
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=2,
+        max_queued_transfers=2,
+    )
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    assert transfer_runtime._records[first.id].service_concurrency_limit == 2
+
+    transfer_runtime.run_transfer(first.id)
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: len(transfer_runtime._worker_threads) == 2,
+        message="OpenSSH should run both transfers concurrently",
+    )
+    assert client.max_active_writes <= 2
+    client.allow_write.set()
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
 
 
 def test_shutdown_cancels_active_transfer_deterministically():

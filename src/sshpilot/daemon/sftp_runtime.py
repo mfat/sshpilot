@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
 from sshpilot.api.client import SshPilotClient
+from sshpilot.sftp.server_limits import parse_remote_software_version
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
     CoreEvent,
@@ -172,6 +173,57 @@ def _read_local_authorized_keys() -> tuple[str, bytes, int | None]:
     return path, content, mode
 
 
+def _argv_with_remote_banner_logging(argv: Tuple[str, ...]) -> Tuple[str, ...]:
+    """Ensure OpenSSH logs the remote software banner on stderr (DEBUG1).
+
+    Dropbear vs OpenSSH must be read from the SSH handshake — SFTP extensions
+    alone are insufficient because OpenWrt often runs Dropbear SSH with an
+    OpenSSH ``sftp-server`` subsystem.
+    """
+    if not argv:
+        return argv
+    # Already verbose enough (``-v`` / ``-vv`` / explicit LogLevel).
+    for item in argv[1:]:
+        if item in {"-v", "-vv", "-vvv"} or item.startswith("LogLevel="):
+            return argv
+        if item.startswith("-o") and "LogLevel=" in item:
+            return argv
+    # Scan paired ``-o LogLevel=…`` forms.
+    for index, item in enumerate(argv[1:], start=1):
+        if item == "-o" and index + 1 < len(argv) and argv[index + 1].startswith(
+            "LogLevel="
+        ):
+            return argv
+    return (argv[0], "-o", "LogLevel=DEBUG1", *argv[1:])
+
+
+def _drain_ssh_stderr_for_banner(
+    stream, holder: Dict[str, Optional[str]]
+) -> None:
+    """Read ssh stderr until EOF; keep the first remote-software banner token."""
+    try:
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            if holder.get("software"):
+                continue
+            try:
+                text = line.decode("utf-8", errors="replace")
+            except AttributeError:
+                text = str(line)
+            software = parse_remote_software_version(text)
+            if software:
+                holder["software"] = software
+    except Exception:  # pragma: no cover - best-effort drain
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+
 class SftpProcessHandle(Protocol):
     """Owned SFTP transport: a live client plus its underlying process."""
 
@@ -218,11 +270,16 @@ class _SubprocessSftpHandle:
         client: OpenSSHSFTPClient,
         on_exit: SftpExitCallback,
         unregister: Callable[["_SubprocessSftpHandle"], None],
+        *,
+        remote_software: Optional[str] = None,
+        stderr_thread: Optional[threading.Thread] = None,
     ) -> None:
         self._process = process
         self.client = client
         self._on_exit = on_exit
         self._unregister = unregister
+        self.remote_software = remote_software
+        self._stderr_thread = stderr_thread
         self._lock = threading.Lock()
         self._terminated = False
         self._notified = False
@@ -239,6 +296,12 @@ class _SubprocessSftpHandle:
         if self._process.poll() is None:
             try:
                 self._process.terminate()
+            except Exception:  # pragma: no cover - best effort
+                pass
+        # Unblock a stuck stderr reader so terminate/wait cannot deadlock.
+        if self._process.stderr is not None:
+            try:
+                self._process.stderr.close()
             except Exception:  # pragma: no cover - best effort
                 pass
 
@@ -264,6 +327,8 @@ class _SubprocessSftpHandle:
             self._notified = True
         forget_owned_process(self._process.pid)
         self._unregister(self)
+        if self._stderr_thread is not None and self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=0.5)
         self._on_exit(return_code)
 
 
@@ -317,6 +382,7 @@ class SubprocessSftpProcessRunner:
                 "The SFTP launch command is invalid",
                 connection_id=spec.connection_id,
             )
+        argv = _argv_with_remote_banner_logging(argv)
         with self._condition:
             if self._closed:
                 raise RuntimeError("SFTP process runner is closed")
@@ -324,10 +390,20 @@ class SubprocessSftpProcessRunner:
             argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env=dict(environment),
             close_fds=True,
         )
+        # Drain stderr continuously so a DEBUG LogLevel pipe cannot block ssh,
+        # and capture the remote software banner for transfer concurrency.
+        banner_holder: Dict[str, Optional[str]] = {"software": None}
+        stderr_thread = threading.Thread(
+            target=_drain_ssh_stderr_for_banner,
+            args=(process.stderr, banner_holder),
+            name="sshpilot-sftp-stderr",
+            daemon=True,
+        )
+        stderr_thread.start()
         client = OpenSSHSFTPClient(
             process.stdin,
             process.stdout,
@@ -341,13 +417,35 @@ class SubprocessSftpProcessRunner:
                 process.wait(timeout=self._connect_timeout)
             except Exception:  # pragma: no cover - defensive
                 process.kill()
+            if process.stderr is not None:
+                try:
+                    process.stderr.close()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            stderr_thread.join(timeout=0.5)
             raise SshPilotError(
                 ErrorCode.SFTP_SERVICE_NOT_READY,
                 "The SFTP session could not be established",
                 connection_id=spec.connection_id,
             ) from exc
+        # Banner is logged during SSH handshake, before SFTP VERSION returns.
+        stderr_thread.join(timeout=0.2)
+        remote_software = banner_holder.get("software")
+        if remote_software:
+            logger.debug(
+                "SFTP remote SSH software=%s [connection=%s]",
+                remote_software,
+                spec.connection_id,
+            )
         record_owned_process_or_abandon(process, kind=KIND_SFTP)
-        handle = _SubprocessSftpHandle(process, client, on_exit, self._unregister)
+        handle = _SubprocessSftpHandle(
+            process,
+            client,
+            on_exit,
+            self._unregister,
+            remote_software=remote_software,
+            stderr_thread=stderr_thread,
+        )
         with self._condition:
             if self._closed:
                 handle.terminate()
@@ -951,6 +1049,24 @@ class SftpServiceRuntime:
 
         record = self._ready_record_for_read(service_id, client_id)
         return record.handle.client, record.connection_id
+
+    def remote_ssh_software(
+        self,
+        service_id: SftpServiceId,
+        client_id: ClientId,
+    ) -> Optional[str]:
+        """SSH software banner for a READY service the caller may use, if known.
+
+        Populated from OpenSSH client stderr during SFTP launch (``remote
+        software version …``). Used to tighten transfer concurrency for
+        Dropbear without treating OpenSSH ``sftp-server`` extensions as proof
+        of a capable SSH channel.
+        """
+        record = self._ready_record_for_read(service_id, client_id)
+        handle = record.handle
+        if handle is None:
+            return None
+        return getattr(handle, "remote_software", None)
 
     # -- close --------------------------------------------------------
     def prepare_close_service(

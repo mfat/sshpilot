@@ -9,8 +9,10 @@ actual byte-copy loop runs on a dedicated per-transfer thread rather than a
 and must not starve the shared command queue; the executor operation merely
 hands work to the bounded transfer worker pool and returns immediately (see
 ``run_transfer``). At most ``max_concurrent_transfers`` copy threads run at
-once; additional accepted transfers wait in ``_pending_run`` up to the
-combined in-flight capacity.
+once globally; each SFTP service also has its own cap (Dropbear SSH channels
+serialize to one transfer — OpenWrt often pairs Dropbear with an OpenSSH
+``sftp-server``, so SFTP extensions alone cannot decide). Additional accepted
+transfers wait in ``_pending_run`` up to the combined in-flight capacity.
 """
 
 from __future__ import annotations
@@ -53,12 +55,14 @@ from sshpilot.logging_support import log_context
 from sshpilot.api.remote_path import remote_path_dirname, remote_path_join
 from sshpilot.api.transfer_identity import new_transfer_id
 from sshpilot.sftp import protocol as sftp_proto
+from sshpilot.sftp.server_limits import transfer_concurrency_for_remote_software
 
 from .sftp_runtime import SftpServiceRuntime
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONCURRENT_TRANSFERS = 4
+DROPBEAR_MAX_CONCURRENT_TRANSFERS = 1
 DEFAULT_MAX_QUEUED_TRANSFERS = 32
 DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS = 200
 DEFAULT_CHUNK_SIZE = 32768
@@ -276,6 +280,9 @@ class _TransferRecord:
     backend: TransferBackend = TransferBackend.SFTP
     scp_request: Optional[StartScpTransferRequest] = None
     scp_cancel_event: Optional[threading.Event] = None
+    # Per-SFTP-service concurrent-transfer cap (Dropbear → 1). SCP uses the
+    # global pool only and leaves this at the runtime default.
+    service_concurrency_limit: int = DEFAULT_MAX_CONCURRENT_TRANSFERS
 
 
 class TransferRuntime:
@@ -440,6 +447,15 @@ class TransferRuntime:
         _client, connection_id = self._sftp_runtime.acquire_active_client(
             request.sftp_service_id, client_id
         )
+        service_limit = transfer_concurrency_for_remote_software(
+            self._sftp_runtime.remote_ssh_software(
+                request.sftp_service_id, client_id
+            ),
+            default=self._max_concurrent_transfers,
+            dropbear=min(
+                DROPBEAR_MAX_CONCURRENT_TRANSFERS, self._max_concurrent_transfers
+            ),
+        )
         transfer_id = self._id_factory()
         now = self._clock()
         local_display = os.path.basename(request.local_path.rstrip("/\\")) or "file"
@@ -461,6 +477,7 @@ class TransferRuntime:
             created_at=now,
             owner_client_id=client_id,
             recursive=bool(request.recursive),
+            service_concurrency_limit=service_limit,
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -1355,8 +1372,30 @@ class TransferRuntime:
             1 for record in self._records.values() if record.state not in _TERMINAL_STATES
         )
 
+    def _count_service_workers_locked(self, sftp_service_id: SftpServiceId) -> int:
+        count = 0
+        for transfer_id in self._worker_threads:
+            record = self._records.get(transfer_id)
+            if (
+                record is not None
+                and record.backend is TransferBackend.SFTP
+                and record.sftp_service_id == sftp_service_id
+            ):
+                count += 1
+        return count
+
+    def _can_start_locked(self, record: _TransferRecord) -> bool:
+        if len(self._worker_threads) >= self._max_concurrent_transfers:
+            return False
+        if record.backend is TransferBackend.SFTP:
+            running = self._count_service_workers_locked(record.sftp_service_id)
+            if running >= max(1, int(record.service_concurrency_limit)):
+                return False
+        return True
+
     def _schedule_or_queue_locked(self, transfer_id: TransferId) -> Optional[threading.Thread]:
-        if len(self._worker_threads) < self._max_concurrent_transfers:
+        record = self._records.get(transfer_id)
+        if record is not None and self._can_start_locked(record):
             return self._register_worker_thread_locked(transfer_id)
         self._pending_run.append(transfer_id)
         return None
@@ -1372,20 +1411,31 @@ class TransferRuntime:
         return thread
 
     def _take_next_runnable_locked(self) -> Optional[TransferId]:
-        while self._pending_run:
-            transfer_id = self._pending_run.pop(0)
+        """Pop the oldest queued transfer that fits global + per-service caps."""
+        kept: List[TransferId] = []
+        selected: Optional[TransferId] = None
+        for transfer_id in self._pending_run:
             record = self._records.get(transfer_id)
             if record is None:
                 continue
-            if record.state is TransferState.QUEUED and not record.cancel_requested:
-                return transfer_id
-        return None
+            if record.state is not TransferState.QUEUED or record.cancel_requested:
+                continue
+            if selected is None and self._can_start_locked(record):
+                selected = transfer_id
+                continue
+            kept.append(transfer_id)
+        self._pending_run = kept
+        return selected
 
     def _promote_queued_locked(self, transfer_id: TransferId) -> Optional[threading.Thread]:
         """Assign a worker to a previously queued transfer."""
 
         record = self._records.get(transfer_id)
         if record is None or record.state is not TransferState.QUEUED:
+            return None
+        if not self._can_start_locked(record):
+            # Put it back; a later completion may free a service slot.
+            self._pending_run.insert(0, transfer_id)
             return None
         if record.started_at is None:
             record.started_at = self._clock()
