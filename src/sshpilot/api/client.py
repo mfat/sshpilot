@@ -138,6 +138,7 @@ from .models.operations import (
     SftpChmodRequest,
     SftpCopyRequest,
     SftpDirectorySizeRequest,
+    SftpFilesystemUsage,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -498,6 +499,9 @@ class SshPilotClient(Protocol):
         ...
 
     def sftp_realpath(self, request: SftpPathRequest) -> str:
+        ...
+
+    def sftp_filesystem_usage(self, request: SftpPathRequest) -> SftpFilesystemUsage:
         ...
 
     def sftp_readlink(self, request: SftpPathRequest) -> str:

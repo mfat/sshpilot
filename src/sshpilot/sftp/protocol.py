@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import struct
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 PROTOCOL_VERSION = 3
 
@@ -145,7 +145,9 @@ def pack_uint64(value: int) -> bytes:
 
 def pack_string(value) -> bytes:
     if isinstance(value, str):
-        value = value.encode("utf-8")
+        # surrogateescape restores the raw bytes of a name that was not valid
+        # UTF-8 when the server sent it (see ``_Reader.text``).
+        value = value.encode("utf-8", "surrogateescape")
     return pack_uint32(len(value)) + value
 
 
@@ -173,7 +175,12 @@ class _Reader:
         return v
 
     def text(self) -> str:
-        return self.string().decode("utf-8", "replace")
+        # surrogateescape, not replace: a filename's bytes need not be valid
+        # UTF-8, and replacing them names a file that does not exist. The
+        # lone surrogates round-trip through ``pack_string``, the daemon
+        # wire (surrogatepass) and os.fsencode, and the GUI shows them with
+        # ``safe_display_text``.
+        return self.string().decode("utf-8", "surrogateescape")
 
     def remaining(self) -> int:
         return len(self._data) - self._pos
@@ -293,6 +300,29 @@ def parse_data(payload: bytes) -> Tuple[int, bytes]:
     reader = _Reader(payload)
     request_id = reader.uint32()
     return request_id, reader.string()
+
+
+class SFTPStatVFS(NamedTuple):
+    """A ``statvfs@openssh.com`` reply; sizes are in ``f_frsize`` units."""
+
+    f_bsize: int
+    f_frsize: int
+    f_blocks: int
+    f_bfree: int
+    f_bavail: int
+    f_files: int
+    f_ffree: int
+    f_favail: int
+    f_fsid: int
+    f_flag: int
+    f_namemax: int
+
+
+def parse_statvfs(payload: bytes) -> SFTPStatVFS:
+    """Parse a ``statvfs@openssh.com`` EXTENDED_REPLY payload."""
+    reader = _Reader(payload)
+    reader.uint32()  # request id
+    return SFTPStatVFS(*(reader.uint64() for _ in SFTPStatVFS._fields))
 
 
 def parse_attrs(payload: bytes) -> Tuple[int, SFTPAttributes]:

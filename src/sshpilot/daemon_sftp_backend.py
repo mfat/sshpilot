@@ -681,6 +681,24 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
+    def filesystem_usage(self, path: str) -> Future:
+        """Future resolving to the
+        :class:`~sshpilot.api.models.operations.SftpFilesystemUsage` of the
+        remote filesystem holding ``path``."""
+        future: Future = Future()
+        target = self._expand(path)
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+        self._sftp_controller.filesystem_usage(
+            target,
+            on_success=lambda usage: self._safe_set(future, result=usage),
+            on_error=lambda exc: self._safe_set(future, exc=_localized_direct_error(exc)),
+        )
+        return future
+
     def rename(self, source: str, target: str) -> Future:
         future: Future = Future()
         source = self._expand(source)

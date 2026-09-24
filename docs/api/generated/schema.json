@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.66",
+  "api_implementation_version": "0.67",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -503,6 +503,10 @@
     },
     "sftp_directory_size": {
       "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "sftp_filesystem_usage": {
+      "capability": "sftp.metadata",
       "status": "daemon-only"
     },
     "sftp_list_directory": {
@@ -1063,6 +1067,9 @@
     },
     "sftp.directory_size": {
       "capability": "sftp.read"
+    },
+    "sftp.filesystem_usage": {
+      "capability": "sftp.metadata"
     },
     "sftp.get_service": {
       "capability": "sftp.read"
@@ -8004,6 +8011,39 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpFilesystemUsage": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "total_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "free_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "available_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
         }
       ],
       "status": "Implemented"

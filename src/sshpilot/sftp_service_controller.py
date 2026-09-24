@@ -37,6 +37,7 @@ from .api.models.operations import (
     SftpDirectorySizeRequest,
     SftpDirectorySizeResult,
     SftpFileTarget,
+    SftpFilesystemUsage,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -349,6 +350,24 @@ class DaemonSftpServiceController:
 
         def _op():
             return self._client.sftp_realpath(
+                SftpPathRequest(service_id=service_id, path=path)
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def filesystem_usage(
+        self,
+        path: str,
+        *,
+        on_success: Callable[[SftpFilesystemUsage], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_filesystem_usage(
                 SftpPathRequest(service_id=service_id, path=path)
             )
 

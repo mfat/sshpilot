@@ -202,6 +202,7 @@ from ..models.operations import (
     SftpDirectorySizeResult,
     SftpFileAccess,
     SftpFileTarget,
+    SftpFilesystemUsage,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -4827,6 +4828,31 @@ def sftp_directory_size_result_from_wire(value: Any) -> SftpDirectorySizeResult:
         size_bytes=_integer(data["size_bytes"], "SFTP size result size bytes"),
         file_count=_integer(data["file_count"], "SFTP size result file count"),
         directory_count=_integer(data["directory_count"], "SFTP size result directory count"),
+    )
+
+
+def sftp_filesystem_usage_to_wire(usage: SftpFilesystemUsage) -> Dict[str, Any]:
+    if type(usage) is not SftpFilesystemUsage:
+        raise TypeError("SFTP filesystem usage is required")
+    return {
+        "path": usage.path,
+        "total_bytes": usage.total_bytes,
+        "free_bytes": usage.free_bytes,
+        "available_bytes": usage.available_bytes,
+    }
+
+
+def sftp_filesystem_usage_from_wire(value: Any) -> SftpFilesystemUsage:
+    data = _strict_fields(
+        value,
+        required={"path", "total_bytes", "free_bytes", "available_bytes"},
+        context="SFTP filesystem usage",
+    )
+    return SftpFilesystemUsage(
+        path=_text(data["path"], "SFTP filesystem usage path"),
+        total_bytes=_integer(data["total_bytes"], "SFTP filesystem total bytes"),
+        free_bytes=_integer(data["free_bytes"], "SFTP filesystem free bytes"),
+        available_bytes=_integer(data["available_bytes"], "SFTP filesystem available bytes"),
     )
 
 

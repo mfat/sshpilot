@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import EventType, Subscription
 from sshpilot.api.models.broadcast import HostCommandResult, HostCommandState
 from sshpilot.api.models.common import ClientId
@@ -37,8 +38,13 @@ CLIENT = ClientId("test-backup")
 class FakeSftpRuntime:
     """Models the daemon SFTP runtime over an in-memory remote filesystem."""
 
-    def __init__(self, *, ready=True, home="/home/u", dirs=("/home/u",), files=()):
+    def __init__(
+        self, *, ready=True, home="/home/u", dirs=("/home/u",), files=(), available_bytes=None
+    ):
         self.ready = ready
+        # None models a server without statvfs@openssh.com.
+        self.available_bytes = available_bytes
+        self.usage_paths = []
         self.home = home
         self.dirs = set(dirs)
         self.files = dict.fromkeys(files, b"")
@@ -67,6 +73,12 @@ class FakeSftpRuntime:
 
     def realpath(self, request, *, client_id):
         return self.home
+
+    def filesystem_usage(self, request, *, client_id):
+        self.usage_paths.append(request.path)
+        if self.available_bytes is None:
+            raise SshPilotError(ErrorCode.REMOTE_UNSUPPORTED_OPERATION, "no statvfs")
+        return SimpleNamespace(available_bytes=self.available_bytes)
 
     def stat_path(self, request, *, client_id):
         if request.path in self.dirs:
@@ -257,12 +269,20 @@ def test_sftp_store_reports_a_failed_transfer(tmp_path):
     assert sftp.removed == ["/home/u/sshpilot-backups/b.spbk.part"]
 
 
-def test_sftp_store_free_space_is_unknown():
-    # No statvfs@openssh.com in the client, so the honest answer is "unknown"
+def test_sftp_store_reads_free_space_from_statvfs():
+    sftp = FakeSftpRuntime(available_bytes=5 * 1024 * 1024)
+    with SftpBackupStore(sftp, FakeTransferRuntime(sftp), "h", client_id=CLIENT) as store:
+        assert store.free_space_bytes("~/x") == 5 * 1024 * 1024
+    # The tilde is expanded before the runtime sees the path.
+    assert sftp.usage_paths == ["/home/u/x"]
+
+
+def test_sftp_store_free_space_is_unknown_without_statvfs():
+    # A server without statvfs@openssh.com: the honest answer is "unknown"
     # and the backend skips the pre-check rather than inventing a number.
     sftp = FakeSftpRuntime()
-    store = SftpBackupStore(sftp, FakeTransferRuntime(sftp), "h", client_id=CLIENT)
-    assert store.free_space_bytes("~/x") is None
+    with SftpBackupStore(sftp, FakeTransferRuntime(sftp), "h", client_id=CLIENT) as store:
+        assert store.free_space_bytes("~/x") is None
 
 
 def test_sftp_store_signals_unavailable_when_the_service_never_readies():

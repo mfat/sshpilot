@@ -119,6 +119,7 @@ direct core service compositions are test-only and are not client choices.
 | `sftp_directory_size` | Daemon only | `sftp.read` |
 | `sftp_lstat` | Daemon only | `sftp.metadata` |
 | `sftp_realpath` | Daemon only | `sftp.metadata` |
+| `sftp_filesystem_usage` | Daemon only | `sftp.metadata` |
 | `sftp_readlink` | Daemon only | `sftp.metadata` |
 | `sftp_mkdir` | Daemon only | `sftp.mutate` |
 | `sftp_create_file` | Daemon only | `sftp.mutate` |
@@ -216,6 +217,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: sftp_read_file status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_readlink status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_realpath status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_filesystem_usage status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_remove status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_rename status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_replace_file status=daemon-only capability=sftp.mutate -->
@@ -403,6 +405,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sftp.directory_size` | `sftp.read` | Implemented |
 | `sftp.lstat` | `sftp.metadata` | Implemented |
 | `sftp.realpath` | `sftp.metadata` | Implemented |
+| `sftp.filesystem_usage` | `sftp.metadata` | Implemented |
 | `sftp.readlink` | `sftp.metadata` | Implemented |
 | `sftp.mkdir` | `sftp.mutate` | Implemented |
 | `sftp.create_file` | `sftp.mutate` | Implemented |
@@ -530,6 +533,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sftp.read_file capability=sftp.read -->
 <!-- api-daemon-method: sftp.readlink capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.realpath capability=sftp.metadata -->
+<!-- api-daemon-method: sftp.filesystem_usage capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.remove capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.rename capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.replace_file capability=sftp.mutate -->
@@ -1260,6 +1264,14 @@ Returns metadata for one remote path without following the final symlink.
 ## `sftp_realpath`
 
 Resolves a remote path to its absolute form and returns the path string.
+
+<!-- api-method: sftp_filesystem_usage -->
+## `sftp_filesystem_usage`
+
+Returns `SftpFilesystemUsage` for the remote filesystem holding one path:
+total, free, and available (writable without root) bytes, from OpenSSH's
+`statvfs@openssh.com` extension. A server without the extension fails with
+`remote_unsupported_operation`.
 
 <!-- api-method: sftp_readlink -->
 ## `sftp_readlink`

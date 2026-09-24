@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- `sftp_filesystem_usage` (`sftp.filesystem_usage`, capability
+  `sftp.metadata`) returns the new `SftpFilesystemUsage` — total, free, and
+  available bytes of the remote filesystem holding a path — from OpenSSH's
+  `statvfs@openssh.com`. Servers without the extension fail with
+  `remote_unsupported_operation`. The file manager's properties dialog shows
+  remote free space, and the SSH-server backup pre-check now knows it. New
+  method and model, so the API implementation version is 0.67; Protocol
+  remains 1.0.
 - Generic daemon session failures now carry a strict `SessionFailureCode`,
   separate machine `ErrorCode`, exact parameters, and an optional opaque
   diagnostic. GTK translates known startup, authentication, queue, termination,

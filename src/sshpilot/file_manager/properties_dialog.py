@@ -154,8 +154,36 @@ class PropertiesDialog(Adw.Window):
         summary_label = Gtk.Label(label=summary_text)
         summary_label.add_css_class("dim-label")
         box.append(summary_label)
-        
+
+        if self._is_remote_file():
+            self._start_remote_free_space(summary_label, summary_parts)
+
         return box
+
+    def _start_remote_free_space(self, label: Gtk.Label, summary_parts: list) -> None:
+        """Append the remote filesystem's free space once the daemon answers.
+
+        Servers without ``statvfs@openssh.com`` just leave it out.
+        """
+        if self._sftp_manager is None or not hasattr(self._sftp_manager, "filesystem_usage"):
+            return
+        future = self._sftp_manager.filesystem_usage(self._remote_path())
+
+        def _done(fut) -> None:
+            try:
+                usage = fut.result()
+            except Exception as exc:
+                logger.debug("Remote free space unavailable: %s", exc)
+                return
+            parts = [*summary_parts, _free_space_text(usage.available_bytes)]
+
+            def _apply():
+                label.set_label(" — ".join(parts))
+                return GLib.SOURCE_REMOVE
+
+            GLib.idle_add(_apply)
+
+        future.add_done_callback(_done)
 
     def _create_size_row(self) -> Gtk.Widget:
         """Create the size row."""

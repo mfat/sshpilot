@@ -74,6 +74,7 @@ from sshpilot.api.models.operations import (
     SftpDirectorySizeResult,
     SftpFileAccess,
     SftpFileTarget,
+    SftpFilesystemUsage,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -1759,6 +1760,34 @@ class SftpServiceRuntime:
             return record.handle.client.realpath(path)
         except Exception as exc:
             raise self._map_error(exc, record) from exc
+
+    def filesystem_usage(
+        self, request: SftpPathRequest, *, client_id: ClientId
+    ) -> SftpFilesystemUsage:
+        """Total, free and available bytes of the filesystem holding a path,
+        via ``statvfs@openssh.com``."""
+        if type(request) is not SftpPathRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        record = self._ready_record_for_read(request.service_id, client_id)
+        path = self._expand_tilde_path(record, _validate_path(request.path))
+        client = record.handle.client
+        supports_statvfs = getattr(client, "supports_statvfs", None)
+        if not (callable(supports_statvfs) and supports_statvfs()):
+            raise SshPilotError(
+                ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
+                "The SFTP server does not report filesystem usage",
+                connection_id=record.connection_id,
+            )
+        try:
+            vfs = client.statvfs(path)
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+        return SftpFilesystemUsage(
+            path=path,
+            total_bytes=vfs.f_blocks * vfs.f_frsize,
+            free_bytes=vfs.f_bfree * vfs.f_frsize,
+            available_bytes=vfs.f_bavail * vfs.f_frsize,
+        )
 
     def readlink(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:

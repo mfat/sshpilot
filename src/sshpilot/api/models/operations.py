@@ -596,6 +596,28 @@ class SftpDirectorySizeResult:
 
 
 @dataclass(frozen=True)
+class SftpFilesystemUsage:
+    """Size of the remote filesystem holding ``path``.
+
+    ``available_bytes`` is what an unprivileged user can still write;
+    ``free_bytes`` also counts blocks reserved for root.
+    """
+
+    path: str
+    total_bytes: int
+    free_bytes: int
+    available_bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP filesystem usage path must be safe")
+        for name in ("total_bytes", "free_bytes", "available_bytes"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"SFTP filesystem usage {name} must be a non-negative integer")
+
+
+@dataclass(frozen=True)
 class SftpRenameRequest:
     service_id: SftpServiceId
     source_path: str

@@ -56,7 +56,6 @@ from .progress_dialog import (
     SFTPProgressDialog,
 )
 from .properties_dialog import PropertiesDialog
-from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 
 def create_file_manager_backend(
@@ -151,11 +150,8 @@ __all__ = [
     "_portal_doc_path",
     "_pretty_path_for_display",
     "_save_doc",
-    "_sftp_path_exists",
     "create_file_manager_backend",
     "open_in_file_manager",
     "resolve_download_locate_path",
     "safe_display_text",
-    "stat_isdir",
-    "walk_remote",
 ]

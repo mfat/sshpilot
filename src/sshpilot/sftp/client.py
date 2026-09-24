@@ -21,6 +21,8 @@ _MAX_CHUNK = 4 * 1024 * 1024
 # Reads/writes a file keeps in flight, so a transfer costs about one round
 # trip per window instead of one per chunk.
 _PIPELINE_DEPTH = 16
+# READDIRs a directory listing keeps in flight.
+_READDIR_AHEAD = 8
 
 
 class _Pending:
@@ -233,13 +235,22 @@ class OpenSSHSFTPClient:
         raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected ATTRS")
 
     def listdir_attr(self, path: str) -> List[proto.SFTPAttributes]:
+        """List a directory, keeping ``_READDIR_AHEAD`` READDIRs in flight.
+
+        Each READDIR returns the next batch (OpenSSH: ~100 names) or EOF, and
+        a server handles requests on one handle in order, so a large directory
+        costs a round trip per ``_READDIR_AHEAD`` batches instead of per batch.
+        """
         resp = self._request(proto.FXP_OPENDIR, proto.pack_string(path))
         handle = self._handle(resp)
         entries: List[proto.SFTPAttributes] = []
+        request = proto.pack_string(handle)
+        inflight: Deque[_Pending] = deque()
         try:
             while True:
-                rd = self._request(proto.FXP_READDIR, proto.pack_string(handle))
-                ptype, payload = rd
+                while len(inflight) < _READDIR_AHEAD:
+                    inflight.append(self._send(proto.FXP_READDIR, request))
+                ptype, payload = self._wait(inflight.popleft())
                 if ptype == proto.FXP_NAME:
                     _, names = proto.parse_name(payload)
                     for attr in names:
@@ -253,6 +264,9 @@ class OpenSSHSFTPClient:
                     raise proto.SFTPError(code, message)
                 else:
                     raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected NAME")
+            # The read-aheads past EOF answer EOF; settle them before CLOSE.
+            while inflight:
+                self._wait(inflight.popleft())
         finally:
             self.close_handle(handle)
         return entries
@@ -337,6 +351,26 @@ class OpenSSHSFTPClient:
             + proto.pack_uint64(0)  # write offset
         )
         self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+
+    def supports_statvfs(self) -> bool:
+        return "statvfs@openssh.com" in self.extensions
+
+    def statvfs(self, path: str) -> proto.SFTPStatVFS:
+        """Filesystem sizes for *path* (OpenSSH extension)."""
+        payload = proto.pack_string("statvfs@openssh.com") + proto.pack_string(path)
+        ptype, body = self._request(proto.FXP_EXTENDED, payload)
+        if ptype == proto.FXP_STATUS:
+            _, code, message = proto.parse_status(body)
+            raise proto.SFTPError(code, message)
+        if ptype != proto.FXP_EXTENDED_REPLY:
+            raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected EXTENDED_REPLY")
+        return proto.parse_statvfs(body)
+
+    def fsetstat(self, handle: bytes, attr: proto.SFTPAttributes) -> None:
+        """Set attributes (mode, times, …) on an open handle."""
+        self._expect_ok(
+            self._request(proto.FXP_FSETSTAT, proto.pack_string(handle) + proto.encode_attrs(attr))
+        )
 
     def chmod(self, path: str, mode: int) -> None:
         attr = proto.SFTPAttributes(st_mode=int(mode) & 0o7777)

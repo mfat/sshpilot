@@ -58,14 +58,18 @@ class _FakeSftpClient:
 
     def __init__(self):
         self.files = {}
+        self.create_modes = {}
+        self.fsetstat_calls = []
 
     def stat(self, path):
         if path not in self.files:
             raise FileNotFoundError(path)
         return SimpleNamespace(st_size=len(self.files[path]))
 
-    def open_handle(self, path, _flags):
+    def open_handle(self, path, _flags, attr=None):
         self.files.setdefault(path, b"")
+        if attr is not None and attr.st_mode:
+            self.create_modes[path] = attr.st_mode
         return path
 
     def write(self, handle, offset, chunk):
@@ -76,6 +80,9 @@ class _FakeSftpClient:
 
     def close_handle(self, _handle):
         return None
+
+    def fsetstat(self, handle, attr):
+        self.fsetstat_calls.append((handle, attr))
 
     # The runtime streams through the client's pipelined helpers; these
     # sequential stand-ins keep ``read``/``write`` overrides in effect.
@@ -224,7 +231,7 @@ class _RecursiveSftpClient(_FakeSftpClient):
             raise FileNotFoundError(path)
         return entries
 
-    def open_handle(self, path, flags):
+    def open_handle(self, path, flags, attr=None):
         from sshpilot.sftp import protocol as sftp_proto
 
         if flags & sftp_proto.FXF_READ:

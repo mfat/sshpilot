@@ -14,6 +14,7 @@ from sshpilot.api.models.operations import (
     OperationState,
     OperationSummary,
     SftpDirectorySizeResult,
+    SftpFilesystemUsage,
 )
 from sshpilot.api.transport.codec import sftp_directory_size_result_to_wire
 from sshpilot.daemon_sftp_backend import DaemonSftpManager
@@ -1015,3 +1016,26 @@ def test_open_file_manager_windows_follow_a_replaced_client(monkeypatch):
 
     for window in windows:
         window.rebind_daemon_client.assert_called_once_with(new_client, "bridge")
+
+
+def test_filesystem_usage_asks_the_daemon_for_the_path(controller, mock_client, mock_bridge):
+    _mark_ready(controller)
+    usage = SftpFilesystemUsage(
+        path="/srv", total_bytes=1000, free_bytes=400, available_bytes=300
+    )
+    mock_client.sftp_filesystem_usage.return_value = usage
+    mock_bridge.submit.side_effect = (
+        lambda factory, on_success=None, on_error=None: on_success(factory())
+    )
+
+    seen = []
+    controller.filesystem_usage(
+        "/srv",
+        on_success=seen.append,
+        on_error=lambda e: pytest.fail(f"unexpected error: {e}"),
+    )
+
+    request = mock_client.sftp_filesystem_usage.call_args[0][0]
+    assert request.service_id == SftpServiceId("svc-1")
+    assert request.path == "/srv"
+    assert seen == [usage]

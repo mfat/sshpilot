@@ -1,4 +1,4 @@
-"""Files larger than one SFTP packet round-trip through ``OpenSSHSFTPFile``.
+"""Large files and directories through ``OpenSSHSFTPClient``.
 
 OpenSSH's sftp-server answers a READ with at most ~255 KiB and drops the
 session on a message over 256 KiB, so a single-request read silently truncated
@@ -224,3 +224,38 @@ def test_save_over_a_slow_link_takes_a_few_round_trips(tmp_path):
     assert path.read_bytes() == content
     # open, pipelined read, EOF follow-up, close, open, pipelined write, close.
     assert round_trips < 12, f"save took {round_trips:.1f} round trips"
+
+
+def test_listing_a_large_directory_returns_every_entry(client, tmp_path):
+    names = {f"file-{index:05d}" for index in range(2500)}
+    for name in names:
+        (tmp_path / name).touch()
+    (tmp_path / "sub").mkdir()
+
+    listed = client.listdir_attr(str(tmp_path))
+
+    assert sorted(entry.filename for entry in listed) == sorted(names | {"sub"})
+
+
+def test_listing_an_empty_directory(client, tmp_path):
+    assert client.listdir_attr(str(tmp_path)) == []
+    # The session is still usable after the read-aheads past EOF.
+    assert client.listdir_attr(str(tmp_path)) == []
+
+
+def test_listing_a_large_directory_over_a_slow_link(tmp_path):
+    """2500 entries are ~25 READDIR batches from OpenSSH; one request at a
+    time made that ~27 round trips."""
+    for index in range(2500):
+        (tmp_path / f"file-{index:05d}").touch()
+    delay = 0.1
+    sftp, process, stdout = _start_client(delay)
+    try:
+        started = time.monotonic()
+        listed = sftp.listdir_attr(str(tmp_path))
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert len(listed) == 2500
+    # OPENDIR, ceil(26 / 8) READDIR windows, CLOSE.
+    assert round_trips < 10, f"listing took {round_trips:.1f} round trips"
