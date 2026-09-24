@@ -2067,9 +2067,7 @@ class SftpServiceRuntime:
         total = len(paths)
         for offset in range(0, total, _REMOVE_CHUNK_SIZE):
             if cancel is not None and cancel():
-                # Preserve per-path failures from completed chunks. Callers that
-                # raise from ``cancel`` (operation lifecycle) never reach here.
-                return SftpRemoveResult(failures=tuple(failures))
+                raise OperationCancelled()
             chunk = paths[offset : offset + _REMOVE_CHUNK_SIZE]
             failures.extend(self._remove_chunk(client, chunk))
             if progress is not None:

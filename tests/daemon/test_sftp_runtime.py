@@ -540,6 +540,8 @@ def test_remove_recursive_chunks_large_file_lists():
 
 
 def test_remove_multi_path_cancel_stops_after_first_chunk():
+    from sshpilot.daemon.operation_runtime import OperationCancelled
+
     runtime, runner = _make_runtime()
     owner = ClientId("client:owner")
     summary = runtime.prepare_open_service(_open_request(), client_id=owner)
@@ -562,18 +564,17 @@ def test_remove_multi_path_cancel_stops_after_first_chunk():
         calls["cancel"] += 1
         return calls["cancel"] > 1
 
-    result = runtime.remove(
-        SftpPathRequest(
-            service_id=summary.id,
-            path=paths[0],
-            paths=tuple(paths[1:]),
-        ),
-        client_id=owner,
-        cancel=_cancel,
-    )
+    with pytest.raises(OperationCancelled):
+        runtime.remove(
+            SftpPathRequest(
+                service_id=summary.id,
+                path=paths[0],
+                paths=tuple(paths[1:]),
+            ),
+            client_id=owner,
+            cancel=_cancel,
+        )
 
-    assert result is not None
-    assert result.failures == ()
     assert len(batches) == 1
     assert len(batches[0]) == 256
     assert calls["cancel"] == 2
