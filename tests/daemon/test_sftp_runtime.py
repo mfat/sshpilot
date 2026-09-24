@@ -138,6 +138,17 @@ class _FakeSftpClient:
         self.files.pop(path, None)
         self.symlinks.pop(path, None)
 
+    def remove_many(self, paths, *, continue_on_error=False):
+        failures = []
+        for path in paths:
+            try:
+                self.remove(path)
+            except Exception as exc:
+                failures.append((path, exc))
+                if not continue_on_error:
+                    raise
+        return failures
+
     def rmdir(self, path):
         self.directories.discard(path)
 
@@ -429,6 +440,58 @@ def test_remove_recursive_single_file_is_removed():
 
     assert "/source.txt" in client.remove_calls
     assert "/source.txt" not in client.files
+
+
+def test_remove_multi_path_pipelines_files_and_reports_failures():
+    from sshpilot.api.models.operations import SftpRemoveResult
+
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.files.update({"/a.txt": b"a", "/b.txt": b"b"})
+
+    result = runtime.remove(
+        SftpPathRequest(
+            service_id=summary.id,
+            path="/a.txt",
+            paths=("/missing.txt", "/b.txt"),
+        ),
+        client_id=owner,
+    )
+
+    assert isinstance(result, SftpRemoveResult)
+    assert result.failures == ()
+    assert set(client.remove_calls) == {"/a.txt", "/missing.txt", "/b.txt"}
+    assert "/a.txt" not in client.files
+    assert "/b.txt" not in client.files
+
+
+def test_remove_recursive_batches_sibling_files_via_remove_many():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.files.update({"/tree/a.txt": b"a", "/tree/b.txt": b"b"})
+    client.directories.add("/tree")
+    batches = []
+    original = client.remove_many
+
+    def _track(paths, *, continue_on_error=False):
+        batches.append(list(paths))
+        return original(paths, continue_on_error=continue_on_error)
+
+    client.remove_many = _track
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert batches == [["/tree/a.txt", "/tree/b.txt"]]
+    assert "/tree" not in client.directories
 
 
 # ---------------------------------------------------------------------------

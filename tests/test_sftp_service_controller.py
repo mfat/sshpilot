@@ -15,6 +15,8 @@ from sshpilot.api.models.operations import (
     OperationSummary,
     SftpDirectorySizeResult,
     SftpFilesystemUsage,
+    SftpRemoveFailure,
+    SftpRemoveResult,
 )
 from sshpilot.api.transport.codec import sftp_directory_size_result_to_wire
 from sshpilot.daemon_sftp_backend import DaemonSftpManager
@@ -1068,23 +1070,30 @@ def test_remove_many_uses_sync_path_for_files_and_recursive_for_dirs():
     controller.state = SftpControllerState.READY
     controller.service_id = SftpServiceId("svc-1")
     manager = _bound_manager(controller)
-    calls = []
+    file_batches = []
+    dir_calls = []
+
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        file_batches.append(list(paths))
+        on_success(SftpRemoveResult())
 
     def _remove(path, *, recursive, on_success=None, on_error=None,
                 on_operation_started=None, on_progress=None):
-        calls.append((path, recursive))
+        dir_calls.append((path, recursive))
         if recursive:
             on_operation_started(OperationId(f"op-{path}"))
         on_success(None)
 
+    controller.remove_paths.side_effect = _remove_paths
     controller.remove.side_effect = _remove
     future = DaemonSftpManager.remove_many(
         manager,
         [("/a.txt", False), ("/tree", True), ("/b.txt", False)],
     )
 
-    assert future.result(timeout=1) == []
-    assert calls == [("/a.txt", False), ("/tree", True), ("/b.txt", False)]
+    assert future.result(timeout=1) == ([], 3)
+    assert file_batches == [["/a.txt", "/b.txt"]]
+    assert dir_calls == [("/tree", True)]
 
 
 def test_remove_many_collects_per_path_errors_and_continues():
@@ -1092,26 +1101,26 @@ def test_remove_many_collects_per_path_errors_and_continues():
     controller.state = SftpControllerState.READY
     controller.service_id = SftpServiceId("svc-1")
     manager = _bound_manager(controller)
-    boom = OSError("gone")
 
-    def _remove(path, *, recursive, on_success=None, on_error=None,
-                on_operation_started=None, on_progress=None):
-        if path == "/missing.txt":
-            on_error(boom)
-        else:
-            on_success(None)
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        on_success(
+            SftpRemoveResult(
+                failures=(SftpRemoveFailure(path="/missing.txt", message="gone"),)
+            )
+        )
 
-    controller.remove.side_effect = _remove
+    controller.remove_paths.side_effect = _remove_paths
     future = DaemonSftpManager.remove_many(
         manager,
         [("/a.txt", False), ("/missing.txt", False), ("/b.txt", False)],
     )
 
-    failures = future.result(timeout=1)
+    failures, completed = future.result(timeout=1)
+    assert completed == 2
     assert len(failures) == 1
     assert failures[0][0] == "/missing.txt"
-    assert failures[0][1] is boom
-    assert controller.remove.call_count == 3
+    assert "gone" in str(failures[0][1])
+    controller.remove.assert_not_called()
 
 
 def test_remove_many_empty_resolves_immediately():
@@ -1122,11 +1131,12 @@ def test_remove_many_empty_resolves_immediately():
 
     future = DaemonSftpManager.remove_many(manager, [])
 
-    assert future.result(timeout=1) == []
+    assert future.result(timeout=1) == ([], 0)
     controller.remove.assert_not_called()
+    controller.remove_paths.assert_not_called()
 
 
-def test_remove_many_cancel_stops_before_next_item():
+def test_remove_many_cancel_stops_before_next_dir():
     controller = Mock()
     controller.state = SftpControllerState.READY
     controller.service_id = SftpServiceId("svc-1")
@@ -1134,23 +1144,28 @@ def test_remove_many_cancel_stops_before_next_item():
     calls = []
     captured = {}
 
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        calls.append(("files", list(paths)))
+        on_success(SftpRemoveResult())
+
     def _remove(path, *, recursive, on_success=None, on_error=None,
                 on_operation_started=None, on_progress=None):
-        calls.append(path)
+        calls.append(("dir", path))
         captured["on_error"] = on_error
         on_operation_started(OperationId("op-tree"))
 
+    controller.remove_paths.side_effect = _remove_paths
     controller.remove.side_effect = _remove
     future = DaemonSftpManager.remove_many(
-        manager, [("/tree", True), ("/late.txt", False)]
+        manager, [("/a.txt", False), ("/tree", True), ("/late", True)]
     )
 
     assert future.cancel() is True
     controller.cancel_operation.assert_called_once_with(OperationId("op-tree"))
-    # Daemon confirms cancellation: batch rejects as cancelled, late item never runs.
     captured["on_error"](
         SshPilotError(ErrorCode.OPERATION_CANCELLED, "cancelled")
     )
-    with pytest.raises(TransferCancelledException):
-        future.result(timeout=1)
-    assert calls == ["/tree"]
+    failures, completed = future.result(timeout=1)
+    assert failures == []
+    assert completed == 1  # file batch finished; cancelled dir not counted
+    assert calls == [("files", ["/a.txt"]), ("dir", "/tree")]

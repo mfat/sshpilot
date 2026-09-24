@@ -12,7 +12,7 @@ import logging
 import threading
 from enum import Enum
 from gettext import gettext as _
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Sequence
 
 from gi.repository import GLib
 
@@ -39,6 +39,7 @@ from .api.models.operations import (
     SftpFileTarget,
     SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpReplaceFileRequest,
@@ -563,6 +564,45 @@ class DaemonSftpServiceController:
                 on_success=on_success,
                 on_error=on_error,
             )
+
+    def remove_paths(
+        self,
+        paths: Sequence[str],
+        *,
+        on_success: Callable[[object], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        """Delete many non-directory paths in one pipelined ``sftp.remove`` RPC.
+
+        ``on_success`` receives an ``SftpRemoveResult`` (possibly with per-path
+        failures). Directories must use ``remove(..., recursive=True)``.
+        """
+        targets = [path for path in paths if path]
+        if not targets:
+            on_success(SftpRemoveResult())
+            return
+        if len(targets) == 1:
+            self._path_mutation(
+                "sftp_remove",
+                targets[0],
+                on_success=lambda _result: on_success(SftpRemoveResult()),
+                on_error=on_error,
+            )
+            return
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_remove(
+                SftpPathRequest(
+                    service_id=service_id,
+                    path=targets[0],
+                    paths=tuple(targets[1:]),
+                )
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
 
     def _recursive_remove(
         self,

@@ -296,6 +296,55 @@ class OpenSSHSFTPClient:
     def remove(self, path: str) -> None:
         self._expect_ok(self._request(proto.FXP_REMOVE, proto.pack_string(path)))
 
+    def remove_many(
+        self, paths: List[str], *, continue_on_error: bool = False
+    ) -> List[Tuple[str, BaseException]]:
+        """Delete many files/symlinks with pipelined ``FXP_REMOVE`` requests.
+
+        Up to ``_PIPELINE_DEPTH`` removes stay in flight so a mass delete costs
+        about one round trip per window instead of one per path. Missing paths
+        are ignored (same idempotent policy as a recursive tree delete).
+
+        When ``continue_on_error`` is false (default), the first hard STATUS
+        error is raised after draining the current in-flight window. When true,
+        every path is attempted and ``(path, exception)`` failures are returned
+        instead of raising. Directories must be removed with ``rmdir`` /
+        recursive walk — ``FXP_REMOVE`` on a directory fails.
+        """
+        if not paths:
+            return []
+        inflight: Deque[Tuple[str, _Pending]] = deque()
+        failures: List[Tuple[str, BaseException]] = []
+        fatal: Optional[BaseException] = None
+
+        def _drain_one() -> None:
+            nonlocal fatal
+            path, slot = inflight.popleft()
+            try:
+                self._expect_ok(self._wait(slot))
+            except proto.SFTPError as exc:
+                if exc.code == proto.FX_NO_SUCH_FILE:
+                    return
+                failures.append((path, exc))
+                if not continue_on_error and fatal is None:
+                    fatal = exc
+            except BaseException as exc:
+                failures.append((path, exc))
+                if not continue_on_error and fatal is None:
+                    fatal = exc
+
+        for path in paths:
+            if fatal is not None:
+                break
+            inflight.append((path, self._send(proto.FXP_REMOVE, proto.pack_string(path))))
+            if len(inflight) >= _PIPELINE_DEPTH:
+                _drain_one()
+        while inflight:
+            _drain_one()
+        if fatal is not None:
+            raise fatal
+        return failures
+
     unlink = remove  # paramiko alias
 
     def rename(self, old: str, new: str) -> None:

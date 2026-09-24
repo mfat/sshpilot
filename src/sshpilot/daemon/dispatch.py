@@ -33,7 +33,7 @@ from sshpilot.api.models.connections import (
     store_plugin_secret_request_from_wire,
 )
 from sshpilot.api.models.interactions import InteractionType, PassphrasePrompt
-from sshpilot.api.models.operations import OperationSummary, SftpFileAccess
+from sshpilot.api.models.operations import OperationSummary, SftpFileAccess, SftpRemoveResult
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
     agent_key_list_to_wire,
@@ -136,6 +136,7 @@ from sshpilot.api.transport.codec import (
     sftp_filesystem_usage_to_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
+    sftp_remove_result_to_wire,
     sftp_replace_file_request_from_wire,
     sftp_replace_file_result_to_wire,
     sftp_rename_request_from_wire,
@@ -2615,6 +2616,21 @@ class RequestDispatcher:
                 operation=lambda: operation_summary_to_wire(
                     runtime.start_remove(path_request, client_id=client_id)
                 ),
+                command_key=path_request.service_id,
+                on_rejected=lambda: None,
+            )
+        if path_request.paths:
+            def _multi_remove():
+                result = runtime.remove(path_request, client_id=client_id)
+                if type(result) is not SftpRemoveResult:
+                    raise SshPilotError(
+                        ErrorCode.INTERNAL_ERROR,
+                        "Multi-path SFTP remove must return a result",
+                    )
+                return sftp_remove_result_to_wire(result)
+
+            return DeferredResult(
+                operation=_multi_remove,
                 command_key=path_request.service_id,
                 on_rejected=lambda: None,
             )

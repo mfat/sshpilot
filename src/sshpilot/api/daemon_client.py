@@ -254,6 +254,7 @@ from .transport.codec import (
     sftp_filesystem_usage_from_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
+    sftp_remove_result_from_wire,
     sftp_replace_file_request_to_wire,
     sftp_rename_request_to_wire,
     sftp_read_file_result_from_wire,
@@ -1648,12 +1649,19 @@ class DaemonClient:
         self._require_capability(Capability.SFTP_MUTATE)
         if request.recursive:
             self._require_write_compatibility("recursive removal")
+        if request.paths:
+            self._require_write_compatibility("multi-path removal")
         result = self._request("sftp.remove", sftp_path_request_to_wire(request))
         if request.recursive:
             try:
                 return operation_summary_from_wire(result)
             except (TypeError, ValueError):
                 self._fail_protocol("The daemon returned an invalid remove operation")
+        if request.paths:
+            try:
+                return sftp_remove_result_from_wire(result)
+            except (TypeError, ValueError):
+                self._fail_protocol("The daemon returned an invalid remove result")
         if result is not None:
             self._fail_protocol("The daemon returned an invalid remove result")
 

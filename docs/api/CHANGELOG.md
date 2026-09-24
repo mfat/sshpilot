@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- Multi-path `sftp.remove`: an additive optional `paths` list on
+  `SftpPathRequest` deletes several non-directory targets in one RPC. The
+  daemon pipelines `FXP_REMOVE` (and recursive tree deletes pipeline sibling
+  file children the same way). Multi-path non-recursive remove returns
+  `SftpRemoveResult` with per-path failures; single-path non-recursive still
+  returns `null`. Recursive multi-path remove stays one `sftp_remove_tree`
+  operation. API implementation version is 0.68; Protocol remains 1.0.
 - `sftp_filesystem_usage` (`sftp.filesystem_usage`, capability
   `sftp.metadata`) returns the new `SftpFilesystemUsage` — total, free, and
   available bytes of the remote filesystem holding a path — from OpenSSH's

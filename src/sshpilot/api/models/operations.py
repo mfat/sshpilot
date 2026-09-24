@@ -407,6 +407,7 @@ class SftpPathRequest:
     service_id: SftpServiceId
     path: str
     recursive: bool = False
+    paths: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.service_id, "SFTP service id")
@@ -416,6 +417,52 @@ class SftpPathRequest:
             raise ValueError("SFTP path must not contain NUL")
         if type(self.recursive) is not bool:
             raise ValueError("SFTP path recursive flag must be a bool")
+        if type(self.paths) is not tuple:
+            raise ValueError("SFTP extra paths must be a tuple")
+        for extra in self.paths:
+            if type(extra) is not str or not extra:
+                raise ValueError("SFTP extra path must be a non-empty string")
+            if "\x00" in extra:
+                raise ValueError("SFTP path must not contain NUL")
+
+    def all_paths(self) -> Tuple[str, ...]:
+        """Primary path plus any additive extra paths for multi-target remove."""
+        if not self.paths:
+            return (self.path,)
+        return (self.path,) + self.paths
+
+
+@dataclass(frozen=True)
+class SftpRemoveFailure:
+    """One path that failed inside a multi-path ``sftp.remove``."""
+
+    path: str
+    message: str
+
+    def __post_init__(self) -> None:
+        if type(self.path) is not str or not self.path:
+            raise ValueError("SFTP remove failure path must be a non-empty string")
+        if type(self.message) is not str:
+            raise TypeError("SFTP remove failure message must be a string")
+
+
+@dataclass(frozen=True)
+class SftpRemoveResult:
+    """Result of a non-recursive multi-path ``sftp.remove``.
+
+    Single-path non-recursive remove still returns ``null`` on the wire.
+    Multi-path remove returns this so callers can keep going after a per-path
+    failure without N round trips.
+    """
+
+    failures: Tuple[SftpRemoveFailure, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.failures) is not tuple:
+            raise TypeError("SFTP remove failures must be a tuple")
+        for item in self.failures:
+            if type(item) is not SftpRemoveFailure:
+                raise TypeError("SFTP remove failures must be SftpRemoveFailure")
 
 
 class SftpFileTarget(str, Enum):

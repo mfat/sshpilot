@@ -1794,8 +1794,19 @@ class FileManagerWindow(Adw.Window):
                 logger.debug("Deleting %d remote entries", total_count)
 
                 def _on_batch_done(future_result: Future) -> None:
+                    success_count = 0
                     try:
-                        failures = future_result.result()
+                        result = future_result.result()
+                        if isinstance(result, tuple) and len(result) == 2:
+                            failures, success_count = result
+                        else:
+                            # Older shape: bare failure list
+                            failures = result or []
+                            success_count = max(0, total_count - len(failures))
+                    except TransferCancelledException:
+                        logger.info("Remote batch delete cancelled")
+                        errors.append(_("Delete was cancelled"))
+                        success_count = 0
                     except Exception as exc:
                         logger.error("Remote batch delete failed: %s", exc, exc_info=True)
                         errors.append(
@@ -1803,6 +1814,7 @@ class FileManagerWindow(Adw.Window):
                                 count=total_count, error=exc
                             )
                         )
+                        success_count = 0
                     else:
                         for failed_path, exc in failures:
                             entry_name = names.get(failed_path, failed_path)
@@ -1813,11 +1825,13 @@ class FileManagerWindow(Adw.Window):
                             errors.append(error_msg)
                     logger.debug(
                         "Remote batch delete finished (%d/%d ok)",
-                        total_count - len(errors),
+                        success_count,
                         total_count,
                     )
                     GLib.idle_add(
-                        lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                        lambda sc=success_count: self._on_all_deletes_complete(
+                            pane, base_dir, errors, total_count, success_count=sc
+                        )
                     )
 
                 try:
@@ -2256,9 +2270,18 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
-    def _on_all_deletes_complete(self, pane: FilePane, base_dir: str, errors: List[str], total_count: int) -> None:
+    def _on_all_deletes_complete(
+        self,
+        pane: FilePane,
+        base_dir: str,
+        errors: List[str],
+        total_count: int,
+        *,
+        success_count: Optional[int] = None,
+    ) -> None:
         """Handle completion of all delete operations."""
-        success_count = total_count - len(errors)
+        if success_count is None:
+            success_count = max(0, total_count - len(errors))
         
         if success_count > 0:
             message = ngettext("Deleted {count} item", "Deleted {count} items", success_count).format(count=success_count)

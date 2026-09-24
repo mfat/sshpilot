@@ -11,6 +11,7 @@ from typing import (
     Iterable,
     Mapping,
     Optional,
+    Tuple,
     Union,
 )
 
@@ -204,6 +205,8 @@ from ..models.operations import (
     SftpFileTarget,
     SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveFailure,
+    SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
@@ -4733,6 +4736,8 @@ def sftp_path_request_to_wire(request: SftpPathRequest) -> Dict[str, Any]:
     wire = {"service_id": request.service_id, "path": request.path}
     if request.recursive:
         wire["recursive"] = True
+    if request.paths:
+        wire["paths"] = list(request.paths)
     return wire
 
 
@@ -4740,16 +4745,58 @@ def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
     data = _strict_fields(
         value,
         required={"service_id", "path"},
-        optional={"recursive"},
+        optional={"recursive", "paths"},
         context="SFTP path request",
     )
+    extra_paths: Tuple[str, ...] = ()
+    if "paths" in data:
+        raw_paths = data["paths"]
+        if type(raw_paths) is not list:
+            raise ValueError("SFTP extra paths must be a list")
+        extra_paths = tuple(_text(item, "SFTP extra path") for item in raw_paths)
     return SftpPathRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         path=_text(data["path"], "SFTP path"),
         recursive=(
             _boolean(data["recursive"], "SFTP recursive flag") if "recursive" in data else False
         ),
+        paths=extra_paths,
     )
+
+
+def sftp_remove_result_to_wire(result: SftpRemoveResult) -> Dict[str, Any]:
+    if type(result) is not SftpRemoveResult:
+        raise TypeError("SFTP remove result is required")
+    return {
+        "failures": [
+            {"path": item.path, "message": item.message} for item in result.failures
+        ]
+    }
+
+
+def sftp_remove_result_from_wire(value: Any) -> SftpRemoveResult:
+    data = _strict_fields(
+        value,
+        required={"failures"},
+        context="SFTP remove result",
+    )
+    raw_failures = data["failures"]
+    if type(raw_failures) is not list:
+        raise ValueError("SFTP remove failures must be a list")
+    failures = []
+    for item in raw_failures:
+        entry = _strict_fields(
+            item,
+            required={"path", "message"},
+            context="SFTP remove failure",
+        )
+        failures.append(
+            SftpRemoveFailure(
+                path=_text(entry["path"], "SFTP remove failure path"),
+                message=_text(entry["message"], "SFTP remove failure message", allow_empty=True),
+            )
+        )
+    return SftpRemoveResult(failures=tuple(failures))
 
 
 def sftp_create_file_request_to_wire(request: SftpCreateFileRequest) -> Dict[str, Any]:

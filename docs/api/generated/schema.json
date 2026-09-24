@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.67",
+  "api_implementation_version": "0.68",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -8070,6 +8070,13 @@
           "required": false,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "paths",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
         }
       ],
       "status": "Implemented"
@@ -8157,6 +8164,37 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpRemoveFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpRemoveResult": {
+      "fields": [
+        {
+          "default": [],
+          "name": "failures",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[SftpRemoveFailure, ...]"
         }
       ],
       "status": "Implemented"

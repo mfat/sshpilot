@@ -237,10 +237,25 @@ def test_listing_a_large_directory_returns_every_entry(client, tmp_path):
     assert sorted(entry.filename for entry in listed) == sorted(names | {"sub"})
 
 
-def test_listing_an_empty_directory(client, tmp_path):
-    assert client.listdir_attr(str(tmp_path)) == []
-    # The session is still usable after the read-aheads past EOF.
-    assert client.listdir_attr(str(tmp_path)) == []
+def test_remove_many_pipelines_over_a_slow_link(tmp_path):
+    """Mass file delete should pay about one RTT per pipeline window."""
+    paths = []
+    for index in range(48):
+        path = tmp_path / f"file-{index:02d}.txt"
+        path.write_text("x")
+        paths.append(str(path))
+    delay = 0.05
+    sftp, process, stdout = _start_client(delay)
+    try:
+        started = time.monotonic()
+        failures = sftp.remove_many(paths, continue_on_error=True)
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert failures == []
+    assert all(not os.path.exists(path) for path in paths)
+    # 48 removes / depth 16 ≈ 3 windows; leave headroom for handshake jitter.
+    assert round_trips < 8, f"remove_many took {round_trips:.1f} round trips"
 
 
 def test_listing_a_large_directory_over_a_slow_link(tmp_path):

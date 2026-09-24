@@ -34,7 +34,7 @@ from gi.repository import GObject
 from .api.errors import ErrorCode, SshPilotError
 from .api.capabilities import Capability
 from .api.models.common import SessionId, SftpServiceId
-from .api.models.operations import RemoteFileType
+from .api.models.operations import RemoteFileType, SftpRemoveResult
 from .api.models.transfers import (
     StartTransferRequest,
     TransferConflictPolicy,
@@ -43,6 +43,7 @@ from .api.models.transfers import (
     TransferSummary,
 )
 from .file_manager.common import FileEntry
+from .api.models.operations import SftpRemoveResult
 from .file_manager.exceptions import TransferCancelledException
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.sftp_failure_messages import format_sftp_failure
@@ -798,58 +799,72 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
-        future, on_operation_started = self._operation_cancellable(future)
-        progress_message = _("Deleting…")
+        if recursive:
+            future, on_operation_started = self._operation_cancellable(future)
+            progress_message = _("Deleting…")
 
-        def _on_progress(summary) -> None:
-            self.emit("progress", summary.progress or 0.0, progress_message)
+            def _on_progress(summary) -> None:
+                self.emit("progress", summary.progress or 0.0, progress_message)
 
+            self._sftp_controller.remove(
+                target,
+                recursive=True,
+                on_success=lambda _result: self._safe_set(future, result=None),
+                on_error=lambda exc: self._safe_set(
+                    future, exc=self._resolve_operation_exception(exc)
+                ),
+                on_operation_started=on_operation_started,
+                on_progress=_on_progress,
+            )
+            return future
+
+        # Non-recursive file/symlink delete: sync RPC, not cancellable via
+        # operations.cancel (no operation id).
         self._sftp_controller.remove(
             target,
-            recursive=recursive,
+            recursive=False,
             on_success=lambda _result: self._safe_set(future, result=None),
             on_error=lambda exc: self._safe_set(
                 future, exc=self._resolve_operation_exception(exc)
             ),
-            on_operation_started=on_operation_started,
-            on_progress=_on_progress,
         )
         return future
 
     def remove_many(self, items: Sequence[tuple[str, bool]]) -> Future:
         """Delete several remote paths with a single ``Future``.
 
-        Each item is ``(path, recursive)`` — callers pass
-        ``recursive=True`` for directories so only they pay the
-        ``SFTP_REMOVE_TREE`` operation lifecycle; plain files go through
-        the fast synchronous ``sftp.remove`` RPC.
+        Each item is ``(path, recursive)``. Non-recursive paths are deleted in
+        one pipelined multi-path ``sftp.remove`` RPC; directories still use the
+        ``SFTP_REMOVE_TREE`` operation lifecycle, chained after the file batch.
 
-        The future resolves to a list of ``(path, exception)`` failures
-        (empty when everything was deleted) so the caller can report
-        per-path errors the same way sequential single removes did.
-        A fatal setup failure (service not ready) still rejects the
-        future. Cancelling stops the batch after the in-flight delete:
-        already-deleted paths stay deleted.
+        The future resolves to ``(failures, completed)`` where ``failures`` is
+        a list of ``(path, exception)`` and ``completed`` is how many paths
+        finished successfully. Cancelling stops further work after the
+        in-flight delete; already-deleted paths stay deleted and the future
+        still resolves with the partial result (it does not raise).
         """
         future: Future = Future()
-        expanded = [(self._expand(path), recursive) for path, recursive in items]
+        expanded = [(self._expand(path), recursive, path) for path, recursive in items]
         try:
             self._require_ready_service_id()
         except OSError as exc:
             future.set_exception(exc)
             return future
         if not expanded:
-            future.set_result([])
+            future.set_result(([], 0))
             return future
 
-        total = len(expanded)
+        file_items = [(expanded_path, original) for expanded_path, recursive, original in expanded if not recursive]
+        dir_items = [(expanded_path, original) for expanded_path, recursive, original in expanded if recursive]
         failures: List[tuple[str, BaseException]] = []
         state: Dict[str, Any] = {
-            "index": 0,
+            "dir_index": 0,
+            "completed": 0,
             "operation_id": None,
             "cancel_requested": False,
         }
         progress_message = _("Deleting…")
+        total = len(expanded)
 
         def cancel_with_cleanup() -> bool:
             if future.done():
@@ -863,60 +878,103 @@ class DaemonSftpManager(GObject.GObject):
 
         def _finish() -> None:
             self.emit("progress", 1.0, progress_message)
-            self._safe_set(future, result=failures)
+            self._safe_set(future, result=(failures, state["completed"]))
 
-        def _run_next() -> None:
+        def _emit_progress() -> None:
+            done = state["completed"] + len(failures)
+            self.emit("progress", min(done / total, 1.0) if total else 1.0, progress_message)
+
+        def _run_dirs() -> None:
             if future.done():
                 return
-            if state["cancel_requested"]:
-                self._safe_set(
-                    future,
-                    exc=TransferCancelledException(_("Delete was cancelled")),
-                )
-                return
-            index = state["index"]
-            if index >= total:
+            if state["cancel_requested"] or state["dir_index"] >= len(dir_items):
                 _finish()
                 return
-            state["index"] = index + 1
-            original = items[index][0]
-            target, recursive = expanded[index]
+            target, original = dir_items[state["dir_index"]]
+            state["dir_index"] += 1
 
             def _on_operation_started(operation_id) -> None:
                 state["operation_id"] = operation_id
                 if state["cancel_requested"]:
                     self._sftp_controller.cancel_operation(operation_id)
 
-            def _on_success(_result, _path=original) -> None:
+            def _on_success(_result) -> None:
                 state["operation_id"] = None
-                self.emit("progress", (index + 1) / total, progress_message)
-                _run_next()
+                state["completed"] += 1
+                _emit_progress()
+                _run_dirs()
 
-            def _on_error(exc, _path=original) -> None:
+            def _on_error(exc) -> None:
                 state["operation_id"] = None
                 resolved = self._resolve_operation_exception(exc)
                 if isinstance(resolved, TransferCancelledException):
-                    self._safe_set(future, exc=resolved)
+                    _finish()
                     return
-                failures.append((_path, resolved))
-                self.emit("progress", (index + 1) / total, progress_message)
-                _run_next()
+                failures.append((original, resolved))
+                _emit_progress()
+                _run_dirs()
 
             def _on_progress(summary) -> None:
-                fraction = (index + (summary.progress or 0.0)) / total
-                self.emit("progress", fraction, progress_message)
+                base = state["completed"] + len(failures)
+                fraction = (base + (summary.progress or 0.0)) / total if total else 1.0
+                self.emit("progress", min(fraction, 1.0), progress_message)
 
             self._sftp_controller.remove(
                 target,
-                recursive=recursive,
+                recursive=True,
                 on_success=_on_success,
                 on_error=_on_error,
                 on_operation_started=_on_operation_started,
                 on_progress=_on_progress,
             )
 
+        def _after_files(result) -> None:
+            if future.done():
+                return
+            if isinstance(result, SftpRemoveResult):
+                failed_paths = {item.path for item in result.failures}
+                for item in result.failures:
+                    # Map expanded failure paths back to the caller-facing path.
+                    original = next(
+                        (orig for expanded_path, orig in file_items if expanded_path == item.path),
+                        item.path,
+                    )
+                    failures.append((original, OSError(item.message)))
+                state["completed"] += len(file_items) - len(failed_paths)
+            else:
+                state["completed"] += len(file_items)
+            _emit_progress()
+            if state["cancel_requested"]:
+                _finish()
+                return
+            _run_dirs()
+
+        def _files_failed(exc) -> None:
+            if future.done():
+                return
+            resolved = self._resolve_operation_exception(exc)
+            if isinstance(resolved, TransferCancelledException):
+                _finish()
+                return
+            # Whole file-batch RPC failed before per-path results — attribute
+            # the error to every file target so the UI can report something.
+            for _expanded_path, original in file_items:
+                failures.append((original, resolved))
+            _emit_progress()
+            if state["cancel_requested"]:
+                _finish()
+                return
+            _run_dirs()
+
         self.emit("progress", 0.0, progress_message)
-        _run_next()
+        if file_items:
+            self._sftp_controller.remove_paths(
+                [path for path, _original in file_items],
+                on_success=_after_files,
+                on_error=_files_failed,
+            )
+        else:
+            _run_dirs()
         return future
 
     # -- transfers --------------------------------------------------------

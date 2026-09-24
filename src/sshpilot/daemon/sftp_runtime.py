@@ -76,6 +76,8 @@ from sshpilot.api.models.operations import (
     SftpFileTarget,
     SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveFailure,
+    SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
@@ -1800,6 +1802,7 @@ class SftpServiceRuntime:
             raise self._map_error(exc, record) from exc
 
     def mkdir(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
+        self._reject_extra_paths(request)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
@@ -1808,12 +1811,21 @@ class SftpServiceRuntime:
             raise self._map_error(exc, record) from exc
 
     def rmdir(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
+        self._reject_extra_paths(request)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
             record.handle.client.rmdir(path)
         except Exception as exc:
             raise self._map_error(exc, record) from exc
+
+    @staticmethod
+    def _reject_extra_paths(request: SftpPathRequest) -> None:
+        if request.paths:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "Extra SFTP paths are only valid for sftp.remove",
+            )
 
     def copy(
         self,
@@ -2003,15 +2015,24 @@ class SftpServiceRuntime:
         client_id: ClientId,
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
-    ) -> None:
+    ) -> Optional[SftpRemoveResult]:
         record = self._ready_record_for_mutation(request.service_id, client_id)
-        path = _validate_path(request.path)
+        paths = tuple(_validate_path(path) for path in request.all_paths())
         client = record.handle.client
         try:
             if request.recursive:
-                self._remove_recursive(client, path, progress=progress, cancel=cancel)
-            else:
-                client.remove(path)
+                total = len(paths)
+                for index, path in enumerate(paths):
+                    if cancel is not None and cancel():
+                        raise OperationCancelled()
+                    self._remove_recursive(client, path, progress=progress, cancel=cancel)
+                    if progress is not None and total > 1:
+                        progress(_coarse_progress(index + 1, total))
+                return None
+            if len(paths) == 1:
+                client.remove(paths[0])
+                return None
+            return self._remove_paths_sync(client, paths)
         except OperationCancelled:
             raise
         except SshPilotError:
@@ -2019,23 +2040,48 @@ class SftpServiceRuntime:
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
+    def _remove_paths_sync(self, client, paths: Tuple[str, ...]) -> SftpRemoveResult:
+        """Pipelined non-recursive multi-path remove with per-path continue-on-error."""
+        remove_many = getattr(client, "remove_many", None)
+        if callable(remove_many):
+            raw_failures = remove_many(list(paths), continue_on_error=True)
+            return SftpRemoveResult(
+                failures=tuple(
+                    SftpRemoveFailure(path=path, message=str(exc) or "remove failed")
+                    for path, exc in raw_failures
+                )
+            )
+        failures: List[SftpRemoveFailure] = []
+        for path in paths:
+            try:
+                client.remove(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if isinstance(exc, sftp_proto.SFTPError) and exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                    continue
+                failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
+            except Exception as exc:
+                failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
+        return SftpRemoveResult(failures=tuple(failures))
+
     def start_remove(
         self,
         request: SftpPathRequest,
         *,
         client_id: ClientId,
     ) -> OperationSummary:
-        """Start a daemon operation that recursively deletes a remote tree.
+        """Start a daemon operation that recursively deletes remote path(s).
 
         The walk runs on the shared operation worker with progress reporting
         and cooperative cancellation instead of blocking the SFTP command
-        stream.
+        stream. Extra ``paths`` on the request are deleted in the same
+        operation after the primary path.
         """
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
-        path = _validate_path(request.path)
+        paths = tuple(_validate_path(path) for path in request.all_paths())
         record = self._ready_record_for_mutation(request.service_id, client_id)
         runtime = self._require_operation_lifecycle()
+        label = paths[0] if len(paths) == 1 else f"{len(paths)} paths"
 
         def _body(handle) -> str:
             handle.report("Deleting…", 0.0)
@@ -2060,7 +2106,7 @@ class SftpServiceRuntime:
             _body,
             connection_id=record.connection_id,
             owner_client_id=client_id,
-            message=f"Deleting {path}",
+            message=f"Deleting {label}",
             failure_mapper=_operation_failure,
         )
 
@@ -2076,6 +2122,10 @@ class SftpServiceRuntime:
 
         A symlink is removed as a link (like ``rm -r``), never recursed into,
         which keeps cycles and escapes out of the tree impossible.
+
+        File and symlink children in a directory are removed with pipelined
+        ``FXP_REMOVE`` when the client supports ``remove_many``; subdirectory
+        trees still recurse sequentially.
         """
         try:
             attr = client.lstat(path)
@@ -2087,23 +2137,47 @@ class SftpServiceRuntime:
             client.remove(path)
             return
         entries = client.listdir_attr(path)
-        processed = 0
+        file_children: List[str] = []
+        dir_children: List[str] = []
         for entry in entries:
-            if cancel is not None and cancel():
-                raise OperationCancelled()
             child = path.rstrip("/") + "/" + entry.filename
             if entry.is_dir() and not entry.is_symlink():
-                self._remove_recursive(client, child, progress=progress, cancel=cancel)
+                dir_children.append(child)
             else:
-                try:
-                    client.remove(child)
-                except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-                    if not isinstance(exc, sftp_proto.SFTPError) or exc.code != sftp_proto.FX_NO_SUCH_FILE:
-                        raise
+                file_children.append(child)
+        total = len(entries)
+        processed = 0
+        if file_children:
+            if cancel is not None and cancel():
+                raise OperationCancelled()
+            self._remove_files(client, file_children)
+            processed += len(file_children)
+            if progress is not None:
+                progress(_coarse_progress(processed, total))
+        for child in dir_children:
+            if cancel is not None and cancel():
+                raise OperationCancelled()
+            self._remove_recursive(client, child, progress=progress, cancel=cancel)
             processed += 1
             if progress is not None:
-                progress(_coarse_progress(processed, len(entries)))
+                progress(_coarse_progress(processed, total))
         client.rmdir(path)
+
+    @staticmethod
+    def _remove_files(client, paths: List[str]) -> None:
+        """Remove file/symlink paths, preferring a pipelined batch when available."""
+        if not paths:
+            return
+        remove_many = getattr(client, "remove_many", None)
+        if callable(remove_many):
+            remove_many(paths)
+            return
+        for path in paths:
+            try:
+                client.remove(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if not isinstance(exc, sftp_proto.SFTPError) or exc.code != sftp_proto.FX_NO_SUCH_FILE:
+                    raise
 
     def rename(self, request: SftpRenameRequest, *, client_id: ClientId) -> None:
         if type(request) is not SftpRenameRequest:
