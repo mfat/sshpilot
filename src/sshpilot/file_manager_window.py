@@ -2912,6 +2912,46 @@ class FileManagerWindow(Adw.Window):
         self._batch_expected: Dict[str, Optional[int]] = {}
         self._batch_active_bytes: Dict[str, Tuple[int, int]] = {}
         self._batch_settled_bytes: Dict[str, Tuple[int, int]] = {}
+        # key -> (filename, source_path, destination_path)
+        self._batch_file_meta: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
+        self._batch_focused_key: Optional[str] = None
+
+    def _focus_batch_transfer(self, key: str, *, force: bool = False) -> None:
+        """Point the dialog's name / From / To labels at one batch member."""
+        dialog = self._progress_dialog
+        meta = getattr(self, "_batch_file_meta", {}).get(key)
+        if dialog is None or meta is None:
+            return
+        if not force and getattr(self, "_batch_focused_key", None) == key:
+            return
+        filename, source_path, destination_path = meta
+        self._batch_focused_key = key
+        try:
+            dialog.set_operation_details(
+                total_files=dialog.total_files or 1,
+                filename=filename,
+            )
+            if source_path or destination_path:
+                dialog.set_paths(source_path, destination_path)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+
+    def _focus_next_active_batch_transfer(self, exclude_key: Optional[str] = None) -> None:
+        """After a file finishes, show another still-active transfer if needed."""
+        active = getattr(self, "_batch_active_bytes", {})
+        focused = getattr(self, "_batch_focused_key", None)
+        if focused and focused != exclude_key and focused in active:
+            return
+        for key in active:
+            if key != exclude_key:
+                self._focus_batch_transfer(key, force=True)
+                return
+        # Nothing active yet — fall back to any unfinished expected key.
+        settled = getattr(self, "_batch_settled_bytes", {})
+        for key in getattr(self, "_batch_expected", {}):
+            if key != exclude_key and key not in settled:
+                self._focus_batch_transfer(key, force=True)
+                return
 
     def _publish_batch_transfer_progress(self) -> None:
         """Push aggregated batch bytes + an honest status string into the dialog."""
@@ -2974,6 +3014,7 @@ class FileManagerWindow(Adw.Window):
             done = total
         if done > 0 or total > 0:
             settled[key] = (done, total if total > 0 else done)
+        self._focus_next_active_batch_transfer(exclude_key=key)
         self._publish_batch_transfer_progress()
 
     def _show_progress_dialog(
@@ -3056,17 +3097,11 @@ class FileManagerWindow(Adw.Window):
                 except Exception as exc:
                     logger.debug("Failed to re-present progress dialog: %s", exc)
 
-            # Add future to dialog (will update total_files if needed). Real
-            # byte counts arrive via the manager's progress-bytes signal — no
-            # need to pre-set total_bytes here.
-            self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
+            # Keep the file counter in sync. Name / From / To are owned by
+            # ``_focus_batch_transfer`` so a multi-file start loop does not
+            # leave the dialog stuck on the last registered path.
+            self._progress_dialog.set_operation_details(total_files=total_files)
             self._progress_dialog.set_future(future)
-
-            # Surface source and destination paths so the user can see where
-            # the file is going / coming from. Both labels stay hidden until
-            # one is provided.
-            if source_path or destination_path:
-                self._progress_dialog.set_paths(source_path, destination_path)
 
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
@@ -3138,6 +3173,7 @@ class FileManagerWindow(Adw.Window):
                     return
                 active[key] = (transferred_n, total_n)
                 try:
+                    GLib.idle_add(self._focus_batch_transfer, key)
                     GLib.idle_add(self._publish_batch_transfer_progress)
                 except (AttributeError, RuntimeError, GLib.Error):
                     pass
@@ -3162,7 +3198,13 @@ class FileManagerWindow(Adw.Window):
             self._reset_batch_progress_state()
         key = progress_key_for_future(future)
         exp = int(expected_bytes) if expected_bytes is not None and expected_bytes > 0 else None
+        first_in_batch = key not in self._batch_expected and not self._batch_expected
         self._batch_expected[key] = exp
+        self._batch_file_meta[key] = (filename, source_path, destination_path)
+        # Show the first file immediately; later files update the labels when
+        # their progress-bytes arrive (or when a prior file settles).
+        if first_in_batch or total_files <= 1:
+            self._focus_batch_transfer(key, force=True)
         if exp is not None and total_files > 1:
             self._publish_batch_transfer_progress()
 

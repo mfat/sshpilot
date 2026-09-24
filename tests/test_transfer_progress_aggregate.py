@@ -67,3 +67,50 @@ def test_progress_key_for_future_is_stable():
     fut = _Fut()
     assert progress_key_for_future(fut) == f"fut-{id(fut)}"
     assert progress_key_for_future(fut) == progress_key_for_future(fut)
+
+
+def test_focus_batch_transfer_updates_name_and_paths(load_file_manager_window):
+    from unittest.mock import MagicMock
+
+    window_module = load_file_manager_window()
+    window = window_module.FileManagerWindow.__new__(window_module.FileManagerWindow)
+    dialog = MagicMock()
+    dialog.total_files = 3
+    window._progress_dialog = dialog
+    window._reset_batch_progress_state()
+    window._batch_file_meta["a"] = ("one.txt", "/local/one.txt", "/remote/one.txt")
+    window._batch_file_meta["b"] = ("two.txt", "/local/two.txt", "/remote/two.txt")
+
+    window._focus_batch_transfer("a", force=True)
+    dialog.set_operation_details.assert_called_with(total_files=3, filename="one.txt")
+    dialog.set_paths.assert_called_with("/local/one.txt", "/remote/one.txt")
+
+    dialog.reset_mock()
+    window._focus_batch_transfer("a")  # same key — no-op
+    dialog.set_operation_details.assert_not_called()
+
+    window._focus_batch_transfer("b")
+    dialog.set_operation_details.assert_called_with(total_files=3, filename="two.txt")
+    dialog.set_paths.assert_called_with("/local/two.txt", "/remote/two.txt")
+
+
+def test_focus_next_active_skips_settled_key(load_file_manager_window):
+    from unittest.mock import MagicMock
+
+    window_module = load_file_manager_window()
+    window = window_module.FileManagerWindow.__new__(window_module.FileManagerWindow)
+    dialog = MagicMock()
+    dialog.total_files = 2
+    window._progress_dialog = dialog
+    window._reset_batch_progress_state()
+    window._batch_expected = {"a": 10, "b": 20}
+    window._batch_file_meta = {
+        "a": ("a.txt", "/a", "/ra"),
+        "b": ("b.txt", "/b", "/rb"),
+    }
+    window._batch_active_bytes = {"b": (5, 20)}
+    window._batch_focused_key = "a"
+
+    window._focus_next_active_batch_transfer(exclude_key="a")
+    dialog.set_operation_details.assert_called_with(total_files=2, filename="b.txt")
+    dialog.set_paths.assert_called_with("/b", "/rb")
