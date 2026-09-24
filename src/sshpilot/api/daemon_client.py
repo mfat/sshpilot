@@ -9,6 +9,7 @@ import secrets
 import socket
 import threading
 import time
+from collections import OrderedDict
 from sshpilot.runtime_identity import new_unique_client_id, new_request_id
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -341,6 +342,25 @@ SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT = (
 # it had just saved. A hung-but-connected daemon is the only thing this delays
 # noticing — a daemon that dies closes the socket, which is seen at once.
 SECRET_BACKEND_REQUEST_TIMEOUT = 60.0
+# Remote file reads and saves for the text editor run a chain of sequential
+# SFTP round trips on the daemon (stat, read, backup, write, rename). Over a
+# high-latency link a save measured ~5.4s against the 5s default, and the
+# timeout tore down the whole daemon transport while the daemon went on to
+# finish the write -- the editor reported a failed save for a file that had
+# been saved, then every later request on the dead client failed with
+# "transport is closed". A slow SFTP peer is not a hung daemon, so these
+# methods get a longer budget and time out on their own (see
+# ``ABANDON_ON_TIMEOUT_METHODS``).
+SFTP_FILE_REQUEST_TIMEOUT = 60.0
+SFTP_FILE_METHODS = frozenset({"sftp.read_file", "sftp.replace_file"})
+# Requests whose slowness says nothing about the daemon's health: on timeout
+# only that request fails, and its late response is dropped instead of being
+# treated as a protocol violation. Everything else keeps the strict behavior
+# where a timeout means the daemon is unresponsive and the transport is failed.
+ABANDON_ON_TIMEOUT_METHODS = SFTP_FILE_METHODS
+# Bound on remembered abandoned request ids, so a daemon that never answers
+# cannot grow this set without limit.
+_ABANDONED_REQUEST_LIMIT = 256
 # Connection/plugin secret RPCs. The ``secrets.*`` namespace is covered by
 # prefix; these live under ``connections.*`` next to ordinary metadata calls
 # that must keep the short default, so they are named explicitly.
@@ -593,6 +613,7 @@ class DaemonClient:
         self._publisher = EventPublisher()
         self._pending_requests: Dict[RequestId, _PendingRequest] = {}
         self._pending_secret_responses: Dict[RequestId, _PendingSecretResponse] = {}
+        self._abandoned_requests: "OrderedDict[RequestId, None]" = OrderedDict()
         self._event_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
         self._terminal_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
         self._terminal_subscribers: Dict[
@@ -1572,6 +1593,7 @@ class DaemonClient:
         result = self._request(
             "sftp.replace_file",
             sftp_replace_file_request_to_wire(request),
+            mutation_description="file save",
         )
         try:
             return sftp_replace_file_result_from_wire(result)
@@ -3181,6 +3203,8 @@ class DaemonClient:
         """
         if method.startswith("secrets.") or method in SECRET_BACKEND_METHODS:
             return max(self._timeout, SECRET_BACKEND_REQUEST_TIMEOUT)
+        if method in SFTP_FILE_METHODS:
+            return max(self._timeout, SFTP_FILE_REQUEST_TIMEOUT)
         return self._timeout
 
     def _request(
@@ -3297,7 +3321,9 @@ class DaemonClient:
             if not pending.completed.wait(effective_timeout):
                 with self._state_lock:
                     response_arrived = pending.response is not None or pending.error is not None
-                if not response_arrived:
+                if not response_arrived and not self._abandon_timed_out_request(
+                    request_id, pending
+                ):
                     elapsed = time.monotonic() - pending.started_at
                     diagnostics = self._transport_diagnostics(
                         request_id=request_id,
@@ -3515,6 +3541,18 @@ class DaemonClient:
                     self._terminal_overflow.discard(
                         pending.terminal_reset_session
                     )
+                abandoned = (
+                    pending is None
+                    and envelope.request_id in self._abandoned_requests
+                )
+                if abandoned:
+                    del self._abandoned_requests[envelope.request_id]
+            if abandoned:
+                logger.info(
+                    "Dropped late daemon response for abandoned request %s",
+                    envelope.request_id,
+                )
+                continue
             if pending is None:
                 logger.debug(
                     "Late or unknown daemon response for cleared request id %s",
@@ -3787,6 +3825,43 @@ class DaemonClient:
             "terminal_thread_alive": threads["terminal"],
             "transport_open": socket_state == "open",
         }
+
+    def _abandon_timed_out_request(
+        self, request_id: RequestId, pending: _PendingRequest
+    ) -> bool:
+        """Fail only *pending* on timeout when its method allows it.
+
+        Returns False when the method is not abandonable and the transport
+        must be failed instead. A response or transport failure that races
+        the timeout wins, and the normal completion path handles it.
+        """
+        if pending.method not in ABANDON_ON_TIMEOUT_METHODS:
+            return False
+        with self._state_lock:
+            claimed = self._pending_requests.pop(request_id, None) is not None
+            if claimed:
+                self._abandoned_requests[request_id] = None
+                while len(self._abandoned_requests) > _ABANDONED_REQUEST_LIMIT:
+                    self._abandoned_requests.popitem(last=False)
+                pending.error = SshPilotError(
+                    ErrorCode.TRANSPORT_TIMEOUT,
+                    "The daemon request timed out",
+                    retryable=True,
+                    request_id=request_id,
+                )
+                pending.completed.set()
+        if not claimed:
+            # The reader (or a transport failure) already took this request
+            # and is about to complete it.
+            pending.completed.wait()
+            return True
+        logger.warning(
+            "Daemon %s request %s timed out after %.1fs; keeping the transport open",
+            pending.method,
+            request_id,
+            time.monotonic() - pending.started_at,
+        )
+        return True
 
     def _fail_transport(self, error: SshPilotError) -> None:
         timeout_diagnostics: Optional[dict] = None

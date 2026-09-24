@@ -846,6 +846,13 @@ class SftpServiceRuntime:
                     connection_id=record.connection_id,
                 )
             record.attached_clients.add(client_id)
+            if record.owner_client_id is None:
+                # The owner disconnected (``detach_client`` orphans rather
+                # than closes). The app re-attaches its open file managers on
+                # the replacement transport, and must be able to save and
+                # manage the service again, so the first client to re-attach
+                # an orphan becomes its owner.
+                record.owner_client_id = client_id
             return self._summary_locked(record)
 
     def detach_service(self, service_id: SftpServiceId, *, client_id: ClientId) -> None:
@@ -1276,28 +1283,19 @@ class SftpServiceRuntime:
                     "The remote file changed since it was read",
                     connection_id=record.connection_id,
                 )
-            parent = posixpath.dirname(path)
-            if parent:
-                try:
-                    client.mkdir(parent, 0o700)
-                except Exception as exc:
-                    # SFTP v3 has no EEXIST status: servers answer a bare
-                    # FX_FAILURE when the directory already exists, which
-                    # SFTPError maps to EIO — never EEXIST/EISDIR, so an errno
-                    # check here can never pass. Confirm the parent is a
-                    # usable directory instead; only a genuinely missing or
-                    # non-directory parent is an error.
-                    try:
-                        parent_attr = client.stat(parent)
-                    except Exception:
-                        raise self._map_error(exc, record) from exc
-                    if not stat_module.S_ISDIR(parent_attr.st_mode or 0):
-                        raise self._map_error(exc, record) from exc
+            # Every step below is a sequential SFTP round trip, and the GTK
+            # client waits on the whole save. Over a high-latency link the
+            # old sequence (18 round trips) outran the client's timeout, so
+            # skip what an existing file makes unnecessary.
+            if current_mode is None:
+                self._ensure_remote_parent(client, path, record)
+            # Keep the file's own permissions; a new file stays private.
+            target_mode = current_mode if current_mode is not None else 0o600
             backup_path = None
             if request.backup and current_mode is not None:
                 backup_path = f"{path}.bak-{time.time_ns()}"
                 try:
-                    self._write_remote_bytes(client, backup_path, current_content, 0o600)
+                    self._backup_remote_file(client, path, backup_path, current_content)
                 except Exception as exc:
                     raise SshPilotError(
                         ErrorCode.FILE_BACKUP_FAILED,
@@ -1307,6 +1305,14 @@ class SftpServiceRuntime:
             temporary = f"{path}.sshpilot.tmp-{time.time_ns()}"
             try:
                 self._write_remote_bytes(client, temporary, payload, 0o600)
+                if target_mode != 0o600:
+                    # Set the final mode before the rename so the file is
+                    # never visible with the wrong permissions. The create
+                    # mode alone is subject to the server's umask.
+                    try:
+                        client.chmod(temporary, target_mode)
+                    except Exception:
+                        logger.debug("Could not preserve remote file mode", exc_info=True)
                 try:
                     client.posix_rename(temporary, path)
                 except Exception:
@@ -1315,10 +1321,6 @@ class SftpServiceRuntime:
                     except Exception:
                         pass
                     client.rename(temporary, path)
-                try:
-                    client.chmod(path, 0o600)
-                except Exception:
-                    logger.debug("Could not enforce remote file mode", exc_info=True)
             except SshPilotError:
                 raise
             except Exception as exc:
@@ -1361,12 +1363,59 @@ class SftpServiceRuntime:
             raise SshPilotError(ErrorCode.FILE_CONTENT_TOO_LARGE, "The remote file is too large")
         return content, ((attr.st_mode or 0) & 0o7777)
 
+    def _ensure_remote_parent(
+        self, client: OpenSSHSFTPClient, path: str, record: _SftpRecord
+    ) -> None:
+        parent = posixpath.dirname(path)
+        if not parent:
+            return
+        try:
+            client.mkdir(parent, 0o700)
+        except Exception as exc:
+            # SFTP v3 has no EEXIST status: servers answer a bare
+            # FX_FAILURE when the directory already exists, which
+            # SFTPError maps to EIO — never EEXIST/EISDIR, so an errno
+            # check here can never pass. Confirm the parent is a
+            # usable directory instead; only a genuinely missing or
+            # non-directory parent is an error.
+            try:
+                parent_attr = client.stat(parent)
+            except Exception:
+                raise self._map_error(exc, record) from exc
+            if not stat_module.S_ISDIR(parent_attr.st_mode or 0):
+                raise self._map_error(exc, record) from exc
+
+    @classmethod
+    def _backup_remote_file(
+        cls,
+        client: OpenSSHSFTPClient,
+        path: str,
+        backup_path: str,
+        content: bytes,
+    ) -> None:
+        """Preserve the current file at *backup_path* before it is replaced.
+
+        A hard link is one round trip and keeps the old inode intact once the
+        new content is renamed over *path*; a copy needs a full upload and is
+        only the fallback for servers without the OpenSSH extension or
+        filesystems that refuse links.
+        """
+        supports_hardlink = getattr(client, "supports_hardlink", None)
+        if callable(supports_hardlink) and supports_hardlink():
+            try:
+                client.hardlink(path, backup_path)
+                return
+            except Exception:
+                logger.debug("Hard-link backup failed; copying instead", exc_info=True)
+        cls._write_remote_bytes(client, backup_path, content, 0o600)
+
     @staticmethod
     def _write_remote_bytes(client: OpenSSHSFTPClient, path: str, content: bytes, mode: int) -> None:
-        with client.file(path, "wb") as handle:
-            client.chmod(path, mode)
+        # The mode travels with the OPEN, so the content is never readable
+        # under a wider mode and no separate SETSTAT is needed. A server umask
+        # can only narrow it.
+        with client.file(path, "wb", create_mode=mode) as handle:
             handle.write(content)
-        client.chmod(path, mode)
 
     @staticmethod
     def _replace_local_authorized_keys(

@@ -5,6 +5,7 @@ strings, no keyring lookups, no sudo building. The ``access`` intent and the
 ``expected_revision`` revision-safety fields are the contract we assert here.
 """
 import types
+import weakref
 from concurrent.futures import Future
 
 import pytest
@@ -235,6 +236,7 @@ def _ready_manager(client, *, state=None):
     manager._username = "user"
     manager._host = "web"
     manager._closed = False
+    manager._editor_services = weakref.WeakSet()
     manager._connection_id = "conn-1"
     return manager
 
@@ -268,3 +270,71 @@ def test_make_file_editor_service_requires_ready_sftp():
 
     with pytest.raises(OSError):
         manager.make_file_editor_service(PATH)
+
+
+class _AmbiguousSaveClient(FakeClient):
+    """The save's response was lost; the remote holds *remote_content*."""
+
+    def __init__(self, remote_content, code=None):
+        super().__init__(revision="rev-remote", content=remote_content)
+        from sshpilot.api.errors import ErrorCode
+
+        self._code = code or ErrorCode.MUTATION_AMBIGUOUS
+
+    def sftp_replace_file(self, request):
+        from sshpilot.api.errors import SshPilotError
+
+        self.replaces.append(request)
+        raise SshPilotError(self._code, "The file save may have completed")
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_interrupted_save_that_landed_is_reported_as_saved(privileged):
+    client = _AmbiguousSaveClient("edited\n")
+    service = _make(client, privileged=privileged)
+    service._revision = "rev-1"
+    save = service.save_text_privileged if privileged else service.save_text
+
+    result = _wait(save("edited\n"))
+
+    assert result.revision == "rev-remote"
+    expected = SftpFileAccess.SUDO if privileged else SftpFileAccess.NORMAL
+    assert client.reads[-1].access is expected
+
+
+def test_interrupted_save_that_did_not_land_still_fails():
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    client = _AmbiguousSaveClient("original\n")
+    service = _make(client)
+    service._revision = "rev-1"
+
+    with pytest.raises(SshPilotError) as raised:
+        _wait(service.save_text("edited\n"))
+    assert raised.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_definite_save_errors_are_not_second_guessed():
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    client = _AmbiguousSaveClient("edited\n", code=ErrorCode.FILE_REVISION_CONFLICT)
+    service = _make(client)
+    service._revision = "rev-1"
+
+    with pytest.raises(SshPilotError) as raised:
+        _wait(service.save_text("edited\n"))
+    assert raised.value.code is ErrorCode.FILE_REVISION_CONFLICT
+    assert client.reads == []
+
+
+def test_rebind_client_routes_later_requests_to_the_new_client():
+    old, new = FakeClient(), FakeClient()
+    service = _make(old)
+    service._revision = "rev-1"
+
+    service.rebind_client(new)
+    _wait(service.save_text("x"))
+
+    assert old.replaces == []
+    assert new.replaces[-1].expected_revision == "rev-1"
+    assert new.replaces[-1].service_id == SERVICE_ID

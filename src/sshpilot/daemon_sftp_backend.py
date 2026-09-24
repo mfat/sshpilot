@@ -24,6 +24,7 @@ import logging
 import os
 import pathlib
 import threading
+import weakref
 from concurrent.futures import Future
 from gettext import gettext as _
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -211,6 +212,9 @@ class DaemonSftpManager(GObject.GObject):
             on_error=self._on_service_error,
         )
         self._transfers = TransferServiceController(daemon_client, bridge)
+        # Editor file services handed out by make_file_editor_service; they
+        # hold the daemon client too and must follow a transport replacement.
+        self._editor_services: "weakref.WeakSet[Any]" = weakref.WeakSet()
 
     # -- compatibility aliases (mirrors OpenSSHSFTPManager) ---------------
     @property
@@ -252,6 +256,43 @@ class DaemonSftpManager(GObject.GObject):
                 self._client, self._bridge, self._parent_widget
             )
         self._sftp_controller.open(self._connection_id)
+
+    def rebind_client(self, client: Any, bridge: Any = None) -> None:
+        """Move this backend, and every editor it opened, to a new transport.
+
+        Called when the app replaced a lost daemon connection. The daemon SFTP
+        service survives the old connection, so it is re-attached (reclaiming
+        ownership) rather than reopened: no re-authentication, and open panes
+        and editors keep working.
+        """
+        if client is None:
+            raise ValueError("a daemon client is required")
+        if self._closed or client is self._client:
+            return
+        self._client = client
+        if bridge is not None:
+            self._bridge = bridge
+        if self._interaction_dialogs is not None:
+            self._interaction_dialogs.close()
+            self._interaction_dialogs = None
+            if self._parent_widget is not None:
+                from .daemon_interaction_dialogs import DaemonInteractionDialogs
+
+                self._interaction_dialogs = DaemonInteractionDialogs(
+                    client, self._bridge, self._parent_widget
+                )
+                service_id = self._sftp_controller.service_id
+                if service_id is not None:
+                    self._interaction_dialogs.set_session(SessionId(str(service_id)))
+        self._transfers.rebind_client(client, self._bridge)
+        self._sftp_controller.rebind_client(client, self._bridge)
+        for service in list(self._editor_services):
+            rebind = getattr(service, "rebind_client", None)
+            if callable(rebind):
+                try:
+                    rebind(client)
+                except Exception:
+                    logger.debug("Failed to rebind editor file service", exc_info=True)
 
     def _on_service_state_changed(self, summary) -> None:
         service_id = self._sftp_controller.service_id
@@ -383,12 +424,14 @@ class DaemonSftpManager(GObject.GObject):
                 privileged = capabilities().supports(Capability.SFTP_PRIVILEGED_FILE)
             except Exception:  # noqa: BLE001 - capability inspection must not block editing
                 logger.debug("Failed to inspect privileged-file capability", exc_info=True)
-        return DaemonRemoteFileService(
+        service = DaemonRemoteFileService(
             self._client,
             service_id,
             path,
             privileged_supported=privileged,
         )
+        self._editor_services.add(service)
+        return service
 
     @staticmethod
     def _format_size(num_bytes: float) -> str:

@@ -699,3 +699,21 @@ def test_external_exception_text_is_not_transported_as_direct_message(
     assert raised.value.code is expected_code
     assert raised.value.message == expected_code.value
     assert str(failure) not in str(raised.value.to_dict())
+
+
+def test_reattaching_an_orphaned_service_reclaims_ownership():
+    """After the app's daemon transport is replaced, its new client re-attaches
+    the surviving service and must be able to save through it again."""
+    runtime, _runner = _make_runtime()
+    old_client = ClientId("client:old")
+    new_client = ClientId("client:new")
+    summary = runtime.prepare_open_service(_open_request(), client_id=old_client)
+    runtime.start_service(summary.id)
+
+    runtime.detach_client(old_client)
+    runtime.attach_service(AttachSftpRequest(service_id=summary.id), client_id=new_client)
+
+    runtime.mkdir(
+        SftpPathRequest(service_id=summary.id, path="/tmp/demo"),
+        client_id=new_client,
+    )

@@ -911,3 +911,107 @@ def test_event_for_other_connection_ignored_while_unbound(controller):
     )
     assert controller.service_id is None
     assert controller.state is SftpControllerState.IDLE
+
+
+class _SyncBridge:
+    def submit(self, factory, *, on_success, on_error):
+        try:
+            result = factory()
+        except Exception as exc:  # noqa: BLE001 - mirror the bridge contract
+            on_error(exc)
+        else:
+            on_success(result)
+
+
+def _new_client():
+    client = Mock()
+    capabilities = Mock()
+    capabilities.supported = required_daemon_sftp_capabilities()
+    client.get_capabilities.return_value = capabilities
+    return client
+
+
+def test_rebind_reattaches_the_service_on_the_new_client_without_resetting():
+    from sshpilot.api.models.operations import SftpServiceState
+
+    old_client, new_client = _new_client(), _new_client()
+    ready = []
+    controller = DaemonSftpServiceController(
+        client=old_client,
+        bridge=_SyncBridge(),
+        connection_id=ConnectionId("conn-1"),
+        on_ready=ready.append,
+    )
+    _mark_ready(controller)
+    old_subscription = Mock()
+    controller._event_subscription = old_subscription
+    new_client.attach_sftp.return_value = SimpleNamespace(
+        id=SftpServiceId("svc-1"),
+        state=SftpServiceState.READY,
+        connection_id=ConnectionId("conn-1"),
+    )
+
+    controller.rebind_client(new_client)
+
+    old_subscription.unsubscribe.assert_called_once()
+    new_client.subscribe_events.assert_called_once()
+    (request,), _ = new_client.attach_sftp.call_args
+    assert request.service_id == SftpServiceId("svc-1")
+    assert controller.state is SftpControllerState.READY
+    assert controller.service_id == SftpServiceId("svc-1")
+    # Already READY: panes must not be re-initialised by a second on_ready.
+    assert ready == []
+    old_client.attach_sftp.assert_not_called()
+
+
+def test_rebind_leaves_a_closed_controller_alone():
+    old_client, new_client = _new_client(), _new_client()
+    controller = DaemonSftpServiceController(
+        client=old_client, bridge=_SyncBridge(), connection_id=ConnectionId("conn-1")
+    )
+    _mark_ready(controller)
+    controller.close()
+
+    controller.rebind_client(new_client)
+
+    new_client.attach_sftp.assert_not_called()
+
+
+def test_manager_rebind_moves_controllers_and_open_editors():
+    import weakref
+
+    from sshpilot.remote_file_editor_service import DaemonRemoteFileService
+
+    old_client, new_client = _new_client(), _new_client()
+    manager = DaemonSftpManager.__new__(DaemonSftpManager)
+    manager._client = old_client
+    manager._bridge = "bridge"
+    manager._closed = False
+    manager._parent_widget = None
+    manager._interaction_dialogs = None
+    manager._sftp_controller = Mock()
+    manager._transfers = Mock()
+    manager._editor_services = weakref.WeakSet()
+    editor = DaemonRemoteFileService(old_client, "svc-1", "/srv/.env")
+    manager._editor_services.add(editor)
+
+    manager.rebind_client(new_client)
+
+    manager._sftp_controller.rebind_client.assert_called_once_with(new_client, "bridge")
+    manager._transfers.rebind_client.assert_called_once_with(new_client, "bridge")
+    assert editor._client is new_client
+    editor.close()
+
+
+def test_open_file_manager_windows_follow_a_replaced_client(monkeypatch):
+    from sshpilot import file_manager_window
+
+    windows = [Mock(), Mock()]
+    windows[0].rebind_daemon_client.side_effect = RuntimeError("one broken window")
+    monkeypatch.setattr(file_manager_window, "_file_manager_windows_registry", windows)
+    new_client = object()
+
+    file_manager_window.rebind_file_manager_windows(new_client, "bridge")
+
+    for window in windows:
+        window.rebind_daemon_client.assert_called_once_with(new_client, "bridge")

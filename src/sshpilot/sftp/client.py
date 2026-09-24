@@ -44,6 +44,7 @@ class OpenSSHSFTPClient:
         self._reader: Optional[threading.Thread] = None
         self._closed = False
         self.version: Optional[int] = None
+        self.extensions: Dict[str, bytes] = {}
 
     # -- framing ----------------------------------------------------------
     def _read_exact(self, n: int) -> bytes:
@@ -76,7 +77,7 @@ class OpenSSHSFTPClient:
         ptype, payload = self._read_packet()
         if ptype != proto.FXP_VERSION:
             raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected SFTP VERSION")
-        self.version, _ = proto.parse_version(payload)
+        self.version, self.extensions = proto.parse_version(payload)
         self._reader = threading.Thread(
             target=self._reader_loop, name="sftp-reader", daemon=True
         )
@@ -250,6 +251,22 @@ class OpenSSHSFTPClient:
         )
         self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
 
+    def supports_hardlink(self) -> bool:
+        return "hardlink@openssh.com" in self.extensions
+
+    def hardlink(self, old: str, new: str) -> None:
+        """Create ``new`` as a hard link to ``old`` (OpenSSH extension).
+
+        One round trip, and the link keeps the old inode's content even after
+        ``old`` is later replaced by a rename.
+        """
+        payload = (
+            proto.pack_string("hardlink@openssh.com")
+            + proto.pack_string(old)
+            + proto.pack_string(new)
+        )
+        self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+
     def chmod(self, path: str, mode: int) -> None:
         attr = proto.SFTPAttributes(st_mode=int(mode) & 0o7777)
         self._expect_ok(
@@ -294,10 +311,21 @@ class OpenSSHSFTPClient:
         payload = proto.pack_string(path) + proto.pack_uint32(pflags) + proto.encode_attrs(attr)
         return self._handle(self._request(proto.FXP_OPEN, payload))
 
-    def open(self, path: str, mode: str = "r", bufsize: int = -1) -> "OpenSSHSFTPFile":
+    def open(
+        self,
+        path: str,
+        mode: str = "r",
+        bufsize: int = -1,
+        *,
+        create_mode: Optional[int] = None,
+    ) -> "OpenSSHSFTPFile":
         """Paramiko-compatible ``open`` returning a seek-tracking file object, so
         code written against paramiko's ``SFTPClient.open(path, mode)`` (e.g. the
-        window's remote copy/paste) works against this client unchanged."""
+        window's remote copy/paste) works against this client unchanged.
+
+        ``create_mode`` sets the permissions a newly created file gets in the
+        same OPEN request (the server still applies its umask), saving the
+        separate SETSTAT round trip."""
         m = mode.replace("b", "")
         if m in ("w", "x"):
             pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
@@ -307,12 +335,22 @@ class OpenSSHSFTPClient:
             pflags = proto.FXF_READ | proto.FXF_WRITE | proto.FXF_CREAT
         else:  # "r"
             pflags = proto.FXF_READ
-        handle = self.open_handle(path, pflags)
+        attr = None
+        if create_mode is not None:
+            attr = proto.SFTPAttributes(st_mode=int(create_mode) & 0o7777)
+        handle = self.open_handle(path, pflags, attr)
         return OpenSSHSFTPFile(self, handle)
 
     # paramiko's SFTPClient exposes both ``open`` and ``file`` (an alias).
-    def file(self, path: str, mode: str = "r", bufsize: int = -1) -> "OpenSSHSFTPFile":
-        return self.open(path, mode, bufsize)
+    def file(
+        self,
+        path: str,
+        mode: str = "r",
+        bufsize: int = -1,
+        *,
+        create_mode: Optional[int] = None,
+    ) -> "OpenSSHSFTPFile":
+        return self.open(path, mode, bufsize, create_mode=create_mode)
 
     def read(self, handle: bytes, offset: int, length: int) -> bytes:
         payload = proto.pack_string(handle) + proto.pack_uint64(offset) + proto.pack_uint32(length)

@@ -67,6 +67,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def rebind_file_manager_windows(client: Any, bridge: Any = None) -> None:
+    """Move every open file manager to a replacement daemon client.
+
+    Called by the main window after a lost daemon transport is replaced, so
+    open panes and the editors they launched keep working instead of failing
+    every request with "The daemon transport is closed".
+    """
+    for window in list(_file_manager_windows_registry):
+        rebind = getattr(window, "rebind_daemon_client", None)
+        if not callable(rebind):
+            continue
+        try:
+            rebind(client, bridge)
+        except Exception:
+            logger.warning("Failed to move a file manager to the new daemon client", exc_info=True)
+
+
 def _sftp_session_ready(manager) -> bool:
     """True when *manager* has a usable remote SFTP session.
 
@@ -898,6 +915,18 @@ class FileManagerWindow(Adw.Window):
             return False  # Don't repeat
 
         GLib.idle_add(show_error)
+
+    def rebind_daemon_client(self, client: Any, bridge: Any = None) -> None:
+        """Follow the app onto a replacement daemon client (see module helper)."""
+        if client is None:
+            return
+        self._daemon_client = client
+        if bridge is not None:
+            self._bridge = bridge
+        manager = getattr(self, "_manager", None)
+        rebind = getattr(manager, "rebind_client", None)
+        if callable(rebind):
+            rebind(client, self._bridge)
 
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""

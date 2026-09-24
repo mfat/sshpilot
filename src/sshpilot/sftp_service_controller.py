@@ -224,6 +224,51 @@ class DaemonSftpServiceController:
             on_error=lambda error: self._fail(error, generation),
         )
 
+    def rebind_client(self, client, bridge=None) -> None:
+        """Move this controller onto a replacement daemon transport.
+
+        The daemon keeps SFTP services alive when their client disconnects
+        (it only clears the owner), so after a reconnect the same service can
+        be re-attached from the new client, which also reclaims ownership for
+        saves and other mutations. The controller stays READY while that
+        happens, so open panes are neither reset nor re-listed.
+        """
+        if client is None:
+            raise ValueError("a daemon client is required")
+        self._unsubscribe_events()
+        with self._lock:
+            if self._closed:
+                return
+            self._client = client
+            if bridge is not None:
+                self._bridge = bridge
+            self._generation += 1
+            generation = self._generation
+            service_id = self._service_id
+            state = self._state
+        if state in (
+            SftpControllerState.IDLE,
+            SftpControllerState.CLOSED,
+            SftpControllerState.CLOSING,
+            SftpControllerState.DETACHED,
+        ):
+            return
+        if service_id is None:
+            # Still opening on the old transport: its result can no longer
+            # arrive, so start the open again on the new one.
+            self.open()
+            return
+        self._ensure_events()
+
+        def _op():
+            return client.attach_sftp(AttachSftpRequest(service_id=service_id))
+
+        self._submit(
+            _op,
+            on_success=lambda summary: self._on_open_accepted(summary, generation),
+            on_error=lambda error: self._fail(error, generation),
+        )
+
     def detach(self) -> None:
         service_id = self.service_id
         generation = self._bump()
