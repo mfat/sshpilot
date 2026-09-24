@@ -246,8 +246,8 @@ def test_listing_an_empty_directory(client, tmp_path):
 def test_remove_many_pipelines_over_a_slow_link(tmp_path):
     """Mass file delete should pay about one RTT per pipeline window."""
     paths = []
-    for index in range(48):
-        path = tmp_path / f"file-{index:02d}.txt"
+    for index in range(200):
+        path = tmp_path / f"file-{index:03d}.txt"
         path.write_text("x")
         paths.append(str(path))
     delay = 0.05
@@ -260,8 +260,9 @@ def test_remove_many_pipelines_over_a_slow_link(tmp_path):
         _stop_client(sftp, process, stdout)
     assert failures == []
     assert all(not os.path.exists(path) for path in paths)
-    # 48 removes / depth 16 ≈ 3 windows; leave headroom for handshake jitter.
-    assert round_trips < 8, f"remove_many took {round_trips:.1f} round trips"
+    # 200 removes / depth 100 ≈ 2 windows; leave headroom for handshake jitter.
+    # Depth 16 would need ~12.5 windows and fail this bound on a slow link.
+    assert round_trips < 5, f"remove_many took {round_trips:.1f} round trips"
 
 
 def test_listing_a_large_directory_over_a_slow_link(tmp_path):

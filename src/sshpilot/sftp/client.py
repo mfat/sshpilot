@@ -21,6 +21,10 @@ _MAX_CHUNK = 4 * 1024 * 1024
 # Reads/writes a file keeps in flight, so a transfer costs about one round
 # trip per window instead of one per chunk.
 _PIPELINE_DEPTH = 16
+# Mass ``FXP_REMOVE`` window. FileZilla uses 100 for the same reason: deletes
+# are tiny requests, so a deeper window hides RTT better than the transfer
+# depth without saturating the channel the way large READ/WRITE payloads would.
+_REMOVE_PIPELINE_DEPTH = 100
 # READDIRs a directory listing keeps in flight.
 _READDIR_AHEAD = 8
 
@@ -301,9 +305,9 @@ class OpenSSHSFTPClient:
     ) -> List[Tuple[str, BaseException]]:
         """Delete many files/symlinks with pipelined ``FXP_REMOVE`` requests.
 
-        Up to ``_PIPELINE_DEPTH`` removes stay in flight so a mass delete costs
-        about one round trip per window instead of one per path. Missing paths
-        are ignored (same idempotent policy as a recursive tree delete).
+        Up to ``_REMOVE_PIPELINE_DEPTH`` removes stay in flight so a mass delete
+        costs about one round trip per window instead of one per path. Missing
+        paths are ignored (same idempotent policy as a recursive tree delete).
 
         When ``continue_on_error`` is false (default), the first hard STATUS
         error is raised after draining the current in-flight window. When true,
@@ -337,7 +341,7 @@ class OpenSSHSFTPClient:
             if fatal is not None:
                 break
             inflight.append((path, self._send(proto.FXP_REMOVE, proto.pack_string(path))))
-            if len(inflight) >= _PIPELINE_DEPTH:
+            if len(inflight) >= _REMOVE_PIPELINE_DEPTH:
                 _drain_one()
         while inflight:
             _drain_one()
