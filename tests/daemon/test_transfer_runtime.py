@@ -97,8 +97,36 @@ class _FakeSftpClient:
     def pipelined_writer(self, handle, offset=0):
         return _SequentialWriter(self, handle, offset)
 
+    def supports_posix_rename(self):
+        return getattr(self, "_posix_rename_supported", True)
+
     def posix_rename(self, old, new):
+        if not self.supports_posix_rename():
+            from sshpilot.sftp import protocol as sftp_proto
+
+            raise sftp_proto.SFTPError(
+                sftp_proto.FX_OP_UNSUPPORTED, "posix-rename@openssh.com"
+            )
         self.files[new] = self.files.pop(old, b"")
+
+    def rename(self, old, new):
+        if new in self.files:
+            raise OSError("destination exists")
+        self.files[new] = self.files.pop(old, b"")
+
+    def atomic_rename(self, old, new):
+        """Mirror :meth:`OpenSSHSFTPClient.atomic_rename` for transfer tests."""
+        if self.supports_posix_rename():
+            try:
+                self.posix_rename(old, new)
+                return
+            except Exception:
+                pass
+        try:
+            self.remove(new)
+        except Exception:
+            pass
+        self.rename(old, new)
 
     def remove(self, path):
         self.files.pop(path, None)
@@ -256,6 +284,21 @@ class _RecursiveSftpClient(_FakeSftpClient):
         return None
 
     def posix_rename(self, old, new):
+        if not self.supports_posix_rename():
+            from sshpilot.sftp import protocol as sftp_proto
+
+            raise sftp_proto.SFTPError(
+                sftp_proto.FX_OP_UNSUPPORTED, "posix-rename@openssh.com"
+            )
+        if old in self.files:
+            self.files[new] = self.files.pop(old, b"")
+        if old in self.dirs:
+            self.dirs.discard(old)
+            self.dirs.add(new)
+
+    def rename(self, old, new):
+        if new in self.files or new in self.dirs:
+            raise OSError("destination exists")
         if old in self.files:
             self.files[new] = self.files.pop(old, b"")
         if old in self.dirs:
@@ -557,6 +600,31 @@ def test_run_transfer_completes_upload():
     summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
     assert summary.state is TransferState.COMPLETED
     assert client.files["/remote/file.txt"] == b"hello world"
+
+
+def test_upload_falls_back_when_posix_rename_unsupported():
+    """Non-OpenSSH SFTP rejects posix-rename; upload must still commit."""
+    from dataclasses import replace
+
+    owner = ClientId("client:owner")
+    client = _FakeSftpClient()
+    client._posix_rename_supported = False
+    client.files["/remote/file.txt"] = b"stale"
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_path = _temp_source(b"fresh bytes")
+    request = replace(
+        _upload_request(service_id, local_path),
+        conflict_policy=TransferConflictPolicy.OVERWRITE,
+    )
+    prepared = transfer_runtime.prepare_start_transfer(request, client_id=owner)
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+    assert summary.state is TransferState.COMPLETED
+    assert client.files["/remote/file.txt"] == b"fresh bytes"
+    assert not any(
+        name.startswith("/remote/.sshpilot-tmp-") for name in client.files
+    )
 
 
 def test_cancel_before_run_marks_transfer_cancelled():

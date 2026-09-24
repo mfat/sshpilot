@@ -426,6 +426,9 @@ class OpenSSHSFTPClient:
             )
         )
 
+    def supports_posix_rename(self) -> bool:
+        return "posix-rename@openssh.com" in self.extensions
+
     def posix_rename(self, old: str, new: str) -> None:
         """Atomic rename that overwrites the target (OpenSSH extension).
 
@@ -438,6 +441,31 @@ class OpenSSHSFTPClient:
             + proto.pack_string(new)
         )
         self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+
+    def atomic_rename(self, old: str, new: str) -> None:
+        """Rename ``old`` onto ``new``, replacing ``new`` if it already exists.
+
+        Prefers OpenSSH ``posix-rename`` when the server advertises it. Servers
+        that reject the extension (ProFTPD mod_sftp, AWS Transfer Family,
+        Dropbear, many appliances) get remove-destination then standard
+        ``FXP_RENAME`` instead of a hard failure.
+        """
+        if self.supports_posix_rename():
+            try:
+                self.posix_rename(old, new)
+                return
+            except proto.SFTPError as exc:
+                if exc.code == proto.FX_CONNECTION_LOST:
+                    raise
+                logger.debug(
+                    "posix-rename failed (%s); falling back to remove+rename",
+                    exc,
+                )
+        try:
+            self.remove(new)
+        except (FileNotFoundError, proto.SFTPError):
+            pass
+        self.rename(old, new)
 
     def supports_hardlink(self) -> bool:
         return "hardlink@openssh.com" in self.extensions

@@ -1006,6 +1006,10 @@ class TransferRuntime:
         lost: a replaced file keeps *existing_mode* (the temp is private until
         then), and a new file gets the local file's mode, narrowed by the
         server's umask as OpenSSH's ``sftp put`` does. The local mtime is kept.
+
+        Commit uses ``atomic_rename`` (OpenSSH posix-rename when available,
+        otherwise remove + standard RENAME) so non-OpenSSH SFTP servers still
+        accept the upload.
         """
         local_info = os.stat(local_src)
         create_mode = 0o600 if existing_mode is not None else stat.S_IMODE(local_info.st_mode)
@@ -1044,7 +1048,9 @@ class TransferRuntime:
             raise
         client.close_handle(handle)
         try:
-            client.posix_rename(remote_temp, remote_dst)
+            # OpenSSH: posix-rename. Others (mod_sftp, AWS Transfer, …):
+            # remove+FXP_RENAME — see OpenSSHSFTPClient.atomic_rename.
+            client.atomic_rename(remote_temp, remote_dst)
         except Exception:
             self._cleanup_remote_temp(record)
             raise

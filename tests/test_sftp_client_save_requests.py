@@ -24,6 +24,9 @@ class _FakeServer(threading.Thread):
         self._extensions = extensions
         self.opens: list[tuple[str, proto.SFTPAttributes]] = []
         self.extended: list[tuple[str, str, str]] = []
+        self.removes: list[str] = []
+        self.renames: list[tuple[str, str]] = []
+        self.extended_status = proto.FX_OK
 
     def _read_exact(self, n: int) -> bytes:
         data = b""
@@ -73,6 +76,12 @@ class _FakeServer(threading.Thread):
                     )
                 elif ptype == proto.FXP_EXTENDED:
                     self.extended.append((reader.text(), reader.text(), reader.text()))
+                    self._status(rid, self.extended_status)
+                elif ptype == proto.FXP_REMOVE:
+                    self.removes.append(reader.text())
+                    self._status(rid, proto.FX_OK)
+                elif ptype == proto.FXP_RENAME:
+                    self.renames.append((reader.text(), reader.text()))
                     self._status(rid, proto.FX_OK)
                 else:
                     self._status(rid, proto.FX_OK)
@@ -136,3 +145,52 @@ def test_hardlink_sends_the_openssh_extension():
         client.close()
 
     assert server.extended == [("hardlink@openssh.com", "/srv/.env", "/srv/.env.bak-1")]
+
+
+@pytest.mark.parametrize(
+    ("extensions", "supported"),
+    [({"posix-rename@openssh.com": b"1"}, True), ({}, False)],
+)
+def test_posix_rename_support_comes_from_the_server_version(extensions, supported):
+    client, _server = _make_client(extensions)
+    try:
+        assert client.supports_posix_rename() is supported
+    finally:
+        client.close()
+
+
+def test_atomic_rename_uses_posix_rename_when_advertised():
+    client, server = _make_client({"posix-rename@openssh.com": b"1"})
+    try:
+        client.atomic_rename("/srv/.tmp", "/srv/file")
+    finally:
+        client.close()
+
+    assert server.extended == [("posix-rename@openssh.com", "/srv/.tmp", "/srv/file")]
+    assert server.removes == []
+    assert server.renames == []
+
+
+def test_atomic_rename_falls_back_when_posix_rename_is_absent():
+    client, server = _make_client({})
+    try:
+        client.atomic_rename("/srv/.tmp", "/srv/file")
+    finally:
+        client.close()
+
+    assert server.extended == []
+    assert server.removes == ["/srv/file"]
+    assert server.renames == [("/srv/.tmp", "/srv/file")]
+
+
+def test_atomic_rename_falls_back_when_posix_rename_is_rejected():
+    client, server = _make_client({"posix-rename@openssh.com": b"1"})
+    server.extended_status = proto.FX_OP_UNSUPPORTED
+    try:
+        client.atomic_rename("/srv/.tmp", "/srv/file")
+    finally:
+        client.close()
+
+    assert server.extended == [("posix-rename@openssh.com", "/srv/.tmp", "/srv/file")]
+    assert server.removes == ["/srv/file"]
+    assert server.renames == [("/srv/.tmp", "/srv/file")]
