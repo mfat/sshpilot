@@ -375,7 +375,52 @@ def test_same_pane_local_drop_into_folder_moves(load_file_manager_window, monkey
     assert move is True
 
 
-def test_remote_clipboard_skips_self_descendant_paste(load_file_manager_window, monkeypatch):
+def test_remote_clipboard_prompts_before_self_descendant_paste(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
+
+    FileEntry = module.FileEntry
+    window = module.FileManagerWindow.__new__(module.FileManagerWindow)
+    window._right_pane = type("Pane", (), {"show_toast": lambda *a, **k: None})()
+    calls = []
+    prompts = []
+    window._manager = type(
+        "Manager", (), {"copy_remote": lambda *a, **k: calls.append((a, k))}
+    )()
+    window._show_progress_dialog = lambda *a, **k: None
+    window._attach_refresh = lambda *a, **k: None
+
+    def _confirm(*, move, total_count, invalid_count, on_skip):
+        prompts.append((move, total_count, invalid_count))
+        # Cancel: do not call on_skip.
+
+    window._confirm_into_itself_skip = _confirm
+
+    docs = FileEntry("docs", True, 0, 0)
+
+    window._perform_remote_clipboard_operation(
+        [docs], "/srv/data", "/srv/data", False
+    )
+    window._perform_remote_clipboard_operation(
+        [docs], "/srv/data", "/srv/data/docs/sub", True
+    )
+    assert calls == []
+    assert prompts == [(False, 1, 1), (True, 1, 1)]
+
+    prompts.clear()
+    window._perform_remote_clipboard_operation(
+        [docs], "/srv/data", "/srv/backup", True
+    )
+    assert prompts == []
+    assert len(calls) == 1
+    manager, source_path, destination_path = calls[0][0]
+    assert source_path == "/srv/data/docs"
+    assert destination_path == "/srv/backup/docs"
+    assert calls[0][1]["recursive"] is True
+    assert calls[0][1]["move"] is True
+
+
+def test_remote_clipboard_skip_continues_with_sibling_files(load_file_manager_window, monkeypatch):
+    """Dropping folder A + files onto A: Skip transfers only the files (Nautilus)."""
     module = load_file_manager_window()
 
     FileEntry = module.FileEntry
@@ -387,26 +432,84 @@ def test_remote_clipboard_skips_self_descendant_paste(load_file_manager_window, 
     )()
     window._show_progress_dialog = lambda *a, **k: None
     window._attach_refresh = lambda *a, **k: None
-
-    docs = FileEntry("docs", True, 0, 0)
-
-    window._perform_remote_clipboard_operation(
-        [docs], "/srv/data", "/srv/data", False
+    window._confirm_into_itself_skip = (
+        lambda **kwargs: kwargs["on_skip"]()
     )
+
+    folder = FileEntry("archive", True, 0, 0)
+    file_a = FileEntry("a.txt", False, 0, 0)
+    file_b = FileEntry("b.txt", False, 0, 0)
+
     window._perform_remote_clipboard_operation(
-        [docs], "/srv/data", "/srv/data/docs/sub", True
+        [folder, file_a, file_b], "/srv/data", "/srv/data/archive", True
+    )
+
+    assert [call[0][1] for call in calls] == [
+        "/srv/data/a.txt",
+        "/srv/data/b.txt",
+    ]
+    assert [call[0][2] for call in calls] == [
+        "/srv/data/archive/a.txt",
+        "/srv/data/archive/b.txt",
+    ]
+
+
+def test_remote_clipboard_cancel_aborts_entire_batch(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
+
+    FileEntry = module.FileEntry
+    window = module.FileManagerWindow.__new__(module.FileManagerWindow)
+    window._right_pane = type("Pane", (), {"show_toast": lambda *a, **k: None})()
+    calls = []
+    window._manager = type(
+        "Manager", (), {"copy_remote": lambda *a, **k: calls.append((a, k))}
+    )()
+    window._show_progress_dialog = lambda *a, **k: None
+    window._attach_refresh = lambda *a, **k: None
+    window._confirm_into_itself_skip = lambda **_kwargs: None
+
+    folder = FileEntry("archive", True, 0, 0)
+    file_a = FileEntry("a.txt", False, 0, 0)
+
+    window._perform_remote_clipboard_operation(
+        [folder, file_a], "/srv/data", "/srv/data/archive", True
     )
     assert calls == []
 
-    window._perform_remote_clipboard_operation(
-        [docs], "/srv/data", "/srv/backup", True
+
+def test_local_clipboard_skip_continues_with_sibling_files(load_file_manager_window, monkeypatch, tmp_path):
+    module = load_file_manager_window()
+
+    FileEntry = module.FileEntry
+    window = module.FileManagerWindow.__new__(module.FileManagerWindow)
+    toasts = []
+    window._left_pane = type("Pane", (), {"show_toast": lambda *a, **k: toasts.append(a)})()
+    window._pending_highlights = {}
+    window._normalize_local_path = lambda path: path
+    window._confirm_into_itself_skip = lambda **kwargs: kwargs["on_skip"]()
+    refreshes = []
+    window._refresh_local_listing = lambda path: refreshes.append(path)
+
+    source = tmp_path / "data"
+    archive = source / "archive"
+    archive.mkdir(parents=True)
+    (source / "a.txt").write_text("a")
+    (source / "b.txt").write_text("b")
+
+    folder = FileEntry("archive", True, 0, 0)
+    file_a = FileEntry("a.txt", False, 0, 0)
+    file_b = FileEntry("b.txt", False, 0, 0)
+
+    window._perform_local_clipboard_operation(
+        [folder, file_a, file_b], str(source), str(archive), True
     )
-    assert len(calls) == 1
-    manager, source_path, destination_path = calls[0][0]
-    assert source_path == "/srv/data/docs"
-    assert destination_path == "/srv/backup/docs"
-    assert calls[0][1]["recursive"] is True
-    assert calls[0][1]["move"] is True
+
+    assert (archive / "a.txt").read_text() == "a"
+    assert (archive / "b.txt").read_text() == "b"
+    assert not (archive / "archive").exists()
+    assert not (source / "a.txt").exists()
+    assert not (source / "b.txt").exists()
+    assert archive.is_dir()
 
 
 def test_is_remote_descendant_guard(load_file_manager_window, monkeypatch):
@@ -418,3 +521,5 @@ def test_is_remote_descendant_guard(load_file_manager_window, monkeypatch):
     assert cls._is_remote_descendant("/a/b", "/a") is False
     assert cls._is_remote_descendant("/a", "/ab") is False
     assert cls._is_remote_descendant("/", "/a") is False
+    assert cls._is_path_into_itself("/a", "/a/b", posix=False) is True
+    assert cls._is_path_into_itself("/a", "/ab", posix=False) is False

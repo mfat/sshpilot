@@ -1498,23 +1498,31 @@ class FileManagerWindow(Adw.Window):
         source_dir = self._clipboard_directory or "/"
         entries = list(self._clipboard_entries)
 
+        def _on_clipboard_op_started() -> None:
+            if move_requested:
+                self._clear_clipboard()
+            else:
+                self._update_paste_targets()
+
         if source_pane is self._left_pane and pane is self._left_pane:
-            self._perform_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            self._perform_local_clipboard_operation(
+                entries, source_dir, destination, move_requested,
+                on_started=_on_clipboard_op_started,
+            )
         elif source_pane is self._right_pane and pane is self._right_pane:
-            self._perform_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            self._perform_remote_clipboard_operation(
+                entries, source_dir, destination, move_requested,
+                on_started=_on_clipboard_op_started,
+            )
         elif source_pane is self._left_pane and pane is self._right_pane:
             self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            _on_clipboard_op_started()
         elif source_pane is self._right_pane and pane is self._left_pane:
             self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            _on_clipboard_op_started()
         else:
             pane.show_toast(_("Paste target is unavailable"))
             return
-
-        if move_requested:
-            self._clear_clipboard()
-        else:
-            self._update_paste_targets()
-
     def _op_mkdir(self, pane) -> None:
         dialog = Adw.AlertDialog.new(_("New Folder"), _("Enter a name for the new folder"))
         entry = Gtk.Entry()
@@ -2402,71 +2410,186 @@ class FileManagerWindow(Adw.Window):
         base = directory or "/"
         return posixpath.join(base, entry.name)
 
+    @staticmethod
+    def _is_path_into_itself(source_path: str, destination_path: str, *, posix: bool) -> bool:
+        """True when *destination_path* is *source_path* or lives inside it.
+
+        Mirrors Nautilus ``test_dir_is_parent`` used to block recursive
+        copy/move into itself (folder A dropped onto A, or into a child of A).
+        """
+        norm = posixpath.normpath if posix else os.path.normpath
+        sep = "/" if posix else os.sep
+        source_norm = norm(source_path)
+        dest_norm = norm(destination_path)
+        if source_norm in {"", ".", sep}:
+            return False
+        if dest_norm == source_norm:
+            return True
+        prefix = source_norm.rstrip(sep)
+        if not prefix or prefix == sep:
+            return False
+        return dest_norm.startswith(f"{prefix}{sep}")
+
+    @staticmethod
+    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
+        """True when *destination_path* is the source or lives inside it."""
+        return FileManagerWindow._is_path_into_itself(
+            source_path, destination_path, posix=True
+        )
+
+    def _present_alert_dialog(self, dialog: Adw.AlertDialog) -> None:
+        try:
+            dialog.present(self._dialog_parent())
+        except Exception as exc:
+            logger.error("Failed to present dialog with parent: %s", exc, exc_info=True)
+            dialog.present()
+
+    def _confirm_into_itself_skip(
+        self,
+        *,
+        move: bool,
+        total_count: int,
+        invalid_count: int,
+        on_skip: Callable[[], None],
+    ) -> None:
+        """Ask whether to skip recursive into-itself items (Nautilus skip dialog).
+
+        * Cancel aborts the whole job.
+        * Skip / Skip All continue with the remaining valid items. Both are
+          offered when the batch has more than one item, matching Nautilus
+          ``show_skip_dialog``; with a pre-filtered batch they behave the same.
+        """
+        heading = (
+            _("You cannot move a folder into itself.")
+            if move
+            else _("You cannot copy a folder into itself.")
+        )
+        body = _("The destination folder is inside the source folder.")
+        dialog = Adw.AlertDialog.new(heading, body)
+        dialog.add_response("cancel", _("Cancel"))
+        if total_count > 1:
+            dialog.add_response("skip", _("Skip"))
+            if invalid_count > 1 or total_count > invalid_count:
+                dialog.add_response("skip_all", _("Skip All"))
+            dialog.set_default_response("skip")
+        else:
+            dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response: str) -> None:
+            dialog.close()
+            if response in ("skip", "skip_all"):
+                on_skip()
+
+        dialog.connect("response", _on_response)
+        self._present_alert_dialog(dialog)
+
+    def _partition_clipboard_entries(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        *,
+        remote: bool,
+    ) -> Tuple[List[Tuple[str, str, FileEntry]], List[FileEntry]]:
+        """Split clipboard entries into transferable items and into-itself folders."""
+        valid: List[Tuple[str, str, FileEntry]] = []
+        invalid: List[FileEntry] = []
+        for entry in entries:
+            if remote:
+                source_path = self._resolve_remote_entry_path(source_dir, entry)
+                destination_path = self._resolve_remote_entry_path(destination_dir, entry)
+            else:
+                source_path = os.path.join(source_dir, entry.name)
+                destination_path = os.path.join(destination_dir, entry.name)
+            if entry.is_dir and self._is_path_into_itself(
+                source_path, destination_path, posix=remote
+            ):
+                invalid.append(entry)
+            else:
+                valid.append((source_path, destination_path, entry))
+        return valid, invalid
+
     def _perform_local_clipboard_operation(
         self,
         entries: List[FileEntry],
         source_dir: str,
         destination_dir: str,
         move: bool,
+        on_started: Optional[Callable[[], None]] = None,
     ) -> None:
         source_dir_norm = self._normalize_local_path(source_dir)
         destination_dir_norm = self._normalize_local_path(destination_dir)
-        source_base = pathlib.Path(source_dir_norm)
-        destination_base = pathlib.Path(destination_dir_norm)
-        destination_base.mkdir(parents=True, exist_ok=True)
+        valid, invalid = self._partition_clipboard_entries(
+            entries, source_dir_norm, destination_dir_norm, remote=False
+        )
 
-        completed = 0
-        errors: List[str] = []
+        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+            if not work_items:
+                return
+            if on_started is not None:
+                on_started()
 
-        for entry in entries:
-            source_path = source_base / entry.name
-            destination_path = destination_base / entry.name
-            try:
-                if move:
-                    shutil.move(str(source_path), str(destination_path))
-                else:
-                    if entry.is_dir:
-                        if destination_path.exists():
-                            raise FileExistsError(_("{name} already exists").format(name=entry.name))
-                        shutil.copytree(source_path, destination_path)
+            destination_base = pathlib.Path(destination_dir_norm)
+            destination_base.mkdir(parents=True, exist_ok=True)
+
+            completed = 0
+            errors: List[str] = []
+
+            for source_path, destination_path, entry in work_items:
+                try:
+                    if move:
+                        shutil.move(source_path, destination_path)
                     else:
-                        if destination_path.exists():
-                            raise FileExistsError(_("{name} already exists").format(name=entry.name))
-                        shutil.copy2(source_path, destination_path)
-                completed += 1
-            except FileExistsError as exc:
-                errors.append(str(exc))
-            except Exception as exc:
-                errors.append(f"{entry.name}: {exc}")
+                        dest = pathlib.Path(destination_path)
+                        if entry.is_dir:
+                            if dest.exists():
+                                raise FileExistsError(
+                                    _("{name} already exists").format(name=entry.name)
+                                )
+                            shutil.copytree(source_path, destination_path)
+                        else:
+                            if dest.exists():
+                                raise FileExistsError(
+                                    _("{name} already exists").format(name=entry.name)
+                                )
+                            shutil.copy2(source_path, destination_path)
+                    completed += 1
+                except FileExistsError as exc:
+                    errors.append(str(exc))
+                except Exception as exc:
+                    errors.append(f"{entry.name}: {exc}")
 
-        if completed:
-            if entries:
-                self._pending_highlights[self._left_pane] = entries[0].name
-            GLib.idle_add(self._refresh_local_listing, destination_dir_norm)
-            if move and destination_dir_norm != source_dir_norm:
-                GLib.idle_add(self._refresh_local_listing, source_dir_norm)
-            message = (
-                ngettext("Moved {count} item", "Moved {count} items", completed)
-                if move else ngettext("Copied {count} item", "Copied {count} items", completed)
-            ).format(count=completed)
-            self._left_pane.show_toast(message)
+            if completed:
+                if work_items:
+                    self._pending_highlights[self._left_pane] = work_items[0][2].name
+                GLib.idle_add(self._refresh_local_listing, destination_dir_norm)
+                if move and destination_dir_norm != source_dir_norm:
+                    GLib.idle_add(self._refresh_local_listing, source_dir_norm)
+                message = (
+                    ngettext("Moved {count} item", "Moved {count} items", completed)
+                    if move
+                    else ngettext(
+                        "Copied {count} item", "Copied {count} items", completed
+                    )
+                ).format(count=completed)
+                self._left_pane.show_toast(message)
 
-        if errors:
-            self._left_pane.show_toast(_("Local copy or move failed: {error}").format(error=errors[0]))
+            if errors:
+                self._left_pane.show_toast(
+                    _("Local copy or move failed: {error}").format(error=errors[0])
+                )
 
-    @staticmethod
-    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
-        """True when *destination_path* is the source or lives inside it."""
-        source_norm = posixpath.normpath(source_path)
-        dest_norm = posixpath.normpath(destination_path)
-        if source_norm in {"", ".", "/"}:
-            return False
-        if dest_norm == source_norm:
-            return True
-        source_prefix = source_norm.rstrip("/")
-        if not source_prefix:
-            return False
-        return dest_norm.startswith(f"{source_prefix}/")
+        if not invalid:
+            _run(valid)
+            return
+
+        self._confirm_into_itself_skip(
+            move=move,
+            total_count=len(entries),
+            invalid_count=len(invalid),
+            on_skip=lambda: _run(valid),
+        )
 
     def _perform_remote_clipboard_operation(
         self,
@@ -2474,6 +2597,7 @@ class FileManagerWindow(Adw.Window):
         source_dir: str,
         destination_dir: str,
         move: bool,
+        on_started: Optional[Callable[[], None]] = None,
     ) -> None:
         if not entries:
             return
@@ -2482,55 +2606,50 @@ class FileManagerWindow(Adw.Window):
             self._right_pane.show_toast(_("Remote connection unavailable"))
             return
 
-        skipped: List[str] = []
-        work_items: List[tuple[str, str, FileEntry, bool]] = []
+        valid, invalid = self._partition_clipboard_entries(
+            entries, source_dir, destination_dir, remote=True
+        )
 
-        for entry in entries:
-            source_path = self._resolve_remote_entry_path(source_dir, entry)
-            destination_path = self._resolve_remote_entry_path(destination_dir, entry)
+        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+            if not work_items:
+                return
+            if on_started is not None:
+                on_started()
 
-            if entry.is_dir and self._is_remote_descendant(source_path, destination_path):
-                skipped.append(
-                    _("Cannot paste '{name}' into its own subdirectory").format(name=entry.name)
+            operation = "move" if move else "copy"
+            total_files = len(work_items)
+
+            for source_path, destination_path, entry in work_items:
+                future = manager.copy_remote(
+                    source_path,
+                    destination_path,
+                    recursive=entry.is_dir,
+                    move=move,
                 )
-                continue
+                self._show_progress_dialog(
+                    operation,
+                    entry.name,
+                    future,
+                    total_files=total_files,
+                    source_path=source_path,
+                    destination_path=destination_path,
+                )
+                self._attach_refresh(
+                    future,
+                    refresh_remote=self._right_pane,
+                    highlight_name=entry.name,
+                )
 
-            work_items.append(
-                (source_path, destination_path, entry, entry.is_dir)
-            )
-
-        if not work_items:
-            if skipped:
-                self._right_pane.show_toast(skipped[0])
+        if not invalid:
+            _run(valid)
             return
 
-        operation = "move" if move else "copy"
-        total_files = len(work_items)
-
-        for source_path, destination_path, entry, is_dir in work_items:
-            future = manager.copy_remote(
-                source_path,
-                destination_path,
-                recursive=is_dir,
-                move=move,
-            )
-            self._show_progress_dialog(
-                operation,
-                entry.name,
-                future,
-                total_files=total_files,
-                source_path=source_path,
-                destination_path=destination_path,
-            )
-            self._attach_refresh(
-                future,
-                refresh_remote=self._right_pane,
-                highlight_name=entry.name,
-            )
-
-        if skipped:
-            self._right_pane.show_toast(skipped[0])
-
+        self._confirm_into_itself_skip(
+            move=move,
+            total_count=len(entries),
+            invalid_count=len(invalid),
+            on_skip=lambda: _run(valid),
+        )
 
     def _perform_local_to_remote_clipboard_operation(
         self,
