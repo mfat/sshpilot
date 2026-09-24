@@ -9,7 +9,7 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Callable, Optional
+from typing import Optional
 
 
 class TransferDirection(str, Enum):
@@ -202,51 +202,13 @@ def decide_conflict(exists: bool, policy: OverwritePolicy) -> ConflictDecision:
 
 
 def ui_conflict_response_to_policy(response: str) -> OverwritePolicy:
-    """Map AlertDialog responses (replace/skip/cancel/rename) onto overwrite policy."""
+    """Map AlertDialog responses (replace/skip/cancel) onto overwrite policy."""
     key = (response or "").strip().lower()
-    if key in ("replace", "overwrite", "yes", "merge"):
+    if key in ("replace", "overwrite", "yes"):
         return OverwritePolicy.OVERWRITE
     if key in ("skip",):
         return OverwritePolicy.SKIP
-    if key in ("rename",):
-        return OverwritePolicy.RENAME
     return OverwritePolicy.FAIL
-
-
-def conflict_name_variants(basename: str, *, max_index: int = 999) -> list[str]:
-    """Yield Nautilus/daemon-style alternate names: ``stem (1).ext``, …
-
-    Used by the file-manager conflict dialog (suggested rename) and by the
-    transfer runtime when ``OverwritePolicy.RENAME`` is set.
-    """
-    if not basename or basename in (".", ".."):
-        return []
-    # Prefer the final path segment only.
-    name = basename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    if not name or name in (".", ".."):
-        return []
-    if name.startswith(".") and name.count(".") == 1:
-        stem, ext = name, ""
-    else:
-        stem, dot, ext = name.rpartition(".")
-        if not dot or not stem:
-            stem, ext = name, ""
-        else:
-            ext = f".{ext}"
-    return [f"{stem} ({index}){ext}" for index in range(1, max_index + 1)]
-
-
-def first_available_conflict_name(
-    basename: str,
-    is_taken: Callable[[str], bool],
-    *,
-    max_index: int = 999,
-) -> Optional[str]:
-    """Return the first ``conflict_name_variants`` candidate not marked taken."""
-    for candidate in conflict_name_variants(basename, max_index=max_index):
-        if not is_taken(candidate):
-            return candidate
-    return None
 
 
 @dataclass

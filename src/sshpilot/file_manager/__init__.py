@@ -56,16 +56,6 @@ from .progress_dialog import (
     SFTPProgressDialog,
 )
 from .properties_dialog import PropertiesDialog
-from .conflict_dialog import FileConflictDialog
-from .conflict_resolution import (
-    ConflictItem,
-    ConflictResolutionSession,
-    ConflictResponse,
-    ConflictSideInfo,
-    destination_taken_checker,
-    local_side_info,
-    remote_side_info_from_entry,
-)
 from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 
@@ -136,11 +126,6 @@ __all__ = [
     "_MAX_ICON_LEVELS",
     "_MIN_ICON_LEVEL",
     "_PROGRESS_DIALOG_BASE",
-    "ConflictItem",
-    "ConflictResolutionSession",
-    "ConflictResponse",
-    "ConflictSideInfo",
-    "FileConflictDialog",
     "FileEntry",
     "FilePane",
     "PaneControls",
@@ -168,10 +153,7 @@ __all__ = [
     "_save_doc",
     "_sftp_path_exists",
     "create_file_manager_backend",
-    "destination_taken_checker",
-    "local_side_info",
     "open_in_file_manager",
-    "remote_side_info_from_entry",
     "resolve_download_locate_path",
     "safe_display_text",
     "stat_isdir",

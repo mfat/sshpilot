@@ -83,7 +83,8 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("connection_dialog_port_forwarding.py", "forwards", "validate_forwarding_rule"),
         ("connection_dialog_port_forwarding.py", "forwards", "forwarding_rule_defaults"),
         # -- transfer conflict-policy mapping ---------------------------
-        ("file_manager_window.py", "transfers", "first_available_conflict_name"),
+        ("file_manager_window.py", "transfers", "OverwritePolicy"),
+        ("file_manager_window.py", "transfers", "ui_conflict_response_to_policy"),
         # -- prompt classification policy (pure) ------------------------
         ("askpass_utils.py", "interaction", "classify_prompt"),
         ("askpass_utils.py", "interaction", "PromptKind"),

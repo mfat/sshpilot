@@ -104,20 +104,11 @@ def test_atomic_cancel_progress_queue():
 
 
 def test_decide_conflict_and_ui_mapping():
-    from sshpilot.core.transfers import (
-        conflict_name_variants,
-        first_available_conflict_name,
-    )
-
     assert decide_conflict(False, OverwritePolicy.FAIL) is ConflictDecision.PROCEED
     assert decide_conflict(True, OverwritePolicy.OVERWRITE) is ConflictDecision.PROCEED
     assert decide_conflict(True, OverwritePolicy.SKIP) is ConflictDecision.SKIP
     assert decide_conflict(True, OverwritePolicy.RENAME) is ConflictDecision.RENAME
     assert decide_conflict(True, OverwritePolicy.FAIL) is ConflictDecision.FAIL
     assert ui_conflict_response_to_policy("replace") is OverwritePolicy.OVERWRITE
-    assert ui_conflict_response_to_policy("merge") is OverwritePolicy.OVERWRITE
     assert ui_conflict_response_to_policy("skip") is OverwritePolicy.SKIP
-    assert ui_conflict_response_to_policy("rename") is OverwritePolicy.RENAME
     assert ui_conflict_response_to_policy("cancel") is OverwritePolicy.FAIL
-    assert conflict_name_variants("notes.txt")[:2] == ["notes (1).txt", "notes (2).txt"]
-    assert first_available_conflict_name("notes.txt", lambda name: name == "notes (1).txt") == "notes (2).txt"
