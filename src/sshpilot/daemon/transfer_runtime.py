@@ -922,11 +922,11 @@ class TransferRuntime:
             with os.fdopen(fd, "wb") as tmp_file:
                 handle = client.open_handle(remote_src, sftp_proto.FXF_READ)
                 try:
-                    while True:
+                    self._check_cancel(record)
+                    # Pipelined: several reads in flight, not one round trip
+                    # per chunk.
+                    for chunk in client.iter_read(handle):
                         self._check_cancel(record)
-                        chunk = client.read(handle, offset, self._chunk_size)
-                        if not chunk:
-                            break
                         tmp_file.write(chunk)
                         offset += len(chunk)
                         self._report_progress(record, base + offset)
@@ -958,15 +958,20 @@ class TransferRuntime:
             sftp_proto.FXF_WRITE | sftp_proto.FXF_CREAT | sftp_proto.FXF_TRUNC,
         )
         try:
+            # Pipelined: several writes in flight, not one round trip per
+            # chunk. Progress counts bytes sent; flush() waits for the acks.
+            writer = client.pipelined_writer(handle)
+            block = max(self._chunk_size, getattr(client, "max_write_length", 0))
             with open(local_src, "rb") as source:
                 while True:
                     self._check_cancel(record)
-                    chunk = source.read(self._chunk_size)
+                    chunk = source.read(block)
                     if not chunk:
                         break
-                    client.write(handle, offset, chunk)
+                    writer.write(chunk)
                     offset += len(chunk)
                     self._report_progress(record, base + offset)
+            writer.flush()
         except BaseException:
             client.close_handle(handle)
             self._cleanup_remote_temp(record)

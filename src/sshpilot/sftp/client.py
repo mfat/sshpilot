@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Dict, List, Optional, Tuple
+from collections import deque
+from typing import Deque, Dict, Iterator, List, Optional, Tuple
 
 from . import protocol as proto
 
 logger = logging.getLogger(__name__)
 
 _CHUNK = 32768  # 32 KiB — within the SFTP max packet for reads/writes.
+# Upper bound on a read/write chunk, whatever limits@openssh.com advertises.
+_MAX_CHUNK = 4 * 1024 * 1024
+# Reads/writes a file keeps in flight, so a transfer costs about one round
+# trip per window instead of one per chunk.
+_PIPELINE_DEPTH = 16
 
 
 class _Pending:
@@ -45,6 +51,9 @@ class OpenSSHSFTPClient:
         self._closed = False
         self.version: Optional[int] = None
         self.extensions: Dict[str, bytes] = {}
+        # Largest READ/WRITE payload; raised from limits@openssh.com in start().
+        self.max_read_length = _CHUNK
+        self.max_write_length = _CHUNK
 
     # -- framing ----------------------------------------------------------
     def _read_exact(self, n: int) -> bytes:
@@ -82,6 +91,38 @@ class OpenSSHSFTPClient:
             target=self._reader_loop, name="sftp-reader", daemon=True
         )
         self._reader.start()
+        self._load_limits()
+
+    def _load_limits(self) -> None:
+        """Adopt the server's READ/WRITE size limits (OpenSSH extension).
+
+        OpenSSH advertises ~255 KiB, so a 1 MiB file moves in 4-5 chunks
+        instead of 32. Servers without the extension keep the 32 KiB default.
+        """
+        if "limits@openssh.com" not in self.extensions:
+            return
+        try:
+            ptype, payload = self._request(
+                proto.FXP_EXTENDED, proto.pack_string("limits@openssh.com")
+            )
+            if ptype != proto.FXP_EXTENDED_REPLY:
+                return
+            reader = proto._Reader(payload)
+            reader.uint32()  # request id
+            max_packet = reader.uint64()
+            max_read = reader.uint64()
+            max_write = reader.uint64()
+        except Exception as exc:
+            logger.debug("SFTP limits request failed: %s", exc)
+            return
+        # 0 means "no limit"; a WRITE also carries its handle and header, so
+        # leave room for them inside the packet limit.
+        if max_packet:
+            max_write = min(max_write or max_packet, max_packet - 1024)
+        if max_read > 0:
+            self.max_read_length = min(max_read, _MAX_CHUNK)
+        if max_write > 0:
+            self.max_write_length = min(max_write, _MAX_CHUNK)
 
     def _reader_loop(self) -> None:
         try:
@@ -129,6 +170,10 @@ class OpenSSHSFTPClient:
 
     # -- request/response -------------------------------------------------
     def _request(self, ptype: int, payload: bytes) -> Tuple[int, bytes]:
+        return self._wait(self._send(ptype, payload))
+
+    def _send(self, ptype: int, payload: bytes) -> _Pending:
+        """Send a request without waiting; pass the slot to ``_wait``."""
         if self._closed:
             raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session closed")
         with self._id_lock:
@@ -136,7 +181,15 @@ class OpenSSHSFTPClient:
             rid = self._next_id
             slot = _Pending()
             self._pending[rid] = slot
+        # The reader marks the session closed before it wakes the pending
+        # slots, so a slot registered after that sweep is woken here.
+        if self._closed:
+            slot.event.set()
         self._write_packet(proto.build_request(ptype, rid, payload))
+        return slot
+
+    @staticmethod
+    def _wait(slot: _Pending) -> Tuple[int, bytes]:
         slot.event.wait()
         if slot.response is None:
             raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session lost")
@@ -267,6 +320,24 @@ class OpenSSHSFTPClient:
         )
         self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
 
+    def supports_copy_data(self) -> bool:
+        return "copy-data" in self.extensions
+
+    def copy_data(self, source_handle: bytes, destination_handle: bytes) -> None:
+        """Copy a whole open file into another on the server (``copy-data``).
+
+        One round trip, and no file data crosses the connection.
+        """
+        payload = (
+            proto.pack_string("copy-data")
+            + proto.pack_string(source_handle)
+            + proto.pack_uint64(0)  # read offset
+            + proto.pack_uint64(0)  # length: 0 copies to EOF
+            + proto.pack_string(destination_handle)
+            + proto.pack_uint64(0)  # write offset
+        )
+        self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+
     def chmod(self, path: str, mode: int) -> None:
         attr = proto.SFTPAttributes(st_mode=int(mode) & 0o7777)
         self._expect_ok(
@@ -353,8 +424,15 @@ class OpenSSHSFTPClient:
         return self.open(path, mode, bufsize, create_mode=create_mode)
 
     def read(self, handle: bytes, offset: int, length: int) -> bytes:
+        return self._read_data(self._wait(self._send_read(handle, offset, length)))
+
+    def _send_read(self, handle: bytes, offset: int, length: int) -> _Pending:
         payload = proto.pack_string(handle) + proto.pack_uint64(offset) + proto.pack_uint32(length)
-        resp = self._request(proto.FXP_READ, payload)
+        return self._send(proto.FXP_READ, payload)
+
+    @staticmethod
+    def _read_data(resp: Tuple[int, bytes]) -> bytes:
+        """DATA reply → bytes; EOF → ``b""``."""
         ptype, body = resp
         if ptype == proto.FXP_DATA:
             _, data = proto.parse_data(body)
@@ -367,14 +445,86 @@ class OpenSSHSFTPClient:
         raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected DATA")
 
     def write(self, handle: bytes, offset: int, data: bytes) -> None:
+        self._expect_ok(self._wait(self._send_write(handle, offset, data)))
+
+    def _send_write(self, handle: bytes, offset: int, data: bytes) -> _Pending:
         payload = proto.pack_string(handle) + proto.pack_uint64(offset) + proto.pack_string(data)
-        self._expect_ok(self._request(proto.FXP_WRITE, payload))
+        return self._send(proto.FXP_WRITE, payload)
+
+    def iter_read(
+        self, handle: bytes, offset: int = 0, length: Optional[int] = None
+    ) -> Iterator[bytes]:
+        """Yield a file's bytes in order from ``offset``, up to ``length`` or EOF.
+
+        Up to ``_PIPELINE_DEPTH`` reads are in flight at once. A server may
+        return fewer bytes than asked (OpenSSH's sftp-server caps a READ at
+        ~255 KiB), so a short reply is followed up for the rest of its chunk;
+        only an empty reply means EOF.
+        """
+        step = self.max_read_length
+        end = None if length is None else offset + length
+        inflight: Deque[Tuple[int, int, _Pending]] = deque()
+        next_offset = position = offset
+        while True:
+            while len(inflight) < _PIPELINE_DEPTH and (end is None or next_offset < end):
+                size = step if end is None else min(step, end - next_offset)
+                inflight.append((next_offset, size, self._send_read(handle, next_offset, size)))
+                next_offset += size
+            if not inflight:
+                return
+            chunk_offset, size, slot = inflight.popleft()
+            data = self._read_data(self._wait(slot))
+            chunk_end = chunk_offset + size
+            while data:
+                yield data
+                position += len(data)
+                if position >= chunk_end:
+                    break
+                data = self.read(handle, position, chunk_end - position)
+            if position < chunk_end:
+                # EOF inside this chunk; replies still in flight are past it.
+                return
+
+    def pipelined_writer(self, handle: bytes, offset: int = 0) -> "PipelinedWriter":
+        return PipelinedWriter(self, handle, offset)
 
     def close_handle(self, handle: bytes) -> None:
         try:
             self._expect_ok(self._request(proto.FXP_CLOSE, proto.pack_string(handle)))
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("SFTP close handle failed: %s", exc)
+
+
+class PipelinedWriter:
+    """Writes to an open handle with up to ``_PIPELINE_DEPTH`` WRITEs in flight.
+
+    Data is split into chunks the server accepts: OpenSSH's sftp-server drops
+    the session on a message over 256 KiB. A failed WRITE raises from a later
+    ``write()`` or from ``flush()``, which must be called before the handle is
+    closed.
+    """
+
+    def __init__(self, client: "OpenSSHSFTPClient", handle: bytes, offset: int = 0) -> None:
+        self._client = client
+        self._handle = handle
+        self.offset = offset
+        self._inflight: Deque[_Pending] = deque()
+
+    def write(self, data: bytes) -> None:
+        client = self._client
+        step = client.max_write_length
+        view = memoryview(data)
+        for start in range(0, len(view), step):
+            chunk = bytes(view[start:start + step])
+            self._inflight.append(client._send_write(self._handle, self.offset, chunk))
+            self.offset += len(chunk)
+            if len(self._inflight) >= _PIPELINE_DEPTH:
+                client._expect_ok(client._wait(self._inflight.popleft()))
+
+    def flush(self) -> None:
+        """Wait until every WRITE is acknowledged."""
+        while self._inflight:
+            self._client._expect_ok(self._client._wait(self._inflight.popleft()))
 
 
 class OpenSSHSFTPFile:
@@ -390,34 +540,23 @@ class OpenSSHSFTPFile:
         self._offset = 0
         self._closed = False
 
-    def read(self, size: Optional[int] = None) -> bytes:
-        """Read ``size`` bytes, or to EOF when ``size`` is None.
+    @property
+    def handle(self) -> bytes:
+        return self._handle
 
-        Requests go out in ``_CHUNK`` pieces and short replies are followed
-        up: a server may return fewer bytes than asked (OpenSSH's sftp-server
-        caps a READ at ~255 KiB), and only an empty reply means EOF.
-        """
+    def read(self, size: Optional[int] = None) -> bytes:
+        """Read ``size`` bytes, or to EOF when ``size`` is None."""
         chunks = []
-        remaining = size
-        while remaining is None or remaining > 0:
-            length = _CHUNK if remaining is None else min(remaining, _CHUNK)
-            chunk = self._client.read(self._handle, self._offset, length)
-            if not chunk:
-                break
-            self._offset += len(chunk)
+        for chunk in self._client.iter_read(self._handle, self._offset, size):
             chunks.append(chunk)
-            if remaining is not None:
-                remaining -= len(chunk)
+            self._offset += len(chunk)
         return b"".join(chunks)
 
     def write(self, data: bytes) -> None:
-        # One WRITE per chunk: OpenSSH's sftp-server drops the session on a
-        # message over 256 KiB.
-        view = memoryview(data)
-        for start in range(0, len(view), _CHUNK):
-            chunk = bytes(view[start:start + _CHUNK])
-            self._client.write(self._handle, self._offset, chunk)
-            self._offset += len(chunk)
+        writer = self._client.pipelined_writer(self._handle, self._offset)
+        writer.write(data)
+        writer.flush()
+        self._offset = writer.offset
 
     def close(self) -> None:
         if not self._closed:

@@ -541,6 +541,29 @@ def _validate_path(value: Any, field_name: str = "remote path") -> str:
         raise SshPilotError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
 
 
+# Bytes a remote-to-remote copy holds at once when the server cannot copy for it.
+_COPY_BLOCK = 1024 * 1024
+
+
+def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
+    """Copy through the ``copy-data`` extension when the server offers it.
+
+    Returns False, having written nothing, when the caller must stream the
+    bytes itself.
+    """
+    supports_copy_data = getattr(client, "supports_copy_data", None)
+    if not (callable(supports_copy_data) and supports_copy_data()):
+        return False
+    try:
+        client.copy_data(source_file.handle, destination_file.handle)
+    except sftp_proto.SFTPError as exc:
+        if exc.code == sftp_proto.FX_CONNECTION_LOST:
+            raise
+        logger.debug("Server-side copy failed; streaming instead: %s", exc)
+        return False
+    return True
+
+
 def _remote_path_is_descendant(source: str, destination: str) -> bool:
     source = posixpath.normpath(source)
     destination = posixpath.normpath(destination)
@@ -1798,11 +1821,12 @@ class SftpServiceRuntime:
             with client.open(source_path, "rb") as source_file, client.open(
                 destination_path, "wb"
             ) as destination_file:
-                while True:
-                    chunk = source_file.read(32768)
-                    if not chunk:
-                        break
-                    destination_file.write(chunk)
+                if not _server_side_copy(client, source_file, destination_file):
+                    while True:
+                        chunk = source_file.read(_COPY_BLOCK)
+                        if not chunk:
+                            break
+                        destination_file.write(chunk)
             copied += 1
             _report_copy_progress()
 

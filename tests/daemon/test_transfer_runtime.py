@@ -77,11 +77,38 @@ class _FakeSftpClient:
     def close_handle(self, _handle):
         return None
 
+    # The runtime streams through the client's pipelined helpers; these
+    # sequential stand-ins keep ``read``/``write`` overrides in effect.
+    def iter_read(self, handle, offset=0, length=None):
+        while True:
+            chunk = self.read(handle, offset, 32768)
+            if not chunk:
+                return
+            yield chunk
+            offset += len(chunk)
+
+    def pipelined_writer(self, handle, offset=0):
+        return _SequentialWriter(self, handle, offset)
+
     def posix_rename(self, old, new):
         self.files[new] = self.files.pop(old, b"")
 
     def remove(self, path):
         self.files.pop(path, None)
+
+
+class _SequentialWriter:
+    def __init__(self, client, handle, offset):
+        self._client = client
+        self._handle = handle
+        self.offset = offset
+
+    def write(self, data):
+        self._client.write(self._handle, self.offset, data)
+        self.offset += len(data)
+
+    def flush(self):
+        return None
 
 
 class _BlockingSftpClient(_FakeSftpClient):

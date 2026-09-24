@@ -63,6 +63,10 @@ class _File:
         self.mode = mode
         self.offset = 0
 
+    @property
+    def handle(self):
+        return self.path
+
     def __enter__(self):
         return self
 
@@ -260,6 +264,66 @@ def test_owner_can_copy_and_move_remote_file():
     )
     assert "/copy.txt" not in runner.handles[0].client.files
     assert runner.handles[0].client.files["/moved.txt"] == b"payload"
+
+
+class _CopyDataSftpClient(_FakeSftpClient):
+    """Offers the ``copy-data`` extension; ``copy_error`` makes it fail."""
+
+    def __init__(self, copy_error=None):
+        super().__init__()
+        self.copy_error = copy_error
+        self.copy_data_calls = []
+
+    def supports_copy_data(self):
+        return True
+
+    def copy_data(self, source_handle, destination_handle):
+        self.copy_data_calls.append((source_handle, destination_handle))
+        if self.copy_error is not None:
+            raise self.copy_error
+        self.files[destination_handle] = self.files[source_handle]
+
+
+@pytest.mark.parametrize("copy_error", [None, sftp_proto.SFTPError(sftp_proto.FX_OP_UNSUPPORTED)])
+def test_remote_copy_uses_server_side_copy_and_falls_back(copy_error):
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = _CopyDataSftpClient(copy_error)
+    runner.handles[0].client = client
+
+    runtime.copy(
+        SftpCopyRequest(
+            service_id=summary.id,
+            source_path="/source.txt",
+            destination_path="/copy.txt",
+        ),
+        client_id=owner,
+    )
+
+    assert client.copy_data_calls == [("/source.txt", "/copy.txt")]
+    assert client.files["/copy.txt"] == b"payload"
+
+
+def test_remote_copy_does_not_stream_after_losing_the_connection():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = _CopyDataSftpClient(sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST))
+    runner.handles[0].client = client
+
+    with pytest.raises(SshPilotError):
+        runtime.copy(
+            SftpCopyRequest(
+                service_id=summary.id,
+                source_path="/source.txt",
+                destination_path="/copy.txt",
+            ),
+            client_id=owner,
+        )
+    assert "/copy.txt" not in client.files
 
 
 def test_remote_copy_rejects_existing_destination_and_self_directory():
