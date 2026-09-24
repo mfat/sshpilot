@@ -465,6 +465,12 @@ class SftpRemoveResult:
                 raise TypeError("SFTP remove failures must be SftpRemoveFailure")
 
 
+# Non-directory removes per cancellation/progress checkpoint. Shared by the
+# daemon chunker and the presentation layer's multi-path RPC window so UI
+# cancel checks land between the same batches the daemon uses internally.
+SFTP_REMOVE_CHUNK_SIZE = 256
+
+
 class SftpFileTarget(str, Enum):
     REMOTE = "remote"
     LOCAL_AUTHORIZED_KEYS = "local_authorized_keys"

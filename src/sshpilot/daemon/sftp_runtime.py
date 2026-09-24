@@ -78,6 +78,7 @@ from sshpilot.api.models.operations import (
     SftpPathRequest,
     SftpRemoveFailure,
     SftpRemoveResult,
+    SFTP_REMOVE_CHUNK_SIZE,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
@@ -127,6 +128,27 @@ def _coarse_progress(processed: int, pending: int) -> float:
     if pending <= 0:
         return 1.0
     return min(0.99, processed / (processed + pending))
+
+
+def _nested_path_progress(
+    progress: Optional[Callable[[float], None]],
+    index: int,
+    total: int,
+) -> Optional[Callable[[float], None]]:
+    """Map one path's [0,1] tree walk into its slice of a multi-path batch.
+
+    Without this, each recursive walk restarts at 0 while the outer loop
+    reports path-level progress, so the overall fraction jumps backward
+    between paths. Single-path removes keep the original callback unchanged.
+    """
+    if progress is None or total <= 1:
+        return progress
+
+    def _report(fraction: float) -> None:
+        unit = 0.0 if fraction < 0.0 else 1.0 if fraction > 1.0 else fraction
+        progress((index + unit) / total)
+
+    return _report
 
 
 def _read_local_authorized_keys() -> tuple[str, bytes, int | None]:
@@ -546,12 +568,6 @@ def _validate_path(value: Any, field_name: str = "remote path") -> str:
 
 # Bytes a remote-to-remote copy holds at once when the server cannot copy for it.
 _COPY_BLOCK = 1024 * 1024
-
-
-# Non-directory removes processed per cancellation/progress checkpoint, so a
-# mass delete stays responsive on slow links (used by both the pipelined
-# multi-path remove and the recursive walk's sibling batches).
-_REMOVE_CHUNK_SIZE = 256
 
 
 def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
@@ -2026,6 +2042,14 @@ class SftpServiceRuntime:
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
     ) -> Optional[SftpRemoveResult]:
+        """Delete path(s). ``cancel``/``progress`` are cooperative hooks for
+        operation-wrapped callers (``start_remove``) and direct embedders.
+
+        The bare multi-path wire RPC in dispatch does not pass them: a sync
+        command-stream remove has no operation id, so clients cannot cancel
+        mid-request. Presentation code cancels between chunked RPCs of
+        ``SFTP_REMOVE_CHUNK_SIZE`` paths instead.
+        """
         record = self._ready_record_for_mutation(request.service_id, client_id)
         paths = tuple(_validate_path(path) for path in request.all_paths())
         client = record.handle.client
@@ -2035,7 +2059,12 @@ class SftpServiceRuntime:
                 for index, path in enumerate(paths):
                     if cancel is not None and cancel():
                         raise OperationCancelled()
-                    self._remove_recursive(client, path, progress=progress, cancel=cancel)
+                    self._remove_recursive(
+                        client,
+                        path,
+                        progress=_nested_path_progress(progress, index, total),
+                        cancel=cancel,
+                    )
                     if progress is not None and total > 1:
                         progress(_coarse_progress(index + 1, total - (index + 1)))
                 return None
@@ -2060,15 +2089,15 @@ class SftpServiceRuntime:
     ) -> SftpRemoveResult:
         """Pipelined non-recursive multi-path remove with per-path continue-on-error.
 
-        Large batches run in ``_REMOVE_CHUNK_SIZE`` slices so cancellation and
+        Large batches run in ``SFTP_REMOVE_CHUNK_SIZE`` slices so cancellation and
         progress stay responsive on slow links (mirrors ``_remove_recursive``).
         """
         failures: List[SftpRemoveFailure] = []
         total = len(paths)
-        for offset in range(0, total, _REMOVE_CHUNK_SIZE):
+        for offset in range(0, total, SFTP_REMOVE_CHUNK_SIZE):
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            chunk = paths[offset : offset + _REMOVE_CHUNK_SIZE]
+            chunk = paths[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
             failures.extend(self._remove_chunk(client, chunk))
             if progress is not None:
                 processed = offset + len(chunk)
@@ -2183,10 +2212,10 @@ class SftpServiceRuntime:
         total = len(entries)
         processed = 0
         if file_children:
-            for offset in range(0, len(file_children), _REMOVE_CHUNK_SIZE):
+            for offset in range(0, len(file_children), SFTP_REMOVE_CHUNK_SIZE):
                 if cancel is not None and cancel():
                     raise OperationCancelled()
-                chunk = file_children[offset : offset + _REMOVE_CHUNK_SIZE]
+                chunk = file_children[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
                 self._remove_files(client, chunk)
                 processed += len(chunk)
                 if progress is not None:

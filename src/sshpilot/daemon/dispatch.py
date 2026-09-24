@@ -2620,6 +2620,9 @@ class RequestDispatcher:
                 on_rejected=lambda: None,
             )
         if path_request.paths:
+            # Sync multi-path remove: no operation id, so no cancel/progress
+            # on the wire. Presentation callers chunk at
+            # SFTP_REMOVE_CHUNK_SIZE and cancel between RPCs.
             def _multi_remove():
                 result = runtime.remove(path_request, client_id=client_id)
                 if type(result) is not SftpRemoveResult:

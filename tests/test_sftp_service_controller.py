@@ -13,6 +13,7 @@ from sshpilot.api.models.operations import (
     OperationKind,
     OperationState,
     OperationSummary,
+    SFTP_REMOVE_CHUNK_SIZE,
     SftpDirectorySizeResult,
     SftpFilesystemUsage,
     SftpRemoveFailure,
@@ -1188,13 +1189,13 @@ def test_remove_many_chunks_file_batches_and_honours_cancel_between_chunks():
     future = DaemonSftpManager.remove_many(manager, items)
 
     assert len(batches) == 1
-    assert len(batches[0]) == 256
+    assert len(batches[0]) == SFTP_REMOVE_CHUNK_SIZE
     assert future.cancel() is True
     pending["on_success"](SftpRemoveResult())
 
     failures, completed = future.result(timeout=1)
     assert failures == []
-    assert completed == 256
-    # Cancel prevented the remaining 44-file chunk from starting.
+    assert completed == SFTP_REMOVE_CHUNK_SIZE
+    # Cancel prevented the remaining chunk from starting.
     assert len(batches) == 1
     controller.remove.assert_not_called()

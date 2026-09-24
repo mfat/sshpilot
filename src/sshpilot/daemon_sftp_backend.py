@@ -34,7 +34,7 @@ from gi.repository import GObject
 from .api.errors import ErrorCode, SshPilotError
 from .api.capabilities import Capability
 from .api.models.common import SessionId, SftpServiceId
-from .api.models.operations import RemoteFileType, SftpRemoveResult
+from .api.models.operations import RemoteFileType, SFTP_REMOVE_CHUNK_SIZE, SftpRemoveResult
 from .api.models.transfers import (
     StartTransferRequest,
     TransferConflictPolicy,
@@ -833,10 +833,10 @@ class DaemonSftpManager(GObject.GObject):
         """Delete several remote paths with a single ``Future``.
 
         Each item is ``(path, recursive)``. Non-recursive paths are deleted in
-        pipelined multi-path ``sftp.remove`` RPCs of at most 256 paths so
-        cancellation and progress stay responsive; directories still use the
-        ``SFTP_REMOVE_TREE`` operation lifecycle, chained after the file
-        batches.
+        pipelined multi-path ``sftp.remove`` RPCs of at most
+        ``SFTP_REMOVE_CHUNK_SIZE`` paths so cancellation and progress stay
+        responsive; directories still use the ``SFTP_REMOVE_TREE`` operation
+        lifecycle, chained after the file batches.
 
         The future resolves to ``(failures, completed)`` where ``failures`` is
         a list of ``(path, exception)`` and ``completed`` is how many paths
@@ -867,9 +867,8 @@ class DaemonSftpManager(GObject.GObject):
         }
         progress_message = _("Deleting…")
         total = len(expanded)
-        # Keep in sync with daemon ``_REMOVE_CHUNK_SIZE`` so UI cancel checks
-        # land between the same windows the daemon uses internally.
-        file_chunk = 256
+        # Same window the daemon uses for its cancel/progress checkpoints.
+        file_chunk = SFTP_REMOVE_CHUNK_SIZE
 
         def cancel_with_cleanup() -> bool:
             if future.done():

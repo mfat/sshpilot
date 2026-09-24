@@ -576,6 +576,8 @@ class DaemonSftpServiceController:
 
         ``on_success`` receives an ``SftpRemoveResult`` (possibly with per-path
         failures). Directories must use ``remove(..., recursive=True)``.
+        The multi-path wire RPC has no operation id; callers cancel between
+        chunked RPCs of ``SFTP_REMOVE_CHUNK_SIZE`` paths.
         """
         targets = [path for path in paths if path]
         if not targets:

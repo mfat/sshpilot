@@ -1798,15 +1798,13 @@ class FileManagerWindow(Adw.Window):
                     try:
                         result = future_result.result()
                         if isinstance(result, tuple) and len(result) == 2:
+                            # remove_many always resolves cancel as a partial
+                            # (failures, completed) tuple — never an exception.
                             failures, success_count = result
                         else:
                             # Older shape: bare failure list
                             failures = result or []
                             success_count = max(0, total_count - len(failures))
-                    except TransferCancelledException:
-                        logger.info("Remote batch delete cancelled")
-                        errors.append(_("Delete was cancelled"))
-                        success_count = 0
                     except Exception as exc:
                         logger.error("Remote batch delete failed: %s", exc, exc_info=True)
                         errors.append(

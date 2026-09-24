@@ -9,6 +9,7 @@ from sshpilot.api.models.operations import (
     CloseSftpRequest,
     ListDirectoryRequest,
     OpenSftpRequest,
+    SFTP_REMOVE_CHUNK_SIZE,
     SftpCopyRequest,
     SftpFailureCode,
     SftpPathRequest,
@@ -534,8 +535,8 @@ def test_remove_recursive_chunks_large_file_lists():
     )
 
     assert len(batches) == 2
-    assert len(batches[0]) == 256
-    assert len(batches[1]) == 44
+    assert len(batches[0]) == SFTP_REMOVE_CHUNK_SIZE
+    assert len(batches[1]) == 300 - SFTP_REMOVE_CHUNK_SIZE
     assert "/tree" not in client.directories
 
 
@@ -576,11 +577,12 @@ def test_remove_multi_path_cancel_stops_after_first_chunk():
         )
 
     assert len(batches) == 1
-    assert len(batches[0]) == 256
+    assert len(batches[0]) == SFTP_REMOVE_CHUNK_SIZE
     assert calls["cancel"] == 2
     # First chunk is gone; remaining paths were not attempted.
-    assert all(path not in client.files for path in paths[:256])
-    assert all(path in client.files for path in paths[256:])
+    chunk = SFTP_REMOVE_CHUNK_SIZE
+    assert all(path not in client.files for path in paths[:chunk])
+    assert all(path in client.files for path in paths[chunk:])
 
 
 def test_remove_multi_path_treats_file_not_found_as_success():
@@ -638,10 +640,42 @@ def test_remove_multi_path_reports_progress_per_chunk():
 
     assert result.failures == ()
     assert len(seen) == 2
-    # Remaining-pending form: first window ~256/300, final window reaches 1.0.
+    # Remaining-pending form: first window ~CHUNK/300, final window reaches 1.0.
     assert 0.0 < seen[0] < seen[1] == 1.0
-    assert seen[0] == pytest.approx(256 / 300)
+    assert seen[0] == pytest.approx(SFTP_REMOVE_CHUNK_SIZE / 300)
     assert all(path not in client.files for path in paths)
+
+
+def test_remove_multi_path_recursive_progress_is_monotonic():
+    """Each tree walk reports inside its path slice — never jumps backward."""
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    for tree in ("/t0", "/t1"):
+        client.directories.add(tree)
+        for i in range(5):
+            client.files[f"{tree}/f{i}.txt"] = b"x"
+    seen = []
+
+    runtime.remove(
+        SftpPathRequest(
+            service_id=summary.id,
+            path="/t0",
+            paths=("/t1",),
+            recursive=True,
+        ),
+        client_id=owner,
+        progress=seen.append,
+    )
+
+    assert seen
+    assert seen[-1] == 1.0
+    assert all(b >= a for a, b in zip(seen, seen[1:])), seen
+    # Second path's walk stays in [0.5, 1.0], never restarts near 0.
+    second_path_start = next(i for i, v in enumerate(seen) if v >= 0.5)
+    assert all(v >= 0.5 for v in seen[second_path_start:])
 
 
 # ---------------------------------------------------------------------------
