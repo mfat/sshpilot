@@ -1768,6 +1768,8 @@ class FileManagerWindow(Adw.Window):
             if pane is self._left_pane:
                 deleted = 0
                 errors: List[str] = []
+                # Optimistic UI: drop rows immediately, then delete on disk.
+                pane.remove_cached_entries(entry.name for entry in entries)
                 for selected_entry in entries:
                     target_path = os.path.join(base_dir, selected_entry.name)
                     try:
@@ -1785,9 +1787,12 @@ class FileManagerWindow(Adw.Window):
                 if deleted:
                     message = ngettext("Deleted {count} item", "Deleted {count} items", deleted).format(count=deleted)
                     pane.show_toast(message)
-                    self._load_local(base_dir)
                 if errors:
                     pane.show_toast(errors[0])
+                # Relist when anything failed so surviving items return; on full
+                # success the optimistic removal already matches disk.
+                if errors or deleted < len(entries):
+                    self._load_local(base_dir)
             else:
                 # Batch the whole selection into one backend Future. Files use
                 # the fast synchronous sftp.remove (recursive=False); only
@@ -1798,8 +1803,13 @@ class FileManagerWindow(Adw.Window):
                     (posixpath.join(base_dir, e.name), e.is_dir) for e in entries
                 ]
                 names = {path: e.name for path, e in zip([t[0] for t in targets], entries)}
+                entry_names = [e.name for e in entries]
 
                 logger.debug("Deleting %d remote entries", total_count)
+
+                # FileZilla-style: drop selected rows from the listing cache so
+                # the UI feels instant while pipelined removes run.
+                pane.remove_cached_entries(entry_names)
 
                 def _on_batch_done(future_result: Future) -> None:
                     success_count = 0
@@ -1842,7 +1852,12 @@ class FileManagerWindow(Adw.Window):
                     )
                     GLib.idle_add(
                         lambda sc=success_count: self._on_all_deletes_complete(
-                            pane, base_dir, errors, total_count, success_count=sc
+                            pane,
+                            base_dir,
+                            errors,
+                            total_count,
+                            success_count=sc,
+                            used_progress_dialog=True,
                         )
                     )
 
@@ -1863,13 +1878,31 @@ class FileManagerWindow(Adw.Window):
                                 errors.append(error_msg)
                             GLib.idle_add(
                                 lambda: self._on_all_deletes_complete(
-                                    pane, base_dir, errors, total_count
+                                    pane,
+                                    base_dir,
+                                    errors,
+                                    total_count,
+                                    used_progress_dialog=True,
                                 )
                             )
 
+                        self._show_progress_dialog(
+                            "delete",
+                            entry_names[0],
+                            future,
+                            total_files=1,
+                            source_path=path,
+                        )
                         future.add_done_callback(_on_single_done)
                     else:
                         future = self._manager.remove_many(targets)
+                        self._show_progress_dialog(
+                            "delete",
+                            entry_names[0],
+                            future,
+                            total_files=total_count,
+                            source_path=base_dir,
+                        )
                         future.add_done_callback(_on_batch_done)
                 except Exception as exc:
                     logger.error("Failed to start remote delete: %s", exc, exc_info=True)
@@ -1879,12 +1912,14 @@ class FileManagerWindow(Adw.Window):
                         )
                     )
                     GLib.idle_add(
-                        lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                        lambda: self._on_all_deletes_complete(
+                            pane,
+                            base_dir,
+                            errors,
+                            total_count,
+                            used_progress_dialog=False,
+                        )
                     )
-
-                pane.show_toast(
-                    ngettext("Deleting {count} item…", "Deleting {count} items…", count).format(count=count)
-                )
             dialog.close()
 
         dialog.connect("response", _on_delete)
@@ -2282,6 +2317,55 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
+    def _complete_delete_progress(self, future_result: Future) -> None:
+        """Drive delete completion UI from a remove / remove_many future.
+
+        ``remove_many`` resolves with ``(failures, completed)`` even on cancel,
+        so a bare ``exception()`` check would always report success.
+        """
+        dialog = self._progress_dialog
+        if dialog is None or dialog.is_cancelled or getattr(dialog, "_closed", False):
+            return
+        try:
+            result = future_result.result()
+        except CancelledError:
+            return
+        except Exception as exc:
+            dialog.show_completion(success=False, error_message=str(exc) or _("Unknown error"))
+            return
+
+        total = dialog.total_files or 1
+        if isinstance(result, tuple) and len(result) == 2:
+            failures, success_count = result
+            dialog.files_completed = success_count
+            processed = success_count + len(failures)
+            if processed < total:
+                dialog.show_completion(
+                    success=False,
+                    error_message=_("Delete was cancelled"),
+                )
+            elif failures:
+                if success_count == 0:
+                    first = failures[0]
+                    message = str(first[1]) if len(first) > 1 else _("Unknown error")
+                    dialog.show_completion(success=False, error_message=message)
+                else:
+                    dialog.show_completion(
+                        success=False,
+                        error_message=ngettext(
+                            "{count} of {total} item failed",
+                            "{count} of {total} items failed",
+                            len(failures),
+                        ).format(count=len(failures), total=total),
+                    )
+            else:
+                dialog.show_completion(success=True)
+            return
+
+        # Single-path remove returns None on success.
+        dialog.files_completed = max(dialog.files_completed, 1)
+        dialog.show_completion(success=True)
+
     def _on_all_deletes_complete(
         self,
         pane: FilePane,
@@ -2290,12 +2374,15 @@ class FileManagerWindow(Adw.Window):
         total_count: int,
         *,
         success_count: Optional[int] = None,
+        used_progress_dialog: bool = False,
     ) -> None:
         """Handle completion of all delete operations."""
         if success_count is None:
             success_count = max(0, total_count - len(errors))
         
-        if success_count > 0:
+        # Progress dialog already reports success; keep toasts for errors and
+        # for paths that never opened a dialog (start failed, local deletes).
+        if success_count > 0 and not used_progress_dialog:
             message = ngettext("Deleted {count} item", "Deleted {count} items", success_count).format(count=success_count)
             pane.show_toast(message)
         
@@ -2304,7 +2391,11 @@ class FileManagerWindow(Adw.Window):
             pane.show_toast(errors[0])
             logger.error(f"Delete operation completed with {len(errors)} errors out of {total_count} items")
         
-        # Refresh the pane to show updated directory contents
+        # Optimistic removal already matches a full success. Relist only when
+        # cancel/failures may have left surviving items that need restoring.
+        needs_refresh = bool(errors) or success_count < total_count
+        if not needs_refresh:
+            return
         if pane is self._right_pane:
             self._refresh_remote_listing(pane)
         else:
@@ -2898,7 +2989,11 @@ class FileManagerWindow(Adw.Window):
                 if active_count == 0:
                     return
                 try:
-                    if self._progress_dialog.total_files > 1:
+                    # Mass/recursive delete emits an overall 0..1 fraction on a
+                    # single future — do not re-apply multi-file math.
+                    if self._progress_dialog.operation_type == "delete":
+                        self._progress_dialog.update_progress(progress, message)
+                    elif self._progress_dialog.total_files > 1:
                         # Single-file directory transfers emit per-file
                         # fractions; flatten to one overall progress value.
                         completed = self._progress_dialog.files_completed
@@ -2976,6 +3071,8 @@ class FileManagerWindow(Adw.Window):
                             # Operation was cancelled, don't show completion
                             # The dialog will be closed by the cancel handler
                             pass
+                        elif self._progress_dialog.operation_type == "delete":
+                            self._complete_delete_progress(future_result)
                         else:
                             # Check for exceptions
                             try:

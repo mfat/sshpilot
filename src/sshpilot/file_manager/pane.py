@@ -3070,6 +3070,26 @@ class FilePane(Gtk.Box):
 
         logger.debug(f"FilePane.show_entries: {pane_type} pane update completed")
 
+    def remove_cached_entries(self, names: Iterable[str]) -> int:
+        """Drop entries from the visible listing without a remote/local reload.
+
+        Used for optimistic delete (FileZilla-style): items disappear as soon as
+        the user confirms, while the backend delete runs. Returns how many
+        cached entries were removed. Callers should refresh on cancel/failure
+        so surviving items come back.
+        """
+        name_set = {name for name in names if name}
+        if not name_set or not self._cached_entries:
+            return 0
+        before = len(self._cached_entries)
+        self._cached_entries = [
+            entry for entry in self._cached_entries if entry.name not in name_set
+        ]
+        removed = before - len(self._cached_entries)
+        if removed:
+            self._apply_entry_filter(preserve_selection=True)
+        return removed
+
     def highlight_entry(self, name: str) -> None:
         if not name:
             return

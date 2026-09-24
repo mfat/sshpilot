@@ -59,20 +59,26 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             "upload": _("Uploading Files"),
             "copy": _("Copying on Server"),
             "move": _("Moving on Server"),
+            "delete": _("Deleting Files"),
         }
         title = _titles.get(operation_type, _("Transferring Files"))
+        body = (
+            _("Deleting files…")
+            if operation_type == "delete"
+            else _("Transferring files…")
+        )
 
         # Different constructor kwargs for the two base classes.
         if _HAS_ALERT_DIALOG:
             super().__init__(
                 heading=title,
-                body=_("Transferring files…"),
+                body=body,
                 default_response="cancel",
             )
         else:
             super().__init__(
                 title=title,
-                body=_("Transferring files…"),
+                body=body,
                 default_response="cancel",
             )
             # MessageDialog is a Gtk.Window — old API: set transient + modal.
@@ -274,11 +280,22 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Only update total_files if it's larger (for adding more files to existing dialog)
         if total_files > self.total_files:
             self.total_files = total_files
-            self.counter_label.set_text(
-                ngettext("{done} of {total} file", "{done} of {total} files", total_files).format(
-                    done=self.files_completed, total=total_files
+            if self.operation_type == "delete":
+                self.counter_label.set_text(
+                    ngettext(
+                        "{done} of {total} item",
+                        "{done} of {total} items",
+                        total_files,
+                    ).format(done=self.files_completed, total=total_files)
                 )
-            )
+            else:
+                self.counter_label.set_text(
+                    ngettext(
+                        "{done} of {total} file",
+                        "{done} of {total} files",
+                        total_files,
+                    ).format(done=self.files_completed, total=total_files)
+                )
 
         if filename:
             self.current_file = safe_display_text(filename)
@@ -458,6 +475,19 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 fraction = max(0.0, min(1.0, float(self._latest_fraction)))
                 self.progress_bar.set_fraction(fraction)
                 self.progress_bar.set_text(f"{int(fraction * 100)}%")
+                if self.operation_type == "delete" and self.total_files > 0:
+                    done = min(
+                        self.total_files,
+                        max(self.files_completed, int(round(fraction * self.total_files))),
+                    )
+                    self.files_completed = done
+                    self.counter_label.set_text(
+                        ngettext(
+                            "{done} of {total} item",
+                            "{done} of {total} items",
+                            self.total_files,
+                        ).format(done=done, total=self.total_files)
+                    )
         except (AttributeError, RuntimeError):
             pass
 
@@ -562,12 +592,61 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 "upload": _("Upload Complete"),
                 "copy": _("Copy Complete"),
                 "move": _("Move Complete"),
+                "delete": _("Delete Complete"),
             }
             self._set_dialog_heading(
                 headings.get(self.operation_type, _("Transfer Complete"))
             )
             count = self.files_completed or self.total_files
             size_bytes = self._transferred_bytes
+            if self.operation_type == "delete":
+                self.status_label.set_text(
+                    ngettext(
+                        "Successfully deleted {count} item",
+                        "Successfully deleted {count} items",
+                        count,
+                    ).format(count=count)
+                    if count > 0
+                    else _("Delete completed successfully")
+                )
+                self.file_label.set_text(
+                    ngettext(
+                        "{done} of {total} item",
+                        "{done} of {total} items",
+                        self.total_files or count,
+                    ).format(
+                        done=self.files_completed or count,
+                        total=self.total_files or count,
+                    )
+                    if (self.total_files or count) > 0
+                    else "—"
+                )
+                self.progress_bar.set_fraction(1.0)
+                self.progress_bar.set_text("100%")
+                self.speed_label.set_text("—")
+                self.time_label.set_text(_("Finished"))
+                if self.total_files:
+                    self.counter_label.set_text(
+                        ngettext(
+                            "{done} of {total} item",
+                            "{done} of {total} items",
+                            self.total_files,
+                        ).format(
+                            done=self.files_completed or count,
+                            total=self.total_files,
+                        )
+                    )
+                self._locate_path = None
+                try:
+                    self.locate_button.set_visible(False)
+                except (AttributeError, RuntimeError, GLib.Error):
+                    pass
+                try:
+                    self.action_button.set_label(_("Done"))
+                    self.action_button.add_css_class("suggested-action")
+                except (AttributeError, RuntimeError, GLib.Error):
+                    pass
+                return False
             if count <= 0 and size_bytes <= 0:
                 self.status_label.set_text(_("Transfer completed successfully"))
                 self.file_label.set_text("—")
@@ -652,12 +731,20 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 except (AttributeError, RuntimeError, GLib.Error):
                     pass
         else:
-            self._set_dialog_heading(_("Transfer Failed"))
-            self.status_label.set_text(_("Transfer failed"))
-            if error_message:
-                self.file_label.set_text(_("Error: {message}").format(message=error_message))
+            if self.operation_type == "delete":
+                self._set_dialog_heading(_("Delete Failed"))
+                self.status_label.set_text(_("Delete failed"))
+                if error_message:
+                    self.file_label.set_text(_("Error: {message}").format(message=error_message))
+                else:
+                    self.file_label.set_text(_("An error occurred while deleting"))
             else:
-                self.file_label.set_text(_("An error occurred during transfer"))
+                self._set_dialog_heading(_("Transfer Failed"))
+                self.status_label.set_text(_("Transfer failed"))
+                if error_message:
+                    self.file_label.set_text(_("Error: {message}").format(message=error_message))
+                else:
+                    self.file_label.set_text(_("An error occurred during transfer"))
             self._locate_path = None
             try:
                 self.locate_button.set_visible(False)
