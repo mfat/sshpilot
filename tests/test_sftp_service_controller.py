@@ -404,7 +404,7 @@ def test_recursive_remove_progress_uses_frontend_status_not_wire_message(monkeyp
         on_progress(SimpleNamespace(progress=0.8, message="wire message two /private"))
 
     controller.remove.side_effect = _remove
-    DaemonSftpManager.remove(manager, "/tree")
+    DaemonSftpManager.remove(manager, "/tree", recursive=True)
 
     assert manager.emit.call_args_list == [
         (("progress", 0.4, "deleting-localized"), {}),
@@ -468,7 +468,7 @@ def test_recursive_remove_future_cancel_calls_operations_cancel():
 
     controller.remove.side_effect = _remove
 
-    future = DaemonSftpManager.remove(manager, "/tree")
+    future = DaemonSftpManager.remove(manager, "/tree", recursive=True)
     assert future.cancel() is True
     controller.cancel_operation.assert_called_once_with(OperationId("operation-remove-1"))
 
@@ -507,7 +507,7 @@ def test_recursive_remove_cancel_propagates_end_to_end_through_controller(
         lambda factory, on_success=None, on_error=None: on_success(factory())
     )
 
-    future = DaemonSftpManager.remove(manager, "/tree")
+    future = DaemonSftpManager.remove(manager, "/tree", recursive=True)
 
     assert future.cancel() is True
     mock_client.cancel_operation.assert_called_once_with(started.operation_id)
@@ -1039,3 +1039,118 @@ def test_filesystem_usage_asks_the_daemon_for_the_path(controller, mock_client, 
     assert request.service_id == SftpServiceId("svc-1")
     assert request.path == "/srv"
     assert seen == [usage]
+
+
+def test_file_remove_uses_non_recursive_sync_path():
+    """Plain files must not pay the SFTP_REMOVE_TREE operation lifecycle."""
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    seen = {}
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        seen["path"] = path
+        seen["recursive"] = recursive
+        on_success(None)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove(manager, "/notes.txt", recursive=False)
+
+    assert future.result(timeout=1) is None
+    assert seen == {"path": "/notes.txt", "recursive": False}
+
+
+def test_remove_many_uses_sync_path_for_files_and_recursive_for_dirs():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    calls = []
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        calls.append((path, recursive))
+        if recursive:
+            on_operation_started(OperationId(f"op-{path}"))
+        on_success(None)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove_many(
+        manager,
+        [("/a.txt", False), ("/tree", True), ("/b.txt", False)],
+    )
+
+    assert future.result(timeout=1) == []
+    assert calls == [("/a.txt", False), ("/tree", True), ("/b.txt", False)]
+
+
+def test_remove_many_collects_per_path_errors_and_continues():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    boom = OSError("gone")
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        if path == "/missing.txt":
+            on_error(boom)
+        else:
+            on_success(None)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove_many(
+        manager,
+        [("/a.txt", False), ("/missing.txt", False), ("/b.txt", False)],
+    )
+
+    failures = future.result(timeout=1)
+    assert len(failures) == 1
+    assert failures[0][0] == "/missing.txt"
+    assert failures[0][1] is boom
+    assert controller.remove.call_count == 3
+
+
+def test_remove_many_empty_resolves_immediately():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    future = DaemonSftpManager.remove_many(manager, [])
+
+    assert future.result(timeout=1) == []
+    controller.remove.assert_not_called()
+
+
+def test_remove_many_cancel_stops_before_next_item():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    calls = []
+    captured = {}
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        calls.append(path)
+        captured["on_error"] = on_error
+        on_operation_started(OperationId("op-tree"))
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove_many(
+        manager, [("/tree", True), ("/late.txt", False)]
+    )
+
+    assert future.cancel() is True
+    controller.cancel_operation.assert_called_once_with(OperationId("op-tree"))
+    # Daemon confirms cancellation: batch rejects as cancelled, late item never runs.
+    captured["on_error"](
+        SshPilotError(ErrorCode.OPERATION_CANCELLED, "cancelled")
+    )
+    with pytest.raises(TransferCancelledException):
+        future.result(timeout=1)
+    assert calls == ["/tree"]

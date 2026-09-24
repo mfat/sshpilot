@@ -1781,51 +1781,81 @@ class FileManagerWindow(Adw.Window):
                 if errors:
                     pane.show_toast(errors[0])
             else:
-                # Delete entries sequentially to avoid race conditions and hangs
+                # Batch the whole selection into one backend Future. Files use
+                # the fast synchronous sftp.remove (recursive=False); only
+                # directories pay the SFTP_REMOVE_TREE operation lifecycle.
                 errors: List[str] = []
                 total_count = len(entries)
-                
-                logger.info(f"Starting sequential deletion of {total_count} remote entries")
-                
-                def _delete_next(index: int) -> None:
-                    """Delete the next entry in the list, then continue with the next one."""
-                    if index >= total_count:
-                        # All deletions complete
-                        logger.info(f"All {total_count} deletions completed, refreshing pane")
-                        GLib.idle_add(
-                            lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
-                        )
-                        return
-                    
-                    selected_entry = entries[index]
-                    target_path = posixpath.join(base_dir, selected_entry.name)
-                    entry_name = selected_entry.name
-                    
-                    logger.info(f"Deleting {index + 1}/{total_count}: '{entry_name}'")
-                    
-                    def _on_delete_done(future_result: Future) -> None:
-                        try:
-                            future_result.result()  # Check for errors
-                            logger.info(f"Successfully deleted '{entry_name}'")
-                        except Exception as e:
-                            error_msg = _("Failed to delete {name}: {error}").format(name=entry_name, error=e)
-                            logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
-                            errors.append(error_msg)
-                        
-                        # Continue with next deletion on the main loop
-                        GLib.idle_add(lambda: _delete_next(index + 1))
-                    
+                targets = [
+                    (posixpath.join(base_dir, e.name), e.is_dir) for e in entries
+                ]
+                names = {path: e.name for path, e in zip([t[0] for t in targets], entries)}
+
+                logger.debug("Deleting %d remote entries", total_count)
+
+                def _on_batch_done(future_result: Future) -> None:
                     try:
-                        future = self._manager.remove(target_path)
-                        future.add_done_callback(_on_delete_done)
+                        failures = future_result.result()
                     except Exception as exc:
-                        logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
-                        errors.append(_("Failed to delete {name}: {error}").format(name=entry_name, error=exc))
-                        GLib.idle_add(lambda: _delete_next(index + 1))
-                
-                # Start sequential deletion
-                _delete_next(0)
-                
+                        logger.error("Remote batch delete failed: %s", exc, exc_info=True)
+                        errors.append(
+                            _("Failed to delete {count} items: {error}").format(
+                                count=total_count, error=exc
+                            )
+                        )
+                    else:
+                        for failed_path, exc in failures:
+                            entry_name = names.get(failed_path, failed_path)
+                            error_msg = _("Failed to delete {name}: {error}").format(
+                                name=entry_name, error=exc
+                            )
+                            logger.error("Delete failed for '%s': %s", entry_name, error_msg)
+                            errors.append(error_msg)
+                    logger.debug(
+                        "Remote batch delete finished (%d/%d ok)",
+                        total_count - len(errors),
+                        total_count,
+                    )
+                    GLib.idle_add(
+                        lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                    )
+
+                try:
+                    if len(targets) == 1:
+                        path, recursive = targets[0]
+                        future = self._manager.remove(path, recursive=recursive)
+
+                        def _on_single_done(future_result: Future, _path=path) -> None:
+                            try:
+                                future_result.result()
+                            except Exception as exc:
+                                entry_name = names.get(_path, _path)
+                                error_msg = _("Failed to delete {name}: {error}").format(
+                                    name=entry_name, error=exc
+                                )
+                                logger.error("Delete failed for '%s': %s", entry_name, error_msg)
+                                errors.append(error_msg)
+                            GLib.idle_add(
+                                lambda: self._on_all_deletes_complete(
+                                    pane, base_dir, errors, total_count
+                                )
+                            )
+
+                        future.add_done_callback(_on_single_done)
+                    else:
+                        future = self._manager.remove_many(targets)
+                        future.add_done_callback(_on_batch_done)
+                except Exception as exc:
+                    logger.error("Failed to start remote delete: %s", exc, exc_info=True)
+                    errors.append(
+                        _("Failed to delete {count} items: {error}").format(
+                            count=total_count, error=exc
+                        )
+                    )
+                    GLib.idle_add(
+                        lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                    )
+
                 pane.show_toast(
                     ngettext("Deleting {count} item…", "Deleting {count} items…", count).format(count=count)
                 )
@@ -2597,7 +2627,8 @@ class FileManagerWindow(Adw.Window):
                 completed.result()
             except Exception:
                 return
-            cleanup_future = self._manager.remove(path)
+            # Move sources may be files or trees; recursive handles both.
+            cleanup_future = self._manager.remove(path, recursive=True)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)
