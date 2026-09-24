@@ -182,14 +182,35 @@ def test_background_menu_shows_folder_properties(pane_module):
     pane = _make_pane(pane_module, selected={1})
     pane._menu_for_background = True
     pane._current_path = "/srv"
+    pane._is_remote = True
     seen = []
-    pane.get_selected_entry = lambda: seen.append("selection") or pane._entries[1]
-    try:
-        pane._on_menu_properties()
-    except Exception:
-        # The dialog itself needs a real GTK; only the entry lookup matters.
-        pass
+    pane.get_selected_entries = lambda: seen.append("selection") or [pane._entries[1]]
+    presented = []
+    pane._show_properties_dialog = (
+        lambda entries, details, properties_path=None: presented.append(
+            (list(entries) if not isinstance(entries, pane_module.FileEntry) else [entries], properties_path)
+        )
+    )
+    pane._on_menu_properties()
     assert seen == []
+    assert len(presented) == 1
+    assert presented[0][0][0].name == "srv"
+    assert presented[0][1] == "/"
+
+
+def test_properties_uses_the_full_multi_selection(pane_module):
+    pane = _make_pane(pane_module, names=("a.txt", "b.txt", "c.txt"), selected={0, 2})
+    pane._menu_for_background = False
+    pane._current_path = "/srv"
+    pane._is_remote = True
+    presented = []
+    pane._show_properties_dialog = (
+        lambda entries, details, properties_path=None: presented.append(
+            [e.name for e in entries]
+        )
+    )
+    pane._on_menu_properties()
+    assert presented == [["a.txt", "c.txt"]]
 
 
 # -- grid clicks -------------------------------------------------------------

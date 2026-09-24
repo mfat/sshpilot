@@ -17,7 +17,7 @@ import re
 import time
 from datetime import datetime
 from gettext import gettext as _, ngettext
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
@@ -2205,9 +2205,13 @@ class FilePane(Gtk.Box):
         if getattr(self, "_can_paste", False):
             _add_menu_item(_("Paste"), "edit-paste-symbolic", "paste")
         
-        # Add management operations if items are selected
+        # Add management operations if items are selected.
+        # Rename is single-item only (no batch rename yet); Nautilus hides it
+        # when the rename action is disabled for the selection.
         if has_selection:
-            _add_menu_item(_("Rename…"), "document-edit-symbolic", "rename")
+            selected_entries = self.get_selected_entries()
+            if len(selected_entries) == 1:
+                _add_menu_item(_("Rename…"), "document-edit-symbolic", "rename")
             _add_menu_item(_("Delete"), "user-trash-symbolic", "delete")
         
         # Add New Folder / New File only if no items are selected (before Properties)
@@ -2344,7 +2348,9 @@ class FilePane(Gtk.Box):
         _set_enabled("edit", can_edit)
         _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
-        _set_enabled("properties", single_selection)
+        # Properties works for the current folder, a single item, or a multi
+        # selection (Nautilus-style aggregated dialog).
+        _set_enabled("properties", True)
         # new_folder is available in context menu only now
 
         # Action bar buttons still use the old logic
@@ -2835,10 +2841,10 @@ class FilePane(Gtk.Box):
 
     def _on_menu_properties(self) -> None:
         if getattr(self, "_menu_for_background", False):
-            entry = None
+            entries: List[FileEntry] = []
         else:
-            entry = self.get_selected_entry()
-        if entry is None:
+            entries = self.get_selected_entries()
+        if not entries:
             # No item selected - show properties for current directory
             current_path = self._current_path or "/"
             logger.debug(f"_on_menu_properties: No selection, showing properties for current directory: {current_path}")
@@ -2907,28 +2913,61 @@ class FilePane(Gtk.Box):
             # Use parent path for PropertiesDialog so it can construct the full path correctly
             is_current_dir = True
             properties_path = parent_path
+            entries = [entry]
             logger.debug(f"_on_menu_properties: Using properties_path={properties_path} for current directory")
         else:
             is_current_dir = False
             properties_path = None
-            logger.debug(f"_on_menu_properties: Showing properties for selected entry: {entry.name}")
+            logger.debug(
+                "_on_menu_properties: Showing properties for %d selected entr%s",
+                len(entries),
+                "y" if len(entries) == 1 else "ies",
+            )
         
         try:
-            details = self._build_properties_details(entry, is_current_directory=is_current_dir)
+            details = self._build_properties_details(
+                entries[0], is_current_directory=is_current_dir
+            )
+            if len(entries) > 1:
+                from .properties_dialog import _selection_title
+
+                details["name"] = _selection_title(entries)
+                details["type"] = ngettext(
+                    "{count} item",
+                    "{count} items",
+                    len(entries),
+                ).format(count=len(entries))
+                details["size"] = self._format_size(
+                    sum(entry.size for entry in entries if not entry.is_dir)
+                )
             logger.debug(f"_on_menu_properties: Built properties details: {details}")
-            self._show_properties_dialog(entry, details, properties_path=properties_path)
+            self._show_properties_dialog(entries, details, properties_path=properties_path)
         except Exception as e:
             logger.error(f"Error showing properties dialog: {e}", exc_info=True)
             self.show_toast(_("Failed to show properties: {error}").format(error=e))
 
-    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str], properties_path: Optional[str] = None) -> None:
+    def _show_properties_dialog(
+        self,
+        entries: Union[FileEntry, List[FileEntry]],
+        details: Dict[str, str],
+        properties_path: Optional[str] = None,
+    ) -> None:
         """Show modern properties dialog.
         
         Args:
-            entry: The file entry to show properties for
+            entries: One or more file entries to show properties for
             details: Properties details dictionary
             properties_path: Optional path to use instead of self._current_path (for current directory)
         """
+        if isinstance(entries, FileEntry):
+            entry_list = [entries]
+        else:
+            entry_list = list(entries)
+        if not entry_list:
+            self.show_toast(_("Nothing selected"))
+            return
+        entry = entry_list[0]
+
         window = self.get_root()
         if window is None:
             logger.error("FilePane: Cannot show properties dialog - window is None")
@@ -2952,10 +2991,16 @@ class FilePane(Gtk.Box):
             # Use provided path or fall back to current path
             path_for_dialog = properties_path if properties_path is not None else self._current_path
             
-            logger.debug(f"FilePane: Creating PropertiesDialog with entry.name={entry.name}, path={path_for_dialog}, is_remote={self._is_remote}")
+            logger.debug(
+                "FilePane: Creating PropertiesDialog with %d entr%s, path=%s, is_remote=%s",
+                len(entry_list),
+                "y" if len(entry_list) == 1 else "ies",
+                path_for_dialog,
+                self._is_remote,
+            )
             
             # Create and show the modern properties dialog
-            dialog = PropertiesDialog(entry, path_for_dialog, window, sftp_manager)
+            dialog = PropertiesDialog(entry_list, path_for_dialog, window, sftp_manager)
             logger.debug(f"FilePane: Created PropertiesDialog with sftp_manager={sftp_manager}, path={path_for_dialog}")
             dialog.present()
             logger.debug(f"FilePane: PropertiesDialog presented successfully")
@@ -2963,14 +3008,28 @@ class FilePane(Gtk.Box):
             logger.error(f"FilePane: Failed to show properties dialog: {e}", exc_info=True)
             # Fallback to simple message dialog if modern dialog fails
             try:
-                self._show_fallback_properties_dialog(entry, details, window)
+                self._show_fallback_properties_dialog(entry_list, details, window)
             except Exception as fallback_error:
                 logger.error(f"FilePane: Fallback properties dialog also failed: {fallback_error}", exc_info=True)
                 self.show_toast(_("Failed to show properties: {error}").format(error=e))
 
-    def _show_fallback_properties_dialog(self, entry: FileEntry, details: Dict[str, str], window: Gtk.Window) -> None:
+    def _show_fallback_properties_dialog(
+        self,
+        entries: Union[FileEntry, List[FileEntry]],
+        details: Dict[str, str],
+        window: Gtk.Window,
+    ) -> None:
         """Fallback to simple properties dialog if modern dialog fails."""
-        display_name = safe_display_text(entry.name)
+        if isinstance(entries, FileEntry):
+            entry_list = [entries]
+        else:
+            entry_list = list(entries)
+        if len(entry_list) > 1:
+            from .properties_dialog import _selection_title
+
+            display_name = _selection_title(entry_list)
+        else:
+            display_name = safe_display_text(entry_list[0].name) if entry_list else ""
         heading = _("{name} Properties").format(name=display_name) if display_name else _("Properties")
         body_lines = [
             _("Name: {value}").format(value=details['name']),

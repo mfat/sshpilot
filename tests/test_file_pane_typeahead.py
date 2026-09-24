@@ -180,3 +180,42 @@ def test_context_menu_includes_properties(load_file_manager_window, monkeypatch)
     pane._current_path = "/tmp"
     pane._update_menu_state()
     assert pane._menu_actions["properties"].enabled is True
+
+
+def test_multi_selection_keeps_properties_and_hides_rename(load_file_manager_window):
+    module = load_file_manager_window()
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+
+    pane = FilePane.__new__(FilePane)
+    pane._is_remote = True
+    pane._menu_actions = {}
+    pane._menu_action_callbacks = {}
+
+    class _ActionGroup:
+        def __init__(self):
+            self.actions = []
+
+        def add_action(self, action):
+            self.actions.append(action)
+
+    pane._menu_action_group = _ActionGroup()
+    pane._create_menu_model()
+    pane._action_buttons = {}
+    pane._entries = [
+        FileEntry("a.txt", False, 1, 0.0, None),
+        FileEntry("b.txt", False, 2, 0.0, None),
+    ]
+    pane._selection_model = type(
+        "Selection",
+        (),
+        {"is_selected": staticmethod(lambda index: index in {0, 1})},
+    )()
+    pane._current_path = "/tmp"
+    pane._can_paste = False
+    pane._update_menu_state()
+
+    assert pane._menu_actions["properties"].enabled is True
+    assert pane._menu_actions["rename"].enabled is False
+    assert pane._menu_actions["delete"].enabled is True
+    assert pane._menu_actions["edit"].enabled is False
