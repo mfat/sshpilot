@@ -1872,9 +1872,27 @@ class SshPilotApplication(Adw.Application):
         gc.collect()
         return False  # one-shot idle
 
+    def _new_connection_key_is_new_folder_key(self):
+        """True when New Connection is bound to Nautilus's New Folder key."""
+        try:
+            new_folder = Gtk.accelerator_parse('<primary><shift>n')
+            accels = self.get_accels_for_action('app.new-connection') or []
+            return any(Gtk.accelerator_parse(accel) == new_folder for accel in accels)
+        except Exception:
+            return False
+
     def on_new_connection(self, action, param):
         """Handle new connection action"""
         logger.debug("New connection action triggered")
+        window = self.props.active_window
+        if window and self._new_connection_key_is_new_folder_key():
+            # Application accels run before the file list's own shortcut, so
+            # with a file list focused this key means New Folder (Nautilus).
+            from .file_manager.pane import file_pane_for_focus
+            pane = file_pane_for_focus(window.get_focus())
+            if pane is not None:
+                pane._shortcut_new_folder()
+                return
         if self.props.active_window:
             try:
                 self.props.active_window.show_connection_dialog()

@@ -59,6 +59,7 @@ from .file_manager import (
     _load_grant_for_host,
     safe_display_text,
 )
+from .file_manager.format_utils import filename_extension_offset
 
 import logging
 
@@ -302,15 +303,13 @@ class FileManagerWindow(Adw.Window):
         panes.set_end_child(self._right_overlay)
         self._install_remote_host_button()
 
-        # Seed each pane with the persisted default zoom level. Each pane
+        # Seed each pane with the persisted list and grid zoom levels. Each pane
         # tracks its own level from here on (zooming one does not affect the
         # other); the last pane zoomed persists its level so new file manager
         # windows pick up the most recent choice.
-        initial_level = FilePane._load_saved_icon_size_level()
+        list_level, grid_level = FilePane._load_saved_icon_levels()
         for pane in (self._left_pane, self._right_pane):
-            pane._icon_size_level = initial_level
-            if pane.toolbar is not None and hasattr(pane.toolbar, "set_zoom_level"):
-                pane.toolbar.set_zoom_level(initial_level)
+            pane.set_icon_levels(list_level, grid_level)
 
         
         # Store reference to panes for resize handling
@@ -575,7 +574,7 @@ class FileManagerWindow(Adw.Window):
         # Land in the new host's home, not the old host's last path, and
         # drop the old host's navigation history.
         self._pending_paths[self._right_pane] = "~"
-        self._right_pane._history.clear()
+        self._right_pane.clear_history()
         self._on_placeholder_host_picked(connection)
 
     # -- no-server host picker (same picker as empty split-view panes) ---
@@ -1686,7 +1685,9 @@ class FileManagerWindow(Adw.Window):
 
         def _focus_entry():
             name_entry.grab_focus()
-            name_entry.select_region(0, -1)  # Select all text
+            # Like Nautilus, select a file's name but not its extension.
+            end = -1 if entry.is_dir else filename_extension_offset(display_name)
+            name_entry.select_region(0, end)
 
         def _on_entry_activate(_entry):
             # Trigger the "ok" response when Enter is pressed

@@ -13,6 +13,7 @@ import mimetypes
 import os
 import pathlib
 import posixpath
+import re
 import time
 from datetime import datetime
 from gettext import gettext as _, ngettext
@@ -75,11 +76,11 @@ if TYPE_CHECKING:
 
 
 from .icon_levels import (
-    _DEFAULT_ICON_LEVEL,
+    _DEFAULT_ICON_LEVELS,
     _GRID_ICON_SIZES,
     _LIST_ICON_SIZES,
-    _MAX_ICON_LEVEL,
-    _MIN_ICON_LEVEL,
+    _MAX_ICON_LEVELS,
+    clamp_icon_level,
 )
 
 
@@ -117,6 +118,17 @@ def _column_view_supported(gtk_module: Any = None) -> bool:
     )
 
 
+# CSS variables need GTK 4.16; older GTK would warn about every line.
+_NEUTRAL_ACCENT_CSS = b"""
+columnview.fm-list-view > listview,
+listview.fm-list-view,
+gridview.fm-grid-view {
+    --accent-bg-color: #959595;
+    --accent-color: oklab(from var(--accent-bg-color) var(--standalone-color-oklab));
+}
+"""
+
+
 def _ensure_browser_card_css() -> None:
     global _browser_card_css_installed
     if _browser_card_css_installed:
@@ -128,6 +140,93 @@ def _ensure_browser_card_css() -> None:
 .fm-browser-card columnview,
 .fm-browser-card gridview {
     background: transparent;
+}
+/* Nautilus's list and grid spacing (nautilus src/resources/style.css).
+   Horizontal list padding sits on the columnview so column widths account
+   for it; the listview's negative margins let rubberbanding reach into it. */
+columnview.fm-list-view {
+    padding-left: 24px;
+    padding-right: 24px;
+}
+columnview.fm-list-view > listview {
+    padding-top: 16px;
+    padding-bottom: 24px;
+    border-spacing: 8px;
+    margin-left: -24px;
+    margin-right: -24px;
+}
+columnview.fm-list-view > listview > row {
+    margin-left: 24px;
+    margin-right: 24px;
+    border-radius: 9px;
+}
+columnview.fm-list-view > listview > row > cell {
+    padding: 0px;
+}
+listview.fm-list-view {
+    padding: 16px 24px 24px 24px;
+    border-spacing: 8px;
+}
+listview.fm-list-view > row {
+    border-radius: 9px;
+}
+.fm-list-view .fm-view-cell {
+    padding: 6px;
+}
+columnview.fm-list-view.compact > listview,
+listview.fm-list-view.compact {
+    border-spacing: 4px;
+}
+.fm-list-view.compact .fm-view-cell {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+gridview.fm-grid-view {
+    padding: 18px;
+    border-spacing: 6px;
+}
+gridview.fm-grid-view > child {
+    padding: 0px;
+    border-radius: 12px;
+}
+/* Grid cells are flat buttons; the child row draws hover and selection. */
+gridview.fm-grid-view button.fm-view-cell,
+gridview.fm-grid-view button.fm-view-cell:hover,
+gridview.fm-grid-view button.fm-view-cell:active {
+    padding: 6px;
+    border-radius: 12px;
+    min-height: 0px;
+    min-width: 0px;
+    background: none;
+    box-shadow: none;
+}
+.fm-browser-card image.fm-view-icon {
+    filter: drop-shadow(0px 1px 1px rgba(0,0,0,0.3));
+}
+.fm-browser-card .fm-hidden-file {
+    opacity: 0.55;
+}
+.fm-browser-card rubberband {
+    border-radius: 6px;
+}
+/* Nautilus highlights selection in neutral grey rather than the accent
+   colour. Spelled out with libadwaita 1.5's alphas; GTK 4.16+ also gets
+   Nautilus's own variable override below. */
+columnview.fm-list-view > listview > row:selected,
+listview.fm-list-view > row:selected,
+gridview.fm-grid-view > child:selected {
+    background-color: alpha(#959595, 0.25);
+}
+columnview.fm-list-view > listview > row.activatable:selected:hover,
+listview.fm-list-view > row.activatable:selected:hover {
+    background-color: alpha(#959595, 0.32);
+}
+columnview.fm-list-view > listview > row.activatable:selected:active,
+listview.fm-list-view > row.activatable:selected:active {
+    background-color: alpha(#959595, 0.39);
+}
+gridview.fm-grid-view > child:focus:focus-visible {
+    outline-color: alpha(#959595, 0.5);
 }
 /* ActionBar paints its background/border on an inner box, which would
    square-fill the rounded card; let the card class show through instead. */
@@ -145,7 +244,7 @@ paned.fm-panes > separator {
     /* the theme draws the paned hairline as an inset box-shadow */
     box-shadow: none;
 }
-""")
+""" + (_NEUTRAL_ACCENT_CSS if (Gtk.get_major_version(), Gtk.get_minor_version()) >= (4, 16) else b""))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
             provider,
@@ -184,6 +283,68 @@ def _child_toward(ancestor: Optional[str], descendant: Optional[str]) -> Optiona
     return name or None
 
 
+def _set_hidden_file_style(widget: Gtk.Widget, name: str) -> None:
+    """Dim dotfiles, as Nautilus does when hidden files are shown."""
+    if name.startswith("."):
+        widget.add_css_class("fm-hidden-file")
+    else:
+        widget.remove_css_class("fm-hidden-file")
+
+
+_DIGIT_RUNS = re.compile(r"(\d+)")
+
+
+def _natural_name_key(name: str) -> Tuple:
+    """Sort key that orders names like Nautilus: "file2" before "file10".
+
+    Digit runs compare by value and everything else case-insensitively,
+    the way g_utf8_collate_key_for_filename() orders Nautilus's names.
+    """
+    parts = _DIGIT_RUNS.split(name.casefold())
+    chunks = tuple(
+        (0, int(part), "") if index % 2 else (1, 0, part)
+        for index, part in enumerate(parts)
+    )
+    # Names equal by value ("a01" / "a1") still need a stable order.
+    return chunks, name
+
+
+def _type_sort_key(name: str) -> str:
+    """The file type Nautilus sorts by: its content type's description."""
+    try:
+        content_type, _uncertain = Gio.content_type_guess(name, None)
+        description = Gio.content_type_get_description(content_type)
+        if description:
+            return description.casefold()
+    except Exception:
+        pass
+    _stem, ext = os.path.splitext(name)
+    return ext.casefold()
+
+
+def _pattern_matcher(pattern: str) -> Callable[[str], bool]:
+    """Match names as g_pattern_spec does in Nautilus's Select Pattern:
+    ``*`` and ``?`` are wildcards, everything else is literal and
+    case-sensitive."""
+    regex = re.escape(pattern).replace(r"\*", ".*").replace(r"\?", ".")
+    compiled = re.compile(regex, re.DOTALL)
+    return lambda name: compiled.fullmatch(name) is not None
+
+
+def file_pane_for_focus(widget: Optional[Gtk.Widget]) -> Optional["FilePane"]:
+    """Return the FilePane whose file list or grid contains *widget*."""
+    node = widget
+    while node is not None:
+        if isinstance(node, FilePane):
+            views = (getattr(node, "_list_view", None), getattr(node, "_grid_view", None))
+            for view in views:
+                if view is not None and (widget is view or widget.is_ancestor(view)):
+                    return node
+            return None
+        node = node.get_parent()
+    return None
+
+
 class FilePane(Gtk.Box):
     """Represents a single pane in the manager."""
 
@@ -213,7 +374,7 @@ class FilePane(Gtk.Box):
         # Set silently here so __init__ paths that build factory widgets get a
         # sane initial size; the parent FileManagerWindow may overwrite this
         # with the user's persisted value before the first directory load.
-        self._icon_size_level: int = _DEFAULT_ICON_LEVEL
+        self._icon_levels: Dict[str, int] = dict(_DEFAULT_ICON_LEVELS)
         # Track currently bound icon widgets so zoom updates them in place
         # (O(visible)) instead of forcing a full list-store rebuild. Use plain
         # sets (not WeakSet): PyGObject can drop the Python wrapper for a live
@@ -245,6 +406,7 @@ class FilePane(Gtk.Box):
 
         list_view = self._create_list_widget()
         self._list_view = list_view
+        self._update_list_density()
         list_view.connect("activate", self._on_list_activate)
 
         # Wrap list view in a scrolled window for proper scrolling
@@ -259,8 +421,9 @@ class FilePane(Gtk.Box):
         grid_view = Gtk.GridView(
             model=self._selection_model,
             factory=grid_factory,
-            max_columns=6,
+            max_columns=20,
         )
+        grid_view.add_css_class("fm-grid-view")
         grid_view.set_enable_rubberband(True)
         grid_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         self._grid_view = grid_view
@@ -511,6 +674,7 @@ class FilePane(Gtk.Box):
         # Wire navigation buttons
         self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
         self.toolbar.controls.back_button.connect("clicked", self._on_back_clicked)
+        self.toolbar.controls.forward_button.connect("clicked", self._on_forward_clicked)
         self.toolbar.controls.refresh_button.connect("clicked", self._on_refresh_clicked)
         self.toolbar.controls.new_folder_button.connect(
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
@@ -518,6 +682,8 @@ class FilePane(Gtk.Box):
         # Upload/download functionality is now available through action bar and context menu only
 
         self._history: List[str] = []
+        # Locations left with Back, most recent last.
+        self._forward_history: List[str] = []
         self._current_path = "/"
         self._entries: List[FileEntry] = []
         self._cached_entries: List[FileEntry] = []
@@ -528,6 +694,7 @@ class FilePane(Gtk.Box):
         self._sort_descending = False  # Default ascending order
 
         self._suppress_history_push: bool = False
+        self._update_history_buttons()
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
         self._menu_actions: Dict[str, Gio.SimpleAction] = {}
@@ -623,6 +790,45 @@ class FilePane(Gtk.Box):
         # Ctrl+A / Ctrl+Shift+A come from GtkListBase; Nautilus adds invert.
         add_trigger_string("<shift><primary>i", self._shortcut_invert_selection)
 
+        # Nautilus's view keys (nautilus-files-view.c, nautilus-window-slot.c).
+        # <primary> is Command on macOS, where the keys that clash with
+        # system shortcuts (Cmd+H hides the app) use Finder's instead.
+        add_shortcut(
+            Gtk.KeyvalTrigger.new(Gdk.KEY_F2, Gdk.ModifierType(0)),
+            lambda: self._shortcut_operation("rename"),
+        )
+        add_trigger_string("Menu|<shift>F10", self._shortcut_popup_menu)
+        add_trigger_string("<primary>i|<alt>Return", self._shortcut_properties)
+        add_trigger_string("<shift><primary>n", self._shortcut_new_folder)
+        add_trigger_string("<primary>s", self._shortcut_select_pattern)
+        add_trigger_string(
+            "<primary>equal|<primary>plus|<primary>KP_Add|ZoomIn",
+            lambda: self._shortcut_zoom(1),
+        )
+        add_trigger_string(
+            "<primary>minus|<primary>KP_Subtract|ZoomOut",
+            lambda: self._shortcut_zoom(-1),
+        )
+        add_trigger_string("<primary>0|<primary>KP_0", lambda: self._shortcut_zoom(0))
+
+        if is_macos():
+            hidden = "<shift><primary>period|<shift><primary>greater"
+            back, forward = "<primary>bracketleft|Back", "<primary>bracketright|Forward"
+            up, down = "<primary>Up", "<primary>Down"
+            # Mac keyboards label Backspace "delete"; Finder deletes with Cmd+it.
+            add_trigger_string("<primary>BackSpace", self._shortcut_delete)
+        else:
+            hidden = "<primary>h"
+            back, forward = "<alt>Left|Back", "<alt>Right|Forward"
+            if Gtk.Widget.get_default_direction() == Gtk.TextDirection.RTL:
+                back, forward = "<alt>Right|Back", "<alt>Left|Forward"
+            up, down = "<alt>Up", "<alt>Down"
+        add_trigger_string(hidden, self._shortcut_toggle_hidden)
+        add_trigger_string(back, lambda: self._shortcut_navigate("back"))
+        add_trigger_string(forward, lambda: self._shortcut_navigate("forward"))
+        add_trigger_string(up, lambda: self._shortcut_navigate("up"))
+        add_trigger_string(down, lambda: self._shortcut_navigate("down"))
+
         view.add_controller(controller)
 
     def _shortcut_focus_path_entry(self) -> bool:
@@ -653,16 +859,127 @@ class FilePane(Gtk.Box):
         self._selection_anchor = None
         return True
 
+    def _shortcut_properties(self) -> bool:
+        self._menu_for_background = False
+        self._on_menu_properties()
+        return True
+
+    def _shortcut_new_folder(self) -> bool:
+        self.emit("request-operation", "mkdir", None)
+        return True
+
+    def _shortcut_toggle_hidden(self) -> bool:
+        self.set_show_hidden(not self._show_hidden)
+        return True
+
+    def _shortcut_zoom(self, direction: int) -> bool:
+        """Zoom in (+1), out (-1), or back to the default size (0)."""
+        if direction == 0:
+            view = self._zoom_view()
+            self.set_icon_level(view, _DEFAULT_ICON_LEVELS[view])
+        else:
+            self._request_zoom(direction)
+        return True
+
+    def _shortcut_navigate(self, where: str) -> bool:
+        if where == "back":
+            self._on_back_clicked(None)
+        elif where == "forward":
+            self._on_forward_clicked(None)
+        elif where == "up":
+            self._on_up_clicked(None)
+        elif where == "down":
+            # Nautilus's Alt+Down opens the selected folder.
+            selected = self._get_selected_indices()
+            if len(selected) == 1:
+                self._navigate_to_entry(selected[0])
+        return True
+
+    def select_pattern(self, pattern: str) -> int:
+        """Select the items matching *pattern*; return how many matched."""
+        matches = _pattern_matcher(pattern)
+        self._selection_model.unselect_all()
+        self._selection_anchor = None
+        count = 0
+        for index, entry in enumerate(self._entries):
+            if matches(entry.name):
+                self._selection_model.select_item(index, False)
+                if count == 0:
+                    self._scroll_to_position(index)
+                self._selection_anchor = index
+                count += 1
+        return count
+
+    def _shortcut_select_pattern(self) -> bool:
+        dialog = Adw.AlertDialog.new(_("Select Items Matching"), None)
+        pattern_entry = Gtk.Entry()
+        pattern_entry.set_placeholder_text(_("Pattern, e.g. *.txt"))
+        pattern_entry.set_activates_default(True)
+        dialog.set_extra_child(pattern_entry)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("select", _("Select"))
+        dialog.set_response_appearance("select", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("select")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response: str) -> None:
+            pattern = pattern_entry.get_text()
+            if response == "select" and pattern:
+                if not self.select_pattern(pattern):
+                    self.show_toast(_("No items match"))
+
+        dialog.connect("response", _on_response)
+        dialog.present(self)
+
+        def _focus_entry() -> bool:
+            pattern_entry.grab_focus()
+            return False
+
+        GLib.idle_add(_focus_entry)
+        return True
+
+    def _visible_view(self) -> Optional[Gtk.Widget]:
+        visible = self._stack.get_visible_child_name()
+        if visible == "list":
+            return self._list_view
+        if visible == "grid":
+            return self._grid_view
+        return None
+
+    def _shortcut_popup_menu(self) -> bool:
+        """Open the context menu from the keyboard (Menu / Shift+F10).
+
+        Like Nautilus it offers the selection menu when something is
+        selected and the folder menu otherwise, pointing at the focused item
+        when there is one.
+        """
+        view = self._visible_view()
+        if view is None:
+            return False
+        x, y = view.get_width() / 2, view.get_height() / 2
+        root = view.get_root()
+        focus = root.get_focus() if root is not None else None
+        if focus is not None and focus is not view and focus.is_ancestor(view):
+            ok, bounds = focus.compute_bounds(view)
+            if ok:
+                x = bounds.get_x() + bounds.get_width() / 2
+                y = bounds.get_y() + bounds.get_height()
+        background = not self._get_selected_indices()
+        self._show_context_menu(view, x, y, background=background)
+        return True
+
     def _on_view_toggle(self, toolbar, view_name: str) -> None:
         self._stack.set_visible_child_name(view_name)
         # Update the split button icon to reflect current view
         self._update_view_button_icon()
+        # Each view has its own zoom; show this one's on the slider.
+        self._sync_zoom_slider()
 
     def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
         self.set_show_hidden(show_hidden)
 
     def _on_toolbar_zoom_changed(self, _toolbar, level: int) -> None:
-        self.set_icon_size_level(level)
+        self.set_icon_level(self._zoom_view(), level)
 
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
@@ -690,7 +1007,7 @@ class FilePane(Gtk.Box):
         list_factory.connect("bind", self._on_list_bind)
         list_factory.connect("unbind", self._on_list_unbind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
-        list_view.add_css_class("rich-list")
+        list_view.add_css_class("fm-list-view")
         list_view.set_can_focus(True)
         return list_view
 
@@ -702,6 +1019,7 @@ class FilePane(Gtk.Box):
         still comes from ``_sort_entries`` so directories stay grouped first.
         """
         column_view = Gtk.ColumnView(model=self._selection_model)
+        column_view.add_css_class("fm-list-view")
         column_view.set_can_focus(True)
         column_view.set_hexpand(True)
         if hasattr(column_view, "set_single_click_activate"):
@@ -802,8 +1120,10 @@ class FilePane(Gtk.Box):
 
     def _on_name_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
         from ..icon_utils import new_image_from_icon_name
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.add_css_class("fm-view-cell")
         icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
+        icon.add_css_class("fm-view-icon")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -839,11 +1159,12 @@ class FilePane(Gtk.Box):
             set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
-        display_name = safe_display_text(entry.name) + ("/" if entry.is_dir else "")
+        display_name = safe_display_text(entry.name)
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
         from ..icon_utils import set_icon_from_name
         set_icon_from_name(icon, self._resolve_entry_icon(entry.name, entry.is_dir))
+        _set_hidden_file_style(box, entry.name)
         box._pane_entry = entry
         box._pane_index = position
 
@@ -860,6 +1181,7 @@ class FilePane(Gtk.Box):
         label.set_halign(Gtk.Align.END)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("dim-label")
+        label.add_css_class("fm-view-cell")
         self._attach_list_cell_controllers(label, cell)
         cell.set_child(label)
 
@@ -887,6 +1209,7 @@ class FilePane(Gtk.Box):
         label.set_halign(Gtk.Align.END)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("dim-label")
+        label.add_css_class("fm-view-cell")
         self._attach_list_cell_controllers(label, cell)
         cell.set_child(label)
 
@@ -906,8 +1229,10 @@ class FilePane(Gtk.Box):
     def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item) -> None:
         """Legacy ListView row used when ColumnViewCell is unavailable."""
         from ..icon_utils import new_image_from_icon_name
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.add_css_class("fm-view-cell")
         icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
+        icon.add_css_class("fm-view-icon")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -951,9 +1276,10 @@ class FilePane(Gtk.Box):
             set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
-        display_name = safe_display_text(entry.name) + ("/" if entry.is_dir else "")
+        display_name = safe_display_text(entry.name)
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
+        _set_hidden_file_style(box, entry.name)
         text = self._size_column_text(entry)
         metadata_label.set_text(text)
         metadata_label.set_tooltip_text(None if text == "—" else text)
@@ -1009,81 +1335,118 @@ class FilePane(Gtk.Box):
         return get_icon_for_name(name, is_dir)
 
     def _list_icon_px(self) -> int:
-        return _LIST_ICON_SIZES[self._icon_size_level]
+        return _LIST_ICON_SIZES[self._icon_levels["list"]]
 
     def _grid_icon_px(self) -> int:
-        return _GRID_ICON_SIZES[self._icon_size_level]
+        return _GRID_ICON_SIZES[self._icon_levels["grid"]]
 
-    def set_icon_size_level(self, level: int) -> None:
-        """Update the icon zoom level for this pane and resize visible rows."""
-        clamped = max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level))
-        if clamped == self._icon_size_level:
+    def _zoom_view(self) -> str:
+        """The view zoom acts on: the one on screen, as in Nautilus."""
+        stack = getattr(self, "_stack", None)
+        visible = stack.get_visible_child_name() if stack is not None else None
+        if visible in ("list", "grid"):
+            return visible
+        return getattr(getattr(self, "toolbar", None), "_current_view", "list")
+
+    def set_icon_levels(self, list_level: int, grid_level: int) -> None:
+        """Seed both views' zoom (e.g. from settings) without persisting."""
+        self._icon_levels = {
+            "list": clamp_icon_level("list", list_level),
+            "grid": clamp_icon_level("grid", grid_level),
+        }
+        self._update_list_density()
+        self._sync_zoom_slider()
+
+    def set_icon_level(self, view: str, level: int) -> None:
+        """Set one view's icon zoom level and resize its visible items.
+
+        List and grid zoom separately, like Nautilus.
+        """
+        clamped = clamp_icon_level(view, level)
+        if clamped == self._icon_levels[view]:
             return
-        self._icon_size_level = clamped
+        self._icon_levels[view] = clamped
         # Resize the currently bound icon widgets in place. This is O(visible)
         # — far cheaper than rebuilding the list store, which produces a
         # noticeable freeze on large remote directories. New rows that get
         # bound while scrolling will pick up the size from the bind callback
-        # (which reads self._icon_size_level directly). queue_resize() forces
+        # (which reads self._icon_levels directly). queue_resize() forces
         # GtkGridView to re-measure cell sizes; set_pixel_size alone updates
         # the image's request but the grid caches its cell extents.
-        list_px = self._list_icon_px()
-        for icon in list(self._bound_list_icons):
+        if view == "list":
+            self._update_list_density()
+            images, px = self._bound_list_icons, self._list_icon_px()
+            widget = getattr(self, "_list_view", None)
+        else:
+            images, px = self._bound_grid_images, self._grid_icon_px()
+            widget = getattr(self, "_grid_view", None)
+        for image in list(images):
             try:
-                icon.set_pixel_size(list_px)
-                icon.queue_resize()
-            except Exception:
-                pass
-        grid_px = self._grid_icon_px()
-        for image in list(self._bound_grid_images):
-            try:
-                image.set_pixel_size(grid_px)
+                image.set_pixel_size(px)
                 image.queue_resize()
             except Exception:
                 pass
-        # Nudge the views themselves so cached layouts (especially GridView's
+        # Nudge the view itself so cached layouts (especially GridView's
         # column-width calc) get refreshed.
-        for view in (getattr(self, "_list_view", None), getattr(self, "_grid_view", None)):
-            if view is not None:
-                try:
-                    view.queue_resize()
-                except Exception:
-                    pass
+        if widget is not None:
+            try:
+                widget.queue_resize()
+            except Exception:
+                pass
         # Keep the toolbar's slider in sync — e.g. when the level was changed
         # via Ctrl+wheel rather than by the user dragging the slider itself.
-        toolbar = getattr(self, "toolbar", None)
-        if toolbar is not None and hasattr(toolbar, "set_zoom_level"):
-            try:
-                toolbar.set_zoom_level(self._icon_size_level)
-            except Exception as exc:
-                logger.debug("Failed to sync toolbar slider: %s", exc)
+        self._sync_zoom_slider()
         # Persist whichever pane was zoomed last as the new default for any
         # newly opened file manager windows.
-        self._persist_icon_size_level()
+        self._persist_icon_level(view)
+
+    def _sync_zoom_slider(self) -> None:
+        toolbar = getattr(self, "toolbar", None)
+        if toolbar is None or not hasattr(toolbar, "set_zoom_level"):
+            return
+        view = self._zoom_view()
+        try:
+            toolbar.set_zoom_level(self._icon_levels[view], _MAX_ICON_LEVELS[view])
+        except Exception as exc:
+            logger.debug("Failed to sync toolbar slider: %s", exc)
+
+    def _update_list_density(self) -> None:
+        """Tighter rows at the smallest list size, like Nautilus's compact."""
+        view = getattr(self, "_list_view", None)
+        if view is None:
+            return
+        if self._list_icon_px() <= 16:
+            view.add_css_class("compact")
+        else:
+            view.remove_css_class("compact")
 
     def _request_zoom(self, direction: int) -> None:
-        """Zoom this pane by *direction* (+1 / -1)."""
-        self.set_icon_size_level(self._icon_size_level + direction)
+        """Zoom the visible view by *direction* (+1 / -1)."""
+        view = self._zoom_view()
+        self.set_icon_level(view, self._icon_levels[view] + direction)
 
     @staticmethod
-    def _load_saved_icon_size_level() -> int:
-        """Return the persisted default icon zoom level for new panes."""
+    def _load_saved_icon_levels() -> Tuple[int, int]:
+        """Return the persisted (list, grid) zoom levels for new panes."""
         try:
             from ..config import Config
             fm = Config().get_file_manager_config() or {}
-            value = int(fm.get('icon_size_level', _DEFAULT_ICON_LEVEL))
+            return (
+                clamp_icon_level("list", fm.get('list_icon_level', _DEFAULT_ICON_LEVELS["list"])),
+                clamp_icon_level("grid", fm.get('grid_icon_level', _DEFAULT_ICON_LEVELS["grid"])),
+            )
         except Exception as exc:
-            logger.debug("Could not read file_manager.icon_size_level: %s", exc)
-            return _DEFAULT_ICON_LEVEL
-        return max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, value))
+            logger.debug("Could not read file manager icon levels: %s", exc)
+            return _DEFAULT_ICON_LEVELS["list"], _DEFAULT_ICON_LEVELS["grid"]
 
-    def _persist_icon_size_level(self) -> None:
-        """Save this pane's current level as the default for new windows."""
+    def _persist_icon_level(self, view: str) -> None:
+        """Save this view's level as the default for new windows."""
+        key = f'file_manager.{view}_icon_level'
         try:
             from ..config import Config
-            Config().set_setting('file_manager.icon_size_level', self._icon_size_level)
+            Config().set_setting(key, self._icon_levels[view])
         except Exception as exc:
-            logger.debug("Failed to persist file_manager.icon_size_level: %s", exc)
+            logger.debug("Failed to persist %s: %s", key, exc)
 
     def _on_pane_scroll(self, controller: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
         """Intercept Ctrl/Cmd + wheel to zoom icons; otherwise let it scroll."""
@@ -1125,6 +1488,7 @@ class FilePane(Gtk.Box):
     def _on_grid_setup(self, factory: Gtk.SignalListItemFactory, item):
         button = Gtk.Button()
         button.set_has_frame(False)
+        button.add_css_class("fm-view-cell")
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=6,
@@ -1134,16 +1498,18 @@ class FilePane(Gtk.Box):
 
         from ..icon_utils import new_image_from_icon_name
         image = new_image_from_icon_name("folder-symbolic", size=self._grid_icon_px())
+        image.add_css_class("fm-view-icon")
         image.set_halign(Gtk.Align.CENTER)
         content.append(image)
 
+        # Nautilus grid names: up to three wrapped lines, cut in the middle.
         label = Gtk.Label()
         label.set_halign(Gtk.Align.CENTER)
         label.set_justify(Gtk.Justification.CENTER)
-        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_lines(2)
+        label.set_lines(3)
         # Force normal weight: Gtk.Button styling makes its label bold by
         # default, which looks wrong for filenames in a grid cell.
         normal_weight_attrs = Pango.AttrList()
@@ -1222,6 +1588,7 @@ class FilePane(Gtk.Box):
         from ..icon_utils import set_icon_from_name
         if entry is not None:
             set_icon_from_name(image, self._resolve_entry_icon(entry.name, entry.is_dir))
+            _set_hidden_file_style(button, entry.name)
         else:
             is_dir = value.endswith('/')
             raw_name = value[:-1] if is_dir else value
@@ -1408,6 +1775,7 @@ class FilePane(Gtk.Box):
         self._menu_actions["sort-by-name"] = Gio.SimpleAction.new("sort-by-name", None)
         self._menu_actions["sort-by-size"] = Gio.SimpleAction.new("sort-by-size", None)
         self._menu_actions["sort-by-modified"] = Gio.SimpleAction.new("sort-by-modified", None)
+        self._menu_actions["sort-by-type"] = Gio.SimpleAction.new("sort-by-type", None)
         
         # Create stateful actions for sort direction (radio buttons)
         self._menu_actions["sort-direction-asc"] = Gio.SimpleAction.new_stateful(
@@ -1421,6 +1789,7 @@ class FilePane(Gtk.Box):
         self._menu_actions["sort-by-name"].connect("activate", lambda *_: self._on_sort_by("name"))
         self._menu_actions["sort-by-size"].connect("activate", lambda *_: self._on_sort_by("size"))
         self._menu_actions["sort-by-modified"].connect("activate", lambda *_: self._on_sort_by("modified"))
+        self._menu_actions["sort-by-type"].connect("activate", lambda *_: self._on_sort_by("type"))
         self._menu_actions["sort-direction-asc"].connect("activate", lambda *_: self._on_sort_direction(False))
         self._menu_actions["sort-direction-desc"].connect("activate", lambda *_: self._on_sort_direction(True))
         
@@ -1473,9 +1842,8 @@ class FilePane(Gtk.Box):
         columns = getattr(self, "_list_columns", None)
         if view is None or not columns or not hasattr(view, "sort_by_column"):
             return
+        # Type has no column; its sort then shows no header arrow.
         column = columns.get(self._sort_key)
-        if column is None:
-            return
         direction = (
             Gtk.SortType.DESCENDING if self._sort_descending else Gtk.SortType.ASCENDING
         )
@@ -1484,7 +1852,8 @@ class FilePane(Gtk.Box):
             # Clear first to avoid a double triangle
             # (https://gitlab.gnome.org/GNOME/gtk/-/issues/4696).
             view.sort_by_column(None, Gtk.SortType.ASCENDING)
-            view.sort_by_column(column, direction)
+            if column is not None:
+                view.sort_by_column(column, direction)
         except Exception:
             logger.debug("Failed to sync column sort indicator", exc_info=True)
         finally:
@@ -1529,6 +1898,9 @@ class FilePane(Gtk.Box):
                 self._menu_action_group.add_action(action)
                 self._menu_actions[name] = action
 
+        _add_action("open", self._on_menu_open)
+        _add_action("copy_location", self._on_menu_copy_location)
+        _add_action("select_all", self._on_menu_select_all)
         _add_action("download", self._on_menu_download)
         _add_action("upload", self._on_menu_upload)
         _add_action("edit", self._on_menu_edit)
@@ -1744,6 +2116,12 @@ class FilePane(Gtk.Box):
             row.connect('activated', _on_activated)
             listbox.append(row)
         
+        # Open leads the menu for a single folder, as in Nautilus.
+        if has_selection:
+            selected_entries = self.get_selected_entries()
+            if len(selected_entries) == 1 and selected_entries[0].is_dir:
+                _add_menu_item(_("Open"), "folder-open-symbolic", "open")
+
         # Add Download/Upload based on pane type and selection
         if self._is_remote and has_selection:
             _add_menu_item(_("Download"), "document-save-symbolic", "download")
@@ -1774,6 +2152,10 @@ class FilePane(Gtk.Box):
         if not has_selection:
             _add_menu_item(_("New Folder"), "folder-new-symbolic", "new_folder")
             _add_menu_item(_("New File"), "document-new-symbolic", "new_file")
+            if getattr(self, "_entries", None):
+                _add_menu_item(_("Select All"), "object-select-symbolic", "select_all")
+
+        _add_menu_item(_("Copy Location"), "edit-copy-symbolic", "copy_location")
         
         # Always add Properties (at the end)
         _add_menu_item(_("Properties…"), "document-properties-symbolic", "properties")
@@ -1960,6 +2342,35 @@ class FilePane(Gtk.Box):
 
         self._show_hidden = show_hidden
         self._apply_entry_filter(preserve_selection=preserve_selection)
+
+    def _on_menu_open(self) -> None:
+        selected = self._get_selected_indices()
+        if len(selected) == 1:
+            self._navigate_to_entry(selected[0])
+
+    def _selection_locations(self) -> List[str]:
+        """Full paths of the selected items, or of the folder if none."""
+        base = self._current_path or "/"
+        join = posixpath.join if self._is_remote else os.path.join
+        if getattr(self, "_menu_for_background", False):
+            entries: List[FileEntry] = []
+        else:
+            entries = self.get_selected_entries()
+        if not entries:
+            return [base]
+        return [join(base, entry.name) for entry in entries]
+
+    def _on_menu_copy_location(self) -> None:
+        text = "\n".join(safe_display_text(path) for path in self._selection_locations())
+        try:
+            self.get_clipboard().set(text)
+        except Exception as exc:
+            logger.debug("Failed to copy location: %s", exc)
+            return
+        self.show_toast(_("Location copied"))
+
+    def _on_menu_select_all(self) -> None:
+        self._selection_model.select_all()
 
     def _on_menu_download(self) -> None:
         if not self._is_remote:
@@ -2696,12 +3107,16 @@ class FilePane(Gtk.Box):
         self._navigate_to_entry(position)
 
     def _sort_entries(self, entries: Iterable[FileEntry]) -> List[FileEntry]:
+        # Ties on size, date or type fall back to the name, as in Nautilus.
         def key_func(item: FileEntry):
+            name_key = _natural_name_key(item.name)
             if self._sort_key == "size":
-                return item.size
+                return item.size, name_key
             if self._sort_key == "modified":
-                return item.modified
-            return item.name.casefold()
+                return item.modified, name_key
+            if self._sort_key == "type":
+                return _type_sort_key(item.name), name_key
+            return name_key
 
         dirs = [entry for entry in entries if entry.is_dir]
         files = [entry for entry in entries if not entry.is_dir]
@@ -3219,6 +3634,17 @@ class FilePane(Gtk.Box):
             self._suppress_history_push = True
             self.emit("path-changed", prev)
 
+    def _on_forward_clicked(self, _button) -> None:
+        if not self._forward_history:
+            return
+        target = self._forward_history.pop()
+        # Re-enter the target into the back history here rather than on
+        # arrival, where a push would clear the rest of the forward stack.
+        self._history.append(target)
+        self._suppress_history_push = True
+        self._update_history_buttons()
+        self.emit("path-changed", target)
+
     def _on_refresh_clicked(self, _button) -> None:
         # Refresh the current directory
         current_path = self._current_path or "/"
@@ -3228,12 +3654,32 @@ class FilePane(Gtk.Box):
         if self._history and self._history[-1] == path:
             return
         self._history.append(path)
+        # A new location ends the forward trail, as in a browser or Nautilus.
+        self._forward_history.clear()
+        self._update_history_buttons()
 
     def pop_history(self) -> Optional[str]:
         if len(self._history) > 1:
-            self._history.pop()
+            self._forward_history.append(self._history.pop())
+            self._update_history_buttons()
             return self._history[-1]
         return None
+
+    def clear_history(self) -> None:
+        self._history.clear()
+        self._forward_history.clear()
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        controls = getattr(getattr(self, "toolbar", None), "controls", None)
+        if controls is None:
+            return
+        for button, enabled in (
+            (getattr(controls, "back_button", None), len(self._history) > 1),
+            (getattr(controls, "forward_button", None), bool(self._forward_history)),
+        ):
+            if button is not None:
+                button.set_sensitive(enabled)
 
     def show_toast(self, text: str, timeout: int = -1) -> None:
         """Show a toast; messages too long for a toast escalate to an alert."""

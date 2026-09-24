@@ -23,12 +23,12 @@ from .format_utils import (
     _mode_to_str,
     safe_display_text,
 )
-from .pane import (
-    FilePane,
-    _DEFAULT_ICON_LEVEL,
+from .pane import FilePane
+from .icon_levels import (
+    _DEFAULT_ICON_LEVELS,
     _GRID_ICON_SIZES,
     _LIST_ICON_SIZES,
-    _MAX_ICON_LEVEL,
+    _MAX_ICON_LEVELS,
     _MIN_ICON_LEVEL,
 )
 from .pane_controls import PaneControls, PaneToolbar, PathEntry
@@ -119,11 +119,11 @@ def create_file_manager_backend(
 
 __all__ = [
     "DOCS_JSON",
-    "_DEFAULT_ICON_LEVEL",
+    "_DEFAULT_ICON_LEVELS",
     "_GRID_ICON_SIZES",
     "_HAS_ALERT_DIALOG",
     "_LIST_ICON_SIZES",
-    "_MAX_ICON_LEVEL",
+    "_MAX_ICON_LEVELS",
     "_MIN_ICON_LEVEL",
     "_PROGRESS_DIALOG_BASE",
     "FileEntry",

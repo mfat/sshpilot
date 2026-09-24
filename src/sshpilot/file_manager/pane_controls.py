@@ -6,7 +6,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
-from .icon_levels import _DEFAULT_ICON_LEVEL, _MAX_ICON_LEVEL, _MIN_ICON_LEVEL
+from .icon_levels import _DEFAULT_LIST_LEVEL, _MAX_LIST_LEVEL, _MIN_ICON_LEVEL
 
 
 class PathEntry(Gtk.Entry):
@@ -27,21 +27,32 @@ class PaneControls(Gtk.Box):
         self.set_valign(Gtk.Align.CENTER)
         from sshpilot import icon_utils
         self.back_button = icon_utils.new_button_from_icon_name("go-previous-symbolic")
+        self.back_button.set_tooltip_text(_("Back"))
+        self.forward_button = icon_utils.new_button_from_icon_name("go-next-symbolic")
+        self.forward_button.set_tooltip_text(_("Forward"))
         self.up_button = icon_utils.new_button_from_icon_name("go-up-symbolic")
         self.refresh_button = icon_utils.new_button_from_icon_name("view-refresh-symbolic")
         self.new_folder_button = icon_utils.new_button_from_icon_name("folder-new-symbolic")
         for widget in (
             self.back_button,
+            self.forward_button,
             self.up_button,
             self.refresh_button,
             self.new_folder_button,
         ):
             widget.set_valign(Gtk.Align.CENTER)
-        for widget in (self.back_button, self.up_button, self.refresh_button, self.new_folder_button):
+        for widget in (
+            self.back_button,
+            self.forward_button,
+            self.up_button,
+            self.refresh_button,
+            self.new_folder_button,
+        ):
             widget.add_css_class("flat")
-        # Only back/up live here (left of the address bar); refresh and
-        # new_folder are packed right of the entry by PaneToolbar.
+        # Only back/forward/up live here (left of the address bar); refresh
+        # and new_folder are packed right of the entry by PaneToolbar.
         self.append(self.back_button)
+        self.append(self.forward_button)
         self.append(self.up_button)
 
 
@@ -134,6 +145,7 @@ class PaneToolbar(Gtk.Box):
         sort_section.append(_("Name"), "pane.sort-by-name")
         sort_section.append(_("Size"), "pane.sort-by-size")
         sort_section.append(_("Modified"), "pane.sort-by-modified")
+        sort_section.append(_("Type"), "pane.sort-by-type")
         menu_model.append_section(_("Sort by"), sort_section)
         direction_section = Gio.Menu()
         direction_section.append(_("Ascending"), "pane.sort-direction-asc")
@@ -169,19 +181,21 @@ class PaneToolbar(Gtk.Box):
         header.add_css_class("dim-label")
         box.append(header)
 
+        # Starts on the list view's range; set_zoom_level() re-ranges it
+        # when the pane switches views, since each view zooms separately.
         scale = Gtk.Scale.new_with_range(
             Gtk.Orientation.HORIZONTAL,
             float(_MIN_ICON_LEVEL),
-            float(_MAX_ICON_LEVEL),
+            float(_MAX_LIST_LEVEL),
             1.0,
         )
         scale.set_digits(0)
         scale.set_draw_value(False)
         scale.set_hexpand(True)
         scale.set_round_digits(0)
-        for lvl in range(_MIN_ICON_LEVEL, _MAX_ICON_LEVEL + 1):
-            scale.add_mark(float(lvl), Gtk.PositionType.BOTTOM, None)
-        scale.set_value(float(_DEFAULT_ICON_LEVEL))
+        self._zoom_max_level = _MAX_LIST_LEVEL
+        self._add_zoom_marks(scale, _MAX_LIST_LEVEL)
+        scale.set_value(float(_DEFAULT_LIST_LEVEL))
         self._zoom_scale = scale
         self._zoom_scale_handler_id = scale.connect(
             "value-changed", self._on_zoom_scale_changed
@@ -189,24 +203,33 @@ class PaneToolbar(Gtk.Box):
         box.append(scale)
         return box
 
+    @staticmethod
+    def _add_zoom_marks(scale: Gtk.Scale, max_level: int) -> None:
+        scale.clear_marks()
+        for lvl in range(_MIN_ICON_LEVEL, max_level + 1):
+            scale.add_mark(float(lvl), Gtk.PositionType.BOTTOM, None)
+
     def _on_zoom_scale_changed(self, scale: Gtk.Scale) -> None:
         level = int(round(scale.get_value()))
-        level = max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level))
+        level = max(_MIN_ICON_LEVEL, min(self._zoom_max_level, level))
         self.emit("zoom-changed", level)
 
-    def set_zoom_level(self, level: int) -> None:
-        """Sync the slider to *level* without firing zoom-changed."""
+    def set_zoom_level(self, level: int, max_level: int) -> None:
+        """Show *level* out of *max_level* on the slider without firing zoom-changed."""
         scale = getattr(self, "_zoom_scale", None)
         if scale is None:
             return
-        clamped = float(max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level)))
-        if abs(scale.get_value() - clamped) < 0.5:
-            return
+        clamped = float(max(_MIN_ICON_LEVEL, min(max_level, level)))
         handler_id = getattr(self, "_zoom_scale_handler_id", None)
         if handler_id is not None:
             scale.handler_block(handler_id)
         try:
-            scale.set_value(clamped)
+            if max_level != self._zoom_max_level:
+                self._zoom_max_level = max_level
+                scale.set_range(float(_MIN_ICON_LEVEL), float(max_level))
+                self._add_zoom_marks(scale, max_level)
+            if abs(scale.get_value() - clamped) >= 0.5:
+                scale.set_value(clamped)
         finally:
             if handler_id is not None:
                 scale.handler_unblock(handler_id)

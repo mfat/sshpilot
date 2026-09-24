@@ -90,7 +90,7 @@ def test_icon_level_constants_are_importable():
     """
     pane_controls = _import_pane_controls()
 
-    for name in ("_MIN_ICON_LEVEL", "_MAX_ICON_LEVEL", "_DEFAULT_ICON_LEVEL"):
+    for name in ("_MIN_ICON_LEVEL", "_MAX_LIST_LEVEL", "_DEFAULT_LIST_LEVEL"):
         assert hasattr(pane_controls, name), (
             f"pane_controls must expose {name!r} so the zoom-slider code "
             f"can resolve it at runtime (regression of #981)"
