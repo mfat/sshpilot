@@ -15,7 +15,6 @@ combined in-flight capacity.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import stat
@@ -24,34 +23,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple, Union
-
-# #region agent log
-_AGENT_DEBUG_LOG = "/home/mahdi/GitHub/sshpilot/.cursor/debug-978df9.log"
-
-
-def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps(
-                    {
-                        "sessionId": "978df9",
-                        "runId": "pre-fix",
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data,
-                        "timestamp": int(time.time() * 1000),
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-
-
-# #endregion
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -773,47 +744,14 @@ class TransferRuntime:
             )
         with self._lock:
             record.bytes_total = os.path.getsize(local_path)
-        # #region agent log
-        _agent_dbg(
-            "A",
-            "transfer_runtime.py:_run_upload",
-            "upload begin",
-            {
-                "local": local_path,
-                "remote": record.remote_path,
-                "bytes_total": record.bytes_total,
-                "conflict": str(record.conflict_policy),
-            },
-        )
-        # #endregion
         destination, existing_mode = self._resolve_remote_destination(
             record, client, record.remote_path
         )
-        # #region agent log
-        _agent_dbg(
-            "A",
-            "transfer_runtime.py:_run_upload",
-            "resolved destination",
-            {
-                "destination": destination,
-                "existing_mode": existing_mode,
-                "parent": remote_path_dirname(destination),
-            },
-        )
-        # #endregion
         copied = self._copy_local_to_remote(
             record, client, local_path, destination, existing_mode=existing_mode
         )
         with self._lock:
             record.bytes_completed = copied
-        # #region agent log
-        _agent_dbg(
-            "A",
-            "transfer_runtime.py:_run_upload",
-            "upload done",
-            {"destination": destination, "copied": copied},
-        )
-        # #endregion
 
     # -- recursive transfers ------------------------------------------------
 
@@ -867,38 +805,9 @@ class TransferRuntime:
         with self._lock:
             record.bytes_total = total
 
-        # #region agent log
-        _agent_dbg(
-            "D",
-            "transfer_runtime.py:_run_recursive_upload",
-            "recursive upload plan",
-            {
-                "local_root": local_root,
-                "remote_root": remote_root,
-                "dir_count": len(directories),
-                "file_count": len(files),
-                "bytes_total": total,
-            },
-        )
-        # #endregion
         for remote_dir in directories:
             self._check_cancel(record)
-            try:
-                self._ensure_remote_dir(record, client, remote_dir)
-            except BaseException as exc:
-                # #region agent log
-                _agent_dbg(
-                    "D",
-                    "transfer_runtime.py:_run_recursive_upload",
-                    "ensure_remote_dir failed",
-                    {
-                        "remote_dir": remote_dir,
-                        "exc_type": type(exc).__name__,
-                        "exc": str(exc),
-                    },
-                )
-                # #endregion
-                raise
+            self._ensure_remote_dir(record, client, remote_dir)
 
         completed = 0
         for local_abs, remote_path, size in files:
@@ -1108,29 +1017,11 @@ class TransferRuntime:
         with self._lock:
             record.remote_temp_path = remote_temp
         offset = 0
-        try:
-            handle = client.open_handle(
-                remote_temp,
-                sftp_proto.FXF_WRITE | sftp_proto.FXF_CREAT | sftp_proto.FXF_TRUNC,
-                sftp_proto.SFTPAttributes(st_mode=create_mode),
-            )
-        except BaseException as exc:
-            # #region agent log
-            _agent_dbg(
-                "A",
-                "transfer_runtime.py:_copy_local_to_remote",
-                "open_handle failed",
-                {
-                    "remote_dst": remote_dst,
-                    "remote_temp": remote_temp,
-                    "parent": remote_dir,
-                    "exc_type": type(exc).__name__,
-                    "exc": str(exc),
-                    "create_mode": create_mode,
-                },
-            )
-            # #endregion
-            raise
+        handle = client.open_handle(
+            remote_temp,
+            sftp_proto.FXF_WRITE | sftp_proto.FXF_CREAT | sftp_proto.FXF_TRUNC,
+            sftp_proto.SFTPAttributes(st_mode=create_mode),
+        )
         try:
             # Pipelined: several writes in flight, not one round trip per
             # chunk. Progress counts bytes sent; flush() waits for the acks.
@@ -1147,50 +1038,14 @@ class TransferRuntime:
                     self._report_progress(record, base + offset)
             writer.flush()
             self._apply_uploaded_metadata(client, handle, local_info, existing_mode)
-        except BaseException as exc:
-            # #region agent log
-            _agent_dbg(
-                "B",
-                "transfer_runtime.py:_copy_local_to_remote",
-                "copy loop failed",
-                {
-                    "remote_dst": remote_dst,
-                    "remote_temp": remote_temp,
-                    "exc_type": type(exc).__name__,
-                    "exc": str(exc),
-                    "existing_mode": existing_mode,
-                    "create_mode": create_mode,
-                },
-            )
-            # #endregion
+        except BaseException:
             client.close_handle(handle)
             self._cleanup_remote_temp(record)
             raise
         client.close_handle(handle)
         try:
             client.posix_rename(remote_temp, remote_dst)
-            # #region agent log
-            _agent_dbg(
-                "C",
-                "transfer_runtime.py:_copy_local_to_remote",
-                "posix_rename ok",
-                {"from": remote_temp, "to": remote_dst},
-            )
-            # #endregion
-        except Exception as exc:
-            # #region agent log
-            _agent_dbg(
-                "C",
-                "transfer_runtime.py:_copy_local_to_remote",
-                "posix_rename failed",
-                {
-                    "from": remote_temp,
-                    "to": remote_dst,
-                    "exc_type": type(exc).__name__,
-                    "exc": str(exc),
-                },
-            )
-            # #endregion
+        except Exception:
             self._cleanup_remote_temp(record)
             raise
         with self._lock:
@@ -1211,33 +1066,7 @@ class TransferRuntime:
         )
         try:
             client.fsetstat(handle, attr)
-            # #region agent log
-            _agent_dbg(
-                "B",
-                "transfer_runtime.py:_apply_uploaded_metadata",
-                "fsetstat ok",
-                {
-                    "existing_mode": existing_mode,
-                    "mtime": int(local_info.st_mtime),
-                    "local_mode": stat.S_IMODE(local_info.st_mode),
-                },
-            )
-            # #endregion
         except sftp_proto.SFTPError as exc:
-            # #region agent log
-            _agent_dbg(
-                "B",
-                "transfer_runtime.py:_apply_uploaded_metadata",
-                "fsetstat error",
-                {
-                    "code": getattr(exc, "code", None),
-                    "exc": str(exc),
-                    "existing_mode": existing_mode,
-                    "will_reraise_connection_lost": exc.code
-                    == sftp_proto.FX_CONNECTION_LOST,
-                },
-            )
-            # #endregion
             if exc.code == sftp_proto.FX_CONNECTION_LOST:
                 raise
             logger.debug("Could not set uploaded file attributes: %s", exc)
