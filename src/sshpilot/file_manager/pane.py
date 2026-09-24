@@ -156,6 +156,34 @@ paned.fm-panes > separator {
         logger.debug("Browser card CSS install failed", exc_info=True)
 
 
+def _normalize_dir(path: Optional[str]) -> str:
+    if not path:
+        return ""
+    stripped = path.rstrip("/")
+    return stripped or "/"
+
+
+def _same_path(a: Optional[str], b: Optional[str]) -> bool:
+    return bool(a) and _normalize_dir(a) == _normalize_dir(b)
+
+
+def _child_toward(ancestor: Optional[str], descendant: Optional[str]) -> Optional[str]:
+    """Name of ``ancestor``'s child on the way down to ``descendant``.
+
+    ``_child_toward("/a", "/a/b/c")`` is ``"b"``; ``None`` when ``ancestor`` is
+    not a strict ancestor of ``descendant``.
+    """
+    parent = _normalize_dir(ancestor)
+    child = _normalize_dir(descendant)
+    if not parent or not child or parent == child:
+        return None
+    prefix = parent if parent.endswith("/") else parent + "/"
+    if not child.startswith(prefix):
+        return None
+    name = child[len(prefix):].split("/", 1)[0]
+    return name or None
+
+
 class FilePane(Gtk.Box):
     """Represents a single pane in the manager."""
 
@@ -507,8 +535,23 @@ class FilePane(Gtk.Box):
         self._menu_action_group = Gio.SimpleActionGroup()
         self.insert_action_group("pane", self._menu_action_group)
         self._menu_popover: Gtk.Popover = self._create_menu_model()
+        # True while the context menu was opened on the view background: like
+        # Nautilus, it then offers folder actions but leaves the selection alone.
+        self._menu_for_background: bool = False
+        self._menu_popover.connect("closed", self._on_menu_popover_closed)
         self._add_context_controller(list_view)
         self._add_context_controller(grid_view)
+
+        # A plain click on an already-selected grid item among several narrows
+        # the selection to it on release (so a press can still drag the group).
+        self._pending_grid_collapse: Optional[int] = None
+        # Keyboard navigation moves GTK's own anchor, not ``_selection_anchor``;
+        # when set, the grid's next Shift+click extends from the focused item.
+        self._anchor_follows_focus: bool = False
+        nav_controller = Gtk.EventControllerKey.new()
+        nav_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        nav_controller.connect("key-pressed", self._on_grid_nav_key_pressed)
+        grid_view.add_controller(nav_controller)
 
         for view in (list_view, grid_view):
             controller = Gtk.EventControllerKey.new()
@@ -577,6 +620,9 @@ class FilePane(Gtk.Box):
         for trigger in delete_triggers:
             add_shortcut(trigger, self._shortcut_delete)
 
+        # Ctrl+A / Ctrl+Shift+A come from GtkListBase; Nautilus adds invert.
+        add_trigger_string("<shift><primary>i", self._shortcut_invert_selection)
+
         view.add_controller(controller)
 
     def _shortcut_focus_path_entry(self) -> bool:
@@ -595,6 +641,16 @@ class FilePane(Gtk.Box):
 
     def _shortcut_delete(self) -> bool:
         self._emit_entry_operation("delete")
+        return True
+
+    def _shortcut_invert_selection(self) -> bool:
+        selected = set(self._get_selected_indices())
+        for index in range(len(self._entries)):
+            if index in selected:
+                self._selection_model.unselect_item(index)
+            else:
+                self._selection_model.select_item(index, False)
+        self._selection_anchor = None
         return True
 
     def _on_view_toggle(self, toolbar, view_name: str) -> None:
@@ -1114,6 +1170,8 @@ class FilePane(Gtk.Box):
             except Exception:
                 pass
         click_gesture.connect("pressed", self._on_grid_cell_pressed, button)
+        click_gesture.connect("released", self._on_grid_cell_released, button)
+        click_gesture.connect("stopped", self._on_grid_cell_stopped)
         button.add_controller(click_gesture)
         
         # Add right-click gesture to select item and show context menu
@@ -1199,6 +1257,7 @@ class FilePane(Gtk.Box):
             self._update_grid_selection_for_press(position, gesture)
             return
 
+        self._pending_grid_collapse = None
         if n_press >= 2:
             try:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -1223,6 +1282,13 @@ class FilePane(Gtk.Box):
 
         has_primary = bool(state & primary_mask)
         has_shift = bool(state & getattr(Gdk.ModifierType, "SHIFT_MASK", 0))
+        self._pending_grid_collapse = None
+
+        if has_shift and self._anchor_follows_focus:
+            focused = self._grid_focus_position()
+            if focused is not None:
+                self._selection_anchor = focused
+        self._anchor_follows_focus = False
 
         if has_shift and self._selection_anchor is not None:
             start = min(self._selection_anchor, position)
@@ -1259,7 +1325,79 @@ class FilePane(Gtk.Box):
                 except Exception:
                     pass
                 self._selection_model.select_item(position, False)
+            else:
+                # Keep the group for a possible drag; narrow on release.
+                self._pending_grid_collapse = position
             self._selection_anchor = position
+
+    def _on_grid_cell_released(
+        self,
+        _gesture: Gtk.GestureClick,
+        n_press: int,
+        _x: float,
+        _y: float,
+        button: Gtk.Button,
+    ) -> None:
+        pending = self._pending_grid_collapse
+        self._pending_grid_collapse = None
+        position = getattr(button, "drag_position", None)
+        if n_press != 1 or pending is None or pending != position:
+            return
+        if not (0 <= position < len(self._entries)):
+            return
+        # Matches GtkListBase: a plain click (no drag) selects only that item.
+        self._selection_model.select_item(position, True)
+        self._selection_anchor = position
+
+    def _on_grid_cell_stopped(self, _gesture: Gtk.GestureClick) -> None:
+        # The press turned into a drag or was cancelled: keep the group.
+        self._pending_grid_collapse = None
+
+    def _grid_focus_position(self) -> Optional[int]:
+        child = self._grid_view.get_focus_child()
+        while child is not None:
+            position = getattr(child, "drag_position", None)
+            if position is not None:
+                return position if 0 <= position < len(self._entries) else None
+            child = child.get_first_child()
+        return None
+
+    _GRID_NAV_KEYS = frozenset(
+        getattr(Gdk, name, None)
+        for name in (
+            "KEY_Left", "KEY_Right", "KEY_Up", "KEY_Down",
+            "KEY_Home", "KEY_End", "KEY_Page_Up", "KEY_Page_Down",
+            "KEY_KP_Left", "KEY_KP_Right", "KEY_KP_Up", "KEY_KP_Down",
+            "KEY_KP_Home", "KEY_KP_End", "KEY_KP_Page_Up", "KEY_KP_Page_Down",
+        )
+    ) - {None}
+
+    def _on_grid_nav_key_pressed(
+        self,
+        _controller: Gtk.EventControllerKey,
+        keyval: int,
+        _keycode: int,
+        state: Gdk.ModifierType,
+    ) -> bool:
+        """Track GTK's keyboard anchor for the grid's custom Shift+click.
+
+        Runs in the capture phase, before GridView moves focus. A plain arrow
+        selects the item it lands on, which becomes the anchor; a Shift+arrow
+        after that extends from where focus was before the move.
+        """
+        if keyval not in self._GRID_NAV_KEYS:
+            return False
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            return False
+        if state & Gdk.ModifierType.SHIFT_MASK:
+            if self._anchor_follows_focus:
+                focused = self._grid_focus_position()
+                if focused is not None:
+                    self._selection_anchor = focused
+                self._anchor_follows_focus = False
+        else:
+            self._anchor_follows_focus = True
+        return False
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
@@ -1488,12 +1626,10 @@ class FilePane(Gtk.Box):
         gesture.set_button(Gdk.BUTTON_SECONDARY)
 
         def _on_pressed(_gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
-            # Check if click is on an item or empty space
-            # If on empty space, clear selection before showing menu
-            if self._is_click_on_empty_space(widget, x, y):
-                self._selection_model.unselect_all()
-                self._selection_anchor = None
-            self._show_context_menu(widget, x, y)
+            # On empty space, keep the selection (as Nautilus does) and show
+            # the folder menu instead of the selection menu.
+            background = self._is_click_on_empty_space(widget, x, y)
+            self._show_context_menu(widget, x, y, background=background)
 
         gesture.connect("pressed", _on_pressed)
         widget.add_controller(gesture)
@@ -1501,24 +1637,57 @@ class FilePane(Gtk.Box):
         long_press = Gtk.GestureLongPress()
 
         def _on_long_press(_gesture: Gtk.GestureLongPress, x: float, y: float) -> None:
-            # Check if click is on an item or empty space
-            if self._is_click_on_empty_space(widget, x, y):
-                self._selection_model.unselect_all()
-                self._selection_anchor = None
-            self._show_context_menu(widget, x, y)
+            background = self._is_click_on_empty_space(widget, x, y)
+            self._show_context_menu(widget, x, y, background=background)
 
         long_press.connect("pressed", _on_long_press)
         widget.add_controller(long_press)
 
+        # GTK does not clear the selection on a background click; Nautilus
+        # does for any button but the secondary one, unless Ctrl/Shift is held.
+        background_click = Gtk.GestureClick()
+        background_click.set_button(0)
+        background_click.connect("pressed", self._on_view_background_pressed, widget)
+        widget.add_controller(background_click)
+
+    def _on_view_background_pressed(
+        self,
+        gesture: Gtk.GestureClick,
+        _n_press: int,
+        x: float,
+        y: float,
+        widget: Gtk.Widget,
+    ) -> None:
+        if gesture.get_current_button() == Gdk.BUTTON_SECONDARY:
+            return
+        state = gesture.get_current_event_state()
+        selection_mask = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        if is_macos():
+            selection_mask |= getattr(Gdk.ModifierType, "META_MASK", 0)
+        if state is not None and state & selection_mask:
+            return
+        if not self._is_click_on_empty_space(widget, x, y):
+            return
+        try:
+            widget.grab_focus()
+        except Exception:
+            pass
+        self._selection_model.unselect_all()
+        self._selection_anchor = None
+        self._pending_grid_collapse = None
 
 
 
-    def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
+
+    def _show_context_menu(
+        self, widget: Gtk.Widget, x: float, y: float, *, background: bool = False
+    ) -> None:
         if getattr(self, '_suppress_next_context_menu', False):
             self._suppress_next_context_menu = False
             return
-        # Selection is now handled by item-level gestures or cleared for empty space
-        # No need to update selection here
+        # Item gestures select the clicked item first; a background menu acts
+        # on the current folder and leaves the selection untouched.
+        self._menu_for_background = background
         self._update_menu_state()
         try:
             widget.grab_focus()
@@ -1536,7 +1705,7 @@ class FilePane(Gtk.Box):
         
         # Check if items are selected
         try:
-            if not hasattr(self, '_entries') or not self._entries:
+            if background or not hasattr(self, '_entries') or not self._entries:
                 has_selection = False
             else:
                 selected_entries = self.get_selected_entries()
@@ -1623,6 +1792,13 @@ class FilePane(Gtk.Box):
         self._menu_popover.set_pointing_to(rect)
         self._menu_popover.popup()
 
+    def _on_menu_popover_closed(self, _popover: Gtk.Popover) -> None:
+        self._menu_for_background = False
+
+    # CSS node names of the widgets GtkListView/GtkColumnView/GtkGridView wrap
+    # each item (or header) in; anything else inside the view is background.
+    _ITEM_CSS_NAMES = frozenset({"row", "cell", "child", "header"})
+
     def _is_click_on_empty_space(self, widget: Gtk.Widget, x: float, y: float) -> bool:
         """Check if the click is on empty space (not on an item)."""
         visible_child = self._stack.get_visible_child()
@@ -1647,26 +1823,22 @@ class FilePane(Gtk.Box):
             if picked is None:
                 return True
 
-            if view_widget is self._list_view:
-                current = picked
-                while current and current != view_widget:
-                    if hasattr(current, "drag_position") or hasattr(current, "_pane_entry"):
-                        return False
-                    current = current.get_parent()
-                return picked == view_widget
+            if view_widget not in (self._list_view, self._grid_view):
+                return True
 
-            if view_widget is self._grid_view:
-                current = picked
-                while current and current != view_widget:
-                    if isinstance(current, Gtk.Button) and hasattr(current, "drag_position"):
-                        return False
-                    current = current.get_parent()
-                return picked == view_widget
-
+            current = picked
+            while current is not None and current != view_widget:
+                if hasattr(current, "drag_position") or hasattr(current, "_pane_entry"):
+                    return False
+                if current.get_css_name() in self._ITEM_CSS_NAMES:
+                    return False
+                current = current.get_parent()
             return True
         except Exception as e:
+            # Unknown target: treat it as an item so a click never wipes the
+            # selection by accident.
             logger.debug(f"Error checking if click is on empty space: {e}")
-            return True
+            return False
 
     def _get_selected_indices(self) -> List[int]:
         indices: List[int] = []
@@ -2189,7 +2361,10 @@ class FilePane(Gtk.Box):
                 self.show_toast(_("Failed to open editor: {error}").format(error=e))
 
     def _on_menu_properties(self) -> None:
-        entry = self.get_selected_entry()
+        if getattr(self, "_menu_for_background", False):
+            entry = None
+        else:
+            entry = self.get_selected_entry()
         if entry is None:
             # No item selected - show properties for current directory
             current_path = self._current_path or "/"
@@ -2407,11 +2582,19 @@ class FilePane(Gtk.Box):
         pane_type = "remote" if self._is_remote else "local"
         logger.debug(f"FilePane.show_entries: {pane_type} pane updating with {len(entries_list)} entries for path {path}")
         
+        previous_path = self._current_path
         self._current_path = path
         self._set_current_pathbar_text(path)
         self._cached_entries = entries_list
-        self._apply_entry_filter(preserve_selection=False)
-        
+        # Like Nautilus: a reload keeps the selection, and moving up to an
+        # ancestor selects the folder the user just came out of.
+        reloading = _same_path(previous_path, path)
+        self._apply_entry_filter(preserve_selection=reloading)
+        if not reloading:
+            child = _child_toward(path, previous_path)
+            if child:
+                self.highlight_entry(child)
+
         logger.debug(f"FilePane.show_entries: {pane_type} pane update completed")
 
     def highlight_entry(self, name: str) -> None:
@@ -3222,6 +3405,8 @@ class FilePane(Gtk.Box):
             fallback = getattr(self._selection_model, "set_selected", None)
             if callable(fallback):
                 fallback(match)
+        self._selection_anchor = match
+        self._anchor_follows_focus = False
 
         self._scroll_to_position(match)
         return True
