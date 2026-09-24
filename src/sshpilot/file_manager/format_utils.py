@@ -106,3 +106,22 @@ def safe_display_text(value: str) -> str:
         return "".join(
             "�" if "\ud800" <= char <= "\udfff" else char for char in value
         )
+
+
+def filename_extension_offset(name: str) -> int:
+    """Where *name*'s extension starts, or its length if it has none.
+
+    Mirrors Nautilus's nautilus_filename_get_extension(): the first
+    character never starts an extension (".bashrc" has none), an extension
+    holding whitespace is not one, and ".tar.*" counts as one extension.
+    """
+    if not name:
+        return 0
+    dot = name.rfind(".", 1)
+    if dot == -1 or dot == len(name) - 1:
+        return len(name)
+    if any(char.isspace() for char in name[dot:]):
+        return len(name)
+    if dot > len(".tar") and name[dot - len(".tar"):dot] == ".tar":
+        return dot - len(".tar")
+    return dot

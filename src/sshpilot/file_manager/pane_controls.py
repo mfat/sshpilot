@@ -27,21 +27,32 @@ class PaneControls(Gtk.Box):
         self.set_valign(Gtk.Align.CENTER)
         from sshpilot import icon_utils
         self.back_button = icon_utils.new_button_from_icon_name("go-previous-symbolic")
+        self.back_button.set_tooltip_text(_("Back"))
+        self.forward_button = icon_utils.new_button_from_icon_name("go-next-symbolic")
+        self.forward_button.set_tooltip_text(_("Forward"))
         self.up_button = icon_utils.new_button_from_icon_name("go-up-symbolic")
         self.refresh_button = icon_utils.new_button_from_icon_name("view-refresh-symbolic")
         self.new_folder_button = icon_utils.new_button_from_icon_name("folder-new-symbolic")
         for widget in (
             self.back_button,
+            self.forward_button,
             self.up_button,
             self.refresh_button,
             self.new_folder_button,
         ):
             widget.set_valign(Gtk.Align.CENTER)
-        for widget in (self.back_button, self.up_button, self.refresh_button, self.new_folder_button):
+        for widget in (
+            self.back_button,
+            self.forward_button,
+            self.up_button,
+            self.refresh_button,
+            self.new_folder_button,
+        ):
             widget.add_css_class("flat")
-        # Only back/up live here (left of the address bar); refresh and
-        # new_folder are packed right of the entry by PaneToolbar.
+        # Only back/forward/up live here (left of the address bar); refresh
+        # and new_folder are packed right of the entry by PaneToolbar.
         self.append(self.back_button)
+        self.append(self.forward_button)
         self.append(self.up_button)
 
 
@@ -134,6 +145,7 @@ class PaneToolbar(Gtk.Box):
         sort_section.append(_("Name"), "pane.sort-by-name")
         sort_section.append(_("Size"), "pane.sort-by-size")
         sort_section.append(_("Modified"), "pane.sort-by-modified")
+        sort_section.append(_("Type"), "pane.sort-by-type")
         menu_model.append_section(_("Sort by"), sort_section)
         direction_section = Gio.Menu()
         direction_section.append(_("Ascending"), "pane.sort-direction-asc")
