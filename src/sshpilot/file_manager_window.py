@@ -2420,9 +2420,10 @@ class FileManagerWindow(Adw.Window):
             if not pane._is_remote:
                 path = self._normalize_local_path(path)
         logger.debug(f"_force_refresh_pane: refreshing {('remote' if pane._is_remote else 'local')} pane for path: {path}")
-        
-        # Mark as refreshing to show success toast
-        self._refreshing_panes.add(pane)
+
+        # Do not mark _refreshing_panes here. That flag is only for
+        # user-initiated refresh (path-changed with the same path) and would
+        # spam "Directory refreshed" after every upload/download/mkdir/rename.
         
         if highlight_name:
             self._pending_highlights[pane] = highlight_name
