@@ -1009,6 +1009,8 @@ class FilePane(Gtk.Box):
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
         list_view.add_css_class("fm-list-view")
         list_view.set_can_focus(True)
+        if hasattr(list_view, "set_enable_rubberband"):
+            list_view.set_enable_rubberband(True)
         return list_view
 
     def _create_column_view(self) -> Gtk.ColumnView:
@@ -1084,9 +1086,61 @@ class FilePane(Gtk.Box):
         column.set_sorter(Gtk.CustomSorter.new(None))
         return column
 
+    def _set_view_rubberband_enabled(self, view, enabled: bool) -> None:
+        """Toggle rubberband on a list/grid view.
+
+        GTK #5670: with rubberband left on, a press-drag on an item often
+        starts a selection rectangle instead of DnD. Nautilus disables
+        rubberband for the duration of an item press (see
+        ``rubberband_set_state`` in nautilus-list-base.c).
+        """
+        if view is not None and hasattr(view, "set_enable_rubberband"):
+            view.set_enable_rubberband(enabled)
+
+    def _set_list_rubberband_enabled(self, enabled: bool) -> None:
+        self._set_view_rubberband_enabled(getattr(self, "_list_view", None), enabled)
+
+    def _set_grid_rubberband_enabled(self, enabled: bool) -> None:
+        self._set_view_rubberband_enabled(getattr(self, "_grid_view", None), enabled)
+
+    def _on_list_item_pressed(
+        self, _gesture: Gtk.GestureClick, _n_press: int, _x: float, _y: float
+    ) -> None:
+        self._set_list_rubberband_enabled(False)
+
+    def _on_list_item_released(
+        self, _gesture: Gtk.GestureClick, _n_press: int, _x: float, _y: float
+    ) -> None:
+        self._set_list_rubberband_enabled(True)
+
+    def _on_list_item_stopped(self, _gesture: Gtk.GestureClick) -> None:
+        self._set_list_rubberband_enabled(True)
+
     def _attach_list_cell_controllers(self, widget: Gtk.Widget, cell) -> None:
+        # Fill the column cell so blank row space (e.g. left of a right-aligned
+        # Size/Modified label) still hits this drag source, matching Nautilus
+        # view cells that use BinLayout.
+        if hasattr(widget, "set_hexpand"):
+            widget.set_hexpand(True)
+        if hasattr(widget, "set_halign"):
+            widget.set_halign(Gtk.Align.FILL)
+        if hasattr(widget, "set_valign"):
+            widget.set_valign(Gtk.Align.FILL)
+
+        # Disable rubberband on press so DnD can win (GTK #5670 / Nautilus).
+        # Do not claim the sequence — GTK's default list selection stays intact.
+        item_click = Gtk.GestureClick()
+        item_click.set_button(Gdk.BUTTON_PRIMARY)
+        item_click.connect("pressed", self._on_list_item_pressed)
+        item_click.connect("released", self._on_list_item_released)
+        item_click.connect("stopped", self._on_list_item_stopped)
+        widget.add_controller(item_click)
+
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        propagation = getattr(Gtk, "PropagationPhase", None)
+        if propagation is not None and hasattr(drag_source, "set_propagation_phase"):
+            drag_source.set_propagation_phase(propagation.CAPTURE)
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -1177,8 +1231,9 @@ class FilePane(Gtk.Box):
             self._bound_list_icons.discard(icon)
 
     def _on_size_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        # FILL + xalign=1: label covers the whole cell (for DnD hit testing)
+        # while the text stays right-aligned.
         label = Gtk.Label(xalign=1)
-        label.set_halign(Gtk.Align.END)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("dim-label")
         label.add_css_class("fm-view-cell")
@@ -1205,8 +1260,8 @@ class FilePane(Gtk.Box):
             self._bound_size_labels.discard(label)
 
     def _on_modified_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        # FILL + xalign=1: same full-cell hit target as the Size column.
         label = Gtk.Label(xalign=1)
-        label.set_halign(Gtk.Align.END)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("dim-label")
         label.add_css_class("fm-view-cell")
@@ -1549,6 +1604,8 @@ class FilePane(Gtk.Box):
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        if propagation_phase is not None and hasattr(drag_source, "set_propagation_phase"):
+            drag_source.set_propagation_phase(propagation_phase.CAPTURE)
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -1616,6 +1673,9 @@ class FilePane(Gtk.Box):
         _y: float,
         button: Gtk.Button,
     ) -> None:
+        # Same GTK #5670 workaround as list mode / Nautilus: rubberband must
+        # be off while the item gesture is active so DnD can claim the drag.
+        self._set_grid_rubberband_enabled(False)
         position = getattr(button, "drag_position", None)
         if position is None or not (0 <= position < len(self._entries)):
             return
@@ -1705,6 +1765,7 @@ class FilePane(Gtk.Box):
         _y: float,
         button: Gtk.Button,
     ) -> None:
+        self._set_grid_rubberband_enabled(True)
         pending = self._pending_grid_collapse
         self._pending_grid_collapse = None
         position = getattr(button, "drag_position", None)
@@ -1718,6 +1779,7 @@ class FilePane(Gtk.Box):
 
     def _on_grid_cell_stopped(self, _gesture: Gtk.GestureClick) -> None:
         # The press turned into a drag or was cancelled: keep the group.
+        self._set_grid_rubberband_enabled(True)
         self._pending_grid_collapse = None
 
     def _grid_focus_position(self) -> Optional[int]:

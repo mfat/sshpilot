@@ -219,6 +219,63 @@ def test_drag_keeps_the_group(pane_module):
     assert pane._selection_model.selected == {0, 1, 2}
 
 
+# -- list item press vs rubberband (GTK #5670 / Nautilus) ---------------------
+
+
+def test_list_item_press_disables_rubberband_for_dnd(pane_module):
+    pane = _make_pane(pane_module)
+    calls = []
+    pane._list_view = types.SimpleNamespace(
+        set_enable_rubberband=lambda enabled: calls.append(enabled)
+    )
+
+    pane._on_list_item_pressed(FakeGesture(), 1, 0, 0)
+    assert calls == [False]
+
+    pane._on_list_item_released(FakeGesture(), 1, 0, 0)
+    assert calls == [False, True]
+
+
+def test_list_item_stop_re_enables_rubberband(pane_module):
+    pane = _make_pane(pane_module)
+    calls = []
+    pane._list_view = types.SimpleNamespace(
+        set_enable_rubberband=lambda enabled: calls.append(enabled)
+    )
+
+    pane._on_list_item_pressed(FakeGesture(), 1, 0, 0)
+    pane._on_list_item_stopped(FakeGesture())
+    assert calls == [False, True]
+
+
+def test_grid_item_press_disables_rubberband_for_dnd(pane_module):
+    pane = _make_pane(pane_module, selected={0})
+    calls = []
+    pane._grid_view = types.SimpleNamespace(
+        set_enable_rubberband=lambda enabled: calls.append(enabled)
+    )
+    button = types.SimpleNamespace(drag_position=0)
+
+    pane._on_grid_cell_pressed(FakeGesture(), 1, 0, 0, button)
+    assert calls == [False]
+
+    pane._on_grid_cell_released(FakeGesture(), 1, 0, 0, button)
+    assert calls == [False, True]
+
+
+def test_grid_item_stop_re_enables_rubberband(pane_module):
+    pane = _make_pane(pane_module, selected={0, 1})
+    calls = []
+    pane._grid_view = types.SimpleNamespace(
+        set_enable_rubberband=lambda enabled: calls.append(enabled)
+    )
+    button = types.SimpleNamespace(drag_position=1)
+
+    pane._on_grid_cell_pressed(FakeGesture(), 1, 0, 0, button)
+    pane._on_grid_cell_stopped(FakeGesture())
+    assert calls == [False, True]
+
+
 def test_shift_click_extends_from_keyboard_focus(pane_module):
     pane = _make_pane(pane_module, selected={0})
     pane._selection_anchor = 0
