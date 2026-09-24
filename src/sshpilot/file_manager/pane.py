@@ -118,6 +118,17 @@ def _column_view_supported(gtk_module: Any = None) -> bool:
     )
 
 
+# CSS variables need GTK 4.16; older GTK would warn about every line.
+_NEUTRAL_ACCENT_CSS = b"""
+columnview.fm-list-view > listview,
+listview.fm-list-view,
+gridview.fm-grid-view {
+    --accent-bg-color: #959595;
+    --accent-color: oklab(from var(--accent-bg-color) var(--standalone-color-oklab));
+}
+"""
+
+
 def _ensure_browser_card_css() -> None:
     global _browser_card_css_installed
     if _browser_card_css_installed:
@@ -198,6 +209,25 @@ gridview.fm-grid-view button.fm-view-cell:active {
 .fm-browser-card rubberband {
     border-radius: 6px;
 }
+/* Nautilus highlights selection in neutral grey rather than the accent
+   colour. Spelled out with libadwaita 1.5's alphas; GTK 4.16+ also gets
+   Nautilus's own variable override below. */
+columnview.fm-list-view > listview > row:selected,
+listview.fm-list-view > row:selected,
+gridview.fm-grid-view > child:selected {
+    background-color: alpha(#959595, 0.25);
+}
+columnview.fm-list-view > listview > row.activatable:selected:hover,
+listview.fm-list-view > row.activatable:selected:hover {
+    background-color: alpha(#959595, 0.32);
+}
+columnview.fm-list-view > listview > row.activatable:selected:active,
+listview.fm-list-view > row.activatable:selected:active {
+    background-color: alpha(#959595, 0.39);
+}
+gridview.fm-grid-view > child:focus:focus-visible {
+    outline-color: alpha(#959595, 0.5);
+}
 /* ActionBar paints its background/border on an inner box, which would
    square-fill the rounded card; let the card class show through instead. */
 actionbar.fm-bottom-card > revealer > box {
@@ -214,7 +244,7 @@ paned.fm-panes > separator {
     /* the theme draws the paned hairline as an inset box-shadow */
     box-shadow: none;
 }
-""")
+""" + (_NEUTRAL_ACCENT_CSS if (Gtk.get_major_version(), Gtk.get_minor_version()) >= (4, 16) else b""))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
             provider,
