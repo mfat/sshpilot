@@ -2037,7 +2037,7 @@ class SftpServiceRuntime:
                         raise OperationCancelled()
                     self._remove_recursive(client, path, progress=progress, cancel=cancel)
                     if progress is not None and total > 1:
-                        progress(_coarse_progress(index + 1, total))
+                        progress(_coarse_progress(index + 1, total - (index + 1)))
                 return None
             if len(paths) == 1:
                 client.remove(paths[0])
@@ -2073,7 +2073,8 @@ class SftpServiceRuntime:
             chunk = paths[offset : offset + _REMOVE_CHUNK_SIZE]
             failures.extend(self._remove_chunk(client, chunk))
             if progress is not None:
-                progress(_coarse_progress(offset + len(chunk), total))
+                processed = offset + len(chunk)
+                progress(_coarse_progress(processed, total - processed))
         return SftpRemoveResult(failures=tuple(failures))
 
     @staticmethod
@@ -2091,7 +2092,8 @@ class SftpServiceRuntime:
             try:
                 client.remove(path)
             except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-                if isinstance(exc, sftp_proto.SFTPError) and exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                # Missing is idempotent (same policy as ``_remove_recursive``).
+                if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
                     continue
                 chunk_failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
             except Exception as exc:
@@ -2190,14 +2192,14 @@ class SftpServiceRuntime:
                 self._remove_files(client, chunk)
                 processed += len(chunk)
                 if progress is not None:
-                    progress(_coarse_progress(processed, total))
+                    progress(_coarse_progress(processed, total - processed))
         for child in dir_children:
             if cancel is not None and cancel():
                 raise OperationCancelled()
             self._remove_recursive(client, child, progress=progress, cancel=cancel)
             processed += 1
             if progress is not None:
-                progress(_coarse_progress(processed, total))
+                progress(_coarse_progress(processed, total - processed))
         client.rmdir(path)
 
     @staticmethod
@@ -2213,8 +2215,10 @@ class SftpServiceRuntime:
             try:
                 client.remove(path)
             except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-                if not isinstance(exc, sftp_proto.SFTPError) or exc.code != sftp_proto.FX_NO_SUCH_FILE:
-                    raise
+                # Missing is idempotent (same policy as ``_remove_recursive``).
+                if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                    continue
+                raise
 
     def rename(self, request: SftpRenameRequest, *, client_id: ClientId) -> None:
         if type(request) is not SftpRenameRequest:

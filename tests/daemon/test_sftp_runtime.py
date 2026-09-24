@@ -582,6 +582,38 @@ def test_remove_multi_path_cancel_stops_after_first_chunk():
     assert all(path in client.files for path in paths[256:])
 
 
+def test_remove_multi_path_treats_file_not_found_as_success():
+    """Sequential fallback must ignore FileNotFoundError like recursive remove."""
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.files["/present.txt"] = b"x"
+
+    def _remove(path):
+        client.remove_calls.append(path)
+        if path == "/absent.txt":
+            raise FileNotFoundError(path)
+        client.files.pop(path, None)
+
+    client.remove = _remove
+    client.remove_many = None  # force sequential fallback in ``_remove_chunk``
+
+    result = runtime.remove(
+        SftpPathRequest(
+            service_id=summary.id,
+            path="/present.txt",
+            paths=("/absent.txt",),
+        ),
+        client_id=owner,
+    )
+
+    assert result is not None
+    assert result.failures == ()
+    assert "/present.txt" not in client.files
+
+
 def test_remove_multi_path_reports_progress_per_chunk():
     runtime, runner = _make_runtime()
     owner = ClientId("client:owner")
@@ -605,9 +637,9 @@ def test_remove_multi_path_reports_progress_per_chunk():
 
     assert result.failures == ()
     assert len(seen) == 2
-    # Same coarse convention as the recursive walk: strictly increasing,
-    # bounded below 1.0 mid-walk (terminal 1.0 comes from the caller).
-    assert 0.0 < seen[0] < seen[1] < 1.0
+    # Remaining-pending form: first window ~256/300, final window reaches 1.0.
+    assert 0.0 < seen[0] < seen[1] == 1.0
+    assert seen[0] == pytest.approx(256 / 300)
     assert all(path not in client.files for path in paths)
 
 
