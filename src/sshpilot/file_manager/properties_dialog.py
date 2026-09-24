@@ -35,28 +35,35 @@ def _folder_label(item_count: Optional[int]) -> str:
 
 
 def _folder_calculating_text(item_count: Optional[int]) -> str:
-    return _("{folder} (calculating size...)").format(
-        folder=_folder_label(item_count)
-    )
+    """Placeholder while a folder's deep size is still being measured.
+
+    Nautilus shows a spinner beside a partial count; we approximate with an
+    ellipsis until the final ``items, totalling size`` line is ready.
+    """
+    if item_count is None or item_count == 0:
+        return "…"
+    return _item_count_text(item_count)
 
 
 def _folder_size_text(item_count: Optional[int], total_size: int) -> str:
-    if total_size >= 0:
-        size = _human_size(total_size)
+    """Nautilus-style contents line for a folder (or deep-counted selection)."""
+    if total_size < 0:
         if item_count is None:
-            return size
-        return _("{items} ({size})").format(
-            items=_item_count_text(item_count),
-            size=size,
+            return _("Size unavailable")
+        if item_count == 0:
+            return _("Empty folder")
+        return _("{items} (size unavailable)").format(
+            items=_item_count_text(item_count)
         )
+    if item_count is not None and item_count == 0 and total_size == 0:
+        return _("Empty folder")
     if item_count is None:
-        return _("Size unavailable")
-    return _("{items} (size unavailable)").format(
-        items=_item_count_text(item_count)
-    )
+        return _human_size(total_size)
+    return _selection_size_text(item_count, total_size)
 
 
 def _free_space_text(size: int) -> str:
+    # Nautilus: "%s Free" (e.g. "100 MB Free")
     return _("{size} Free").format(size=_human_size(size))
 
 
@@ -75,7 +82,7 @@ def _selection_title(entries: Sequence["FileEntry"]) -> str:
 
 
 def _selection_size_text(item_count: int, total_size: int) -> str:
-    """Nautilus-style size line for a multi-item selection."""
+    """Nautilus-style size line for a multi-item / deep-counted selection."""
     if total_size < 0:
         return _("Size unavailable")
     size = _human_size(total_size)
@@ -159,14 +166,11 @@ class PropertiesDialog(Adw.Window):
         # the property rows are appended into the template content box.
         content = self.content_box
 
-        # Header with icon and name
+        # Header with icon, name, size/contents, and free space (folders only)
         content.append(self._create_header_block())
 
         # Parent folder row
         content.append(self._create_parent_folder_row())
-
-        # Size row
-        content.append(self._create_size_row())
 
         # Modified and Created rows
         content.append(self._create_modified_row())
@@ -178,30 +182,37 @@ class PropertiesDialog(Adw.Window):
         # Permissions row
         content.append(self._create_permissions_row())
 
+    @property
+    def _all_folders(self) -> bool:
+        return all(entry.is_dir for entry in self._all_entries)
+
+    def _header_icon_name(self) -> str:
+        """Colored Adwaita mimetype icon, matching the file-manager listing."""
+        from ..file_type_icons import ICON_FOLDER, ICON_GENERIC, get_icon_for_name
+
+        entries = self._all_entries
+        if len(entries) == 1:
+            return get_icon_for_name(entries[0].name, entries[0].is_dir)
+        if self._all_folders:
+            return ICON_FOLDER
+        if all(not entry.is_dir for entry in entries):
+            icons = {get_icon_for_name(entry.name, False) for entry in entries}
+            return icons.pop() if len(icons) == 1 else ICON_GENERIC
+        return ICON_GENERIC
+
     def _create_header_block(self) -> Gtk.Widget:
-        """Create the header block with icon, name, and summary."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER)
+        """Create the header block with icon, name, size, and free space.
 
-        # Icon — single entry uses its type icon; multi uses a generic stack cue.
+        Layout mirrors Nautilus: colored icon, title, size/contents caption,
+        then a separate free-space caption when every selected item is a folder.
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
+
         from sshpilot import icon_utils
-        from ..file_type_icons import get_icon_for_name
 
-        if self._is_multi:
-            all_dirs = all(entry.is_dir for entry in self._all_entries)
-            all_files = all(not entry.is_dir for entry in self._all_entries)
-            if all_dirs:
-                icon_name = "folder-symbolic"
-            elif all_files:
-                icon_name = get_icon_for_name(self._entry.name, False)
-            else:
-                icon_name = "folder-documents-symbolic"
-        else:
-            icon_name = get_icon_for_name(self._entry.name, self._entry.is_dir)
-        icon = icon_utils.new_image_from_icon_name(icon_name)
-        # Set a larger custom size instead of using predefined sizes
+        icon = icon_utils.new_image_from_icon_name(self._header_icon_name())
         icon.set_pixel_size(64)
         icon.add_css_class("icon-dropshadow")
-        icon.add_css_class("card")
         box.append(icon)
 
         # Name (centered, bold). GTK cannot encode the lone surrogates a
@@ -212,39 +223,80 @@ class PropertiesDialog(Adw.Window):
         name_label.set_justify(Gtk.Justification.CENTER)
         box.append(name_label)
 
-        # Summary
-        summary_parts = []
-        if self._is_multi:
-            summary_parts.append(_item_count_text(len(self._all_entries)))
-        elif self._entry.is_dir:
-            summary_parts.append(_folder_label(self._entry.item_count))
-        else:
-            if self._entry.size:
-                summary_parts.append(_human_size(self._entry.size))
+        # Size / contents (caption under the name, like Nautilus)
+        size_text = self._initial_size_text()
+        self._size_label = Gtk.Label(label=size_text)
+        self._size_label.add_css_class("caption")
+        self._size_label.set_wrap(True)
+        self._size_label.set_justify(Gtk.Justification.CENTER)
+        box.append(self._size_label)
+        self._start_size_measurement()
 
-        # Add free space for local files
+        # Free space: separate caption, folders only (Nautilus should_show_free_space)
+        self._free_space_label = Gtk.Label(label="")
+        self._free_space_label.add_css_class("caption")
+        self._free_space_label.set_visible(False)
+        box.append(self._free_space_label)
+        if self._all_folders:
+            self._fill_free_space()
+
+        return box
+
+    def _initial_size_text(self) -> str:
+        if self._is_multi:
+            file_total = sum(
+                entry.size for entry in self._all_entries if not entry.is_dir
+            )
+            if any(entry.is_dir for entry in self._all_entries):
+                return _selection_size_text(len(self._all_entries), file_total) + "…"
+            return _selection_size_text(len(self._all_entries), file_total)
+        if self._entry.is_dir:
+            return _folder_calculating_text(self._entry.item_count)
+        return _human_size(self._entry.size) if self._entry.size else "—"
+
+    def _start_size_measurement(self) -> None:
+        """Kick off folder / multi deep-size work that updates the header label."""
+        if self._is_multi:
+            self._start_multi_size_calculation()
+            return
+        if not self._entry.is_dir:
+            return
+        if not self._is_remote_file():
+            self._start_folder_size_calculation()
+        elif self._sftp_manager is not None and hasattr(self._sftp_manager, "directory_size"):
+            self._start_remote_folder_size_calculation()
+        else:
+            # No deep-size backend: fall back to the shallow item count.
+            self._set_size_text(_folder_label(self._entry.item_count))
+
+    def _set_size_text(self, text: str) -> None:
+        label = getattr(self, "_size_label", None)
+        if label is not None:
+            label.set_label(text)
+
+    def _fill_free_space(self) -> None:
+        """Show free space under the size line when the volume can report it."""
         if not self._is_remote_file():
             try:
                 path = self._local_path(self._entry)
                 if os.path.exists(path):
                     stat = os.statvfs(path)
                     free = stat.f_bavail * stat.f_frsize
-                    summary_parts.append(_free_space_text(free))
+                    self._show_free_space(free)
             except Exception:
                 pass
+            return
+        self._start_remote_free_space()
 
-        summary_text = " — ".join(summary_parts) if summary_parts else ""
-        summary_label = Gtk.Label(label=summary_text)
-        summary_label.add_css_class("dim-label")
-        box.append(summary_label)
+    def _show_free_space(self, available_bytes: int) -> None:
+        label = getattr(self, "_free_space_label", None)
+        if label is None:
+            return
+        label.set_label(_free_space_text(available_bytes))
+        label.set_visible(True)
 
-        if self._is_remote_file():
-            self._start_remote_free_space(summary_label, summary_parts)
-
-        return box
-
-    def _start_remote_free_space(self, label: Gtk.Label, summary_parts: list) -> None:
-        """Append the remote filesystem's free space once the daemon answers.
+    def _start_remote_free_space(self) -> None:
+        """Fill the free-space caption once the daemon answers.
 
         Servers without ``statvfs@openssh.com`` just leave it out.
         """
@@ -258,56 +310,29 @@ class PropertiesDialog(Adw.Window):
             except Exception as exc:
                 logger.debug("Remote free space unavailable: %s", exc)
                 return
-            parts = [*summary_parts, _free_space_text(usage.available_bytes)]
 
             def _apply():
-                label.set_label(" — ".join(parts))
+                self._show_free_space(usage.available_bytes)
                 return GLib.SOURCE_REMOVE
 
             GLib.idle_add(_apply)
 
         future.add_done_callback(_done)
 
-    def _create_size_row(self) -> Gtk.Widget:
-        """Create the size row."""
-        if self._is_multi:
-            size_text = self._start_multi_size_calculation()
-        elif self._entry.is_dir:
-            base = _folder_label(self._entry.item_count)
-            size_text = base
-            if not self._is_remote_file():
-                # Local folders: recurse with os.walk in the background.
-                size_text = _folder_calculating_text(self._entry.item_count)
-                self._start_folder_size_calculation()
-            elif self._sftp_manager is not None and hasattr(
-                self._sftp_manager, "directory_size"
-            ):
-                # Remote folders: recurse over SFTP in the background.
-                size_text = _folder_calculating_text(self._entry.item_count)
-                self._start_remote_folder_size_calculation()
-        else:
-            size_text = _human_size(self._entry.size) if self._entry.size else "—"
-
-        # Store reference to size row for updating
-        self._size_row = Adw.ActionRow(title=_("Size"), subtitle=size_text)
-        self._size_row.add_css_class("card")
-        return self._size_row
-
-    def _start_multi_size_calculation(self) -> str:
+    def _start_multi_size_calculation(self) -> None:
         """Sum sizes for a multi-item selection (Nautilus-style)."""
-        file_total = sum(entry.size for entry in self._entries if not entry.is_dir)
-        folders = [entry for entry in self._entries if entry.is_dir]
-        # Until folders finish, treat each selected item as one (not deep count).
+        file_total = sum(entry.size for entry in self._all_entries if not entry.is_dir)
+        folders = [entry for entry in self._all_entries if entry.is_dir]
         self._multi_size_bytes = file_total
         self._multi_size_failed = False
         self._multi_pending_folders = len(folders)
 
         if not folders:
-            return _selection_size_text(len(self._entries), file_total)
+            return
 
         if self._is_remote_file():
             if self._sftp_manager is None or not hasattr(self._sftp_manager, "directory_size"):
-                return _selection_size_text(len(self._entries), file_total)
+                return
             for folder in folders:
                 self._request_remote_folder_size(folder)
         else:
@@ -318,7 +343,6 @@ class PropertiesDialog(Adw.Window):
                 )
                 thread.daemon = True
                 thread.start()
-        return _selection_size_text(len(self._entries), file_total) + "…"
 
     def _request_remote_folder_size(self, entry: "FileEntry") -> None:
         try:
@@ -362,10 +386,7 @@ class PropertiesDialog(Adw.Window):
         self._multi_pending_folders = max(0, self._multi_pending_folders - 1)
         if self._multi_pending_folders == 0:
             total = -1 if self._multi_size_failed else self._multi_size_bytes
-            if hasattr(self, "_size_row") and self._size_row:
-                self._size_row.set_subtitle(
-                    _selection_size_text(len(self._entries), total)
-                )
+            self._set_size_text(_selection_size_text(len(self._all_entries), total))
         return GLib.SOURCE_REMOVE
 
     def _create_parent_folder_row(self) -> Gtk.Widget:
@@ -691,13 +712,10 @@ class PropertiesDialog(Adw.Window):
 
     def _update_folder_size_ui(self, total_size):
         """
-        Updates the size row with the final folder size.
+        Updates the size caption with the final folder size.
         THIS RUNS ON THE MAIN GTK THREAD.
         """
-        if hasattr(self, '_size_row') and self._size_row:
-            size_text = _folder_size_text(self._entry.item_count, total_size)
-
-            self._size_row.set_subtitle(size_text)
+        self._set_size_text(_folder_size_text(self._entry.item_count, total_size))
 
         # Returning GLib.SOURCE_REMOVE ensures this function only runs once
         return GLib.SOURCE_REMOVE
