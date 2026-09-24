@@ -52,12 +52,19 @@ from .file_manager import (
     create_file_manager_backend,
     FileEntry,
     FilePane,
+    FileConflictDialog,
     SFTPProgressDialog,
     TransferCancelledException,
     _HAS_ALERT_DIALOG,
     _load_first_doc_path,
     _load_grant_for_host,
     safe_display_text,
+    ConflictItem,
+    ConflictResolutionSession,
+    ConflictSideInfo,
+    destination_taken_checker,
+    local_side_info,
+    remote_side_info_from_entry,
 )
 from .file_manager.format_utils import filename_extension_offset
 
@@ -1206,211 +1213,289 @@ class FileManagerWindow(Adw.Window):
         return False  # Don't repeat this idle callback
 
     def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None]) -> None:
-        """Check for file conflicts and show resolution dialog if needed.
+        """Check for file conflicts and show Nautilus-style resolution dialogs.
 
-        Args:
-            files_to_transfer: List of (source, destination) tuples
-            operation_type: "upload" or "download"
-            callback: Function to call with resolved file list
+        Conflicts are resolved one-by-one before the transfer starts (Cancel /
+        Skip / Replace|Merge / Rename, with optional apply-to-all).
         """
         logger.debug("=== CHECKING FILE CONFLICTS ===")
         logger.debug("Operation type: %s", operation_type)
         logger.debug("Files to transfer: %s", files_to_transfer)
 
-        def _finalize_conflicts(conflicts: List[Tuple[str, str]]) -> None:
-            logger.debug("Total conflicts found: %d", len(conflicts))
+        def _dialog_parent() -> Any:
+            dialog_parent: Any = self
+            if self._embedded_parent is not None:
+                dialog_parent = self._embedded_parent
+            else:
+                try:
+                    transient = self.get_transient_for()
+                    if transient is not None:
+                        dialog_parent = transient
+                except Exception:
+                    pass
+            return dialog_parent
 
+        def _connection_lost_toast() -> None:
+            if hasattr(self, "_right_pane") and self._right_pane:
+                self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+
+        def _upload_connection_ok() -> bool:
+            if operation_type != "upload":
+                return True
+            if self._manager is None:
+                logger.error("Conflict flow: Manager is None, connection was closed")
+                _connection_lost_toast()
+                return False
+            try:
+                with self._manager._lock:
+                    if self._manager._sftp is None:
+                        logger.error("Conflict flow: SFTP connection closed")
+                        _connection_lost_toast()
+                        return False
+            except Exception as exc:
+                logger.error("Conflict flow: Error checking connection: %s", exc)
+                if hasattr(self, "_right_pane") and self._right_pane:
+                    self._right_pane.show_toast(_("Connection error: {error}").format(error=exc))
+                return False
+            return True
+
+        def _destination_directory_name(dest: str) -> str:
+            if dest.startswith("/"):
+                parent = posixpath.dirname(dest.rstrip("/")) or "/"
+            else:
+                parent = os.path.dirname(dest) or dest
+            name = os.path.basename(parent.rstrip("/")) if parent not in ("/", "") else parent
+            return name or parent or _("destination")
+
+        def _run_resolution(conflicts: List[ConflictItem]) -> None:
+            logger.debug("Total conflicts found: %d", len(conflicts))
             if not conflicts:
-                # No conflicts, proceed with all transfers
-                # But first, verify connection is still valid for uploads
-                if operation_type == "upload":
-                    if self._manager is None:
-                        logger.error("_finalize_conflicts: Manager is None, connection was closed during conflict check")
-                        # Try to show error to user - find a pane to show toast
-                        if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
-                        return
-                    
-                    try:
-                        with self._manager._lock:
-                            if self._manager._sftp is None:
-                                logger.error("_finalize_conflicts: SFTP connection closed during conflict check")
-                                # Try to show error to user - find a pane to show toast
-                                if hasattr(self, '_right_pane') and self._right_pane:
-                                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
-                                return
-                    except Exception as e:
-                        logger.error(f"_finalize_conflicts: Error checking connection: {e}")
-                        if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast(_("Connection error: {error}").format(error=e))
-                        return
-                
+                if not _upload_connection_ok():
+                    return
                 logger.debug("No conflicts, proceeding with transfers")
                 callback(files_to_transfer)
                 return
 
-            # Check if manager is still available before showing conflict dialog (for uploads)
-            if operation_type == "upload" and self._manager is None:
-                logger.error("_finalize_conflicts: Manager is None, connection was closed during conflict check")
-                if hasattr(self, '_right_pane') and self._right_pane:
-                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+            if not _upload_connection_ok():
                 return
-            
-            # Show conflict resolution dialog
-            conflict_count = len(conflicts)
-            total_count = len(files_to_transfer)
 
-            if conflict_count == 1:
-                filename = safe_display_text(os.path.basename(conflicts[0][1]))
-                message = _("'{filename}' already exists in the destination folder.").format(filename=filename)
-            else:
-                message = ngettext(
-                    "{count} of {total} file already exists in the destination folder.",
-                    "{count} of {total} files already exist in the destination folder.",
-                    conflict_count,
-                ).format(count=conflict_count, total=total_count)
+            from sshpilot.core.transfers import first_available_conflict_name
+            from sshpilot.file_manager.conflict_resolution import ConflictAction
 
-            title = ngettext("File Already Exists", "Files Already Exist", conflict_count)
+            session = ConflictResolutionSession(files_to_transfer, conflicts)
+            reserved_names: List[str] = []
 
-            dialog = Adw.AlertDialog.new(title, message)
-            dialog.add_response("cancel", _("Cancel"))
-            dialog.add_response("skip", _("Skip Existing"))
-            dialog.add_response("replace", _("Replace All"))
-            dialog.set_default_response("skip")
-            dialog.set_close_response("cancel")
-
-            def _on_conflict_response(_dialog, response: str) -> None:
-                from sshpilot.core.transfers import OverwritePolicy, ui_conflict_response_to_policy
-
-                dialog.close()
-
-                if response == "cancel":
+            def _present_next() -> None:
+                if not _upload_connection_ok():
                     return
-                
-                # Check if manager is still available for uploads
-                if operation_type == "upload" and self._manager is None:
-                    logger.error("_on_conflict_response: Manager is None, connection was closed")
-                    if hasattr(self, '_right_pane') and self._right_pane:
-                        self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
-                    return
-
-                policy = ui_conflict_response_to_policy(response)
-                if policy is OverwritePolicy.SKIP:
-                    # Only transfer files that don't conflict
-                    non_conflicting = [item for item in files_to_transfer if item not in conflicts]
-                    if non_conflicting:
-                        callback(non_conflicting)
-                        # Show toast about skipped files
-                        if conflict_count == 1:
-                            filename = os.path.basename(conflicts[0][1])
-                            self._left_pane.show_toast(_("Skipped existing file: {filename}").format(filename=filename))
+                item = session.next_conflict()
+                if item is None:
+                    resolved = session.resolved_pairs
+                    if not resolved:
+                        skipped = len(conflicts)
+                        if skipped == 1:
+                            filename = os.path.basename(conflicts[0].destination.path)
+                            self._left_pane.show_toast(
+                                _("Skipped existing file: {filename}").format(filename=filename)
+                            )
                         else:
-                            self._left_pane.show_toast(ngettext(
-                                "Skipped {count} existing file",
-                                "Skipped {count} existing files", conflict_count,
-                            ).format(count=conflict_count))
-                elif policy is OverwritePolicy.OVERWRITE:
-                    # Transfer all files, replacing existing ones
-                    callback(files_to_transfer)
+                            self._left_pane.show_toast(
+                                ngettext(
+                                    "Skipped {count} existing file",
+                                    "Skipped {count} existing files",
+                                    skipped,
+                                ).format(count=skipped)
+                            )
+                        return
+                    callback(resolved)
+                    return
 
-            dialog.connect("response", _on_conflict_response)
-            
-            # Get the correct parent widget (handles both embedded tab and separate window cases)
-            # Adw.AlertDialog.present() accepts a Gtk.Widget, so we can pass the embedded parent directly
-            try:
-                dialog_parent = self
-                if self._embedded_parent is not None:
-                    # If embedded as a tab, use the parent widget directly
-                    dialog_parent = self._embedded_parent
-                else:
-                    # If standalone window, try to get transient parent if any
-                    try:
-                        transient = self.get_transient_for()
-                        if transient is not None:
-                            dialog_parent = transient
-                    except Exception:
-                        pass
-                
-                dialog.present(dialog_parent)  # Present with correct parent to center properly
-            except Exception as e:
-                # Fallback: present without parent if there's an error
-                logger.error(f"Failed to present conflict dialog with parent: {e}", exc_info=True)
-                dialog.present()  # Present without parent as fallback
+                # Never block the GTK thread on remote path_exists; prefer the
+                # name gathered during conflict detection, then fall back to a
+                # local reserved-name check only.
+                is_taken = destination_taken_checker(
+                    item.destination.path,
+                    reserved_basenames=reserved_names,
+                )
+                suggested = item.suggested_name
+                if not suggested or is_taken(suggested):
+                    suggested = first_available_conflict_name(item.conflict_name, is_taken)
+                if not suggested:
+                    suggested = f"{item.conflict_name} (1)"
 
-        def _idle_finalize(conflicts: List[Tuple[str, str]]) -> bool:
-            _finalize_conflicts(conflicts)
+                def _on_response(response) -> None:
+                    if response.action is ConflictAction.RENAME and response.new_name:
+                        reserved_names.append(response.new_name)
+                    if not session.apply(response):
+                        return
+                    _present_next()
+
+                dialog = FileConflictDialog(
+                    _dialog_parent(),
+                    item,
+                    suggested_name=suggested,
+                    remaining_count=session.remaining_count,
+                    on_response=_on_response,
+                )
+                dialog.present_for(_dialog_parent())
+
+            _present_next()
+
+        def _idle_run(conflicts: List[ConflictItem]) -> bool:
+            _run_resolution(conflicts)
             return False
 
         if operation_type == "download":
-            conflicts: List[Tuple[str, str]] = []
-            for source, dest in files_to_transfer:
-                logger.debug("Checking: %s -> %s", source, dest)
-                exists = os.path.exists(dest)
-                logger.debug("  Local file exists: %s", exists)
-                if exists:
-                    conflicts.append((source, dest))
-                    logger.debug("  CONFLICT DETECTED: %s", dest)
+            pending_pairs = [
+                (source, dest) for source, dest in files_to_transfer if os.path.exists(dest)
+            ]
+            if not pending_pairs:
+                _run_resolution([])
+                return
 
-            _finalize_conflicts(conflicts)
+            if self._manager is None:
+                from sshpilot.core.transfers import first_available_conflict_name
+
+                conflicts = []
+                for source, dest in pending_pairs:
+                    conflict_name = os.path.basename(dest.rstrip("/")) or dest
+                    conflicts.append(
+                        ConflictItem(
+                            source=ConflictSideInfo(path=source, is_directory=False),
+                            destination=local_side_info(dest),
+                            destination_directory_name=_destination_directory_name(dest),
+                            suggested_name=first_available_conflict_name(
+                                conflict_name,
+                                destination_taken_checker(dest),
+                            ),
+                        )
+                    )
+                _run_resolution(conflicts)
+                return
+
+            results: Dict[int, ConflictItem] = {}
+            pending = {"remaining": len(pending_pairs)}
+
+            for index, (source, dest) in enumerate(pending_pairs):
+                dest_info = local_side_info(dest)
+
+                def _on_stat(
+                    fut: Future,
+                    idx: int = index,
+                    src: str = source,
+                    dst_info: ConflictSideInfo = dest_info,
+                    dst: str = dest,
+                ) -> None:
+                    try:
+                        entry = fut.result()
+                        src_info = remote_side_info_from_entry(src, entry)
+                    except Exception as exc:
+                        logger.debug("Download conflict: remote stat failed for %s: %s", src, exc)
+                        src_info = ConflictSideInfo(path=src, is_directory=False)
+                    from sshpilot.core.transfers import first_available_conflict_name
+
+                    conflict_name = os.path.basename(dst.rstrip("/")) or dst
+                    suggested = first_available_conflict_name(
+                        conflict_name,
+                        destination_taken_checker(dst),
+                    )
+                    results[idx] = ConflictItem(
+                        source=src_info,
+                        destination=dst_info,
+                        destination_directory_name=_destination_directory_name(dst),
+                        suggested_name=suggested,
+                    )
+                    pending["remaining"] -= 1
+                    if pending["remaining"] == 0:
+                        ordered = [results[i] for i in range(len(pending_pairs))]
+                        GLib.idle_add(_idle_run, ordered)
+
+                self._manager.stat(source).add_done_callback(_on_stat)
             return
 
         if operation_type == "upload":
             if not files_to_transfer:
-                _finalize_conflicts([])
+                _run_resolution([])
                 return
-
             if self._manager is None:
                 logger.warning("Upload conflict check requested without an active SFTP manager")
-                _finalize_conflicts([])
+                _run_resolution([])
                 return
 
+            from sshpilot.api.errors import ErrorCode, SshPilotError
+
             pending = {"remaining": len(files_to_transfer)}
-            conflicts: List[Tuple[str, str]] = []
+            conflicts: List[ConflictItem] = []
 
             for source, dest in files_to_transfer:
                 logger.debug("Checking: %s -> %s", source, dest)
 
                 def _on_result(fut: Future, pair: Tuple[str, str] = (source, dest)) -> None:
+                    src_path, dst_path = pair
+                    entry = None
+                    missing = False
                     try:
-                        exists = fut.result()
+                        entry = fut.result()
                     except Exception as exc:
                         error_str = str(exc).lower()
-                        # Check if connection was closed
                         if "connection" in error_str and ("closed" in error_str or "dropped" in error_str):
-                            logger.error("Connection closed during conflict check for %s: %s", pair[1], exc)
-                            # Don't proceed with conflict resolution if connection is closed
-                            # Check if manager is still available
+                            logger.error(
+                                "Connection closed during conflict check for %s: %s",
+                                dst_path,
+                                exc,
+                            )
                             if self._manager is None:
-                                logger.error("Manager is None, aborting conflict check")
-                                if hasattr(self, '_right_pane') and self._right_pane:
-                                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                                _connection_lost_toast()
                                 return
+                        if isinstance(exc, SshPilotError) and exc.code is ErrorCode.REMOTE_PATH_NOT_FOUND:
+                            missing = True
                         else:
-                            logger.warning("Failed to check remote path %s: %s", pair[1], exc)
-                        exists = False
+                            logger.warning("Failed to check remote path %s: %s", dst_path, exc)
+                            missing = True
 
-                    logger.debug("  Remote file exists: %s", exists)
-                    if exists:
-                        conflicts.append(pair)
-                        logger.debug("  CONFLICT DETECTED: %s", pair[1])
+                    if not missing and entry is not None:
+                        from sshpilot.core.transfers import first_available_conflict_name
+
+                        conflict_name = os.path.basename(dst_path.rstrip("/")) or dst_path
+
+                        def _remote_exists(candidate: str, mgr=self._manager) -> bool:
+                            if mgr is None:
+                                return False
+                            try:
+                                return bool(mgr.path_exists(candidate).result(timeout=5))
+                            except Exception:
+                                return False
+
+                        suggested = first_available_conflict_name(
+                            conflict_name,
+                            destination_taken_checker(
+                                dst_path,
+                                remote_exists=_remote_exists,
+                            ),
+                        )
+                        conflicts.append(
+                            ConflictItem(
+                                source=local_side_info(src_path),
+                                destination=remote_side_info_from_entry(dst_path, entry),
+                                destination_directory_name=_destination_directory_name(dst_path),
+                                suggested_name=suggested,
+                            )
+                        )
+                        logger.debug("  CONFLICT DETECTED: %s", dst_path)
 
                     pending["remaining"] -= 1
                     if pending["remaining"] == 0:
-                        # Before finalizing, check if manager is still available for uploads
-                        if operation_type == "upload" and self._manager is None:
-                            logger.error("Manager is None when finalizing conflicts, connection was closed")
-                            if hasattr(self, '_right_pane') and self._right_pane:
-                                self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                        if self._manager is None:
+                            _connection_lost_toast()
                             return
-                        GLib.idle_add(_idle_finalize, list(conflicts))
+                        GLib.idle_add(_idle_run, list(conflicts))
 
-                future = self._manager.path_exists(dest)
-                future.add_done_callback(_on_result)
+                self._manager.stat(dest).add_done_callback(_on_result)
 
             return
 
         # Unknown operation type, default to proceeding
-        _finalize_conflicts([])
+        _run_resolution([])
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action in {"copy", "cut"} and isinstance(payload, dict):

@@ -11,7 +11,9 @@ from .policy import (
     TransferState,
     TransferSummary,
     atomic_temp_name,
+    conflict_name_variants,
     decide_conflict,
+    first_available_conflict_name,
     transition,
     ui_conflict_response_to_policy,
 )
@@ -28,7 +30,9 @@ __all__ = [
     "TransferState",
     "TransferSummary",
     "atomic_temp_name",
+    "conflict_name_variants",
     "decide_conflict",
+    "first_available_conflict_name",
     "transition",
     "ui_conflict_response_to_policy",
 ]

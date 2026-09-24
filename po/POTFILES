@@ -22,6 +22,7 @@ src/sshpilot/daemon_sessions_dialog.py
 src/sshpilot/daemon_sftp_backend.py
 src/sshpilot/daemon_terminal_policy.py
 src/sshpilot/effective_config_dialog.py
+src/sshpilot/file_manager/conflict_dialog.py
 src/sshpilot/file_manager/format_utils.py
 src/sshpilot/file_manager/pane.py
 src/sshpilot/file_manager/pane_controls.py
