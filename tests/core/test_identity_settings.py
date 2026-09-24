@@ -150,11 +150,14 @@ def test_normalize_identity_settings_strictly_validates_socket_when_custom():
 
 def test_identity_state_service_tolerates_invalid_socket_in_auto_mode(tmp_path):
     import json
+
     from sshpilot.core.identity_service import IdentityStateService
+    from sshpilot.core.settings import CONFIG_VERSION
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps({
+            "config_version": CONFIG_VERSION,
             "identity": {
                 "provider": "auto",
                 "agent_socket": "SSH_AUTH_SOCK=0",
@@ -172,4 +175,89 @@ def test_identity_state_service_tolerates_invalid_socket_in_auto_mode(tmp_path):
     assert state.custom_socket == ""
     assert state.agent_available is True
     assert state.ssh_copy_id_available is True
+
+
+def test_update_configuration_rejects_socket_change_when_not_custom(tmp_path):
+    import json
+
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+    from sshpilot.api.models.identity import (
+        CUSTOM_SOCKET_NOT_APPLICABLE,
+        UpdateIdentityConfigurationRequest,
+    )
+    from sshpilot.core.identity_service import IdentityStateService
+    from sshpilot.core.settings import CONFIG_VERSION
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "config_version": CONFIG_VERSION,
+            "identity": {"provider": "auto", "agent_socket": ""},
+        }),
+        encoding="utf-8",
+    )
+    service = IdentityStateService(
+        config_path,
+        environ={"SSH_AUTH_SOCK": "/run/user/1000/agent.sock"},
+        ssh_copy_id_probe=lambda: True,
+    )
+    before = service.get_state()
+
+    # Matching the canonical empty socket is a no-op while on auto.
+    noop = service.update_configuration(
+        UpdateIdentityConfigurationRequest(
+            custom_socket="",
+            expected_revision=before.revision,
+        )
+    )
+    assert noop.revision == before.revision
+    assert noop.custom_socket == ""
+
+    with pytest.raises(SshPilotError) as excinfo:
+        service.update_configuration(
+            UpdateIdentityConfigurationRequest(
+                custom_socket="/new/agent.sock",
+                expected_revision=before.revision,
+            )
+        )
+    assert excinfo.value.code is ErrorCode.VALIDATION_FAILED
+    assert excinfo.value.details.get("code") == CUSTOM_SOCKET_NOT_APPLICABLE
+
+    disk = json.loads(config_path.read_text(encoding="utf-8"))
+    assert disk["identity"]["agent_socket"] == ""
+    assert service.get_state().revision == before.revision
+
+
+def test_update_configuration_writes_socket_when_custom(tmp_path):
+    import json
+
+    from sshpilot.api.models.identity import UpdateIdentityConfigurationRequest
+    from sshpilot.core.identity_service import IdentityStateService
+    from sshpilot.core.settings import CONFIG_VERSION
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "config_version": CONFIG_VERSION,
+            "identity": {"provider": "custom", "agent_socket": ""},
+        }),
+        encoding="utf-8",
+    )
+    service = IdentityStateService(
+        config_path,
+        environ={"SSH_AUTH_SOCK": "/run/user/1000/agent.sock"},
+        ssh_copy_id_probe=lambda: True,
+    )
+    before = service.get_state()
+    after = service.update_configuration(
+        UpdateIdentityConfigurationRequest(
+            custom_socket="/custom/agent.sock",
+            expected_revision=before.revision,
+        )
+    )
+    assert after.provider == "custom"
+    assert after.custom_socket == "/custom/agent.sock"
+    assert after.revision != before.revision
+    disk = json.loads(config_path.read_text(encoding="utf-8"))
+    assert disk["identity"]["agent_socket"] == "/custom/agent.sock"
 

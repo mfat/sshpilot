@@ -5,6 +5,10 @@ notes remain separate.
 
 ## Unreleased
 
+- `update_identity_configuration` rejects socket changes unless the `custom`
+  provider is selected (`VALIDATION_FAILED` /
+  `custom_socket_not_applicable`). Non-custom providers such as `auto` keep
+  the system default agent; a no-op empty-socket request remains allowed.
 - Multi-path `sftp.remove`: an additive optional `paths` list on
   `SftpPathRequest` deletes several non-directory targets in one RPC. The
   daemon pipelines `FXP_REMOVE` (and recursive tree deletes pipeline sibling

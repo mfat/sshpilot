@@ -1895,6 +1895,10 @@ finally:
   configuration without exposing provider secrets in ordinary DTOs.
 - **Parameters / return:** `UpdateIdentityConfigurationRequest`; returns
   `IdentityState`.
+- **Notes:** The custom agent socket applies only while the ``custom``
+  provider is selected. ``VALIDATION_FAILED`` with
+  ``custom_socket_not_applicable`` when another provider (for example
+  ``auto``) is selected and the request would change the socket.
 
 <!-- api-method: list_agent_keys -->
 ## `list_agent_keys`

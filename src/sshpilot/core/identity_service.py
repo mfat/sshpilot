@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from ..api.errors import ErrorCode, SshPilotError
 from ..api.models.identity import (
+    CUSTOM_SOCKET_NOT_APPLICABLE,
     REVISION_CONFLICT,
     SETTINGS_MALFORMED,
     SETTINGS_PERSISTENCE_FAILED,
@@ -154,7 +155,13 @@ class IdentityStateService:
         self,
         request: UpdateIdentityConfigurationRequest,
     ) -> IdentityState:
-        """Configure the custom agent socket (revision-checked)."""
+        """Configure the custom agent socket (revision-checked).
+
+        The custom socket is only meaningful while ``CUSTOM_PROVIDER`` is
+        selected.  ``'auto'`` (and other non-custom providers) use the system
+        default agent, so a no-op request that matches the canonical empty
+        socket is accepted; any other change is rejected.
+        """
         if type(request) is not UpdateIdentityConfigurationRequest:
             raise TypeError("an UpdateIdentityConfigurationRequest is required")
         with self._lock:
@@ -164,6 +171,13 @@ class IdentityStateService:
                 self._check_revision(request.expected_revision, current)
                 if request.custom_socket == current["custom_socket"]:
                     return self._state_snapshot(current)
+                if current["provider"] != CUSTOM_PROVIDER:
+                    raise SshPilotError(
+                        ErrorCode.VALIDATION_FAILED,
+                        "The custom agent socket can only be configured when "
+                        "the custom provider is selected",
+                        details={"code": CUSTOM_SOCKET_NOT_APPLICABLE},
+                    )
                 set_nested(
                     config,
                     FIELD_TO_CONFIG_KEY["custom_socket"],
