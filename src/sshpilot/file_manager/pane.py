@@ -130,6 +130,74 @@ def _ensure_browser_card_css() -> None:
 .fm-browser-card gridview {
     background: transparent;
 }
+/* Nautilus's list and grid spacing (nautilus src/resources/style.css).
+   Horizontal list padding sits on the columnview so column widths account
+   for it; the listview's negative margins let rubberbanding reach into it. */
+columnview.fm-list-view {
+    padding-left: 24px;
+    padding-right: 24px;
+}
+columnview.fm-list-view > listview {
+    padding-top: 16px;
+    padding-bottom: 24px;
+    border-spacing: 8px;
+    margin-left: -24px;
+    margin-right: -24px;
+}
+columnview.fm-list-view > listview > row {
+    margin-left: 24px;
+    margin-right: 24px;
+    border-radius: 9px;
+}
+columnview.fm-list-view > listview > row > cell {
+    padding: 0px;
+}
+listview.fm-list-view {
+    padding: 16px 24px 24px 24px;
+    border-spacing: 8px;
+}
+listview.fm-list-view > row {
+    border-radius: 9px;
+}
+.fm-list-view .fm-view-cell {
+    padding: 6px;
+}
+columnview.fm-list-view.compact > listview,
+listview.fm-list-view.compact {
+    border-spacing: 4px;
+}
+.fm-list-view.compact .fm-view-cell {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+gridview.fm-grid-view {
+    padding: 18px;
+    border-spacing: 6px;
+}
+gridview.fm-grid-view > child {
+    padding: 0px;
+    border-radius: 12px;
+}
+/* Grid cells are flat buttons; the child row draws hover and selection. */
+gridview.fm-grid-view button.fm-view-cell,
+gridview.fm-grid-view button.fm-view-cell:hover,
+gridview.fm-grid-view button.fm-view-cell:active {
+    padding: 6px;
+    border-radius: 12px;
+    min-height: 0px;
+    min-width: 0px;
+    background: none;
+    box-shadow: none;
+}
+.fm-browser-card image.fm-view-icon {
+    filter: drop-shadow(0px 1px 1px rgba(0,0,0,0.3));
+}
+.fm-browser-card .fm-hidden-file {
+    opacity: 0.55;
+}
+.fm-browser-card rubberband {
+    border-radius: 6px;
+}
 /* ActionBar paints its background/border on an inner box, which would
    square-fill the rounded card; let the card class show through instead. */
 actionbar.fm-bottom-card > revealer > box {
@@ -183,6 +251,14 @@ def _child_toward(ancestor: Optional[str], descendant: Optional[str]) -> Optiona
         return None
     name = child[len(prefix):].split("/", 1)[0]
     return name or None
+
+
+def _set_hidden_file_style(widget: Gtk.Widget, name: str) -> None:
+    """Dim dotfiles, as Nautilus does when hidden files are shown."""
+    if name.startswith("."):
+        widget.add_css_class("fm-hidden-file")
+    else:
+        widget.remove_css_class("fm-hidden-file")
 
 
 _DIGIT_RUNS = re.compile(r"(\d+)")
@@ -300,6 +376,7 @@ class FilePane(Gtk.Box):
 
         list_view = self._create_list_widget()
         self._list_view = list_view
+        self._update_list_density()
         list_view.connect("activate", self._on_list_activate)
 
         # Wrap list view in a scrolled window for proper scrolling
@@ -314,8 +391,9 @@ class FilePane(Gtk.Box):
         grid_view = Gtk.GridView(
             model=self._selection_model,
             factory=grid_factory,
-            max_columns=6,
+            max_columns=20,
         )
+        grid_view.add_css_class("fm-grid-view")
         grid_view.set_enable_rubberband(True)
         grid_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         self._grid_view = grid_view
@@ -896,7 +974,7 @@ class FilePane(Gtk.Box):
         list_factory.connect("bind", self._on_list_bind)
         list_factory.connect("unbind", self._on_list_unbind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
-        list_view.add_css_class("rich-list")
+        list_view.add_css_class("fm-list-view")
         list_view.set_can_focus(True)
         return list_view
 
@@ -908,6 +986,7 @@ class FilePane(Gtk.Box):
         still comes from ``_sort_entries`` so directories stay grouped first.
         """
         column_view = Gtk.ColumnView(model=self._selection_model)
+        column_view.add_css_class("fm-list-view")
         column_view.set_can_focus(True)
         column_view.set_hexpand(True)
         if hasattr(column_view, "set_single_click_activate"):
@@ -1008,8 +1087,10 @@ class FilePane(Gtk.Box):
 
     def _on_name_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
         from ..icon_utils import new_image_from_icon_name
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.add_css_class("fm-view-cell")
         icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
+        icon.add_css_class("fm-view-icon")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -1045,11 +1126,12 @@ class FilePane(Gtk.Box):
             set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
-        display_name = safe_display_text(entry.name) + ("/" if entry.is_dir else "")
+        display_name = safe_display_text(entry.name)
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
         from ..icon_utils import set_icon_from_name
         set_icon_from_name(icon, self._resolve_entry_icon(entry.name, entry.is_dir))
+        _set_hidden_file_style(box, entry.name)
         box._pane_entry = entry
         box._pane_index = position
 
@@ -1066,6 +1148,7 @@ class FilePane(Gtk.Box):
         label.set_halign(Gtk.Align.END)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("dim-label")
+        label.add_css_class("fm-view-cell")
         self._attach_list_cell_controllers(label, cell)
         cell.set_child(label)
 
@@ -1093,6 +1176,7 @@ class FilePane(Gtk.Box):
         label.set_halign(Gtk.Align.END)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.add_css_class("dim-label")
+        label.add_css_class("fm-view-cell")
         self._attach_list_cell_controllers(label, cell)
         cell.set_child(label)
 
@@ -1112,8 +1196,10 @@ class FilePane(Gtk.Box):
     def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item) -> None:
         """Legacy ListView row used when ColumnViewCell is unavailable."""
         from ..icon_utils import new_image_from_icon_name
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.add_css_class("fm-view-cell")
         icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
+        icon.add_css_class("fm-view-icon")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -1157,9 +1243,10 @@ class FilePane(Gtk.Box):
             set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
-        display_name = safe_display_text(entry.name) + ("/" if entry.is_dir else "")
+        display_name = safe_display_text(entry.name)
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
+        _set_hidden_file_style(box, entry.name)
         text = self._size_column_text(entry)
         metadata_label.set_text(text)
         metadata_label.set_tooltip_text(None if text == "—" else text)
@@ -1234,6 +1321,7 @@ class FilePane(Gtk.Box):
         # GtkGridView to re-measure cell sizes; set_pixel_size alone updates
         # the image's request but the grid caches its cell extents.
         list_px = self._list_icon_px()
+        self._update_list_density()
         for icon in list(self._bound_list_icons):
             try:
                 icon.set_pixel_size(list_px)
@@ -1266,6 +1354,16 @@ class FilePane(Gtk.Box):
         # Persist whichever pane was zoomed last as the new default for any
         # newly opened file manager windows.
         self._persist_icon_size_level()
+
+    def _update_list_density(self) -> None:
+        """Tighter rows at the smallest list size, like Nautilus's compact."""
+        view = getattr(self, "_list_view", None)
+        if view is None:
+            return
+        if self._list_icon_px() <= 16:
+            view.add_css_class("compact")
+        else:
+            view.remove_css_class("compact")
 
     def _request_zoom(self, direction: int) -> None:
         """Zoom this pane by *direction* (+1 / -1)."""
@@ -1331,6 +1429,7 @@ class FilePane(Gtk.Box):
     def _on_grid_setup(self, factory: Gtk.SignalListItemFactory, item):
         button = Gtk.Button()
         button.set_has_frame(False)
+        button.add_css_class("fm-view-cell")
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=6,
@@ -1340,16 +1439,18 @@ class FilePane(Gtk.Box):
 
         from ..icon_utils import new_image_from_icon_name
         image = new_image_from_icon_name("folder-symbolic", size=self._grid_icon_px())
+        image.add_css_class("fm-view-icon")
         image.set_halign(Gtk.Align.CENTER)
         content.append(image)
 
+        # Nautilus grid names: up to three wrapped lines, cut in the middle.
         label = Gtk.Label()
         label.set_halign(Gtk.Align.CENTER)
         label.set_justify(Gtk.Justification.CENTER)
-        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_lines(2)
+        label.set_lines(3)
         # Force normal weight: Gtk.Button styling makes its label bold by
         # default, which looks wrong for filenames in a grid cell.
         normal_weight_attrs = Pango.AttrList()
@@ -1428,6 +1529,7 @@ class FilePane(Gtk.Box):
         from ..icon_utils import set_icon_from_name
         if entry is not None:
             set_icon_from_name(image, self._resolve_entry_icon(entry.name, entry.is_dir))
+            _set_hidden_file_style(button, entry.name)
         else:
             is_dir = value.endswith('/')
             raw_name = value[:-1] if is_dir else value
