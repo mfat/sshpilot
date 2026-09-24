@@ -6,7 +6,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
-from .icon_levels import _DEFAULT_ICON_LEVEL, _MAX_ICON_LEVEL, _MIN_ICON_LEVEL
+from .icon_levels import _DEFAULT_LIST_LEVEL, _MAX_LIST_LEVEL, _MIN_ICON_LEVEL
 
 
 class PathEntry(Gtk.Entry):
@@ -181,19 +181,21 @@ class PaneToolbar(Gtk.Box):
         header.add_css_class("dim-label")
         box.append(header)
 
+        # Starts on the list view's range; set_zoom_level() re-ranges it
+        # when the pane switches views, since each view zooms separately.
         scale = Gtk.Scale.new_with_range(
             Gtk.Orientation.HORIZONTAL,
             float(_MIN_ICON_LEVEL),
-            float(_MAX_ICON_LEVEL),
+            float(_MAX_LIST_LEVEL),
             1.0,
         )
         scale.set_digits(0)
         scale.set_draw_value(False)
         scale.set_hexpand(True)
         scale.set_round_digits(0)
-        for lvl in range(_MIN_ICON_LEVEL, _MAX_ICON_LEVEL + 1):
-            scale.add_mark(float(lvl), Gtk.PositionType.BOTTOM, None)
-        scale.set_value(float(_DEFAULT_ICON_LEVEL))
+        self._zoom_max_level = _MAX_LIST_LEVEL
+        self._add_zoom_marks(scale, _MAX_LIST_LEVEL)
+        scale.set_value(float(_DEFAULT_LIST_LEVEL))
         self._zoom_scale = scale
         self._zoom_scale_handler_id = scale.connect(
             "value-changed", self._on_zoom_scale_changed
@@ -201,24 +203,33 @@ class PaneToolbar(Gtk.Box):
         box.append(scale)
         return box
 
+    @staticmethod
+    def _add_zoom_marks(scale: Gtk.Scale, max_level: int) -> None:
+        scale.clear_marks()
+        for lvl in range(_MIN_ICON_LEVEL, max_level + 1):
+            scale.add_mark(float(lvl), Gtk.PositionType.BOTTOM, None)
+
     def _on_zoom_scale_changed(self, scale: Gtk.Scale) -> None:
         level = int(round(scale.get_value()))
-        level = max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level))
+        level = max(_MIN_ICON_LEVEL, min(self._zoom_max_level, level))
         self.emit("zoom-changed", level)
 
-    def set_zoom_level(self, level: int) -> None:
-        """Sync the slider to *level* without firing zoom-changed."""
+    def set_zoom_level(self, level: int, max_level: int) -> None:
+        """Show *level* out of *max_level* on the slider without firing zoom-changed."""
         scale = getattr(self, "_zoom_scale", None)
         if scale is None:
             return
-        clamped = float(max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level)))
-        if abs(scale.get_value() - clamped) < 0.5:
-            return
+        clamped = float(max(_MIN_ICON_LEVEL, min(max_level, level)))
         handler_id = getattr(self, "_zoom_scale_handler_id", None)
         if handler_id is not None:
             scale.handler_block(handler_id)
         try:
-            scale.set_value(clamped)
+            if max_level != self._zoom_max_level:
+                self._zoom_max_level = max_level
+                scale.set_range(float(_MIN_ICON_LEVEL), float(max_level))
+                self._add_zoom_marks(scale, max_level)
+            if abs(scale.get_value() - clamped) >= 0.5:
+                scale.set_value(clamped)
         finally:
             if handler_id is not None:
                 scale.handler_unblock(handler_id)

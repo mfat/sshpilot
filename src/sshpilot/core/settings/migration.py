@@ -107,16 +107,30 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
             else:
                 _ensure_non_negative_int(int_key)
 
-        icon_size_default = int(file_manager_defaults.get('icon_size_level', 1))
-        icon_size_value = file_manager_cfg.get('icon_size_level', icon_size_default)
-        try:
-            coerced_icon_size = int(icon_size_value)
-        except (TypeError, ValueError):
-            coerced_icon_size = icon_size_default
-        clamped_icon_size = max(0, min(4, coerced_icon_size))
-        if file_manager_cfg.get('icon_size_level') != clamped_icon_size:
-            file_manager_cfg['icon_size_level'] = clamped_icon_size
+        # The single pre-Nautilus zoom step (list 16/24/32/48/64px, grid
+        # 48/72/96/128/192px) becomes the nearest per-view Nautilus step.
+        legacy_icon_size = file_manager_cfg.pop('icon_size_level', None)
+        if legacy_icon_size is not None:
             updated = True
+            try:
+                legacy_step = max(0, min(4, int(legacy_icon_size)))
+            except (TypeError, ValueError):
+                legacy_step = None
+            if legacy_step is not None:
+                file_manager_cfg.setdefault('list_icon_level', (0, 1, 1, 2, 2)[legacy_step])
+                file_manager_cfg.setdefault('grid_icon_level', (0, 1, 2, 2, 3)[legacy_step])
+
+        for level_key, max_level in (('list_icon_level', 2), ('grid_icon_level', 4)):
+            level_default = int(file_manager_defaults.get(level_key, 1))
+            level_value = file_manager_cfg.get(level_key, level_default)
+            try:
+                coerced_level = int(level_value)
+            except (TypeError, ValueError):
+                coerced_level = level_default
+            clamped_level = max(0, min(max_level, coerced_level))
+            if file_manager_cfg.get(level_key) != clamped_level:
+                file_manager_cfg[level_key] = clamped_level
+                updated = True
 
     # --- Logging level: migrate from legacy ssh.debug_enabled --------
     logging_cfg = config.get('logging')

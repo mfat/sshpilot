@@ -875,21 +875,22 @@ class Config(GObject.Object):
                 return default_value
             return coerced
 
-        def _get_icon_size_level() -> int:
-            default_value = int(defaults.get('icon_size_level', 1))
-            raw_value = self.get_setting('file_manager.icon_size_level', default_value)
+        def _get_icon_level(key: str, max_level: int) -> int:
+            default_value = int(defaults.get(key, 1))
+            raw_value = self.get_setting(f'file_manager.{key}', default_value)
             try:
                 coerced = int(raw_value)
             except (TypeError, ValueError):
                 return default_value
-            return max(0, min(4, coerced))
+            return max(0, min(max_level, coerced))
 
         return {
             'open_externally': _get_bool('open_externally'),
             'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
             'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
             'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
-            'icon_size_level': _get_icon_size_level(),
+            'list_icon_level': _get_icon_level('list_icon_level', 2),
+            'grid_icon_level': _get_icon_level('grid_icon_level', 4),
         }
 
     def get_security_config(self) -> Dict[str, Any]:

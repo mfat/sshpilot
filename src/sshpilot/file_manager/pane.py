@@ -76,11 +76,11 @@ if TYPE_CHECKING:
 
 
 from .icon_levels import (
-    _DEFAULT_ICON_LEVEL,
+    _DEFAULT_ICON_LEVELS,
     _GRID_ICON_SIZES,
     _LIST_ICON_SIZES,
-    _MAX_ICON_LEVEL,
-    _MIN_ICON_LEVEL,
+    _MAX_ICON_LEVELS,
+    clamp_icon_level,
 )
 
 
@@ -374,7 +374,7 @@ class FilePane(Gtk.Box):
         # Set silently here so __init__ paths that build factory widgets get a
         # sane initial size; the parent FileManagerWindow may overwrite this
         # with the user's persisted value before the first directory load.
-        self._icon_size_level: int = _DEFAULT_ICON_LEVEL
+        self._icon_levels: Dict[str, int] = dict(_DEFAULT_ICON_LEVELS)
         # Track currently bound icon widgets so zoom updates them in place
         # (O(visible)) instead of forcing a full list-store rebuild. Use plain
         # sets (not WeakSet): PyGObject can drop the Python wrapper for a live
@@ -875,7 +875,8 @@ class FilePane(Gtk.Box):
     def _shortcut_zoom(self, direction: int) -> bool:
         """Zoom in (+1), out (-1), or back to the default size (0)."""
         if direction == 0:
-            self.set_icon_size_level(_DEFAULT_ICON_LEVEL)
+            view = self._zoom_view()
+            self.set_icon_level(view, _DEFAULT_ICON_LEVELS[view])
         else:
             self._request_zoom(direction)
         return True
@@ -971,12 +972,14 @@ class FilePane(Gtk.Box):
         self._stack.set_visible_child_name(view_name)
         # Update the split button icon to reflect current view
         self._update_view_button_icon()
+        # Each view has its own zoom; show this one's on the slider.
+        self._sync_zoom_slider()
 
     def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
         self.set_show_hidden(show_hidden)
 
     def _on_toolbar_zoom_changed(self, _toolbar, level: int) -> None:
-        self.set_icon_size_level(level)
+        self.set_icon_level(self._zoom_view(), level)
 
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
@@ -1332,58 +1335,80 @@ class FilePane(Gtk.Box):
         return get_icon_for_name(name, is_dir)
 
     def _list_icon_px(self) -> int:
-        return _LIST_ICON_SIZES[self._icon_size_level]
+        return _LIST_ICON_SIZES[self._icon_levels["list"]]
 
     def _grid_icon_px(self) -> int:
-        return _GRID_ICON_SIZES[self._icon_size_level]
+        return _GRID_ICON_SIZES[self._icon_levels["grid"]]
 
-    def set_icon_size_level(self, level: int) -> None:
-        """Update the icon zoom level for this pane and resize visible rows."""
-        clamped = max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level))
-        if clamped == self._icon_size_level:
+    def _zoom_view(self) -> str:
+        """The view zoom acts on: the one on screen, as in Nautilus."""
+        stack = getattr(self, "_stack", None)
+        visible = stack.get_visible_child_name() if stack is not None else None
+        if visible in ("list", "grid"):
+            return visible
+        return getattr(getattr(self, "toolbar", None), "_current_view", "list")
+
+    def set_icon_levels(self, list_level: int, grid_level: int) -> None:
+        """Seed both views' zoom (e.g. from settings) without persisting."""
+        self._icon_levels = {
+            "list": clamp_icon_level("list", list_level),
+            "grid": clamp_icon_level("grid", grid_level),
+        }
+        self._update_list_density()
+        self._sync_zoom_slider()
+
+    def set_icon_level(self, view: str, level: int) -> None:
+        """Set one view's icon zoom level and resize its visible items.
+
+        List and grid zoom separately, like Nautilus.
+        """
+        clamped = clamp_icon_level(view, level)
+        if clamped == self._icon_levels[view]:
             return
-        self._icon_size_level = clamped
+        self._icon_levels[view] = clamped
         # Resize the currently bound icon widgets in place. This is O(visible)
         # — far cheaper than rebuilding the list store, which produces a
         # noticeable freeze on large remote directories. New rows that get
         # bound while scrolling will pick up the size from the bind callback
-        # (which reads self._icon_size_level directly). queue_resize() forces
+        # (which reads self._icon_levels directly). queue_resize() forces
         # GtkGridView to re-measure cell sizes; set_pixel_size alone updates
         # the image's request but the grid caches its cell extents.
-        list_px = self._list_icon_px()
-        self._update_list_density()
-        for icon in list(self._bound_list_icons):
+        if view == "list":
+            self._update_list_density()
+            images, px = self._bound_list_icons, self._list_icon_px()
+            widget = getattr(self, "_list_view", None)
+        else:
+            images, px = self._bound_grid_images, self._grid_icon_px()
+            widget = getattr(self, "_grid_view", None)
+        for image in list(images):
             try:
-                icon.set_pixel_size(list_px)
-                icon.queue_resize()
-            except Exception:
-                pass
-        grid_px = self._grid_icon_px()
-        for image in list(self._bound_grid_images):
-            try:
-                image.set_pixel_size(grid_px)
+                image.set_pixel_size(px)
                 image.queue_resize()
             except Exception:
                 pass
-        # Nudge the views themselves so cached layouts (especially GridView's
+        # Nudge the view itself so cached layouts (especially GridView's
         # column-width calc) get refreshed.
-        for view in (getattr(self, "_list_view", None), getattr(self, "_grid_view", None)):
-            if view is not None:
-                try:
-                    view.queue_resize()
-                except Exception:
-                    pass
+        if widget is not None:
+            try:
+                widget.queue_resize()
+            except Exception:
+                pass
         # Keep the toolbar's slider in sync — e.g. when the level was changed
         # via Ctrl+wheel rather than by the user dragging the slider itself.
-        toolbar = getattr(self, "toolbar", None)
-        if toolbar is not None and hasattr(toolbar, "set_zoom_level"):
-            try:
-                toolbar.set_zoom_level(self._icon_size_level)
-            except Exception as exc:
-                logger.debug("Failed to sync toolbar slider: %s", exc)
+        self._sync_zoom_slider()
         # Persist whichever pane was zoomed last as the new default for any
         # newly opened file manager windows.
-        self._persist_icon_size_level()
+        self._persist_icon_level(view)
+
+    def _sync_zoom_slider(self) -> None:
+        toolbar = getattr(self, "toolbar", None)
+        if toolbar is None or not hasattr(toolbar, "set_zoom_level"):
+            return
+        view = self._zoom_view()
+        try:
+            toolbar.set_zoom_level(self._icon_levels[view], _MAX_ICON_LEVELS[view])
+        except Exception as exc:
+            logger.debug("Failed to sync toolbar slider: %s", exc)
 
     def _update_list_density(self) -> None:
         """Tighter rows at the smallest list size, like Nautilus's compact."""
@@ -1396,28 +1421,32 @@ class FilePane(Gtk.Box):
             view.remove_css_class("compact")
 
     def _request_zoom(self, direction: int) -> None:
-        """Zoom this pane by *direction* (+1 / -1)."""
-        self.set_icon_size_level(self._icon_size_level + direction)
+        """Zoom the visible view by *direction* (+1 / -1)."""
+        view = self._zoom_view()
+        self.set_icon_level(view, self._icon_levels[view] + direction)
 
     @staticmethod
-    def _load_saved_icon_size_level() -> int:
-        """Return the persisted default icon zoom level for new panes."""
+    def _load_saved_icon_levels() -> Tuple[int, int]:
+        """Return the persisted (list, grid) zoom levels for new panes."""
         try:
             from ..config import Config
             fm = Config().get_file_manager_config() or {}
-            value = int(fm.get('icon_size_level', _DEFAULT_ICON_LEVEL))
+            return (
+                clamp_icon_level("list", fm.get('list_icon_level', _DEFAULT_ICON_LEVELS["list"])),
+                clamp_icon_level("grid", fm.get('grid_icon_level', _DEFAULT_ICON_LEVELS["grid"])),
+            )
         except Exception as exc:
-            logger.debug("Could not read file_manager.icon_size_level: %s", exc)
-            return _DEFAULT_ICON_LEVEL
-        return max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, value))
+            logger.debug("Could not read file manager icon levels: %s", exc)
+            return _DEFAULT_ICON_LEVELS["list"], _DEFAULT_ICON_LEVELS["grid"]
 
-    def _persist_icon_size_level(self) -> None:
-        """Save this pane's current level as the default for new windows."""
+    def _persist_icon_level(self, view: str) -> None:
+        """Save this view's level as the default for new windows."""
+        key = f'file_manager.{view}_icon_level'
         try:
             from ..config import Config
-            Config().set_setting('file_manager.icon_size_level', self._icon_size_level)
+            Config().set_setting(key, self._icon_levels[view])
         except Exception as exc:
-            logger.debug("Failed to persist file_manager.icon_size_level: %s", exc)
+            logger.debug("Failed to persist %s: %s", key, exc)
 
     def _on_pane_scroll(self, controller: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
         """Intercept Ctrl/Cmd + wheel to zoom icons; otherwise let it scroll."""
