@@ -391,23 +391,33 @@ class OpenSSHSFTPFile:
         self._closed = False
 
     def read(self, size: Optional[int] = None) -> bytes:
-        if size is not None:
-            data = self._client.read(self._handle, self._offset, size)
-            self._offset += len(data)
-            return data
-        # Read to EOF.
+        """Read ``size`` bytes, or to EOF when ``size`` is None.
+
+        Requests go out in ``_CHUNK`` pieces and short replies are followed
+        up: a server may return fewer bytes than asked (OpenSSH's sftp-server
+        caps a READ at ~255 KiB), and only an empty reply means EOF.
+        """
         chunks = []
-        while True:
-            chunk = self._client.read(self._handle, self._offset, _CHUNK)
+        remaining = size
+        while remaining is None or remaining > 0:
+            length = _CHUNK if remaining is None else min(remaining, _CHUNK)
+            chunk = self._client.read(self._handle, self._offset, length)
             if not chunk:
                 break
             self._offset += len(chunk)
             chunks.append(chunk)
+            if remaining is not None:
+                remaining -= len(chunk)
         return b"".join(chunks)
 
     def write(self, data: bytes) -> None:
-        self._client.write(self._handle, self._offset, data)
-        self._offset += len(data)
+        # One WRITE per chunk: OpenSSH's sftp-server drops the session on a
+        # message over 256 KiB.
+        view = memoryview(data)
+        for start in range(0, len(view), _CHUNK):
+            chunk = bytes(view[start:start + _CHUNK])
+            self._client.write(self._handle, self._offset, chunk)
+            self._offset += len(chunk)
 
     def close(self) -> None:
         if not self._closed:
