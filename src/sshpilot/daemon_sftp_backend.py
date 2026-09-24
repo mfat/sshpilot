@@ -833,8 +833,10 @@ class DaemonSftpManager(GObject.GObject):
         """Delete several remote paths with a single ``Future``.
 
         Each item is ``(path, recursive)``. Non-recursive paths are deleted in
-        one pipelined multi-path ``sftp.remove`` RPC; directories still use the
-        ``SFTP_REMOVE_TREE`` operation lifecycle, chained after the file batch.
+        pipelined multi-path ``sftp.remove`` RPCs of at most 256 paths so
+        cancellation and progress stay responsive; directories still use the
+        ``SFTP_REMOVE_TREE`` operation lifecycle, chained after the file
+        batches.
 
         The future resolves to ``(failures, completed)`` where ``failures`` is
         a list of ``(path, exception)`` and ``completed`` is how many paths
@@ -857,6 +859,7 @@ class DaemonSftpManager(GObject.GObject):
         dir_items = [(expanded_path, original) for expanded_path, recursive, original in expanded if recursive]
         failures: List[tuple[str, BaseException]] = []
         state: Dict[str, Any] = {
+            "file_offset": 0,
             "dir_index": 0,
             "completed": 0,
             "operation_id": None,
@@ -864,6 +867,9 @@ class DaemonSftpManager(GObject.GObject):
         }
         progress_message = _("Deleting…")
         total = len(expanded)
+        # Keep in sync with daemon ``_REMOVE_CHUNK_SIZE`` so UI cancel checks
+        # land between the same windows the daemon uses internally.
+        file_chunk = 256
 
         def cancel_with_cleanup() -> bool:
             if future.done():
@@ -882,6 +888,19 @@ class DaemonSftpManager(GObject.GObject):
         def _emit_progress() -> None:
             done = state["completed"] + len(failures)
             self.emit("progress", min(done / total, 1.0) if total else 1.0, progress_message)
+
+        def _map_file_failures(chunk: List[tuple[str, str]], result) -> None:
+            if isinstance(result, SftpRemoveResult):
+                failed_paths = {item.path for item in result.failures}
+                for item in result.failures:
+                    original = next(
+                        (orig for expanded_path, orig in chunk if expanded_path == item.path),
+                        item.path,
+                    )
+                    failures.append((original, OSError(item.message)))
+                state["completed"] += len(chunk) - len(failed_paths)
+            else:
+                state["completed"] += len(chunk)
 
         def _run_dirs() -> None:
             if future.done():
@@ -927,51 +946,53 @@ class DaemonSftpManager(GObject.GObject):
                 on_progress=_on_progress,
             )
 
-        def _after_files(result) -> None:
+        def _run_file_chunks() -> None:
             if future.done():
                 return
-            if isinstance(result, SftpRemoveResult):
-                failed_paths = {item.path for item in result.failures}
-                for item in result.failures:
-                    # Map expanded failure paths back to the caller-facing path.
-                    original = next(
-                        (orig for expanded_path, orig in file_items if expanded_path == item.path),
-                        item.path,
-                    )
-                    failures.append((original, OSError(item.message)))
-                state["completed"] += len(file_items) - len(failed_paths)
-            else:
-                state["completed"] += len(file_items)
-            _emit_progress()
             if state["cancel_requested"]:
                 _finish()
                 return
-            _run_dirs()
+            offset = state["file_offset"]
+            if offset >= len(file_items):
+                _run_dirs()
+                return
+            chunk = file_items[offset : offset + file_chunk]
+            state["file_offset"] = offset + len(chunk)
 
-        def _files_failed(exc) -> None:
-            if future.done():
-                return
-            resolved = self._resolve_operation_exception(exc)
-            if isinstance(resolved, TransferCancelledException):
-                _finish()
-                return
-            # Whole file-batch RPC failed before per-path results — attribute
-            # the error to every file target so the UI can report something.
-            for _expanded_path, original in file_items:
-                failures.append((original, resolved))
-            _emit_progress()
-            if state["cancel_requested"]:
-                _finish()
-                return
-            _run_dirs()
+            def _on_success(result, _chunk=chunk) -> None:
+                if future.done():
+                    return
+                _map_file_failures(_chunk, result)
+                _emit_progress()
+                if state["cancel_requested"]:
+                    _finish()
+                    return
+                _run_file_chunks()
+
+            def _on_error(exc, _chunk=chunk) -> None:
+                if future.done():
+                    return
+                resolved = self._resolve_operation_exception(exc)
+                if isinstance(resolved, TransferCancelledException):
+                    _finish()
+                    return
+                for _expanded_path, original in _chunk:
+                    failures.append((original, resolved))
+                _emit_progress()
+                if state["cancel_requested"]:
+                    _finish()
+                    return
+                _run_file_chunks()
+
+            self._sftp_controller.remove_paths(
+                [path for path, _original in chunk],
+                on_success=_on_success,
+                on_error=_on_error,
+            )
 
         self.emit("progress", 0.0, progress_message)
         if file_items:
-            self._sftp_controller.remove_paths(
-                [path for path, _original in file_items],
-                on_success=_after_files,
-                on_error=_files_failed,
-            )
+            _run_file_chunks()
         else:
             _run_dirs()
         return future

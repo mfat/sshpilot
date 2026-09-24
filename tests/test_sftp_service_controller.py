@@ -1169,3 +1169,32 @@ def test_remove_many_cancel_stops_before_next_dir():
     assert failures == []
     assert completed == 1  # file batch finished; cancelled dir not counted
     assert calls == [("files", ["/a.txt"]), ("dir", "/tree")]
+
+
+def test_remove_many_chunks_file_batches_and_honours_cancel_between_chunks():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    batches = []
+    pending = {}
+
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        batches.append(list(paths))
+        pending["on_success"] = on_success
+
+    controller.remove_paths.side_effect = _remove_paths
+    items = [(f"/f{i}.txt", False) for i in range(300)]
+    future = DaemonSftpManager.remove_many(manager, items)
+
+    assert len(batches) == 1
+    assert len(batches[0]) == 256
+    assert future.cancel() is True
+    pending["on_success"](SftpRemoveResult())
+
+    failures, completed = future.result(timeout=1)
+    assert failures == []
+    assert completed == 256
+    # Cancel prevented the remaining 44-file chunk from starting.
+    assert len(batches) == 1
+    controller.remove.assert_not_called()

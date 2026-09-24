@@ -1816,6 +1816,12 @@ class FileManagerWindow(Adw.Window):
                         )
                         success_count = 0
                     else:
+                        cancelled = success_count + len(failures) < total_count
+                        if cancelled:
+                            # First so _on_all_deletes_complete's errors[0] toast
+                            # surfaces cancel even when some paths also failed.
+                            logger.info("Remote batch delete cancelled")
+                            errors.append(_("Delete was cancelled"))
                         for failed_path, exc in failures:
                             entry_name = names.get(failed_path, failed_path)
                             error_msg = _("Failed to delete {name}: {error}").format(
@@ -1823,9 +1829,6 @@ class FileManagerWindow(Adw.Window):
                             )
                             logger.error("Delete failed for '%s': %s", entry_name, error_msg)
                             errors.append(error_msg)
-                        if success_count + len(failures) < total_count:
-                            logger.info("Remote batch delete cancelled")
-                            errors.append(_("Delete was cancelled"))
                     logger.debug(
                         "Remote batch delete finished (%d/%d ok)",
                         success_count,
