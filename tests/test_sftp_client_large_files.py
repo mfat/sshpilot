@@ -237,6 +237,12 @@ def test_listing_a_large_directory_returns_every_entry(client, tmp_path):
     assert sorted(entry.filename for entry in listed) == sorted(names | {"sub"})
 
 
+def test_listing_an_empty_directory(client, tmp_path):
+    assert client.listdir_attr(str(tmp_path)) == []
+    # The session is still usable after the read-aheads past EOF.
+    assert client.listdir_attr(str(tmp_path)) == []
+
+
 def test_remove_many_pipelines_over_a_slow_link(tmp_path):
     """Mass file delete should pay about one RTT per pipeline window."""
     paths = []

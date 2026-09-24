@@ -494,6 +494,48 @@ def test_remove_recursive_batches_sibling_files_via_remove_many():
     assert "/tree" not in client.directories
 
 
+@pytest.mark.parametrize("method", ["stat_path", "realpath", "readlink", "mkdir", "rmdir"])
+def test_path_methods_reject_extra_paths(method):
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    req = SftpPathRequest(service_id=summary.id, path="/a", paths=("/b",))
+    with pytest.raises(SshPilotError) as exc_info:
+        getattr(runtime, method)(req, client_id=owner)
+    assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+    assert "Extra SFTP paths are only valid for sftp.remove" in str(exc_info.value)
+
+
+def test_remove_recursive_chunks_large_file_lists():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    for i in range(300):
+        client.files[f"/tree/file_{i}.txt"] = b"x"
+    client.directories.add("/tree")
+    batches = []
+    original = client.remove_many
+
+    def _track(paths, *, continue_on_error=False):
+        batches.append(list(paths))
+        return original(paths, continue_on_error=continue_on_error)
+
+    client.remove_many = _track
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert len(batches) == 2
+    assert len(batches[0]) == 256
+    assert len(batches[1]) == 44
+    assert "/tree" not in client.directories
+
+
 # ---------------------------------------------------------------------------
 # list_directory: tilde (``~``) expansion
 # ---------------------------------------------------------------------------

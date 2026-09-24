@@ -328,7 +328,7 @@ class OpenSSHSFTPClient:
                 failures.append((path, exc))
                 if not continue_on_error and fatal is None:
                     fatal = exc
-            except BaseException as exc:
+            except Exception as exc:
                 failures.append((path, exc))
                 if not continue_on_error and fatal is None:
                     fatal = exc

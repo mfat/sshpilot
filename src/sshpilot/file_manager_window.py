@@ -1823,6 +1823,9 @@ class FileManagerWindow(Adw.Window):
                             )
                             logger.error("Delete failed for '%s': %s", entry_name, error_msg)
                             errors.append(error_msg)
+                        if success_count + len(failures) < total_count:
+                            logger.info("Remote batch delete cancelled")
+                            errors.append(_("Delete was cancelled"))
                     logger.debug(
                         "Remote batch delete finished (%d/%d ok)",
                         success_count,

@@ -1589,6 +1589,7 @@ class SftpServiceRuntime:
     ) -> RemoteFileEntry:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         client = record.handle.client
@@ -1756,6 +1757,7 @@ class SftpServiceRuntime:
     def realpath(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
@@ -1770,6 +1772,7 @@ class SftpServiceRuntime:
         via ``statvfs@openssh.com``."""
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = self._expand_tilde_path(record, _validate_path(request.path))
         client = record.handle.client
@@ -1794,6 +1797,7 @@ class SftpServiceRuntime:
     def readlink(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
@@ -2148,12 +2152,15 @@ class SftpServiceRuntime:
         total = len(entries)
         processed = 0
         if file_children:
-            if cancel is not None and cancel():
-                raise OperationCancelled()
-            self._remove_files(client, file_children)
-            processed += len(file_children)
-            if progress is not None:
-                progress(_coarse_progress(processed, total))
+            chunk_size = 256
+            for offset in range(0, len(file_children), chunk_size):
+                if cancel is not None and cancel():
+                    raise OperationCancelled()
+                chunk = file_children[offset : offset + chunk_size]
+                self._remove_files(client, chunk)
+                processed += len(chunk)
+                if progress is not None:
+                    progress(_coarse_progress(processed, total))
         for child in dir_children:
             if cancel is not None and cancel():
                 raise OperationCancelled()

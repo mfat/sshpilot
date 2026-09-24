@@ -43,7 +43,6 @@ from .api.models.transfers import (
     TransferSummary,
 )
 from .file_manager.common import FileEntry
-from .api.models.operations import SftpRemoveResult
 from .file_manager.exceptions import TransferCancelledException
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.sftp_failure_messages import format_sftp_failure
