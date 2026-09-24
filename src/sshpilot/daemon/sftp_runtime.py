@@ -548,6 +548,12 @@ def _validate_path(value: Any, field_name: str = "remote path") -> str:
 _COPY_BLOCK = 1024 * 1024
 
 
+# Non-directory removes processed per cancellation/progress checkpoint, so a
+# mass delete stays responsive on slow links (used by both the pipelined
+# multi-path remove and the recursive walk's sibling batches).
+_REMOVE_CHUNK_SIZE = 256
+
+
 def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
     """Copy through the ``copy-data`` extension when the server offers it.
 
@@ -2036,7 +2042,7 @@ class SftpServiceRuntime:
             if len(paths) == 1:
                 client.remove(paths[0])
                 return None
-            return self._remove_paths_sync(client, paths)
+            return self._remove_paths_sync(client, paths, cancel=cancel, progress=progress)
         except OperationCancelled:
             raise
         except SshPilotError:
@@ -2044,28 +2050,51 @@ class SftpServiceRuntime:
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
-    def _remove_paths_sync(self, client, paths: Tuple[str, ...]) -> SftpRemoveResult:
-        """Pipelined non-recursive multi-path remove with per-path continue-on-error."""
+    def _remove_paths_sync(
+        self,
+        client,
+        paths: Tuple[str, ...],
+        *,
+        cancel: Optional[Callable[[], bool]] = None,
+        progress: Optional[Callable[[float], None]] = None,
+    ) -> SftpRemoveResult:
+        """Pipelined non-recursive multi-path remove with per-path continue-on-error.
+
+        Large batches run in ``_REMOVE_CHUNK_SIZE`` slices so cancellation and
+        progress stay responsive on slow links (mirrors ``_remove_recursive``).
+        """
+        failures: List[SftpRemoveFailure] = []
+        total = len(paths)
+        for offset in range(0, total, _REMOVE_CHUNK_SIZE):
+            if cancel is not None and cancel():
+                raise OperationCancelled()
+            chunk = paths[offset : offset + _REMOVE_CHUNK_SIZE]
+            failures.extend(self._remove_chunk(client, chunk))
+            if progress is not None:
+                progress(_coarse_progress(offset + len(chunk), total))
+        return SftpRemoveResult(failures=tuple(failures))
+
+    @staticmethod
+    def _remove_chunk(client, chunk: Tuple[str, ...]) -> List[SftpRemoveFailure]:
+        """Remove one chunk of non-directory paths, collecting per-path failures."""
         remove_many = getattr(client, "remove_many", None)
         if callable(remove_many):
-            raw_failures = remove_many(list(paths), continue_on_error=True)
-            return SftpRemoveResult(
-                failures=tuple(
-                    SftpRemoveFailure(path=path, message=str(exc) or "remove failed")
-                    for path, exc in raw_failures
-                )
-            )
-        failures: List[SftpRemoveFailure] = []
-        for path in paths:
+            raw_failures = remove_many(list(chunk), continue_on_error=True)
+            return [
+                SftpRemoveFailure(path=path, message=str(exc) or "remove failed")
+                for path, exc in raw_failures
+            ]
+        chunk_failures: List[SftpRemoveFailure] = []
+        for path in chunk:
             try:
                 client.remove(path)
             except (FileNotFoundError, sftp_proto.SFTPError) as exc:
                 if isinstance(exc, sftp_proto.SFTPError) and exc.code == sftp_proto.FX_NO_SUCH_FILE:
                     continue
-                failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
+                chunk_failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
             except Exception as exc:
-                failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
-        return SftpRemoveResult(failures=tuple(failures))
+                chunk_failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
+        return chunk_failures
 
     def start_remove(
         self,
@@ -2152,11 +2181,10 @@ class SftpServiceRuntime:
         total = len(entries)
         processed = 0
         if file_children:
-            chunk_size = 256
-            for offset in range(0, len(file_children), chunk_size):
+            for offset in range(0, len(file_children), _REMOVE_CHUNK_SIZE):
                 if cancel is not None and cancel():
                     raise OperationCancelled()
-                chunk = file_children[offset : offset + chunk_size]
+                chunk = file_children[offset : offset + _REMOVE_CHUNK_SIZE]
                 self._remove_files(client, chunk)
                 processed += len(chunk)
                 if progress is not None:

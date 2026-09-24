@@ -536,6 +536,76 @@ def test_remove_recursive_chunks_large_file_lists():
     assert "/tree" not in client.directories
 
 
+def test_remove_multi_path_cancel_stops_after_first_chunk():
+    from sshpilot.daemon.operation_runtime import OperationCancelled
+
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    paths = [f"/file_{i}.txt" for i in range(300)]
+    for path in paths:
+        client.files[path] = b"x"
+    batches = []
+    original = client.remove_many
+
+    def _track(chunk, *, continue_on_error=False):
+        batches.append(list(chunk))
+        return original(chunk, continue_on_error=continue_on_error)
+
+    client.remove_many = _track
+    calls = {"cancel": 0}
+
+    def _cancel():
+        calls["cancel"] += 1
+        return calls["cancel"] > 1
+
+    with pytest.raises(OperationCancelled):
+        runtime.remove(
+            SftpPathRequest(
+                service_id=summary.id,
+                path=paths[0],
+                paths=tuple(paths[1:]),
+            ),
+            client_id=owner,
+            cancel=_cancel,
+        )
+
+    assert len(batches) == 1
+    assert len(batches[0]) == 256
+    assert calls["cancel"] == 2
+
+
+def test_remove_multi_path_reports_progress_per_chunk():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    paths = [f"/file_{i}.txt" for i in range(300)]
+    for path in paths:
+        client.files[path] = b"x"
+    seen = []
+
+    result = runtime.remove(
+        SftpPathRequest(
+            service_id=summary.id,
+            path=paths[0],
+            paths=tuple(paths[1:]),
+        ),
+        client_id=owner,
+        progress=seen.append,
+    )
+
+    assert result.failures == ()
+    assert len(seen) == 2
+    # Same coarse convention as the recursive walk: strictly increasing,
+    # bounded below 1.0 mid-walk (terminal 1.0 comes from the caller).
+    assert 0.0 < seen[0] < seen[1] < 1.0
+    assert all(path not in client.files for path in paths)
+
+
 # ---------------------------------------------------------------------------
 # list_directory: tilde (``~``) expansion
 # ---------------------------------------------------------------------------
