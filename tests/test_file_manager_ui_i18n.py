@@ -202,6 +202,7 @@ def test_progress_counts_use_ngettext_before_format(monkeypatch):
     dialog = progress_module.SFTPProgressDialog.__new__(progress_module.SFTPProgressDialog)
     dialog.total_files = 0
     dialog.files_completed = 0
+    dialog.operation_type = "upload"
     dialog.counter_label = MagicMock()
     dialog.file_label = MagicMock()
     dialog.current_file = ""
@@ -308,7 +309,7 @@ def test_daemon_transfer_progress_translates_before_format_and_keeps_bytes(monke
     backend_module.DaemonSftpManager._emit_transfer_progress(
         manager, 0, SimpleNamespace(bytes_completed=2048), 4096
     )
-    assert manager.emit.call_args_list[0].args == ("progress-bytes", 2048, 4096)
+    assert manager.emit.call_args_list[0].args == ("progress-bytes", 2048, 4096, "")
     assert manager.emit.call_args_list[1].args == (
         "progress",
         0.5,
@@ -319,7 +320,7 @@ def test_daemon_transfer_progress_translates_before_format_and_keeps_bytes(monke
     backend_module.DaemonSftpManager._emit_transfer_progress(
         manager, 512, SimpleNamespace(bytes_completed=512), 0
     )
-    assert manager.emit.call_args_list[0].args == ("progress-bytes", 1024, 0)
+    assert manager.emit.call_args_list[0].args == ("progress-bytes", 1024, 0, "")
     assert manager.emit.call_args_list[1].args == ("progress", 0.0, "size=1.0 KB")
     assert translated == ["Transferred {done} of {total}", "Transferred {size}"]
 

@@ -150,7 +150,9 @@ class DaemonSftpManager(GObject.GObject):
         "connection-error": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "authentication-required": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "progress": (GObject.SignalFlags.RUN_FIRST, None, (float, str)),
-        "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
+        # (bytes_done, bytes_total, progress_key) — key attributes concurrent
+        # transfers so the file manager can aggregate a multi-file batch.
+        "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object, object)),
         "operation-error": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "directory-loaded": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
         "directory-counts": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
@@ -997,9 +999,17 @@ class DaemonSftpManager(GObject.GObject):
         return future
 
     # -- transfers --------------------------------------------------------
-    def _emit_transfer_progress(self, base: int, summary: TransferSummary, grand_total: int) -> None:
+    def _emit_transfer_progress(
+        self,
+        base: int,
+        summary: TransferSummary,
+        grand_total: int,
+        *,
+        progress_key: str = "",
+    ) -> None:
         done = base + summary.bytes_completed
-        self.emit("progress-bytes", done, grand_total)
+        key = progress_key or str(getattr(summary, "id", "") or "")
+        self.emit("progress-bytes", done, grand_total, key)
         if grand_total > 0:
             self.emit(
                 "progress",
@@ -1018,6 +1028,7 @@ class DaemonSftpManager(GObject.GObject):
 
     def upload(self, source: pathlib.Path, destination: str) -> Future:
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         target = self._expand(destination)
         try:
             service_id = self._require_ready_service_id()
@@ -1033,7 +1044,9 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, total)
+            self._emit_transfer_progress(
+                0, summary, total, progress_key=progress_key
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             self._finish_transfer(future, summary)
@@ -1060,6 +1073,7 @@ class DaemonSftpManager(GObject.GObject):
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         target = self._expand(source)
         try:
             service_id = self._require_ready_service_id()
@@ -1076,7 +1090,12 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
+            self._emit_transfer_progress(
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             if summary.state is TransferState.CANCELLED:
@@ -1128,6 +1147,7 @@ class DaemonSftpManager(GObject.GObject):
     def download_directory(self, source: str, destination: pathlib.Path) -> Future:
         """Download a remote directory tree through a single daemon transfer."""
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         target = self._expand(source)
         try:
             service_id = self._require_ready_service_id()
@@ -1139,7 +1159,12 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
+            self._emit_transfer_progress(
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             self._finish_transfer(future, summary)
@@ -1168,6 +1193,7 @@ class DaemonSftpManager(GObject.GObject):
     def upload_directory(self, source: pathlib.Path, destination: str) -> Future:
         """Upload a local directory tree through a single daemon transfer."""
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         remote_root = self._expand(destination)
         try:
             service_id = self._require_ready_service_id()
@@ -1179,7 +1205,12 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
+            self._emit_transfer_progress(
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             self._finish_transfer(future, summary)

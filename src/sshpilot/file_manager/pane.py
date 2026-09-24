@@ -3578,11 +3578,18 @@ class FilePane(Gtk.Box):
                     else:
                         future = manager.upload(path_obj, dest_path)
 
+                    expected = None
+                    if path_obj.is_file():
+                        try:
+                            expected = int(path_obj.stat().st_size)
+                        except OSError:
+                            expected = None
                     window._show_progress_dialog(
                         "upload", entry_name, future,
                         total_files=total_files,
                         source_path=str(path_obj),
                         destination_path=dest_path,
+                        expected_bytes=expected,
                     )
                     window._attach_refresh(
                         future,
@@ -3640,11 +3647,15 @@ class FilePane(Gtk.Box):
                     else:
                         future = manager.download(source, target_path)
 
+                    expected = None
+                    if entry is not None and not entry.is_dir and entry.size and entry.size > 0:
+                        expected = int(entry.size)
                     window._show_progress_dialog(
                         "download", entry_name, future,
                         total_files=total_files,
                         source_path=source,
                         destination_path=str(target_path),
+                        expected_bytes=expected,
                     )
                     window._attach_refresh(
                         future,

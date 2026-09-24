@@ -60,6 +60,10 @@ from .file_manager import (
     safe_display_text,
 )
 from .file_manager.format_utils import filename_extension_offset
+from .file_manager.transfer_progress import (
+    aggregate_batch_bytes,
+    progress_key_for_future,
+)
 
 import logging
 
@@ -794,6 +798,10 @@ class FileManagerWindow(Adw.Window):
     def _on_progress(self, sender, fraction: float, message: str) -> None:
         manager = getattr(self, "_manager", None)
         if sender is not None and sender is not manager:
+            return
+        # While a transfer dialog owns the progress handlers, skip the legacy
+        # path so per-file fractions cannot overwrite the batch aggregate.
+        if getattr(self, "_progress_handler_id", None):
             return
         self._show_progress(fraction, message)
 
@@ -2065,11 +2073,18 @@ class FileManagerWindow(Adw.Window):
                         future = self._manager.upload(path_obj, destination)
 
                     # Show progress dialog for upload (pass total_files for multi-file support)
+                    expected = None
+                    if path_obj.is_file():
+                        try:
+                            expected = int(path_obj.stat().st_size)
+                        except OSError:
+                            expected = None
                     self._show_progress_dialog(
                         "upload", path_obj.name, future,
                         total_files=total_files,
                         source_path=str(path_obj),
                         destination_path=destination,
+                        expected_bytes=expected,
                     )
                     self._attach_refresh(
                         future,
@@ -2151,11 +2166,18 @@ class FileManagerWindow(Adw.Window):
                     else:
                         future = self._manager.download(source, target_path)
                     # Pass total_files so dialog can be reused for multiple files
+                    expected = None
+                    for entry in entries:
+                        if entry.name == entry_name and not entry.is_dir:
+                            if entry.size and entry.size > 0:
+                                expected = int(entry.size)
+                            break
                     self._show_progress_dialog(
                         "download", entry_name, future,
                         total_files=total_files,
                         source_path=source,
                         destination_path=str(target_path),
+                        expected_bytes=expected,
                     )
                     self._attach_refresh(
                         future,
@@ -2876,10 +2898,94 @@ class FileManagerWindow(Adw.Window):
         if getattr(self, "_progress_dialog", None) is dialog:
             self._progress_dialog = None
 
-    def _show_progress_dialog(self, operation_type: str, filename: str, future: Future,
-                               total_files: int = 1,
-                               source_path: Optional[str] = None,
-                               destination_path: Optional[str] = None) -> None:
+    @staticmethod
+    def _format_transfer_size(num_bytes: float) -> str:
+        """Match ``DaemonSftpManager._format_size`` for progress status text."""
+        size = float(num_bytes)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if size < 1024 or unit == "TB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    def _reset_batch_progress_state(self) -> None:
+        self._batch_expected: Dict[str, Optional[int]] = {}
+        self._batch_active_bytes: Dict[str, Tuple[int, int]] = {}
+        self._batch_settled_bytes: Dict[str, Tuple[int, int]] = {}
+
+    def _publish_batch_transfer_progress(self) -> None:
+        """Push aggregated batch bytes + an honest status string into the dialog."""
+        dialog = self._progress_dialog
+        if dialog is None or dialog.is_cancelled:
+            return
+        batch = aggregate_batch_bytes(
+            expected=getattr(self, "_batch_expected", {}),
+            active=getattr(self, "_batch_active_bytes", {}),
+            settled=getattr(self, "_batch_settled_bytes", {}),
+            files_completed=dialog.files_completed,
+            total_files=dialog.total_files,
+        )
+        try:
+            dialog.on_bytes(batch.bytes_done, batch.bytes_total or 0)
+            if batch.bytes_total is not None and batch.bytes_total > 0:
+                message = _("Transferred {done} of {total}").format(
+                    done=self._format_transfer_size(batch.bytes_done),
+                    total=self._format_transfer_size(batch.bytes_total),
+                )
+            else:
+                message = _("Transferred {size}").format(
+                    size=self._format_transfer_size(batch.bytes_done),
+                )
+            if batch.fraction is not None:
+                dialog.update_progress(batch.fraction, message)
+            else:
+                dialog.update_progress(0.0, message)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+
+    def _settle_batch_transfer(self, future_result: Future, *, success: bool) -> None:
+        """Move a finished transfer's bytes from active → settled for aggregation."""
+        key = progress_key_for_future(future_result)
+        expected = getattr(self, "_batch_expected", None)
+        if expected is None:
+            return
+        active = getattr(self, "_batch_active_bytes", {})
+        settled = getattr(self, "_batch_settled_bytes", {})
+        if key in settled:
+            return
+        if key in active:
+            done, total = active.pop(key)
+        else:
+            done = 0
+            total = 0
+            if success:
+                try:
+                    result = future_result.result()
+                    if isinstance(result, int) and result >= 0:
+                        done = result
+                except Exception:
+                    pass
+            exp = expected.get(key)
+            if isinstance(exp, int) and exp > 0:
+                total = exp
+                if done <= 0 and success:
+                    done = exp
+        if success and done <= 0 and total > 0:
+            done = total
+        if done > 0 or total > 0:
+            settled[key] = (done, total if total > 0 else done)
+        self._publish_batch_transfer_progress()
+
+    def _show_progress_dialog(
+        self,
+        operation_type: str,
+        filename: str,
+        future: Future,
+        total_files: int = 1,
+        source_path: Optional[str] = None,
+        destination_path: Optional[str] = None,
+        expected_bytes: Optional[int] = None,
+    ) -> None:
         """Show and manage the progress dialog for a file operation."""
         try:
             logger.debug("_show_progress_dialog called for %s %s", operation_type, filename)
@@ -2949,7 +3055,7 @@ class FileManagerWindow(Adw.Window):
                         self._progress_dialog.present()
                 except Exception as exc:
                     logger.debug("Failed to re-present progress dialog: %s", exc)
-            
+
             # Add future to dialog (will update total_files if needed). Real
             # byte counts arrive via the manager's progress-bytes signal — no
             # need to pre-set total_bytes here.
@@ -2965,7 +3071,7 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
             return
-        
+
         # Only connect progress signal handler when creating a new dialog
         # When reusing, the handler is already connected
         if not reuse_dialog:
@@ -2974,10 +3080,11 @@ class FileManagerWindow(Adw.Window):
             self._progress_bytes_handler_id = None
             self._active_futures = []  # Track all active futures for multi-file transfers
             self._future_to_filename = {}  # Map futures to filenames for progress tracking
-            
-            # Connect progress signal. We compute the overall-progress
-            # fraction exactly once here — the dialog stores and renders it
-            # verbatim without re-applying multi-file math.
+            self._reset_batch_progress_state()
+
+            # Connect progress signal. Multi-file byte transfers are driven by
+            # the progress-bytes aggregator; this handler only covers deletes
+            # and single-file transfers (and starting messages).
             def _on_progress(manager, progress: float, message: str) -> None:
                 if not (self._progress_dialog and
                         not self._progress_dialog.is_cancelled and
@@ -2995,27 +3102,43 @@ class FileManagerWindow(Adw.Window):
                     if self._progress_dialog.operation_type == "delete":
                         self._progress_dialog.update_progress(progress, message)
                     elif self._progress_dialog.total_files > 1:
-                        # Single-file directory transfers emit per-file
-                        # fractions; flatten to one overall progress value.
-                        completed = self._progress_dialog.files_completed
-                        total = self._progress_dialog.total_files
-                        overall_progress = (completed + progress) / total
-                        # Don't claim 100% while files are still active.
-                        if completed < total:
-                            cap = (total - 1) / total
-                            overall_progress = min(overall_progress, cap)
-                        self._progress_dialog.update_progress(overall_progress, message)
+                        # Concurrent transfers each emit their own fraction and
+                        # "Transferred X of Y" for that file alone. Ignore those
+                        # for the bar/status — batch aggregation owns them.
+                        # Keep only pre-byte starting messages so the dialog
+                        # isn't blank before the first chunk arrives.
+                        if getattr(self, "_batch_active_bytes", None) or getattr(
+                            self, "_batch_settled_bytes", None
+                        ):
+                            return
+                        self._progress_dialog.update_progress(0.0, message)
                     else:
                         self._progress_dialog.update_progress(progress, message)
                 except (AttributeError, RuntimeError, GLib.Error):
                     # Dialog may have been destroyed mid-emit.
                     pass
 
-            def _on_progress_bytes(manager, transferred, total) -> None:
+            def _on_progress_bytes(manager, transferred, total, progress_key="") -> None:
                 if not (self._progress_dialog and not self._progress_dialog.is_cancelled):
                     return
+                key = str(progress_key or "")
+                if not key:
+                    return
                 try:
-                    GLib.idle_add(self._progress_dialog.on_bytes, transferred, total)
+                    transferred_n = int(transferred or 0)
+                    total_n = int(total or 0)
+                except (TypeError, ValueError):
+                    return
+                active = getattr(self, "_batch_active_bytes", None)
+                expected = getattr(self, "_batch_expected", None)
+                if active is None or expected is None:
+                    return
+                if key not in expected:
+                    # Progress for a transfer outside this dialog batch.
+                    return
+                active[key] = (transferred_n, total_n)
+                try:
+                    GLib.idle_add(self._publish_batch_transfer_progress)
                 except (AttributeError, RuntimeError, GLib.Error):
                     pass
 
@@ -3023,28 +3146,36 @@ class FileManagerWindow(Adw.Window):
             self._progress_bytes_handler_id = self._manager.connect(
                 "progress-bytes", _on_progress_bytes
             )
-        
+
         # Add this future to the active futures list
         if not hasattr(self, '_active_futures'):
             self._active_futures = []
         if future not in self._active_futures:
             self._active_futures.append(future)
-        
+
         # Map future to filename for progress tracking
         if not hasattr(self, '_future_to_filename'):
             self._future_to_filename = {}
         self._future_to_filename[future] = filename
-        
+
+        if not hasattr(self, "_batch_expected"):
+            self._reset_batch_progress_state()
+        key = progress_key_for_future(future)
+        exp = int(expected_bytes) if expected_bytes is not None and expected_bytes > 0 else None
+        self._batch_expected[key] = exp
+        if exp is not None and total_files > 1:
+            self._publish_batch_transfer_progress()
+
         # Also update current_future for backward compatibility
         self._current_future = future
-        
+
         def _on_complete(future_result) -> None:
             # Use GLib.idle_add to ensure we're on the main thread
             def _cleanup():
                 # Remove this future from active futures list
                 if hasattr(self, '_active_futures') and future_result in self._active_futures:
                     self._active_futures.remove(future_result)
-                
+
                 # Only disconnect progress signals if all futures are done
                 active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                  if f and not f.done())
@@ -3063,7 +3194,7 @@ class FileManagerWindow(Adw.Window):
                         except (TypeError, RuntimeError, AttributeError):
                             pass
                         self._progress_bytes_handler_id = None
-                
+
                 # Update dialog to show completion
                 if self._progress_dialog:
                     try:
@@ -3079,6 +3210,7 @@ class FileManagerWindow(Adw.Window):
                             try:
                                 exception = future_result.exception()
                                 if exception:
+                                    self._settle_batch_transfer(future_result, success=False)
                                     error_msg = str(exception)
                                     # Get filename for this future
                                     filename = self._future_to_filename.get(future_result, "unknown file")
@@ -3086,9 +3218,9 @@ class FileManagerWindow(Adw.Window):
                                     if hasattr(self._progress_dialog, '_failed_files'):
                                         self._progress_dialog._failed_files.append((filename, error_msg))
                                     logger.error(f"Upload failed for {filename}: {error_msg}")
-                                    
+
                                     # For multi-file operations, don't show completion until all files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                                      if f and not f.done())
                                     if active_count == 0:
                                         # All files are done (some may have failed)
@@ -3113,10 +3245,11 @@ class FileManagerWindow(Adw.Window):
                                             self._progress_dialog.show_completion(success=True)
                                 else:
                                     # File completed successfully
+                                    self._settle_batch_transfer(future_result, success=True)
                                     self._progress_dialog.increment_file_count()
-                                    
+
                                     # Only show completion dialog when ALL files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                                      if f and not f.done())
                                     if active_count == 0:
                                         # All files completed successfully
@@ -3127,15 +3260,15 @@ class FileManagerWindow(Adw.Window):
                     except (AttributeError, RuntimeError, GLib.Error):
                         # Dialog may have been destroyed
                         pass
-                
+
                 # Only clear current_future when all transfers are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                  if f and not f.done())
                 if active_count == 0:
                     self._current_future = None
-            
+
             GLib.idle_add(_cleanup)
-        
+
         # Connect future completion
         future.add_done_callback(_on_complete)
 
