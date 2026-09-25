@@ -1,3 +1,11 @@
+sshpilot (6.2.3-1) unstable; urgency=medium
+
+  * Release v6.2.3.
+  * More SFTP improvemnets
+  * Added support for OSC 52
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 25 Sep 2026 22:54:50 +0000
+
 sshpilot (6.2.2-1) unstable; urgency=medium
 
   * Release v6.2.2.
