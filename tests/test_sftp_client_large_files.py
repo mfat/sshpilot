@@ -464,3 +464,105 @@ def test_stat_many_pipelines_missing_and_present(tmp_path):
     assert attrs[0] is not None and attrs[0].st_size == 1
     assert attrs[1] is None
     assert attrs[2] is not None
+
+
+def _upload_items(tmp_path, remote_dir, count, *, size=16, prefix="f"):
+    from sshpilot.sftp.client import AtomicUploadItem
+
+    local_dir = tmp_path / f"local-{prefix}"
+    local_dir.mkdir(exist_ok=True)
+    items = []
+    for index in range(count):
+        local = local_dir / f"{prefix}{index:05d}"
+        local.write_bytes(os.urandom(size))
+        items.append(
+            AtomicUploadItem(
+                local_path=str(local),
+                remote_temp=str(remote_dir / f".tmp-{prefix}{index:05d}"),
+                remote_dst=str(remote_dir / f"{prefix}{index:05d}"),
+                create_mode=0o644,
+                existing_mode=None,
+                atime=0,
+                mtime=0,
+            )
+        )
+    return items
+
+
+def test_atomic_upload_many_stays_within_the_servers_handle_limit(tmp_path):
+    """Every item used to be opened before any was closed, so a tree larger
+    than the server's RLIMIT_NOFILE failed outright."""
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    items = _upload_items(tmp_path, remote_dir, 1500)
+    process = subprocess.Popen(
+        ["/bin/sh", "-c", f'ulimit -n 256 && exec "{_SFTP_SERVER}"'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    sftp = OpenSSHSFTPClient(process.stdin, process.stdout, on_close=process.terminate)
+    sftp.start()
+    try:
+        sftp.atomic_upload_many(items)
+    finally:
+        _stop_client(sftp, process, process.stdout)
+    assert sorted(os.listdir(remote_dir)) == [Path(i.remote_dst).name for i in items]
+
+
+def test_atomic_upload_many_failed_open_leaves_no_temps(client, tmp_path):
+    from sshpilot.sftp.client import AtomicUploadItem
+
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    items = _upload_items(tmp_path, remote_dir, 49)
+    local = items[0].local_path
+    items.insert(
+        0,
+        AtomicUploadItem(
+            local_path=local,
+            remote_temp=str(remote_dir / "missing" / ".tmp-x"),
+            remote_dst=str(remote_dir / "missing" / "x"),
+            create_mode=0o644,
+            existing_mode=None,
+            atime=0,
+            mtime=0,
+        ),
+    )
+    with pytest.raises(proto.SFTPError):
+        client.atomic_upload_many(items)
+    assert os.listdir(remote_dir) == []
+
+
+def test_atomic_upload_many_replaces_files_without_posix_rename(client, tmp_path):
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    items = _upload_items(tmp_path, remote_dir, 30)
+    for item in items[::2]:
+        Path(item.remote_dst).write_bytes(b"old")
+    client.extensions.pop("posix-rename@openssh.com", None)
+    assert not client.supports_posix_rename()
+    client.atomic_upload_many(items)
+    for item in items:
+        assert Path(item.remote_dst).read_bytes() == Path(item.local_path).read_bytes()
+    assert sorted(os.listdir(remote_dir)) == [Path(i.remote_dst).name for i in items]
+
+
+def test_atomic_upload_many_writes_a_file_that_outgrew_one_chunk(client, tmp_path):
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    items = _upload_items(tmp_path, remote_dir, 3, size=client.max_write_length * 3 + 7)
+    client.atomic_upload_many(items)
+    for item in items:
+        assert Path(item.remote_dst).read_bytes() == Path(item.local_path).read_bytes()
+
+
+def test_stat_many_missing_on_error_tolerates_non_enoent_failures(client, tmp_path):
+    present = tmp_path / "here.bin"
+    present.write_bytes(b"x")
+    # ENAMETOOLONG comes back as FX_FAILURE, not FX_NO_SUCH_FILE.
+    odd = str(tmp_path / ("n" * 300))
+    with pytest.raises(proto.SFTPError):
+        client.stat_many([odd])
+    attrs = client.stat_many([odd, str(present)], missing_on_error=True)
+    assert attrs[0] is None
+    assert attrs[1] is not None

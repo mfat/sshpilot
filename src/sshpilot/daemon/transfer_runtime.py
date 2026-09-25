@@ -922,20 +922,26 @@ class TransferRuntime:
                 item = self._atomic_upload_item(
                     local_abs, destination, existing_mode=existing_mode
                 )
+                file_bytes = 0
+
+                def _on_one_file_bytes(_item: AtomicUploadItem, nbytes: int) -> None:
+                    nonlocal file_bytes
+                    file_bytes += nbytes
+                    self._report_progress(record, completed + file_bytes)
+
                 client.atomic_upload_many(
                     [item],
-                    on_file_bytes=lambda _item, nbytes, b=completed: self._report_progress(
-                        record, b + nbytes
-                    ),
+                    on_file_bytes=_on_one_file_bytes,
                     check_cancel=lambda: self._check_cancel(record),
                 )
-                completed += size
+                completed += file_bytes
                 self._report_progress(record, completed)
             return completed
 
         remote_paths = [remote for _local, remote, _size in files]
         self._check_cancel(record)
-        attrs_list = client.stat_many(remote_paths)
+        # Like _resolve_remote_destination: any STAT error reads as absent.
+        attrs_list = client.stat_many(remote_paths, missing_on_error=True)
         items: List[AtomicUploadItem] = []
         skipped_bytes = 0
         for (local_abs, remote_path, size), existing_attr in zip(files, attrs_list):
@@ -968,10 +974,7 @@ class TransferRuntime:
         if not items:
             return completed
 
-        # Track temps for cancel cleanup while the batch runs.
-        with self._lock:
-            record.remote_temp_path = items[0].remote_temp if items else None
-
+        # atomic_upload_many removes its own temps on failure or cancel.
         bytes_in_batch = completed
 
         def _on_file_bytes(_item: AtomicUploadItem, nbytes: int) -> None:
@@ -979,20 +982,11 @@ class TransferRuntime:
             bytes_in_batch += nbytes
             self._report_progress(record, bytes_in_batch)
 
-        try:
-            client.atomic_upload_many(
-                items,
-                on_file_bytes=_on_file_bytes,
-                check_cancel=lambda: self._check_cancel(record),
-            )
-        except BaseException:
-            # Best-effort: clear the primary temp marker; atomic_upload_many
-            # already removes any temps it opened.
-            with self._lock:
-                record.remote_temp_path = None
-            raise
-        with self._lock:
-            record.remote_temp_path = None
+        client.atomic_upload_many(
+            items,
+            on_file_bytes=_on_file_bytes,
+            check_cancel=lambda: self._check_cancel(record),
+        )
         completed = bytes_in_batch
         self._report_progress(record, completed)
         return completed
