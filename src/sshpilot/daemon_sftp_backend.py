@@ -898,7 +898,8 @@ class DaemonSftpManager(GObject.GObject):
                         (orig for expanded_path, orig in chunk if expanded_path == item.path),
                         item.path,
                     )
-                    failures.append((original, OSError(item.message)))
+                    err_msg = _("Delete failed") if item.message == "remove failed" else item.message
+                    failures.append((original, OSError(err_msg)))
                 state["completed"] += len(chunk) - len(failed_paths)
             else:
                 state["completed"] += len(chunk)
@@ -929,6 +930,7 @@ class DaemonSftpManager(GObject.GObject):
                 if isinstance(resolved, TransferCancelledException):
                     _finish()
                     return
+                resolved = _localized_direct_error(resolved)
                 failures.append((original, resolved))
                 _emit_progress()
                 _run_dirs()
@@ -977,6 +979,7 @@ class DaemonSftpManager(GObject.GObject):
                 if isinstance(resolved, TransferCancelledException):
                     _finish()
                     return
+                resolved = _localized_direct_error(resolved)
                 for _expanded_path, original in _chunk:
                     failures.append((original, resolved))
                 _emit_progress()

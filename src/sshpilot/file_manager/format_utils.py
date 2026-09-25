@@ -104,7 +104,7 @@ def safe_display_text(value: str) -> str:
     except UnicodeEncodeError:
         # Surrogates outside the 0xDC80-0xDCFF range the escape handler covers.
         return "".join(
-            "�" if "\ud800" <= char <= "\udfff" else char for char in value
+            "�" if 0xD800 <= ord(char) <= 0xDFFF else char for char in value
         )
 
 

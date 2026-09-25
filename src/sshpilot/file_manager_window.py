@@ -60,10 +60,12 @@ from .file_manager import (
     safe_display_text,
 )
 from .file_manager.format_utils import filename_extension_offset
+from .api.errors import SshPilotError
 from .file_manager.transfer_progress import (
     aggregate_batch_bytes,
     progress_key_for_future,
 )
+from .gtk.sftp_error_messages import format_direct_sftp_error
 
 import logging
 
@@ -2353,7 +2355,8 @@ class FileManagerWindow(Adw.Window):
         except CancelledError:
             return
         except Exception as exc:
-            dialog.show_completion(success=False, error_message=str(exc) or _("Unknown error"))
+            msg = format_direct_sftp_error(exc) if isinstance(exc, SshPilotError) else (str(exc) or _("Unknown error"))
+            dialog.show_completion(success=False, error_message=msg)
             return
 
         total = dialog.total_files or 1
@@ -2369,7 +2372,15 @@ class FileManagerWindow(Adw.Window):
             elif failures:
                 if success_count == 0:
                     first = failures[0]
-                    message = str(first[1]) if len(first) > 1 else _("Unknown error")
+                    first_err = first[1] if len(first) > 1 else None
+                    if first_err is not None:
+                        message = (
+                            format_direct_sftp_error(first_err)
+                            if isinstance(first_err, SshPilotError)
+                            else (str(first_err) or _("Unknown error"))
+                        )
+                    else:
+                        message = _("Unknown error")
                     dialog.show_completion(success=False, error_message=message)
                 else:
                     dialog.show_completion(

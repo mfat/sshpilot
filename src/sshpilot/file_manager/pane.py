@@ -2966,7 +2966,6 @@ class FilePane(Gtk.Box):
         if not entry_list:
             self.show_toast(_("Nothing selected"))
             return
-        entry = entry_list[0]
 
         window = self.get_root()
         if window is None:

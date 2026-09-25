@@ -39,3 +39,23 @@ def test_folder_states_translate_before_formatting(monkeypatch):
     assert properties._folder_size_text(3, -1) == "taille inconnue pour 3 éléments"
     assert properties._folder_size_text(None, -1) == "Taille indisponible"
     assert properties._free_space_text(2048) == "2.0 KB libres"
+
+
+def test_selection_title_translates_when_count_exceeds_max(monkeypatch):
+    from types import SimpleNamespace
+
+    translations = {
+        "{count} Selected Item": "{count} élément sélectionné",
+        "{count} Selected Items": "{count} éléments sélectionnés",
+    }
+    monkeypatch.setattr(
+        properties,
+        "ngettext",
+        lambda singular, plural, count: translations[singular if count == 1 else plural],
+    )
+    entries_few = [SimpleNamespace(name=f"file{i}.txt") for i in range(3)]
+    assert properties._selection_title(entries_few) == "file0.txt, file1.txt, file2.txt"
+
+    entries_many = [SimpleNamespace(name=f"file{i}.txt") for i in range(6)]
+    assert properties._selection_title(entries_many) == "6 éléments sélectionnés"
+

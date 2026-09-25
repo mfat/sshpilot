@@ -60,12 +60,22 @@ def test_copy_cut_toasts_translate_before_format_and_keep_clipboard(monkeypatch,
 class _EntryWidget:
     def __init__(self):
         self.value = ""
+        self.placeholder = ""
 
     def set_text(self, value):
         self.value = value
 
     def get_text(self):
         return self.value
+
+    def set_placeholder_text(self, text):
+        self.placeholder = text
+
+    def get_placeholder_text(self):
+        return self.placeholder
+
+    def set_activates_default(self, *_args):
+        pass
 
     def connect(self, *_args):
         pass
@@ -426,6 +436,170 @@ def test_reconnect_error_toast_translates_reason(monkeypatch):
         "translated:Connection closed. Please refresh manually.", timeout=3
     )
     assert pane not in window._refreshing_panes
+
+
+def test_into_itself_skip_dialog_localizes_heading_and_body(monkeypatch):
+    window_module, _, _ = _modules()
+    window = _window(window_module)
+    dialogs = []
+
+    def new_dialog(heading, body):
+        dialog = MagicMock()
+        dialogs.append((heading, body, dialog))
+        return dialog
+
+    monkeypatch.setattr(
+        window_module.Adw, "AlertDialog", SimpleNamespace(new=new_dialog), raising=False
+    )
+    monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
+    window._present_alert_dialog = MagicMock()
+
+    # Move:
+    window._confirm_into_itself_skip(
+        move=True,
+        total_count=3,
+        invalid_count=1,
+        on_skip=lambda: None,
+    )
+    heading, body, dialog = dialogs[0]
+    assert heading == "translated:You cannot move a folder into itself."
+    assert body == "translated:The destination folder is inside the source folder."
+    dialog.add_response.assert_any_call("cancel", "translated:Cancel")
+    dialog.add_response.assert_any_call("skip", "translated:Skip")
+    dialog.add_response.assert_any_call("skip_all", "translated:Skip All")
+
+    # Copy:
+    window._confirm_into_itself_skip(
+        move=False,
+        total_count=1,
+        invalid_count=1,
+        on_skip=lambda: None,
+    )
+    heading, body, dialog = dialogs[1]
+    assert heading == "translated:You cannot copy a folder into itself."
+    assert body == "translated:The destination folder is inside the source folder."
+    dialog.add_response.assert_called_once_with("cancel", "translated:Cancel")
+
+
+def test_select_pattern_dialog_localizes_heading_and_placeholder(monkeypatch):
+    _, pane_module, _ = _modules()
+    pane = pane_module.FilePane.__new__(pane_module.FilePane)
+    dialogs = []
+
+    def new_dialog(heading, body):
+        dialog = MagicMock()
+        dialogs.append((heading, body, dialog))
+        return dialog
+
+    monkeypatch.setattr(
+        pane_module.Adw, "AlertDialog", SimpleNamespace(new=new_dialog), raising=False
+    )
+    monkeypatch.setattr(pane_module.Gtk, "Entry", _EntryWidget)
+    monkeypatch.setattr(pane_module, "_", lambda msg: f"translated:{msg}")
+    pane.get_root = MagicMock(return_value=None)
+    pane._selection_model = MagicMock()
+    pane._entries = []
+    pane.show_toast = MagicMock()
+
+    pane._shortcut_select_pattern()
+
+    heading, body, dialog = dialogs[0]
+    assert heading == "translated:Select Items Matching"
+    entry = dialog.set_extra_child.call_args.args[0]
+    assert entry.get_placeholder_text() == "translated:Pattern, e.g. *.txt"
+    dialog.add_response.assert_any_call("cancel", "translated:Cancel")
+    dialog.add_response.assert_any_call("select", "translated:Select")
+
+
+def test_delete_progress_dialog_localizes_headings_status_and_counts(monkeypatch):
+    _, _, progress_module = _modules()
+    translated = []
+
+    def translate(msg):
+        translated.append(msg)
+        return f"translated:{msg}"
+
+    monkeypatch.setattr(progress_module, "_", translate)
+    monkeypatch.setattr(
+        progress_module,
+        "ngettext",
+        lambda singular, plural, count: f"translated:{singular if count == 1 else plural}",
+    )
+
+    dialog = progress_module.SFTPProgressDialog.__new__(progress_module.SFTPProgressDialog)
+    dialog._completion_shown = False
+    dialog._stop_render_timer = MagicMock()
+    dialog._set_dialog_heading = MagicMock()
+    dialog.files_completed = 2
+    dialog.total_files = 2
+    dialog._transferred_bytes = 0
+    dialog.status_label = MagicMock()
+    dialog.file_label = MagicMock()
+    dialog.counter_label = MagicMock()
+    dialog.progress_bar = MagicMock()
+    dialog.speed_label = MagicMock()
+    dialog.time_label = MagicMock()
+    dialog.action_button = MagicMock()
+    dialog.locate_button = MagicMock()
+    dialog.operation_type = "delete"
+    dialog.current_file = ""
+
+    # Success:
+    dialog._show_completion_ui(True, None)
+    dialog._set_dialog_heading.assert_called_with("translated:Delete Complete")
+    dialog.status_label.set_text.assert_called_with("translated:Successfully deleted 2 items")
+    dialog.time_label.set_text.assert_called_with("translated:Finished")
+
+    # Failure with message:
+    dialog._completion_shown = False
+    dialog._show_completion_ui(False, "permission denied")
+    dialog._set_dialog_heading.assert_called_with("translated:Delete Failed")
+    dialog.status_label.set_text.assert_called_with("translated:Delete failed")
+    dialog.file_label.set_text.assert_called_with("translated:Error: permission denied")
+
+    # Failure without message:
+    dialog._completion_shown = False
+    dialog._show_completion_ui(False, None)
+    dialog.file_label.set_text.assert_called_with("translated:An error occurred while deleting")
+
+
+def test_batch_delete_error_localizes_sftp_and_daemon_errors(monkeypatch):
+    window_module, _, _ = _modules()
+    from sshpilot import daemon_sftp_backend as backend_module
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    window = _window(window_module)
+    dialog = MagicMock()
+    dialog.total_files = 1
+    dialog.is_cancelled = False
+    dialog._closed = False
+    window._progress_dialog = dialog
+    monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
+    monkeypatch.setattr(
+        window_module,
+        "ngettext",
+        lambda singular, plural, count: f"translated:{singular if count == 1 else plural}",
+    )
+
+    future = backend_module.Future()
+    future.set_result(([("/path/a", OSError("Delete failed"))], 0))
+    window._complete_delete_progress(future)
+    dialog.show_completion.assert_called_with(success=False, error_message="Delete failed")
+
+    # When error is an SshPilotError:
+    future2 = backend_module.Future()
+    future2.set_result(
+        ([("/path/b", SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "raw permission denied"))], 0)
+    )
+    window._complete_delete_progress(future2)
+    dialog.show_completion.assert_called_with(success=False, error_message="Permission denied")
+
+    # When batch is cancelled (processed < total):
+    dialog.total_files = 3
+    future3 = backend_module.Future()
+    future3.set_result(([("/path/c", OSError("Delete failed"))], 0))
+    window._complete_delete_progress(future3)
+    dialog.show_completion.assert_called_with(success=False, error_message="translated:Delete was cancelled")
 
 
 def test_file_manager_gettext_sources_are_in_potfiles():
