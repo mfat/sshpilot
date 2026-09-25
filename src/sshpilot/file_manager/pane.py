@@ -3157,16 +3157,18 @@ class FilePane(Gtk.Box):
             self._apply_entry_filter(preserve_selection=True)
         return removed
 
-    def release_removed_entries(self, names: Iterable[str]) -> None:
-        """Stop hiding names held by :meth:`remove_cached_entries`."""
-        name_set = set(names)
+    def release_removed_entries(self, names: Iterable[str], path: Optional[str]) -> None:
+        """Stop hiding *names* that :meth:`remove_cached_entries` held while
+        *path* was the current directory. Other directories keep their holds,
+        even for the same names (``README.md`` in two folders)."""
         held = getattr(self, "_held_removals", {})
-        for path in list(held):
-            remaining = held[path] - name_set
-            if remaining:
-                held[path] = remaining
-            else:
-                del held[path]
+        if path not in held:
+            return
+        remaining = held[path] - set(names)
+        if remaining:
+            held[path] = remaining
+        else:
+            del held[path]
 
     def highlight_entry(self, name: str) -> None:
         if not name:

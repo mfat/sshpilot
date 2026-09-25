@@ -560,7 +560,8 @@ class DaemonSftpManager(GObject.GObject):
             child = path.rstrip("/") + "/" + name
 
             def _on_success(result) -> None:
-                if self._closed:
+                # A superseded pass drops its in-flight answer too.
+                if self._closed or generation != self._count_generation:
                     return
                 self.emit("directory-counts", path, {name: len(result.entries)})
                 _count_next(index + 1)

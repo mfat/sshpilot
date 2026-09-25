@@ -32,6 +32,17 @@ def _land(win, path="/root/docs"):
     win._on_directory_loaded(win._manager, path, [])
 
 
+def test_a_listing_lands_before_any_refresh_was_requested():
+    """The first listing of a session arrives before any refresh ran."""
+    win = _window()
+    win._pending_paths[win._right_pane] = "/root/docs"
+
+    _land(win)
+
+    win._right_pane.show_entries.assert_called_once_with("/root/docs", [])
+    win._manager.listdir.assert_not_called()
+
+
 def test_a_burst_of_refreshes_costs_two_listings():
     win = _window()
     pane = win._right_pane
@@ -71,9 +82,10 @@ def test_a_successful_remote_delete_releases_rows_and_relists():
         success_count=2,
         used_progress_dialog=True,
         held_names=["a.md", "b.md"],
+        held_path="/root/docs",
     )
 
-    pane.release_removed_entries.assert_called_once_with(["a.md", "b.md"])
+    pane.release_removed_entries.assert_called_once_with(["a.md", "b.md"], "/root/docs")
     win._manager.listdir.assert_called_once_with("/root/docs")
 
 

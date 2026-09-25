@@ -1054,7 +1054,7 @@ class FileManagerWindow(Adw.Window):
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
-        if target in self._queued_refreshes:
+        if target in self._refresh_queue():
             self._refresh_queue().discard(target)
             self._force_refresh_pane(target)
 
@@ -1847,6 +1847,7 @@ class FileManagerWindow(Adw.Window):
                 # the UI feels instant while pipelined removes run. Holding the
                 # names keeps a listing requested before the delete from
                 # putting them back until it finishes.
+                held_path = getattr(pane, "_current_path", None)
                 pane.remove_cached_entries(entry_names, hold=True)
 
                 def _on_batch_done(future_result: Future) -> None:
@@ -1897,6 +1898,7 @@ class FileManagerWindow(Adw.Window):
                             success_count=sc,
                             used_progress_dialog=True,
                             held_names=entry_names,
+                            held_path=held_path,
                         )
                     )
 
@@ -1923,6 +1925,7 @@ class FileManagerWindow(Adw.Window):
                                     total_count,
                                     used_progress_dialog=True,
                                     held_names=entry_names,
+                                    held_path=held_path,
                                 )
                             )
 
@@ -1959,6 +1962,7 @@ class FileManagerWindow(Adw.Window):
                             total_count,
                             used_progress_dialog=False,
                             held_names=entry_names,
+                            held_path=held_path,
                         )
                     )
             dialog.close()
@@ -2440,12 +2444,13 @@ class FileManagerWindow(Adw.Window):
         success_count: Optional[int] = None,
         used_progress_dialog: bool = False,
         held_names: Iterable[str] = (),
+        held_path: Optional[str] = None,
     ) -> None:
         """Handle completion of all delete operations.
 
-        ``held_names`` are the rows a remote delete hid while it ran; they are
-        released here and the pane relisted, since a listing requested before
-        the delete may have landed in the meantime.
+        ``held_names`` are the rows a remote delete hid in ``held_path`` while
+        it ran; they are released here and the pane relisted, since a listing
+        requested before the delete may have landed in the meantime.
         """
         if success_count is None:
             success_count = max(0, total_count - len(errors))
@@ -2462,7 +2467,7 @@ class FileManagerWindow(Adw.Window):
             logger.error(f"Delete operation completed with {len(errors)} errors out of {total_count} items")
         
         if pane is self._right_pane:
-            pane.release_removed_entries(held_names)
+            pane.release_removed_entries(held_names, held_path)
             # Always relist: the optimistic removal only covers rows, and a
             # listing that predates the delete can still be in flight. A
             # refresh arriving mid-listing is queued behind it, so this one

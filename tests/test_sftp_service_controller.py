@@ -723,7 +723,9 @@ def test_a_newer_count_pass_stops_the_older_one():
 
     pending[0][1](types.SimpleNamespace(entries=[]))  # the older pass answers
     assert len(pending) == 2  # ...and stops instead of listing "b"
+    fake.emit.assert_not_called()  # without reporting its stale count
     pending[1][1](types.SimpleNamespace(entries=[]))
+    fake.emit.assert_called_once_with("directory-counts", "/home/user", {"a": 0})
     assert [path for path, _ in pending][2:] == ["/home/user/b"]
 
 
