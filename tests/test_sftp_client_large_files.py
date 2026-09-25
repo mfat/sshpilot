@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -407,3 +408,59 @@ def test_listing_a_large_directory_over_a_slow_link(tmp_path):
     assert len(listed) == 2500
     # OPENDIR, ceil(26 / 8) READDIR windows, CLOSE.
     assert round_trips < 10, f"listing took {round_trips:.1f} round trips"
+
+
+def test_atomic_upload_many_hides_rtt_for_small_files(tmp_path):
+    """Fifty tiny files must share control-plane RTTs, not pay six each.
+
+    Serial open/write/fsetstat/close/rename is ≈6 RTTs/file (≈300 RTTs here).
+    Pipelined phases collapse that to roughly one window per phase.
+    """
+    from sshpilot.sftp.client import AtomicUploadItem
+
+    delay = 0.05
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    items = []
+    for index in range(50):
+        local = tmp_path / f"src-{index:03d}.bin"
+        local.write_bytes(os.urandom(512))
+        info = local.stat()
+        items.append(
+            AtomicUploadItem(
+                local_path=str(local),
+                remote_temp=str(remote_dir / f".tmp-{index:03d}"),
+                remote_dst=str(remote_dir / f"dst-{index:03d}.bin"),
+                create_mode=0o600,
+                existing_mode=None,
+                atime=int(info.st_atime),
+                mtime=int(info.st_mtime),
+            )
+        )
+    sftp, process, stdout = _start_client(delay)
+    try:
+        started = time.monotonic()
+        sftp.atomic_upload_many(items)
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    for item in items:
+        assert Path(item.remote_dst).read_bytes() == Path(item.local_path).read_bytes()
+        assert not Path(item.remote_temp).exists()
+    # Serial would be ~300 RTTs. Allow generous headroom for five phases +
+    # window draining on a 50-file batch.
+    assert round_trips < 40, f"pipelined upload took {round_trips:.1f} round trips"
+
+
+def test_stat_many_pipelines_missing_and_present(tmp_path):
+    present = tmp_path / "here.bin"
+    present.write_bytes(b"x")
+    missing = tmp_path / "gone.bin"
+    sftp, process, stdout = _start_client(0.0)
+    try:
+        attrs = sftp.stat_many([str(present), str(missing), str(present)])
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert attrs[0] is not None and attrs[0].st_size == 1
+    assert attrs[1] is None
+    assert attrs[2] is not None

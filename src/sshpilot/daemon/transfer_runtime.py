@@ -55,6 +55,7 @@ from sshpilot.logging_support import log_context
 from sshpilot.api.remote_path import remote_path_dirname, remote_path_join
 from sshpilot.api.transfer_identity import new_transfer_id
 from sshpilot.sftp import protocol as sftp_proto
+from sshpilot.sftp.client import AtomicUploadItem
 from sshpilot.sftp.server_limits import transfer_concurrency_for_remote_software
 
 from .sftp_runtime import SftpServiceRuntime
@@ -843,7 +844,31 @@ class TransferRuntime:
             self._ensure_remote_dir(record, client, remote_dir)
 
         completed = 0
-        for local_abs, remote_path, size in files:
+        # Small files are RTT-bound when uploaded one-by-one (≈6 serial
+        # round trips each). When the client can pipeline control-plane
+        # requests, batch them so a window of files shares those RTTs.
+        # Larger files keep the serial pipelined-WRITE path.
+        pipeline_max = int(getattr(client, "max_write_length", 0) or DEFAULT_CHUNK_SIZE)
+        can_pipeline = callable(getattr(client, "atomic_upload_many", None)) and callable(
+            getattr(client, "stat_many", None)
+        )
+        small: List[tuple] = []
+        large: List[tuple] = []
+        if can_pipeline:
+            for entry in files:
+                if entry[2] <= pipeline_max:
+                    small.append(entry)
+                else:
+                    large.append(entry)
+        else:
+            large = list(files)
+
+        if small:
+            completed = self._upload_small_files_pipelined(
+                record, client, small, completed
+            )
+
+        for local_abs, remote_path, size in large:
             self._check_cancel(record)
             try:
                 destination, existing_mode = self._resolve_remote_destination(
@@ -864,6 +889,134 @@ class TransferRuntime:
             self._report_progress(record, completed)
         with self._lock:
             record.bytes_completed = completed
+
+    def _upload_small_files_pipelined(
+        self,
+        record: _TransferRecord,
+        client,
+        files: List[tuple],
+        base: int,
+    ) -> int:
+        """Resolve conflicts then atomic-upload *files* with overlapped RTTs."""
+        from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
+
+        overwrite = {
+            TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+            TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+            TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+            TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+        }.get(record.conflict_policy, OverwritePolicy.FAIL)
+
+        completed = base
+        # RENAME may need several STAT probes per file; keep that serial.
+        if record.conflict_policy is TransferConflictPolicy.RENAME:
+            for local_abs, remote_path, size in files:
+                self._check_cancel(record)
+                try:
+                    destination, existing_mode = self._resolve_remote_destination(
+                        record, client, remote_path
+                    )
+                except _TransferSkipped:
+                    completed += size
+                    continue
+                item = self._atomic_upload_item(
+                    local_abs, destination, existing_mode=existing_mode
+                )
+                client.atomic_upload_many(
+                    [item],
+                    on_file_bytes=lambda _item, nbytes, b=completed: self._report_progress(
+                        record, b + nbytes
+                    ),
+                    check_cancel=lambda: self._check_cancel(record),
+                )
+                completed += size
+                self._report_progress(record, completed)
+            return completed
+
+        remote_paths = [remote for _local, remote, _size in files]
+        self._check_cancel(record)
+        attrs_list = client.stat_many(remote_paths)
+        items: List[AtomicUploadItem] = []
+        skipped_bytes = 0
+        for (local_abs, remote_path, size), existing_attr in zip(files, attrs_list):
+            exists = existing_attr is not None
+            existing_mode = getattr(existing_attr, "st_mode", None) if exists else None
+            if existing_mode is not None:
+                existing_mode = stat.S_IMODE(existing_mode)
+            decision = decide_conflict(exists, overwrite)
+            if decision is ConflictDecision.SKIP:
+                skipped_bytes += size
+                continue
+            if decision is ConflictDecision.FAIL:
+                raise _sftp_transfer_error(
+                    SftpFailureCode.REMOTE_DESTINATION_EXISTS,
+                    ErrorCode.TRANSFER_CONFLICT,
+                    parameters={"path": remote_path},
+                )
+            if decision is ConflictDecision.PROCEED:
+                items.append(
+                    self._atomic_upload_item(
+                        local_abs, remote_path, existing_mode=existing_mode
+                    )
+                )
+            else:
+                raise AssertionError("unhandled transfer conflict policy")
+
+        completed += skipped_bytes
+        if skipped_bytes:
+            self._report_progress(record, completed)
+        if not items:
+            return completed
+
+        # Track temps for cancel cleanup while the batch runs.
+        with self._lock:
+            record.remote_temp_path = items[0].remote_temp if items else None
+
+        bytes_in_batch = completed
+
+        def _on_file_bytes(_item: AtomicUploadItem, nbytes: int) -> None:
+            nonlocal bytes_in_batch
+            bytes_in_batch += nbytes
+            self._report_progress(record, bytes_in_batch)
+
+        try:
+            client.atomic_upload_many(
+                items,
+                on_file_bytes=_on_file_bytes,
+                check_cancel=lambda: self._check_cancel(record),
+            )
+        except BaseException:
+            # Best-effort: clear the primary temp marker; atomic_upload_many
+            # already removes any temps it opened.
+            with self._lock:
+                record.remote_temp_path = None
+            raise
+        with self._lock:
+            record.remote_temp_path = None
+        completed = bytes_in_batch
+        self._report_progress(record, completed)
+        return completed
+
+    @staticmethod
+    def _atomic_upload_item(
+        local_abs: str, remote_dst: str, *, existing_mode: Optional[int]
+    ) -> AtomicUploadItem:
+        local_info = os.stat(local_abs)
+        create_mode = 0o600 if existing_mode is not None else stat.S_IMODE(local_info.st_mode)
+        remote_dir = remote_path_dirname(remote_dst)
+        temp_name = f"{_TEMP_PREFIX}{new_transfer_id()}"
+        remote_temp = (
+            temp_name if remote_dir in (".", "") else remote_path_join(remote_dir, temp_name)
+        )
+        return AtomicUploadItem(
+            local_path=local_abs,
+            remote_temp=remote_temp,
+            remote_dst=remote_dst,
+            create_mode=create_mode,
+            existing_mode=existing_mode,
+            atime=int(local_info.st_atime),
+            mtime=int(local_info.st_mtime),
+        )
 
     def _run_recursive_download(self, record: _TransferRecord, client) -> None:
         """Copy a remote directory tree to a local destination directory.

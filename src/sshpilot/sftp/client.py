@@ -10,7 +10,8 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Deque, Dict, Iterator, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Callable, Deque, Dict, Iterator, List, Optional, Tuple
 
 from . import protocol as proto
 
@@ -32,8 +33,30 @@ _MAX_BYTES_IN_FLIGHT = 32 * 1024 * 1024
 # are tiny requests, so a deeper window hides RTT better than the transfer
 # depth without saturating the channel the way large READ/WRITE payloads would.
 _REMOVE_PIPELINE_DEPTH = 100
+# Same depth for mass STAT / atomic small-file upload control-plane ops: each
+# request is tiny, so overlapping ~100 of them collapses N×RTT to ~1 RTT per
+# phase for a recursive directory of small files.
+_META_PIPELINE_DEPTH = 100
 # READDIRs a directory listing keeps in flight.
 _READDIR_AHEAD = 8
+
+
+@dataclass(frozen=True)
+class AtomicUploadItem:
+    """One temp→rename upload for :meth:`OpenSSHSFTPClient.atomic_upload_many`.
+
+    ``create_mode`` is applied on OPEN (server umask still applies).
+    ``existing_mode`` is restored via FSETSTAT when replacing a file; ``None``
+    leaves the create mode and only sets timestamps.
+    """
+
+    local_path: str
+    remote_temp: str
+    remote_dst: str
+    create_mode: int
+    existing_mode: Optional[int]
+    atime: int
+    mtime: int
 
 
 class _Pending:
@@ -295,6 +318,46 @@ class OpenSSHSFTPClient:
     def lstat(self, path: str) -> proto.SFTPAttributes:
         return self._attrs(self._request(proto.FXP_LSTAT, proto.pack_string(path)))
 
+    def stat_many(self, paths: List[str]) -> List[Optional[proto.SFTPAttributes]]:
+        """STAT many paths with a pipelined window.
+
+        Missing paths become ``None`` (same as a conflict probe that treats
+        ``FX_NO_SUCH_FILE`` as absent). Other STATUS errors raise after the
+        in-flight window is drained.
+        """
+        if not paths:
+            return []
+        results: List[Optional[proto.SFTPAttributes]] = [None] * len(paths)
+        inflight: Deque[Tuple[int, _Pending]] = deque()
+        fatal: Optional[BaseException] = None
+
+        def _drain_one() -> None:
+            nonlocal fatal
+            index, slot = inflight.popleft()
+            try:
+                results[index] = self._attrs(self._wait(slot))
+            except proto.SFTPError as exc:
+                if exc.code == proto.FX_NO_SUCH_FILE:
+                    results[index] = None
+                    return
+                if fatal is None:
+                    fatal = exc
+            except Exception as exc:
+                if fatal is None:
+                    fatal = exc
+
+        for index, path in enumerate(paths):
+            if fatal is not None:
+                break
+            inflight.append((index, self._send(proto.FXP_STAT, proto.pack_string(path))))
+            if len(inflight) >= _META_PIPELINE_DEPTH:
+                _drain_one()
+        while inflight:
+            _drain_one()
+        if fatal is not None:
+            raise fatal
+        return results
+
     @staticmethod
     def _attrs(resp: Tuple[int, bytes]) -> proto.SFTPAttributes:
         ptype, payload = resp
@@ -466,6 +529,218 @@ class OpenSSHSFTPClient:
         except (FileNotFoundError, proto.SFTPError):
             pass
         self.rename(old, new)
+
+    def atomic_upload_many(
+        self,
+        items: List[AtomicUploadItem],
+        *,
+        on_file_bytes: Optional[Callable[[AtomicUploadItem, int], None]] = None,
+        check_cancel: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Upload many small files with pipelined control-plane requests.
+
+        Each item is written to ``remote_temp`` then atomically renamed onto
+        ``remote_dst`` (same policy as a single-file transfer). Within each
+        phase (OPEN, WRITE, FSETSTAT, CLOSE, rename) up to
+        ``_META_PIPELINE_DEPTH`` requests stay in flight so a directory of
+        tiny files costs about one RTT per phase per window instead of six
+        RTTs per file.
+
+        Callers should only pass files that fit in one WRITE chunk (see
+        ``max_write_length``); larger files keep the serial
+        open/write/close path so one bulk transfer does not pin the window.
+        """
+        if not items:
+            return
+        depth = _META_PIPELINE_DEPTH
+        opened: List[Tuple[AtomicUploadItem, bytes]] = []
+        temps_opened: List[str] = []
+
+        def _cancel() -> None:
+            if check_cancel is not None:
+                check_cancel()
+
+        def _cleanup_temps() -> None:
+            for path in temps_opened:
+                try:
+                    self.remove(path)
+                except Exception:
+                    pass
+
+        try:
+            # Phase 1: OPEN temps -------------------------------------------------
+            inflight_open: Deque[Tuple[AtomicUploadItem, _Pending]] = deque()
+
+            def _drain_open() -> None:
+                item, slot = inflight_open.popleft()
+                handle = self._handle(self._wait(slot))
+                opened.append((item, handle))
+                temps_opened.append(item.remote_temp)
+
+            for item in items:
+                _cancel()
+                attr = proto.SFTPAttributes(st_mode=int(item.create_mode) & 0o7777)
+                payload = (
+                    proto.pack_string(item.remote_temp)
+                    + proto.pack_uint32(
+                        proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
+                    )
+                    + proto.encode_attrs(attr)
+                )
+                inflight_open.append((item, self._send(proto.FXP_OPEN, payload)))
+                if len(inflight_open) >= depth:
+                    _drain_open()
+            while inflight_open:
+                _drain_open()
+
+            # Phase 2: WRITE payloads --------------------------------------------
+            inflight_write: Deque[Tuple[AtomicUploadItem, int, _Pending]] = deque()
+
+            def _drain_write() -> None:
+                item, nbytes, slot = inflight_write.popleft()
+                self._expect_ok(self._wait(slot))
+                if on_file_bytes is not None:
+                    on_file_bytes(item, nbytes)
+
+            for item, handle in opened:
+                _cancel()
+                with open(item.local_path, "rb") as source:
+                    data = source.read()
+                if not data:
+                    if on_file_bytes is not None:
+                        on_file_bytes(item, 0)
+                    continue
+                inflight_write.append(
+                    (item, len(data), self._send_write(handle, 0, data))
+                )
+                if len(inflight_write) >= depth:
+                    _drain_write()
+            while inflight_write:
+                _drain_write()
+
+            # Phase 3: FSETSTAT (mode + mtime) -----------------------------------
+            inflight_meta: Deque[_Pending] = deque()
+
+            def _drain_ok(queue: Deque[_Pending]) -> None:
+                self._expect_ok(self._wait(queue.popleft()))
+
+            for item, handle in opened:
+                _cancel()
+                attr = proto.SFTPAttributes(
+                    st_mode=item.existing_mode,
+                    st_atime=item.atime,
+                    st_mtime=item.mtime,
+                )
+                payload = proto.pack_string(handle) + proto.encode_attrs(attr)
+                inflight_meta.append(self._send(proto.FXP_FSETSTAT, payload))
+                if len(inflight_meta) >= depth:
+                    try:
+                        _drain_ok(inflight_meta)
+                    except proto.SFTPError as exc:
+                        if exc.code == proto.FX_CONNECTION_LOST:
+                            raise
+                        # Best effort, matching single-file uploads.
+                        logger.debug("Could not set uploaded file attributes: %s", exc)
+            while inflight_meta:
+                try:
+                    _drain_ok(inflight_meta)
+                except proto.SFTPError as exc:
+                    if exc.code == proto.FX_CONNECTION_LOST:
+                        raise
+                    logger.debug("Could not set uploaded file attributes: %s", exc)
+
+            # Phase 4: CLOSE -----------------------------------------------------
+            inflight_close: Deque[_Pending] = deque()
+            for _item, handle in opened:
+                _cancel()
+                inflight_close.append(
+                    self._send(proto.FXP_CLOSE, proto.pack_string(handle))
+                )
+                if len(inflight_close) >= depth:
+                    _drain_ok(inflight_close)
+            while inflight_close:
+                _drain_ok(inflight_close)
+            opened.clear()
+
+            # Phase 5: atomic rename onto the destination -----------------------
+            if self.supports_posix_rename():
+                inflight_rename: Deque[Tuple[AtomicUploadItem, _Pending]] = deque()
+
+                def _drain_posix_one() -> None:
+                    item, slot = inflight_rename.popleft()
+                    try:
+                        self._expect_ok(self._wait(slot))
+                    except proto.SFTPError as exc:
+                        if exc.code == proto.FX_CONNECTION_LOST:
+                            raise
+                        logger.debug(
+                            "posix-rename failed (%s); falling back to remove+rename",
+                            exc,
+                        )
+                        self.atomic_rename(item.remote_temp, item.remote_dst)
+                    if item.remote_temp in temps_opened:
+                        temps_opened.remove(item.remote_temp)
+
+                for item in items:
+                    _cancel()
+                    payload = (
+                        proto.pack_string("posix-rename@openssh.com")
+                        + proto.pack_string(item.remote_temp)
+                        + proto.pack_string(item.remote_dst)
+                    )
+                    inflight_rename.append(
+                        (item, self._send(proto.FXP_EXTENDED, payload))
+                    )
+                    if len(inflight_rename) >= depth:
+                        _drain_posix_one()
+                while inflight_rename:
+                    _drain_posix_one()
+            else:
+                # remove+rename: pipeline destination removes, then renames.
+                inflight_rm: Deque[_Pending] = deque()
+                for item in items:
+                    _cancel()
+                    inflight_rm.append(
+                        self._send(proto.FXP_REMOVE, proto.pack_string(item.remote_dst))
+                    )
+                    if len(inflight_rm) >= depth:
+                        try:
+                            self._expect_ok(self._wait(inflight_rm.popleft()))
+                        except (FileNotFoundError, proto.SFTPError):
+                            pass
+                while inflight_rm:
+                    try:
+                        self._expect_ok(self._wait(inflight_rm.popleft()))
+                    except (FileNotFoundError, proto.SFTPError):
+                        pass
+                inflight_rn: Deque[Tuple[AtomicUploadItem, _Pending]] = deque()
+                for item in items:
+                    _cancel()
+                    payload = (
+                        proto.pack_string(item.remote_temp)
+                        + proto.pack_string(item.remote_dst)
+                    )
+                    inflight_rn.append(
+                        (item, self._send(proto.FXP_RENAME, payload))
+                    )
+                    if len(inflight_rn) >= depth:
+                        item0, slot = inflight_rn.popleft()
+                        self._expect_ok(self._wait(slot))
+                        if item0.remote_temp in temps_opened:
+                            temps_opened.remove(item0.remote_temp)
+                while inflight_rn:
+                    item0, slot = inflight_rn.popleft()
+                    self._expect_ok(self._wait(slot))
+                    if item0.remote_temp in temps_opened:
+                        temps_opened.remove(item0.remote_temp)
+        except BaseException:
+            for _item, handle in opened:
+                try:
+                    self.close_handle(handle)
+                except Exception:
+                    pass
+            _cleanup_temps()
+            raise
 
     def supports_hardlink(self) -> bool:
         return "hardlink@openssh.com" in self.extensions
