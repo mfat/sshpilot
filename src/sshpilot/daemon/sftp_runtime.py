@@ -2203,7 +2203,9 @@ class SftpServiceRuntime:
                 _reject_protected_recursive_delete(path, home=home)
         try:
             if request.recursive:
-                self._remove_trees(client, paths, progress=progress, cancel=cancel)
+                self._remove_trees(
+                    client, paths, progress=progress, cancel=cancel, home=home
+                )
                 return None
             if len(paths) == 1:
                 client.remove(paths[0])
@@ -2324,9 +2326,10 @@ class SftpServiceRuntime:
         *,
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
+        home: Optional[str] = None,
     ) -> None:
         """Delete one remote tree (see :meth:`_remove_trees`)."""
-        self._remove_trees(client, (path,), progress=progress, cancel=cancel)
+        self._remove_trees(client, (path,), progress=progress, cancel=cancel, home=home)
 
     def _remove_trees(
         self,
@@ -2335,6 +2338,7 @@ class SftpServiceRuntime:
         *,
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
+        home: Optional[str] = None,
     ) -> None:
         """Delete remote trees with lstat so symlinks are never followed.
 
@@ -2344,9 +2348,11 @@ class SftpServiceRuntime:
         All roots are walked together, one depth level at a time: a level's
         directories are listed with ``listdir_many`` and its files removed
         with pipelined ``FXP_REMOVE``, so a wide tree costs a few round trips
-        per level instead of per directory. Directories are then removed
-        deepest level first with pipelined ``FXP_RMDIR``. Progress only moves
-        forward and reaches 1.0 once every root is gone.
+        per level instead of per directory. A directory is removed with
+        pipelined ``FXP_RMDIR`` as soon as its whole subtree is gone, so a
+        cancel or failure leaves only unfinished subtrees behind, never an
+        emptied skeleton. Progress only moves forward and reaches 1.0 once
+        every root is gone.
         """
         # ``pending`` counts entries discovered but not yet deleted
         # (directories until their rmdir); it grows as directories are
@@ -2370,7 +2376,17 @@ class SftpServiceRuntime:
             if cancel is not None and cancel():
                 raise OperationCancelled()
 
-        roots: List[str] = []
+        def _key(path: str) -> str:
+            return path.rstrip("/") or "/"
+
+        # Resolve and check every root before deleting anything. Paths are
+        # opaque strings that only the server resolves (``..``, symlinked
+        # components), so a directory root is replaced by its REALPATH: that
+        # re-checks the protected-path guard on what will really be deleted,
+        # and keeps one root's spelling from depending on another root that
+        # may already be gone.
+        file_roots: List[str] = []
+        roots: Dict[str, str] = {}
         for path in paths:
             _check_cancel()
             try:
@@ -2381,59 +2397,106 @@ class SftpServiceRuntime:
                     continue
                 raise
             if not attr.is_dir() or attr.is_symlink():
-                client.remove(path)
+                file_roots.append(path)
+                continue
+            try:
+                resolved = client.realpath(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if _is_missing_path_error(exc):
+                    _advance(1)
+                    continue
+                raise
+            _reject_protected_recursive_delete(resolved, home=home)
+            if _key(resolved) in roots:
                 _advance(1)
             else:
-                roots.append(path)
+                roots[_key(resolved)] = resolved
+        for path in dict.fromkeys(file_roots):
+            client.remove(path)
+        _advance(len(file_roots))
 
-        # A root inside another root is deleted by that root's walk; walking
-        # it twice would list it twice and rmdir it after it is gone.
-        root_set = set(roots)
-        nested = {
-            root
-            for root in root_set
-            if any(root != other and root.startswith(other.rstrip("/") + "/") for other in root_set)
-        }
-        root_set -= nested
-        unique_roots = [root for root in dict.fromkeys(roots) if root in root_set]
-        _advance(len(roots) - len(unique_roots))
-        roots = unique_roots
-        levels: List[List[str]] = []
-        level = roots
+        # A root is never assumed to lie inside another from its spelling.
+        # Only when a listing names a resolved root exactly is it tracked as
+        # that parent's child instead of being walked a second time.
+        parent_of: Dict[str, str] = {}
+        open_children: Dict[str, int] = {}
+        cleared: Set[str] = set()  # listed, files removed, awaiting rmdir
+        removed: Set[str] = set()
+
+        def _child_gone(key: str) -> List[str]:
+            parent = parent_of.get(key)
+            if parent is None:
+                return []
+            open_children[parent] -= 1
+            if open_children[parent] == 0 and parent in cleared:
+                return [parent]
+            return []
+
+        def _rmdir_finished(ready: List[str]) -> None:
+            # Parents become ready only after their children's batch, so one
+            # batch never holds a directory together with its ancestor.
+            while ready:
+                cascade: List[str] = []
+                for offset in range(0, len(ready), SFTP_REMOVE_CHUNK_SIZE):
+                    _check_cancel()
+                    chunk = ready[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+                    self._remove_directories(client, [paths_by_key[key] for key in chunk])
+                    for key in chunk:
+                        cleared.discard(key)
+                        removed.add(key)
+                        cascade.extend(_child_gone(key))
+                    _advance(len(chunk))
+                ready = cascade
+
+        paths_by_key: Dict[str, str] = dict(roots)
+        level = list(roots)
         while level:
-            listed: List[str] = []
             next_level: List[str] = []
             for offset in range(0, len(level), SFTP_REMOVE_CHUNK_SIZE):
                 _check_cancel()
                 batch = level[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+                listings = self._list_directories(
+                    client, [paths_by_key[key] for key in batch], set(roots.values())
+                )
                 file_children: List[str] = []
-                for directory, entries in zip(batch, self._list_directories(client, batch, root_set)):
+                listed: List[str] = []
+                ready: List[str] = []
+                for key, entries in zip(batch, listings):
                     if entries is None:
                         # A subdirectory deleted concurrently is already gone.
+                        removed.add(key)
                         _advance(1)
+                        ready.extend(_child_gone(key))
                         continue
-                    listed.append(directory)
-                    pending += len(entries)
+                    listed.append(key)
+                    open_children[key] = 0
                     for entry in entries:
-                        child = directory.rstrip("/") + "/" + entry.filename
-                        if entry.is_dir() and not entry.is_symlink():
-                            next_level.append(child)
-                        else:
+                        child = paths_by_key[key].rstrip("/") + "/" + entry.filename
+                        if not entry.is_dir() or entry.is_symlink():
                             file_children.append(child)
+                            pending += 1
+                            continue
+                        child_key = _key(child)
+                        if child_key in removed:
+                            continue
+                        parent_of[child_key] = key
+                        open_children[key] += 1
+                        if child_key not in roots:
+                            paths_by_key[child_key] = child
+                            next_level.append(child_key)
+                            pending += 1
                 for start in range(0, len(file_children), SFTP_REMOVE_CHUNK_SIZE):
                     _check_cancel()
                     chunk = file_children[start : start + SFTP_REMOVE_CHUNK_SIZE]
                     self._remove_files(client, chunk)
                     _advance(len(chunk))
-            levels.append(listed)
+                cleared.update(listed)
+                ready.extend(key for key in listed if open_children[key] == 0)
+                # A root listed in this batch may be the child that its
+                # already-cleared parent was waiting for.
+                ready = list(dict.fromkeys(ready))
+                _rmdir_finished(ready)
             level = next_level
-
-        for directories in reversed(levels):
-            for offset in range(0, len(directories), SFTP_REMOVE_CHUNK_SIZE):
-                _check_cancel()
-                chunk = directories[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
-                self._remove_directories(client, chunk)
-                _advance(len(chunk))
 
     @staticmethod
     def _list_directories(
@@ -2442,8 +2505,9 @@ class SftpServiceRuntime:
         """List *directories*; ``None`` marks a non-root that has vanished.
 
         ``listdir_many`` fails a whole batch on its first error, so a batch
-        that hits a missing directory is listed again one directory at a
-        time to keep deleting everything else.
+        that hits a missing directory is split in halves and each half is
+        listed again, which isolates a vanished directory in a few rounds
+        instead of re-listing the batch one directory at a time.
         """
         listdir_many = getattr(client, "listdir_many", None)
         if callable(listdir_many) and len(directories) > 1:
@@ -2452,6 +2516,10 @@ class SftpServiceRuntime:
             except (FileNotFoundError, sftp_proto.SFTPError) as exc:
                 if not _is_missing_path_error(exc):
                     raise
+            middle = len(directories) // 2
+            return SftpServiceRuntime._list_directories(
+                client, directories[:middle], roots
+            ) + SftpServiceRuntime._list_directories(client, directories[middle:], roots)
         results: List[Optional[List[sftp_proto.SFTPAttributes]]] = []
         for directory in directories:
             try:
@@ -2470,7 +2538,12 @@ class SftpServiceRuntime:
             rmdir_many(paths)
             return
         for path in paths:
-            client.rmdir(path)
+            try:
+                client.rmdir(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                # Missing is idempotent, as in ``rmdir_many``.
+                if not _is_missing_path_error(exc):
+                    raise
 
     @staticmethod
     def _remove_files(client, paths: List[str]) -> None:

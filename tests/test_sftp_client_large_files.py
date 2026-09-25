@@ -316,6 +316,29 @@ def test_tree_delete_over_a_slow_link_costs_rtts_per_level(tmp_path):
     assert round_trips < 40, f"tree delete took {round_trips:.1f} round trips"
 
 
+def test_tree_delete_resolves_roots_that_depend_on_each_other(client, tmp_path):
+    """``x/../y`` must still name ``y`` after ``x`` itself has been deleted."""
+    from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
+
+    for name in ("x", "y", "z"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "f").write_bytes(b"x")
+    (tmp_path / "z" / "sub").mkdir()
+    (tmp_path / "x" / "link").symlink_to(tmp_path / "z")
+
+    runtime = SftpServiceRuntime.__new__(SftpServiceRuntime)
+    runtime._remove_trees(
+        client,
+        [str(tmp_path / "x"), str(tmp_path / "x" / ".." / "y"), str(tmp_path / "x" / "link" / "sub")],
+    )
+
+    assert not (tmp_path / "x").exists()
+    assert not (tmp_path / "y").exists()
+    assert not (tmp_path / "z" / "sub").exists()
+    # Reached only through the symlink, which is removed as a link.
+    assert (tmp_path / "z" / "f").exists()
+
+
 def test_adaptive_pipeline_grows_on_high_rtt():
     """FileZilla's 500 ms target grows the window when one RTT is large."""
     pipeline = _AdaptivePipeline(32768)
