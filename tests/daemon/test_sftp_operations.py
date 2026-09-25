@@ -329,6 +329,17 @@ def test_remove_tree_operation_missing_path_is_idempotent():
     assert done.state is OperationState.SUCCEEDED
 
 
+def test_remove_tree_operation_refuses_root_before_starting():
+    fs = _tree_client()
+    runtime, ops, summary = _make_runtime(fs)
+    with pytest.raises(SshPilotError) as refused:
+        runtime.start_remove(
+            SftpPathRequest(summary.id, "/", recursive=True), client_id=OWNER
+        )
+    assert refused.value.code is ErrorCode.VALIDATION_FAILED
+    assert fs.files
+
+
 def test_copy_tree_operation_copies_recursively():
     fs = _tree_client()
     runtime, ops, summary = _make_runtime(fs)

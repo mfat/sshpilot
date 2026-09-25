@@ -791,7 +791,19 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
-    def remove(self, path: str, *, recursive: bool = False) -> Future:
+    def remove(
+        self,
+        path: str,
+        *,
+        recursive: bool = False,
+        report_progress: bool = True,
+    ) -> Future:
+        """Delete *path*; a recursive delete runs as a cancellable operation.
+
+        ``report_progress=False`` keeps a background delete (e.g. the source
+        cleanup after a cut → paste) off the shared ``progress`` signal, which
+        would otherwise repaint whatever transfer dialog is open.
+        """
         future: Future = Future()
         target = self._expand(path)
         try:
@@ -805,7 +817,8 @@ class DaemonSftpManager(GObject.GObject):
             progress_message = _("Deleting…")
 
             def _on_progress(summary) -> None:
-                self.emit("progress", summary.progress or 0.0, progress_message)
+                if report_progress:
+                    self.emit("progress", summary.progress or 0.0, progress_message)
 
             self._sftp_controller.remove(
                 target,

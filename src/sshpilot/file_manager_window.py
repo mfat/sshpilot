@@ -2919,8 +2919,10 @@ class FileManagerWindow(Adw.Window):
                 completed.result()
             except Exception:
                 return
-            # Move sources may be files or trees; recursive handles both.
-            cleanup_future = self._manager.remove(path, recursive=True)
+            # Move sources may be files or trees; recursive handles both. The
+            # download dialog is still up for the rest of the batch, so keep
+            # this background delete off the shared progress signal.
+            cleanup_future = self._manager.remove(path, recursive=True, report_progress=False)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)

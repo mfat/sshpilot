@@ -427,6 +427,131 @@ def test_remove_recursive_missing_path_is_idempotent():
     assert client.directories == {"/"}
 
 
+def test_remove_recursive_progress_is_monotonic_and_completes():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.directories.update({"/tree", "/tree/a", "/tree/a/b", "/tree/c"})
+    client.files.update(
+        {
+            "/tree/1.txt": b"",
+            "/tree/a/2.txt": b"",
+            "/tree/a/b/3.txt": b"",
+            "/tree/a/b/4.txt": b"",
+            "/tree/c/5.txt": b"",
+        }
+    )
+    reported = []
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+        progress=reported.append,
+    )
+
+    assert reported
+    assert reported == sorted(reported)
+    assert reported[-1] == 1.0
+    assert all(0.0 < value <= 1.0 for value in reported)
+    assert client.directories == {"/"}
+
+
+def test_remove_recursive_handles_trees_deeper_than_recursion_limit():
+    import sys
+
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    depth = sys.getrecursionlimit() + 200
+    path = "/deep"
+    for _ in range(depth):
+        client.directories.add(path)
+        path += "/d"
+    client.files[path.rsplit("/", 1)[0] + "/leaf.txt"] = b""
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/deep", recursive=True),
+        client_id=owner,
+    )
+
+    assert client.directories == {"/"}
+    assert not any(name.startswith("/deep") for name in client.files)
+
+
+@pytest.mark.parametrize(
+    "path", ["/", "//", "/.", "/tmp/..", ".", "./", "~", "~/", "..", "../..", "/home/alice", "/home/alice/"]
+)
+def test_remove_recursive_refuses_root_and_home(path):
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.cwd = "/home/alice"
+    client.directories.update({"/home", "/home/alice"})
+    client.files["/home/alice/keep.txt"] = b"k"
+
+    with pytest.raises(SshPilotError) as refused:
+        runtime.remove(
+            SftpPathRequest(service_id=summary.id, path=path, recursive=True),
+            client_id=owner,
+        )
+
+    assert refused.value.code is ErrorCode.VALIDATION_FAILED
+    assert client.remove_calls == []
+    assert "/home/alice" in client.directories
+
+
+def test_remove_recursive_allows_directories_inside_home():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.cwd = "/home/alice"
+    client.directories.update({"/home", "/home/alice", "/home/alice/project"})
+    client.files["/home/alice/project/a.txt"] = b"a"
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/home/alice/project", recursive=True),
+        client_id=owner,
+    )
+
+    assert "/home/alice/project" not in client.directories
+    assert "/home/alice" in client.directories
+
+
+def test_remove_recursive_multi_path_progress_is_monotonic():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.directories.update({"/one", "/one/sub", "/two", "/two/sub"})
+    client.files.update(
+        {"/one/sub/a.txt": b"", "/one/b.txt": b"", "/two/sub/c.txt": b"", "/two/d.txt": b""}
+    )
+    reported = []
+
+    runtime.remove(
+        SftpPathRequest(
+            service_id=summary.id, path="/one", paths=("/two",), recursive=True
+        ),
+        client_id=owner,
+        progress=reported.append,
+    )
+
+    assert reported == sorted(reported)
+    # The first tree must not look finished before it actually is.
+    assert max(value for value in reported if value <= 0.5) == 0.5
+    assert reported[-1] == 1.0
+    assert client.directories == {"/"}
+
+
 def test_remove_recursive_single_file_is_removed():
     runtime, runner = _make_runtime()
     owner = ClientId("client:owner")

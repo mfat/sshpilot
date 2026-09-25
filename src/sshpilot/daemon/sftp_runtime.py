@@ -695,6 +695,34 @@ def _remote_path_is_descendant(source: str, destination: str) -> bool:
     return destination == source or destination.startswith(source.rstrip("/") + "/")
 
 
+def _is_missing_path_error(exc: BaseException) -> bool:
+    if isinstance(exc, sftp_proto.SFTPError):
+        return exc.code == sftp_proto.FX_NO_SUCH_FILE
+    return isinstance(exc, FileNotFoundError)
+
+
+def _reject_protected_recursive_delete(path: str, *, home: Optional[str]) -> None:
+    """Refuse a recursive delete of the filesystem root or the login directory.
+
+    Relative paths resolve against the login directory on the server, so
+    ``.``, ``~`` and ``..`` chains are as dangerous as the absolute root.
+    """
+    normalized = posixpath.normpath(path)
+    parts = [part for part in normalized.split("/") if part]
+    protected = (
+        not parts  # "/" or "//"
+        or normalized in (".", "~")
+        or (not normalized.startswith("/") and all(part == ".." for part in parts))
+        or (bool(home) and normalized == posixpath.normpath(home))
+    )
+    if protected:
+        raise SshPilotError(
+            ErrorCode.VALIDATION_FAILED,
+            "Refusing to recursively delete the root or home directory",
+            details={"path": path},
+        )
+
+
 def _file_type(mode: int) -> RemoteFileType:
     if stat_module.S_ISDIR(mode):
         return RemoteFileType.DIRECTORY
@@ -1635,6 +1663,20 @@ class SftpServiceRuntime:
         )
 
     # -- remote filesystem operations -------------------------------------
+    def _resolve_home(self, record: _SftpRecord) -> Optional[str]:
+        """Return the service's home directory, resolving it once via REALPATH(".")."""
+        home = record.home
+        if home is None:
+            try:
+                home = record.handle.client.realpath(".")
+            except Exception:
+                home = None
+            if home:
+                with self._lock:
+                    if record.home is None:
+                        record.home = home
+        return home
+
     def _expand_tilde_path(self, record: _SftpRecord, path: str) -> str:
         """Expand a leading ``~``/``~/`` using the service's home directory.
 
@@ -1650,16 +1692,7 @@ class SftpServiceRuntime:
         """
         if not (path == "~" or path.startswith("~/")):
             return path
-        home = record.home
-        if home is None:
-            try:
-                home = record.handle.client.realpath(".")
-            except Exception:
-                home = None
-            if home:
-                with self._lock:
-                    if record.home is None:
-                        record.home = home
+        home = self._resolve_home(record)
         if not home:
             return path
         if path == "~":
@@ -2169,6 +2202,10 @@ class SftpServiceRuntime:
         record = self._ready_record_for_mutation(request.service_id, client_id)
         paths = tuple(_validate_path(path) for path in request.all_paths())
         client = record.handle.client
+        if request.recursive:
+            home = self._resolve_home(record)
+            for path in paths:
+                _reject_protected_recursive_delete(path, home=home)
         try:
             if request.recursive:
                 total = len(paths)
@@ -2259,6 +2296,12 @@ class SftpServiceRuntime:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
         paths = tuple(_validate_path(path) for path in request.all_paths())
+        if request.recursive:
+            # The login directory is checked again inside remove(), where
+            # resolving it may touch the server; this rejects "/", "." and
+            # friends synchronously, before an operation is ever started.
+            for path in paths:
+                _reject_protected_recursive_delete(path, home=None)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         runtime = self._require_operation_lifecycle()
         label = paths[0] if len(paths) == 1 else f"{len(paths)} paths"
@@ -2304,46 +2347,76 @@ class SftpServiceRuntime:
         which keeps cycles and escapes out of the tree impossible.
 
         File and symlink children in a directory are removed with pipelined
-        ``FXP_REMOVE`` when the client supports ``remove_many``; subdirectory
-        trees still recurse sequentially.
+        ``FXP_REMOVE`` when the client supports ``remove_many``. The walk uses
+        an explicit stack, so a tree deeper than Python's recursion limit
+        still deletes, and progress covers the whole tree: it only moves
+        forward and reaches 1.0 once the root directory is gone.
         """
         try:
             attr = client.lstat(path)
         except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-            if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
+            if _is_missing_path_error(exc):
                 return
             raise
         if not attr.is_dir() or attr.is_symlink():
             client.remove(path)
             return
-        entries = client.listdir_attr(path)
-        file_children: List[str] = []
-        dir_children: List[str] = []
-        for entry in entries:
-            child = path.rstrip("/") + "/" + entry.filename
-            if entry.is_dir() and not entry.is_symlink():
-                dir_children.append(child)
-            else:
-                file_children.append(child)
-        total = len(entries)
+
+        # (directory, listed): each directory is pushed once to be listed and
+        # again, beneath its children, to be removed after they are gone.
+        stack: List[Tuple[str, bool]] = [(path, False)]
+        # ``pending`` counts entries discovered but not yet deleted
+        # (directories until their rmdir); it grows as directories are
+        # listed, so the reported fraction is clamped to never step back.
         processed = 0
-        if file_children:
+        pending = 1
+        reported = 0.0
+
+        def _advance(count: int) -> None:
+            nonlocal processed, pending, reported
+            processed += count
+            pending -= count
+            if progress is None:
+                return
+            fraction = _coarse_progress(processed, pending)
+            if fraction > reported:
+                reported = fraction
+                progress(fraction)
+
+        while stack:
+            if cancel is not None and cancel():
+                raise OperationCancelled()
+            current, listed = stack.pop()
+            if listed:
+                client.rmdir(current)
+                _advance(1)
+                continue
+            try:
+                entries = client.listdir_attr(current)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                # A subdirectory deleted concurrently is already gone.
+                if current == path or not _is_missing_path_error(exc):
+                    raise
+                _advance(1)
+                continue
+            file_children: List[str] = []
+            dir_children: List[str] = []
+            for entry in entries:
+                child = current.rstrip("/") + "/" + entry.filename
+                if entry.is_dir() and not entry.is_symlink():
+                    dir_children.append(child)
+                else:
+                    file_children.append(child)
+            pending += len(entries)
+            stack.append((current, True))
+            # Reversed so subdirectories are still walked in listing order.
+            stack.extend((child, False) for child in reversed(dir_children))
             for offset in range(0, len(file_children), SFTP_REMOVE_CHUNK_SIZE):
                 if cancel is not None and cancel():
                     raise OperationCancelled()
                 chunk = file_children[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
                 self._remove_files(client, chunk)
-                processed += len(chunk)
-                if progress is not None:
-                    progress(_coarse_progress(processed, total - processed))
-        for child in dir_children:
-            if cancel is not None and cancel():
-                raise OperationCancelled()
-            self._remove_recursive(client, child, progress=progress, cancel=cancel)
-            processed += 1
-            if progress is not None:
-                progress(_coarse_progress(processed, total - processed))
-        client.rmdir(path)
+                _advance(len(chunk))
 
     @staticmethod
     def _remove_files(client, paths: List[str]) -> None:

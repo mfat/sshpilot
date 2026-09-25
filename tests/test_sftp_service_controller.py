@@ -457,6 +457,22 @@ def test_directory_size_cancelled_operation_resolves_as_transfer_cancelled():
         future.result(timeout=1)
 
 
+def test_recursive_remove_can_stay_off_shared_progress_signal():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        on_progress(SimpleNamespace(progress=0.5, message="wire"))
+
+    controller.remove.side_effect = _remove
+    DaemonSftpManager.remove(manager, "/tree", recursive=True, report_progress=False)
+
+    manager.emit.assert_not_called()
+
+
 def test_recursive_remove_future_cancel_calls_operations_cancel():
     """Cancelling a recursive-remove future must reach ``operations.cancel``
     -- this is the highest-risk case, since an uncancelled daemon delete
