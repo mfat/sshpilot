@@ -159,11 +159,13 @@ class PaneToolbar(Gtk.Box):
 
         split_button = Adw.SplitButton()
         split_button.set_popover(popover)
-        split_button.set_tooltip_text(_("Toggle view mode"))
         # Tooltip text is parsed as Pango markup; escape the ampersand or
         # use a plain word to avoid "entity did not end with a semicolon".
         split_button.set_dropdown_tooltip(_("Adjust icon size and sort order"))
-        split_button.set_icon_name("view-list-symbolic")
+        # Icon/tooltip show the destination layout (Nautilus), not the current one.
+        icon_name, tooltip = self.view_toggle_appearance(self._current_view)
+        split_button.set_icon_name(icon_name)
+        split_button.set_tooltip_text(tooltip)
         split_button.connect("clicked", self._on_view_toggle_clicked)
         return split_button
 
@@ -234,12 +236,25 @@ class PaneToolbar(Gtk.Box):
             if handler_id is not None:
                 scale.handler_unblock(handler_id)
 
-    # Example handler
+    @staticmethod
+    def view_toggle_appearance(current_view: str) -> tuple[str, str]:
+        """Icon and tooltip for switching away from *current_view*.
+
+        Matches Nautilus: the control advertises the other layout, not the
+        one currently shown.
+        """
+        if current_view == "list":
+            return "view-grid-symbolic", _("Grid View")
+        return "view-list-symbolic", _("List View")
+
+    def _sync_view_toggle_appearance(self) -> None:
+        icon_name, tooltip = self.view_toggle_appearance(self._current_view)
+        self.sort_split_button.set_icon_name(icon_name)
+        self.sort_split_button.set_tooltip_text(tooltip)
+
     def _on_view_toggle_clicked(self, *_):
         self._current_view = "grid" if self._current_view == "list" else "list"
-        icon_name = "view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic"
-        # Adw.SplitButton uses set_icon_name()
-        self.sort_split_button.set_icon_name(icon_name)
+        self._sync_view_toggle_appearance()
         self.emit("view-changed", self._current_view)
 
     def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:

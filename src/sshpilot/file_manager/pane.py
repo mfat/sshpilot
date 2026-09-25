@@ -1922,15 +1922,10 @@ class FilePane(Gtk.Box):
             self._syncing_column_sort = False
 
     def _update_view_button_icon(self) -> None:
-        """Update the split button icon based on current view mode."""
-        # Check which view is currently active
-        if hasattr(self.toolbar, '_current_view') and self.toolbar._current_view == "list":
-            icon_name = "view-list-symbolic"
-        else:
-            icon_name = "view-grid-symbolic"
-        
-        # Adw.SplitButton uses set_icon_name()
-        self.toolbar.sort_split_button.set_icon_name(icon_name)
+        """Show the destination layout on the view toggle (Nautilus-style)."""
+        sync = getattr(self.toolbar, "_sync_view_toggle_appearance", None)
+        if sync is not None:
+            sync()
 
     def _update_sort_direction_states(self) -> None:
         """Update the radio button states for sort direction."""

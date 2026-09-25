@@ -97,6 +97,14 @@ def test_icon_level_constants_are_importable():
         )
 
 
+def test_view_toggle_appearance_shows_destination_layout():
+    """Nautilus-style: the toggle advertises the other layout, not the current one."""
+    PaneToolbar = _import_pane_controls().PaneToolbar
+
+    assert PaneToolbar.view_toggle_appearance("list")[0] == "view-grid-symbolic"
+    assert PaneToolbar.view_toggle_appearance("grid")[0] == "view-list-symbolic"
+
+
 def test_pane_controls_has_no_unresolved_global_names():
     """Every LOAD_GLOBAL in pane_controls must resolve to a module attr or builtin.
 
