@@ -151,3 +151,154 @@ def test_recursive_small_file_upload_pipelines_over_rtt(tmp_path):
     # a small multiple of one window (mkdir + 6 phases).
     round_trips = elapsed / delay
     assert round_trips < 50, f"recursive upload took {round_trips:.1f} round trips ({elapsed:.2f}s)"
+
+
+def _run_over_delay(tmp_path, delay, *, direction, remote_path, local_path, policy):
+    process = subprocess.Popen(
+        [_SFTP_SERVER], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+    )
+    delayed = _DelayLine(process.stdout, delay)
+    client = OpenSSHSFTPClient(process.stdin, delayed.reader, on_close=process.terminate)
+    client.start()
+    try:
+        sftp_runtime, service_id, _ = _make_ready_sftp_service(_OWNER, client)
+        runtime = TransferRuntime(sftp_runtime)
+        started = time.monotonic()
+        prepared = runtime.prepare_start_transfer(
+            StartTransferRequest(
+                connection_id=ConnectionId("demo"),
+                sftp_service_id=service_id,
+                direction=direction,
+                remote_path=str(remote_path),
+                local_path=str(local_path),
+                conflict_policy=policy,
+                recursive=True,
+            ),
+            client_id=_OWNER,
+        )
+        runtime.run_transfer(prepared.id)
+        summary = _wait_for_terminal_state(runtime, prepared.id, timeout=60.0)
+        elapsed = time.monotonic() - started
+    finally:
+        client.close()
+        process.wait(timeout=5)
+        process.stdout.close()
+        delayed.reader.close()
+    return summary, elapsed / delay if delay else 0.0
+
+
+def _make_tree(root, *, dirs=10, files_per_dir=8):
+    payloads = {}
+    for d in range(dirs):
+        sub = root / f"d{d:02d}" / "inner"
+        sub.mkdir(parents=True)
+        for f in range(files_per_dir):
+            path = sub / f"f{f}.bin"
+            data = os.urandom(100 + f)
+            path.write_bytes(data)
+            os.utime(path, (1_600_000_000, 1_600_000_000 + f))
+            payloads[path.relative_to(root)] = data
+    return payloads
+
+
+def test_recursive_download_of_small_files_pipelines_over_rtt(tmp_path):
+    delay = 0.03
+    remote_root = tmp_path / "remote"
+    payloads = _make_tree(remote_root)
+    target = remote_root / "d00" / "inner" / "f0.bin"
+    (remote_root / "link.bin").symlink_to(target)
+    os.chmod(target, 0o640)
+    local_root = tmp_path / "local"
+
+    summary, round_trips = _run_over_delay(
+        tmp_path,
+        delay,
+        direction=TransferDirection.DOWNLOAD,
+        remote_path=remote_root,
+        local_path=local_root,
+        policy=TransferConflictPolicy.OVERWRITE,
+    )
+
+    assert summary.state is TransferState.COMPLETED, summary
+    for rel, data in payloads.items():
+        local = local_root / rel
+        assert local.read_bytes() == data
+        assert int(local.stat().st_mtime) == int((remote_root / rel).stat().st_mtime)
+    # A symlinked file is downloaded by content with its target's metadata.
+    link = local_root / "link.bin"
+    assert not link.is_symlink()
+    assert link.read_bytes() == target.read_bytes()
+    assert int(link.stat().st_mtime) == int(target.stat().st_mtime)
+    assert not [p for p in local_root.rglob(".sshpilot-tmp-*")]
+    # Serial: 21 dirs × 3 + 81 files × 5 ≈ 470 RTTs. Pipelined: a few per
+    # directory level plus a few per file window.
+    assert round_trips < 60, f"recursive download took {round_trips:.1f} round trips"
+
+
+def test_recursive_upload_creates_directories_per_level(tmp_path):
+    delay = 0.03
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    for d in range(30):
+        (local_root / f"d{d:02d}" / "a" / "b").mkdir(parents=True)
+    (local_root / "d00" / "a" / "b" / "f").write_bytes(b"x")
+    remote_root = tmp_path / "remote"
+
+    summary, round_trips = _run_over_delay(
+        tmp_path,
+        delay,
+        direction=TransferDirection.UPLOAD,
+        remote_path=remote_root,
+        local_path=local_root,
+        policy=TransferConflictPolicy.OVERWRITE,
+    )
+
+    assert summary.state is TransferState.COMPLETED, summary
+    for d in range(30):
+        assert (remote_root / f"d{d:02d}" / "a" / "b").is_dir()
+    assert (remote_root / "d00" / "a" / "b" / "f").read_bytes() == b"x"
+    # Serial: 91 dirs × 2 RTTs ≈ 180. Per level: 4 levels × 2 + one file.
+    assert round_trips < 40, f"directory creation took {round_trips:.1f} round trips"
+
+
+def test_recursive_upload_rejects_a_file_blocking_a_directory(tmp_path):
+    local_root = tmp_path / "local"
+    (local_root / "sub").mkdir(parents=True)
+    remote_root = tmp_path / "remote"
+    remote_root.mkdir()
+    (remote_root / "sub").write_bytes(b"not a dir")
+
+    summary, _ = _run_over_delay(
+        tmp_path,
+        0.0,
+        direction=TransferDirection.UPLOAD,
+        remote_path=remote_root,
+        local_path=local_root,
+        policy=TransferConflictPolicy.OVERWRITE,
+    )
+
+    assert summary.state is TransferState.FAILED, summary
+    assert (remote_root / "sub").read_bytes() == b"not a dir"
+
+
+def test_recursive_download_rename_policy_keeps_every_file(tmp_path):
+    remote_root = tmp_path / "remote"
+    remote_root.mkdir()
+    (remote_root / "a.txt").write_bytes(b"remote a")
+    (remote_root / "a (1).txt").write_bytes(b"remote a1")
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    (local_root / "a.txt").write_bytes(b"local a")
+
+    summary, _ = _run_over_delay(
+        tmp_path,
+        0.0,
+        direction=TransferDirection.DOWNLOAD,
+        remote_path=remote_root,
+        local_path=local_root,
+        policy=TransferConflictPolicy.RENAME,
+    )
+
+    assert summary.state is TransferState.COMPLETED, summary
+    contents = sorted(p.read_bytes() for p in local_root.iterdir())
+    assert contents == [b"local a", b"remote a", b"remote a1"]

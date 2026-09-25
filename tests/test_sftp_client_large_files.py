@@ -566,3 +566,92 @@ def test_stat_many_missing_on_error_tolerates_non_enoent_failures(client, tmp_pa
     attrs = client.stat_many([odd, str(present)], missing_on_error=True)
     assert attrs[0] is None
     assert attrs[1] is not None
+
+
+def test_listdir_many_matches_listdir_attr(client, tmp_path):
+    dirs = []
+    for index in range(5):
+        path = tmp_path / f"d{index}"
+        path.mkdir()
+        for child in range(index * 90):  # up to 360 names: several READDIRs
+            (path / f"c{child}").write_bytes(b"")
+        dirs.append(str(path))
+    listings = client.listdir_many(dirs)
+    for path, listing in zip(dirs, listings):
+        expected = sorted(a.filename for a in client.listdir_attr(path))
+        assert sorted(a.filename for a in listing) == expected
+    with pytest.raises(proto.SFTPError):
+        client.listdir_many([dirs[0], str(tmp_path / "missing")])
+    # Nothing leaked: a later listing still works.
+    assert len(client.listdir_many(dirs[1:2])[0]) == 90
+
+
+def test_listdir_many_over_a_slow_link_lists_a_level_together(tmp_path):
+    delay = 0.05
+    dirs = []
+    for index in range(40):
+        path = tmp_path / f"d{index}"
+        path.mkdir()
+        (path / "f").write_bytes(b"x")
+        dirs.append(str(path))
+    sftp, process, stdout = _start_client(delay)
+    try:
+        started = time.monotonic()
+        listings = sftp.listdir_many(dirs)
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert all([a.filename for a in listing] == ["f"] for listing in listings)
+    # OPENDIR, one READDIR round (names + EOF), CLOSE — not 3 per directory.
+    assert round_trips < 8, f"listing took {round_trips:.1f} round trips"
+
+
+def test_mkdir_many_reports_each_failure(client, tmp_path):
+    (tmp_path / "exists").mkdir()
+    errors = client.mkdir_many(
+        [str(tmp_path / "a"), str(tmp_path / "exists"), str(tmp_path / "b")]
+    )
+    assert errors[0] is None and errors[2] is None
+    assert isinstance(errors[1], proto.SFTPError)
+    assert (tmp_path / "a").is_dir() and (tmp_path / "b").is_dir()
+
+
+def test_read_small_files_handles_size_drift(client, tmp_path):
+    exact = tmp_path / "exact"
+    exact.write_bytes(os.urandom(500))
+    grew = tmp_path / "grew"
+    grew.write_bytes(os.urandom(client.max_read_length * 2 + 3))
+    shrank = tmp_path / "shrank"
+    shrank.write_bytes(b"abc")
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    items = [(str(exact), 500), (str(grew), 10), (str(shrank), 400), (str(empty), 0)]
+    contents = []
+    for start, window in client.read_small_files(items):
+        assert start == len(contents)
+        contents.extend(window)
+    assert contents == [p.read_bytes() for p in (exact, grew, shrank, empty)]
+    with pytest.raises(proto.SFTPError):
+        list(client.read_small_files([(str(exact), 500), (str(tmp_path / "gone"), 1)]))
+
+
+def test_read_small_files_stays_within_the_servers_handle_limit(tmp_path):
+    paths = []
+    for index in range(1500):
+        path = tmp_path / f"f{index:05d}"
+        path.write_bytes(str(index).encode())
+        paths.append(path)
+    process = subprocess.Popen(
+        ["/bin/sh", "-c", f'ulimit -n 256 && exec "{_SFTP_SERVER}"'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    sftp = OpenSSHSFTPClient(process.stdin, process.stdout, on_close=process.terminate)
+    sftp.start()
+    try:
+        contents = []
+        for _start, window in sftp.read_small_files([(str(p), p.stat().st_size) for p in paths]):
+            contents.extend(window)
+    finally:
+        _stop_client(sftp, process, process.stdout)
+    assert contents == [p.read_bytes() for p in paths]

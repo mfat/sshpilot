@@ -36,10 +36,14 @@ threads are removed; shutdown joins workers within the configured deadline.
 
 Concurrent workers share **one** READY SFTP service (one OpenSSH `sftp`
 subsystem session). Per-file throughput comes from pipelining on that session,
-not from opening extra SSH connections. Recursive directory uploads of small
-files also pipeline control-plane requests (STAT / OPEN / WRITE / FSETSTAT /
-CLOSE / rename) across a window of files so latency is paid per phase, not per
-file.
+not from opening extra SSH connections. Recursive directory transfers of small
+files also pipeline control-plane requests across a window of files (at most
+100, or a quarter of the server's advertised open-handle limit) so latency is
+paid per phase, not per file: uploads batch STAT / OPEN / WRITE / FSETSTAT /
+CLOSE / rename, downloads batch OPEN / READ / CLOSE (one READ of the listed
+size + 1 proves EOF). Directory trees are handled a depth level at a time:
+uploads STAT and MKDIR each level together, downloads list each level
+together.
 
 ## Pipelining
 

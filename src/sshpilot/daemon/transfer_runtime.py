@@ -825,7 +825,8 @@ class TransferRuntime:
         for root, dirs, names in os.walk(local_root):
             rel_dir = os.path.relpath(root, local_root)
             remote_dir = remote_root if rel_dir == "." else self._join_remote(remote_root, rel_dir)
-            directories.append(remote_dir)
+            depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
+            directories.append((depth, remote_dir))
             for name in names:
                 local_abs = os.path.join(root, name)
                 remote_path = self._join_remote(remote_dir, name)
@@ -839,9 +840,7 @@ class TransferRuntime:
         with self._lock:
             record.bytes_total = total
 
-        for remote_dir in directories:
-            self._check_cancel(record)
-            self._ensure_remote_dir(record, client, remote_dir)
+        self._ensure_remote_dirs(record, client, directories)
 
         completed = 0
         # Small files are RTT-bound when uploaded one-by-one (≈6 serial
@@ -1053,29 +1052,55 @@ class TransferRuntime:
         total = 0
         pending: List[tuple] = [(remote_root, local_root)]
 
-        def _walk(remote_dir: str, local_dir: str) -> None:
+        def _collect(remote_dir: str, local_dir: str, listing) -> None:
             nonlocal total
-            for entry in client.listdir_attr(remote_dir):
+            for entry in listing:
                 self._check_cancel(record)
                 child_remote = self._join_remote(remote_dir, entry.filename)
                 child_local = os.path.join(local_dir, entry.filename)
                 if entry.is_dir() and not entry.is_symlink():
                     os.makedirs(child_local, exist_ok=True)
-                    pending.append((child_remote, child_local))
+                    next_level.append((child_remote, child_local))
                 else:
                     size = entry.st_size or 0
-                    files.append((child_remote, child_local, size))
+                    files.append((child_remote, child_local, size, entry))
                     total += size
 
+        # Breadth-first, one directory level at a time: a pipelining client
+        # lists a whole level together instead of paying OPENDIR / READDIR /
+        # CLOSE round trips per directory.
+        list_many = getattr(client, "listdir_many", None)
         while pending:
             self._check_cancel(record)
-            remote_dir, local_dir = pending.pop(0)
-            _walk(remote_dir, local_dir)
+            next_level: List[tuple] = []
+            if callable(list_many):
+                listings = list_many([remote for remote, _local in pending])
+            else:
+                listings = [client.listdir_attr(remote) for remote, _local in pending]
+            for (remote_dir, local_dir), listing in zip(pending, listings):
+                _collect(remote_dir, local_dir, listing)
+            pending = next_level
         with self._lock:
             record.bytes_total = total
 
+        # Small regular files are RTT-bound one by one (OPEN / READ / READ-EOF
+        # / CLOSE each), so read them in pipelined windows. Symlinks keep the
+        # serial path: their listing attrs describe the link, not the target.
+        small: List[tuple] = []
+        large: List[tuple] = []
+        read_many = getattr(client, "read_small_files", None)
+        limit = client.small_read_limit() if callable(read_many) else -1
+        for entry in files:
+            attr = entry[3]
+            if not attr.is_symlink() and 0 <= entry[2] <= limit:
+                small.append(entry)
+            else:
+                large.append(entry)
+
         completed = 0
-        for remote_abs, local_abs, size in files:
+        if small:
+            completed = self._download_small_files_pipelined(record, client, small, completed)
+        for remote_abs, local_abs, size, attr in large:
             self._check_cancel(record)
             parent = os.path.dirname(local_abs) or "."
             os.makedirs(parent, exist_ok=True)
@@ -1084,7 +1109,14 @@ class TransferRuntime:
             except _TransferSkipped:
                 completed += size
                 continue
-            copied = self._copy_remote_to_local(record, client, remote_abs, destination, base=completed)
+            copied = self._copy_remote_to_local(
+                record,
+                client,
+                remote_abs,
+                destination,
+                base=completed,
+                attr=None if attr.is_symlink() else attr,
+            )
             completed += copied
             self._report_progress(record, completed)
         with self._lock:
@@ -1098,6 +1130,49 @@ class TransferRuntime:
             if cleaned:
                 result = result.rstrip("/") + "/" + cleaned
         return result
+
+    def _ensure_remote_dirs(
+        self, record: _TransferRecord, client, directories: List[tuple]
+    ) -> None:
+        """Create the ``(depth, remote_dir)`` tree, reusing existing dirs.
+
+        With a pipelining client each depth level is one STAT batch plus one
+        MKDIR batch (parents are always a level ahead of their children);
+        otherwise directories are checked one by one.
+        """
+        if not (
+            callable(getattr(client, "stat_many", None))
+            and callable(getattr(client, "mkdir_many", None))
+        ):
+            for _depth, remote_dir in directories:
+                self._check_cancel(record)
+                self._ensure_remote_dir(record, client, remote_dir)
+            return
+        levels: Dict[int, List[str]] = {}
+        for depth, remote_dir in directories:
+            levels.setdefault(depth, []).append(remote_dir)
+        for depth in sorted(levels):
+            self._check_cancel(record)
+            level = levels[depth]
+            missing: List[str] = []
+            for remote_dir, attr in zip(level, client.stat_many(level)):
+                if attr is None:
+                    missing.append(remote_dir)
+                elif not attr.is_dir():
+                    raise _sftp_transfer_error(
+                        SftpFailureCode.REMOTE_FILE_BLOCKS_DIRECTORY,
+                        ErrorCode.TRANSFER_CONFLICT,
+                        parameters={"remote_dir": remote_dir},
+                    )
+            if not missing:
+                continue
+            for remote_dir, exc in zip(missing, client.mkdir_many(missing)):
+                if exc is not None:
+                    raise _sftp_transfer_error(
+                        SftpFailureCode.REMOTE_DIRECTORY_CREATION_FAILED,
+                        ErrorCode.TRANSFER_IO_FAILED,
+                        parameters={"remote_dir": remote_dir},
+                    ) from exc
 
     def _ensure_remote_dir(self, record: _TransferRecord, client, remote_dir: str) -> None:
         """Create a remote directory tree for uploads, reusing existing dirs."""
@@ -1128,19 +1203,88 @@ class TransferRuntime:
 
     # -- per-file copy (atomic temp + rename) -------------------------------
 
-    def _copy_remote_to_local(
-        self, record: _TransferRecord, client, remote_src: str, local_dst: str, base: int = 0
+    def _download_small_files_pipelined(
+        self, record: _TransferRecord, client, files: List[tuple], base: int
     ) -> int:
+        """Read *files* ``(remote, local, size, attr)`` in pipelined windows
+        and commit each through a local temp, like :meth:`_copy_remote_to_local`."""
+        completed = base
+        # RENAME picks names by probing the disk, so it must run as each file
+        # is written (an earlier file may take the next free name); the other
+        # policies are decided up front so skipped files are never read.
+        rename = record.conflict_policy is TransferConflictPolicy.RENAME
+        wanted: List[tuple] = []
+        for remote_abs, local_abs, size, attr in files:
+            if rename:
+                wanted.append((remote_abs, local_abs, size, attr))
+                continue
+            try:
+                destination = self._resolve_local_destination(record, local_abs)
+            except _TransferSkipped:
+                completed += size
+                continue
+            wanted.append((remote_abs, destination, size, attr))
+        if completed != base:
+            self._report_progress(record, completed)
+
+        batches = client.read_small_files(
+            [(remote_abs, size) for remote_abs, _local, size, _attr in wanted],
+            check_cancel=lambda: self._check_cancel(record),
+        )
+        for start, contents in batches:
+            for offset, data in enumerate(contents):
+                self._check_cancel(record)
+                _remote, destination, _size, attr = wanted[start + offset]
+                if rename:
+                    destination = self._resolve_local_destination(record, destination)
+                self._write_downloaded_file(record, destination, data, attr)
+                completed += len(data)
+                self._report_progress(record, completed)
+        return completed
+
+    def _write_downloaded_file(
+        self, record: _TransferRecord, local_dst: str, data: bytes, attr
+    ) -> None:
         parent = os.path.dirname(local_dst) or "."
         os.makedirs(parent, exist_ok=True)
-        attr = None
+        fd, temp_path = self._mkstemp(parent)
+        with self._lock:
+            record.local_temp_path = temp_path
         try:
-            attr = client.stat(remote_src)
-            with self._lock:
-                if record.bytes_total is None:
-                    record.bytes_total = int(attr.st_size) if attr.st_size is not None else None
-        except Exception:
-            pass
+            with os.fdopen(fd, "wb") as tmp_file:
+                tmp_file.write(data)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            _apply_downloaded_metadata(temp_path, local_dst, attr)
+            os.replace(temp_path, local_dst)
+        except BaseException:
+            self._cleanup_local_temp(record)
+            raise
+        with self._lock:
+            record.local_temp_path = None
+
+    def _copy_remote_to_local(
+        self,
+        record: _TransferRecord,
+        client,
+        remote_src: str,
+        local_dst: str,
+        base: int = 0,
+        *,
+        attr=None,
+    ) -> int:
+        """Download through a local temp. *attr*, when the caller already has
+        the source's (non-symlink) attributes from a listing, saves a STAT."""
+        parent = os.path.dirname(local_dst) or "."
+        os.makedirs(parent, exist_ok=True)
+        if attr is None:
+            try:
+                attr = client.stat(remote_src)
+                with self._lock:
+                    if record.bytes_total is None:
+                        record.bytes_total = int(attr.st_size) if attr.st_size is not None else None
+            except Exception:
+                pass
         fd, temp_path = self._mkstemp(parent)
         with self._lock:
             record.local_temp_path = temp_path
