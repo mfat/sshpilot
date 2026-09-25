@@ -69,3 +69,24 @@ def test_complete_delete_progress_skips_when_dialog_already_cancelled(
     future.set_result(([], 1))
     window._complete_delete_progress(future)
     assert dialog._completions == []
+
+
+def test_delete_items_done_floors_fractional_recursive_progress():
+    """Partial tree walks must not count as finished selected items."""
+    done = SFTPProgressDialog._delete_items_done
+    # Mid-walk on the first of two directories → still 0 completed.
+    assert done(0.25, 2, 0) == 0
+    assert done(0.495, 2, 0) == 0
+    # First directory finished.
+    assert done(0.5, 2, 0) == 1
+    # Nested progress inside a 10-item batch must not round up early.
+    assert done(0.06, 10, 0) == 0
+    assert done(0.09, 10, 0) == 0
+    assert done(0.1, 10, 0) == 1
+    # Discrete file-chunk progress stays exact.
+    assert done(0.64, 100, 0) == 64
+    # Single recursive delete stays 0 until the operation reports 1.0.
+    assert done(0.99, 1, 0) == 0
+    assert done(1.0, 1, 0) == 1
+    # Never move the counter backwards.
+    assert done(0.1, 10, 3) == 3

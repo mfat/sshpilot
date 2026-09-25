@@ -479,10 +479,10 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 self.progress_bar.set_fraction(fraction)
                 self.progress_bar.set_text(f"{int(fraction * 100)}%")
                 if self.operation_type == "delete" and self.total_files > 0:
-                    done = min(
-                        self.total_files,
-                        max(self.files_completed, int(round(fraction * self.total_files))),
-                    )
+                    # Floor, not round: recursive deletes report a fractional
+                    # share of one selected item, and rounding that up makes
+                    # remaining items look finished mid-walk.
+                    done = self._delete_items_done(fraction, self.total_files, self.files_completed)
                     self.files_completed = done
                     self.counter_label.set_text(
                         ngettext(
@@ -534,6 +534,20 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         else:
             self.set_title(text)
     
+    @staticmethod
+    def _delete_items_done(fraction: float, total_files: int, files_completed: int) -> int:
+        """Map overall delete progress onto a completed-item counter.
+
+        ``remove_many`` folds recursive tree walks into ``(base + unit) / total``
+        so a half-finished directory is e.g. 0.25 of a 2-item batch. Rounding
+        that to the nearest item advances the counter early; floor keeps
+        ``done`` at fully completed selections only until the batch finishes.
+        """
+        if total_files <= 0:
+            return 0
+        unit = 0.0 if fraction < 0.0 else 1.0 if fraction > 1.0 else float(fraction)
+        return min(total_files, max(int(files_completed), int(unit * total_files)))
+
     def increment_file_count(self):
         """Increment completed file counter"""
         GLib.idle_add(self._increment_file_count_ui)
