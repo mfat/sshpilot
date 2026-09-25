@@ -132,27 +132,6 @@ def _coarse_progress(processed: int, pending: int) -> float:
     return min(0.99, processed / (processed + pending))
 
 
-def _nested_path_progress(
-    progress: Optional[Callable[[float], None]],
-    index: int,
-    total: int,
-) -> Optional[Callable[[float], None]]:
-    """Map one path's [0,1] tree walk into its slice of a multi-path batch.
-
-    Without this, each recursive walk restarts at 0 while the outer loop
-    reports path-level progress, so the overall fraction jumps backward
-    between paths. Single-path removes keep the original callback unchanged.
-    """
-    if progress is None or total <= 1:
-        return progress
-
-    def _report(fraction: float) -> None:
-        unit = 0.0 if fraction < 0.0 else 1.0 if fraction > 1.0 else fraction
-        progress((index + unit) / total)
-
-    return _report
-
-
 def _read_local_authorized_keys() -> tuple[str, bytes, int | None]:
     path = os.path.expanduser(_LOCAL_AUTHORIZED_KEYS_MARKER)
     try:
@@ -2224,18 +2203,7 @@ class SftpServiceRuntime:
                 _reject_protected_recursive_delete(path, home=home)
         try:
             if request.recursive:
-                total = len(paths)
-                for index, path in enumerate(paths):
-                    if cancel is not None and cancel():
-                        raise OperationCancelled()
-                    self._remove_recursive(
-                        client,
-                        path,
-                        progress=_nested_path_progress(progress, index, total),
-                        cancel=cancel,
-                    )
-                    if progress is not None and total > 1:
-                        progress(_coarse_progress(index + 1, total - (index + 1)))
+                self._remove_trees(client, paths, progress=progress, cancel=cancel)
                 return None
             if len(paths) == 1:
                 client.remove(paths[0])
@@ -2357,35 +2325,34 @@ class SftpServiceRuntime:
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
     ) -> None:
-        """Delete a remote tree with lstat so symlinks are never followed.
+        """Delete one remote tree (see :meth:`_remove_trees`)."""
+        self._remove_trees(client, (path,), progress=progress, cancel=cancel)
+
+    def _remove_trees(
+        self,
+        client,
+        paths: Sequence[str],
+        *,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """Delete remote trees with lstat so symlinks are never followed.
 
         A symlink is removed as a link (like ``rm -r``), never recursed into,
         which keeps cycles and escapes out of the tree impossible.
 
-        File and symlink children in a directory are removed with pipelined
-        ``FXP_REMOVE`` when the client supports ``remove_many``. The walk uses
-        an explicit stack, so a tree deeper than Python's recursion limit
-        still deletes, and progress covers the whole tree: it only moves
-        forward and reaches 1.0 once the root directory is gone.
+        All roots are walked together, one depth level at a time: a level's
+        directories are listed with ``listdir_many`` and its files removed
+        with pipelined ``FXP_REMOVE``, so a wide tree costs a few round trips
+        per level instead of per directory. Directories are then removed
+        deepest level first with pipelined ``FXP_RMDIR``. Progress only moves
+        forward and reaches 1.0 once every root is gone.
         """
-        try:
-            attr = client.lstat(path)
-        except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-            if _is_missing_path_error(exc):
-                return
-            raise
-        if not attr.is_dir() or attr.is_symlink():
-            client.remove(path)
-            return
-
-        # (directory, listed): each directory is pushed once to be listed and
-        # again, beneath its children, to be removed after they are gone.
-        stack: List[Tuple[str, bool]] = [(path, False)]
         # ``pending`` counts entries discovered but not yet deleted
         # (directories until their rmdir); it grows as directories are
         # listed, so the reported fraction is clamped to never step back.
         processed = 0
-        pending = 1
+        pending = len(paths)
         reported = 0.0
 
         def _advance(count: int) -> None:
@@ -2399,40 +2366,111 @@ class SftpServiceRuntime:
                 reported = fraction
                 progress(fraction)
 
-        while stack:
+        def _check_cancel() -> None:
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            current, listed = stack.pop()
-            if listed:
-                client.rmdir(current)
-                _advance(1)
-                continue
+
+        roots: List[str] = []
+        for path in paths:
+            _check_cancel()
             try:
-                entries = client.listdir_attr(current)
+                attr = client.lstat(path)
             except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-                # A subdirectory deleted concurrently is already gone.
-                if current == path or not _is_missing_path_error(exc):
-                    raise
+                if _is_missing_path_error(exc):
+                    _advance(1)
+                    continue
+                raise
+            if not attr.is_dir() or attr.is_symlink():
+                client.remove(path)
                 _advance(1)
-                continue
-            file_children: List[str] = []
-            dir_children: List[str] = []
-            for entry in entries:
-                child = current.rstrip("/") + "/" + entry.filename
-                if entry.is_dir() and not entry.is_symlink():
-                    dir_children.append(child)
-                else:
-                    file_children.append(child)
-            pending += len(entries)
-            stack.append((current, True))
-            # Reversed so subdirectories are still walked in listing order.
-            stack.extend((child, False) for child in reversed(dir_children))
-            for offset in range(0, len(file_children), SFTP_REMOVE_CHUNK_SIZE):
-                if cancel is not None and cancel():
-                    raise OperationCancelled()
-                chunk = file_children[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
-                self._remove_files(client, chunk)
+            else:
+                roots.append(path)
+
+        # A root inside another root is deleted by that root's walk; walking
+        # it twice would list it twice and rmdir it after it is gone.
+        root_set = set(roots)
+        nested = {
+            root
+            for root in root_set
+            if any(root != other and root.startswith(other.rstrip("/") + "/") for other in root_set)
+        }
+        root_set -= nested
+        unique_roots = [root for root in dict.fromkeys(roots) if root in root_set]
+        _advance(len(roots) - len(unique_roots))
+        roots = unique_roots
+        levels: List[List[str]] = []
+        level = roots
+        while level:
+            listed: List[str] = []
+            next_level: List[str] = []
+            for offset in range(0, len(level), SFTP_REMOVE_CHUNK_SIZE):
+                _check_cancel()
+                batch = level[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+                file_children: List[str] = []
+                for directory, entries in zip(batch, self._list_directories(client, batch, root_set)):
+                    if entries is None:
+                        # A subdirectory deleted concurrently is already gone.
+                        _advance(1)
+                        continue
+                    listed.append(directory)
+                    pending += len(entries)
+                    for entry in entries:
+                        child = directory.rstrip("/") + "/" + entry.filename
+                        if entry.is_dir() and not entry.is_symlink():
+                            next_level.append(child)
+                        else:
+                            file_children.append(child)
+                for start in range(0, len(file_children), SFTP_REMOVE_CHUNK_SIZE):
+                    _check_cancel()
+                    chunk = file_children[start : start + SFTP_REMOVE_CHUNK_SIZE]
+                    self._remove_files(client, chunk)
+                    _advance(len(chunk))
+            levels.append(listed)
+            level = next_level
+
+        for directories in reversed(levels):
+            for offset in range(0, len(directories), SFTP_REMOVE_CHUNK_SIZE):
+                _check_cancel()
+                chunk = directories[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+                self._remove_directories(client, chunk)
                 _advance(len(chunk))
+
+    @staticmethod
+    def _list_directories(
+        client, directories: List[str], roots: Set[str]
+    ) -> List[Optional[List[sftp_proto.SFTPAttributes]]]:
+        """List *directories*; ``None`` marks a non-root that has vanished.
+
+        ``listdir_many`` fails a whole batch on its first error, so a batch
+        that hits a missing directory is listed again one directory at a
+        time to keep deleting everything else.
+        """
+        listdir_many = getattr(client, "listdir_many", None)
+        if callable(listdir_many) and len(directories) > 1:
+            try:
+                return list(listdir_many(directories))
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if not _is_missing_path_error(exc):
+                    raise
+        results: List[Optional[List[sftp_proto.SFTPAttributes]]] = []
+        for directory in directories:
+            try:
+                results.append(client.listdir_attr(directory))
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if directory in roots or not _is_missing_path_error(exc):
+                    raise
+                results.append(None)
+        return results
+
+    @staticmethod
+    def _remove_directories(client, paths: List[str]) -> None:
+        """Remove empty directories, preferring a pipelined batch when available."""
+        rmdir_many = getattr(client, "rmdir_many", None)
+        if callable(rmdir_many):
+            rmdir_many(paths)
+            return
+        for path in paths:
+            client.rmdir(path)
 
     @staticmethod
     def _remove_files(client, paths: List[str]) -> None:

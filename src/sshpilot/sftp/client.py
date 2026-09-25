@@ -462,6 +462,22 @@ class OpenSSHSFTPClient:
         instead of raising. Directories must be removed with ``rmdir`` /
         recursive walk — ``FXP_REMOVE`` on a directory fails.
         """
+        return self._path_status_many(proto.FXP_REMOVE, paths, continue_on_error)
+
+    def rmdir_many(
+        self, paths: List[str], *, continue_on_error: bool = False
+    ) -> List[Tuple[str, BaseException]]:
+        """Remove many empty directories with pipelined ``FXP_RMDIR`` requests.
+
+        Same window, missing-path and error policy as :meth:`remove_many`. The
+        caller removes children before parents across calls; directories in
+        one call must not contain each other.
+        """
+        return self._path_status_many(proto.FXP_RMDIR, paths, continue_on_error)
+
+    def _path_status_many(
+        self, ptype: int, paths: List[str], continue_on_error: bool
+    ) -> List[Tuple[str, BaseException]]:
         if not paths:
             return []
         inflight: Deque[Tuple[str, _Pending]] = deque()
@@ -487,7 +503,7 @@ class OpenSSHSFTPClient:
         for path in paths:
             if fatal is not None:
                 break
-            inflight.append((path, self._send(proto.FXP_REMOVE, proto.pack_string(path))))
+            inflight.append((path, self._send(ptype, proto.pack_string(path))))
             if len(inflight) >= _REMOVE_PIPELINE_DEPTH:
                 _drain_one()
         while inflight:

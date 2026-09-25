@@ -272,6 +272,50 @@ def test_remove_many_pipelines_over_a_slow_link(tmp_path):
     assert round_trips < 5, f"remove_many took {round_trips:.1f} round trips"
 
 
+def test_rmdir_many_removes_empty_dirs_and_reports_the_rest(client, tmp_path):
+    empty = [tmp_path / f"empty-{index}" for index in range(3)]
+    for path in empty:
+        path.mkdir()
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "f").write_bytes(b"x")
+
+    failures = client.rmdir_many(
+        [str(empty[0]), str(full), str(tmp_path / "missing"), str(empty[1]), str(empty[2])],
+        continue_on_error=True,
+    )
+
+    # Missing is idempotent; only the non-empty directory fails.
+    assert [path for path, _ in failures] == [str(full)]
+    assert all(not path.exists() for path in empty)
+    assert full.exists()
+
+
+def test_tree_delete_over_a_slow_link_costs_rtts_per_level(tmp_path):
+    """A wide tree deletes in a few round trips per level, not per directory."""
+    from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
+
+    root = tmp_path / "tree"
+    root.mkdir()
+    for index in range(40):
+        child = root / f"d{index}"
+        child.mkdir()
+        (child / "f").write_bytes(b"x")
+        (child / "sub").mkdir()
+    delay = 0.05
+    sftp, process, stdout = _start_client(delay)
+    try:
+        runtime = SftpServiceRuntime.__new__(SftpServiceRuntime)
+        started = time.monotonic()
+        runtime._remove_recursive(sftp, str(root))
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    assert not root.exists()
+    # 81 directories took ~6 round trips each (~490) when walked one by one.
+    assert round_trips < 40, f"tree delete took {round_trips:.1f} round trips"
+
+
 def test_adaptive_pipeline_grows_on_high_rtt():
     """FileZilla's 500 ms target grows the window when one RTT is large."""
     pipeline = _AdaptivePipeline(32768)
