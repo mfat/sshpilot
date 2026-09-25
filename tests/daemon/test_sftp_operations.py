@@ -399,6 +399,9 @@ def test_copy_tree_operation_rejects_descendant_destination():
             client_id=OWNER,
         )
     assert raised.value.code is ErrorCode.VALIDATION_FAILED
+    assert raised.value.details["sftp_failure_code"] == (
+        "directory_cannot_be_copied_into_itself"
+    )
 
 
 def _root_symlink_client():

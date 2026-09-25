@@ -366,6 +366,9 @@ def test_remote_copy_rejects_existing_destination_and_self_directory():
             client_id=owner,
         )
     assert self_copy.value.code is ErrorCode.VALIDATION_FAILED
+    assert self_copy.value.details["sftp_failure_code"] == (
+        "directory_cannot_be_copied_into_itself"
+    )
 
 
 def test_remove_recursive_deletes_tree_files_then_dirs():

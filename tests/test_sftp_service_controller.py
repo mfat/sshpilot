@@ -613,6 +613,56 @@ def test_recursive_move_future_cancel_calls_operations_cancel():
     controller.cancel_operation.assert_called_once_with(OperationId("operation-move-1"))
 
 
+def test_recursive_copy_translates_copy_into_itself_rejection(monkeypatch):
+    from sshpilot.gtk import sftp_failure_messages
+
+    monkeypatch.setattr(sftp_failure_messages, "_", lambda value: f"translated:{value}")
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    rejection = SshPilotError(
+        ErrorCode.VALIDATION_FAILED,
+        "A directory cannot be copied into itself",
+        details={
+            "service_id": "svc-1",
+            "sftp_failure_code": "directory_cannot_be_copied_into_itself",
+        },
+    )
+
+    def _copy(source, destination, *, recursive, move, on_success=None,
+              on_error=None, on_operation_started=None, on_progress=None):
+        on_error(rejection)
+
+    controller.copy.side_effect = _copy
+    future = DaemonSftpManager.copy_remote(
+        manager, "/tree", "/tree/sub", recursive=True, move=False
+    )
+
+    error = future.exception()
+    assert error.code is ErrorCode.VALIDATION_FAILED
+    assert str(error) == "translated:A directory cannot be copied into itself"
+
+
+def test_recursive_copy_keeps_already_translated_operation_errors():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    translated = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "Zugriff verweigert\n\nEACCES")
+
+    def _copy(source, destination, *, recursive, move, on_success=None,
+              on_error=None, on_operation_started=None, on_progress=None):
+        on_error(translated)
+
+    controller.copy.side_effect = _copy
+    future = DaemonSftpManager.copy_remote(
+        manager, "/tree", "/dest", recursive=True, move=False
+    )
+
+    assert future.exception() is translated
+
+
 def test_count_pass_skips_when_closed():
     """A closed manager must not start further directory-count RPCs."""
     controller = Mock()

@@ -2026,7 +2026,12 @@ class SftpServiceRuntime:
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
                 SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
-                details={"service_id": record.service_id},
+                details={
+                    "service_id": record.service_id,
+                    SFTP_FAILURE_CODE_DETAIL: (
+                        SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF.value
+                    ),
+                },
             )
         client = record.handle.client
         copied = 0
@@ -2157,7 +2162,12 @@ class SftpServiceRuntime:
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
                 SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
-                details={"service_id": record.service_id},
+                details={
+                    "service_id": record.service_id,
+                    SFTP_FAILURE_CODE_DETAIL: (
+                        SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF.value
+                    ),
+                },
             )
         runtime = self._require_operation_lifecycle()
 

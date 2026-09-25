@@ -775,7 +775,10 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_error(exc) -> None:
             resolved = self._resolve_operation_exception(exc)
-            if not recursive:
+            # Recursive copies are operations the controller already
+            # translates, except a rejection before the operation starts
+            # (e.g. copying a folder into itself), which names its reason.
+            if not recursive or has_structured_sftp_failure(resolved):
                 resolved = _localized_direct_error(resolved)
             self._safe_set(future, exc=resolved)
 

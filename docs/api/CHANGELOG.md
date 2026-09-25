@@ -10,8 +10,9 @@ notes remain separate.
   new `SftpFailureCode.recursive_delete_protected_path`. Operation failures
   carry it as the structured `SftpFailure`; a direct RPC rejection names it in
   the error details under `sftp_failure_code`, so GTK translates it instead of
-  showing the daemon's English message. API implementation version is 0.69;
-  Protocol remains 1.0.
+  showing the daemon's English message. The recursive copy/move rejection
+  `directory_cannot_be_copied_into_itself` now names its reason under the
+  same key. API implementation version is 0.69; Protocol remains 1.0.
 - `update_identity_configuration` rejects socket changes unless the `custom`
   provider is selected (`VALIDATION_FAILED` /
   `custom_socket_not_applicable`). Non-custom providers such as `auto` keep
