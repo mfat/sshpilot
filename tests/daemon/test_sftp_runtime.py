@@ -502,6 +502,8 @@ def test_remove_recursive_refuses_root_and_home(path):
         )
 
     assert refused.value.code is ErrorCode.VALIDATION_FAILED
+    assert refused.value.details == {"sftp_failure_code": "recursive_delete_protected_path"}
+    assert refused.value.summary_failure.code is SftpFailureCode.RECURSIVE_DELETE_PROTECTED_PATH
     assert client.remove_calls == []
     assert "/home/alice" in client.directories
 

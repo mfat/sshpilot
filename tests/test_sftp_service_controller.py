@@ -473,6 +473,51 @@ def test_recursive_remove_can_stay_off_shared_progress_signal():
     manager.emit.assert_not_called()
 
 
+def test_recursive_remove_translates_protected_path_rejection(monkeypatch):
+    from sshpilot.gtk import sftp_failure_messages
+
+    monkeypatch.setattr(sftp_failure_messages, "_", lambda value: f"translated:{value}")
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    rejection = SshPilotError(
+        ErrorCode.VALIDATION_FAILED,
+        "Refusing to recursively delete the root or home directory",
+        details={"sftp_failure_code": "recursive_delete_protected_path"},
+    )
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        on_error(rejection)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove(manager, "/", recursive=True)
+
+    error = future.exception()
+    assert isinstance(error, SshPilotError)
+    assert error.code is ErrorCode.VALIDATION_FAILED
+    assert str(error) == "translated:The root folder and your home folder cannot be deleted"
+
+
+def test_recursive_remove_keeps_already_translated_operation_errors():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    # What the controller builds from a failed operation summary.
+    translated = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "Zugriff verweigert\n\nEACCES")
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        on_error(translated)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove(manager, "/tree", recursive=True)
+
+    assert future.exception() is translated
+
+
 def test_recursive_remove_future_cancel_calls_operations_cancel():
     """Cancelling a recursive-remove future must reach ``operations.cancel``
     -- this is the highest-risk case, since an uncancelled daemon delete

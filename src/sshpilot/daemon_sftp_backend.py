@@ -44,7 +44,7 @@ from .api.models.transfers import (
 )
 from .file_manager.common import FileEntry
 from .file_manager.exceptions import TransferCancelledException
-from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.sftp_error_messages import format_direct_sftp_error, has_structured_sftp_failure
 from .gtk.sftp_failure_messages import format_sftp_failure
 from .sftp_service_controller import (
     DaemonSftpServiceController,
@@ -820,13 +820,20 @@ class DaemonSftpManager(GObject.GObject):
                 if report_progress:
                     self.emit("progress", summary.progress or 0.0, progress_message)
 
+            def _on_recursive_error(exc) -> None:
+                resolved = self._resolve_operation_exception(exc)
+                # A rejection before the operation starts (e.g. the protected
+                # root/home guard) arrives as a direct error; operation
+                # failures are already translated by the controller.
+                if has_structured_sftp_failure(resolved):
+                    resolved = _localized_direct_error(resolved)
+                self._safe_set(future, exc=resolved)
+
             self._sftp_controller.remove(
                 target,
                 recursive=True,
                 on_success=lambda _result: self._safe_set(future, result=None),
-                on_error=lambda exc: self._safe_set(
-                    future, exc=self._resolve_operation_exception(exc)
-                ),
+                on_error=_on_recursive_error,
                 on_operation_started=on_operation_started,
                 on_progress=_on_progress,
             )

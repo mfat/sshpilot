@@ -86,7 +86,13 @@ class SftpFailureCode(str, Enum):
     NO_FREE_LOCAL_FILENAME = "no_free_local_filename"
     NO_FREE_REMOTE_FILENAME = "no_free_remote_filename"
     DAEMON_SHUTTING_DOWN = "daemon_shutting_down"
+    RECURSIVE_DELETE_PROTECTED_PATH = "recursive_delete_protected_path"
 
+
+# Error-details key naming the ``SftpFailureCode`` behind a direct (non
+# operation) SFTP RPC error, so frontends can translate reasons that the
+# generic ``ErrorCode`` alone cannot distinguish.
+SFTP_FAILURE_CODE_DETAIL = "sftp_failure_code"
 
 _SFTP_FAILURE_PARAMETER_KEYS = {
     code: frozenset() for code in SftpFailureCode

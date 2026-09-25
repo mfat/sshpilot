@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.68",
+  "api_implementation_version": "0.69",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1718,7 +1718,8 @@
       "remote_destination_exists",
       "no_free_local_filename",
       "no_free_remote_filename",
-      "daemon_shutting_down"
+      "daemon_shutting_down",
+      "recursive_delete_protected_path"
     ],
     "SftpFileAccess": [
       "normal",

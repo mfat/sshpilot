@@ -56,6 +56,7 @@ from sshpilot.api.models.common import (
     utc_now,
 )
 from sshpilot.api.models.operations import (
+    SFTP_FAILURE_CODE_DETAIL,
     AttachSftpRequest,
     CloseSftpRequest,
     ListDirectoryRequest,
@@ -716,10 +717,15 @@ def _reject_protected_recursive_delete(path: str, *, home: Optional[str]) -> Non
         or (bool(home) and normalized == posixpath.normpath(home))
     )
     if protected:
-        raise SshPilotError(
+        failure_code = SftpFailureCode.RECURSIVE_DELETE_PROTECTED_PATH
+        raise _SftpSummaryError(
             ErrorCode.VALIDATION_FAILED,
             "Refusing to recursively delete the root or home directory",
-            details={"path": path},
+            failure_code,
+            # The operation path carries the structured failure itself; a
+            # direct RPC only has error details, so name the reason there
+            # too for the frontend to translate.
+            details={SFTP_FAILURE_CODE_DETAIL: failure_code.value},
         )
 
 

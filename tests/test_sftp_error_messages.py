@@ -93,3 +93,45 @@ def test_specific_diagnostic_metadata_is_strict():
 
     with pytest.raises(ValueError, match="classification is invalid"):
         messages.format_direct_sftp_error(error)
+
+
+def test_direct_error_naming_a_failure_code_uses_its_frontend_msgid(monkeypatch):
+    from sshpilot.gtk import sftp_failure_messages
+
+    calls = []
+    monkeypatch.setattr(messages, "_", lambda value: pytest.fail("generic template used"))
+    monkeypatch.setattr(
+        sftp_failure_messages,
+        "_",
+        lambda value: calls.append(value) or f"translated:{value}",
+    )
+    error = SshPilotError(
+        ErrorCode.VALIDATION_FAILED,
+        "Refusing to recursively delete the root or home directory",
+        details={"sftp_failure_code": "recursive_delete_protected_path"},
+    )
+
+    assert messages.has_structured_sftp_failure(error)
+    assert messages.format_direct_sftp_error(error) == (
+        "translated:The root folder and your home folder cannot be deleted"
+    )
+    assert calls == ["The root folder and your home folder cannot be deleted"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "reason_from_a_newer_daemon",  # unknown to this frontend
+        "remote_destination_exists",  # needs a parameter details cannot carry
+        7,
+    ),
+)
+def test_unusable_failure_code_detail_falls_back_to_generic_presentation(value):
+    error = SshPilotError(
+        ErrorCode.VALIDATION_FAILED,
+        "daemon message",
+        details={"sftp_failure_code": value},
+    )
+
+    assert not messages.has_structured_sftp_failure(error)
+    assert messages.format_direct_sftp_error(error) == "daemon message"

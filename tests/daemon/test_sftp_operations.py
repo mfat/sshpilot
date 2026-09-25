@@ -337,7 +337,22 @@ def test_remove_tree_operation_refuses_root_before_starting():
             SftpPathRequest(summary.id, "/", recursive=True), client_id=OWNER
         )
     assert refused.value.code is ErrorCode.VALIDATION_FAILED
+    assert refused.value.details == {"sftp_failure_code": "recursive_delete_protected_path"}
     assert fs.files
+
+
+def test_remove_tree_operation_reports_protected_home_as_structured_failure():
+    fs = _tree_client()
+    fs.realpath = lambda path: "/tree" if path == "." else path
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_remove(
+        SftpPathRequest(summary.id, "/tree", recursive=True), client_id=OWNER
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.RECURSIVE_DELETE_PROTECTED_PATH
+    assert done.failure.error_code is ErrorCode.VALIDATION_FAILED
+    assert "/tree/a.txt" in fs.files
 
 
 def test_copy_tree_operation_copies_recursively():
