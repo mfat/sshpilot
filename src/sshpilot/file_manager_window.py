@@ -374,13 +374,23 @@ class FileManagerWindow(Adw.Window):
         self._clipboard_operation: Optional[str] = None
 
 
-        # Schedule initial local home directory load on the idle loop so widget
+        # Schedule initial local directory load on the idle loop so widget
         # instantiation in __init__ returns immediately without blocking on disk I/O.
+        #
+        # Under Flatpak, sandbox ``~`` is not a host grant — loading it after a
+        # portal restore (or instead of one) empties the local pane and forces
+        # the user to re-grant every time the file manager opens. Resolve the
+        # start path once via ``_initial_local_path`` (portal grant or host ``~``).
         def _deferred_load_local():
             try:
-                local_home = os.path.expanduser("~")
-                self._load_local(local_home)
-                self._left_pane.push_history(local_home)
+                local_path = self._initial_local_path()
+                if local_path:
+                    self._load_local(local_path)
+                    self._left_pane.push_history(local_path)
+                elif is_flatpak():
+                    logger.info(
+                        "No Flatpak folder grant yet; local pane awaits Request Access"
+                    )
             except Exception as exc:
                 self._left_pane.show_toast(_("Failed to load local home: {error}").format(error=exc))
             return False
@@ -392,10 +402,6 @@ class FileManagerWindow(Adw.Window):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
             pane.set_can_paste(False)
-
-        # In Flatpak, schedule restoration after initialization is complete
-        if is_flatpak():
-            GLib.idle_add(self._restore_flatpak_folder)
 
         # Connect close-request and destroy handlers to clean up resources
         self.connect("close-request", self._on_close_request)
@@ -1195,22 +1201,37 @@ class FileManagerWindow(Adw.Window):
             
             manager.listdir(path)
 
+    @staticmethod
+    def _initial_local_path() -> Optional[str]:
+        """Return the path the local pane should open on first load.
+
+        Outside Flatpak this is the real home directory. Inside the sandbox,
+        ``~`` is not a usable host folder — only a previously granted document-
+        portal path is. Prefer a grant of home, else the most recent grant.
+        Returns ``None`` when Flatpak has no usable grant yet (Request Access).
+        """
+        if not is_flatpak():
+            return os.path.expanduser("~")
+        home = os.path.expanduser("~")
+        portal_result = _load_grant_for_host(home) or _load_first_doc_path()
+        if not portal_result:
+            return None
+        portal_path, doc_id, _entry = portal_result
+        logger.debug("Using Flatpak grant for local pane: %s (doc_id=%s)", portal_path, doc_id)
+        return portal_path
+
     def _restore_flatpak_folder(self) -> bool:
         """Open the local pane on a granted folder after window init.
 
-        Prefer the user's home folder when it has been granted (the sandbox can't
-        reach ``~`` otherwise); fall back to the most recently granted folder.
+        Kept as an idle-callback-compatible entry point for callers that still
+        schedule restoration separately; new init uses ``_initial_local_path``.
         """
         try:
-            home = os.path.expanduser("~")
-            portal_result = _load_grant_for_host(home) or _load_first_doc_path()
-            if portal_result:
-                portal_path, doc_id, entry = portal_result
-                logger.debug(f"Scheduled restoration of: {portal_path} (doc_id={doc_id})")
-                # Directly call _load_local instead of emitting signals
+            portal_path = self._initial_local_path()
+            if portal_path and is_flatpak():
                 self._load_local(portal_path)
                 self._left_pane.push_history(portal_path)
-                logger.info(f"Successfully restored access to folder: {portal_path}")
+                logger.info("Successfully restored access to folder: %s", portal_path)
         except Exception as e:
             logger.warning(f"Failed to restore Flatpak folder access: {e}")
         return False  # Don't repeat this idle callback
