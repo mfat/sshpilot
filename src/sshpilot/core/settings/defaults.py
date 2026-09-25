@@ -45,6 +45,11 @@ def get_default_config() -> Dict[str, Any]:
             'wheel_scroll_lines': DEFAULT_WHEEL_SCROLL_LINES,
             'encoding': 'UTF-8',
             'macos_option_key_passthrough': False,
+            # OSC 52 clipboard writes from remote programs: 'never' | 'ask'
+            # | 'always' (see terminal_osc52), capped at this many KiB of
+            # base64 per copy.
+            'osc52_policy': 'ask',
+            'osc52_max_kib': 1024,
         },
         'secrets': {
             # Secret storage backend: 'auto' (platform default), 'libsecret',
