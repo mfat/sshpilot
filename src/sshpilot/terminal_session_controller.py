@@ -214,6 +214,7 @@ class DaemonTerminalSessionController:
         self._restoring_existing = False
         self._attach_from_sequence = 0
         self._replay_catchup_target: Optional[int] = None
+        self._delivering_replay = False
         self._stream_generation = 0
         self._recovery_catchup_target: Optional[int] = None
         self._recovery_replay_pending = None
@@ -234,6 +235,11 @@ class DaemonTerminalSessionController:
     def state(self) -> TerminalSessionState:
         """Current session state."""
         return self._tab_state.state
+
+    @property
+    def delivering_replay(self) -> bool:
+        """Whether the output callback now running carries replayed bytes."""
+        return self._delivering_replay
 
     @property
     def session_running(self) -> bool:
@@ -1106,7 +1112,13 @@ class DaemonTerminalSessionController:
             return
 
         if self._on_output:
-            self._on_output(output.data)
+            # Lets the output callback tell a replay of old bytes (reattach,
+            # recovery) from live output; see TerminalWidget OSC 52 handling.
+            self._delivering_replay = bool(getattr(output, "replay", False))
+            try:
+                self._on_output(output.data)
+            finally:
+                self._delivering_replay = False
 
         # Advance only after the VTE-facing callback returned successfully.
         # This remains the authoritative replay start for this presentation.
