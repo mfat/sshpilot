@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
 
     steps:
@@ -93,7 +93,7 @@ jobs:
                   1,
               )
 
-          # Build a complete, matched FIDO-capable OpenSSH stack. The GNOME 50
+          # Build a complete, matched FIDO-capable OpenSSH stack. The GNOME
           # runtime currently provides ssh/ssh-keygen but not ssh-sk-helper.
           # Bundle libcbor + libfido2 first, then OpenSSH 10.4p1. OpenSSH finds
           # libfido2 at configure time and builds /app/libexec/ssh-sk-helper.
@@ -113,7 +113,7 @@ jobs:
             - name: libfido2
               buildsystem: simple
               build-commands:
-                # GNOME 50's Flatpak toolchain already injects
+                # The Flatpak toolchain already injects
                 # _FORTIFY_SOURCE=3. libfido2 1.17.0 unconditionally adds
                 # _FORTIFY_SOURCE=2 for Release builds and compiles with
                 # -Werror, making the harmless redefinition fatal. Remove only
