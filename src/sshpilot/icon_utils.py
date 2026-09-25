@@ -40,6 +40,7 @@ _ICON_RESOURCE_MAP = {
     'folder-new-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-new-symbolic.svg',
     'folder-remote-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-remote-symbolic.svg',
     'go-previous-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-previous-symbolic.svg',
+    'go-next-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-next-symbolic.svg',
     'box-left-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/box-left-symbolic.svg',
     'box-right-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/box-right-symbolic.svg',
     'go-up-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-up-symbolic.svg',

@@ -33,7 +33,7 @@ from sshpilot.api.models.connections import (
     store_plugin_secret_request_from_wire,
 )
 from sshpilot.api.models.interactions import InteractionType, PassphrasePrompt
-from sshpilot.api.models.operations import OperationSummary, SftpFileAccess
+from sshpilot.api.models.operations import OperationSummary, SftpFileAccess, SftpRemoveResult
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
     agent_key_list_to_wire,
@@ -133,8 +133,10 @@ from sshpilot.api.transport.codec import (
     sftp_create_file_result_to_wire,
     sftp_directory_size_request_from_wire,
     sftp_path_request_from_wire,
+    sftp_filesystem_usage_to_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
+    sftp_remove_result_to_wire,
     sftp_replace_file_request_from_wire,
     sftp_replace_file_result_to_wire,
     sftp_rename_request_from_wire,
@@ -281,6 +283,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.directory_size": Capability.SFTP_READ,
     "sftp.lstat": Capability.SFTP_METADATA,
     "sftp.realpath": Capability.SFTP_METADATA,
+    "sftp.filesystem_usage": Capability.SFTP_METADATA,
     "sftp.readlink": Capability.SFTP_METADATA,
     "sftp.read_file": Capability.SFTP_READ,
     "sftp.replace_file": Capability.SFTP_MUTATE,
@@ -506,6 +509,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.directory_size",
         "sftp.lstat",
         "sftp.realpath",
+        "sftp.filesystem_usage",
         "sftp.readlink",
         "sftp.read_file",
         "sftp.replace_file",
@@ -791,6 +795,7 @@ class RequestDispatcher:
             "sftp.directory_size": self._handle_sftp_directory_size,
             "sftp.lstat": self._handle_sftp_lstat,
             "sftp.realpath": self._handle_sftp_realpath,
+            "sftp.filesystem_usage": self._handle_sftp_filesystem_usage,
             "sftp.readlink": self._handle_sftp_readlink,
             "sftp.read_file": self._handle_sftp_read_file,
             "sftp.replace_file": self._handle_sftp_replace_file,
@@ -2464,6 +2469,22 @@ class RequestDispatcher:
             on_rejected=lambda: None,
         )
 
+    def _handle_sftp_filesystem_usage(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: sftp_filesystem_usage_to_wire(
+                runtime.filesystem_usage(path_request, client_id=client_id)
+            ),
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
     def _handle_sftp_readlink(
         self,
         request: RequestEnvelope,
@@ -2595,6 +2616,24 @@ class RequestDispatcher:
                 operation=lambda: operation_summary_to_wire(
                     runtime.start_remove(path_request, client_id=client_id)
                 ),
+                command_key=path_request.service_id,
+                on_rejected=lambda: None,
+            )
+        if path_request.paths:
+            # Sync multi-path remove: no operation id, so no cancel/progress
+            # on the wire. Presentation callers chunk at
+            # SFTP_REMOVE_CHUNK_SIZE and cancel between RPCs.
+            def _multi_remove():
+                result = runtime.remove(path_request, client_id=client_id)
+                if type(result) is not SftpRemoveResult:
+                    raise SshPilotError(
+                        ErrorCode.INTERNAL_ERROR,
+                        "Multi-path SFTP remove must return a result",
+                    )
+                return sftp_remove_result_to_wire(result)
+
+            return DeferredResult(
+                operation=_multi_remove,
                 command_key=path_request.service_id,
                 on_rejected=lambda: None,
             )

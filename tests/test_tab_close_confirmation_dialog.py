@@ -372,7 +372,7 @@ def test_split_view_close_confirmation_uses_in_window_alert_dialog(fake_gtk, mon
     assert isinstance(dialog, fake_gtk.AlertDialog)
     assert_not_message_dialog_created()
     assert dialog.heading == "Close split view?"
-    assert "disconnect 2 terminal session(s)" in dialog.body
+    assert "disconnect 2 terminal sessions" in dialog.body
     assert dialog.presented_parent is window
     assert "transient_for" not in dialog.kwargs
     assert dialog.extra_child is not None

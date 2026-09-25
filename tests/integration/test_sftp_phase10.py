@@ -126,6 +126,9 @@ def test_sftp_filesystem_ops_and_unusual_names(stack):
     assert lstat.file_type is RemoteFileType.SYMLINK
     real = client.sftp_realpath(SftpPathRequest(service_id=sid, path=renamed))
     assert real.endswith("renamed")
+    usage = client.sftp_filesystem_usage(SftpPathRequest(service_id=sid, path=renamed))
+    assert usage.path.endswith("renamed")
+    assert 0 < usage.available_bytes <= usage.free_bytes <= usage.total_bytes
 
     client.sftp_rmdir(SftpPathRequest(service_id=sid, path=renamed))
     client.sftp_remove(SftpPathRequest(service_id=sid, path=link))

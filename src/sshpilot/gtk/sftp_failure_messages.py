@@ -102,6 +102,9 @@ _SFTP_FAILURE_TEMPLATES = {
         "No free remote filename could be found"
     ),
     SftpFailureCode.DAEMON_SHUTTING_DOWN: N_("The daemon is shutting down"),
+    SftpFailureCode.RECURSIVE_DELETE_PROTECTED_PATH: N_(
+        "The root folder and your home folder cannot be deleted"
+    ),
 }
 
 

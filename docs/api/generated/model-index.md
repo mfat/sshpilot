@@ -4849,6 +4849,37 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpFilesystemUsage -->
+## `SftpFilesystemUsage`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Size of the remote filesystem holding ``path``.
+
+``available_bytes`` is what an unprivileged user can still write;
+``free_bytes`` also counts blocks reserved for root.
+
+**Related methods:** `sftp_filesystem_usage`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `path` | `str` | Yes | — | No |
+| `total_bytes` | `int` | Yes | — | No |
+| `free_bytes` | `int` | Yes | — | No |
+| `available_bytes` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "available_bytes": {},
+  "free_bytes": {},
+  "path": "/remote/example",
+  "total_bytes": {}
+}
+```
+
 <!-- api-model: SftpPathRequest -->
 ## `SftpPathRequest`
 
@@ -4856,7 +4887,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpPathRequest` record.
 
-**Related methods:** `sftp_lstat`, `sftp_mkdir`, `sftp_readlink`, `sftp_realpath`, `sftp_remove`, `sftp_rmdir`, `sftp_stat`
+**Related methods:** `sftp_filesystem_usage`, `sftp_lstat`, `sftp_mkdir`, `sftp_readlink`, `sftp_realpath`, `sftp_remove`, `sftp_rmdir`, `sftp_stat`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -4864,12 +4895,14 @@ Synthetic representation:
 | `service_id` | `SftpServiceId` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
 | `recursive` | `bool` | No | `false` | No |
+| `paths` | `Tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
 ```json
 {
   "path": "/remote/example",
+  "paths": [],
   "recursive": false,
   "service_id": {}
 }
@@ -4934,6 +4967,56 @@ Synthetic representation:
   "revision": {},
   "size": {},
   "target": {}
+}
+```
+
+<!-- api-model: SftpRemoveFailure -->
+## `SftpRemoveFailure`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One path that failed inside a multi-path ``sftp.remove``.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `path` | `str` | Yes | — | No |
+| `message` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "message": "Example request",
+  "path": "/remote/example"
+}
+```
+
+<!-- api-model: SftpRemoveResult -->
+## `SftpRemoveResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Result of a non-recursive multi-path ``sftp.remove``.
+
+Single-path non-recursive remove still returns ``null`` on the wire.
+Multi-path remove returns this so callers can keep going after a per-path
+failure without N round trips.
+
+**Related methods:** `sftp_remove`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `failures` | `Tuple[SftpRemoveFailure, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "failures": []
 }
 ```
 

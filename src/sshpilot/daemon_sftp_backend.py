@@ -24,16 +24,17 @@ import logging
 import os
 import pathlib
 import threading
+import weakref
 from concurrent.futures import Future
 from gettext import gettext as _
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from gi.repository import GObject
 
 from .api.errors import ErrorCode, SshPilotError
 from .api.capabilities import Capability
 from .api.models.common import SessionId, SftpServiceId
-from .api.models.operations import RemoteFileType
+from .api.models.operations import RemoteFileType, SFTP_REMOVE_CHUNK_SIZE, SftpRemoveResult
 from .api.models.transfers import (
     StartTransferRequest,
     TransferConflictPolicy,
@@ -43,7 +44,7 @@ from .api.models.transfers import (
 )
 from .file_manager.common import FileEntry
 from .file_manager.exceptions import TransferCancelledException
-from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.sftp_error_messages import format_direct_sftp_error, has_structured_sftp_failure
 from .gtk.sftp_failure_messages import format_sftp_failure
 from .sftp_service_controller import (
     DaemonSftpServiceController,
@@ -149,7 +150,9 @@ class DaemonSftpManager(GObject.GObject):
         "connection-error": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "authentication-required": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "progress": (GObject.SignalFlags.RUN_FIRST, None, (float, str)),
-        "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
+        # (bytes_done, bytes_total, progress_key) — key attributes concurrent
+        # transfers so the file manager can aggregate a multi-file batch.
+        "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object, object)),
         "operation-error": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "directory-loaded": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
         "directory-counts": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
@@ -211,6 +214,9 @@ class DaemonSftpManager(GObject.GObject):
             on_error=self._on_service_error,
         )
         self._transfers = TransferServiceController(daemon_client, bridge)
+        # Editor file services handed out by make_file_editor_service; they
+        # hold the daemon client too and must follow a transport replacement.
+        self._editor_services: "weakref.WeakSet[Any]" = weakref.WeakSet()
 
     # -- compatibility aliases (mirrors OpenSSHSFTPManager) ---------------
     @property
@@ -253,6 +259,43 @@ class DaemonSftpManager(GObject.GObject):
             )
         self._sftp_controller.open(self._connection_id)
 
+    def rebind_client(self, client: Any, bridge: Any = None) -> None:
+        """Move this backend, and every editor it opened, to a new transport.
+
+        Called when the app replaced a lost daemon connection. The daemon SFTP
+        service survives the old connection, so it is re-attached (reclaiming
+        ownership) rather than reopened: no re-authentication, and open panes
+        and editors keep working.
+        """
+        if client is None:
+            raise ValueError("a daemon client is required")
+        if self._closed or client is self._client:
+            return
+        self._client = client
+        if bridge is not None:
+            self._bridge = bridge
+        if self._interaction_dialogs is not None:
+            self._interaction_dialogs.close()
+            self._interaction_dialogs = None
+            if self._parent_widget is not None:
+                from .daemon_interaction_dialogs import DaemonInteractionDialogs
+
+                self._interaction_dialogs = DaemonInteractionDialogs(
+                    client, self._bridge, self._parent_widget
+                )
+                service_id = self._sftp_controller.service_id
+                if service_id is not None:
+                    self._interaction_dialogs.set_session(SessionId(str(service_id)))
+        self._transfers.rebind_client(client, self._bridge)
+        self._sftp_controller.rebind_client(client, self._bridge)
+        for service in list(self._editor_services):
+            rebind = getattr(service, "rebind_client", None)
+            if callable(rebind):
+                try:
+                    rebind(client)
+                except Exception:
+                    logger.debug("Failed to rebind editor file service", exc_info=True)
+
     def _on_service_state_changed(self, summary) -> None:
         service_id = self._sftp_controller.service_id
         _register_service_user(service_id, id(self))
@@ -290,7 +333,7 @@ class DaemonSftpManager(GObject.GObject):
         # per-command failure. A connection-lost SFTP status used to arrive
         # here with the canned "The SFTP command failed" text.
         if message == "The SFTP command failed":
-            message = "The SFTP connection was lost"
+            message = _("The SFTP connection was lost")
         logger.warning(
             "Daemon SFTP service error for %s@%s: %s",
             self._username,
@@ -383,12 +426,14 @@ class DaemonSftpManager(GObject.GObject):
                 privileged = capabilities().supports(Capability.SFTP_PRIVILEGED_FILE)
             except Exception:  # noqa: BLE001 - capability inspection must not block editing
                 logger.debug("Failed to inspect privileged-file capability", exc_info=True)
-        return DaemonRemoteFileService(
+        service = DaemonRemoteFileService(
             self._client,
             service_id,
             path,
             privileged_supported=privileged,
         )
+        self._editor_services.add(service)
+        return service
 
     @staticmethod
     def _format_size(num_bytes: float) -> str:
@@ -638,6 +683,24 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
+    def filesystem_usage(self, path: str) -> Future:
+        """Future resolving to the
+        :class:`~sshpilot.api.models.operations.SftpFilesystemUsage` of the
+        remote filesystem holding ``path``."""
+        future: Future = Future()
+        target = self._expand(path)
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+        self._sftp_controller.filesystem_usage(
+            target,
+            on_success=lambda usage: self._safe_set(future, result=usage),
+            on_error=lambda exc: self._safe_set(future, exc=_localized_direct_error(exc)),
+        )
+        return future
+
     def rename(self, source: str, target: str) -> Future:
         future: Future = Future()
         source = self._expand(source)
@@ -712,7 +775,10 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_error(exc) -> None:
             resolved = self._resolve_operation_exception(exc)
-            if not recursive:
+            # Recursive copies are operations the controller already
+            # translates, except a rejection before the operation starts
+            # (e.g. copying a folder into itself), which names its reason.
+            if not recursive or has_structured_sftp_failure(resolved):
                 resolved = _localized_direct_error(resolved)
             self._safe_set(future, exc=resolved)
 
@@ -728,7 +794,19 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
-    def remove(self, path: str) -> Future:
+    def remove(
+        self,
+        path: str,
+        *,
+        recursive: bool = False,
+        report_progress: bool = True,
+    ) -> Future:
+        """Delete *path*; a recursive delete runs as a cancellable operation.
+
+        ``report_progress=False`` keeps a background delete (e.g. the source
+        cleanup after a cut → paste) off the shared ``progress`` signal, which
+        would otherwise repaint whatever transfer dialog is open.
+        """
         future: Future = Future()
         target = self._expand(path)
         try:
@@ -737,28 +815,227 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
-        future, on_operation_started = self._operation_cancellable(future)
-        progress_message = _("Deleting…")
+        if recursive:
+            future, on_operation_started = self._operation_cancellable(future)
+            progress_message = _("Deleting…")
 
-        def _on_progress(summary) -> None:
-            self.emit("progress", summary.progress or 0.0, progress_message)
+            def _on_progress(summary) -> None:
+                if report_progress:
+                    self.emit("progress", summary.progress or 0.0, progress_message)
 
+            def _on_recursive_error(exc) -> None:
+                resolved = self._resolve_operation_exception(exc)
+                # A rejection before the operation starts (e.g. the protected
+                # root/home guard) arrives as a direct error; operation
+                # failures are already translated by the controller.
+                if has_structured_sftp_failure(resolved):
+                    resolved = _localized_direct_error(resolved)
+                self._safe_set(future, exc=resolved)
+
+            self._sftp_controller.remove(
+                target,
+                recursive=True,
+                on_success=lambda _result: self._safe_set(future, result=None),
+                on_error=_on_recursive_error,
+                on_operation_started=on_operation_started,
+                on_progress=_on_progress,
+            )
+            return future
+
+        # Non-recursive file/symlink delete: sync RPC, not cancellable via
+        # operations.cancel (no operation id).
         self._sftp_controller.remove(
             target,
-            recursive=True,
+            recursive=False,
             on_success=lambda _result: self._safe_set(future, result=None),
             on_error=lambda exc: self._safe_set(
                 future, exc=self._resolve_operation_exception(exc)
             ),
-            on_operation_started=on_operation_started,
-            on_progress=_on_progress,
         )
         return future
 
+    def remove_many(self, items: Sequence[tuple[str, bool]]) -> Future:
+        """Delete several remote paths with a single ``Future``.
+
+        Each item is ``(path, recursive)``. Non-recursive paths are deleted in
+        pipelined multi-path ``sftp.remove`` RPCs of at most
+        ``SFTP_REMOVE_CHUNK_SIZE`` paths so cancellation and progress stay
+        responsive; directories still use the ``SFTP_REMOVE_TREE`` operation
+        lifecycle, chained after the file batches.
+
+        The future resolves to ``(failures, completed)`` where ``failures`` is
+        a list of ``(path, exception)`` and ``completed`` is how many paths
+        finished successfully. Cancelling stops further work after the
+        in-flight delete; already-deleted paths stay deleted and the future
+        still resolves with the partial result (it does not raise).
+        """
+        future: Future = Future()
+        expanded = [(self._expand(path), recursive, path) for path, recursive in items]
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+        if not expanded:
+            future.set_result(([], 0))
+            return future
+
+        file_items = [(expanded_path, original) for expanded_path, recursive, original in expanded if not recursive]
+        dir_items = [(expanded_path, original) for expanded_path, recursive, original in expanded if recursive]
+        failures: List[tuple[str, BaseException]] = []
+        state: Dict[str, Any] = {
+            "file_offset": 0,
+            "dir_index": 0,
+            "completed": 0,
+            "operation_id": None,
+            "cancel_requested": False,
+        }
+        progress_message = _("Deleting…")
+        total = len(expanded)
+        # Same window the daemon uses for its cancel/progress checkpoints.
+        file_chunk = SFTP_REMOVE_CHUNK_SIZE
+
+        def cancel_with_cleanup() -> bool:
+            if future.done():
+                return False
+            state["cancel_requested"] = True
+            if state["operation_id"] is not None:
+                self._sftp_controller.cancel_operation(state["operation_id"])
+            return True
+
+        future.cancel = cancel_with_cleanup  # type: ignore[method-assign]
+
+        def _finish() -> None:
+            self.emit("progress", 1.0, progress_message)
+            self._safe_set(future, result=(failures, state["completed"]))
+
+        def _emit_progress() -> None:
+            done = state["completed"] + len(failures)
+            self.emit("progress", min(done / total, 1.0) if total else 1.0, progress_message)
+
+        def _map_file_failures(chunk: List[tuple[str, str]], result) -> None:
+            if isinstance(result, SftpRemoveResult):
+                failed_paths = {item.path for item in result.failures}
+                for item in result.failures:
+                    original = next(
+                        (orig for expanded_path, orig in chunk if expanded_path == item.path),
+                        item.path,
+                    )
+                    err_msg = _("Delete failed") if item.message == "remove failed" else item.message
+                    failures.append((original, OSError(err_msg)))
+                state["completed"] += len(chunk) - len(failed_paths)
+            else:
+                state["completed"] += len(chunk)
+
+        def _run_dirs() -> None:
+            if future.done():
+                return
+            if state["cancel_requested"] or state["dir_index"] >= len(dir_items):
+                _finish()
+                return
+            target, original = dir_items[state["dir_index"]]
+            state["dir_index"] += 1
+
+            def _on_operation_started(operation_id) -> None:
+                state["operation_id"] = operation_id
+                if state["cancel_requested"]:
+                    self._sftp_controller.cancel_operation(operation_id)
+
+            def _on_success(_result) -> None:
+                state["operation_id"] = None
+                state["completed"] += 1
+                _emit_progress()
+                _run_dirs()
+
+            def _on_error(exc) -> None:
+                state["operation_id"] = None
+                resolved = self._resolve_operation_exception(exc)
+                if isinstance(resolved, TransferCancelledException):
+                    _finish()
+                    return
+                resolved = _localized_direct_error(resolved)
+                failures.append((original, resolved))
+                _emit_progress()
+                _run_dirs()
+
+            def _on_progress(summary) -> None:
+                base = state["completed"] + len(failures)
+                fraction = (base + (summary.progress or 0.0)) / total if total else 1.0
+                self.emit("progress", min(fraction, 1.0), progress_message)
+
+            self._sftp_controller.remove(
+                target,
+                recursive=True,
+                on_success=_on_success,
+                on_error=_on_error,
+                on_operation_started=_on_operation_started,
+                on_progress=_on_progress,
+            )
+
+        def _run_file_chunks() -> None:
+            if future.done():
+                return
+            if state["cancel_requested"]:
+                _finish()
+                return
+            offset = state["file_offset"]
+            if offset >= len(file_items):
+                _run_dirs()
+                return
+            chunk = file_items[offset : offset + file_chunk]
+            state["file_offset"] = offset + len(chunk)
+
+            def _on_success(result, _chunk=chunk) -> None:
+                if future.done():
+                    return
+                _map_file_failures(_chunk, result)
+                _emit_progress()
+                if state["cancel_requested"]:
+                    _finish()
+                    return
+                _run_file_chunks()
+
+            def _on_error(exc, _chunk=chunk) -> None:
+                if future.done():
+                    return
+                resolved = self._resolve_operation_exception(exc)
+                if isinstance(resolved, TransferCancelledException):
+                    _finish()
+                    return
+                resolved = _localized_direct_error(resolved)
+                for _expanded_path, original in _chunk:
+                    failures.append((original, resolved))
+                _emit_progress()
+                if state["cancel_requested"]:
+                    _finish()
+                    return
+                _run_file_chunks()
+
+            self._sftp_controller.remove_paths(
+                [path for path, _original in chunk],
+                on_success=_on_success,
+                on_error=_on_error,
+            )
+
+        self.emit("progress", 0.0, progress_message)
+        if file_items:
+            _run_file_chunks()
+        else:
+            _run_dirs()
+        return future
+
     # -- transfers --------------------------------------------------------
-    def _emit_transfer_progress(self, base: int, summary: TransferSummary, grand_total: int) -> None:
+    def _emit_transfer_progress(
+        self,
+        base: int,
+        summary: TransferSummary,
+        grand_total: int,
+        *,
+        progress_key: str = "",
+    ) -> None:
         done = base + summary.bytes_completed
-        self.emit("progress-bytes", done, grand_total)
+        key = progress_key or str(getattr(summary, "id", "") or "")
+        self.emit("progress-bytes", done, grand_total, key)
         if grand_total > 0:
             self.emit(
                 "progress",
@@ -777,6 +1054,7 @@ class DaemonSftpManager(GObject.GObject):
 
     def upload(self, source: pathlib.Path, destination: str) -> Future:
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         target = self._expand(destination)
         try:
             service_id = self._require_ready_service_id()
@@ -792,7 +1070,9 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, total)
+            self._emit_transfer_progress(
+                0, summary, total, progress_key=progress_key
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             self._finish_transfer(future, summary)
@@ -819,6 +1099,7 @@ class DaemonSftpManager(GObject.GObject):
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         target = self._expand(source)
         try:
             service_id = self._require_ready_service_id()
@@ -835,7 +1116,12 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
+            self._emit_transfer_progress(
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             if summary.state is TransferState.CANCELLED:
@@ -887,6 +1173,7 @@ class DaemonSftpManager(GObject.GObject):
     def download_directory(self, source: str, destination: pathlib.Path) -> Future:
         """Download a remote directory tree through a single daemon transfer."""
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         target = self._expand(source)
         try:
             service_id = self._require_ready_service_id()
@@ -898,7 +1185,12 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
+            self._emit_transfer_progress(
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             self._finish_transfer(future, summary)
@@ -927,6 +1219,7 @@ class DaemonSftpManager(GObject.GObject):
     def upload_directory(self, source: pathlib.Path, destination: str) -> Future:
         """Upload a local directory tree through a single daemon transfer."""
         future: Future = Future()
+        progress_key = f"fut-{id(future)}"
         remote_root = self._expand(destination)
         try:
             service_id = self._require_ready_service_id()
@@ -938,7 +1231,12 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
-            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
+            self._emit_transfer_progress(
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+            )
 
         def _on_done(summary: TransferSummary) -> None:
             self._finish_transfer(future, summary)

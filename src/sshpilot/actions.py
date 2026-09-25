@@ -5,7 +5,7 @@ import os
 import random
 from typing import Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .accessibility import set_accessible_name
 from .dialog_focus import mark_default_response_visible
@@ -175,9 +175,21 @@ def _describe_group_contents(connection_count: int, subgroup_count: int) -> str:
     """Phrase naming what a group holds, for the delete prompt's body."""
     parts = []
     if connection_count:
-        parts.append(_("{count} connection(s)").format(count=connection_count))
+        parts.append(
+            ngettext(
+                "{count} connection",
+                "{count} connections",
+                connection_count,
+            ).format(count=connection_count)
+        )
     if subgroup_count:
-        parts.append(_("{count} subgroup(s)").format(count=subgroup_count))
+        parts.append(
+            ngettext(
+                "{count} subgroup",
+                "{count} subgroups",
+                subgroup_count,
+            ).format(count=subgroup_count)
+        )
     if len(parts) == 2:
         return _("{connections} and {subgroups}").format(
             connections=parts[0], subgroups=parts[1],
@@ -373,9 +385,17 @@ class WindowActions:
             return
 
         if prefer == 'tabs':
-            body = _("This will open {n} new connection tabs.")
+            body = ngettext(
+                "This will open {n} new connection tab.",
+                "This will open {n} new connection tabs.",
+                len(connections),
+            )
         else:
-            body = _("This will start {n} connections in a single tab.")
+            body = ngettext(
+                "This will start {n} connection in a single tab.",
+                "This will start {n} connections in a single tab.",
+                len(connections),
+            )
         dialog = Adw.AlertDialog(
             heading=_("Open connections?"),
             body=body.format(n=len(connections)),
@@ -555,10 +575,12 @@ class WindowActions:
             if toast_overlay:
                 if failures:
                     toast_msg = _("Wake-on-LAN failed: %s") % "; ".join(failures)
-                elif sent == 1:
-                    toast_msg = _("Wake-on-LAN sent")
                 else:
-                    toast_msg = _("Wake-on-LAN sent to {n} hosts").format(n=sent)
+                    toast_msg = ngettext(
+                        "Wake-on-LAN sent to {n} host",
+                        "Wake-on-LAN sent to {n} hosts",
+                        sent,
+                    ).format(n=sent)
                 toast = Adw.Toast.new(toast_msg)
                 toast.set_timeout(4 if failures else 3)
                 toast_overlay.add_toast(toast)
@@ -703,10 +725,14 @@ class WindowActions:
                     "parent group, or delete everything inside it?"
                 ).format(name=first_name, contents=contents)
             else:
-                body = _(
+                body = ngettext(
+                    "The {count} selected group contains {contents}.\n\n"
+                    "Delete the group on its own, moving what it holds to the "
+                    "parent group, or delete everything inside it?",
                     "The {count} selected groups contain {contents}.\n\n"
                     "Delete the groups on their own, moving what they hold to "
-                    "the parent group, or delete everything inside them?"
+                    "the parent group, or delete everything inside them?",
+                    group_count,
                 ).format(count=group_count, contents=contents)
 
             dialog = Adw.MessageDialog(
@@ -1042,7 +1068,9 @@ class WindowActions:
         row.set_title(name)
         payload = session_manager.get_session(name) or {}
         tab_count = len(payload.get('tabs', []) if isinstance(payload, dict) else [])
-        row.set_subtitle(_("{n} tab(s)").format(n=tab_count))
+        row.set_subtitle(
+            ngettext("{n} tab", "{n} tabs", tab_count).format(n=tab_count)
+        )
 
         from sshpilot import icon_utils
 
@@ -1199,10 +1227,10 @@ class WindowActions:
         if not self.update_banner:
             return
         
-        title = f"SSH Pilot {version} is available!"
+        title = _("SSH Pilot {version} is available!").format(version=version)
         
         self.update_banner.set_title(title)
-        self.update_banner.set_button_label("Download")
+        self.update_banner.set_button_label(_("Download"))
         
         # Apply CSS styling for blue button
         self._apply_update_banner_css()

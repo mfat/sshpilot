@@ -27,7 +27,7 @@ import shlex
 import threading
 from typing import Any, List, Optional
 
-from sshpilot.api.errors import ErrorCode
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import EventType
 from sshpilot.api.models.broadcast import (
     MAX_BROADCAST_OUTPUT_BYTES,
@@ -263,14 +263,21 @@ class SftpBackupStore:
                 ) from exc
 
     def free_space_bytes(self, path: str) -> Optional[int]:
-        """Unknown over SFTP.
+        """Bytes the account can still write, via ``statvfs@openssh.com``.
 
-        The app's SFTP client does not implement ``statvfs@openssh.com``, so
-        there is no free-space answer to give. ``None`` tells the backend to
-        skip the pre-check; an actually full disk still fails the upload with
-        the remote's own error.
+        ``None`` when the server does not report it, which tells the backend
+        to skip the pre-check; an actually full disk still fails the upload
+        with the remote's own error.
         """
-        return None
+        try:
+            usage = self._sftp.filesystem_usage(
+                SftpPathRequest(self._service_id, self._absolute(path)),
+                client_id=self._client_id,
+            )
+        except SshPilotError as exc:
+            logger.debug("Remote free space is unknown: %s", exc)
+            return None
+        return usage.available_bytes
 
     def list_backups(self, path: str) -> List[BackupEntry]:
         target = self._absolute(path)

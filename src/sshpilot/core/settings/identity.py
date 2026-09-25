@@ -103,16 +103,24 @@ def normalize_identity_settings(identity: Mapping[str, Any]) -> Dict[str, Any]:
 
     Returns exactly the public field names with canonical values; missing keys
     normalize to :data:`DEFAULT_IDENTITY_SETTINGS` so "field absent" and
-    "field set to its default" share a revision.
+    "field set to its default" share a revision.  When the selected provider
+    is not ``CUSTOM_PROVIDER`` (e.g. ``'auto'``), ``custom_socket`` always
+    normalizes to the canonical default (``''``) so stale or arbitrary socket
+    text cannot affect system-agent operations.
     """
     raw = identity if isinstance(identity, Mapping) else {}
     provider = raw.get("provider")
     custom_socket = raw.get("agent_socket")
+    normalized_provider = (
+        AUTO_PROVIDER if provider is None else normalize_provider(provider)
+    )
+    if normalized_provider != CUSTOM_PROVIDER:
+        normalized_custom_socket = DEFAULT_IDENTITY_SETTINGS["custom_socket"]
+    else:
+        normalized_custom_socket = normalize_custom_socket(custom_socket)
     return {
-        "provider": (
-            AUTO_PROVIDER if provider is None else normalize_provider(provider)
-        ),
-        "custom_socket": normalize_custom_socket(custom_socket),
+        "provider": normalized_provider,
+        "custom_socket": normalized_custom_socket,
     }
 
 

@@ -41,6 +41,11 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .platform_utils import is_macos, get_ssh_dir
+from .flatpak_ssh_import import (
+    import_certificate_into_ssh_dir,
+    import_private_key_into_ssh_dir,
+    needs_flatpak_ssh_import,
+)
 from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
@@ -68,6 +73,14 @@ logger = logging.getLogger(__name__)
 #: amount, so the field is evenly placed in the row instead of running flush
 #: into the card edge while the left side is indented.
 _PRE_COMMAND_INDENT = 16
+
+
+def _protocol_display_name(backend) -> str:
+    """Return a localized GTK label without changing the plugin contract."""
+    protocol_id = getattr(backend, "protocol_id", "") or ""
+    if protocol_id == "serial":
+        return _("Serial")
+    return getattr(backend, "display_name", "") or protocol_id
 
 
 def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
@@ -2593,7 +2606,12 @@ class ConnectionDialog(
         dialog.present()
 
     def _browse_key(self, on_chosen, parent=None):
-        self._browse_file(_("Select SSH Key File"), on_chosen, parent=parent)
+        def _after(path):
+            self._confirm_flatpak_ssh_import(
+                path, on_chosen, parent=parent, kind="key"
+            )
+
+        self._browse_file(_("Select SSH Key File"), _after, parent=parent)
 
     def _browse_cert(self, on_chosen, parent=None):
         filters = None
@@ -2610,7 +2628,84 @@ class ConnectionDialog(
             filters.append(all_filter)
         except Exception:
             filters = None
-        self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters, parent=parent)
+
+        def _after(path):
+            self._confirm_flatpak_ssh_import(
+                path, on_chosen, parent=parent, kind="cert"
+            )
+
+        self._browse_file(
+            _("Select SSH Certificate File"),
+            _after,
+            filters=filters,
+            parent=parent,
+        )
+
+    def _confirm_flatpak_ssh_import(
+        self, path, on_chosen, *, parent=None, kind: str = "key"
+    ):
+        """On Flatpak, copy keys/certs outside ``~/.ssh`` in after confirmation.
+
+        Sandbox OpenSSH cannot use host paths outside ``~/.ssh``. Portal paths
+        must not be written into ssh_config, so the durable option is an
+        explicit copy into ``~/.ssh`` (plus ``.pub`` / ``-cert.pub`` sidecars
+        for private keys when present).
+        """
+        if not callable(on_chosen):
+            return
+        if not path or not needs_flatpak_ssh_import(path):
+            on_chosen(path)
+            return
+
+        transient = parent if parent is not None else self
+        if kind == "cert":
+            heading = _("Copy certificate into ~/.ssh?")
+            body = _(
+                "Flatpak can only use SSH files under ~/.ssh. Copy this "
+                "certificate into ~/.ssh and use the copy?"
+            )
+        else:
+            heading = _("Copy key into ~/.ssh?")
+            body = _(
+                "Flatpak can only use SSH keys under ~/.ssh. Copy this key "
+                "into ~/.ssh and use the copy? Matching .pub and certificate "
+                "files next to it will be copied too when present."
+            )
+
+        dialog = Adw.MessageDialog.new(transient, heading, body)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("copy", _("Copy"))
+        try:
+            dialog.set_response_appearance(
+                "copy", Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+        dialog.set_default_response("copy")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response):
+            if response != "copy":
+                return
+            try:
+                if kind == "cert":
+                    dest, _companions = import_certificate_into_ssh_dir(path)
+                else:
+                    dest, _companions = import_private_key_into_ssh_dir(path)
+            except Exception as exc:
+                logger.warning(
+                    "Flatpak SSH import failed for %s: %s", path, exc, exc_info=True
+                )
+                self.show_error(
+                    _("Could not copy the file into ~/.ssh: {error}").format(
+                        error=str(exc)
+                    )
+                )
+                return
+            on_chosen(dest)
+
+        dialog.connect("response", _on_response)
+        dialog.present()
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
@@ -3547,7 +3642,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.key_selection_group = Adw.PreferencesGroup()
         key_select_model = Gtk.StringList()
         key_select_model.append(_("Automatic"))
-        key_select_model.append(_("Use Specific Key(s)"))
+        key_select_model.append(_("Use Specific Keys"))
         self.key_select_row = Adw.ComboRow(title=_("Key selection"))
         self.key_select_row.set_subtitle(_("Use SSH defaults or pick specific keys below."))
         self.key_select_row.set_model(key_select_model)
@@ -3589,7 +3684,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # --- Key handling ---
         self.idonly_group = Adw.PreferencesGroup(title=_("Key handling"))
         self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use the selected key(s)"))
+        self.key_only_row.set_title(_("Only use the selected keys"))
         self.key_only_row.set_subtitle(_("Write IdentitiesOnly yes for this connection."))
         self.key_only_row.set_active(True)
         self.idonly_group.add(self.key_only_row)
@@ -3755,7 +3850,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             names = Gtk.StringList()
             for backend in self._protocol_backends:
-                names.append(backend.display_name or backend.protocol_id)
+                names.append(_protocol_display_name(backend))
             self.protocol_row.set_model(names)
         except Exception:
             pass
@@ -4676,7 +4771,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             group_key = getattr(spec, 'group', 'general') or 'general'
             if group_key not in groups:
                 if group_key == 'general':
-                    title = backend.display_name or backend.protocol_id
+                    title = _protocol_display_name(backend)
                 elif group_key == 'advanced':
                     title = _("Advanced")
                 else:

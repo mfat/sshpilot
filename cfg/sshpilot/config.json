@@ -10,11 +10,10 @@
   "config_version": 3,
   "connections_meta": {},
   "file_manager": {
-    "icon_size_level": 1,
     "open_externally": false,
-    "sftp_connect_timeout": 20,
-    "sftp_keepalive_count_max": 5,
-    "sftp_keepalive_interval": 30
+    "max_concurrent_transfers": 4,
+    "list_icon_level": 1,
+    "grid_icon_level": 2
   },
   "identity": {
     "agent_socket": "",

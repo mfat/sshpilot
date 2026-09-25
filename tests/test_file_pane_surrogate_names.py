@@ -216,6 +216,7 @@ def test_properties_dialog_header_shows_a_name_gtk_can_encode(load_file_manager_
     dialog._entry = module.FileEntry(BAD_NAME, False, 12, 0.0, None)
     dialog._current_path = "/tmp"
     dialog._is_remote_file = lambda: True
+    dialog._sftp_manager = None
 
     dialogs.PropertiesDialog._create_header_block(dialog)
 

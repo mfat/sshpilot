@@ -151,6 +151,23 @@ class TransferServiceController:
             on_error=on_error or (lambda _exc: None),
         )
 
+    def rebind_client(self, client, bridge=None) -> None:
+        """Follow the app onto a replacement daemon transport.
+
+        Transfers run in the daemon, so watched ones keep reporting progress
+        once the event subscription moves to the new client.
+        """
+        if client is None:
+            raise ValueError("a daemon client is required")
+        if self._closed:
+            return
+        self._unsubscribe_events()
+        self._client = client
+        if bridge is not None:
+            self._bridge = bridge
+        if self._watchers:
+            self._ensure_subscription()
+
     def close(self) -> None:
         if self._closed:
             return

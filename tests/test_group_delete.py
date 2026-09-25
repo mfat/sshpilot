@@ -158,13 +158,15 @@ class TestPlanGroupDelete:
 
 class TestDescribeGroupContents:
     def test_connections_only(self):
-        assert _describe_group_contents(2, 0) == "2 connection(s)"
+        assert _describe_group_contents(1, 0) == "1 connection"
+        assert _describe_group_contents(2, 0) == "2 connections"
 
     def test_subgroups_only(self):
-        assert _describe_group_contents(0, 3) == "3 subgroup(s)"
+        assert _describe_group_contents(0, 1) == "1 subgroup"
+        assert _describe_group_contents(0, 3) == "3 subgroups"
 
     def test_both_are_joined(self):
-        assert _describe_group_contents(2, 3) == "2 connection(s) and 3 subgroup(s)"
+        assert _describe_group_contents(2, 3) == "2 connections and 3 subgroups"
 
 
 # --- action ---------------------------------------------------------------
@@ -367,8 +369,8 @@ class TestDeleteGroupPrompt:
 
         dialog = only_dialog()
         assert dialog.responses == ["cancel", "move", "delete_all"]
-        assert "1 subgroup(s)" in dialog.body
-        assert "connection(s)" not in dialog.body
+        assert "1 subgroup" in dialog.body
+        assert "connection" not in dialog.body
 
     def test_the_choice_prompt_counts_connections_and_subgroups(self):
         groups = _tree(("a", None, ["one"]), ("b", "a", ["two"]))
@@ -379,7 +381,7 @@ class TestDeleteGroupPrompt:
         window.on_delete_group_action(None)
 
         dialog = only_dialog()
-        assert "2 connection(s) and 1 subgroup(s)" in dialog.body
+        assert "2 connections and 1 subgroup" in dialog.body
         assert dialog.labels["move"] == "Delete Group Only"
         assert dialog.labels["delete_all"] == "Delete Group and Contents"
         assert dialog.destructive == ["delete_all"]
@@ -405,7 +407,7 @@ class TestDeleteGroupPrompt:
 
         window.on_delete_group_action(None)
 
-        assert "1 connection(s)" in only_dialog().body
+        assert "1 connection" in only_dialog().body
 
 
 class TestDeleteGroupOnly:

@@ -21,7 +21,7 @@ import os
 import threading
 import time
 from enum import Enum
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -614,7 +614,11 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
         # transport hiccup) while tabs are plainly open. Count what the window
         # is showing rather than telling the user they have nothing running.
         sessions = count_daemon_terminals(window)
-    body = _("Number of running sessions: {n}").format(n=sessions)
+    body = ngettext(
+        "{n} running session",
+        "{n} running sessions",
+        sessions,
+    ).format(n=sessions)
 
     dialog = Adw.AlertDialog.new(_("Quit SSH Pilot?"), body)
     dialog.add_response("cancel", _("Cancel"))

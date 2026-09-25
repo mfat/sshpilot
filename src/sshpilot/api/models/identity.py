@@ -38,6 +38,7 @@ CUSTOM_PROVIDER = CUSTOM_PROVIDER
 REVISION_CONFLICT = "revision_conflict"
 SETTINGS_MALFORMED = "settings_malformed"
 SETTINGS_PERSISTENCE_FAILED = "settings_persistence_failed"
+CUSTOM_SOCKET_NOT_APPLICABLE = "custom_socket_not_applicable"
 AGENT_UNAVAILABLE = "agent_unavailable"
 SSH_COPY_ID_UNAVAILABLE = "ssh_copy_id_unavailable"
 AUTHORIZED_KEYS_STALE = "authorized_keys_stale"

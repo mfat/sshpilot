@@ -11,6 +11,7 @@ from typing import (
     Iterable,
     Mapping,
     Optional,
+    Tuple,
     Union,
 )
 
@@ -202,7 +203,10 @@ from ..models.operations import (
     SftpDirectorySizeResult,
     SftpFileAccess,
     SftpFileTarget,
+    SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveFailure,
+    SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
@@ -4732,6 +4736,8 @@ def sftp_path_request_to_wire(request: SftpPathRequest) -> Dict[str, Any]:
     wire = {"service_id": request.service_id, "path": request.path}
     if request.recursive:
         wire["recursive"] = True
+    if request.paths:
+        wire["paths"] = list(request.paths)
     return wire
 
 
@@ -4739,16 +4745,58 @@ def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
     data = _strict_fields(
         value,
         required={"service_id", "path"},
-        optional={"recursive"},
+        optional={"recursive", "paths"},
         context="SFTP path request",
     )
+    extra_paths: Tuple[str, ...] = ()
+    if "paths" in data:
+        raw_paths = data["paths"]
+        if type(raw_paths) is not list:
+            raise ValueError("SFTP extra paths must be a list")
+        extra_paths = tuple(_text(item, "SFTP extra path") for item in raw_paths)
     return SftpPathRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         path=_text(data["path"], "SFTP path"),
         recursive=(
             _boolean(data["recursive"], "SFTP recursive flag") if "recursive" in data else False
         ),
+        paths=extra_paths,
     )
+
+
+def sftp_remove_result_to_wire(result: SftpRemoveResult) -> Dict[str, Any]:
+    if type(result) is not SftpRemoveResult:
+        raise TypeError("SFTP remove result is required")
+    return {
+        "failures": [
+            {"path": item.path, "message": item.message} for item in result.failures
+        ]
+    }
+
+
+def sftp_remove_result_from_wire(value: Any) -> SftpRemoveResult:
+    data = _strict_fields(
+        value,
+        required={"failures"},
+        context="SFTP remove result",
+    )
+    raw_failures = data["failures"]
+    if type(raw_failures) is not list:
+        raise ValueError("SFTP remove failures must be a list")
+    failures = []
+    for item in raw_failures:
+        entry = _strict_fields(
+            item,
+            required={"path", "message"},
+            context="SFTP remove failure",
+        )
+        failures.append(
+            SftpRemoveFailure(
+                path=_text(entry["path"], "SFTP remove failure path"),
+                message=_text(entry["message"], "SFTP remove failure message", allow_empty=True),
+            )
+        )
+    return SftpRemoveResult(failures=tuple(failures))
 
 
 def sftp_create_file_request_to_wire(request: SftpCreateFileRequest) -> Dict[str, Any]:
@@ -4827,6 +4875,31 @@ def sftp_directory_size_result_from_wire(value: Any) -> SftpDirectorySizeResult:
         size_bytes=_integer(data["size_bytes"], "SFTP size result size bytes"),
         file_count=_integer(data["file_count"], "SFTP size result file count"),
         directory_count=_integer(data["directory_count"], "SFTP size result directory count"),
+    )
+
+
+def sftp_filesystem_usage_to_wire(usage: SftpFilesystemUsage) -> Dict[str, Any]:
+    if type(usage) is not SftpFilesystemUsage:
+        raise TypeError("SFTP filesystem usage is required")
+    return {
+        "path": usage.path,
+        "total_bytes": usage.total_bytes,
+        "free_bytes": usage.free_bytes,
+        "available_bytes": usage.available_bytes,
+    }
+
+
+def sftp_filesystem_usage_from_wire(value: Any) -> SftpFilesystemUsage:
+    data = _strict_fields(
+        value,
+        required={"path", "total_bytes", "free_bytes", "available_bytes"},
+        context="SFTP filesystem usage",
+    )
+    return SftpFilesystemUsage(
+        path=_text(data["path"], "SFTP filesystem usage path"),
+        total_bytes=_integer(data["total_bytes"], "SFTP filesystem total bytes"),
+        free_bytes=_integer(data["free_bytes"], "SFTP filesystem free bytes"),
+        available_bytes=_integer(data["available_bytes"], "SFTP filesystem available bytes"),
     )
 
 

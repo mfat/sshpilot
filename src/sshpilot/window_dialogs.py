@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .accessibility import set_accessible_name, set_accessible_selected
 from .gtk.asbru_import_messages import (
@@ -2853,21 +2853,55 @@ class WindowConfigDialogsMixin:
         else:
             done = []
             if restored:
-                done.append(_("{count} credential(s)").format(count=restored))
+                done.append(
+                    ngettext(
+                        "{count} credential",
+                        "{count} credentials",
+                        restored,
+                    ).format(count=restored)
+                )
             if keys_written:
-                done.append(_("{count} private key(s)").format(count=keys_written))
+                done.append(
+                    ngettext(
+                        "{count} private key",
+                        "{count} private keys",
+                        keys_written,
+                    ).format(count=keys_written)
+                )
             if done:
                 lines.append(_("Restored {items}.").format(items=_(", ").join(done)))
             if skipped_creds:
-                lines.append(_("{} credential(s) already existed and were left untouched — "
-                               "SSH Pilot never overwrites a saved secret.").format(skipped_creds))
+                lines.append(
+                    ngettext(
+                        "{count} credential already existed and was left untouched — "
+                        "SSH Pilot never overwrites a saved secret.",
+                        "{count} credentials already existed and were left untouched — "
+                        "SSH Pilot never overwrites a saved secret.",
+                        skipped_creds,
+                    ).format(count=skipped_creds)
+                )
             if keys_skipped:
-                lines.append(_("{} private key(s) already existed and were left untouched — "
-                               "SSH Pilot never overwrites a private key.").format(keys_skipped))
+                lines.append(
+                    ngettext(
+                        "{count} private key already existed and was left untouched — "
+                        "SSH Pilot never overwrites a private key.",
+                        "{count} private keys already existed and were left untouched — "
+                        "SSH Pilot never overwrites a private key.",
+                        keys_skipped,
+                    ).format(count=keys_skipped)
+                )
             if ignored:
-                lines.append(_("{} saved password(s)/key(s) in this .json file were not "
-                               "imported — legacy JSON backups can't restore secrets. Use an "
-                               "encrypted .spbk backup to include them.").format(ignored))
+                lines.append(
+                    ngettext(
+                        "{count} saved password or key in this .json file was not "
+                        "imported — legacy JSON backups can't restore secrets. Use an "
+                        "encrypted .spbk backup to include it.",
+                        "{count} saved passwords or keys in this .json file were not "
+                        "imported — legacy JSON backups can't restore secrets. Use an "
+                        "encrypted .spbk backup to include them.",
+                        ignored,
+                    ).format(count=ignored)
+                )
         if result.warnings:
             lines.append("\n\n".join(
                 format_secret_transfer_messages(result.warnings)

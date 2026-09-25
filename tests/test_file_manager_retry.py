@@ -177,6 +177,21 @@ BAD_DIR = "/home/alice/bad\udce5\udcb1dir"
 BAD_DIR_AS_DISPLAYED = "file:///home/alice/bad%E5%B1dir"
 
 
+def test_force_refresh_does_not_mark_pane_for_success_toast():
+    """Post-upload/mkdir refreshes must not spam "Directory refreshed"."""
+    win = _window()
+    pane = win._right_pane
+    pane._is_remote = True
+    pane._current_path = "/tmp"
+    win._pending_highlights = {pane: None}
+    win._manager = MagicMock()
+
+    win._force_refresh_pane(pane, highlight_name="new.txt")
+
+    assert pane not in win._refreshing_panes
+    win._manager.listdir.assert_called_once_with("/tmp")
+
+
 def test_local_refresh_uses_the_real_path_not_the_displayed_one():
     win = _window()
     pane = win._left_pane

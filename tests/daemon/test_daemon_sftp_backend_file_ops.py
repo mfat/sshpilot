@@ -106,10 +106,20 @@ def test_remove_delegates_recursive_delete_to_daemon():
     controller = _Controller()
     manager = _manager(controller)
 
-    future = manager.remove("/home/user/tree")
+    future = manager.remove("/home/user/tree", recursive=True)
 
     assert future.result() is None
     assert controller.remove_calls == [("/home/user/tree", True)]
+
+
+def test_remove_delegates_file_delete_without_recursion():
+    controller = _Controller()
+    manager = _manager(controller)
+
+    future = manager.remove("/home/user/notes.txt", recursive=False)
+
+    assert future.result() is None
+    assert controller.remove_calls == [("/home/user/notes.txt", False)]
 
 
 def test_direct_future_error_is_localized_without_losing_error_code(monkeypatch):

@@ -1,6 +1,6 @@
 """Typed frontend-independent sshPilot client contract."""
 
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Union
 
 from .capabilities import Capabilities
 from .events import CoreEventCallback, Subscription
@@ -138,7 +138,9 @@ from .models.operations import (
     SftpChmodRequest,
     SftpCopyRequest,
     SftpDirectorySizeRequest,
+    SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
@@ -500,6 +502,9 @@ class SshPilotClient(Protocol):
     def sftp_realpath(self, request: SftpPathRequest) -> str:
         ...
 
+    def sftp_filesystem_usage(self, request: SftpPathRequest) -> SftpFilesystemUsage:
+        ...
+
     def sftp_readlink(self, request: SftpPathRequest) -> str:
         ...
 
@@ -521,7 +526,9 @@ class SshPilotClient(Protocol):
     def sftp_rename(self, request: SftpRenameRequest) -> None:
         ...
 
-    def sftp_remove(self, request: SftpPathRequest) -> Optional[OperationSummary]:
+    def sftp_remove(
+        self, request: SftpPathRequest
+    ) -> Optional[Union[OperationSummary, SftpRemoveResult]]:
         ...
 
     def sftp_chmod(self, request: SftpChmodRequest) -> None:

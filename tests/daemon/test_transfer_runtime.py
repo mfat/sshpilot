@@ -58,14 +58,18 @@ class _FakeSftpClient:
 
     def __init__(self):
         self.files = {}
+        self.create_modes = {}
+        self.fsetstat_calls = []
 
     def stat(self, path):
         if path not in self.files:
             raise FileNotFoundError(path)
         return SimpleNamespace(st_size=len(self.files[path]))
 
-    def open_handle(self, path, _flags):
+    def open_handle(self, path, _flags, attr=None):
         self.files.setdefault(path, b"")
+        if attr is not None and attr.st_mode:
+            self.create_modes[path] = attr.st_mode
         return path
 
     def write(self, handle, offset, chunk):
@@ -77,11 +81,69 @@ class _FakeSftpClient:
     def close_handle(self, _handle):
         return None
 
+    def fsetstat(self, handle, attr):
+        self.fsetstat_calls.append((handle, attr))
+
+    # The runtime streams through the client's pipelined helpers; these
+    # sequential stand-ins keep ``read``/``write`` overrides in effect.
+    def iter_read(self, handle, offset=0, length=None):
+        while True:
+            chunk = self.read(handle, offset, 32768)
+            if not chunk:
+                return
+            yield chunk
+            offset += len(chunk)
+
+    def pipelined_writer(self, handle, offset=0):
+        return _SequentialWriter(self, handle, offset)
+
+    def supports_posix_rename(self):
+        return getattr(self, "_posix_rename_supported", True)
+
     def posix_rename(self, old, new):
+        if not self.supports_posix_rename():
+            from sshpilot.sftp import protocol as sftp_proto
+
+            raise sftp_proto.SFTPError(
+                sftp_proto.FX_OP_UNSUPPORTED, "posix-rename@openssh.com"
+            )
         self.files[new] = self.files.pop(old, b"")
+
+    def rename(self, old, new):
+        if new in self.files:
+            raise OSError("destination exists")
+        self.files[new] = self.files.pop(old, b"")
+
+    def atomic_rename(self, old, new):
+        """Mirror :meth:`OpenSSHSFTPClient.atomic_rename` for transfer tests."""
+        if self.supports_posix_rename():
+            try:
+                self.posix_rename(old, new)
+                return
+            except Exception:
+                pass
+        try:
+            self.remove(new)
+        except Exception:
+            pass
+        self.rename(old, new)
 
     def remove(self, path):
         self.files.pop(path, None)
+
+
+class _SequentialWriter:
+    def __init__(self, client, handle, offset):
+        self._client = client
+        self._handle = handle
+        self.offset = offset
+
+    def write(self, data):
+        self._client.write(self._handle, self.offset, data)
+        self.offset += len(data)
+
+    def flush(self):
+        return None
 
 
 class _BlockingSftpClient(_FakeSftpClient):
@@ -110,8 +172,9 @@ class _BlockingSftpClient(_FakeSftpClient):
 
 
 class _FakeSftpHandle:
-    def __init__(self, client):
+    def __init__(self, client, *, remote_software=None):
         self.client = client
+        self.remote_software = remote_software
 
     def terminate(self):
         return None
@@ -197,7 +260,7 @@ class _RecursiveSftpClient(_FakeSftpClient):
             raise FileNotFoundError(path)
         return entries
 
-    def open_handle(self, path, flags):
+    def open_handle(self, path, flags, attr=None):
         from sshpilot.sftp import protocol as sftp_proto
 
         if flags & sftp_proto.FXF_READ:
@@ -222,6 +285,21 @@ class _RecursiveSftpClient(_FakeSftpClient):
         return None
 
     def posix_rename(self, old, new):
+        if not self.supports_posix_rename():
+            from sshpilot.sftp import protocol as sftp_proto
+
+            raise sftp_proto.SFTPError(
+                sftp_proto.FX_OP_UNSUPPORTED, "posix-rename@openssh.com"
+            )
+        if old in self.files:
+            self.files[new] = self.files.pop(old, b"")
+        if old in self.dirs:
+            self.dirs.discard(old)
+            self.dirs.add(new)
+
+    def rename(self, old, new):
+        if new in self.files or new in self.dirs:
+            raise OSError("destination exists")
         if old in self.files:
             self.files[new] = self.files.pop(old, b"")
         if old in self.dirs:
@@ -230,19 +308,23 @@ class _RecursiveSftpClient(_FakeSftpClient):
 
 
 class _FakeSftpRunner:
-    def __init__(self, client):
+    def __init__(self, client, *, remote_software=None):
         self._client = client
+        self._remote_software = remote_software
 
     def start(self, _spec, _on_exit=None):
-        return _FakeSftpHandle(self._client)
+        return _FakeSftpHandle(self._client, remote_software=self._remote_software)
 
     def close(self):
         return None
 
 
-def _make_ready_sftp_service(owner, client=None):
+def _make_ready_sftp_service(owner, client=None, *, remote_software=None):
     client = client if client is not None else _FakeSftpClient()
-    sftp_runtime = SftpServiceRuntime(_CoreClient(), runner=_FakeSftpRunner(client))
+    sftp_runtime = SftpServiceRuntime(
+        _CoreClient(),
+        runner=_FakeSftpRunner(client, remote_software=remote_software),
+    )
     summary = sftp_runtime.prepare_open_service(
         OpenSftpRequest(connection_id=ConnectionId("demo")),
         client_id=owner,
@@ -525,6 +607,31 @@ def test_run_transfer_completes_upload():
     assert client.files["/remote/file.txt"] == b"hello world"
 
 
+def test_upload_falls_back_when_posix_rename_unsupported():
+    """Non-OpenSSH SFTP rejects posix-rename; upload must still commit."""
+    from dataclasses import replace
+
+    owner = ClientId("client:owner")
+    client = _FakeSftpClient()
+    client._posix_rename_supported = False
+    client.files["/remote/file.txt"] = b"stale"
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_path = _temp_source(b"fresh bytes")
+    request = replace(
+        _upload_request(service_id, local_path),
+        conflict_policy=TransferConflictPolicy.OVERWRITE,
+    )
+    prepared = transfer_runtime.prepare_start_transfer(request, client_id=owner)
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+    assert summary.state is TransferState.COMPLETED
+    assert client.files["/remote/file.txt"] == b"fresh bytes"
+    assert not any(
+        name.startswith("/remote/.sshpilot-tmp-") for name in client.files
+    )
+
+
 def test_cancel_before_run_marks_transfer_cancelled():
     owner = ClientId("client:owner")
     sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
@@ -708,6 +815,123 @@ def test_constructor_rejects_non_positive_limits():
         TransferRuntime(sftp_runtime, max_concurrent_transfers=0)
     with pytest.raises(ValueError, match="max queued transfers"):
         TransferRuntime(sftp_runtime, max_queued_transfers=0)
+
+
+def test_max_concurrent_provider_is_consulted_live():
+    """Preferences can lower the pool without restarting the daemon."""
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    limit = {"value": 2}
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=4,
+        max_concurrent_transfers_provider=lambda: limit["value"],
+        max_queued_transfers=4,
+    )
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    third = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"three"), "/remote/third.txt"),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(first.id)
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: len(transfer_runtime._worker_threads) == 2,
+        message="expected two concurrent workers before the live limit change",
+    )
+    limit["value"] = 1
+    transfer_runtime.run_transfer(third.id)
+    _wait_until(
+        lambda: third.id in transfer_runtime._pending_run,
+        message="third transfer should queue once the live cap is 1",
+    )
+    assert len(transfer_runtime._worker_threads) == 2
+    client.allow_write.set()
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
+    _wait_for_terminal_state(transfer_runtime, third.id)
+
+
+def test_dropbear_serializes_transfers_despite_global_concurrency():
+    """Dropbear SSH shares one SFTP channel — never run two copy loops on it."""
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(
+        owner, client=client, remote_software="dropbear_2024.85"
+    )
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=4,
+        max_queued_transfers=4,
+    )
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    assert transfer_runtime._records[first.id].service_concurrency_limit == 1
+    assert transfer_runtime._records[second.id].service_concurrency_limit == 1
+
+    transfer_runtime.run_transfer(first.id)
+    _wait_until(
+        client.write_started.is_set,
+        message="first transfer never reached write",
+    )
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: second.id in transfer_runtime._pending_run,
+        message="second transfer was not queued behind Dropbear's single slot",
+    )
+    assert len(transfer_runtime._worker_threads) == 1
+    assert transfer_runtime.get_transfer(second.id).state is TransferState.QUEUED
+
+    client.allow_write.set()
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
+
+
+def test_openssh_allows_parallel_transfers_up_to_global_limit():
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(
+        owner, client=client, remote_software="OpenSSH_9.6"
+    )
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=2,
+        max_queued_transfers=2,
+    )
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    assert transfer_runtime._records[first.id].service_concurrency_limit == 2
+
+    transfer_runtime.run_transfer(first.id)
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: len(transfer_runtime._worker_threads) == 2,
+        message="OpenSSH should run both transfers concurrently",
+    )
+    assert client.max_active_writes <= 2
+    client.allow_write.set()
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
 
 
 def test_shutdown_cancels_active_transfer_deterministically():

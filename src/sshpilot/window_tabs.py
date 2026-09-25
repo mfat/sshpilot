@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from sshpilot import icon_utils
 from .connection_model import Connection
@@ -956,11 +956,18 @@ class WindowTabsMixin:
         n_sessions = self._count_sessions_in_pages(pages)
 
         if confirm and n_sessions > 0:
+            tab_count = len(pages)
+            tabs = ngettext(
+                "{count} tab", "{count} tabs", tab_count
+            ).format(count=tab_count)
+            sessions = ngettext(
+                "{count} session", "{count} sessions", n_sessions
+            ).format(count=n_sessions)
             dialog = Adw.AlertDialog(
                 heading=_("Close tabs?"),
-                body=_("This will close {t} tab(s) and disconnect {n} session(s). Continue?").format(
-                    t=len(pages), n=n_sessions
-                ),
+                body=_(
+                    "This will close {tabs} and disconnect {sessions}. Continue?"
+                ).format(tabs=tabs, sessions=sessions),
             )
             dialog.add_response('cancel', _("Cancel"))
             dialog.add_response('close', _("Close"))
@@ -1008,7 +1015,11 @@ class WindowTabsMixin:
                     self._pending_close_split_child = child
                     dialog = Adw.AlertDialog(
                         heading=_("Close split view?"),
-                        body=_("This will disconnect {n} terminal session(s). Continue?").format(n=n_terminals),
+                        body=ngettext(
+                            "This will disconnect {n} terminal session. Continue?",
+                            "This will disconnect {n} terminal sessions. Continue?",
+                            n_terminals,
+                        ).format(n=n_terminals),
                     )
                     dialog.add_response('cancel', _("Cancel"))
                     dialog.add_response('close', _("Close"))

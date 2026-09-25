@@ -1,6 +1,6 @@
 app-id: io.github.mfat.sshpilot
 runtime: org.gnome.Platform
-runtime-version: '50'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 command: sshpilot
 separate-locales: false
@@ -43,7 +43,7 @@ modules:
   - name: libfido2
     buildsystem: simple
     build-commands:
-      # GNOME 50's Flatpak toolchain already injects _FORTIFY_SOURCE=3.
+      # The Flatpak toolchain already injects _FORTIFY_SOURCE=3.
       # libfido2 1.17.0 adds _FORTIFY_SOURCE=2 for Release builds and uses
       # -Werror, so remove only the duplicate definition.
       - sed -i '/CMAKE_C_FLAGS_RELEASE.*D_FORTIFY_SOURCE=2/d' CMakeLists.txt
