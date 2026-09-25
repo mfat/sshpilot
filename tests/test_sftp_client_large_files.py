@@ -22,7 +22,9 @@ import pytest
 from sshpilot.sftp import protocol as proto
 from sshpilot.sftp.client import (
     OpenSSHSFTPClient,
+    PipelinedWriter,
     _AdaptivePipeline,
+    _Pending,
     _INITIAL_PIPELINE_DEPTH,
 )
 
@@ -349,6 +351,35 @@ def test_adaptive_write_grows_window_over_a_slow_link(tmp_path):
     assert path.read_bytes() == content
     assert peak > _INITIAL_PIPELINE_DEPTH, f"peak pending stayed at {peak}"
     assert round_trips < 10, f"adaptive write took {round_trips:.1f} round trips"
+
+
+def test_pipelined_writer_drains_down_to_a_shrunk_window():
+    """A shrunk window must lower writes in flight, not keep the old depth."""
+
+    class _AckingClient:
+        max_write_length = 10
+
+        def _send_write(self, handle, offset, data):
+            slot = _Pending()
+            slot.response = (proto.FXP_STATUS, b"")
+            slot.event.set()
+            return slot
+
+        @staticmethod
+        def _wait(slot):
+            return slot.response
+
+        @staticmethod
+        def _expect_ok(resp):
+            pass
+
+    writer = PipelinedWriter(_AckingClient(), b"h")
+    writer._pipeline.max_pending = 200
+    writer.write(b"x" * 10 * 199)
+    assert len(writer._inflight) == 199
+    writer._pipeline.max_pending = _INITIAL_PIPELINE_DEPTH
+    writer.write(b"x" * 10)
+    assert len(writer._inflight) < _INITIAL_PIPELINE_DEPTH
 
 
 def test_tiny_read_does_not_grow_the_pipeline(client, tmp_path):

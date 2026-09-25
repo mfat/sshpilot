@@ -726,7 +726,10 @@ class PipelinedWriter:
             self.offset = end_offset
             if len(self._inflight) >= pipeline.max_pending:
                 pipeline.note_full(end_offset)
-                self._drain_one()
+                # ``while``: after the window shrinks, drain down to it rather
+                # than holding the old depth one-in, one-out.
+                while len(self._inflight) >= pipeline.max_pending:
+                    self._drain_one()
 
     def flush(self) -> None:
         """Wait until every WRITE is acknowledged."""
