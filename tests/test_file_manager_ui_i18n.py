@@ -245,6 +245,8 @@ def test_completion_summary_uses_real_singular_and_plural(monkeypatch):
         dialog._completion_shown = False
         dialog._stop_render_timer = MagicMock()
         dialog._set_dialog_heading = MagicMock()
+        dialog._enter_completion_actions = MagicMock()
+        dialog.set_body = MagicMock()
         dialog.files_completed = count
         dialog.total_files = count
         dialog._transferred_bytes = size
@@ -254,8 +256,6 @@ def test_completion_summary_uses_real_singular_and_plural(monkeypatch):
         dialog.progress_bar = MagicMock()
         dialog.speed_label = MagicMock()
         dialog.time_label = MagicMock()
-        dialog.action_button = MagicMock()
-        dialog.locate_button = MagicMock()
         dialog.operation_type = "upload"
         dialog.current_file = ""
         return dialog
@@ -530,6 +530,8 @@ def test_delete_progress_dialog_localizes_headings_status_and_counts(monkeypatch
     dialog._completion_shown = False
     dialog._stop_render_timer = MagicMock()
     dialog._set_dialog_heading = MagicMock()
+    dialog._enter_completion_actions = MagicMock()
+    dialog.set_body = MagicMock()
     dialog.files_completed = 2
     dialog.total_files = 2
     dialog._transferred_bytes = 0
@@ -539,8 +541,6 @@ def test_delete_progress_dialog_localizes_headings_status_and_counts(monkeypatch
     dialog.progress_bar = MagicMock()
     dialog.speed_label = MagicMock()
     dialog.time_label = MagicMock()
-    dialog.action_button = MagicMock()
-    dialog.locate_button = MagicMock()
     dialog.operation_type = "delete"
     dialog.current_file = ""
 
@@ -549,6 +549,7 @@ def test_delete_progress_dialog_localizes_headings_status_and_counts(monkeypatch
     dialog._set_dialog_heading.assert_called_with("translated:Delete Complete")
     dialog.status_label.set_text.assert_called_with("translated:Successfully deleted 2 items")
     dialog.time_label.set_text.assert_called_with("translated:Finished")
+    dialog._enter_completion_actions.assert_called_with(show_locate=False)
 
     # Failure with message:
     dialog._completion_shown = False

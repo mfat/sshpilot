@@ -1,8 +1,10 @@
 """Modern HIG-compliant SFTP transfer progress dialog.
 
 Subclasses ``Adw.AlertDialog`` when available (libadwaita ≥ 1.5) and falls
-back to ``Adw.MessageDialog`` on older systems. UI updates are paced from
-a ``GLib.timeout`` so per-chunk progress callbacks never touch widgets
+back to ``Adw.MessageDialog`` on older systems. The progress bar lives in
+``extra_child``; Cancel / Done stay as compact body buttons (a single Adw
+response would span the full footer). UI updates are paced from a
+``GLib.timeout`` so per-chunk progress callbacks never touch widgets
 directly — they only mutate state that the render tick reads.
 """
 
@@ -40,6 +42,8 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
     Subclasses ``Adw.AlertDialog`` when available (libadwaita ≥ 1.5) and
     falls back to the deprecated ``Adw.MessageDialog`` on older systems.
+    No HeaderBar / Adw response footer — Cancel and Done are compact buttons
+    in the extra-child (a lone AlertDialog response spans the full width).
 
     UI is driven from a fixed-cadence ``GLib.timeout`` (the canonical GTK
     ProgressBar pattern). The worker's per-chunk callbacks only mutate a few
@@ -70,17 +74,9 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
         # Different constructor kwargs for the two base classes.
         if _HAS_ALERT_DIALOG:
-            super().__init__(
-                heading=title,
-                body=body,
-                default_response="cancel",
-            )
+            super().__init__(heading=title, body=body)
         else:
-            super().__init__(
-                title=title,
-                body=body,
-                default_response="cancel",
-            )
+            super().__init__(title=title, body=body)
             # MessageDialog is a Gtk.Window — old API: set transient + modal.
             if parent is not None:
                 try:
@@ -136,33 +132,28 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         )
         
     def _build_ui(self):
-        """Build the modern GNOME HIG-compliant UI.
+        """Build AlertDialog chrome: heading/body + progress extra-child.
 
-        We deliberately do NOT add an Adw response button for Cancel. Single
-        responses in Adw.AlertDialog / Adw.MessageDialog span the entire
-        footer width — too prominent for a progress dialog. Instead, Cancel
-        is a regular Gtk.Button placed at the bottom of the body content,
-        right-aligned. Esc-to-cancel is preserved via the ``closed`` signal
-        (Adw.Dialog fires that for any close path, including Esc).
+        Cancel / Done / Show in Files are compact Gtk.Buttons in the body —
+        not Adw responses. A single AlertDialog response spans the full
+        footer width, which is too loud for a progress dialog. Esc-to-cancel
+        is preserved via the ``closed`` signal.
         """
-
-        # No add_response(); no set_default_response(); no set_close_response().
-        # We listen on ``closed`` to catch Esc / parent dismiss / etc.
         self.connect("closed", self._on_dialog_closed)
 
-        # Create progress content area
         progress_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
+            spacing=8,
             margin_top=12,
-            margin_bottom=12
         )
-        
-        def _configure_progress_label(label: Gtk.Label) -> None:
-            label.set_ellipsize(Pango.EllipsizeMode.END)
+
+        def _configure_file_label(label: Gtk.Label) -> None:
+            label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            label.set_halign(Gtk.Align.CENTER)
             label.set_justify(Gtk.Justification.CENTER)
             label.set_width_chars(self._LABEL_WIDTH_CHARS)
             label.set_max_width_chars(self._LABEL_WIDTH_CHARS)
+            label.add_css_class("heading")
 
         def _configure_path_label(label: Gtk.Label) -> None:
             # Middle-ellipsis keeps both the head (drive/scheme/leading dir)
@@ -175,17 +166,17 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             label.add_css_class("caption")
             label.add_css_class("dim-label")
 
-        # Current file label (primary info)
+        # Current file (primary). Status text lives in the AlertDialog body.
         self.file_label = Gtk.Label()
         self.file_label.set_text("—")
-        _configure_progress_label(self.file_label)
+        _configure_file_label(self.file_label)
         progress_box.append(self.file_label)
 
-        # Status label for detailed progress messages
+        # Kept for callers/tests that still write status via this label; mirrored
+        # into the dialog body so the AlertDialog chrome stays authoritative.
         self.status_label = Gtk.Label()
+        self.status_label.set_visible(False)
         self.status_label.set_text(_("Preparing transfer…"))
-        _configure_progress_label(self.status_label)
-        progress_box.append(self.status_label)
 
         # Source / destination paths. Hidden until set_paths() is called so
         # we don't leave two empty "From:" / "To:" lines for callers that
@@ -200,56 +191,46 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self.dest_label.set_visible(False)
         progress_box.append(self.dest_label)
 
-        # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_show_text(True)
         self.progress_bar.set_text("0%")
+        self.progress_bar.set_margin_top(4)
         progress_box.append(self.progress_bar)
-        
-        # Transfer details
-        details_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=6
-        )
-        progress_box.append(details_box)
-        
-        # Speed and time info
-        info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        details_box.append(info_box)
-        
+
+        info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        info_box.set_margin_top(4)
+        progress_box.append(info_box)
+
         self.speed_label = Gtk.Label()
         self.speed_label.set_text("—")
         self.speed_label.set_halign(Gtk.Align.START)
+        self.speed_label.set_hexpand(True)
         self.speed_label.add_css_class("caption")
+        self.speed_label.add_css_class("dim-label")
         info_box.append(self.speed_label)
-        
-        # Spacer
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        info_box.append(spacer)
-        
+
         self.time_label = Gtk.Label()
         self.time_label.set_text("—")
         self.time_label.set_halign(Gtk.Align.END)
         self.time_label.add_css_class("caption")
+        self.time_label.add_css_class("dim-label")
         info_box.append(self.time_label)
-        
-        # File counter
+
         self.counter_label = Gtk.Label()
         self.counter_label.set_text(ngettext(
             "{done} of {total} file", "{done} of {total} files", 0
         ).format(done=0, total=0))
         self.counter_label.set_halign(Gtk.Align.CENTER)
         self.counter_label.add_css_class("caption")
-        details_box.append(self.counter_label)
+        self.counter_label.add_css_class("dim-label")
+        progress_box.append(self.counter_label)
 
-        # Cancel / Done action button. Placed in the body (not as an Adw
-        # response) so it doesn't get the full-width single-response styling.
-        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        # Compact Cancel / Done (+ optional Show in Files). Not Adw responses
+        # so they stay natural width instead of filling the footer.
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         action_row.set_halign(Gtk.Align.FILL)
-        action_row.set_margin_top(6)
+        action_row.set_margin_top(8)
         self.locate_button = Gtk.Button(label=_("Show in Files"))
-        self.locate_button.add_css_class("pill")
         self.locate_button.set_halign(Gtk.Align.START)
         self.locate_button.set_hexpand(True)
         self.locate_button.set_visible(False)
@@ -257,13 +238,11 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self.locate_button.connect("clicked", self._on_locate_clicked)
         action_row.append(self.locate_button)
         self.action_button = Gtk.Button(label=_("Cancel"))
-        self.action_button.add_css_class("pill")
         self.action_button.set_halign(Gtk.Align.END)
         self.action_button.connect("clicked", self._on_action_button_clicked)
         action_row.append(self.action_button)
         progress_box.append(action_row)
 
-        # Set the progress content as extra child
         self.set_extra_child(progress_box)
     
     def is_reusable(self) -> bool:
@@ -320,6 +299,30 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             self.dest_label.set_text(_("To: {path}").format(path=destination))
             self.dest_label.set_tooltip_text(destination)
             self.dest_label.set_visible(True)
+
+    def _set_status_text(self, text: str) -> None:
+        """Keep the hidden status label and AlertDialog body in sync."""
+        try:
+            self.status_label.set_text(text)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+        try:
+            self.set_body(text)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+
+    def _enter_completion_actions(self, *, show_locate: bool) -> None:
+        """Swap Cancel → Done and optionally reveal Show in Files."""
+        try:
+            self.action_button.set_label(_("Done"))
+            self.action_button.add_css_class("suggested-action")
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+        try:
+            self.locate_button.set_visible(show_locate)
+            self.locate_button.set_sensitive(show_locate)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
 
     def _on_locate_clicked(self, _button: Gtk.Button) -> None:
         """Open the completed download location in the desktop file manager."""
@@ -456,7 +459,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Status + current-file text.
         if self._latest_message:
             try:
-                self.status_label.set_text(self._latest_message)
+                self._set_status_text(self._latest_message)
             except (AttributeError, RuntimeError):
                 pass
         if self._latest_file:
@@ -585,7 +588,8 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             return False
         self._completion_shown = True
         self._stop_render_timer()
-        
+
+        show_locate = False
         if success:
             headings = {
                 "download": _("Download Complete"),
@@ -600,7 +604,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             count = self.files_completed or self.total_files
             size_bytes = self._transferred_bytes
             if self.operation_type == "delete":
-                self.status_label.set_text(
+                self._set_status_text(
                     ngettext(
                         "Successfully deleted {count} item",
                         "Successfully deleted {count} items",
@@ -637,21 +641,13 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                         )
                     )
                 self._locate_path = None
-                try:
-                    self.locate_button.set_visible(False)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    pass
-                try:
-                    self.action_button.set_label(_("Done"))
-                    self.action_button.add_css_class("suggested-action")
-                except (AttributeError, RuntimeError, GLib.Error):
-                    pass
+                self._enter_completion_actions(show_locate=False)
                 return False
             if count <= 0 and size_bytes <= 0:
-                self.status_label.set_text(_("Transfer completed successfully"))
+                self._set_status_text(_("Transfer completed successfully"))
                 self.file_label.set_text("—")
             elif size_bytes > 0 and count > 1:
-                self.status_label.set_text(
+                self._set_status_text(
                     ngettext(
                         "Successfully transferred {count} file ({size})",
                         "Successfully transferred {count} files ({size})",
@@ -671,7 +667,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                     )
                 )
             elif size_bytes > 0:
-                self.status_label.set_text(
+                self._set_status_text(
                     _("Transferred {size} successfully").format(
                         size=self._format_size(size_bytes),
                     )
@@ -690,7 +686,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                         ).format(count=count)
                     )
             else:
-                self.status_label.set_text(_("Transfer completed successfully"))
+                self._set_status_text(_("Transfer completed successfully"))
                 self.file_label.set_text(
                     ngettext(
                         "Successfully transferred {count} file",
@@ -718,47 +714,25 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                     self._destination_path, sources
                 )
                 self._locate_path = locate
-                try:
-                    self.locate_button.set_visible(locate is not None)
-                    self.locate_button.set_sensitive(locate is not None)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    pass
+                show_locate = locate is not None
             else:
                 self._locate_path = None
-                try:
-                    self.locate_button.set_visible(False)
-                    self.locate_button.set_sensitive(False)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    pass
         else:
             if self.operation_type == "delete":
                 self._set_dialog_heading(_("Delete Failed"))
-                self.status_label.set_text(_("Delete failed"))
+                self._set_status_text(_("Delete failed"))
                 if error_message:
                     self.file_label.set_text(_("Error: {message}").format(message=error_message))
                 else:
                     self.file_label.set_text(_("An error occurred while deleting"))
             else:
                 self._set_dialog_heading(_("Transfer Failed"))
-                self.status_label.set_text(_("Transfer failed"))
+                self._set_status_text(_("Transfer failed"))
                 if error_message:
                     self.file_label.set_text(_("Error: {message}").format(message=error_message))
                 else:
                     self.file_label.set_text(_("An error occurred during transfer"))
             self._locate_path = None
-            try:
-                self.locate_button.set_visible(False)
-                self.locate_button.set_sensitive(False)
-            except (AttributeError, RuntimeError, GLib.Error):
-                pass
-        
-        # Swap the body button's label from Cancel → Done. _on_action_button_clicked
-        # reads _completion_shown (set above) and takes the "just close" path.
-        try:
-            self.action_button.set_label(_("Done"))
-            self.action_button.add_css_class("suggested-action")
-        except (AttributeError, RuntimeError, GLib.Error):
-            # Button may have been destroyed if the dialog is mid-close.
-            pass
 
+        self._enter_completion_actions(show_locate=show_locate)
         return False
