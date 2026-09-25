@@ -17,7 +17,7 @@ import re
 import time
 from datetime import datetime
 from gettext import gettext as _, ngettext
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 
@@ -687,6 +687,8 @@ class FilePane(Gtk.Box):
         self._current_path = "/"
         self._entries: List[FileEntry] = []
         self._cached_entries: List[FileEntry] = []
+        # Names hidden per directory while a delete of them is in flight.
+        self._held_removals: Dict[str, Set[str]] = {}
         self._raw_entries: List[FileEntry] = []
         self._show_hidden = False
         self.toolbar.set_show_hidden_state(self._show_hidden)
@@ -3105,6 +3107,11 @@ class FilePane(Gtk.Box):
     def show_entries(self, path: str, entries: Iterable[FileEntry]) -> None:
         self._clear_load_error()
         entries_list = list(entries)
+        held = getattr(self, "_held_removals", {}).get(path)
+        if held:
+            # A listing requested before a delete finished still names the
+            # entries being deleted; keep them hidden until it completes.
+            entries_list = [entry for entry in entries_list if entry.name not in held]
         pane_type = "remote" if self._is_remote else "local"
         logger.debug(f"FilePane.show_entries: {pane_type} pane updating with {len(entries_list)} entries for path {path}")
         
@@ -3123,15 +3130,22 @@ class FilePane(Gtk.Box):
 
         logger.debug(f"FilePane.show_entries: {pane_type} pane update completed")
 
-    def remove_cached_entries(self, names: Iterable[str]) -> int:
+    def remove_cached_entries(self, names: Iterable[str], *, hold: bool = False) -> int:
         """Drop entries from the visible listing without a remote/local reload.
 
         Used for optimistic delete (FileZilla-style): items disappear as soon as
         the user confirms, while the backend delete runs. Returns how many
         cached entries were removed. Callers should refresh on cancel/failure
         so surviving items come back.
+
+        With ``hold``, listings of this directory keep hiding the names until
+        :meth:`release_removed_entries`, so an asynchronous listing requested
+        before the delete cannot bring the rows back while it runs.
         """
         name_set = {name for name in names if name}
+        if hold and name_set and self._current_path:
+            held = self.__dict__.setdefault("_held_removals", {})
+            held.setdefault(self._current_path, set()).update(name_set)
         if not name_set or not self._cached_entries:
             return 0
         before = len(self._cached_entries)
@@ -3142,6 +3156,17 @@ class FilePane(Gtk.Box):
         if removed:
             self._apply_entry_filter(preserve_selection=True)
         return removed
+
+    def release_removed_entries(self, names: Iterable[str]) -> None:
+        """Stop hiding names held by :meth:`remove_cached_entries`."""
+        name_set = set(names)
+        held = getattr(self, "_held_removals", {})
+        for path in list(held):
+            remaining = held[path] - name_set
+            if remaining:
+                held[path] = remaining
+            else:
+                del held[path]
 
     def highlight_entry(self, name: str) -> None:
         if not name:

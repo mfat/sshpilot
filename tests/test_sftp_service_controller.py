@@ -701,6 +701,32 @@ def test_count_pass_abandons_on_service_not_ready():
     fake.emit.assert_not_called()
 
 
+def test_a_newer_count_pass_stops_the_older_one():
+    """Stale passes (one per refresh) must not keep listing folders."""
+    pending = []
+
+    def _list(path, *, on_success, on_error, cursor=None, limit=None):
+        pending.append((path, on_success))
+
+    fake = types.SimpleNamespace(
+        _closed=False,
+        _sftp_controller=types.SimpleNamespace(list_directory=_list),
+        emit=Mock(),
+    )
+    folders = [
+        FileEntry(name="a", is_dir=True, size=0, modified=0),
+        FileEntry(name="b", is_dir=True, size=0, modified=0),
+    ]
+    DaemonSftpManager._start_count_pass(fake, "/home/user", folders)
+    DaemonSftpManager._start_count_pass(fake, "/home/user", folders)
+    assert [path for path, _ in pending] == ["/home/user/a", "/home/user/a"]
+
+    pending[0][1](types.SimpleNamespace(entries=[]))  # the older pass answers
+    assert len(pending) == 2  # ...and stops instead of listing "b"
+    pending[1][1](types.SimpleNamespace(entries=[]))
+    assert [path for path, _ in pending][2:] == ["/home/user/b"]
+
+
 def test_open_attaches_ready_service_when_controlmaster_enabled(
     controller, mock_client, monkeypatch
 ):
