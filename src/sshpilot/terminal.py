@@ -10,7 +10,7 @@ import signal
 import time
 import re
 import gi
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 import weakref
 import subprocess
 import shutil
@@ -53,6 +53,14 @@ from .terminal_input import (
     MouseTrackingState,
     commit_payload_to_bytes,
     sgr_reports_to_legacy,
+)
+from .terminal_osc52 import (
+    OSC52_POLICY_ALWAYS,
+    OSC52_POLICY_ASK,
+    TARGET_PRIMARY,
+    Osc52Scanner,
+    normalize_osc52_max_kib,
+    normalize_osc52_policy,
 )
 from .terminal_display_pause import (
     DeferredDisplayFeed,
@@ -304,6 +312,11 @@ class TerminalWidget(Gtk.Box):
         self._pty_handoff = None
         self._local_shell_agent_pid = None
         self._mouse_tracking = MouseTrackingState()
+        # OSC 52 clipboard writes from remote programs (GH #1297).
+        self._osc52_scanner = Osc52Scanner()
+        self._osc52_pending = None
+        self._osc52_timer_id = None
+        self._osc52_toast = None
         # PTY-less VTE cannot disconnect_pty_read() during drag-select the way
         # Ptyxis does; buffer daemon output instead (see DeferredDisplayFeed).
         self._display_feed_pause = DeferredDisplayFeed()
@@ -1918,6 +1931,17 @@ class TerminalWidget(Gtk.Box):
         """Handle daemon terminal output."""
         try:
             self._feed_display(data)
+            # After painting, so clipboard handling can never hold output up.
+            scan = getattr(self, 'scan_remote_clipboard', None)
+            if scan is not None:
+                scan(
+                    data,
+                    replay=bool(getattr(
+                        getattr(self, '_daemon_controller', None),
+                        'delivering_replay',
+                        False,
+                    )),
+                )
 
             # First real output frame means the remote shell is rendering
             # (banner/prompt), not merely attached.
@@ -3344,20 +3368,195 @@ class TerminalWidget(Gtk.Box):
 
     def _show_toast(self, message, timeout=3):
         """Show a transient toast in the main window's toast overlay."""
-        root = self.get_root()
         try:
             toast = Adw.Toast.new(message)
             toast.set_timeout(timeout)
         except Exception:
             return
+        self._present_toast(toast)
 
+    def _present_toast(self, toast):
+        """Add a prepared toast to the main window's overlay; True if shown."""
+        root = self.get_root()
         try:
             if root and hasattr(root, 'toast_overlay') and root.toast_overlay is not None:
                 root.toast_overlay.add_toast(toast)
-            elif root and hasattr(root, 'add_toast'):
+                return True
+            if root and hasattr(root, 'add_toast'):
                 root.add_toast(toast)
+                return True
         except Exception:
             pass
+        return False
+
+    # -- OSC 52: remote programs writing the local clipboard (GH #1297) ------
+    #
+    # Neither emulator acts on OSC 52, so output is scanned here before it is
+    # painted (see terminal_osc52). Writes only; reads are never answered.
+
+    # Chunks of one large copy arrive back to back; act once on the result.
+    _OSC52_COALESCE_MS = 150
+    _OSC52_ASK_TIMEOUT_S = 10
+    _OSC52_SETTINGS_TTL_S = 1.0
+
+    def _osc52_settings(self):
+        """(policy, max_bytes), re-read from config at most once a second."""
+        now = time.monotonic()
+        cached = getattr(self, '_osc52_settings_cache', None)
+        if cached is not None and now - cached[0] < self._OSC52_SETTINGS_TTL_S:
+            return cached[1]
+        policy, max_kib = None, None
+        config = getattr(self, 'config', None)
+        if config is not None:
+            try:
+                policy = config.get_setting('terminal.osc52_policy', None)
+                max_kib = config.get_setting('terminal.osc52_max_kib', None)
+            except Exception:
+                logger.debug("Failed to read OSC 52 settings", exc_info=True)
+        settings = (
+            normalize_osc52_policy(policy),
+            normalize_osc52_max_kib(max_kib) * 1024,
+        )
+        self._osc52_settings_cache = (now, settings)
+        return settings
+
+    def scan_remote_clipboard(self, data, replay=False):
+        """Watch output bytes for OSC 52 writes before they are painted.
+
+        ``replay`` marks bytes the daemon re-sends on reattach or recovery;
+        they are scanned so a sequence straddling the boundary stays in
+        sync, but an old copy request is never acted on again.
+        """
+        scanner = getattr(self, '_osc52_scanner', None)
+        if scanner is None or not data:
+            return
+        try:
+            policy, max_bytes = self._osc52_settings()
+            scanner.max_bytes = max_bytes
+            writes = scanner.feed(data)
+            if not writes:
+                return
+            request = writes[-1]
+            if replay:
+                logger.debug(
+                    "OSC 52 write in replayed output ignored chars=%d",
+                    len(request.text),
+                )
+                return
+            if policy not in (OSC52_POLICY_ASK, OSC52_POLICY_ALWAYS):
+                logger.debug(
+                    "OSC 52 write ignored by policy=%s chars=%d",
+                    policy,
+                    len(request.text),
+                )
+                return
+            self._osc52_pending = request
+            if getattr(self, '_osc52_timer_id', None) is None:
+                self._osc52_timer_id = GLib.timeout_add(
+                    self._OSC52_COALESCE_MS, self._on_osc52_request_settled
+                )
+        except Exception:
+            logger.debug("OSC 52 scan failed", exc_info=True)
+
+    def _on_osc52_request_settled(self):
+        self._osc52_timer_id = None
+        request, self._osc52_pending = self._osc52_pending, None
+        if request is None or getattr(self, '_destroyed', False):
+            return False
+        policy, _max_bytes = self._osc52_settings()
+        chars = len(request.text)
+        if policy not in (OSC52_POLICY_ASK, OSC52_POLICY_ALWAYS):
+            return False
+        if not self._osc52_terminal_focused():
+            logger.debug("OSC 52 write ignored: terminal not focused chars=%d", chars)
+            return False
+        try:
+            has_selection = bool(self.backend and self.backend.get_has_selection())
+        except Exception:
+            has_selection = False
+        if has_selection:
+            logger.debug("OSC 52 write ignored: user selection active chars=%d", chars)
+            return False
+        if policy == OSC52_POLICY_ALWAYS:
+            if self._write_remote_clipboard(request):
+                self._show_toast(ngettext(
+                    "Remote program copied {count} character to the clipboard",
+                    "Remote program copied {count} characters to the clipboard",
+                    chars,
+                ).format(count=chars))
+        else:
+            self._ask_remote_clipboard(request)
+        return False
+
+    def _osc52_terminal_focused(self):
+        """Whether keyboard focus is inside this terminal in an active window."""
+        try:
+            root = self.get_root()
+            if root is None:
+                return False
+            is_active = getattr(root, 'is_active', None)
+            if callable(is_active) and not is_active():
+                return False
+            focus = root.get_focus()
+            return focus is not None and (focus is self or focus.is_ancestor(self))
+        except Exception:
+            logger.debug("OSC 52 focus check failed", exc_info=True)
+            return False
+
+    def _ask_remote_clipboard(self, request):
+        chars = len(request.text)
+        try:
+            toast = Adw.Toast.new(ngettext(
+                "Remote program wants to copy {count} character to the clipboard",
+                "Remote program wants to copy {count} characters to the clipboard",
+                chars,
+            ).format(count=chars))
+            toast.set_button_label(_("Copy"))
+            toast.set_timeout(self._OSC52_ASK_TIMEOUT_S)
+            toast.connect(
+                'button-clicked',
+                lambda _toast: self._write_remote_clipboard(request),
+            )
+        except Exception:
+            logger.debug("Failed to build OSC 52 prompt", exc_info=True)
+            return
+        self._dismiss_osc52_toast()
+        if self._present_toast(toast):
+            self._osc52_toast = toast
+            toast.connect('dismissed', self._on_osc52_toast_dismissed)
+            logger.debug("OSC 52 write awaiting confirmation chars=%d", chars)
+
+    def _on_osc52_toast_dismissed(self, toast):
+        if getattr(self, '_osc52_toast', None) is toast:
+            self._osc52_toast = None
+
+    def _dismiss_osc52_toast(self):
+        toast, self._osc52_toast = getattr(self, '_osc52_toast', None), None
+        if toast is not None:
+            try:
+                toast.dismiss()
+            except Exception:
+                pass
+
+    def _write_remote_clipboard(self, request):
+        """Put an OSC 52 request on the clipboard(s) it names."""
+        try:
+            for target in sorted(request.targets):
+                if target == TARGET_PRIMARY:
+                    clipboard = self.get_primary_clipboard()
+                else:
+                    clipboard = self.get_clipboard()
+                clipboard.set(request.text)
+        except Exception:
+            logger.warning("Failed to apply OSC 52 clipboard write", exc_info=True)
+            return False
+        logger.debug(
+            "OSC 52 clipboard write applied targets=%s chars=%d parts=%d",
+            ",".join(sorted(request.targets)),
+            len(request.text),
+            request.parts,
+        )
+        return True
 
     def _notify_invalid_encoding(self, requested, fallback):
         message = _(
@@ -5093,6 +5292,16 @@ class TerminalWidget(Gtk.Box):
         # Suppress any in-flight VTE interactions (motion/enter callbacks still
         # queued on the motion controller) before the screen state is released.
         self._destroyed = True
+
+        osc52_timer = getattr(self, '_osc52_timer_id', None)
+        if osc52_timer is not None:
+            self._osc52_timer_id = None
+            try:
+                GLib.source_remove(osc52_timer)
+            except Exception:
+                pass
+        self._osc52_pending = None
+        self._dismiss_osc52_toast()
 
         # Disconnect backend signal handlers first to prevent callbacks on destroyed objects
         if hasattr(self, 'backend') and self.backend is not None:

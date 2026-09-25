@@ -21,6 +21,13 @@ from .gtk.secret_status_messages import format_secret_error, format_secret_messa
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
+from .terminal_osc52 import (
+    OSC52_MAX_MAX_KIB,
+    OSC52_MIN_MAX_KIB,
+    OSC52_POLICIES,
+    normalize_osc52_max_kib,
+    normalize_osc52_policy,
+)
 from .terminal_cursor import (
     CURSOR_BLINK_MODES,
     CURSOR_SHAPES,
@@ -795,6 +802,86 @@ class PreferencesWindow(Adw.NavigationPage):
         self._update_wheel_scroll_visibility()
 
         terminal_page.add(mouse_group)
+
+        self._add_remote_clipboard_group(terminal_page)
+
+    def _add_remote_clipboard_group(self, terminal_page):
+        """OSC 52: let programs on the remote host write the local clipboard."""
+        clipboard_group = Adw.PreferencesGroup(title=_("Remote Clipboard"))
+        clipboard_group.set_description(
+            _("Programs on the remote host (tmux, Neovim, osc52 tools) can ask "
+              "to copy text to this computer's clipboard using OSC 52. They "
+              "can never read the clipboard.")
+        )
+
+        self.osc52_policy_row = Adw.ComboRow()
+        self.osc52_policy_row.set_title(_("Allow remote programs to copy"))
+        self.osc52_policy_row.set_subtitle(
+            _("Only the focused terminal can copy")
+        )
+        policy_model = Gtk.StringList()
+        # Same order as OSC52_POLICIES: never, ask, always.
+        for label in (_("Never"), _("Ask Each Time"), _("Always")):
+            policy_model.append(label)
+        self.osc52_policy_row.set_model(policy_model)
+        current_policy = normalize_osc52_policy(
+            self.config.get_setting('terminal.osc52_policy', None)
+        )
+        self.osc52_policy_row.set_selected(OSC52_POLICIES.index(current_policy))
+        self.osc52_policy_row.connect('notify::selected', self.on_osc52_policy_changed)
+        clipboard_group.add(self.osc52_policy_row)
+
+        max_kib = normalize_osc52_max_kib(
+            self.config.get_setting('terminal.osc52_max_kib', None)
+        )
+        self.osc52_max_kib_row = Adw.SpinRow(
+            adjustment=Gtk.Adjustment(
+                value=float(max_kib),
+                lower=OSC52_MIN_MAX_KIB,
+                upper=OSC52_MAX_MAX_KIB,
+                step_increment=64,
+                page_increment=1024,
+            ),
+            digits=0,
+        )
+        self.osc52_max_kib_row.set_title(_("Maximum copy size (KiB)"))
+        self.osc52_max_kib_row.set_subtitle(
+            _("Larger copy requests are ignored")
+        )
+        self.osc52_max_kib_row.connect('notify::value', self.on_osc52_max_kib_changed)
+        clipboard_group.add(self.osc52_max_kib_row)
+        self._update_osc52_size_sensitivity()
+
+        terminal_page.add(clipboard_group)
+
+    def _update_osc52_size_sensitivity(self):
+        row = getattr(self, 'osc52_max_kib_row', None)
+        policy_row = getattr(self, 'osc52_policy_row', None)
+        if row is None or policy_row is None:
+            return
+        index = policy_row.get_selected()
+        never = 0 <= index < len(OSC52_POLICIES) and OSC52_POLICIES[index] == 'never'
+        row.set_sensitive(not never)
+
+    def on_osc52_policy_changed(self, combo_row, _param):
+        """Persist the OSC 52 remote clipboard policy."""
+        index = combo_row.get_selected()
+        if not 0 <= index < len(OSC52_POLICIES):
+            return
+        try:
+            self.config.set_setting('terminal.osc52_policy', OSC52_POLICIES[index])
+        except Exception as exc:
+            logger.error("Failed to update OSC 52 policy: %s", exc)
+        self._update_osc52_size_sensitivity()
+
+    def on_osc52_max_kib_changed(self, row, _pspec):
+        """Persist the OSC 52 size limit."""
+        try:
+            self.config.set_setting(
+                'terminal.osc52_max_kib', normalize_osc52_max_kib(row.get_value())
+            )
+        except Exception as exc:
+            logger.error("Failed to update OSC 52 size limit: %s", exc)
 
     def _add_terminal_preferred_group(self, terminal_page):
         """Add the Preferred Terminal group when external terminals are available."""

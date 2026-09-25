@@ -2936,7 +2936,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         from .xterm_pty_bridge import XtermPtyBridge
         self._reset_flow_control()
         self._bridge = XtermPtyBridge(
-            on_output=self._on_pty_output,
+            on_output=self._on_local_pty_output,
             on_exit=self._on_bridge_exit,
             flush_ms=16,
         )
@@ -3048,6 +3048,18 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             )
         if want_ack and self._fc_pending > self._FC_HIGH:
             self._pause_pty_flow()
+
+    def _on_local_pty_output(self, chunk: str):
+        # Only the in-process PTY comes through here. Daemon bytes reach
+        # _on_pty_output via feed() and were already scanned by the owner,
+        # so scanning here as well would act on each OSC 52 twice.
+        scan = getattr(self.owner, "scan_remote_clipboard", None)
+        if scan is not None:
+            try:
+                scan(chunk)
+            except Exception:  # noqa: BLE001
+                logger.debug("OSC 52 scan raised", exc_info=True)
+        self._on_pty_output(chunk)
 
     def _on_pty_output(self, chunk: str):
         # Keep a rolling tail so get_content() works (PTY auto-fill / failure

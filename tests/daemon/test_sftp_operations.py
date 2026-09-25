@@ -103,6 +103,9 @@ class _FsClient:
             )
         raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE)
 
+    def realpath(self, path):
+        return path
+
     def lstat(self, path):
         return self._attr(path, follow=False)
 

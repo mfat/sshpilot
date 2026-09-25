@@ -625,6 +625,214 @@ def test_remove_recursive_batches_sibling_files_via_remove_many():
     assert "/tree" not in client.directories
 
 
+class _BatchingSftpClient(_FakeSftpClient):
+    """Adds the pipelined ``listdir_many`` / ``rmdir_many`` batch calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.listdir_many_calls = []
+        self.rmdir_many_calls = []
+
+    def listdir_many(self, paths):
+        self.listdir_many_calls.append(list(paths))
+        # Like the real client: the first error fails the whole batch.
+        for path in paths:
+            if path not in self.directories:
+                raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE, "missing")
+        return [_FakeSftpClient.listdir_attr(self, path) for path in paths]
+
+    def rmdir_many(self, paths, *, continue_on_error=False):
+        self.rmdir_many_calls.append(list(paths))
+        for path in paths:
+            self.rmdir(path)
+        return []
+
+
+def _batching_runtime():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = _BatchingSftpClient()
+    runner.handles[0].client = client
+    return runtime, summary, owner, client
+
+
+def test_remove_recursive_lists_each_level_of_all_roots_together():
+    runtime, summary, owner, client = _batching_runtime()
+    client.directories.update({"/one", "/one/a", "/one/b", "/one/a/x", "/two", "/two/c"})
+    client.files.update({"/one/a/1.txt": b"", "/one/a/x/2.txt": b"", "/two/c/3.txt": b""})
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/one", paths=("/two",), recursive=True),
+        client_id=owner,
+    )
+
+    assert client.listdir_many_calls == [
+        ["/one", "/two"],
+        ["/one/a", "/one/b", "/two/c"],
+    ]
+    # A directory goes as soon as its subtree is gone: leaves after their
+    # level, then parents as they empty.
+    assert client.rmdir_many_calls == [
+        ["/one/b", "/two/c"],
+        ["/two"],
+        ["/one/a/x"],
+        ["/one/a"],
+        ["/one"],
+    ]
+    assert client.directories == {"/"}
+    assert set(client.files) == {"/source.txt"}
+
+
+def test_remove_recursive_skips_a_subdirectory_that_vanished_mid_walk():
+    runtime, summary, owner, client = _batching_runtime()
+    client.directories.update({"/tree", "/tree/a", "/tree/b"})
+    client.files.update({"/tree/a/1.txt": b"", "/tree/b/2.txt": b""})
+    original = client.listdir_attr
+
+    def _listdir(path):
+        if path == "/tree":
+            listing = original(path)
+            client.directories.discard("/tree/a")  # deleted by someone else
+            client.files.pop("/tree/a/1.txt")
+            return listing
+        return original(path)
+
+    client.listdir_attr = _listdir
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert client.directories == {"/"}
+    assert "/tree/b/2.txt" not in client.files
+
+
+def test_remove_recursive_walks_a_nested_root_only_once():
+    runtime, summary, owner, client = _batching_runtime()
+    client.directories.update({"/tree", "/tree/sub"})
+    client.files["/tree/sub/1.txt"] = b""
+    reported = []
+
+    runtime.remove(
+        SftpPathRequest(
+            service_id=summary.id, path="/tree/sub", paths=("/tree", "/tree"), recursive=True
+        ),
+        client_id=owner,
+        progress=reported.append,
+    )
+
+    # Both roots are listed once; /tree waits for its root child /tree/sub.
+    assert client.listdir_many_calls == [["/tree/sub", "/tree"]]
+    assert client.rmdir_many_calls == [["/tree/sub"], ["/tree"]]
+    assert client.directories == {"/"}
+    assert reported == sorted(reported) and reported[-1] == 1.0
+
+
+def test_remove_recursive_cancel_leaves_no_emptied_skeleton():
+    from sshpilot.daemon.operation_runtime import OperationCancelled
+
+    runtime, summary, owner, client = _batching_runtime()
+    client.directories.update({"/t", "/t/a", "/t/b", "/t/b/c"})
+    client.files.update({"/t/a/1.txt": b"", "/t/b/c/deep.txt": b""})
+
+    with pytest.raises(OperationCancelled):
+        runtime.remove(
+            SftpPathRequest(service_id=summary.id, path="/t", recursive=True),
+            client_id=owner,
+            # Cancel once the first finished subtree is gone.
+            cancel=lambda: "/t/a" not in client.directories,
+        )
+
+    # The finished subtree is gone entirely; the unfinished one is intact.
+    assert "/t/a" not in client.directories
+    assert {"/t", "/t/b", "/t/b/c"} <= client.directories
+    assert "/t/b/c/deep.txt" in client.files
+
+
+def test_remove_recursive_fallback_rmdir_ignores_a_missing_directory():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client  # no rmdir_many
+    client.directories.update({"/tree", "/tree/sub"})
+    original = client.rmdir
+
+    def _rmdir(path):
+        if path == "/tree/sub":
+            original(path)  # someone else removed it first
+            raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE, "missing")
+        original(path)
+
+    client.rmdir = _rmdir
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert client.directories == {"/"}
+
+
+def test_remove_recursive_isolates_a_vanished_directory_by_halving():
+    runtime, summary, owner, client = _batching_runtime()
+    client.directories.add("/tree")
+    for index in range(64):
+        client.directories.add(f"/tree/d{index:02d}")
+    original = client.listdir_attr
+    single = []
+
+    def _listdir(path):
+        if path == "/tree":
+            listing = original(path)
+            client.directories.discard("/tree/d17")  # deleted by someone else
+            return listing
+        single.append(path)
+        return original(path)
+
+    client.listdir_attr = _listdir
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert client.directories == {"/"}
+    # Halving reaches the vanished directory in a handful of batches instead
+    # of re-listing all 64 siblings one by one.
+    assert len(single) <= 2
+    assert len(client.listdir_many_calls) <= 2 * 6 + 1
+
+
+def test_remove_recursive_checks_the_resolved_path_against_the_guard():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.directories.update({"/x", "/x/up-to-root"})
+    client.files["/keep.txt"] = b"k"
+    # The spelling looks harmless; the server resolves it to "/".
+    client.realpath = lambda path: "/" if path == "/x/up-to-root/.." else path
+    client.directories.add("/x/up-to-root/..")
+
+    with pytest.raises(SshPilotError) as refused:
+        runtime.remove(
+            SftpPathRequest(
+                service_id=summary.id, path="/source.txt", paths=("/x/up-to-root/..",), recursive=True
+            ),
+            client_id=owner,
+        )
+
+    assert refused.value.details == {"sftp_failure_code": "recursive_delete_protected_path"}
+    # Refused before anything was deleted, including the plain file root.
+    assert client.remove_calls == []
+    assert "/keep.txt" in client.files
+
+
 @pytest.mark.parametrize(
     "method",
     ["stat_path", "realpath", "readlink", "filesystem_usage", "mkdir", "rmdir"],

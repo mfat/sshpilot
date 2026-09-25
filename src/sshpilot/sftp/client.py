@@ -10,7 +10,8 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Deque, Dict, Iterator, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Callable, Deque, Dict, Iterator, List, Optional, Tuple
 
 from . import protocol as proto
 
@@ -32,8 +33,30 @@ _MAX_BYTES_IN_FLIGHT = 32 * 1024 * 1024
 # are tiny requests, so a deeper window hides RTT better than the transfer
 # depth without saturating the channel the way large READ/WRITE payloads would.
 _REMOVE_PIPELINE_DEPTH = 100
+# Same depth for mass STAT / atomic small-file upload control-plane ops: each
+# request is tiny, so overlapping ~100 of them collapses N×RTT to ~1 RTT per
+# phase for a recursive directory of small files.
+_META_PIPELINE_DEPTH = 100
 # READDIRs a directory listing keeps in flight.
 _READDIR_AHEAD = 8
+
+
+@dataclass(frozen=True)
+class AtomicUploadItem:
+    """One temp→rename upload for :meth:`OpenSSHSFTPClient.atomic_upload_many`.
+
+    ``create_mode`` is applied on OPEN (server umask still applies).
+    ``existing_mode`` is restored via FSETSTAT when replacing a file; ``None``
+    leaves the create mode and only sets timestamps.
+    """
+
+    local_path: str
+    remote_temp: str
+    remote_dst: str
+    create_mode: int
+    existing_mode: Optional[int]
+    atime: int
+    mtime: int
 
 
 class _Pending:
@@ -125,6 +148,8 @@ class OpenSSHSFTPClient:
         # Largest READ/WRITE payload; raised from limits@openssh.com in start().
         self.max_read_length = _CHUNK
         self.max_write_length = _CHUNK
+        # Server's open-handle limit from limits@openssh.com (0 = unknown).
+        self.max_open_handles = 0
         # Peak outstanding depth from the most recent transfer pipeline (tests /
         # diagnostics). Updated by ``iter_read`` and ``PipelinedWriter``.
         self.last_transfer_peak_pending = _INITIAL_PIPELINE_DEPTH
@@ -186,6 +211,10 @@ class OpenSSHSFTPClient:
             max_packet = reader.uint64()
             max_read = reader.uint64()
             max_write = reader.uint64()
+            try:
+                max_handles = reader.uint64()
+            except Exception:  # older/partial reply: no handle limit
+                max_handles = 0
         except Exception as exc:
             logger.debug("SFTP limits request failed: %s", exc)
             return
@@ -197,6 +226,7 @@ class OpenSSHSFTPClient:
             self.max_read_length = min(max_read, _MAX_CHUNK)
         if max_write > 0:
             self.max_write_length = min(max_write, _MAX_CHUNK)
+        self.max_open_handles = max_handles
 
     def _reader_loop(self) -> None:
         try:
@@ -295,6 +325,55 @@ class OpenSSHSFTPClient:
     def lstat(self, path: str) -> proto.SFTPAttributes:
         return self._attrs(self._request(proto.FXP_LSTAT, proto.pack_string(path)))
 
+    def stat_many(
+        self, paths: List[str], *, missing_on_error: bool = False
+    ) -> List[Optional[proto.SFTPAttributes]]:
+        """STAT many paths with a pipelined window.
+
+        Missing paths become ``None`` (same as a conflict probe that treats
+        ``FX_NO_SUCH_FILE`` as absent). Other STATUS errors raise after the
+        in-flight window is drained, unless ``missing_on_error`` is set: then
+        any error except a lost connection also reads as ``None`` (for servers
+        that answer a missing path with ``FX_FAILURE`` or a permission error).
+        """
+        if not paths:
+            return []
+        results: List[Optional[proto.SFTPAttributes]] = [None] * len(paths)
+        inflight: Deque[Tuple[int, _Pending]] = deque()
+        fatal: Optional[BaseException] = None
+
+        def _drain_one() -> None:
+            nonlocal fatal
+            index, slot = inflight.popleft()
+            try:
+                results[index] = self._attrs(self._wait(slot))
+            except proto.SFTPError as exc:
+                if exc.code == proto.FX_NO_SUCH_FILE or (
+                    missing_on_error and exc.code != proto.FX_CONNECTION_LOST
+                ):
+                    results[index] = None
+                    return
+                if fatal is None:
+                    fatal = exc
+            except Exception as exc:
+                if missing_on_error:
+                    results[index] = None
+                    return
+                if fatal is None:
+                    fatal = exc
+
+        for index, path in enumerate(paths):
+            if fatal is not None:
+                break
+            inflight.append((index, self._send(proto.FXP_STAT, proto.pack_string(path))))
+            if len(inflight) >= _META_PIPELINE_DEPTH:
+                _drain_one()
+        while inflight:
+            _drain_one()
+        if fatal is not None:
+            raise fatal
+        return results
+
     @staticmethod
     def _attrs(resp: Tuple[int, bytes]) -> proto.SFTPAttributes:
         ptype, payload = resp
@@ -383,6 +462,22 @@ class OpenSSHSFTPClient:
         instead of raising. Directories must be removed with ``rmdir`` /
         recursive walk — ``FXP_REMOVE`` on a directory fails.
         """
+        return self._path_status_many(proto.FXP_REMOVE, paths, continue_on_error)
+
+    def rmdir_many(
+        self, paths: List[str], *, continue_on_error: bool = False
+    ) -> List[Tuple[str, BaseException]]:
+        """Remove many empty directories with pipelined ``FXP_RMDIR`` requests.
+
+        Same window, missing-path and error policy as :meth:`remove_many`. The
+        caller removes children before parents across calls; directories in
+        one call must not contain each other.
+        """
+        return self._path_status_many(proto.FXP_RMDIR, paths, continue_on_error)
+
+    def _path_status_many(
+        self, ptype: int, paths: List[str], continue_on_error: bool
+    ) -> List[Tuple[str, BaseException]]:
         if not paths:
             return []
         inflight: Deque[Tuple[str, _Pending]] = deque()
@@ -408,7 +503,7 @@ class OpenSSHSFTPClient:
         for path in paths:
             if fatal is not None:
                 break
-            inflight.append((path, self._send(proto.FXP_REMOVE, proto.pack_string(path))))
+            inflight.append((path, self._send(ptype, proto.pack_string(path))))
             if len(inflight) >= _REMOVE_PIPELINE_DEPTH:
                 _drain_one()
         while inflight:
@@ -466,6 +561,480 @@ class OpenSSHSFTPClient:
         except (FileNotFoundError, proto.SFTPError):
             pass
         self.rename(old, new)
+
+    def atomic_upload_many(
+        self,
+        items: List[AtomicUploadItem],
+        *,
+        on_file_bytes: Optional[Callable[[AtomicUploadItem, int], None]] = None,
+        check_cancel: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Upload many small files with pipelined control-plane requests.
+
+        Each item is written to ``remote_temp`` then atomically renamed onto
+        ``remote_dst`` (same policy as a single-file transfer). Items run in
+        windows of at most :meth:`_meta_window` files; within a window every
+        phase (OPEN, WRITE, FSETSTAT, CLOSE, rename) is sent at once, so a
+        directory of tiny files costs about one RTT per phase per window
+        instead of six RTTs per file, while the server never holds more than
+        one window of open handles.
+
+        Callers should pass files that fit in one WRITE chunk (see
+        ``max_write_length``); a file that grew since it was measured is still
+        written in ``max_write_length`` pieces.
+        """
+        window = self._meta_window()
+        for start in range(0, len(items), window):
+            if check_cancel is not None:
+                check_cancel()
+            self._atomic_upload_window(
+                items[start : start + window], on_file_bytes, check_cancel
+            )
+
+    def _meta_window(self) -> int:
+        # Concurrent transfers share this session, so take only a slice of
+        # the server's handle limit when it advertises one.
+        if self.max_open_handles:
+            return max(1, min(_META_PIPELINE_DEPTH, self.max_open_handles // 4))
+        return _META_PIPELINE_DEPTH
+
+    def _send_all(self, requests: List[Tuple[int, bytes]]) -> List[object]:
+        """Send *requests* together and wait for every reply.
+
+        Returns one entry per request: the response tuple, or the exception
+        raised while sending or waiting. Every sent request is drained, so no
+        reply (e.g. a successful OPEN's handle) is ever abandoned.
+        """
+        slots: List[object] = []
+        for ptype, payload in requests:
+            try:
+                slots.append(self._send(ptype, payload))
+            except BaseException as exc:  # connection lost mid-window
+                slots.append(exc)
+        results: List[object] = []
+        for slot in slots:
+            if isinstance(slot, BaseException):
+                results.append(slot)
+                continue
+            try:
+                results.append(self._wait(slot))
+            except BaseException as exc:
+                results.append(exc)
+        return results
+
+    def _status_results(self, requests: List[Tuple[int, bytes]]) -> List[Optional[BaseException]]:
+        """Like :meth:`_send_all` for STATUS replies: ``None`` means OK."""
+        errors: List[Optional[BaseException]] = []
+        for result in self._send_all(requests):
+            if isinstance(result, BaseException):
+                errors.append(result)
+                continue
+            try:
+                self._expect_ok(result)
+            except BaseException as exc:
+                errors.append(exc)
+            else:
+                errors.append(None)
+        return errors
+
+    def _atomic_upload_window(
+        self,
+        items: List[AtomicUploadItem],
+        on_file_bytes: Optional[Callable[[AtomicUploadItem, int], None]],
+        check_cancel: Optional[Callable[[], None]],
+    ) -> None:
+        opened: List[Tuple[AtomicUploadItem, bytes]] = []
+        # Temps that exist on the server and are not yet renamed into place.
+        pending_temps: List[str] = []
+        # Temps whose destination was already removed: the temp is now the
+        # only copy, so it must survive a failure.
+        keep_temps: List[str] = []
+
+        def _cancel() -> None:
+            if check_cancel is not None:
+                check_cancel()
+
+        def _first_error(errors: List[Optional[BaseException]]) -> None:
+            for exc in errors:
+                if exc is not None:
+                    raise exc
+
+        try:
+            # Phase 1: OPEN temps ------------------------------------------------
+            _cancel()
+            open_results = self._send_all(
+                [
+                    (
+                        proto.FXP_OPEN,
+                        proto.pack_string(item.remote_temp)
+                        + proto.pack_uint32(
+                            proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
+                        )
+                        + proto.encode_attrs(
+                            proto.SFTPAttributes(st_mode=int(item.create_mode) & 0o7777)
+                        ),
+                    )
+                    for item in items
+                ]
+            )
+            open_error: Optional[BaseException] = None
+            for item, result in zip(items, open_results):
+                if isinstance(result, BaseException):
+                    open_error = open_error or result
+                    continue
+                try:
+                    handle = self._handle(result)
+                except BaseException as exc:
+                    open_error = open_error or exc
+                    continue
+                opened.append((item, handle))
+                pending_temps.append(item.remote_temp)
+            if open_error is not None:
+                raise open_error
+
+            # Phase 2: WRITE payloads --------------------------------------------
+            _cancel()
+            writes: List[Tuple[int, bytes]] = []
+            written: List[Tuple[AtomicUploadItem, int]] = []
+            step = max(1, int(self.max_write_length))
+            for item, handle in opened:
+                offset = 0
+                with open(item.local_path, "rb") as source:
+                    while True:
+                        data = source.read(step)
+                        if not data:
+                            break
+                        writes.append(
+                            (
+                                proto.FXP_WRITE,
+                                proto.pack_string(handle)
+                                + proto.pack_uint64(offset)
+                                + proto.pack_string(data),
+                            )
+                        )
+                        written.append((item, len(data)))
+                        offset += len(data)
+                if offset == 0 and on_file_bytes is not None:
+                    on_file_bytes(item, 0)
+            write_errors = self._status_results(writes)
+            for (item, nbytes), exc in zip(written, write_errors):
+                if exc is None and on_file_bytes is not None:
+                    on_file_bytes(item, nbytes)
+            _first_error(write_errors)
+
+            # Phase 3: FSETSTAT (mode + mtime), best effort ----------------------
+            _cancel()
+            meta_errors = self._status_results(
+                [
+                    (
+                        proto.FXP_FSETSTAT,
+                        proto.pack_string(handle)
+                        + proto.encode_attrs(
+                            proto.SFTPAttributes(
+                                st_mode=item.existing_mode,
+                                st_atime=item.atime,
+                                st_mtime=item.mtime,
+                            )
+                        ),
+                    )
+                    for item, handle in opened
+                ]
+            )
+            for exc in meta_errors:
+                if exc is None:
+                    continue
+                if not isinstance(exc, proto.SFTPError) or exc.code == proto.FX_CONNECTION_LOST:
+                    raise exc
+                logger.debug("Could not set uploaded file attributes: %s", exc)
+
+            # Phase 4: CLOSE -----------------------------------------------------
+            close_errors = self._status_results(
+                [(proto.FXP_CLOSE, proto.pack_string(handle)) for _item, handle in opened]
+            )
+            opened.clear()
+            _first_error(close_errors)
+
+            # Phase 5: rename onto the destination ------------------------------
+            _cancel()
+            if self.supports_posix_rename():
+                rename_errors = self._status_results(
+                    [
+                        (
+                            proto.FXP_EXTENDED,
+                            proto.pack_string("posix-rename@openssh.com")
+                            + proto.pack_string(item.remote_temp)
+                            + proto.pack_string(item.remote_dst),
+                        )
+                        for item in items
+                    ]
+                )
+            else:
+                # Plain RENAME succeeds for new destinations without touching
+                # anything; only existing ones need the remove+rename fallback.
+                rename_errors = self._status_results(
+                    [
+                        (
+                            proto.FXP_RENAME,
+                            proto.pack_string(item.remote_temp)
+                            + proto.pack_string(item.remote_dst),
+                        )
+                        for item in items
+                    ]
+                )
+            retry: List[AtomicUploadItem] = []
+            for item, exc in zip(items, rename_errors):
+                if exc is None:
+                    pending_temps.remove(item.remote_temp)
+                elif isinstance(exc, proto.SFTPError) and exc.code != proto.FX_CONNECTION_LOST:
+                    retry.append(item)
+                else:
+                    raise exc
+            # Fallback one file at a time so at most one destination is ever
+            # missing while its replacement is still a temp.
+            for item in retry:
+                logger.debug(
+                    "rename of %s failed; falling back to remove+rename", item.remote_temp
+                )
+                try:
+                    self.remove(item.remote_dst)
+                    removed = True
+                except (FileNotFoundError, proto.SFTPError) as exc:
+                    if getattr(exc, "code", None) == proto.FX_CONNECTION_LOST:
+                        raise
+                    removed = False
+                if removed:
+                    keep_temps.append(item.remote_temp)
+                self.rename(item.remote_temp, item.remote_dst)
+                pending_temps.remove(item.remote_temp)
+                if removed:
+                    keep_temps.remove(item.remote_temp)
+        except BaseException:
+            if opened:
+                try:
+                    self._status_results(
+                        [(proto.FXP_CLOSE, proto.pack_string(h)) for _i, h in opened]
+                    )
+                except BaseException:
+                    pass
+            for path in keep_temps:
+                logger.warning(
+                    "Upload interrupted after its destination was removed; "
+                    "keeping the new content at %s",
+                    path,
+                )
+            doomed = [path for path in pending_temps if path not in keep_temps]
+            if doomed:
+                try:
+                    self.remove_many(doomed, continue_on_error=True)
+                except BaseException:
+                    pass
+            raise
+
+    def _open_all(
+        self, requests: List[Tuple[int, bytes]]
+    ) -> Tuple[List[Optional[bytes]], Optional[BaseException]]:
+        """Send OPEN/OPENDIR *requests* together; return each handle (``None``
+        where it failed) and the first error."""
+        handles: List[Optional[bytes]] = []
+        error: Optional[BaseException] = None
+        for result in self._send_all(requests):
+            try:
+                if isinstance(result, BaseException):
+                    raise result
+                handles.append(self._handle(result))
+            except BaseException as exc:
+                handles.append(None)
+                error = error or exc
+        return handles, error
+
+    def _close_all(self, handles: List[Optional[bytes]]) -> None:
+        """Best-effort pipelined CLOSE (like :meth:`close_handle`)."""
+        requests = [
+            (proto.FXP_CLOSE, proto.pack_string(handle))
+            for handle in handles
+            if handle is not None
+        ]
+        try:
+            errors = self._status_results(requests)
+        except BaseException as exc:  # pragma: no cover - best effort
+            errors = [exc]
+        for exc in errors:
+            if exc is not None:
+                logger.debug("SFTP close handle failed: %s", exc)
+
+    def mkdir_many(
+        self, paths: List[str], mode: Optional[int] = None
+    ) -> List[Optional[BaseException]]:
+        """MKDIR many paths with pipelined windows.
+
+        Returns one entry per path: ``None`` on success, else the error. The
+        caller orders parents before children across calls; paths within one
+        call must not depend on each other.
+        """
+        attr = None
+        if mode is not None:
+            attr = proto.SFTPAttributes(st_mode=int(mode) & 0o7777)
+        errors: List[Optional[BaseException]] = []
+        for start in range(0, len(paths), _META_PIPELINE_DEPTH):
+            errors.extend(
+                self._status_results(
+                    [
+                        (proto.FXP_MKDIR, proto.pack_string(path) + proto.encode_attrs(attr))
+                        for path in paths[start : start + _META_PIPELINE_DEPTH]
+                    ]
+                )
+            )
+        return errors
+
+    def listdir_many(self, paths: List[str]) -> List[List[proto.SFTPAttributes]]:
+        """List many directories at once (entries as :meth:`listdir_attr`).
+
+        Directories are opened a window at a time and read in rounds, each
+        round sending READDIRs for every unfinished directory together, so a
+        level of small directories costs a few round trips in total rather
+        than a few per directory. The first error is raised after every reply
+        is drained and every handle closed.
+        """
+        entries: List[List[proto.SFTPAttributes]] = []
+        window = self._meta_window()
+        for start in range(0, len(paths), window):
+            entries.extend(self._listdir_window(paths[start : start + window]))
+        return entries
+
+    def _listdir_window(self, paths: List[str]) -> List[List[proto.SFTPAttributes]]:
+        handles, error = self._open_all(
+            [(proto.FXP_OPENDIR, proto.pack_string(path)) for path in paths]
+        )
+        entries: List[List[proto.SFTPAttributes]] = [[] for _ in paths]
+        try:
+            if error is not None:
+                raise error
+            active = list(range(len(paths)))
+            # Two READDIRs finish a typical small directory (names, then EOF)
+            # in one round trip; directories still going get the full ahead.
+            ahead = 2
+            while active:
+                sent: List[Tuple[int, object]] = []
+                for index in active:
+                    request = proto.pack_string(handles[index])
+                    for _ in range(ahead):
+                        try:
+                            sent.append((index, self._send(proto.FXP_READDIR, request)))
+                        except BaseException as exc:
+                            sent.append((index, exc))
+                done = set()
+                for index, slot in sent:
+                    try:
+                        if isinstance(slot, BaseException):
+                            raise slot
+                        # Always wait, even past EOF: replies on one handle
+                        # arrive in order and must settle before CLOSE.
+                        ptype, payload = self._wait(slot)
+                        if index in done:
+                            continue
+                        if ptype == proto.FXP_NAME:
+                            _, names = proto.parse_name(payload)
+                            entries[index].extend(
+                                attr for attr in names if attr.filename not in (".", "..")
+                            )
+                        elif ptype == proto.FXP_STATUS:
+                            _, code, message = proto.parse_status(payload)
+                            if code != proto.FX_EOF:
+                                raise proto.SFTPError(code, message)
+                            done.add(index)
+                        else:
+                            raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected NAME")
+                    except BaseException as exc:
+                        error = error or exc
+                        done.add(index)
+                if error is not None:
+                    raise error
+                active = [index for index in active if index not in done]
+                ahead = _READDIR_AHEAD
+        finally:
+            self._close_all(handles)
+        return entries
+
+    def small_read_limit(self) -> int:
+        """Largest file size :meth:`read_small_files` reads in one READ."""
+        return max(0, int(self.max_read_length) - 1)
+
+    def read_small_files(
+        self,
+        items: List[Tuple[str, int]],
+        *,
+        check_cancel: Optional[Callable[[], None]] = None,
+    ) -> Iterator[Tuple[int, List[bytes]]]:
+        """Read many small files with pipelined OPEN / READ / CLOSE.
+
+        *items* are ``(path, expected_size)``. Files are handled a window at a
+        time; each window yields ``(start_index, contents)`` once all of its
+        handles are closed, so no handle outlives a yield. Each file is read
+        with one READ of ``expected_size + 1`` bytes: getting exactly the
+        expected size back proves EOF without another round trip, and a file
+        that grew or came back short is finished with :meth:`iter_read`.
+        """
+        window = self._meta_window()
+        for start in range(0, len(items), window):
+            if check_cancel is not None:
+                check_cancel()
+            yield start, self._read_window(items[start : start + window], check_cancel)
+
+    def _read_window(
+        self,
+        items: List[Tuple[str, int]],
+        check_cancel: Optional[Callable[[], None]],
+    ) -> List[bytes]:
+        handles, error = self._open_all(
+            [
+                (
+                    proto.FXP_OPEN,
+                    proto.pack_string(path)
+                    + proto.pack_uint32(proto.FXF_READ)
+                    + proto.encode_attrs(None),
+                )
+                for path, _size in items
+            ]
+        )
+        contents: List[bytes] = []
+        try:
+            if error is not None:
+                raise error
+            if check_cancel is not None:
+                check_cancel()
+            step = max(1, int(self.max_read_length))
+            lengths = [min(max(0, int(size)) + 1, step) for _path, size in items]
+            replies = self._send_all(
+                [
+                    (
+                        proto.FXP_READ,
+                        proto.pack_string(handle)
+                        + proto.pack_uint64(0)
+                        + proto.pack_uint32(length),
+                    )
+                    for handle, length in zip(handles, lengths)
+                ]
+            )
+            for reply in replies:
+                try:
+                    if isinstance(reply, BaseException):
+                        raise reply
+                    contents.append(self._read_data(reply))
+                except BaseException as exc:
+                    error = error or exc
+                    contents.append(b"")
+            if error is not None:
+                raise error
+            for index, ((_path, size), length) in enumerate(zip(items, lengths)):
+                data = contents[index]
+                if len(data) == size and length > size:
+                    continue  # asked for one byte more than expected: at EOF
+                # Grew, shrank, or a short reply: read the rest to real EOF.
+                rest = b"".join(self.iter_read(handles[index], offset=len(data)))
+                contents[index] = data + rest
+        finally:
+            self._close_all(handles)
+        return contents
 
     def supports_hardlink(self) -> bool:
         return "hardlink@openssh.com" in self.extensions

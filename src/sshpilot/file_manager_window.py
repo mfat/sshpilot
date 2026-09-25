@@ -26,7 +26,7 @@ import shutil
 import types
 import weakref
 from concurrent.futures import Future, CancelledError
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from gettext import gettext as _, ngettext
 
@@ -846,6 +846,7 @@ class FileManagerWindow(Adw.Window):
         if target is not None:
             failed_path = self._pending_paths[target]
             self._pending_paths[target] = None
+            self._refresh_queue().discard(target)
             logger.debug(
                 "File manager directory load error on %s path=%r: %s",
                 "right" if target is getattr(self, "_right_pane", None) else "left",
@@ -1052,6 +1053,10 @@ class FileManagerWindow(Adw.Window):
                 self._refreshing_panes.discard(target)
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
+
+        if target in self._refresh_queue():
+            self._refresh_queue().discard(target)
+            self._force_refresh_pane(target)
 
     def _on_directory_counts(self, sender, path: str, counts) -> None:
         """Background folder item-counts arrived; forward to whichever pane is
@@ -1839,8 +1844,11 @@ class FileManagerWindow(Adw.Window):
                 logger.debug("Deleting %d remote entries", total_count)
 
                 # FileZilla-style: drop selected rows from the listing cache so
-                # the UI feels instant while pipelined removes run.
-                pane.remove_cached_entries(entry_names)
+                # the UI feels instant while pipelined removes run. Holding the
+                # names keeps a listing requested before the delete from
+                # putting them back until it finishes.
+                held_path = getattr(pane, "_current_path", None)
+                pane.remove_cached_entries(entry_names, hold=True)
 
                 def _on_batch_done(future_result: Future) -> None:
                     success_count = 0
@@ -1889,6 +1897,8 @@ class FileManagerWindow(Adw.Window):
                             total_count,
                             success_count=sc,
                             used_progress_dialog=True,
+                            held_names=entry_names,
+                            held_path=held_path,
                         )
                     )
 
@@ -1914,6 +1924,8 @@ class FileManagerWindow(Adw.Window):
                                     errors,
                                     total_count,
                                     used_progress_dialog=True,
+                                    held_names=entry_names,
+                                    held_path=held_path,
                                 )
                             )
 
@@ -1949,6 +1961,8 @@ class FileManagerWindow(Adw.Window):
                             errors,
                             total_count,
                             used_progress_dialog=False,
+                            held_names=entry_names,
+                            held_path=held_path,
                         )
                     )
             dialog.close()
@@ -2429,8 +2443,15 @@ class FileManagerWindow(Adw.Window):
         *,
         success_count: Optional[int] = None,
         used_progress_dialog: bool = False,
+        held_names: Iterable[str] = (),
+        held_path: Optional[str] = None,
     ) -> None:
-        """Handle completion of all delete operations."""
+        """Handle completion of all delete operations.
+
+        ``held_names`` are the rows a remote delete hid in ``held_path`` while
+        it ran; they are released here and the pane relisted, since a listing
+        requested before the delete may have landed in the meantime.
+        """
         if success_count is None:
             success_count = max(0, total_count - len(errors))
         
@@ -2445,14 +2466,17 @@ class FileManagerWindow(Adw.Window):
             pane.show_toast(errors[0])
             logger.error(f"Delete operation completed with {len(errors)} errors out of {total_count} items")
         
-        # Optimistic removal already matches a full success. Relist only when
-        # cancel/failures may have left surviving items that need restoring.
-        needs_refresh = bool(errors) or success_count < total_count
-        if not needs_refresh:
-            return
         if pane is self._right_pane:
+            pane.release_removed_entries(held_names, held_path)
+            # Always relist: the optimistic removal only covers rows, and a
+            # listing that predates the delete can still be in flight. A
+            # refresh arriving mid-listing is queued behind it, so this one
+            # always reflects the finished delete.
             self._refresh_remote_listing(pane)
-        else:
+            return
+        # Optimistic removal already matches a full local success. Relist only
+        # when failures may have left surviving items that need restoring.
+        if errors or success_count < total_count:
             self._load_local(base_dir)
 
     def _apply_pending_highlight(self, pane: FilePane) -> None:
@@ -2461,6 +2485,14 @@ class FileManagerWindow(Adw.Window):
             return
         self._pending_highlights[pane] = None
         pane.highlight_entry(name)
+
+    def _refresh_queue(self) -> Set[FilePane]:
+        """Remote panes whose refresh arrived while a listing of the same path
+        was already in flight; one more listing runs when that one lands."""
+        queue = self.__dict__.get("_queued_refreshes")
+        if queue is None:
+            queue = self._queued_refreshes = set()
+        return queue
 
     def _force_refresh_pane(self, pane: FilePane, highlight_name: Optional[str] = None) -> None:
         """Force refresh a pane by directly calling listdir and updating UI"""
@@ -2484,6 +2516,15 @@ class FileManagerWindow(Adw.Window):
             logger.debug(f"_force_refresh_pane: set pending highlight {highlight_name}")
         
         if pane._is_remote:
+            if self._pending_paths.get(pane) == path:
+                # A listing of this path is already in flight but may predate
+                # the change being refreshed for. Queue one more for when it
+                # lands, so a burst of refreshes (one per uploaded file) costs
+                # two listings instead of one each, all serialized ahead of the
+                # user's next command.
+                logger.debug("_force_refresh_pane: listing in flight, queueing one refresh")
+                self._refresh_queue().add(pane)
+                return
             # For remote pane, use SFTP
             self._pending_paths[pane] = path
             if self._manager is None:
@@ -2492,6 +2533,11 @@ class FileManagerWindow(Adw.Window):
                 logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
                 self._manager.listdir(path)
             except Exception as e:
+                # Nothing is in flight, so later refreshes must not queue
+                # behind this one.
+                if self._pending_paths.get(pane) == path:
+                    self._pending_paths[pane] = None
+                self._refresh_queue().discard(pane)
                 error_str = str(e).lower()
                 # Check if it's a socket/connection closed error
                 if "socket is closed" in error_str or ("connection" in error_str and "closed" in error_str):

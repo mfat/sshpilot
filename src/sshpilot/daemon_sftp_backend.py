@@ -199,6 +199,8 @@ class DaemonSftpManager(GObject.GObject):
         self._parent_widget = parent_widget
 
         self._closed = False
+        # Bumped by every count pass; an older pass stops at its next folder.
+        self._count_generation = 0
         self._home: Optional[str] = None
         self._cancelled_operations: set = set()
         self._operation_seq = 0
@@ -540,6 +542,11 @@ class DaemonSftpManager(GObject.GObject):
         self._sftp_controller.list_directory(target, on_success=_on_success, on_error=_on_error)
 
     def _start_count_pass(self, path: str, entries: List[FileEntry]) -> None:
+        # A newer listing supersedes this pass. Its one-request-per-folder
+        # listings are serialized with every other SFTP command, so a stale
+        # pass left running (one per refresh) delays the user's next action.
+        generation = getattr(self, "_count_generation", 0) + 1
+        self._count_generation = generation
         folders = [e.name for e in entries if e.is_dir]
         if not folders:
             return
@@ -547,13 +554,14 @@ class DaemonSftpManager(GObject.GObject):
         def _count_next(index: int) -> None:
             # Quit / panel close abandons the background pass — do not kick
             # off another list_directory against a detached SFTP service.
-            if self._closed or index >= len(folders):
+            if self._closed or index >= len(folders) or generation != self._count_generation:
                 return
             name = folders[index]
             child = path.rstrip("/") + "/" + name
 
             def _on_success(result) -> None:
-                if self._closed:
+                # A superseded pass drops its in-flight answer too.
+                if self._closed or generation != self._count_generation:
                     return
                 self.emit("directory-counts", path, {name: len(result.entries)})
                 _count_next(index + 1)
