@@ -278,6 +278,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._suppress_encoding_config_handler = False
         self._user_initiated_encoding_change = False
         self.open_file_manager_externally_row = None
+        self.max_concurrent_transfers_row = None
 
         self._config_signal_id = None
         self._bw_ui_refresh_id = None
@@ -2725,16 +2726,14 @@ class PreferencesWindow(Adw.NavigationPage):
                 logger.debug("Failed to read file manager configuration: %s", exc)
                 file_manager_config = {}
 
-        def _fm_default_int(key: str, fallback: int = 0) -> int:
-            value = 0
+        def _fm_default_int(key: str, fallback: int) -> int:
+            value = fallback
             if isinstance(file_manager_defaults, dict):
                 try:
                     value = int(file_manager_defaults.get(key, fallback))
                 except (TypeError, ValueError):
                     value = fallback
-            else:
-                value = fallback
-            return value if value >= 0 else fallback
+            return value
 
         def _fm_config_int(key: str, fallback: int) -> int:
             if isinstance(file_manager_config, dict):
@@ -2742,69 +2741,27 @@ class PreferencesWindow(Adw.NavigationPage):
                     value = int(file_manager_config.get(key, fallback))
                 except (TypeError, ValueError):
                     value = fallback
-                if value < 0:
-                    return fallback
                 return value
             return fallback
 
-        keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
-        keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
-        keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
-
-        sftp_advanced_group = Adw.PreferencesGroup(title=_("Advanced SFTP Settings"))
-        sftp_advanced_group.set_description(
-            _("Fine-tune options that only apply to SSH Pilot's built-in SFTP file manager.")
+        concurrent_default = max(1, min(10, _fm_default_int('max_concurrent_transfers', 4)))
+        concurrent_value = max(
+            1, min(10, _fm_config_int('max_concurrent_transfers', concurrent_default))
         )
 
-
-        self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
-        self.sftp_keepalive_interval_row.set_title(_("SFTP Keepalive Interval (seconds)"))
-        self.sftp_keepalive_interval_row.set_subtitle(
-            _("How often the built-in file manager sends keepalives. "
-            "Set to 0 to disable.")
+        self.max_concurrent_transfers_row = Adw.SpinRow.new_with_range(1, 10, 1)
+        self.max_concurrent_transfers_row.set_title(_("Concurrent Transfers"))
+        self.max_concurrent_transfers_row.set_subtitle(
+            _("How many file transfers may run at once. Dropbear hosts still "
+              "run one at a time.")
         )
-        self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
-        self.sftp_keepalive_interval_row.connect(
-            'notify::value', self.on_sftp_keepalive_interval_changed
+        self.max_concurrent_transfers_row.set_value(concurrent_value)
+        self.max_concurrent_transfers_row.connect(
+            'notify::value', self.on_max_concurrent_transfers_changed
         )
-        sftp_advanced_group.add(self.sftp_keepalive_interval_row)
-
-
-        keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
-        keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
-        keepalive_count_value = max(0, min(keepalive_count_value, 10))
-
-        self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
-        self.sftp_keepalive_count_row.set_title(_("SFTP Keepalive Retry Limit"))
-        self.sftp_keepalive_count_row.set_subtitle(
-            _("Number of failed keepalives tolerated by the built-in file "
-            "manager before raising an error.")
-        )
-        self.sftp_keepalive_count_row.set_value(keepalive_count_value)
-        self.sftp_keepalive_count_row.connect(
-            'notify::value', self.on_sftp_keepalive_count_changed
-        )
-        sftp_advanced_group.add(self.sftp_keepalive_count_row)
-
-
-        connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
-        connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
-        connect_timeout_value = max(0, min(connect_timeout_value, 600))
-
-        self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
-        self.sftp_connect_timeout_row.set_title(_("SFTP Connection Timeout (seconds)"))
-        self.sftp_connect_timeout_row.set_subtitle(
-            _("Time allowed for the built-in file manager to establish a "
-            "session; 0 uses the default.")
-        )
-        self.sftp_connect_timeout_row.set_value(connect_timeout_value)
-        self.sftp_connect_timeout_row.connect(
-            'notify::value', self.on_sftp_connect_timeout_changed
-        )
-        sftp_advanced_group.add(self.sftp_connect_timeout_row)
+        file_manager_group.add(self.max_concurrent_transfers_row)
 
         file_management_page.add(file_manager_group)
-        file_management_page.add(sftp_advanced_group)
         return file_management_page
 
     def _build_updates_preferences_page(self):
@@ -5904,21 +5861,13 @@ class PreferencesWindow(Adw.NavigationPage):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
-            if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
-                interval_value = int(self.sftp_keepalive_interval_row.get_value())
-                if interval_value < 0:
-                    interval_value = 0
-                self.config.set_setting('file_manager.sftp_keepalive_interval', interval_value)
-            if getattr(self, 'sftp_keepalive_count_row', None) is not None:
-                keepalive_count_value = int(self.sftp_keepalive_count_row.get_value())
-                if keepalive_count_value < 0:
-                    keepalive_count_value = 0
-                self.config.set_setting('file_manager.sftp_keepalive_count_max', keepalive_count_value)
-            if getattr(self, 'sftp_connect_timeout_row', None) is not None:
-                connect_timeout_value = int(self.sftp_connect_timeout_row.get_value())
-                if connect_timeout_value < 0:
-                    connect_timeout_value = 0
-                self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
+            if getattr(self, 'max_concurrent_transfers_row', None) is not None:
+                concurrent_value = max(
+                    1, min(10, int(self.max_concurrent_transfers_row.get_value()))
+                )
+                self.config.set_setting(
+                    'file_manager.max_concurrent_transfers', concurrent_value
+                )
 
             # 2. The nine daemon-owned fields go through the controller last.
             if controller is not None and page_built:
@@ -6032,18 +5981,15 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('file_manager.open_externally', default_open_external)
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.open_file_manager_externally_row.set_active(default_open_external)
-            keepalive_interval_default = int(file_manager_defaults.get('sftp_keepalive_interval', 0) or 0)
-            self.config.set_setting('file_manager.sftp_keepalive_interval', max(0, keepalive_interval_default))
-            if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
-                self.sftp_keepalive_interval_row.set_value(max(0, keepalive_interval_default))
-            keepalive_count_default = int(file_manager_defaults.get('sftp_keepalive_count_max', 0) or 0)
-            self.config.set_setting('file_manager.sftp_keepalive_count_max', max(0, keepalive_count_default))
-            if getattr(self, 'sftp_keepalive_count_row', None) is not None:
-                self.sftp_keepalive_count_row.set_value(max(0, keepalive_count_default))
-            connect_timeout_default = int(file_manager_defaults.get('sftp_connect_timeout', 0) or 0)
-            self.config.set_setting('file_manager.sftp_connect_timeout', max(0, connect_timeout_default))
-            if getattr(self, 'sftp_connect_timeout_row', None) is not None:
-                self.sftp_connect_timeout_row.set_value(max(0, connect_timeout_default))
+            concurrent_default = int(
+                file_manager_defaults.get('max_concurrent_transfers', 4) or 4
+            )
+            concurrent_default = max(1, min(10, concurrent_default))
+            self.config.set_setting(
+                'file_manager.max_concurrent_transfers', concurrent_default
+            )
+            if getattr(self, 'max_concurrent_transfers_row', None) is not None:
+                self.max_concurrent_transfers_row.set_value(concurrent_default)
 
             if controller is None:
                 # No Preferences row exists for this Config-owned key, but the
@@ -6850,32 +6796,15 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update external file manager preference: %s", exc)
 
-    def on_sftp_keepalive_interval_changed(self, row, *args):
-        """Persist the SFTP keepalive interval the instant it's changed."""
+    def on_max_concurrent_transfers_changed(self, row, *args):
+        """Persist the concurrent-transfer cap as soon as it changes."""
         try:
             self.config.set_setting(
-                'file_manager.sftp_keepalive_interval', max(0, int(row.get_value()))
+                'file_manager.max_concurrent_transfers',
+                max(1, min(10, int(row.get_value()))),
             )
         except Exception as exc:
-            logger.error("Failed to update SFTP keepalive interval: %s", exc)
-
-    def on_sftp_keepalive_count_changed(self, row, *args):
-        """Persist the SFTP keepalive retry limit the instant it's changed."""
-        try:
-            self.config.set_setting(
-                'file_manager.sftp_keepalive_count_max', max(0, int(row.get_value()))
-            )
-        except Exception as exc:
-            logger.error("Failed to update SFTP keepalive retry limit: %s", exc)
-
-    def on_sftp_connect_timeout_changed(self, row, *args):
-        """Persist the SFTP connect timeout the instant it's changed."""
-        try:
-            self.config.set_setting(
-                'file_manager.sftp_connect_timeout', max(0, int(row.get_value()))
-            )
-        except Exception as exc:
-            logger.error("Failed to update SFTP connection timeout: %s", exc)
+            logger.error("Failed to update concurrent transfers preference: %s", exc)
 
     def on_confirm_disconnect_changed(self, switch, *args):
         """Handle confirm disconnect setting change"""

@@ -817,6 +817,49 @@ def test_constructor_rejects_non_positive_limits():
         TransferRuntime(sftp_runtime, max_queued_transfers=0)
 
 
+def test_max_concurrent_provider_is_consulted_live():
+    """Preferences can lower the pool without restarting the daemon."""
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    limit = {"value": 2}
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=4,
+        max_concurrent_transfers_provider=lambda: limit["value"],
+        max_queued_transfers=4,
+    )
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    third = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"three"), "/remote/third.txt"),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(first.id)
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: len(transfer_runtime._worker_threads) == 2,
+        message="expected two concurrent workers before the live limit change",
+    )
+    limit["value"] = 1
+    transfer_runtime.run_transfer(third.id)
+    _wait_until(
+        lambda: third.id in transfer_runtime._pending_run,
+        message="third transfer should queue once the live cap is 1",
+    )
+    assert len(transfer_runtime._worker_threads) == 2
+    client.allow_write.set()
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
+    _wait_for_terminal_state(transfer_runtime, third.id)
+
+
 def test_dropbear_serializes_transfers_despite_global_concurrency():
     """Dropbear SSH shares one SFTP channel — never run two copy loops on it."""
     owner = ClientId("client:owner")

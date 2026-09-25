@@ -166,9 +166,9 @@ def get_default_config() -> Dict[str, Any]:
         },
         'file_manager': {
             'open_externally': False,
-            'sftp_keepalive_interval': 30,
-            'sftp_keepalive_count_max': 5,
-            'sftp_connect_timeout': 20,
+            # Daemon TransferRuntime worker cap (OpenSSH). Dropbear SFTP
+            # services still serialize to 1 regardless of this preference.
+            'max_concurrent_transfers': 4,
             # Zoom steps of the built-in SFTP file manager, per view as in
             # Nautilus; indexes into file_manager/icon_levels.py. List is in
             # [0, 2] (default 1 = 32px), grid in [0, 4] (default 2 = 96px).

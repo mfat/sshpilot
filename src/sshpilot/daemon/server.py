@@ -752,9 +752,16 @@ class DaemonServer:
                         self._connection_service,
                         self._interaction_broker,
                     )
+            from .bootstrap_settings import DaemonBootstrapSettings
+
+            transfer_settings = DaemonBootstrapSettings()
             self._transfer_runtime = TransferRuntime(
                 self._sftp_runtime,
                 scp_backend=scp_backend,
+                max_concurrent_transfers=transfer_settings.max_concurrent_transfers,
+                max_concurrent_transfers_provider=(
+                    lambda: transfer_settings.max_concurrent_transfers
+                ),
             )
             if self._secrets_service is not None and hasattr(
                 self._secrets_service, "attach_interaction_broker"

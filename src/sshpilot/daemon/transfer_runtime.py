@@ -297,6 +297,7 @@ class TransferRuntime:
         id_factory: Callable[[], TransferId] = new_transfer_id,
         shutdown_timeout_seconds: float = 5.0,
         max_concurrent_transfers: int = DEFAULT_MAX_CONCURRENT_TRANSFERS,
+        max_concurrent_transfers_provider: Optional[Callable[[], int]] = None,
         max_queued_transfers: int = DEFAULT_MAX_QUEUED_TRANSFERS,
         max_retained_completed_transfers: int = DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -323,6 +324,7 @@ class TransferRuntime:
         self._id_factory = id_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_concurrent_transfers = max_concurrent_transfers
+        self._max_concurrent_transfers_provider = max_concurrent_transfers_provider
         self._max_queued_transfers = max_queued_transfers
         self._max_retained_completed_transfers = max_retained_completed_transfers
         self._chunk_size = chunk_size
@@ -337,6 +339,18 @@ class TransferRuntime:
         self._pending_run: List[TransferId] = []
         self._accepting_commands = True
         self._closed = False
+
+    def _effective_max_concurrent_transfers(self) -> int:
+        """Return the live worker cap, preferring a settings provider when set."""
+        provider = self._max_concurrent_transfers_provider
+        if provider is not None:
+            try:
+                value = int(provider())
+            except Exception:  # pragma: no cover - defensive fallback
+                value = self._max_concurrent_transfers
+            if value >= 1:
+                return value
+        return self._max_concurrent_transfers
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         with self._lock:
@@ -451,9 +465,10 @@ class TransferRuntime:
             self._sftp_runtime.remote_ssh_software(
                 request.sftp_service_id, client_id
             ),
-            default=self._max_concurrent_transfers,
+            default=self._effective_max_concurrent_transfers(),
             dropbear=min(
-                DROPBEAR_MAX_CONCURRENT_TRANSFERS, self._max_concurrent_transfers
+                DROPBEAR_MAX_CONCURRENT_TRANSFERS,
+                self._effective_max_concurrent_transfers(),
             ),
         )
         transfer_id = self._id_factory()
@@ -596,11 +611,12 @@ class TransferRuntime:
     def _admit_record_locked(self, record: _TransferRecord) -> None:
         from sshpilot.core.transfers import TransferQueuePolicy
 
-        capacity = self._max_concurrent_transfers + self._max_queued_transfers
+        max_concurrent = self._effective_max_concurrent_transfers()
+        capacity = max_concurrent + self._max_queued_transfers
         inflight = self._count_inflight_locked()
         policy = TransferQueuePolicy(
             max_queued=capacity,
-            max_concurrent=self._max_concurrent_transfers,
+            max_concurrent=max_concurrent,
         )
         if policy.admit(inflight, 0) is not None:
             raise SshPilotError(
@@ -1385,7 +1401,7 @@ class TransferRuntime:
         return count
 
     def _can_start_locked(self, record: _TransferRecord) -> bool:
-        if len(self._worker_threads) >= self._max_concurrent_transfers:
+        if len(self._worker_threads) >= self._effective_max_concurrent_transfers():
             return False
         if record.backend is TransferBackend.SFTP:
             running = self._count_service_workers_locked(record.sftp_service_id)

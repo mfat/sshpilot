@@ -68,7 +68,15 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         config['file_manager'] = file_manager_defaults.copy()
         updated = True
     else:
-        for obsolete_key in ('force_internal', 'first_run_prompt_shown'):
+        for obsolete_key in (
+            'force_internal',
+            'first_run_prompt_shown',
+            # Frontend OpenSSH SFTP backend keepalives/timeouts — unused since
+            # the daemon owns the SFTP path (SSH ServerAlive* settings apply).
+            'sftp_keepalive_interval',
+            'sftp_keepalive_count_max',
+            'sftp_connect_timeout',
+        ):
             if obsolete_key in file_manager_cfg:
                 file_manager_cfg.pop(obsolete_key, None)
                 updated = True
@@ -82,30 +90,20 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
             file_manager_cfg['open_externally'] = bool(file_manager_cfg['open_externally'])
             updated = True
 
-        def _ensure_non_negative_int(key: str) -> None:
-            nonlocal updated
-            default_value = file_manager_defaults.get(key, 0)
-            value = file_manager_cfg.get(key, default_value)
-            try:
-                coerced = int(value)
-            except (TypeError, ValueError):
-                coerced = default_value
-            if coerced < 0:
-                coerced = default_value
-            if file_manager_cfg.get(key) != coerced:
-                file_manager_cfg[key] = coerced
-                updated = True
-
-        for int_key in (
-            'sftp_keepalive_interval',
-            'sftp_keepalive_count_max',
-            'sftp_connect_timeout',
-        ):
-            if int_key not in file_manager_cfg:
-                file_manager_cfg[int_key] = int(file_manager_defaults.get(int_key, 0))
-                updated = True
-            else:
-                _ensure_non_negative_int(int_key)
+        concurrent_default = int(
+            file_manager_defaults.get('max_concurrent_transfers', 4) or 4
+        )
+        concurrent_value = file_manager_cfg.get(
+            'max_concurrent_transfers', concurrent_default
+        )
+        try:
+            concurrent_coerced = int(concurrent_value)
+        except (TypeError, ValueError):
+            concurrent_coerced = concurrent_default
+        concurrent_coerced = max(1, min(10, concurrent_coerced))
+        if file_manager_cfg.get('max_concurrent_transfers') != concurrent_coerced:
+            file_manager_cfg['max_concurrent_transfers'] = concurrent_coerced
+            updated = True
 
         # The single pre-Nautilus zoom step (list 16/24/32/48/64px, grid
         # 48/72/96/128/192px) becomes the nearest per-view Nautilus step.

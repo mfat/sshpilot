@@ -25,12 +25,14 @@ States: `queued` → `starting` → `running` → (`cancelling` →) `completed`
 Default limits (daemon transfer runtime):
 
 - at most **4** concurrent transfer worker threads
+  (`file_manager.max_concurrent_transfers` in preferences; range 1–10)
 - at most **32** queued transfers beyond the active set
 - additional `transfers.start` requests raise `SERVER_BUSY`
+- Dropbear SSH banners still serialize to **1** transfer per SFTP service
 
-These bounds are configurable on `TransferRuntime` construction. Completed
-worker threads are removed; shutdown joins workers within the configured
-deadline.
+These bounds are configurable on `TransferRuntime` construction and the
+worker cap is re-read from settings for new admissions. Completed worker
+threads are removed; shutdown joins workers within the configured deadline.
 
 Concurrent workers share **one** READY SFTP service (one OpenSSH `sftp`
 subsystem session). Per-file throughput comes from pipelining on that session,

@@ -245,13 +245,10 @@ def _load_file_manager_module(monkeypatch):
     sys.modules.pop("sshpilot.ssh_config_utils", None)
     monkeypatch.setitem(sys.modules, "sshpilot.ssh_config_utils", ssh_config_stub)
 
-    # The daemon-backed file-manager path lazily does ``from ..config import Config`` and,
-    # when that Config exposes ``get_file_manager_config``, prefers it over the
-    # ``ssh_config`` passed to the manager — so the app's default
-    # sftp_keepalive_interval/sftp_connect_timeout would shadow the per-test values.
+    # The daemon-backed file-manager path lazily does ``from ..config import Config``.
     # In isolation Config() happens to raise (dummy gi), but in full-suite order a
-    # sibling makes it importable, flipping these results. Pin a Config that lacks
-    # get_file_manager_config so the explicit ssh_config is always honoured.
+    # sibling makes it importable. Pin a Config that lacks get_file_manager_config
+    # so per-test ssh_config values are always honoured.
     config_stub = types.ModuleType("sshpilot.config")
 
     class _StubConfig:
