@@ -379,7 +379,29 @@ def _production_core_services():
         return IdentityStateService(get_config_dir() / "config.json")
 
     identity_state_service = _build_identity_state_service()
-    secret_provider = DaemonConnectionSecretProvider(repository.get_record)
+
+    def _build_login_profile_service():
+        from sshpilot.core.login_profiles.service import LoginProfileService
+
+        from .connection_secret_provider import DaemonLoginProfileSecretStore
+
+        service = LoginProfileService(
+            repository,
+            get_config_dir() / "login_profiles.json",
+            secret_store=DaemonLoginProfileSecretStore(),
+        )
+        # Catch Host blocks edited while the daemon was not running.
+        try:
+            service.reconcile()
+        except Exception:
+            logger.exception("Initial login profile reconciliation failed")
+        return service
+
+    login_profiles = _build_login_profile_service()
+    secret_provider = DaemonConnectionSecretProvider(
+        repository.get_record,
+        profile_password_lookup=login_profiles.password_for_connection,
+    )
     launch_provider = DaemonConnectionLaunchProvider(
         repository.get_record,
         secret_provider=secret_provider,

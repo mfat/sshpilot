@@ -36,6 +36,7 @@ class DaemonConnectionSecretProvider:
         resolver: Callable[[ConnectionId], Optional[ConnectionRecord]],
         *,
         secret_manager_factory: Optional[Callable[[], Any]] = None,
+        profile_password_lookup: Optional[Callable[[ConnectionId], Optional[str]]] = None,
     ) -> None:
         if resolver is None:
             raise ValueError("a connection resolver is required")
@@ -45,6 +46,9 @@ class DaemonConnectionSecretProvider:
 
             secret_manager_factory = get_secret_manager
         self._secret_manager_factory = secret_manager_factory
+        # A linked login profile's password is shared by all its connections
+        # and takes precedence over a per-host entry.
+        self._profile_password_lookup = profile_password_lookup
         self._session_passwords: Dict[ConnectionId, tuple[float, str]] = {}
         self._session_password_lock = threading.RLock()
         self._session_password_ttl = 3600.0
@@ -77,6 +81,16 @@ class DaemonConnectionSecretProvider:
                 if expires > now:
                     return value
                 self._session_passwords.pop(connection_id, None)
+        if self._profile_password_lookup is not None:
+            try:
+                profile_value = self._profile_password_lookup(connection_id)
+            except Exception:
+                logger.warning(
+                    "Login profile password lookup failed connection=%s", connection_id
+                )
+                profile_value = None
+            if profile_value:
+                return profile_value
         user = _string(record.username)
         if not user:
             return None
@@ -308,3 +322,35 @@ class DaemonConnectionSecretProvider:
             return True
         manager = self._secret_manager_factory()
         return bool(manager.delete(password_spec(self._plugin_secret_host(plugin_id), key)))
+
+
+class DaemonLoginProfileSecretStore:
+    """Login profile secrets in the active secret backend.
+
+    Profile secrets use the plugin-secret convention: a login password spec
+    keyed on the pseudo host ``profile_secret_host(profile_id)``, so every
+    secret backend, backup, and the Credential Manager handle them unchanged.
+    """
+
+    def __init__(self, secret_manager_factory: Optional[Callable[[], Any]] = None) -> None:
+        if secret_manager_factory is None:
+            from ..secret_storage import get_secret_manager
+
+            secret_manager_factory = get_secret_manager
+        self._secret_manager_factory = secret_manager_factory
+
+    @staticmethod
+    def _spec(profile_id: str, account: str):
+        from ..core.login_profiles.models import profile_secret_host
+        from ..secret_storage import password_spec
+
+        return password_spec(profile_secret_host(profile_id), account)
+
+    def store(self, profile_id: str, account: str, value: str) -> bool:
+        return bool(self._secret_manager_factory().store(self._spec(profile_id, account), value))
+
+    def lookup(self, profile_id: str, account: str) -> Optional[str]:
+        return self._secret_manager_factory().lookup(self._spec(profile_id, account)) or None
+
+    def delete(self, profile_id: str, account: str) -> bool:
+        return bool(self._secret_manager_factory().delete(self._spec(profile_id, account)))
