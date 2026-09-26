@@ -90,11 +90,19 @@ def test_icon_level_constants_are_importable():
     """
     pane_controls = _import_pane_controls()
 
-    for name in ("_MIN_ICON_LEVEL", "_MAX_ICON_LEVEL", "_DEFAULT_ICON_LEVEL"):
+    for name in ("_MIN_ICON_LEVEL", "_MAX_LIST_LEVEL", "_DEFAULT_LIST_LEVEL"):
         assert hasattr(pane_controls, name), (
             f"pane_controls must expose {name!r} so the zoom-slider code "
             f"can resolve it at runtime (regression of #981)"
         )
+
+
+def test_view_toggle_appearance_shows_destination_layout():
+    """Nautilus-style: the toggle advertises the other layout, not the current one."""
+    PaneToolbar = _import_pane_controls().PaneToolbar
+
+    assert PaneToolbar.view_toggle_appearance("list")[0] == "view-grid-symbolic"
+    assert PaneToolbar.view_toggle_appearance("grid")[0] == "view-list-symbolic"
 
 
 def test_pane_controls_has_no_unresolved_global_names():

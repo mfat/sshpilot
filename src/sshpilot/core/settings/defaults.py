@@ -45,6 +45,11 @@ def get_default_config() -> Dict[str, Any]:
             'wheel_scroll_lines': DEFAULT_WHEEL_SCROLL_LINES,
             'encoding': 'UTF-8',
             'macos_option_key_passthrough': False,
+            # OSC 52 clipboard writes from remote programs: 'never' | 'ask'
+            # | 'always' (see terminal_osc52), capped at this many KiB of
+            # base64 per copy.
+            'osc52_policy': 'ask',
+            'osc52_max_kib': 1024,
         },
         'secrets': {
             # Secret storage backend: 'auto' (platform default), 'libsecret',
@@ -166,13 +171,14 @@ def get_default_config() -> Dict[str, Any]:
         },
         'file_manager': {
             'open_externally': False,
-            'sftp_keepalive_interval': 30,
-            'sftp_keepalive_count_max': 5,
-            'sftp_connect_timeout': 20,
-            # Icon size step used by the built-in SFTP file manager. Integer
-            # in [0, 4]; index into the per-view size tables in
-            # file_manager_window.py. Default 1 = list 24px / grid 72px.
-            'icon_size_level': 1,
+            # Daemon TransferRuntime worker cap (OpenSSH). Dropbear SFTP
+            # services still serialize to 1 regardless of this preference.
+            'max_concurrent_transfers': 4,
+            # Zoom steps of the built-in SFTP file manager, per view as in
+            # Nautilus; indexes into file_manager/icon_levels.py. List is in
+            # [0, 2] (default 1 = 32px), grid in [0, 4] (default 2 = 96px).
+            'list_icon_level': 1,
+            'grid_icon_level': 2,
         },
         'security': {
             'store_passwords': True,

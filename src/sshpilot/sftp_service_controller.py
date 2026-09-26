@@ -12,7 +12,7 @@ import logging
 import threading
 from enum import Enum
 from gettext import gettext as _
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Sequence
 
 from gi.repository import GLib
 
@@ -37,7 +37,9 @@ from .api.models.operations import (
     SftpDirectorySizeRequest,
     SftpDirectorySizeResult,
     SftpFileTarget,
+    SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpReplaceFileRequest,
@@ -224,6 +226,51 @@ class DaemonSftpServiceController:
             on_error=lambda error: self._fail(error, generation),
         )
 
+    def rebind_client(self, client, bridge=None) -> None:
+        """Move this controller onto a replacement daemon transport.
+
+        The daemon keeps SFTP services alive when their client disconnects
+        (it only clears the owner), so after a reconnect the same service can
+        be re-attached from the new client, which also reclaims ownership for
+        saves and other mutations. The controller stays READY while that
+        happens, so open panes are neither reset nor re-listed.
+        """
+        if client is None:
+            raise ValueError("a daemon client is required")
+        self._unsubscribe_events()
+        with self._lock:
+            if self._closed:
+                return
+            self._client = client
+            if bridge is not None:
+                self._bridge = bridge
+            self._generation += 1
+            generation = self._generation
+            service_id = self._service_id
+            state = self._state
+        if state in (
+            SftpControllerState.IDLE,
+            SftpControllerState.CLOSED,
+            SftpControllerState.CLOSING,
+            SftpControllerState.DETACHED,
+        ):
+            return
+        if service_id is None:
+            # Still opening on the old transport: its result can no longer
+            # arrive, so start the open again on the new one.
+            self.open()
+            return
+        self._ensure_events()
+
+        def _op():
+            return client.attach_sftp(AttachSftpRequest(service_id=service_id))
+
+        self._submit(
+            _op,
+            on_success=lambda summary: self._on_open_accepted(summary, generation),
+            on_error=lambda error: self._fail(error, generation),
+        )
+
     def detach(self) -> None:
         service_id = self.service_id
         generation = self._bump()
@@ -304,6 +351,24 @@ class DaemonSftpServiceController:
 
         def _op():
             return self._client.sftp_realpath(
+                SftpPathRequest(service_id=service_id, path=path)
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def filesystem_usage(
+        self,
+        path: str,
+        *,
+        on_success: Callable[[SftpFilesystemUsage], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_filesystem_usage(
                 SftpPathRequest(service_id=service_id, path=path)
             )
 
@@ -499,6 +564,47 @@ class DaemonSftpServiceController:
                 on_success=on_success,
                 on_error=on_error,
             )
+
+    def remove_paths(
+        self,
+        paths: Sequence[str],
+        *,
+        on_success: Callable[[object], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        """Delete many non-directory paths in one pipelined ``sftp.remove`` RPC.
+
+        ``on_success`` receives an ``SftpRemoveResult`` (possibly with per-path
+        failures). Directories must use ``remove(..., recursive=True)``.
+        The multi-path wire RPC has no operation id; callers cancel between
+        chunked RPCs of ``SFTP_REMOVE_CHUNK_SIZE`` paths.
+        """
+        targets = [path for path in paths if path]
+        if not targets:
+            on_success(SftpRemoveResult())
+            return
+        if len(targets) == 1:
+            self._path_mutation(
+                "sftp_remove",
+                targets[0],
+                on_success=lambda _result: on_success(SftpRemoveResult()),
+                on_error=on_error,
+            )
+            return
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_remove(
+                SftpPathRequest(
+                    service_id=service_id,
+                    path=targets[0],
+                    paths=tuple(targets[1:]),
+                )
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
 
     def _recursive_remove(
         self,

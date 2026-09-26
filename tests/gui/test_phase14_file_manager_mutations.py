@@ -63,7 +63,7 @@ def test_file_manager_mkdir_rename_remove(phase14_harness):
     h.pump_until(lambda: fut2.done(), timeout=30.0, label="rename future")
     h.pump_until(lambda: renamed in _remote_names(), timeout=20.0, label="rename visible")
 
-    fut3 = mgr.remove(renamed)
+    fut3 = mgr.remove(renamed, recursive=True)
     h.pump_until(lambda: fut3.done(), timeout=30.0, label="remove future")
     h.pump_until(lambda: renamed not in _remote_names(), timeout=20.0, label="remove gone")
 

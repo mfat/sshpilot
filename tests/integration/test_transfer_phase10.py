@@ -195,11 +195,15 @@ def test_transfer_concurrency_queue_and_server_busy(stack, tmp_path):
     ready = _ready_sftp(stack)
     sid = ready.id
     runtime = stack.server._transfer_runtime
+    # DaemonServer installs a settings provider that ignores the field below;
+    # pin both so admission capacity is exactly concurrent(1)+queued(1)=2.
     runtime._max_concurrent_transfers = 1
     runtime._max_queued_transfers = 1
+    runtime._max_concurrent_transfers_provider = lambda: 1
 
+    # Tiny payloads can finish before the third start and free a slot.
     payload = tmp_path / "q.bin"
-    payload.write_bytes(b"x" * 64)
+    payload.write_bytes(os.urandom(4 * 1024 * 1024))
     first = _start_upload(stack, sid, payload, "q1.bin")
     second = _start_upload(stack, sid, payload, "q2.bin")
     with pytest.raises(SshPilotError) as excinfo:

@@ -9,8 +9,10 @@ actual byte-copy loop runs on a dedicated per-transfer thread rather than a
 and must not starve the shared command queue; the executor operation merely
 hands work to the bounded transfer worker pool and returns immediately (see
 ``run_transfer``). At most ``max_concurrent_transfers`` copy threads run at
-once; additional accepted transfers wait in ``_pending_run`` up to the
-combined in-flight capacity.
+once globally; each SFTP service also has its own cap (Dropbear SSH channels
+serialize to one transfer — OpenWrt often pairs Dropbear with an OpenSSH
+``sftp-server``, so SFTP extensions alone cannot decide). Additional accepted
+transfers wait in ``_pending_run`` up to the combined in-flight capacity.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -53,12 +55,15 @@ from sshpilot.logging_support import log_context
 from sshpilot.api.remote_path import remote_path_dirname, remote_path_join
 from sshpilot.api.transfer_identity import new_transfer_id
 from sshpilot.sftp import protocol as sftp_proto
+from sshpilot.sftp.client import AtomicUploadItem
+from sshpilot.sftp.server_limits import transfer_concurrency_for_remote_software
 
 from .sftp_runtime import SftpServiceRuntime
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONCURRENT_TRANSFERS = 4
+DROPBEAR_MAX_CONCURRENT_TRANSFERS = 1
 DEFAULT_MAX_QUEUED_TRANSFERS = 32
 DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS = 200
 DEFAULT_CHUNK_SIZE = 32768
@@ -76,6 +81,39 @@ _TERMINAL_STATES = frozenset(
 
 class _TransferCancelled(Exception):
     """Raised inside a copy loop when cancellation is observed mid-transfer."""
+
+
+def _current_umask() -> int:
+    """The process umask, read without the racy set-and-restore of os.umask."""
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for line in status:
+                if line.startswith("Umask:"):
+                    return int(line.split()[1], 8)
+    except (OSError, ValueError):
+        pass
+    return 0o022
+
+
+def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> None:
+    """Give a finished download its permissions and times before it replaces
+    *local_dst*.
+
+    ``mkstemp`` creates the temp ``0600``. A replaced file keeps its own mode;
+    a new one gets the remote mode narrowed by the umask, as OpenSSH's
+    ``sftp get`` does. The remote mtime is kept.
+    """
+    try:
+        mode = stat.S_IMODE(os.stat(local_dst).st_mode)
+    except OSError:
+        remote_mode = getattr(attr, "st_mode", None)
+        base = stat.S_IMODE(remote_mode) & 0o777 if remote_mode is not None else 0o666
+        mode = base & ~_current_umask()
+    os.chmod(temp_path, mode)
+    mtime = getattr(attr, "st_mtime", None)
+    if mtime is not None:
+        atime = getattr(attr, "st_atime", None)
+        os.utime(temp_path, (atime if atime is not None else mtime, mtime))
 
 
 class _TransferSkipped(Exception):
@@ -243,6 +281,9 @@ class _TransferRecord:
     backend: TransferBackend = TransferBackend.SFTP
     scp_request: Optional[StartScpTransferRequest] = None
     scp_cancel_event: Optional[threading.Event] = None
+    # Per-SFTP-service concurrent-transfer cap (Dropbear → 1). SCP uses the
+    # global pool only and leaves this at the runtime default.
+    service_concurrency_limit: int = DEFAULT_MAX_CONCURRENT_TRANSFERS
 
 
 class TransferRuntime:
@@ -257,6 +298,7 @@ class TransferRuntime:
         id_factory: Callable[[], TransferId] = new_transfer_id,
         shutdown_timeout_seconds: float = 5.0,
         max_concurrent_transfers: int = DEFAULT_MAX_CONCURRENT_TRANSFERS,
+        max_concurrent_transfers_provider: Optional[Callable[[], int]] = None,
         max_queued_transfers: int = DEFAULT_MAX_QUEUED_TRANSFERS,
         max_retained_completed_transfers: int = DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -283,6 +325,7 @@ class TransferRuntime:
         self._id_factory = id_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_concurrent_transfers = max_concurrent_transfers
+        self._max_concurrent_transfers_provider = max_concurrent_transfers_provider
         self._max_queued_transfers = max_queued_transfers
         self._max_retained_completed_transfers = max_retained_completed_transfers
         self._chunk_size = chunk_size
@@ -297,6 +340,18 @@ class TransferRuntime:
         self._pending_run: List[TransferId] = []
         self._accepting_commands = True
         self._closed = False
+
+    def _effective_max_concurrent_transfers(self) -> int:
+        """Return the live worker cap, preferring a settings provider when set."""
+        provider = self._max_concurrent_transfers_provider
+        if provider is not None:
+            try:
+                value = int(provider())
+            except Exception:  # pragma: no cover - defensive fallback
+                value = self._max_concurrent_transfers
+            if value >= 1:
+                return value
+        return self._max_concurrent_transfers
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         with self._lock:
@@ -407,6 +462,16 @@ class TransferRuntime:
         _client, connection_id = self._sftp_runtime.acquire_active_client(
             request.sftp_service_id, client_id
         )
+        service_limit = transfer_concurrency_for_remote_software(
+            self._sftp_runtime.remote_ssh_software(
+                request.sftp_service_id, client_id
+            ),
+            default=self._effective_max_concurrent_transfers(),
+            dropbear=min(
+                DROPBEAR_MAX_CONCURRENT_TRANSFERS,
+                self._effective_max_concurrent_transfers(),
+            ),
+        )
         transfer_id = self._id_factory()
         now = self._clock()
         local_display = os.path.basename(request.local_path.rstrip("/\\")) or "file"
@@ -428,6 +493,7 @@ class TransferRuntime:
             created_at=now,
             owner_client_id=client_id,
             recursive=bool(request.recursive),
+            service_concurrency_limit=service_limit,
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -546,11 +612,12 @@ class TransferRuntime:
     def _admit_record_locked(self, record: _TransferRecord) -> None:
         from sshpilot.core.transfers import TransferQueuePolicy
 
-        capacity = self._max_concurrent_transfers + self._max_queued_transfers
+        max_concurrent = self._effective_max_concurrent_transfers()
+        capacity = max_concurrent + self._max_queued_transfers
         inflight = self._count_inflight_locked()
         policy = TransferQueuePolicy(
             max_queued=capacity,
-            max_concurrent=self._max_concurrent_transfers,
+            max_concurrent=max_concurrent,
         )
         if policy.admit(inflight, 0) is not None:
             raise SshPilotError(
@@ -711,8 +778,12 @@ class TransferRuntime:
             )
         with self._lock:
             record.bytes_total = os.path.getsize(local_path)
-        destination = self._resolve_remote_destination(record, client, record.remote_path)
-        copied = self._copy_local_to_remote(record, client, local_path, destination)
+        destination, existing_mode = self._resolve_remote_destination(
+            record, client, record.remote_path
+        )
+        copied = self._copy_local_to_remote(
+            record, client, local_path, destination, existing_mode=existing_mode
+        )
         with self._lock:
             record.bytes_completed = copied
 
@@ -754,7 +825,8 @@ class TransferRuntime:
         for root, dirs, names in os.walk(local_root):
             rel_dir = os.path.relpath(root, local_root)
             remote_dir = remote_root if rel_dir == "." else self._join_remote(remote_root, rel_dir)
-            directories.append(remote_dir)
+            depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
+            directories.append((depth, remote_dir))
             for name in names:
                 local_abs = os.path.join(root, name)
                 remote_path = self._join_remote(remote_dir, name)
@@ -768,23 +840,176 @@ class TransferRuntime:
         with self._lock:
             record.bytes_total = total
 
-        for remote_dir in directories:
-            self._check_cancel(record)
-            self._ensure_remote_dir(record, client, remote_dir)
+        self._ensure_remote_dirs(record, client, directories)
 
         completed = 0
-        for local_abs, remote_path, size in files:
+        # Small files are RTT-bound when uploaded one-by-one (≈6 serial
+        # round trips each). When the client can pipeline control-plane
+        # requests, batch them so a window of files shares those RTTs.
+        # Larger files keep the serial pipelined-WRITE path.
+        pipeline_max = int(getattr(client, "max_write_length", 0) or DEFAULT_CHUNK_SIZE)
+        can_pipeline = callable(getattr(client, "atomic_upload_many", None)) and callable(
+            getattr(client, "stat_many", None)
+        )
+        small: List[tuple] = []
+        large: List[tuple] = []
+        if can_pipeline:
+            for entry in files:
+                if entry[2] <= pipeline_max:
+                    small.append(entry)
+                else:
+                    large.append(entry)
+        else:
+            large = list(files)
+
+        if small:
+            completed = self._upload_small_files_pipelined(
+                record, client, small, completed
+            )
+
+        for local_abs, remote_path, size in large:
             self._check_cancel(record)
             try:
-                destination = self._resolve_remote_destination(record, client, remote_path)
+                destination, existing_mode = self._resolve_remote_destination(
+                    record, client, remote_path
+                )
             except _TransferSkipped:
                 completed += size
                 continue
-            copied = self._copy_local_to_remote(record, client, local_abs, destination, base=completed)
+            copied = self._copy_local_to_remote(
+                record,
+                client,
+                local_abs,
+                destination,
+                base=completed,
+                existing_mode=existing_mode,
+            )
             completed += copied
             self._report_progress(record, completed)
         with self._lock:
             record.bytes_completed = completed
+
+    def _upload_small_files_pipelined(
+        self,
+        record: _TransferRecord,
+        client,
+        files: List[tuple],
+        base: int,
+    ) -> int:
+        """Resolve conflicts then atomic-upload *files* with overlapped RTTs."""
+        from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
+
+        overwrite = {
+            TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+            TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+            TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+            TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+        }.get(record.conflict_policy, OverwritePolicy.FAIL)
+
+        completed = base
+        # RENAME may need several STAT probes per file; keep that serial.
+        if record.conflict_policy is TransferConflictPolicy.RENAME:
+            for local_abs, remote_path, size in files:
+                self._check_cancel(record)
+                try:
+                    destination, existing_mode = self._resolve_remote_destination(
+                        record, client, remote_path
+                    )
+                except _TransferSkipped:
+                    completed += size
+                    continue
+                item = self._atomic_upload_item(
+                    local_abs, destination, existing_mode=existing_mode
+                )
+                file_bytes = 0
+
+                def _on_one_file_bytes(_item: AtomicUploadItem, nbytes: int) -> None:
+                    nonlocal file_bytes
+                    file_bytes += nbytes
+                    self._report_progress(record, completed + file_bytes)
+
+                client.atomic_upload_many(
+                    [item],
+                    on_file_bytes=_on_one_file_bytes,
+                    check_cancel=lambda: self._check_cancel(record),
+                )
+                completed += file_bytes
+                self._report_progress(record, completed)
+            return completed
+
+        remote_paths = [remote for _local, remote, _size in files]
+        self._check_cancel(record)
+        # Like _resolve_remote_destination: any STAT error reads as absent.
+        attrs_list = client.stat_many(remote_paths, missing_on_error=True)
+        items: List[AtomicUploadItem] = []
+        skipped_bytes = 0
+        for (local_abs, remote_path, size), existing_attr in zip(files, attrs_list):
+            exists = existing_attr is not None
+            existing_mode = getattr(existing_attr, "st_mode", None) if exists else None
+            if existing_mode is not None:
+                existing_mode = stat.S_IMODE(existing_mode)
+            decision = decide_conflict(exists, overwrite)
+            if decision is ConflictDecision.SKIP:
+                skipped_bytes += size
+                continue
+            if decision is ConflictDecision.FAIL:
+                raise _sftp_transfer_error(
+                    SftpFailureCode.REMOTE_DESTINATION_EXISTS,
+                    ErrorCode.TRANSFER_CONFLICT,
+                    parameters={"path": remote_path},
+                )
+            if decision is ConflictDecision.PROCEED:
+                items.append(
+                    self._atomic_upload_item(
+                        local_abs, remote_path, existing_mode=existing_mode
+                    )
+                )
+            else:
+                raise AssertionError("unhandled transfer conflict policy")
+
+        completed += skipped_bytes
+        if skipped_bytes:
+            self._report_progress(record, completed)
+        if not items:
+            return completed
+
+        # atomic_upload_many removes its own temps on failure or cancel.
+        bytes_in_batch = completed
+
+        def _on_file_bytes(_item: AtomicUploadItem, nbytes: int) -> None:
+            nonlocal bytes_in_batch
+            bytes_in_batch += nbytes
+            self._report_progress(record, bytes_in_batch)
+
+        client.atomic_upload_many(
+            items,
+            on_file_bytes=_on_file_bytes,
+            check_cancel=lambda: self._check_cancel(record),
+        )
+        completed = bytes_in_batch
+        self._report_progress(record, completed)
+        return completed
+
+    @staticmethod
+    def _atomic_upload_item(
+        local_abs: str, remote_dst: str, *, existing_mode: Optional[int]
+    ) -> AtomicUploadItem:
+        local_info = os.stat(local_abs)
+        create_mode = 0o600 if existing_mode is not None else stat.S_IMODE(local_info.st_mode)
+        remote_dir = remote_path_dirname(remote_dst)
+        temp_name = f"{_TEMP_PREFIX}{new_transfer_id()}"
+        remote_temp = (
+            temp_name if remote_dir in (".", "") else remote_path_join(remote_dir, temp_name)
+        )
+        return AtomicUploadItem(
+            local_path=local_abs,
+            remote_temp=remote_temp,
+            remote_dst=remote_dst,
+            create_mode=create_mode,
+            existing_mode=existing_mode,
+            atime=int(local_info.st_atime),
+            mtime=int(local_info.st_mtime),
+        )
 
     def _run_recursive_download(self, record: _TransferRecord, client) -> None:
         """Copy a remote directory tree to a local destination directory.
@@ -827,29 +1052,55 @@ class TransferRuntime:
         total = 0
         pending: List[tuple] = [(remote_root, local_root)]
 
-        def _walk(remote_dir: str, local_dir: str) -> None:
+        def _collect(remote_dir: str, local_dir: str, listing) -> None:
             nonlocal total
-            for entry in client.listdir_attr(remote_dir):
+            for entry in listing:
                 self._check_cancel(record)
                 child_remote = self._join_remote(remote_dir, entry.filename)
                 child_local = os.path.join(local_dir, entry.filename)
                 if entry.is_dir() and not entry.is_symlink():
                     os.makedirs(child_local, exist_ok=True)
-                    pending.append((child_remote, child_local))
+                    next_level.append((child_remote, child_local))
                 else:
                     size = entry.st_size or 0
-                    files.append((child_remote, child_local, size))
+                    files.append((child_remote, child_local, size, entry))
                     total += size
 
+        # Breadth-first, one directory level at a time: a pipelining client
+        # lists a whole level together instead of paying OPENDIR / READDIR /
+        # CLOSE round trips per directory.
+        list_many = getattr(client, "listdir_many", None)
         while pending:
             self._check_cancel(record)
-            remote_dir, local_dir = pending.pop(0)
-            _walk(remote_dir, local_dir)
+            next_level: List[tuple] = []
+            if callable(list_many):
+                listings = list_many([remote for remote, _local in pending])
+            else:
+                listings = [client.listdir_attr(remote) for remote, _local in pending]
+            for (remote_dir, local_dir), listing in zip(pending, listings):
+                _collect(remote_dir, local_dir, listing)
+            pending = next_level
         with self._lock:
             record.bytes_total = total
 
+        # Small regular files are RTT-bound one by one (OPEN / READ / READ-EOF
+        # / CLOSE each), so read them in pipelined windows. Symlinks keep the
+        # serial path: their listing attrs describe the link, not the target.
+        small: List[tuple] = []
+        large: List[tuple] = []
+        read_many = getattr(client, "read_small_files", None)
+        limit = client.small_read_limit() if callable(read_many) else -1
+        for entry in files:
+            attr = entry[3]
+            if not attr.is_symlink() and 0 <= entry[2] <= limit:
+                small.append(entry)
+            else:
+                large.append(entry)
+
         completed = 0
-        for remote_abs, local_abs, size in files:
+        if small:
+            completed = self._download_small_files_pipelined(record, client, small, completed)
+        for remote_abs, local_abs, size, attr in large:
             self._check_cancel(record)
             parent = os.path.dirname(local_abs) or "."
             os.makedirs(parent, exist_ok=True)
@@ -858,7 +1109,14 @@ class TransferRuntime:
             except _TransferSkipped:
                 completed += size
                 continue
-            copied = self._copy_remote_to_local(record, client, remote_abs, destination, base=completed)
+            copied = self._copy_remote_to_local(
+                record,
+                client,
+                remote_abs,
+                destination,
+                base=completed,
+                attr=None if attr.is_symlink() else attr,
+            )
             completed += copied
             self._report_progress(record, completed)
         with self._lock:
@@ -872,6 +1130,49 @@ class TransferRuntime:
             if cleaned:
                 result = result.rstrip("/") + "/" + cleaned
         return result
+
+    def _ensure_remote_dirs(
+        self, record: _TransferRecord, client, directories: List[tuple]
+    ) -> None:
+        """Create the ``(depth, remote_dir)`` tree, reusing existing dirs.
+
+        With a pipelining client each depth level is one STAT batch plus one
+        MKDIR batch (parents are always a level ahead of their children);
+        otherwise directories are checked one by one.
+        """
+        if not (
+            callable(getattr(client, "stat_many", None))
+            and callable(getattr(client, "mkdir_many", None))
+        ):
+            for _depth, remote_dir in directories:
+                self._check_cancel(record)
+                self._ensure_remote_dir(record, client, remote_dir)
+            return
+        levels: Dict[int, List[str]] = {}
+        for depth, remote_dir in directories:
+            levels.setdefault(depth, []).append(remote_dir)
+        for depth in sorted(levels):
+            self._check_cancel(record)
+            level = levels[depth]
+            missing: List[str] = []
+            for remote_dir, attr in zip(level, client.stat_many(level)):
+                if attr is None:
+                    missing.append(remote_dir)
+                elif not attr.is_dir():
+                    raise _sftp_transfer_error(
+                        SftpFailureCode.REMOTE_FILE_BLOCKS_DIRECTORY,
+                        ErrorCode.TRANSFER_CONFLICT,
+                        parameters={"remote_dir": remote_dir},
+                    )
+            if not missing:
+                continue
+            for remote_dir, exc in zip(missing, client.mkdir_many(missing)):
+                if exc is not None:
+                    raise _sftp_transfer_error(
+                        SftpFailureCode.REMOTE_DIRECTORY_CREATION_FAILED,
+                        ErrorCode.TRANSFER_IO_FAILED,
+                        parameters={"remote_dir": remote_dir},
+                    ) from exc
 
     def _ensure_remote_dir(self, record: _TransferRecord, client, remote_dir: str) -> None:
         """Create a remote directory tree for uploads, reusing existing dirs."""
@@ -902,18 +1203,88 @@ class TransferRuntime:
 
     # -- per-file copy (atomic temp + rename) -------------------------------
 
-    def _copy_remote_to_local(
-        self, record: _TransferRecord, client, remote_src: str, local_dst: str, base: int = 0
+    def _download_small_files_pipelined(
+        self, record: _TransferRecord, client, files: List[tuple], base: int
     ) -> int:
+        """Read *files* ``(remote, local, size, attr)`` in pipelined windows
+        and commit each through a local temp, like :meth:`_copy_remote_to_local`."""
+        completed = base
+        # RENAME picks names by probing the disk, so it must run as each file
+        # is written (an earlier file may take the next free name); the other
+        # policies are decided up front so skipped files are never read.
+        rename = record.conflict_policy is TransferConflictPolicy.RENAME
+        wanted: List[tuple] = []
+        for remote_abs, local_abs, size, attr in files:
+            if rename:
+                wanted.append((remote_abs, local_abs, size, attr))
+                continue
+            try:
+                destination = self._resolve_local_destination(record, local_abs)
+            except _TransferSkipped:
+                completed += size
+                continue
+            wanted.append((remote_abs, destination, size, attr))
+        if completed != base:
+            self._report_progress(record, completed)
+
+        batches = client.read_small_files(
+            [(remote_abs, size) for remote_abs, _local, size, _attr in wanted],
+            check_cancel=lambda: self._check_cancel(record),
+        )
+        for start, contents in batches:
+            for offset, data in enumerate(contents):
+                self._check_cancel(record)
+                _remote, destination, _size, attr = wanted[start + offset]
+                if rename:
+                    destination = self._resolve_local_destination(record, destination)
+                self._write_downloaded_file(record, destination, data, attr)
+                completed += len(data)
+                self._report_progress(record, completed)
+        return completed
+
+    def _write_downloaded_file(
+        self, record: _TransferRecord, local_dst: str, data: bytes, attr
+    ) -> None:
         parent = os.path.dirname(local_dst) or "."
         os.makedirs(parent, exist_ok=True)
+        fd, temp_path = self._mkstemp(parent)
+        with self._lock:
+            record.local_temp_path = temp_path
         try:
-            attr = client.stat(remote_src)
-            with self._lock:
-                if record.bytes_total is None:
-                    record.bytes_total = int(attr.st_size) if attr.st_size is not None else None
-        except Exception:
-            pass
+            with os.fdopen(fd, "wb") as tmp_file:
+                tmp_file.write(data)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            _apply_downloaded_metadata(temp_path, local_dst, attr)
+            os.replace(temp_path, local_dst)
+        except BaseException:
+            self._cleanup_local_temp(record)
+            raise
+        with self._lock:
+            record.local_temp_path = None
+
+    def _copy_remote_to_local(
+        self,
+        record: _TransferRecord,
+        client,
+        remote_src: str,
+        local_dst: str,
+        base: int = 0,
+        *,
+        attr=None,
+    ) -> int:
+        """Download through a local temp. *attr*, when the caller already has
+        the source's (non-symlink) attributes from a listing, saves a STAT."""
+        parent = os.path.dirname(local_dst) or "."
+        os.makedirs(parent, exist_ok=True)
+        if attr is None:
+            try:
+                attr = client.stat(remote_src)
+                with self._lock:
+                    if record.bytes_total is None:
+                        record.bytes_total = int(attr.st_size) if attr.st_size is not None else None
+            except Exception:
+                pass
         fd, temp_path = self._mkstemp(parent)
         with self._lock:
             record.local_temp_path = temp_path
@@ -922,11 +1293,11 @@ class TransferRuntime:
             with os.fdopen(fd, "wb") as tmp_file:
                 handle = client.open_handle(remote_src, sftp_proto.FXF_READ)
                 try:
-                    while True:
+                    self._check_cancel(record)
+                    # Pipelined: several reads in flight, not one round trip
+                    # per chunk.
+                    for chunk in client.iter_read(handle):
                         self._check_cancel(record)
-                        chunk = client.read(handle, offset, self._chunk_size)
-                        if not chunk:
-                            break
                         tmp_file.write(chunk)
                         offset += len(chunk)
                         self._report_progress(record, base + offset)
@@ -934,6 +1305,7 @@ class TransferRuntime:
                     client.close_handle(handle)
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
+            _apply_downloaded_metadata(temp_path, local_dst, attr)
             os.replace(temp_path, local_dst)
         except BaseException:
             self._cleanup_local_temp(record)
@@ -943,8 +1315,28 @@ class TransferRuntime:
         return offset
 
     def _copy_local_to_remote(
-        self, record: _TransferRecord, client, local_src: str, remote_dst: str, base: int = 0
+        self,
+        record: _TransferRecord,
+        client,
+        local_src: str,
+        remote_dst: str,
+        base: int = 0,
+        *,
+        existing_mode: Optional[int] = None,
     ) -> int:
+        """Upload through a temp file renamed over *remote_dst*.
+
+        The rename replaces the target's inode, so its permissions would be
+        lost: a replaced file keeps *existing_mode* (the temp is private until
+        then), and a new file gets the local file's mode, narrowed by the
+        server's umask as OpenSSH's ``sftp put`` does. The local mtime is kept.
+
+        Commit uses ``atomic_rename`` (OpenSSH posix-rename when available,
+        otherwise remove + standard RENAME) so non-OpenSSH SFTP servers still
+        accept the upload.
+        """
+        local_info = os.stat(local_src)
+        create_mode = 0o600 if existing_mode is not None else stat.S_IMODE(local_info.st_mode)
         remote_dir = remote_path_dirname(remote_dst)
         temp_name = f"{_TEMP_PREFIX}{new_transfer_id()}"
         remote_temp = (
@@ -956,30 +1348,58 @@ class TransferRuntime:
         handle = client.open_handle(
             remote_temp,
             sftp_proto.FXF_WRITE | sftp_proto.FXF_CREAT | sftp_proto.FXF_TRUNC,
+            sftp_proto.SFTPAttributes(st_mode=create_mode),
         )
         try:
+            # Pipelined: several writes in flight, not one round trip per
+            # chunk. Progress counts bytes sent; flush() waits for the acks.
+            writer = client.pipelined_writer(handle)
+            block = max(self._chunk_size, getattr(client, "max_write_length", 0))
             with open(local_src, "rb") as source:
                 while True:
                     self._check_cancel(record)
-                    chunk = source.read(self._chunk_size)
+                    chunk = source.read(block)
                     if not chunk:
                         break
-                    client.write(handle, offset, chunk)
+                    writer.write(chunk)
                     offset += len(chunk)
                     self._report_progress(record, base + offset)
+            writer.flush()
+            self._apply_uploaded_metadata(client, handle, local_info, existing_mode)
         except BaseException:
             client.close_handle(handle)
             self._cleanup_remote_temp(record)
             raise
         client.close_handle(handle)
         try:
-            client.posix_rename(remote_temp, remote_dst)
+            # OpenSSH: posix-rename. Others (mod_sftp, AWS Transfer, …):
+            # remove+FXP_RENAME — see OpenSSHSFTPClient.atomic_rename.
+            client.atomic_rename(remote_temp, remote_dst)
         except Exception:
             self._cleanup_remote_temp(record)
             raise
         with self._lock:
             record.remote_temp_path = None
         return offset
+
+    @staticmethod
+    def _apply_uploaded_metadata(client, handle, local_info, existing_mode) -> None:
+        """Set the kept mode and the local times on the finished temp file.
+
+        Best effort: a server that refuses leaves the temp's private create
+        mode, never a wider one.
+        """
+        attr = sftp_proto.SFTPAttributes(
+            st_mode=existing_mode,
+            st_atime=int(local_info.st_atime),
+            st_mtime=int(local_info.st_mtime),
+        )
+        try:
+            client.fsetstat(handle, attr)
+        except sftp_proto.SFTPError as exc:
+            if exc.code == sftp_proto.FX_CONNECTION_LOST:
+                raise
+            logger.debug("Could not set uploaded file attributes: %s", exc)
 
     def _resolve_local_destination(self, record: _TransferRecord, path: str) -> str:
         from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
@@ -1014,16 +1434,24 @@ class TransferRuntime:
             )
         raise AssertionError("unhandled transfer conflict policy")
 
-    def _resolve_remote_destination(self, record: _TransferRecord, client, path: str) -> str:
+    def _resolve_remote_destination(
+        self, record: _TransferRecord, client, path: str
+    ) -> Tuple[str, Optional[int]]:
+        """Return the path to upload to and, when it replaces an existing
+        file, that file's permission bits (which the upload keeps)."""
         from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
 
+        existing_attr = None
         try:
-            client.stat(path)
+            existing_attr = client.stat(path)
             exists = True
         except sftp_proto.SFTPError:
             exists = False
         except Exception:
             exists = False
+        existing_mode = getattr(existing_attr, "st_mode", None)
+        if existing_mode is not None:
+            existing_mode = stat.S_IMODE(existing_mode)
         overwrite = {
             TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
             TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
@@ -1032,7 +1460,7 @@ class TransferRuntime:
         }.get(record.conflict_policy, OverwritePolicy.FAIL)
         decision = decide_conflict(exists, overwrite)
         if decision is ConflictDecision.PROCEED:
-            return path
+            return path, existing_mode
         if decision is ConflictDecision.FAIL:
             raise _sftp_transfer_error(
                 SftpFailureCode.REMOTE_DESTINATION_EXISTS,
@@ -1049,7 +1477,7 @@ class TransferRuntime:
                 try:
                     client.stat(candidate)
                 except Exception:
-                    return candidate
+                    return candidate, None
             raise _sftp_transfer_error(
                 SftpFailureCode.NO_FREE_REMOTE_FILENAME,
                 ErrorCode.TRANSFER_CONFLICT,
@@ -1251,8 +1679,30 @@ class TransferRuntime:
             1 for record in self._records.values() if record.state not in _TERMINAL_STATES
         )
 
+    def _count_service_workers_locked(self, sftp_service_id: SftpServiceId) -> int:
+        count = 0
+        for transfer_id in self._worker_threads:
+            record = self._records.get(transfer_id)
+            if (
+                record is not None
+                and record.backend is TransferBackend.SFTP
+                and record.sftp_service_id == sftp_service_id
+            ):
+                count += 1
+        return count
+
+    def _can_start_locked(self, record: _TransferRecord) -> bool:
+        if len(self._worker_threads) >= self._effective_max_concurrent_transfers():
+            return False
+        if record.backend is TransferBackend.SFTP:
+            running = self._count_service_workers_locked(record.sftp_service_id)
+            if running >= max(1, int(record.service_concurrency_limit)):
+                return False
+        return True
+
     def _schedule_or_queue_locked(self, transfer_id: TransferId) -> Optional[threading.Thread]:
-        if len(self._worker_threads) < self._max_concurrent_transfers:
+        record = self._records.get(transfer_id)
+        if record is not None and self._can_start_locked(record):
             return self._register_worker_thread_locked(transfer_id)
         self._pending_run.append(transfer_id)
         return None
@@ -1268,20 +1718,31 @@ class TransferRuntime:
         return thread
 
     def _take_next_runnable_locked(self) -> Optional[TransferId]:
-        while self._pending_run:
-            transfer_id = self._pending_run.pop(0)
+        """Pop the oldest queued transfer that fits global + per-service caps."""
+        kept: List[TransferId] = []
+        selected: Optional[TransferId] = None
+        for transfer_id in self._pending_run:
             record = self._records.get(transfer_id)
             if record is None:
                 continue
-            if record.state is TransferState.QUEUED and not record.cancel_requested:
-                return transfer_id
-        return None
+            if record.state is not TransferState.QUEUED or record.cancel_requested:
+                continue
+            if selected is None and self._can_start_locked(record):
+                selected = transfer_id
+                continue
+            kept.append(transfer_id)
+        self._pending_run = kept
+        return selected
 
     def _promote_queued_locked(self, transfer_id: TransferId) -> Optional[threading.Thread]:
         """Assign a worker to a previously queued transfer."""
 
         record = self._records.get(transfer_id)
         if record is None or record.state is not TransferState.QUEUED:
+            return None
+        if not self._can_start_locked(record):
+            # Put it back; a later completion may free a service slot.
+            self._pending_run.insert(0, transfer_id)
             return None
         if record.started_at is None:
             record.started_at = self._clock()

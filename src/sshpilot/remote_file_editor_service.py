@@ -17,6 +17,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
+from .api.errors import ErrorCode, SshPilotError
 from .api.models.operations import (
     SftpFileAccess,
     SftpFileTarget,
@@ -62,6 +63,15 @@ class DaemonRemoteFileService:
             thread_name_prefix="sshpilot-remote-file-editor",
         )
 
+    def rebind_client(self, client: Any) -> None:
+        """Use *client* after the app replaced its daemon connection.
+
+        The SFTP service outlives the old transport, so the service id and the
+        revision this editor last read stay valid on the new connection.
+        """
+        if client is not None:
+            self._client = client
+
     # -- editor-facing interface -------------------------------------------
 
     def load(self) -> Future:
@@ -90,21 +100,66 @@ class DaemonRemoteFileService:
         """Replace the remote file as the login user, revision-safe."""
 
         def _do() -> Any:
-            result = self._client.sftp_replace_file(
-                SftpReplaceFileRequest(
-                    SftpFileTarget.REMOTE,
-                    self._path,
-                    text,
-                    self._revision,
-                    backup=make_backup,
-                    service_id=self._service_id,
-                    access=SftpFileAccess.NORMAL,
+            try:
+                result = self._client.sftp_replace_file(
+                    SftpReplaceFileRequest(
+                        SftpFileTarget.REMOTE,
+                        self._path,
+                        text,
+                        self._revision,
+                        backup=make_backup,
+                        service_id=self._service_id,
+                        access=SftpFileAccess.NORMAL,
+                    )
                 )
-            )
+            except SshPilotError as exc:
+                result = self._confirm_ambiguous_save(
+                    exc, text, SftpFileAccess.NORMAL
+                )
             self._revision = result.revision
             return result
 
         return self._executor.submit(_do)
+
+    def _confirm_ambiguous_save(
+        self, error: SshPilotError, text: str, access: SftpFileAccess
+    ) -> Any:
+        """Settle a save whose outcome the transport lost.
+
+        A timed-out or interrupted save may still have landed on the remote
+        (the daemon finishes the write on its own). Read the file back: if it
+        holds exactly what was saved, the save succeeded and the editor keeps
+        the new revision instead of reporting a failure it will then contradict
+        with a revision conflict on the next save.
+        """
+        if error.code not in (
+            ErrorCode.MUTATION_AMBIGUOUS,
+            ErrorCode.TRANSPORT_TIMEOUT,
+            ErrorCode.TRANSPORT_CLOSED,
+        ):
+            raise error
+        try:
+            current = self._client.sftp_read_file(
+                SftpReadFileRequest(
+                    SftpFileTarget.REMOTE,
+                    self._path,
+                    self._service_id,
+                    access=access,
+                )
+            )
+        except Exception as read_error:
+            logger.debug("Could not confirm an interrupted save", exc_info=True)
+            raise error from read_error
+        if current.content != text:
+            raise error
+        logger.info("Interrupted save of %s had completed on the remote", self._path)
+        return SimpleNamespace(
+            target=SftpFileTarget.REMOTE,
+            path=self._path,
+            revision=current.revision,
+            size=len(text.encode("utf-8")),
+            backup_path=None,
+        )
 
     def load_privileged(self) -> Future:
         """Read the remote file as root through the daemon privileged runner."""
@@ -133,17 +188,20 @@ class DaemonRemoteFileService:
         """Replace the remote file as root, revision-safe."""
 
         def _do() -> Any:
-            result = self._client.sftp_replace_file(
-                SftpReplaceFileRequest(
-                    SftpFileTarget.REMOTE,
-                    self._path,
-                    text,
-                    self._privileged_revision or self._revision,
-                    backup=make_backup,
-                    service_id=self._service_id,
-                    access=SftpFileAccess.SUDO,
+            try:
+                result = self._client.sftp_replace_file(
+                    SftpReplaceFileRequest(
+                        SftpFileTarget.REMOTE,
+                        self._path,
+                        text,
+                        self._privileged_revision or self._revision,
+                        backup=make_backup,
+                        service_id=self._service_id,
+                        access=SftpFileAccess.SUDO,
+                    )
                 )
-            )
+            except SshPilotError as exc:
+                result = self._confirm_ambiguous_save(exc, text, SftpFileAccess.SUDO)
             self._privileged_revision = result.revision
             return result
 

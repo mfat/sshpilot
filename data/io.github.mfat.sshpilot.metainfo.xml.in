@@ -61,6 +61,18 @@
 
 
 
+    <release version="6.2.3" date="2026-09-25">
+      <description>
+        <p>More SFTP improvemnets</p>
+        <p>Added support for OSC 52</p>
+      </description>
+    </release>
+    <release version="6.2.2" date="2026-09-25">
+      <description>
+        <p>Various improvemnets to SFTP file manager</p>
+        <p>Minor bug fixes</p>
+      </description>
+    </release>
     <release version="6.2.1" date="2026-09-22">
       <description>
         <p>Fixed KeePass database creation failing with a false &quot;pykeepass is not installed&quot; error</p>

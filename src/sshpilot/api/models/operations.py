@@ -86,7 +86,13 @@ class SftpFailureCode(str, Enum):
     NO_FREE_LOCAL_FILENAME = "no_free_local_filename"
     NO_FREE_REMOTE_FILENAME = "no_free_remote_filename"
     DAEMON_SHUTTING_DOWN = "daemon_shutting_down"
+    RECURSIVE_DELETE_PROTECTED_PATH = "recursive_delete_protected_path"
 
+
+# Error-details key naming the ``SftpFailureCode`` behind a direct (non
+# operation) SFTP RPC error, so frontends can translate reasons that the
+# generic ``ErrorCode`` alone cannot distinguish.
+SFTP_FAILURE_CODE_DETAIL = "sftp_failure_code"
 
 _SFTP_FAILURE_PARAMETER_KEYS = {
     code: frozenset() for code in SftpFailureCode
@@ -407,6 +413,7 @@ class SftpPathRequest:
     service_id: SftpServiceId
     path: str
     recursive: bool = False
+    paths: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.service_id, "SFTP service id")
@@ -416,6 +423,58 @@ class SftpPathRequest:
             raise ValueError("SFTP path must not contain NUL")
         if type(self.recursive) is not bool:
             raise ValueError("SFTP path recursive flag must be a bool")
+        if type(self.paths) is not tuple:
+            raise ValueError("SFTP extra paths must be a tuple")
+        for extra in self.paths:
+            if type(extra) is not str or not extra:
+                raise ValueError("SFTP extra path must be a non-empty string")
+            if "\x00" in extra:
+                raise ValueError("SFTP path must not contain NUL")
+
+    def all_paths(self) -> Tuple[str, ...]:
+        """Primary path plus any additive extra paths for multi-target remove."""
+        if not self.paths:
+            return (self.path,)
+        return (self.path,) + self.paths
+
+
+@dataclass(frozen=True)
+class SftpRemoveFailure:
+    """One path that failed inside a multi-path ``sftp.remove``."""
+
+    path: str
+    message: str
+
+    def __post_init__(self) -> None:
+        if type(self.path) is not str or not self.path:
+            raise ValueError("SFTP remove failure path must be a non-empty string")
+        if type(self.message) is not str:
+            raise TypeError("SFTP remove failure message must be a string")
+
+
+@dataclass(frozen=True)
+class SftpRemoveResult:
+    """Result of a non-recursive multi-path ``sftp.remove``.
+
+    Single-path non-recursive remove still returns ``null`` on the wire.
+    Multi-path remove returns this so callers can keep going after a per-path
+    failure without N round trips.
+    """
+
+    failures: Tuple[SftpRemoveFailure, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.failures) is not tuple:
+            raise TypeError("SFTP remove failures must be a tuple")
+        for item in self.failures:
+            if type(item) is not SftpRemoveFailure:
+                raise TypeError("SFTP remove failures must be SftpRemoveFailure")
+
+
+# Non-directory removes per cancellation/progress checkpoint. Shared by the
+# daemon chunker and the presentation layer's multi-path RPC window so UI
+# cancel checks land between the same batches the daemon uses internally.
+SFTP_REMOVE_CHUNK_SIZE = 256
 
 
 class SftpFileTarget(str, Enum):
@@ -593,6 +652,28 @@ class SftpDirectorySizeResult:
             raise ValueError("SFTP size result file count must be non-negative")
         if type(self.directory_count) is not int or self.directory_count < 0:
             raise ValueError("SFTP size result directory count must be non-negative")
+
+
+@dataclass(frozen=True)
+class SftpFilesystemUsage:
+    """Size of the remote filesystem holding ``path``.
+
+    ``available_bytes`` is what an unprivileged user can still write;
+    ``free_bytes`` also counts blocks reserved for root.
+    """
+
+    path: str
+    total_bytes: int
+    free_bytes: int
+    available_bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP filesystem usage path must be safe")
+        for name in ("total_bytes", "free_bytes", "available_bytes"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"SFTP filesystem usage {name} must be a non-negative integer")
 
 
 @dataclass(frozen=True)

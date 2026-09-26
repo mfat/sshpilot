@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
 from sshpilot.api.client import SshPilotClient
+from sshpilot.sftp.server_limits import parse_remote_software_version
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
     CoreEvent,
@@ -55,6 +56,7 @@ from sshpilot.api.models.common import (
     utc_now,
 )
 from sshpilot.api.models.operations import (
+    SFTP_FAILURE_CODE_DETAIL,
     AttachSftpRequest,
     CloseSftpRequest,
     ListDirectoryRequest,
@@ -74,7 +76,11 @@ from sshpilot.api.models.operations import (
     SftpDirectorySizeResult,
     SftpFileAccess,
     SftpFileTarget,
+    SftpFilesystemUsage,
     SftpPathRequest,
+    SftpRemoveFailure,
+    SftpRemoveResult,
+    SFTP_REMOVE_CHUNK_SIZE,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
@@ -147,6 +153,57 @@ def _read_local_authorized_keys() -> tuple[str, bytes, int | None]:
     return path, content, mode
 
 
+def _argv_with_remote_banner_logging(argv: Tuple[str, ...]) -> Tuple[str, ...]:
+    """Ensure OpenSSH logs the remote software banner on stderr (DEBUG1).
+
+    Dropbear vs OpenSSH must be read from the SSH handshake — SFTP extensions
+    alone are insufficient because OpenWrt often runs Dropbear SSH with an
+    OpenSSH ``sftp-server`` subsystem.
+    """
+    if not argv:
+        return argv
+    # Already verbose enough (``-v`` / ``-vv`` / explicit LogLevel).
+    for item in argv[1:]:
+        if item in {"-v", "-vv", "-vvv"} or item.startswith("LogLevel="):
+            return argv
+        if item.startswith("-o") and "LogLevel=" in item:
+            return argv
+    # Scan paired ``-o LogLevel=…`` forms.
+    for index, item in enumerate(argv[1:], start=1):
+        if item == "-o" and index + 1 < len(argv) and argv[index + 1].startswith(
+            "LogLevel="
+        ):
+            return argv
+    return (argv[0], "-o", "LogLevel=DEBUG1", *argv[1:])
+
+
+def _drain_ssh_stderr_for_banner(
+    stream, holder: Dict[str, Optional[str]]
+) -> None:
+    """Read ssh stderr until EOF; keep the first remote-software banner token."""
+    try:
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            if holder.get("software"):
+                continue
+            try:
+                text = line.decode("utf-8", errors="replace")
+            except AttributeError:
+                text = str(line)
+            software = parse_remote_software_version(text)
+            if software:
+                holder["software"] = software
+    except Exception:  # pragma: no cover - best-effort drain
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+
 class SftpProcessHandle(Protocol):
     """Owned SFTP transport: a live client plus its underlying process."""
 
@@ -193,11 +250,16 @@ class _SubprocessSftpHandle:
         client: OpenSSHSFTPClient,
         on_exit: SftpExitCallback,
         unregister: Callable[["_SubprocessSftpHandle"], None],
+        *,
+        remote_software: Optional[str] = None,
+        stderr_thread: Optional[threading.Thread] = None,
     ) -> None:
         self._process = process
         self.client = client
         self._on_exit = on_exit
         self._unregister = unregister
+        self.remote_software = remote_software
+        self._stderr_thread = stderr_thread
         self._lock = threading.Lock()
         self._terminated = False
         self._notified = False
@@ -214,6 +276,12 @@ class _SubprocessSftpHandle:
         if self._process.poll() is None:
             try:
                 self._process.terminate()
+            except Exception:  # pragma: no cover - best effort
+                pass
+        # Unblock a stuck stderr reader so terminate/wait cannot deadlock.
+        if self._process.stderr is not None:
+            try:
+                self._process.stderr.close()
             except Exception:  # pragma: no cover - best effort
                 pass
 
@@ -239,6 +307,8 @@ class _SubprocessSftpHandle:
             self._notified = True
         forget_owned_process(self._process.pid)
         self._unregister(self)
+        if self._stderr_thread is not None and self._stderr_thread.is_alive():
+            self._stderr_thread.join(timeout=0.5)
         self._on_exit(return_code)
 
 
@@ -292,6 +362,7 @@ class SubprocessSftpProcessRunner:
                 "The SFTP launch command is invalid",
                 connection_id=spec.connection_id,
             )
+        argv = _argv_with_remote_banner_logging(argv)
         with self._condition:
             if self._closed:
                 raise RuntimeError("SFTP process runner is closed")
@@ -299,10 +370,20 @@ class SubprocessSftpProcessRunner:
             argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env=dict(environment),
             close_fds=True,
         )
+        # Drain stderr continuously so a DEBUG LogLevel pipe cannot block ssh,
+        # and capture the remote software banner for transfer concurrency.
+        banner_holder: Dict[str, Optional[str]] = {"software": None}
+        stderr_thread = threading.Thread(
+            target=_drain_ssh_stderr_for_banner,
+            args=(process.stderr, banner_holder),
+            name="sshpilot-sftp-stderr",
+            daemon=True,
+        )
+        stderr_thread.start()
         client = OpenSSHSFTPClient(
             process.stdin,
             process.stdout,
@@ -316,13 +397,35 @@ class SubprocessSftpProcessRunner:
                 process.wait(timeout=self._connect_timeout)
             except Exception:  # pragma: no cover - defensive
                 process.kill()
+            if process.stderr is not None:
+                try:
+                    process.stderr.close()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            stderr_thread.join(timeout=0.5)
             raise SshPilotError(
                 ErrorCode.SFTP_SERVICE_NOT_READY,
                 "The SFTP session could not be established",
                 connection_id=spec.connection_id,
             ) from exc
+        # Banner is logged during SSH handshake, before SFTP VERSION returns.
+        stderr_thread.join(timeout=0.2)
+        remote_software = banner_holder.get("software")
+        if remote_software:
+            logger.debug(
+                "SFTP remote SSH software=%s [connection=%s]",
+                remote_software,
+                spec.connection_id,
+            )
         record_owned_process_or_abandon(process, kind=KIND_SFTP)
-        handle = _SubprocessSftpHandle(process, client, on_exit, self._unregister)
+        handle = _SubprocessSftpHandle(
+            process,
+            client,
+            on_exit,
+            self._unregister,
+            remote_software=remote_software,
+            stderr_thread=stderr_thread,
+        )
         with self._condition:
             if self._closed:
                 handle.terminate()
@@ -541,12 +644,68 @@ def _validate_path(value: Any, field_name: str = "remote path") -> str:
         raise SshPilotError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
 
 
+# Bytes a remote-to-remote copy holds at once when the server cannot copy for it.
+_COPY_BLOCK = 1024 * 1024
+
+
+def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
+    """Copy through the ``copy-data`` extension when the server offers it.
+
+    Returns False, having written nothing, when the caller must stream the
+    bytes itself.
+    """
+    supports_copy_data = getattr(client, "supports_copy_data", None)
+    if not (callable(supports_copy_data) and supports_copy_data()):
+        return False
+    try:
+        client.copy_data(source_file.handle, destination_file.handle)
+    except sftp_proto.SFTPError as exc:
+        if exc.code == sftp_proto.FX_CONNECTION_LOST:
+            raise
+        logger.debug("Server-side copy failed; streaming instead: %s", exc)
+        return False
+    return True
+
+
 def _remote_path_is_descendant(source: str, destination: str) -> bool:
     source = posixpath.normpath(source)
     destination = posixpath.normpath(destination)
     if source in ("", ".", "/"):
         return False
     return destination == source or destination.startswith(source.rstrip("/") + "/")
+
+
+def _is_missing_path_error(exc: BaseException) -> bool:
+    if isinstance(exc, sftp_proto.SFTPError):
+        return exc.code == sftp_proto.FX_NO_SUCH_FILE
+    return isinstance(exc, FileNotFoundError)
+
+
+def _reject_protected_recursive_delete(path: str, *, home: Optional[str]) -> None:
+    """Refuse a recursive delete of the filesystem root or the login directory.
+
+    Relative paths resolve against the login directory on the server, so
+    ``.``, ``~`` and ``..`` chains are as dangerous as the absolute root.
+    """
+    normalized = posixpath.normpath(path)
+    parts = [part for part in normalized.split("/") if part]
+    protected = (
+        not parts  # "/" or "//"
+        or normalized in (".", "~")
+        or (not normalized.startswith("/") and all(part == ".." for part in parts))
+        or (bool(home) and normalized == posixpath.normpath(home))
+    )
+    if protected:
+        failure_code = SftpFailureCode.RECURSIVE_DELETE_PROTECTED_PATH
+        raise _SftpSummaryError(
+            ErrorCode.VALIDATION_FAILED,
+            "Refusing to recursively delete the root or home directory",
+            failure_code,
+            # The operation path carries the structured failure itself; a
+            # direct RPC only has error details, so name the reason there
+            # too for the frontend to translate.
+            details={SFTP_FAILURE_CODE_DETAIL: failure_code.value},
+        )
 
 
 def _file_type(mode: int) -> RemoteFileType:
@@ -846,6 +1005,13 @@ class SftpServiceRuntime:
                     connection_id=record.connection_id,
                 )
             record.attached_clients.add(client_id)
+            if record.owner_client_id is None:
+                # The owner disconnected (``detach_client`` orphans rather
+                # than closes). The app re-attaches its open file managers on
+                # the replacement transport, and must be able to save and
+                # manage the service again, so the first client to re-attach
+                # an orphan becomes its owner.
+                record.owner_client_id = client_id
             return self._summary_locked(record)
 
     def detach_service(self, service_id: SftpServiceId, *, client_id: ClientId) -> None:
@@ -896,6 +1062,24 @@ class SftpServiceRuntime:
 
         record = self._ready_record_for_read(service_id, client_id)
         return record.handle.client, record.connection_id
+
+    def remote_ssh_software(
+        self,
+        service_id: SftpServiceId,
+        client_id: ClientId,
+    ) -> Optional[str]:
+        """SSH software banner for a READY service the caller may use, if known.
+
+        Populated from OpenSSH client stderr during SFTP launch (``remote
+        software version …``). Used to tighten transfer concurrency for
+        Dropbear without treating OpenSSH ``sftp-server`` extensions as proof
+        of a capable SSH channel.
+        """
+        record = self._ready_record_for_read(service_id, client_id)
+        handle = record.handle
+        if handle is None:
+            return None
+        return getattr(handle, "remote_software", None)
 
     # -- close --------------------------------------------------------
     def prepare_close_service(
@@ -1276,28 +1460,19 @@ class SftpServiceRuntime:
                     "The remote file changed since it was read",
                     connection_id=record.connection_id,
                 )
-            parent = posixpath.dirname(path)
-            if parent:
-                try:
-                    client.mkdir(parent, 0o700)
-                except Exception as exc:
-                    # SFTP v3 has no EEXIST status: servers answer a bare
-                    # FX_FAILURE when the directory already exists, which
-                    # SFTPError maps to EIO — never EEXIST/EISDIR, so an errno
-                    # check here can never pass. Confirm the parent is a
-                    # usable directory instead; only a genuinely missing or
-                    # non-directory parent is an error.
-                    try:
-                        parent_attr = client.stat(parent)
-                    except Exception:
-                        raise self._map_error(exc, record) from exc
-                    if not stat_module.S_ISDIR(parent_attr.st_mode or 0):
-                        raise self._map_error(exc, record) from exc
+            # Every step below is a sequential SFTP round trip, and the GTK
+            # client waits on the whole save. Over a high-latency link the
+            # old sequence (18 round trips) outran the client's timeout, so
+            # skip what an existing file makes unnecessary.
+            if current_mode is None:
+                self._ensure_remote_parent(client, path, record)
+            # Keep the file's own permissions; a new file stays private.
+            target_mode = current_mode if current_mode is not None else 0o600
             backup_path = None
             if request.backup and current_mode is not None:
                 backup_path = f"{path}.bak-{time.time_ns()}"
                 try:
-                    self._write_remote_bytes(client, backup_path, current_content, 0o600)
+                    self._backup_remote_file(client, path, backup_path, current_content)
                 except Exception as exc:
                     raise SshPilotError(
                         ErrorCode.FILE_BACKUP_FAILED,
@@ -1307,6 +1482,14 @@ class SftpServiceRuntime:
             temporary = f"{path}.sshpilot.tmp-{time.time_ns()}"
             try:
                 self._write_remote_bytes(client, temporary, payload, 0o600)
+                if target_mode != 0o600:
+                    # Set the final mode before the rename so the file is
+                    # never visible with the wrong permissions. The create
+                    # mode alone is subject to the server's umask.
+                    try:
+                        client.chmod(temporary, target_mode)
+                    except Exception:
+                        logger.debug("Could not preserve remote file mode", exc_info=True)
                 try:
                     client.posix_rename(temporary, path)
                 except Exception:
@@ -1315,10 +1498,6 @@ class SftpServiceRuntime:
                     except Exception:
                         pass
                     client.rename(temporary, path)
-                try:
-                    client.chmod(path, 0o600)
-                except Exception:
-                    logger.debug("Could not enforce remote file mode", exc_info=True)
             except SshPilotError:
                 raise
             except Exception as exc:
@@ -1361,12 +1540,59 @@ class SftpServiceRuntime:
             raise SshPilotError(ErrorCode.FILE_CONTENT_TOO_LARGE, "The remote file is too large")
         return content, ((attr.st_mode or 0) & 0o7777)
 
+    def _ensure_remote_parent(
+        self, client: OpenSSHSFTPClient, path: str, record: _SftpRecord
+    ) -> None:
+        parent = posixpath.dirname(path)
+        if not parent:
+            return
+        try:
+            client.mkdir(parent, 0o700)
+        except Exception as exc:
+            # SFTP v3 has no EEXIST status: servers answer a bare
+            # FX_FAILURE when the directory already exists, which
+            # SFTPError maps to EIO — never EEXIST/EISDIR, so an errno
+            # check here can never pass. Confirm the parent is a
+            # usable directory instead; only a genuinely missing or
+            # non-directory parent is an error.
+            try:
+                parent_attr = client.stat(parent)
+            except Exception:
+                raise self._map_error(exc, record) from exc
+            if not stat_module.S_ISDIR(parent_attr.st_mode or 0):
+                raise self._map_error(exc, record) from exc
+
+    @classmethod
+    def _backup_remote_file(
+        cls,
+        client: OpenSSHSFTPClient,
+        path: str,
+        backup_path: str,
+        content: bytes,
+    ) -> None:
+        """Preserve the current file at *backup_path* before it is replaced.
+
+        A hard link is one round trip and keeps the old inode intact once the
+        new content is renamed over *path*; a copy needs a full upload and is
+        only the fallback for servers without the OpenSSH extension or
+        filesystems that refuse links.
+        """
+        supports_hardlink = getattr(client, "supports_hardlink", None)
+        if callable(supports_hardlink) and supports_hardlink():
+            try:
+                client.hardlink(path, backup_path)
+                return
+            except Exception:
+                logger.debug("Hard-link backup failed; copying instead", exc_info=True)
+        cls._write_remote_bytes(client, backup_path, content, 0o600)
+
     @staticmethod
     def _write_remote_bytes(client: OpenSSHSFTPClient, path: str, content: bytes, mode: int) -> None:
-        with client.file(path, "wb") as handle:
-            client.chmod(path, mode)
+        # The mode travels with the OPEN, so the content is never readable
+        # under a wider mode and no separate SETSTAT is needed. A server umask
+        # can only narrow it.
+        with client.file(path, "wb", create_mode=mode) as handle:
             handle.write(content)
-        client.chmod(path, mode)
 
     @staticmethod
     def _replace_local_authorized_keys(
@@ -1422,6 +1648,20 @@ class SftpServiceRuntime:
         )
 
     # -- remote filesystem operations -------------------------------------
+    def _resolve_home(self, record: _SftpRecord) -> Optional[str]:
+        """Return the service's home directory, resolving it once via REALPATH(".")."""
+        home = record.home
+        if home is None:
+            try:
+                home = record.handle.client.realpath(".")
+            except Exception:
+                home = None
+            if home:
+                with self._lock:
+                    if record.home is None:
+                        record.home = home
+        return home
+
     def _expand_tilde_path(self, record: _SftpRecord, path: str) -> str:
         """Expand a leading ``~``/``~/`` using the service's home directory.
 
@@ -1437,16 +1677,7 @@ class SftpServiceRuntime:
         """
         if not (path == "~" or path.startswith("~/")):
             return path
-        home = record.home
-        if home is None:
-            try:
-                home = record.handle.client.realpath(".")
-            except Exception:
-                home = None
-            if home:
-                with self._lock:
-                    if record.home is None:
-                        record.home = home
+        home = self._resolve_home(record)
         if not home:
             return path
         if path == "~":
@@ -1514,6 +1745,7 @@ class SftpServiceRuntime:
     ) -> RemoteFileEntry:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         client = record.handle.client
@@ -1681,6 +1913,7 @@ class SftpServiceRuntime:
     def realpath(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
@@ -1688,9 +1921,39 @@ class SftpServiceRuntime:
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
+    def filesystem_usage(
+        self, request: SftpPathRequest, *, client_id: ClientId
+    ) -> SftpFilesystemUsage:
+        """Total, free and available bytes of the filesystem holding a path,
+        via ``statvfs@openssh.com``."""
+        if type(request) is not SftpPathRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
+        record = self._ready_record_for_read(request.service_id, client_id)
+        path = self._expand_tilde_path(record, _validate_path(request.path))
+        client = record.handle.client
+        supports_statvfs = getattr(client, "supports_statvfs", None)
+        if not (callable(supports_statvfs) and supports_statvfs()):
+            raise SshPilotError(
+                ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
+                "The SFTP server does not report filesystem usage",
+                connection_id=record.connection_id,
+            )
+        try:
+            vfs = client.statvfs(path)
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+        return SftpFilesystemUsage(
+            path=path,
+            total_bytes=vfs.f_blocks * vfs.f_frsize,
+            free_bytes=vfs.f_bfree * vfs.f_frsize,
+            available_bytes=vfs.f_bavail * vfs.f_frsize,
+        )
+
     def readlink(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        self._reject_extra_paths(request)
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
@@ -1699,6 +1962,7 @@ class SftpServiceRuntime:
             raise self._map_error(exc, record) from exc
 
     def mkdir(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
+        self._reject_extra_paths(request)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
@@ -1707,12 +1971,21 @@ class SftpServiceRuntime:
             raise self._map_error(exc, record) from exc
 
     def rmdir(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
+        self._reject_extra_paths(request)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         path = _validate_path(request.path)
         try:
             record.handle.client.rmdir(path)
         except Exception as exc:
             raise self._map_error(exc, record) from exc
+
+    @staticmethod
+    def _reject_extra_paths(request: SftpPathRequest) -> None:
+        if request.paths:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "Extra SFTP paths are only valid for sftp.remove",
+            )
 
     def copy(
         self,
@@ -1732,7 +2005,12 @@ class SftpServiceRuntime:
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
                 SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
-                details={"service_id": record.service_id},
+                details={
+                    "service_id": record.service_id,
+                    SFTP_FAILURE_CODE_DETAIL: (
+                        SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF.value
+                    ),
+                },
             )
         client = record.handle.client
         copied = 0
@@ -1749,11 +2027,12 @@ class SftpServiceRuntime:
             with client.open(source_path, "rb") as source_file, client.open(
                 destination_path, "wb"
             ) as destination_file:
-                while True:
-                    chunk = source_file.read(32768)
-                    if not chunk:
-                        break
-                    destination_file.write(chunk)
+                if not _server_side_copy(client, source_file, destination_file):
+                    while True:
+                        chunk = source_file.read(_COPY_BLOCK)
+                        if not chunk:
+                            break
+                        destination_file.write(chunk)
             copied += 1
             _report_copy_progress()
 
@@ -1862,7 +2141,12 @@ class SftpServiceRuntime:
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
                 SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
-                details={"service_id": record.service_id},
+                details={
+                    "service_id": record.service_id,
+                    SFTP_FAILURE_CODE_DETAIL: (
+                        SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF.value
+                    ),
+                },
             )
         runtime = self._require_operation_lifecycle()
 
@@ -1901,15 +2185,32 @@ class SftpServiceRuntime:
         client_id: ClientId,
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
-    ) -> None:
+    ) -> Optional[SftpRemoveResult]:
+        """Delete path(s). ``cancel``/``progress`` are cooperative hooks for
+        operation-wrapped callers (``start_remove``) and direct embedders.
+
+        The bare multi-path wire RPC in dispatch does not pass them: a sync
+        command-stream remove has no operation id, so clients cannot cancel
+        mid-request. Presentation code cancels between chunked RPCs of
+        ``SFTP_REMOVE_CHUNK_SIZE`` paths instead.
+        """
         record = self._ready_record_for_mutation(request.service_id, client_id)
-        path = _validate_path(request.path)
+        paths = tuple(_validate_path(path) for path in request.all_paths())
         client = record.handle.client
+        if request.recursive:
+            home = self._resolve_home(record)
+            for path in paths:
+                _reject_protected_recursive_delete(path, home=home)
         try:
             if request.recursive:
-                self._remove_recursive(client, path, progress=progress, cancel=cancel)
-            else:
-                client.remove(path)
+                self._remove_trees(
+                    client, paths, progress=progress, cancel=cancel, home=home
+                )
+                return None
+            if len(paths) == 1:
+                client.remove(paths[0])
+                return None
+            return self._remove_paths_sync(client, paths, cancel=cancel, progress=progress)
         except OperationCancelled:
             raise
         except SshPilotError:
@@ -1917,23 +2218,79 @@ class SftpServiceRuntime:
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
+    def _remove_paths_sync(
+        self,
+        client,
+        paths: Tuple[str, ...],
+        *,
+        cancel: Optional[Callable[[], bool]] = None,
+        progress: Optional[Callable[[float], None]] = None,
+    ) -> SftpRemoveResult:
+        """Pipelined non-recursive multi-path remove with per-path continue-on-error.
+
+        Large batches run in ``SFTP_REMOVE_CHUNK_SIZE`` slices so cancellation and
+        progress stay responsive on slow links (mirrors ``_remove_recursive``).
+        """
+        failures: List[SftpRemoveFailure] = []
+        total = len(paths)
+        for offset in range(0, total, SFTP_REMOVE_CHUNK_SIZE):
+            if cancel is not None and cancel():
+                raise OperationCancelled()
+            chunk = paths[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+            failures.extend(self._remove_chunk(client, chunk))
+            if progress is not None:
+                processed = offset + len(chunk)
+                progress(_coarse_progress(processed, total - processed))
+        return SftpRemoveResult(failures=tuple(failures))
+
+    @staticmethod
+    def _remove_chunk(client, chunk: Tuple[str, ...]) -> List[SftpRemoveFailure]:
+        """Remove one chunk of non-directory paths, collecting per-path failures."""
+        remove_many = getattr(client, "remove_many", None)
+        if callable(remove_many):
+            raw_failures = remove_many(list(chunk), continue_on_error=True)
+            return [
+                SftpRemoveFailure(path=path, message=str(exc) or "remove failed")
+                for path, exc in raw_failures
+            ]
+        chunk_failures: List[SftpRemoveFailure] = []
+        for path in chunk:
+            try:
+                client.remove(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                # Missing is idempotent (same policy as ``_remove_recursive``).
+                if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                    continue
+                chunk_failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
+            except Exception as exc:
+                chunk_failures.append(SftpRemoveFailure(path=path, message=str(exc) or "remove failed"))
+        return chunk_failures
+
     def start_remove(
         self,
         request: SftpPathRequest,
         *,
         client_id: ClientId,
     ) -> OperationSummary:
-        """Start a daemon operation that recursively deletes a remote tree.
+        """Start a daemon operation that recursively deletes remote path(s).
 
         The walk runs on the shared operation worker with progress reporting
         and cooperative cancellation instead of blocking the SFTP command
-        stream.
+        stream. Extra ``paths`` on the request are deleted in the same
+        operation after the primary path.
         """
         if type(request) is not SftpPathRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
-        path = _validate_path(request.path)
+        paths = tuple(_validate_path(path) for path in request.all_paths())
+        if request.recursive:
+            # The login directory is checked again inside remove(), where
+            # resolving it may touch the server; this rejects "/", "." and
+            # friends synchronously, before an operation is ever started.
+            for path in paths:
+                _reject_protected_recursive_delete(path, home=None)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         runtime = self._require_operation_lifecycle()
+        label = paths[0] if len(paths) == 1 else f"{len(paths)} paths"
 
         def _body(handle) -> str:
             handle.report("Deleting…", 0.0)
@@ -1958,7 +2315,7 @@ class SftpServiceRuntime:
             _body,
             connection_id=record.connection_id,
             owner_client_id=client_id,
-            message=f"Deleting {path}",
+            message=f"Deleting {label}",
             failure_mapper=_operation_failure,
         )
 
@@ -1969,39 +2326,242 @@ class SftpServiceRuntime:
         *,
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[Callable[[], bool]] = None,
+        home: Optional[str] = None,
     ) -> None:
-        """Delete a remote tree with lstat so symlinks are never followed.
+        """Delete one remote tree (see :meth:`_remove_trees`)."""
+        self._remove_trees(client, (path,), progress=progress, cancel=cancel, home=home)
+
+    def _remove_trees(
+        self,
+        client,
+        paths: Sequence[str],
+        *,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
+        home: Optional[str] = None,
+    ) -> None:
+        """Delete remote trees with lstat so symlinks are never followed.
 
         A symlink is removed as a link (like ``rm -r``), never recursed into,
         which keeps cycles and escapes out of the tree impossible.
+
+        All roots are walked together, one depth level at a time: a level's
+        directories are listed with ``listdir_many`` and its files removed
+        with pipelined ``FXP_REMOVE``, so a wide tree costs a few round trips
+        per level instead of per directory. A directory is removed with
+        pipelined ``FXP_RMDIR`` as soon as its whole subtree is gone, so a
+        cancel or failure leaves only unfinished subtrees behind, never an
+        emptied skeleton. Progress only moves forward and reaches 1.0 once
+        every root is gone.
         """
-        try:
-            attr = client.lstat(path)
-        except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-            if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
-                return
-            raise
-        if not attr.is_dir() or attr.is_symlink():
-            client.remove(path)
-            return
-        entries = client.listdir_attr(path)
+        # ``pending`` counts entries discovered but not yet deleted
+        # (directories until their rmdir); it grows as directories are
+        # listed, so the reported fraction is clamped to never step back.
         processed = 0
-        for entry in entries:
+        pending = len(paths)
+        reported = 0.0
+
+        def _advance(count: int) -> None:
+            nonlocal processed, pending, reported
+            processed += count
+            pending -= count
+            if progress is None:
+                return
+            fraction = _coarse_progress(processed, pending)
+            if fraction > reported:
+                reported = fraction
+                progress(fraction)
+
+        def _check_cancel() -> None:
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            child = path.rstrip("/") + "/" + entry.filename
-            if entry.is_dir() and not entry.is_symlink():
-                self._remove_recursive(client, child, progress=progress, cancel=cancel)
+
+        def _key(path: str) -> str:
+            return path.rstrip("/") or "/"
+
+        # Resolve and check every root before deleting anything. Paths are
+        # opaque strings that only the server resolves (``..``, symlinked
+        # components), so a directory root is replaced by its REALPATH: that
+        # re-checks the protected-path guard on what will really be deleted,
+        # and keeps one root's spelling from depending on another root that
+        # may already be gone.
+        file_roots: List[str] = []
+        roots: Dict[str, str] = {}
+        for path in paths:
+            _check_cancel()
+            try:
+                attr = client.lstat(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if _is_missing_path_error(exc):
+                    _advance(1)
+                    continue
+                raise
+            if not attr.is_dir() or attr.is_symlink():
+                file_roots.append(path)
+                continue
+            try:
+                resolved = client.realpath(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if _is_missing_path_error(exc):
+                    _advance(1)
+                    continue
+                raise
+            _reject_protected_recursive_delete(resolved, home=home)
+            if _key(resolved) in roots:
+                _advance(1)
             else:
-                try:
-                    client.remove(child)
-                except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-                    if not isinstance(exc, sftp_proto.SFTPError) or exc.code != sftp_proto.FX_NO_SUCH_FILE:
-                        raise
-            processed += 1
-            if progress is not None:
-                progress(_coarse_progress(processed, len(entries)))
-        client.rmdir(path)
+                roots[_key(resolved)] = resolved
+        for path in dict.fromkeys(file_roots):
+            client.remove(path)
+        _advance(len(file_roots))
+
+        # A root is never assumed to lie inside another from its spelling.
+        # Only when a listing names a resolved root exactly is it tracked as
+        # that parent's child instead of being walked a second time.
+        parent_of: Dict[str, str] = {}
+        open_children: Dict[str, int] = {}
+        cleared: Set[str] = set()  # listed, files removed, awaiting rmdir
+        removed: Set[str] = set()
+
+        def _child_gone(key: str) -> List[str]:
+            parent = parent_of.get(key)
+            if parent is None:
+                return []
+            open_children[parent] -= 1
+            if open_children[parent] == 0 and parent in cleared:
+                return [parent]
+            return []
+
+        def _rmdir_finished(ready: List[str]) -> None:
+            # Parents become ready only after their children's batch, so one
+            # batch never holds a directory together with its ancestor.
+            while ready:
+                cascade: List[str] = []
+                for offset in range(0, len(ready), SFTP_REMOVE_CHUNK_SIZE):
+                    _check_cancel()
+                    chunk = ready[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+                    self._remove_directories(client, [paths_by_key[key] for key in chunk])
+                    for key in chunk:
+                        cleared.discard(key)
+                        removed.add(key)
+                        cascade.extend(_child_gone(key))
+                    _advance(len(chunk))
+                ready = cascade
+
+        paths_by_key: Dict[str, str] = dict(roots)
+        level = list(roots)
+        while level:
+            next_level: List[str] = []
+            for offset in range(0, len(level), SFTP_REMOVE_CHUNK_SIZE):
+                _check_cancel()
+                batch = level[offset : offset + SFTP_REMOVE_CHUNK_SIZE]
+                listings = self._list_directories(
+                    client, [paths_by_key[key] for key in batch], set(roots.values())
+                )
+                file_children: List[str] = []
+                listed: List[str] = []
+                ready: List[str] = []
+                for key, entries in zip(batch, listings):
+                    if entries is None:
+                        # A subdirectory deleted concurrently is already gone.
+                        removed.add(key)
+                        _advance(1)
+                        ready.extend(_child_gone(key))
+                        continue
+                    listed.append(key)
+                    open_children[key] = 0
+                    for entry in entries:
+                        child = paths_by_key[key].rstrip("/") + "/" + entry.filename
+                        if not entry.is_dir() or entry.is_symlink():
+                            file_children.append(child)
+                            pending += 1
+                            continue
+                        child_key = _key(child)
+                        if child_key in removed:
+                            continue
+                        parent_of[child_key] = key
+                        open_children[key] += 1
+                        if child_key not in roots:
+                            paths_by_key[child_key] = child
+                            next_level.append(child_key)
+                            pending += 1
+                for start in range(0, len(file_children), SFTP_REMOVE_CHUNK_SIZE):
+                    _check_cancel()
+                    chunk = file_children[start : start + SFTP_REMOVE_CHUNK_SIZE]
+                    self._remove_files(client, chunk)
+                    _advance(len(chunk))
+                cleared.update(listed)
+                ready.extend(key for key in listed if open_children[key] == 0)
+                # A root listed in this batch may be the child that its
+                # already-cleared parent was waiting for.
+                ready = list(dict.fromkeys(ready))
+                _rmdir_finished(ready)
+            level = next_level
+
+    @staticmethod
+    def _list_directories(
+        client, directories: List[str], roots: Set[str]
+    ) -> List[Optional[List[sftp_proto.SFTPAttributes]]]:
+        """List *directories*; ``None`` marks a non-root that has vanished.
+
+        ``listdir_many`` fails a whole batch on its first error, so a batch
+        that hits a missing directory is split in halves and each half is
+        listed again, which isolates a vanished directory in a few rounds
+        instead of re-listing the batch one directory at a time.
+        """
+        listdir_many = getattr(client, "listdir_many", None)
+        if callable(listdir_many) and len(directories) > 1:
+            try:
+                return list(listdir_many(directories))
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if not _is_missing_path_error(exc):
+                    raise
+            middle = len(directories) // 2
+            return SftpServiceRuntime._list_directories(
+                client, directories[:middle], roots
+            ) + SftpServiceRuntime._list_directories(client, directories[middle:], roots)
+        results: List[Optional[List[sftp_proto.SFTPAttributes]]] = []
+        for directory in directories:
+            try:
+                results.append(client.listdir_attr(directory))
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                if directory in roots or not _is_missing_path_error(exc):
+                    raise
+                results.append(None)
+        return results
+
+    @staticmethod
+    def _remove_directories(client, paths: List[str]) -> None:
+        """Remove empty directories, preferring a pipelined batch when available."""
+        rmdir_many = getattr(client, "rmdir_many", None)
+        if callable(rmdir_many):
+            rmdir_many(paths)
+            return
+        for path in paths:
+            try:
+                client.rmdir(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                # Missing is idempotent, as in ``rmdir_many``.
+                if not _is_missing_path_error(exc):
+                    raise
+
+    @staticmethod
+    def _remove_files(client, paths: List[str]) -> None:
+        """Remove file/symlink paths, preferring a pipelined batch when available."""
+        if not paths:
+            return
+        remove_many = getattr(client, "remove_many", None)
+        if callable(remove_many):
+            remove_many(paths)
+            return
+        for path in paths:
+            try:
+                client.remove(path)
+            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                # Missing is idempotent (same policy as ``_remove_recursive``).
+                if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                    continue
+                raise
 
     def rename(self, request: SftpRenameRequest, *, client_id: ClientId) -> None:
         if type(request) is not SftpRenameRequest:

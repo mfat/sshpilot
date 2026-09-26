@@ -37,6 +37,9 @@ DEFAULT_SSH_CONFIG: Dict[str, Any] = {
 #: shell string, not an OpenSSH option.
 DEFAULT_PRE_COMMAND_TIMEOUT_SECONDS = 30
 DEFAULT_PRE_COMMAND_COALESCE_SECONDS = 5
+# Mirrors ``TransferRuntime`` / ``file_manager.max_concurrent_transfers``.
+DEFAULT_MAX_CONCURRENT_TRANSFERS = 4
+MAX_CONCURRENT_TRANSFERS_LIMIT = 10
 
 
 def _positive_int(value: Any, fallback: int) -> int:
@@ -168,6 +171,22 @@ class DaemonBootstrapSettings:
             ),
             DEFAULT_PRE_COMMAND_COALESCE_SECONDS,
         )
+
+    @property
+    def max_concurrent_transfers(self) -> int:
+        """Global file-manager transfer worker cap from ``config.json``.
+
+        Dropbear SFTP services still serialize to one transfer per service;
+        this preference only raises the OpenSSH (and SCP) pool ceiling.
+        """
+        value = _positive_int(
+            self.get_setting(
+                "file_manager.max_concurrent_transfers",
+                DEFAULT_MAX_CONCURRENT_TRANSFERS,
+            ),
+            DEFAULT_MAX_CONCURRENT_TRANSFERS,
+        )
+        return min(value, MAX_CONCURRENT_TRANSFERS_LIMIT)
 
     @property
     def config_file(self) -> Optional[str]:

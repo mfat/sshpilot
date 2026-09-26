@@ -213,6 +213,9 @@ class ManagedRotatingFileHandler(RotatingFileHandler):
             maxBytes=LOG_MAX_BYTES,
             backupCount=LOG_BACKUP_COUNT,
             encoding="utf-8",
+            # Paths can carry lone surrogates (filename bytes that are not
+            # UTF-8); strict encoding would drop the whole record.
+            errors="backslashreplace",
         )
         self._sshpilot_managed = True
         self._sshpilot_log_role = role

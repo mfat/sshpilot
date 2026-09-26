@@ -25,12 +25,34 @@ States: `queued` → `starting` → `running` → (`cancelling` →) `completed`
 Default limits (daemon transfer runtime):
 
 - at most **4** concurrent transfer worker threads
+  (`file_manager.max_concurrent_transfers` in preferences; range 1–10)
 - at most **32** queued transfers beyond the active set
 - additional `transfers.start` requests raise `SERVER_BUSY`
+- Dropbear SSH banners still serialize to **1** transfer per SFTP service
 
-These bounds are configurable on `TransferRuntime` construction. Completed
-worker threads are removed; shutdown joins workers within the configured
-deadline.
+These bounds are configurable on `TransferRuntime` construction and the
+worker cap is re-read from settings for new admissions. Completed worker
+threads are removed; shutdown joins workers within the configured deadline.
+
+Concurrent workers share **one** READY SFTP service (one OpenSSH `sftp`
+subsystem session). Per-file throughput comes from pipelining on that session,
+not from opening extra SSH connections. Recursive directory transfers of small
+files also pipeline control-plane requests across a window of files (at most
+100, or a quarter of the server's advertised open-handle limit) so latency is
+paid per phase, not per file: uploads batch STAT / OPEN / WRITE / FSETSTAT /
+CLOSE / rename, downloads batch OPEN / READ / CLOSE (one READ of the listed
+size + 1 proves EOF). Directory trees are handled a depth level at a time:
+uploads STAT and MKDIR each level together, downloads list each level
+together.
+
+## Pipelining
+
+`OpenSSHSFTPClient` keeps an outstanding READ/WRITE window that starts at 16
+requests and grows from measured RTT toward roughly 500 ms of in-flight work
+(FileZilla’s adaptive download window), capped by bytes in flight (~32 MiB)
+and a hard request ceiling. Chunk sizes still come from
+`limits@openssh.com` when the server advertises them. Mass deletes use a
+separate fixed depth of 100 `FXP_REMOVE` requests.
 
 ## Atomicity
 

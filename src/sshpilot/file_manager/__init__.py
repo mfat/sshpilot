@@ -23,12 +23,12 @@ from .format_utils import (
     _mode_to_str,
     safe_display_text,
 )
-from .pane import (
-    FilePane,
-    _DEFAULT_ICON_LEVEL,
+from .pane import FilePane
+from .icon_levels import (
+    _DEFAULT_ICON_LEVELS,
     _GRID_ICON_SIZES,
     _LIST_ICON_SIZES,
-    _MAX_ICON_LEVEL,
+    _MAX_ICON_LEVELS,
     _MIN_ICON_LEVEL,
 )
 from .pane_controls import PaneControls, PaneToolbar, PathEntry
@@ -56,7 +56,6 @@ from .progress_dialog import (
     SFTPProgressDialog,
 )
 from .properties_dialog import PropertiesDialog
-from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 
 def create_file_manager_backend(
@@ -119,11 +118,11 @@ def create_file_manager_backend(
 
 __all__ = [
     "DOCS_JSON",
-    "_DEFAULT_ICON_LEVEL",
+    "_DEFAULT_ICON_LEVELS",
     "_GRID_ICON_SIZES",
     "_HAS_ALERT_DIALOG",
     "_LIST_ICON_SIZES",
-    "_MAX_ICON_LEVEL",
+    "_MAX_ICON_LEVELS",
     "_MIN_ICON_LEVEL",
     "_PROGRESS_DIALOG_BASE",
     "FileEntry",
@@ -151,11 +150,8 @@ __all__ = [
     "_portal_doc_path",
     "_pretty_path_for_display",
     "_save_doc",
-    "_sftp_path_exists",
     "create_file_manager_backend",
     "open_in_file_manager",
     "resolve_download_locate_path",
     "safe_display_text",
-    "stat_isdir",
-    "walk_remote",
 ]

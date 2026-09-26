@@ -26,7 +26,7 @@ import shutil
 import types
 import weakref
 from concurrent.futures import Future, CancelledError
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from gettext import gettext as _, ngettext
 
@@ -59,11 +59,35 @@ from .file_manager import (
     _load_grant_for_host,
     safe_display_text,
 )
+from .file_manager.format_utils import filename_extension_offset
+from .api.errors import SshPilotError
+from .file_manager.transfer_progress import (
+    aggregate_batch_bytes,
+    progress_key_for_future,
+)
+from .gtk.sftp_error_messages import format_direct_sftp_error
 
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def rebind_file_manager_windows(client: Any, bridge: Any = None) -> None:
+    """Move every open file manager to a replacement daemon client.
+
+    Called by the main window after a lost daemon transport is replaced, so
+    open panes and the editors they launched keep working instead of failing
+    every request with "The daemon transport is closed".
+    """
+    for window in list(_file_manager_windows_registry):
+        rebind = getattr(window, "rebind_daemon_client", None)
+        if not callable(rebind):
+            continue
+        try:
+            rebind(client, bridge)
+        except Exception:
+            logger.warning("Failed to move a file manager to the new daemon client", exc_info=True)
 
 
 def _sftp_session_ready(manager) -> bool:
@@ -302,15 +326,13 @@ class FileManagerWindow(Adw.Window):
         panes.set_end_child(self._right_overlay)
         self._install_remote_host_button()
 
-        # Seed each pane with the persisted default zoom level. Each pane
+        # Seed each pane with the persisted list and grid zoom levels. Each pane
         # tracks its own level from here on (zooming one does not affect the
         # other); the last pane zoomed persists its level so new file manager
         # windows pick up the most recent choice.
-        initial_level = FilePane._load_saved_icon_size_level()
+        list_level, grid_level = FilePane._load_saved_icon_levels()
         for pane in (self._left_pane, self._right_pane):
-            pane._icon_size_level = initial_level
-            if pane.toolbar is not None and hasattr(pane.toolbar, "set_zoom_level"):
-                pane.toolbar.set_zoom_level(initial_level)
+            pane.set_icon_levels(list_level, grid_level)
 
         
         # Store reference to panes for resize handling
@@ -352,13 +374,23 @@ class FileManagerWindow(Adw.Window):
         self._clipboard_operation: Optional[str] = None
 
 
-        # Schedule initial local home directory load on the idle loop so widget
+        # Schedule initial local directory load on the idle loop so widget
         # instantiation in __init__ returns immediately without blocking on disk I/O.
+        #
+        # Under Flatpak, sandbox ``~`` is not a host grant — loading it after a
+        # portal restore (or instead of one) empties the local pane and forces
+        # the user to re-grant every time the file manager opens. Resolve the
+        # start path once via ``_initial_local_path`` (portal grant or host ``~``).
         def _deferred_load_local():
             try:
-                local_home = os.path.expanduser("~")
-                self._load_local(local_home)
-                self._left_pane.push_history(local_home)
+                local_path = self._initial_local_path()
+                if local_path:
+                    self._load_local(local_path)
+                    self._left_pane.push_history(local_path)
+                elif is_flatpak():
+                    logger.info(
+                        "No Flatpak folder grant yet; local pane awaits Request Access"
+                    )
             except Exception as exc:
                 self._left_pane.show_toast(_("Failed to load local home: {error}").format(error=exc))
             return False
@@ -370,10 +402,6 @@ class FileManagerWindow(Adw.Window):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
             pane.set_can_paste(False)
-
-        # In Flatpak, schedule restoration after initialization is complete
-        if is_flatpak():
-            GLib.idle_add(self._restore_flatpak_folder)
 
         # Connect close-request and destroy handlers to clean up resources
         self.connect("close-request", self._on_close_request)
@@ -575,7 +603,7 @@ class FileManagerWindow(Adw.Window):
         # Land in the new host's home, not the old host's last path, and
         # drop the old host's navigation history.
         self._pending_paths[self._right_pane] = "~"
-        self._right_pane._history.clear()
+        self._right_pane.clear_history()
         self._on_placeholder_host_picked(connection)
 
     # -- no-server host picker (same picker as empty split-view panes) ---
@@ -779,6 +807,10 @@ class FileManagerWindow(Adw.Window):
         manager = getattr(self, "_manager", None)
         if sender is not None and sender is not manager:
             return
+        # While a transfer dialog owns the progress handlers, skip the legacy
+        # path so per-file fractions cannot overwrite the batch aggregate.
+        if getattr(self, "_progress_handler_id", None):
+            return
         self._show_progress(fraction, message)
 
     def _on_operation_error(self, sender, message: str) -> None:
@@ -814,6 +846,7 @@ class FileManagerWindow(Adw.Window):
         if target is not None:
             failed_path = self._pending_paths[target]
             self._pending_paths[target] = None
+            self._refresh_queue().discard(target)
             logger.debug(
                 "File manager directory load error on %s path=%r: %s",
                 "right" if target is getattr(self, "_right_pane", None) else "left",
@@ -899,6 +932,18 @@ class FileManagerWindow(Adw.Window):
             return False  # Don't repeat
 
         GLib.idle_add(show_error)
+
+    def rebind_daemon_client(self, client: Any, bridge: Any = None) -> None:
+        """Follow the app onto a replacement daemon client (see module helper)."""
+        if client is None:
+            return
+        self._daemon_client = client
+        if bridge is not None:
+            self._bridge = bridge
+        manager = getattr(self, "_manager", None)
+        rebind = getattr(manager, "rebind_client", None)
+        if callable(rebind):
+            rebind(client, self._bridge)
 
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""
@@ -1008,6 +1053,10 @@ class FileManagerWindow(Adw.Window):
                 self._refreshing_panes.discard(target)
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
+
+        if target in self._refresh_queue():
+            self._refresh_queue().discard(target)
+            self._force_refresh_pane(target)
 
     def _on_directory_counts(self, sender, path: str, counts) -> None:
         """Background folder item-counts arrived; forward to whichever pane is
@@ -1157,22 +1206,37 @@ class FileManagerWindow(Adw.Window):
             
             manager.listdir(path)
 
+    @staticmethod
+    def _initial_local_path() -> Optional[str]:
+        """Return the path the local pane should open on first load.
+
+        Outside Flatpak this is the real home directory. Inside the sandbox,
+        ``~`` is not a usable host folder — only a previously granted document-
+        portal path is. Prefer a grant of home, else the most recent grant.
+        Returns ``None`` when Flatpak has no usable grant yet (Request Access).
+        """
+        if not is_flatpak():
+            return os.path.expanduser("~")
+        home = os.path.expanduser("~")
+        portal_result = _load_grant_for_host(home) or _load_first_doc_path()
+        if not portal_result:
+            return None
+        portal_path, doc_id, _entry = portal_result
+        logger.debug("Using Flatpak grant for local pane: %s (doc_id=%s)", portal_path, doc_id)
+        return portal_path
+
     def _restore_flatpak_folder(self) -> bool:
         """Open the local pane on a granted folder after window init.
 
-        Prefer the user's home folder when it has been granted (the sandbox can't
-        reach ``~`` otherwise); fall back to the most recently granted folder.
+        Kept as an idle-callback-compatible entry point for callers that still
+        schedule restoration separately; new init uses ``_initial_local_path``.
         """
         try:
-            home = os.path.expanduser("~")
-            portal_result = _load_grant_for_host(home) or _load_first_doc_path()
-            if portal_result:
-                portal_path, doc_id, entry = portal_result
-                logger.debug(f"Scheduled restoration of: {portal_path} (doc_id={doc_id})")
-                # Directly call _load_local instead of emitting signals
+            portal_path = self._initial_local_path()
+            if portal_path and is_flatpak():
                 self._load_local(portal_path)
                 self._left_pane.push_history(portal_path)
-                logger.info(f"Successfully restored access to folder: {portal_path}")
+                logger.info("Successfully restored access to folder: %s", portal_path)
         except Exception as e:
             logger.warning(f"Failed to restore Flatpak folder access: {e}")
         return False  # Don't repeat this idle callback
@@ -1470,23 +1534,31 @@ class FileManagerWindow(Adw.Window):
         source_dir = self._clipboard_directory or "/"
         entries = list(self._clipboard_entries)
 
+        def _on_clipboard_op_started() -> None:
+            if move_requested:
+                self._clear_clipboard()
+            else:
+                self._update_paste_targets()
+
         if source_pane is self._left_pane and pane is self._left_pane:
-            self._perform_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            self._perform_local_clipboard_operation(
+                entries, source_dir, destination, move_requested,
+                on_started=_on_clipboard_op_started,
+            )
         elif source_pane is self._right_pane and pane is self._right_pane:
-            self._perform_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            self._perform_remote_clipboard_operation(
+                entries, source_dir, destination, move_requested,
+                on_started=_on_clipboard_op_started,
+            )
         elif source_pane is self._left_pane and pane is self._right_pane:
             self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            _on_clipboard_op_started()
         elif source_pane is self._right_pane and pane is self._left_pane:
             self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            _on_clipboard_op_started()
         else:
             pane.show_toast(_("Paste target is unavailable"))
             return
-
-        if move_requested:
-            self._clear_clipboard()
-        else:
-            self._update_paste_targets()
-
     def _op_mkdir(self, pane) -> None:
         dialog = Adw.AlertDialog.new(_("New Folder"), _("Enter a name for the new folder"))
         entry = Gtk.Entry()
@@ -1686,7 +1758,9 @@ class FileManagerWindow(Adw.Window):
 
         def _focus_entry():
             name_entry.grab_focus()
-            name_entry.select_region(0, -1)  # Select all text
+            # Like Nautilus, select a file's name but not its extension.
+            end = -1 if entry.is_dir else filename_extension_offset(display_name)
+            name_entry.select_region(0, end)
 
         def _on_entry_activate(_entry):
             # Trigger the "ok" response when Enter is pressed
@@ -1730,6 +1804,8 @@ class FileManagerWindow(Adw.Window):
             if pane is self._left_pane:
                 deleted = 0
                 errors: List[str] = []
+                # Optimistic UI: drop rows immediately, then delete on disk.
+                pane.remove_cached_entries(entry.name for entry in entries)
                 for selected_entry in entries:
                     target_path = os.path.join(base_dir, selected_entry.name)
                     try:
@@ -1747,58 +1823,148 @@ class FileManagerWindow(Adw.Window):
                 if deleted:
                     message = ngettext("Deleted {count} item", "Deleted {count} items", deleted).format(count=deleted)
                     pane.show_toast(message)
-                    self._load_local(base_dir)
                 if errors:
                     pane.show_toast(errors[0])
+                # Relist when anything failed so surviving items return; on full
+                # success the optimistic removal already matches disk.
+                if errors or deleted < len(entries):
+                    self._load_local(base_dir)
             else:
-                # Delete entries sequentially to avoid race conditions and hangs
+                # Batch the whole selection into one backend Future. Files use
+                # the fast synchronous sftp.remove (recursive=False); only
+                # directories pay the SFTP_REMOVE_TREE operation lifecycle.
                 errors: List[str] = []
                 total_count = len(entries)
-                
-                logger.info(f"Starting sequential deletion of {total_count} remote entries")
-                
-                def _delete_next(index: int) -> None:
-                    """Delete the next entry in the list, then continue with the next one."""
-                    if index >= total_count:
-                        # All deletions complete
-                        logger.info(f"All {total_count} deletions completed, refreshing pane")
-                        GLib.idle_add(
-                            lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
-                        )
-                        return
-                    
-                    selected_entry = entries[index]
-                    target_path = posixpath.join(base_dir, selected_entry.name)
-                    entry_name = selected_entry.name
-                    
-                    logger.info(f"Deleting {index + 1}/{total_count}: '{entry_name}'")
-                    
-                    def _on_delete_done(future_result: Future) -> None:
-                        try:
-                            future_result.result()  # Check for errors
-                            logger.info(f"Successfully deleted '{entry_name}'")
-                        except Exception as e:
-                            error_msg = _("Failed to delete {name}: {error}").format(name=entry_name, error=e)
-                            logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
-                            errors.append(error_msg)
-                        
-                        # Continue with next deletion on the main loop
-                        GLib.idle_add(lambda: _delete_next(index + 1))
-                    
+                targets = [
+                    (posixpath.join(base_dir, e.name), e.is_dir) for e in entries
+                ]
+                names = {path: e.name for path, e in zip([t[0] for t in targets], entries)}
+                entry_names = [e.name for e in entries]
+
+                logger.debug("Deleting %d remote entries", total_count)
+
+                # FileZilla-style: drop selected rows from the listing cache so
+                # the UI feels instant while pipelined removes run. Holding the
+                # names keeps a listing requested before the delete from
+                # putting them back until it finishes.
+                held_path = getattr(pane, "_current_path", None)
+                pane.remove_cached_entries(entry_names, hold=True)
+
+                def _on_batch_done(future_result: Future) -> None:
+                    success_count = 0
                     try:
-                        future = self._manager.remove(target_path)
-                        future.add_done_callback(_on_delete_done)
+                        result = future_result.result()
+                        if isinstance(result, tuple) and len(result) == 2:
+                            # remove_many always resolves cancel as a partial
+                            # (failures, completed) tuple — never an exception.
+                            failures, success_count = result
+                        else:
+                            # Older shape: bare failure list
+                            failures = result or []
+                            success_count = max(0, total_count - len(failures))
                     except Exception as exc:
-                        logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
-                        errors.append(_("Failed to delete {name}: {error}").format(name=entry_name, error=exc))
-                        GLib.idle_add(lambda: _delete_next(index + 1))
-                
-                # Start sequential deletion
-                _delete_next(0)
-                
-                pane.show_toast(
-                    ngettext("Deleting {count} item…", "Deleting {count} items…", count).format(count=count)
-                )
+                        logger.error("Remote batch delete failed: %s", exc, exc_info=True)
+                        errors.append(
+                            _("Failed to delete {count} items: {error}").format(
+                                count=total_count, error=exc
+                            )
+                        )
+                        success_count = 0
+                    else:
+                        cancelled = success_count + len(failures) < total_count
+                        if cancelled:
+                            # First so _on_all_deletes_complete's errors[0] toast
+                            # surfaces cancel even when some paths also failed.
+                            logger.info("Remote batch delete cancelled")
+                            errors.append(_("Delete was cancelled"))
+                        for failed_path, exc in failures:
+                            entry_name = names.get(failed_path, failed_path)
+                            error_msg = _("Failed to delete {name}: {error}").format(
+                                name=entry_name, error=exc
+                            )
+                            logger.error("Delete failed for '%s': %s", entry_name, error_msg)
+                            errors.append(error_msg)
+                    logger.debug(
+                        "Remote batch delete finished (%d/%d ok)",
+                        success_count,
+                        total_count,
+                    )
+                    GLib.idle_add(
+                        lambda sc=success_count: self._on_all_deletes_complete(
+                            pane,
+                            base_dir,
+                            errors,
+                            total_count,
+                            success_count=sc,
+                            used_progress_dialog=True,
+                            held_names=entry_names,
+                            held_path=held_path,
+                        )
+                    )
+
+                try:
+                    if len(targets) == 1:
+                        path, recursive = targets[0]
+                        future = self._manager.remove(path, recursive=recursive)
+
+                        def _on_single_done(future_result: Future, _path=path) -> None:
+                            try:
+                                future_result.result()
+                            except Exception as exc:
+                                entry_name = names.get(_path, _path)
+                                error_msg = _("Failed to delete {name}: {error}").format(
+                                    name=entry_name, error=exc
+                                )
+                                logger.error("Delete failed for '%s': %s", entry_name, error_msg)
+                                errors.append(error_msg)
+                            GLib.idle_add(
+                                lambda: self._on_all_deletes_complete(
+                                    pane,
+                                    base_dir,
+                                    errors,
+                                    total_count,
+                                    used_progress_dialog=True,
+                                    held_names=entry_names,
+                                    held_path=held_path,
+                                )
+                            )
+
+                        self._show_progress_dialog(
+                            "delete",
+                            entry_names[0],
+                            future,
+                            total_files=1,
+                            source_path=path,
+                        )
+                        future.add_done_callback(_on_single_done)
+                    else:
+                        future = self._manager.remove_many(targets)
+                        self._show_progress_dialog(
+                            "delete",
+                            entry_names[0],
+                            future,
+                            total_files=total_count,
+                            source_path=base_dir,
+                        )
+                        future.add_done_callback(_on_batch_done)
+                except Exception as exc:
+                    logger.error("Failed to start remote delete: %s", exc, exc_info=True)
+                    errors.append(
+                        _("Failed to delete {count} items: {error}").format(
+                            count=total_count, error=exc
+                        )
+                    )
+                    GLib.idle_add(
+                        lambda: self._on_all_deletes_complete(
+                            pane,
+                            base_dir,
+                            errors,
+                            total_count,
+                            used_progress_dialog=False,
+                            held_names=entry_names,
+                            held_path=held_path,
+                        )
+                    )
             dialog.close()
 
         dialog.connect("response", _on_delete)
@@ -1944,11 +2110,18 @@ class FileManagerWindow(Adw.Window):
                         future = self._manager.upload(path_obj, destination)
 
                     # Show progress dialog for upload (pass total_files for multi-file support)
+                    expected = None
+                    if path_obj.is_file():
+                        try:
+                            expected = int(path_obj.stat().st_size)
+                        except OSError:
+                            expected = None
                     self._show_progress_dialog(
                         "upload", path_obj.name, future,
                         total_files=total_files,
                         source_path=str(path_obj),
                         destination_path=destination,
+                        expected_bytes=expected,
                     )
                     self._attach_refresh(
                         future,
@@ -2030,11 +2203,18 @@ class FileManagerWindow(Adw.Window):
                     else:
                         future = self._manager.download(source, target_path)
                     # Pass total_files so dialog can be reused for multiple files
+                    expected = None
+                    for entry in entries:
+                        if entry.name == entry_name and not entry.is_dir:
+                            if entry.size and entry.size > 0:
+                                expected = int(entry.size)
+                            break
                     self._show_progress_dialog(
                         "download", entry_name, future,
                         total_files=total_files,
                         source_path=source,
                         destination_path=str(target_path),
+                        expected_bytes=expected,
                     )
                     self._attach_refresh(
                         future,
@@ -2196,11 +2376,88 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
-    def _on_all_deletes_complete(self, pane: FilePane, base_dir: str, errors: List[str], total_count: int) -> None:
-        """Handle completion of all delete operations."""
-        success_count = total_count - len(errors)
+    def _complete_delete_progress(self, future_result: Future) -> None:
+        """Drive delete completion UI from a remove / remove_many future.
+
+        ``remove_many`` resolves with ``(failures, completed)`` even on cancel,
+        so a bare ``exception()`` check would always report success.
+        """
+        dialog = self._progress_dialog
+        if dialog is None or dialog.is_cancelled or getattr(dialog, "_closed", False):
+            return
+        try:
+            result = future_result.result()
+        except CancelledError:
+            return
+        except Exception as exc:
+            msg = format_direct_sftp_error(exc) if isinstance(exc, SshPilotError) else (str(exc) or _("Unknown error"))
+            dialog.show_completion(success=False, error_message=msg)
+            return
+
+        total = dialog.total_files or 1
+        if isinstance(result, tuple) and len(result) == 2:
+            failures, success_count = result
+            dialog.files_completed = success_count
+            processed = success_count + len(failures)
+            if processed < total:
+                dialog.show_completion(
+                    success=False,
+                    error_message=_("Delete was cancelled"),
+                )
+            elif failures:
+                if success_count == 0:
+                    first = failures[0]
+                    first_err = first[1] if len(first) > 1 else None
+                    if first_err is not None:
+                        message = (
+                            format_direct_sftp_error(first_err)
+                            if isinstance(first_err, SshPilotError)
+                            else (str(first_err) or _("Unknown error"))
+                        )
+                    else:
+                        message = _("Unknown error")
+                    dialog.show_completion(success=False, error_message=message)
+                else:
+                    dialog.show_completion(
+                        success=False,
+                        error_message=ngettext(
+                            "{count} of {total} item failed",
+                            "{count} of {total} items failed",
+                            len(failures),
+                        ).format(count=len(failures), total=total),
+                    )
+            else:
+                dialog.show_completion(success=True)
+            return
+
+        # Single-path remove returns None on success.
+        dialog.files_completed = max(dialog.files_completed, 1)
+        dialog.show_completion(success=True)
+
+    def _on_all_deletes_complete(
+        self,
+        pane: FilePane,
+        base_dir: str,
+        errors: List[str],
+        total_count: int,
+        *,
+        success_count: Optional[int] = None,
+        used_progress_dialog: bool = False,
+        held_names: Iterable[str] = (),
+        held_path: Optional[str] = None,
+    ) -> None:
+        """Handle completion of all delete operations.
+
+        ``held_names`` are the rows a remote delete hid in ``held_path`` while
+        it ran; they are released here and the pane relisted, since a listing
+        requested before the delete may have landed in the meantime.
+        """
+        if success_count is None:
+            success_count = max(0, total_count - len(errors))
         
-        if success_count > 0:
+        # Progress dialog already reports success; keep toasts for errors and
+        # for paths that never opened a dialog (start failed, local deletes).
+        if success_count > 0 and not used_progress_dialog:
             message = ngettext("Deleted {count} item", "Deleted {count} items", success_count).format(count=success_count)
             pane.show_toast(message)
         
@@ -2209,10 +2466,17 @@ class FileManagerWindow(Adw.Window):
             pane.show_toast(errors[0])
             logger.error(f"Delete operation completed with {len(errors)} errors out of {total_count} items")
         
-        # Refresh the pane to show updated directory contents
         if pane is self._right_pane:
+            pane.release_removed_entries(held_names, held_path)
+            # Always relist: the optimistic removal only covers rows, and a
+            # listing that predates the delete can still be in flight. A
+            # refresh arriving mid-listing is queued behind it, so this one
+            # always reflects the finished delete.
             self._refresh_remote_listing(pane)
-        else:
+            return
+        # Optimistic removal already matches a full local success. Relist only
+        # when failures may have left surviving items that need restoring.
+        if errors or success_count < total_count:
             self._load_local(base_dir)
 
     def _apply_pending_highlight(self, pane: FilePane) -> None:
@@ -2221,6 +2485,14 @@ class FileManagerWindow(Adw.Window):
             return
         self._pending_highlights[pane] = None
         pane.highlight_entry(name)
+
+    def _refresh_queue(self) -> Set[FilePane]:
+        """Remote panes whose refresh arrived while a listing of the same path
+        was already in flight; one more listing runs when that one lands."""
+        queue = self.__dict__.get("_queued_refreshes")
+        if queue is None:
+            queue = self._queued_refreshes = set()
+        return queue
 
     def _force_refresh_pane(self, pane: FilePane, highlight_name: Optional[str] = None) -> None:
         """Force refresh a pane by directly calling listdir and updating UI"""
@@ -2234,15 +2506,25 @@ class FileManagerWindow(Adw.Window):
             if not pane._is_remote:
                 path = self._normalize_local_path(path)
         logger.debug(f"_force_refresh_pane: refreshing {('remote' if pane._is_remote else 'local')} pane for path: {path}")
-        
-        # Mark as refreshing to show success toast
-        self._refreshing_panes.add(pane)
+
+        # Do not mark _refreshing_panes here. That flag is only for
+        # user-initiated refresh (path-changed with the same path) and would
+        # spam "Directory refreshed" after every upload/download/mkdir/rename.
         
         if highlight_name:
             self._pending_highlights[pane] = highlight_name
             logger.debug(f"_force_refresh_pane: set pending highlight {highlight_name}")
         
         if pane._is_remote:
+            if self._pending_paths.get(pane) == path:
+                # A listing of this path is already in flight but may predate
+                # the change being refreshed for. Queue one more for when it
+                # lands, so a burst of refreshes (one per uploaded file) costs
+                # two listings instead of one each, all serialized ahead of the
+                # user's next command.
+                logger.debug("_force_refresh_pane: listing in flight, queueing one refresh")
+                self._refresh_queue().add(pane)
+                return
             # For remote pane, use SFTP
             self._pending_paths[pane] = path
             if self._manager is None:
@@ -2251,6 +2533,11 @@ class FileManagerWindow(Adw.Window):
                 logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
                 self._manager.listdir(path)
             except Exception as e:
+                # Nothing is in flight, so later refreshes must not queue
+                # behind this one.
+                if self._pending_paths.get(pane) == path:
+                    self._pending_paths[pane] = None
+                self._refresh_queue().discard(pane)
                 error_str = str(e).lower()
                 # Check if it's a socket/connection closed error
                 if "socket is closed" in error_str or ("connection" in error_str and "closed" in error_str):
@@ -2315,71 +2602,186 @@ class FileManagerWindow(Adw.Window):
         base = directory or "/"
         return posixpath.join(base, entry.name)
 
+    @staticmethod
+    def _is_path_into_itself(source_path: str, destination_path: str, *, posix: bool) -> bool:
+        """True when *destination_path* is *source_path* or lives inside it.
+
+        Mirrors Nautilus ``test_dir_is_parent`` used to block recursive
+        copy/move into itself (folder A dropped onto A, or into a child of A).
+        """
+        norm = posixpath.normpath if posix else os.path.normpath
+        sep = "/" if posix else os.sep
+        source_norm = norm(source_path)
+        dest_norm = norm(destination_path)
+        if source_norm in {"", ".", sep}:
+            return False
+        if dest_norm == source_norm:
+            return True
+        prefix = source_norm.rstrip(sep)
+        if not prefix or prefix == sep:
+            return False
+        return dest_norm.startswith(f"{prefix}{sep}")
+
+    @staticmethod
+    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
+        """True when *destination_path* is the source or lives inside it."""
+        return FileManagerWindow._is_path_into_itself(
+            source_path, destination_path, posix=True
+        )
+
+    def _present_alert_dialog(self, dialog: Adw.AlertDialog) -> None:
+        try:
+            dialog.present(self._dialog_parent())
+        except Exception as exc:
+            logger.error("Failed to present dialog with parent: %s", exc, exc_info=True)
+            dialog.present()
+
+    def _confirm_into_itself_skip(
+        self,
+        *,
+        move: bool,
+        total_count: int,
+        invalid_count: int,
+        on_skip: Callable[[], None],
+    ) -> None:
+        """Ask whether to skip recursive into-itself items (Nautilus skip dialog).
+
+        * Cancel aborts the whole job.
+        * Skip / Skip All continue with the remaining valid items. Both are
+          offered when the batch has more than one item, matching Nautilus
+          ``show_skip_dialog``; with a pre-filtered batch they behave the same.
+        """
+        heading = (
+            _("You cannot move a folder into itself.")
+            if move
+            else _("You cannot copy a folder into itself.")
+        )
+        body = _("The destination folder is inside the source folder.")
+        dialog = Adw.AlertDialog.new(heading, body)
+        dialog.add_response("cancel", _("Cancel"))
+        if total_count > 1:
+            dialog.add_response("skip", _("Skip"))
+            if invalid_count > 1 or total_count > invalid_count:
+                dialog.add_response("skip_all", _("Skip All"))
+            dialog.set_default_response("skip")
+        else:
+            dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response: str) -> None:
+            dialog.close()
+            if response in ("skip", "skip_all"):
+                on_skip()
+
+        dialog.connect("response", _on_response)
+        self._present_alert_dialog(dialog)
+
+    def _partition_clipboard_entries(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        *,
+        remote: bool,
+    ) -> Tuple[List[Tuple[str, str, FileEntry]], List[FileEntry]]:
+        """Split clipboard entries into transferable items and into-itself folders."""
+        valid: List[Tuple[str, str, FileEntry]] = []
+        invalid: List[FileEntry] = []
+        for entry in entries:
+            if remote:
+                source_path = self._resolve_remote_entry_path(source_dir, entry)
+                destination_path = self._resolve_remote_entry_path(destination_dir, entry)
+            else:
+                source_path = os.path.join(source_dir, entry.name)
+                destination_path = os.path.join(destination_dir, entry.name)
+            if entry.is_dir and self._is_path_into_itself(
+                source_path, destination_path, posix=remote
+            ):
+                invalid.append(entry)
+            else:
+                valid.append((source_path, destination_path, entry))
+        return valid, invalid
+
     def _perform_local_clipboard_operation(
         self,
         entries: List[FileEntry],
         source_dir: str,
         destination_dir: str,
         move: bool,
+        on_started: Optional[Callable[[], None]] = None,
     ) -> None:
         source_dir_norm = self._normalize_local_path(source_dir)
         destination_dir_norm = self._normalize_local_path(destination_dir)
-        source_base = pathlib.Path(source_dir_norm)
-        destination_base = pathlib.Path(destination_dir_norm)
-        destination_base.mkdir(parents=True, exist_ok=True)
+        valid, invalid = self._partition_clipboard_entries(
+            entries, source_dir_norm, destination_dir_norm, remote=False
+        )
 
-        completed = 0
-        errors: List[str] = []
+        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+            if not work_items:
+                return
+            if on_started is not None:
+                on_started()
 
-        for entry in entries:
-            source_path = source_base / entry.name
-            destination_path = destination_base / entry.name
-            try:
-                if move:
-                    shutil.move(str(source_path), str(destination_path))
-                else:
-                    if entry.is_dir:
-                        if destination_path.exists():
-                            raise FileExistsError(_("{name} already exists").format(name=entry.name))
-                        shutil.copytree(source_path, destination_path)
+            destination_base = pathlib.Path(destination_dir_norm)
+            destination_base.mkdir(parents=True, exist_ok=True)
+
+            completed = 0
+            errors: List[str] = []
+
+            for source_path, destination_path, entry in work_items:
+                try:
+                    if move:
+                        shutil.move(source_path, destination_path)
                     else:
-                        if destination_path.exists():
-                            raise FileExistsError(_("{name} already exists").format(name=entry.name))
-                        shutil.copy2(source_path, destination_path)
-                completed += 1
-            except FileExistsError as exc:
-                errors.append(str(exc))
-            except Exception as exc:
-                errors.append(f"{entry.name}: {exc}")
+                        dest = pathlib.Path(destination_path)
+                        if entry.is_dir:
+                            if dest.exists():
+                                raise FileExistsError(
+                                    _("{name} already exists").format(name=entry.name)
+                                )
+                            shutil.copytree(source_path, destination_path)
+                        else:
+                            if dest.exists():
+                                raise FileExistsError(
+                                    _("{name} already exists").format(name=entry.name)
+                                )
+                            shutil.copy2(source_path, destination_path)
+                    completed += 1
+                except FileExistsError as exc:
+                    errors.append(str(exc))
+                except Exception as exc:
+                    errors.append(f"{entry.name}: {exc}")
 
-        if completed:
-            if entries:
-                self._pending_highlights[self._left_pane] = entries[0].name
-            GLib.idle_add(self._refresh_local_listing, destination_dir_norm)
-            if move and destination_dir_norm != source_dir_norm:
-                GLib.idle_add(self._refresh_local_listing, source_dir_norm)
-            message = (
-                ngettext("Moved {count} item", "Moved {count} items", completed)
-                if move else ngettext("Copied {count} item", "Copied {count} items", completed)
-            ).format(count=completed)
-            self._left_pane.show_toast(message)
+            if completed:
+                if work_items:
+                    self._pending_highlights[self._left_pane] = work_items[0][2].name
+                GLib.idle_add(self._refresh_local_listing, destination_dir_norm)
+                if move and destination_dir_norm != source_dir_norm:
+                    GLib.idle_add(self._refresh_local_listing, source_dir_norm)
+                message = (
+                    ngettext("Moved {count} item", "Moved {count} items", completed)
+                    if move
+                    else ngettext(
+                        "Copied {count} item", "Copied {count} items", completed
+                    )
+                ).format(count=completed)
+                self._left_pane.show_toast(message)
 
-        if errors:
-            self._left_pane.show_toast(_("Local copy or move failed: {error}").format(error=errors[0]))
+            if errors:
+                self._left_pane.show_toast(
+                    _("Local copy or move failed: {error}").format(error=errors[0])
+                )
 
-    @staticmethod
-    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
-        """True when *destination_path* is the source or lives inside it."""
-        source_norm = posixpath.normpath(source_path)
-        dest_norm = posixpath.normpath(destination_path)
-        if source_norm in {"", ".", "/"}:
-            return False
-        if dest_norm == source_norm:
-            return True
-        source_prefix = source_norm.rstrip("/")
-        if not source_prefix:
-            return False
-        return dest_norm.startswith(f"{source_prefix}/")
+        if not invalid:
+            _run(valid)
+            return
+
+        self._confirm_into_itself_skip(
+            move=move,
+            total_count=len(entries),
+            invalid_count=len(invalid),
+            on_skip=lambda: _run(valid),
+        )
 
     def _perform_remote_clipboard_operation(
         self,
@@ -2387,6 +2789,7 @@ class FileManagerWindow(Adw.Window):
         source_dir: str,
         destination_dir: str,
         move: bool,
+        on_started: Optional[Callable[[], None]] = None,
     ) -> None:
         if not entries:
             return
@@ -2395,55 +2798,50 @@ class FileManagerWindow(Adw.Window):
             self._right_pane.show_toast(_("Remote connection unavailable"))
             return
 
-        skipped: List[str] = []
-        work_items: List[tuple[str, str, FileEntry, bool]] = []
+        valid, invalid = self._partition_clipboard_entries(
+            entries, source_dir, destination_dir, remote=True
+        )
 
-        for entry in entries:
-            source_path = self._resolve_remote_entry_path(source_dir, entry)
-            destination_path = self._resolve_remote_entry_path(destination_dir, entry)
+        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+            if not work_items:
+                return
+            if on_started is not None:
+                on_started()
 
-            if entry.is_dir and self._is_remote_descendant(source_path, destination_path):
-                skipped.append(
-                    _("Cannot paste '{name}' into its own subdirectory").format(name=entry.name)
+            operation = "move" if move else "copy"
+            total_files = len(work_items)
+
+            for source_path, destination_path, entry in work_items:
+                future = manager.copy_remote(
+                    source_path,
+                    destination_path,
+                    recursive=entry.is_dir,
+                    move=move,
                 )
-                continue
+                self._show_progress_dialog(
+                    operation,
+                    entry.name,
+                    future,
+                    total_files=total_files,
+                    source_path=source_path,
+                    destination_path=destination_path,
+                )
+                self._attach_refresh(
+                    future,
+                    refresh_remote=self._right_pane,
+                    highlight_name=entry.name,
+                )
 
-            work_items.append(
-                (source_path, destination_path, entry, entry.is_dir)
-            )
-
-        if not work_items:
-            if skipped:
-                self._right_pane.show_toast(skipped[0])
+        if not invalid:
+            _run(valid)
             return
 
-        operation = "move" if move else "copy"
-        total_files = len(work_items)
-
-        for source_path, destination_path, entry, is_dir in work_items:
-            future = manager.copy_remote(
-                source_path,
-                destination_path,
-                recursive=is_dir,
-                move=move,
-            )
-            self._show_progress_dialog(
-                operation,
-                entry.name,
-                future,
-                total_files=total_files,
-                source_path=source_path,
-                destination_path=destination_path,
-            )
-            self._attach_refresh(
-                future,
-                refresh_remote=self._right_pane,
-                highlight_name=entry.name,
-            )
-
-        if skipped:
-            self._right_pane.show_toast(skipped[0])
-
+        self._confirm_into_itself_skip(
+            move=move,
+            total_count=len(entries),
+            invalid_count=len(invalid),
+            on_skip=lambda: _run(valid),
+        )
 
     def _perform_local_to_remote_clipboard_operation(
         self,
@@ -2567,7 +2965,10 @@ class FileManagerWindow(Adw.Window):
                 completed.result()
             except Exception:
                 return
-            cleanup_future = self._manager.remove(path)
+            # Move sources may be files or trees; recursive handles both. The
+            # download dialog is still up for the rest of the batch, so keep
+            # this background delete off the shared progress signal.
+            cleanup_future = self._manager.remove(path, recursive=True, report_progress=False)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)
@@ -2577,10 +2978,135 @@ class FileManagerWindow(Adw.Window):
         if getattr(self, "_progress_dialog", None) is dialog:
             self._progress_dialog = None
 
-    def _show_progress_dialog(self, operation_type: str, filename: str, future: Future,
-                               total_files: int = 1,
-                               source_path: Optional[str] = None,
-                               destination_path: Optional[str] = None) -> None:
+    @staticmethod
+    def _format_transfer_size(num_bytes: float) -> str:
+        """Match ``DaemonSftpManager._format_size`` for progress status text."""
+        size = float(num_bytes)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if size < 1024 or unit == "TB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    def _reset_batch_progress_state(self) -> None:
+        self._batch_expected: Dict[str, Optional[int]] = {}
+        self._batch_active_bytes: Dict[str, Tuple[int, int]] = {}
+        self._batch_settled_bytes: Dict[str, Tuple[int, int]] = {}
+        # key -> (filename, source_path, destination_path)
+        self._batch_file_meta: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
+        self._batch_focused_key: Optional[str] = None
+
+    def _focus_batch_transfer(self, key: str, *, force: bool = False) -> None:
+        """Point the dialog's name / From / To labels at one batch member."""
+        dialog = self._progress_dialog
+        meta = getattr(self, "_batch_file_meta", {}).get(key)
+        if dialog is None or meta is None:
+            return
+        if not force and getattr(self, "_batch_focused_key", None) == key:
+            return
+        filename, source_path, destination_path = meta
+        self._batch_focused_key = key
+        try:
+            dialog.set_operation_details(
+                total_files=dialog.total_files or 1,
+                filename=filename,
+            )
+            if source_path or destination_path:
+                dialog.set_paths(source_path, destination_path)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+
+    def _focus_next_active_batch_transfer(self, exclude_key: Optional[str] = None) -> None:
+        """After a file finishes, show another still-active transfer if needed."""
+        active = getattr(self, "_batch_active_bytes", {})
+        focused = getattr(self, "_batch_focused_key", None)
+        if focused and focused != exclude_key and focused in active:
+            return
+        for key in active:
+            if key != exclude_key:
+                self._focus_batch_transfer(key, force=True)
+                return
+        # Nothing active yet — fall back to any unfinished expected key.
+        settled = getattr(self, "_batch_settled_bytes", {})
+        for key in getattr(self, "_batch_expected", {}):
+            if key != exclude_key and key not in settled:
+                self._focus_batch_transfer(key, force=True)
+                return
+
+    def _publish_batch_transfer_progress(self) -> None:
+        """Push aggregated batch bytes + an honest status string into the dialog."""
+        dialog = self._progress_dialog
+        if dialog is None or dialog.is_cancelled:
+            return
+        batch = aggregate_batch_bytes(
+            expected=getattr(self, "_batch_expected", {}),
+            active=getattr(self, "_batch_active_bytes", {}),
+            settled=getattr(self, "_batch_settled_bytes", {}),
+            files_completed=dialog.files_completed,
+            total_files=dialog.total_files,
+        )
+        try:
+            dialog.on_bytes(batch.bytes_done, batch.bytes_total or 0)
+            if batch.bytes_total is not None and batch.bytes_total > 0:
+                message = _("Transferred {done} of {total}").format(
+                    done=self._format_transfer_size(batch.bytes_done),
+                    total=self._format_transfer_size(batch.bytes_total),
+                )
+            else:
+                message = _("Transferred {size}").format(
+                    size=self._format_transfer_size(batch.bytes_done),
+                )
+            if batch.fraction is not None:
+                dialog.update_progress(batch.fraction, message)
+            else:
+                dialog.update_progress(0.0, message)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+
+    def _settle_batch_transfer(self, future_result: Future, *, success: bool) -> None:
+        """Move a finished transfer's bytes from active → settled for aggregation."""
+        key = progress_key_for_future(future_result)
+        expected = getattr(self, "_batch_expected", None)
+        if expected is None:
+            return
+        active = getattr(self, "_batch_active_bytes", {})
+        settled = getattr(self, "_batch_settled_bytes", {})
+        if key in settled:
+            return
+        if key in active:
+            done, total = active.pop(key)
+        else:
+            done = 0
+            total = 0
+            if success:
+                try:
+                    result = future_result.result()
+                    if isinstance(result, int) and result >= 0:
+                        done = result
+                except Exception:
+                    pass
+            exp = expected.get(key)
+            if isinstance(exp, int) and exp > 0:
+                total = exp
+                if done <= 0 and success:
+                    done = exp
+        if success and done <= 0 and total > 0:
+            done = total
+        if done > 0 or total > 0:
+            settled[key] = (done, total if total > 0 else done)
+        self._focus_next_active_batch_transfer(exclude_key=key)
+        self._publish_batch_transfer_progress()
+
+    def _show_progress_dialog(
+        self,
+        operation_type: str,
+        filename: str,
+        future: Future,
+        total_files: int = 1,
+        source_path: Optional[str] = None,
+        destination_path: Optional[str] = None,
+        expected_bytes: Optional[int] = None,
+    ) -> None:
         """Show and manage the progress dialog for a file operation."""
         try:
             logger.debug("_show_progress_dialog called for %s %s", operation_type, filename)
@@ -2650,23 +3176,17 @@ class FileManagerWindow(Adw.Window):
                         self._progress_dialog.present()
                 except Exception as exc:
                     logger.debug("Failed to re-present progress dialog: %s", exc)
-            
-            # Add future to dialog (will update total_files if needed). Real
-            # byte counts arrive via the manager's progress-bytes signal — no
-            # need to pre-set total_bytes here.
-            self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
-            self._progress_dialog.set_future(future)
 
-            # Surface source and destination paths so the user can see where
-            # the file is going / coming from. Both labels stay hidden until
-            # one is provided.
-            if source_path or destination_path:
-                self._progress_dialog.set_paths(source_path, destination_path)
+            # Keep the file counter in sync. Name / From / To are owned by
+            # ``_focus_batch_transfer`` so a multi-file start loop does not
+            # leave the dialog stuck on the last registered path.
+            self._progress_dialog.set_operation_details(total_files=total_files)
+            self._progress_dialog.set_future(future)
 
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
             return
-        
+
         # Only connect progress signal handler when creating a new dialog
         # When reusing, the handler is already connected
         if not reuse_dialog:
@@ -2675,10 +3195,11 @@ class FileManagerWindow(Adw.Window):
             self._progress_bytes_handler_id = None
             self._active_futures = []  # Track all active futures for multi-file transfers
             self._future_to_filename = {}  # Map futures to filenames for progress tracking
-            
-            # Connect progress signal. We compute the overall-progress
-            # fraction exactly once here — the dialog stores and renders it
-            # verbatim without re-applying multi-file math.
+            self._reset_batch_progress_state()
+
+            # Connect progress signal. Multi-file byte transfers are driven by
+            # the progress-bytes aggregator; this handler only covers deletes
+            # and single-file transfers (and starting messages).
             def _on_progress(manager, progress: float, message: str) -> None:
                 if not (self._progress_dialog and
                         not self._progress_dialog.is_cancelled and
@@ -2691,28 +3212,49 @@ class FileManagerWindow(Adw.Window):
                 if active_count == 0:
                     return
                 try:
-                    if self._progress_dialog.total_files > 1:
-                        # Single-file directory transfers emit per-file
-                        # fractions; flatten to one overall progress value.
-                        completed = self._progress_dialog.files_completed
-                        total = self._progress_dialog.total_files
-                        overall_progress = (completed + progress) / total
-                        # Don't claim 100% while files are still active.
-                        if completed < total:
-                            cap = (total - 1) / total
-                            overall_progress = min(overall_progress, cap)
-                        self._progress_dialog.update_progress(overall_progress, message)
+                    # Mass/recursive delete emits an overall 0..1 fraction on a
+                    # single future — do not re-apply multi-file math.
+                    if self._progress_dialog.operation_type == "delete":
+                        self._progress_dialog.update_progress(progress, message)
+                    elif self._progress_dialog.total_files > 1:
+                        # Concurrent transfers each emit their own fraction and
+                        # "Transferred X of Y" for that file alone. Ignore those
+                        # for the bar/status — batch aggregation owns them.
+                        # Keep only pre-byte starting messages so the dialog
+                        # isn't blank before the first chunk arrives.
+                        if getattr(self, "_batch_active_bytes", None) or getattr(
+                            self, "_batch_settled_bytes", None
+                        ):
+                            return
+                        self._progress_dialog.update_progress(0.0, message)
                     else:
                         self._progress_dialog.update_progress(progress, message)
                 except (AttributeError, RuntimeError, GLib.Error):
                     # Dialog may have been destroyed mid-emit.
                     pass
 
-            def _on_progress_bytes(manager, transferred, total) -> None:
+            def _on_progress_bytes(manager, transferred, total, progress_key="") -> None:
                 if not (self._progress_dialog and not self._progress_dialog.is_cancelled):
                     return
+                key = str(progress_key or "")
+                if not key:
+                    return
                 try:
-                    GLib.idle_add(self._progress_dialog.on_bytes, transferred, total)
+                    transferred_n = int(transferred or 0)
+                    total_n = int(total or 0)
+                except (TypeError, ValueError):
+                    return
+                active = getattr(self, "_batch_active_bytes", None)
+                expected = getattr(self, "_batch_expected", None)
+                if active is None or expected is None:
+                    return
+                if key not in expected:
+                    # Progress for a transfer outside this dialog batch.
+                    return
+                active[key] = (transferred_n, total_n)
+                try:
+                    GLib.idle_add(self._focus_batch_transfer, key)
+                    GLib.idle_add(self._publish_batch_transfer_progress)
                 except (AttributeError, RuntimeError, GLib.Error):
                     pass
 
@@ -2720,28 +3262,42 @@ class FileManagerWindow(Adw.Window):
             self._progress_bytes_handler_id = self._manager.connect(
                 "progress-bytes", _on_progress_bytes
             )
-        
+
         # Add this future to the active futures list
         if not hasattr(self, '_active_futures'):
             self._active_futures = []
         if future not in self._active_futures:
             self._active_futures.append(future)
-        
+
         # Map future to filename for progress tracking
         if not hasattr(self, '_future_to_filename'):
             self._future_to_filename = {}
         self._future_to_filename[future] = filename
-        
+
+        if not hasattr(self, "_batch_expected"):
+            self._reset_batch_progress_state()
+        key = progress_key_for_future(future)
+        exp = int(expected_bytes) if expected_bytes is not None and expected_bytes > 0 else None
+        first_in_batch = key not in self._batch_expected and not self._batch_expected
+        self._batch_expected[key] = exp
+        self._batch_file_meta[key] = (filename, source_path, destination_path)
+        # Show the first file immediately; later files update the labels when
+        # their progress-bytes arrive (or when a prior file settles).
+        if first_in_batch or total_files <= 1:
+            self._focus_batch_transfer(key, force=True)
+        if exp is not None and total_files > 1:
+            self._publish_batch_transfer_progress()
+
         # Also update current_future for backward compatibility
         self._current_future = future
-        
+
         def _on_complete(future_result) -> None:
             # Use GLib.idle_add to ensure we're on the main thread
             def _cleanup():
                 # Remove this future from active futures list
                 if hasattr(self, '_active_futures') and future_result in self._active_futures:
                     self._active_futures.remove(future_result)
-                
+
                 # Only disconnect progress signals if all futures are done
                 active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                  if f and not f.done())
@@ -2760,7 +3316,7 @@ class FileManagerWindow(Adw.Window):
                         except (TypeError, RuntimeError, AttributeError):
                             pass
                         self._progress_bytes_handler_id = None
-                
+
                 # Update dialog to show completion
                 if self._progress_dialog:
                     try:
@@ -2769,11 +3325,14 @@ class FileManagerWindow(Adw.Window):
                             # Operation was cancelled, don't show completion
                             # The dialog will be closed by the cancel handler
                             pass
+                        elif self._progress_dialog.operation_type == "delete":
+                            self._complete_delete_progress(future_result)
                         else:
                             # Check for exceptions
                             try:
                                 exception = future_result.exception()
                                 if exception:
+                                    self._settle_batch_transfer(future_result, success=False)
                                     error_msg = str(exception)
                                     # Get filename for this future
                                     filename = self._future_to_filename.get(future_result, "unknown file")
@@ -2781,9 +3340,9 @@ class FileManagerWindow(Adw.Window):
                                     if hasattr(self._progress_dialog, '_failed_files'):
                                         self._progress_dialog._failed_files.append((filename, error_msg))
                                     logger.error(f"Upload failed for {filename}: {error_msg}")
-                                    
+
                                     # For multi-file operations, don't show completion until all files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                                      if f and not f.done())
                                     if active_count == 0:
                                         # All files are done (some may have failed)
@@ -2808,10 +3367,11 @@ class FileManagerWindow(Adw.Window):
                                             self._progress_dialog.show_completion(success=True)
                                 else:
                                     # File completed successfully
+                                    self._settle_batch_transfer(future_result, success=True)
                                     self._progress_dialog.increment_file_count()
-                                    
+
                                     # Only show completion dialog when ALL files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                                      if f and not f.done())
                                     if active_count == 0:
                                         # All files completed successfully
@@ -2822,15 +3382,15 @@ class FileManagerWindow(Adw.Window):
                     except (AttributeError, RuntimeError, GLib.Error):
                         # Dialog may have been destroyed
                         pass
-                
+
                 # Only clear current_future when all transfers are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                  if f and not f.done())
                 if active_count == 0:
                     self._current_future = None
-            
+
             GLib.idle_add(_cleanup)
-        
+
         # Connect future completion
         future.add_done_callback(_on_complete)
 

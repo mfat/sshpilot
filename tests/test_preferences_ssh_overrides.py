@@ -139,9 +139,7 @@ def _make_prefs(config, controller):
     prefs.verbosity_row = _Spin(value=0)
     prefs.debug_enabled_row = _Switch(active=False)
     prefs.open_file_manager_externally_row = _Switch(active=False)
-    prefs.sftp_keepalive_interval_row = _Spin(value=0)
-    prefs.sftp_keepalive_count_row = _Spin(value=0)
-    prefs.sftp_connect_timeout_row = _Spin(value=0)
+    prefs.max_concurrent_transfers_row = _Spin(value=4)
     return prefs
 
 
@@ -743,34 +741,14 @@ def test_controller_attach_seeds_last_good_snapshot(tmp_path, monkeypatch):
     assert prefs._advanced_ssh_last_good_snapshot == prefs._snapshot_advanced_ssh_rows()
 
 
-def test_sftp_keepalive_interval_changed_persists_immediately(tmp_path, monkeypatch):
+def test_max_concurrent_transfers_changed_persists_immediately(tmp_path, monkeypatch):
     config = _make_config(tmp_path, monkeypatch, {})
     prefs = _make_prefs(config, None)
-    prefs.sftp_keepalive_interval_row.set_value(45)
+    prefs.max_concurrent_transfers_row.set_value(2)
 
-    prefs.on_sftp_keepalive_interval_changed(prefs.sftp_keepalive_interval_row)
+    prefs.on_max_concurrent_transfers_changed(prefs.max_concurrent_transfers_row)
 
-    assert config.get_setting('file_manager.sftp_keepalive_interval', None) == 45
-
-
-def test_sftp_keepalive_count_changed_persists_immediately(tmp_path, monkeypatch):
-    config = _make_config(tmp_path, monkeypatch, {})
-    prefs = _make_prefs(config, None)
-    prefs.sftp_keepalive_count_row.set_value(3)
-
-    prefs.on_sftp_keepalive_count_changed(prefs.sftp_keepalive_count_row)
-
-    assert config.get_setting('file_manager.sftp_keepalive_count_max', None) == 3
-
-
-def test_sftp_connect_timeout_changed_persists_immediately(tmp_path, monkeypatch):
-    config = _make_config(tmp_path, monkeypatch, {})
-    prefs = _make_prefs(config, None)
-    prefs.sftp_connect_timeout_row.set_value(20)
-
-    prefs.on_sftp_connect_timeout_changed(prefs.sftp_connect_timeout_row)
-
-    assert config.get_setting('file_manager.sftp_connect_timeout', None) == 20
+    assert config.get_setting('file_manager.max_concurrent_transfers', None) == 2
 
 
 def test_ssh_options_help_explains_per_connection_precedence():

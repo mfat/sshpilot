@@ -152,3 +152,85 @@ def test_entries_are_published_before_the_store_changes(load_file_manager_window
     _list(pane, [_entry(module, "new.txt")])
 
     assert seen == [["new.txt"]]
+
+
+def test_remove_cached_entries_drops_selected_names(load_file_manager_window, monkeypatch):
+    """Optimistic delete must clear rows without waiting for a remote reload."""
+    module = load_file_manager_window()
+    monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
+    pane = _make_pane(module)
+
+    _list(
+        pane,
+        [
+            _entry(module, "keep.txt"),
+            _entry(module, "gone.txt"),
+            _entry(module, "also-gone", is_dir=True),
+        ],
+    )
+    removed = pane.remove_cached_entries(["gone.txt", "also-gone", "missing"])
+    assert removed == 2
+    assert [entry.name for entry in pane._entries] == ["keep.txt"]
+    assert pane._list_store.bound_names == ["keep.txt"]
+
+
+def test_remove_cached_entries_noop_when_empty(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
+    monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
+    pane = _make_pane(module)
+    _list(pane, [_entry(module, "keep.txt")])
+    assert pane.remove_cached_entries([]) == 0
+    assert [entry.name for entry in pane._entries] == ["keep.txt"]
+
+
+def test_held_removals_survive_a_listing_that_predates_the_delete(
+    load_file_manager_window, monkeypatch
+):
+    """A listing requested before a delete must not bring its rows back."""
+    module = load_file_manager_window()
+    monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
+    pane = _make_pane(module)
+    pane._clear_load_error = lambda: None
+    pane._set_current_pathbar_text = lambda _path: None
+    pane._is_remote = True
+    pane._current_path = None
+    pane.highlight_entry = lambda _name: None
+    before = [_entry(module, "keep.txt"), _entry(module, "gone.txt")]
+    pane.show_entries("/docs", before)
+
+    pane.remove_cached_entries(["gone.txt"], hold=True)
+    assert [entry.name for entry in pane._entries] == ["keep.txt"]
+    pane.show_entries("/docs", before)  # the stale listing lands mid-delete
+    assert [entry.name for entry in pane._entries] == ["keep.txt"]
+    # Held names are per directory: another folder's same name still shows.
+    pane.show_entries("/other", before)
+    assert [entry.name for entry in pane._entries] == ["gone.txt", "keep.txt"]
+
+    pane.release_removed_entries(["gone.txt"], "/docs")
+    pane.show_entries("/docs", before)  # e.g. the delete failed after all
+    assert [entry.name for entry in pane._entries] == ["gone.txt", "keep.txt"]
+
+
+def test_releasing_one_directory_keeps_the_same_name_held_in_another(
+    load_file_manager_window, monkeypatch
+):
+    module = load_file_manager_window()
+    monkeypatch.setattr(module.Gtk, "StringObject", FakeStringObject, raising=False)
+    pane = _make_pane(module)
+    pane._clear_load_error = lambda: None
+    pane._set_current_pathbar_text = lambda _path: None
+    pane._is_remote = True
+    pane._current_path = None
+    pane.highlight_entry = lambda _name: None
+    listing = [_entry(module, "README.md"), _entry(module, "keep.txt")]
+    pane.show_entries("/one", listing)
+    pane.remove_cached_entries(["README.md"], hold=True)
+    pane.show_entries("/two", listing)
+    pane.remove_cached_entries(["README.md"], hold=True)
+
+    pane.release_removed_entries(["README.md"], "/one")
+
+    pane.show_entries("/two", listing)  # /two's delete is still running
+    assert [entry.name for entry in pane._entries] == ["keep.txt"]
+    pane.show_entries("/one", listing)
+    assert [entry.name for entry in pane._entries] == ["keep.txt", "README.md"]

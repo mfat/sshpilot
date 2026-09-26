@@ -642,6 +642,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             reset = getattr(preferences, "reset_operation_mode_confirmation", None)
             if callable(reset):
                 reset()
+        # File managers (and the remote editors they opened) hold the client
+        # directly; without this they kept failing on the closed transport.
+        try:
+            from .file_manager_window import rebind_file_manager_windows
+
+            rebind_file_manager_windows(client, getattr(self, "client_bridge", None))
+        except Exception:
+            logger.warning("Failed to rebind file managers to the new daemon client", exc_info=True)
 
     def _refresh_operation_mode_scope(self) -> None:
         """Project the daemon-confirmed mode into client-backed UI services."""

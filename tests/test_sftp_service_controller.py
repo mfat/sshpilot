@@ -13,7 +13,11 @@ from sshpilot.api.models.operations import (
     OperationKind,
     OperationState,
     OperationSummary,
+    SFTP_REMOVE_CHUNK_SIZE,
     SftpDirectorySizeResult,
+    SftpFilesystemUsage,
+    SftpRemoveFailure,
+    SftpRemoveResult,
 )
 from sshpilot.api.transport.codec import sftp_directory_size_result_to_wire
 from sshpilot.daemon_sftp_backend import DaemonSftpManager
@@ -403,7 +407,7 @@ def test_recursive_remove_progress_uses_frontend_status_not_wire_message(monkeyp
         on_progress(SimpleNamespace(progress=0.8, message="wire message two /private"))
 
     controller.remove.side_effect = _remove
-    DaemonSftpManager.remove(manager, "/tree")
+    DaemonSftpManager.remove(manager, "/tree", recursive=True)
 
     assert manager.emit.call_args_list == [
         (("progress", 0.4, "deleting-localized"), {}),
@@ -453,6 +457,67 @@ def test_directory_size_cancelled_operation_resolves_as_transfer_cancelled():
         future.result(timeout=1)
 
 
+def test_recursive_remove_can_stay_off_shared_progress_signal():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        on_progress(SimpleNamespace(progress=0.5, message="wire"))
+
+    controller.remove.side_effect = _remove
+    DaemonSftpManager.remove(manager, "/tree", recursive=True, report_progress=False)
+
+    manager.emit.assert_not_called()
+
+
+def test_recursive_remove_translates_protected_path_rejection(monkeypatch):
+    from sshpilot.gtk import sftp_failure_messages
+
+    monkeypatch.setattr(sftp_failure_messages, "_", lambda value: f"translated:{value}")
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    rejection = SshPilotError(
+        ErrorCode.VALIDATION_FAILED,
+        "Refusing to recursively delete the root or home directory",
+        details={"sftp_failure_code": "recursive_delete_protected_path"},
+    )
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        on_error(rejection)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove(manager, "/", recursive=True)
+
+    error = future.exception()
+    assert isinstance(error, SshPilotError)
+    assert error.code is ErrorCode.VALIDATION_FAILED
+    assert str(error) == "translated:The root folder and your home folder cannot be deleted"
+
+
+def test_recursive_remove_keeps_already_translated_operation_errors():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    # What the controller builds from a failed operation summary.
+    translated = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "Zugriff verweigert\n\nEACCES")
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        on_error(translated)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove(manager, "/tree", recursive=True)
+
+    assert future.exception() is translated
+
+
 def test_recursive_remove_future_cancel_calls_operations_cancel():
     """Cancelling a recursive-remove future must reach ``operations.cancel``
     -- this is the highest-risk case, since an uncancelled daemon delete
@@ -467,7 +532,7 @@ def test_recursive_remove_future_cancel_calls_operations_cancel():
 
     controller.remove.side_effect = _remove
 
-    future = DaemonSftpManager.remove(manager, "/tree")
+    future = DaemonSftpManager.remove(manager, "/tree", recursive=True)
     assert future.cancel() is True
     controller.cancel_operation.assert_called_once_with(OperationId("operation-remove-1"))
 
@@ -506,7 +571,7 @@ def test_recursive_remove_cancel_propagates_end_to_end_through_controller(
         lambda factory, on_success=None, on_error=None: on_success(factory())
     )
 
-    future = DaemonSftpManager.remove(manager, "/tree")
+    future = DaemonSftpManager.remove(manager, "/tree", recursive=True)
 
     assert future.cancel() is True
     mock_client.cancel_operation.assert_called_once_with(started.operation_id)
@@ -548,6 +613,56 @@ def test_recursive_move_future_cancel_calls_operations_cancel():
     controller.cancel_operation.assert_called_once_with(OperationId("operation-move-1"))
 
 
+def test_recursive_copy_translates_copy_into_itself_rejection(monkeypatch):
+    from sshpilot.gtk import sftp_failure_messages
+
+    monkeypatch.setattr(sftp_failure_messages, "_", lambda value: f"translated:{value}")
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    rejection = SshPilotError(
+        ErrorCode.VALIDATION_FAILED,
+        "A directory cannot be copied into itself",
+        details={
+            "service_id": "svc-1",
+            "sftp_failure_code": "directory_cannot_be_copied_into_itself",
+        },
+    )
+
+    def _copy(source, destination, *, recursive, move, on_success=None,
+              on_error=None, on_operation_started=None, on_progress=None):
+        on_error(rejection)
+
+    controller.copy.side_effect = _copy
+    future = DaemonSftpManager.copy_remote(
+        manager, "/tree", "/tree/sub", recursive=True, move=False
+    )
+
+    error = future.exception()
+    assert error.code is ErrorCode.VALIDATION_FAILED
+    assert str(error) == "translated:A directory cannot be copied into itself"
+
+
+def test_recursive_copy_keeps_already_translated_operation_errors():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    translated = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "Zugriff verweigert\n\nEACCES")
+
+    def _copy(source, destination, *, recursive, move, on_success=None,
+              on_error=None, on_operation_started=None, on_progress=None):
+        on_error(translated)
+
+    controller.copy.side_effect = _copy
+    future = DaemonSftpManager.copy_remote(
+        manager, "/tree", "/dest", recursive=True, move=False
+    )
+
+    assert future.exception() is translated
+
+
 def test_count_pass_skips_when_closed():
     """A closed manager must not start further directory-count RPCs."""
     controller = Mock()
@@ -584,6 +699,34 @@ def test_count_pass_abandons_on_service_not_ready():
     DaemonSftpManager._start_count_pass(fake, "/home/user", folders)
     assert calls == ["/home/user/a"]
     fake.emit.assert_not_called()
+
+
+def test_a_newer_count_pass_stops_the_older_one():
+    """Stale passes (one per refresh) must not keep listing folders."""
+    pending = []
+
+    def _list(path, *, on_success, on_error, cursor=None, limit=None):
+        pending.append((path, on_success))
+
+    fake = types.SimpleNamespace(
+        _closed=False,
+        _sftp_controller=types.SimpleNamespace(list_directory=_list),
+        emit=Mock(),
+    )
+    folders = [
+        FileEntry(name="a", is_dir=True, size=0, modified=0),
+        FileEntry(name="b", is_dir=True, size=0, modified=0),
+    ]
+    DaemonSftpManager._start_count_pass(fake, "/home/user", folders)
+    DaemonSftpManager._start_count_pass(fake, "/home/user", folders)
+    assert [path for path, _ in pending] == ["/home/user/a", "/home/user/a"]
+
+    pending[0][1](types.SimpleNamespace(entries=[]))  # the older pass answers
+    assert len(pending) == 2  # ...and stops instead of listing "b"
+    fake.emit.assert_not_called()  # without reporting its stale count
+    pending[1][1](types.SimpleNamespace(entries=[]))
+    fake.emit.assert_called_once_with("directory-counts", "/home/user", {"a": 0})
+    assert [path for path, _ in pending][2:] == ["/home/user/b"]
 
 
 def test_open_attaches_ready_service_when_controlmaster_enabled(
@@ -911,3 +1054,287 @@ def test_event_for_other_connection_ignored_while_unbound(controller):
     )
     assert controller.service_id is None
     assert controller.state is SftpControllerState.IDLE
+
+
+class _SyncBridge:
+    def submit(self, factory, *, on_success, on_error):
+        try:
+            result = factory()
+        except Exception as exc:  # noqa: BLE001 - mirror the bridge contract
+            on_error(exc)
+        else:
+            on_success(result)
+
+
+def _new_client():
+    client = Mock()
+    capabilities = Mock()
+    capabilities.supported = required_daemon_sftp_capabilities()
+    client.get_capabilities.return_value = capabilities
+    return client
+
+
+def test_rebind_reattaches_the_service_on_the_new_client_without_resetting():
+    from sshpilot.api.models.operations import SftpServiceState
+
+    old_client, new_client = _new_client(), _new_client()
+    ready = []
+    controller = DaemonSftpServiceController(
+        client=old_client,
+        bridge=_SyncBridge(),
+        connection_id=ConnectionId("conn-1"),
+        on_ready=ready.append,
+    )
+    _mark_ready(controller)
+    old_subscription = Mock()
+    controller._event_subscription = old_subscription
+    new_client.attach_sftp.return_value = SimpleNamespace(
+        id=SftpServiceId("svc-1"),
+        state=SftpServiceState.READY,
+        connection_id=ConnectionId("conn-1"),
+    )
+
+    controller.rebind_client(new_client)
+
+    old_subscription.unsubscribe.assert_called_once()
+    new_client.subscribe_events.assert_called_once()
+    (request,), _ = new_client.attach_sftp.call_args
+    assert request.service_id == SftpServiceId("svc-1")
+    assert controller.state is SftpControllerState.READY
+    assert controller.service_id == SftpServiceId("svc-1")
+    # Already READY: panes must not be re-initialised by a second on_ready.
+    assert ready == []
+    old_client.attach_sftp.assert_not_called()
+
+
+def test_rebind_leaves_a_closed_controller_alone():
+    old_client, new_client = _new_client(), _new_client()
+    controller = DaemonSftpServiceController(
+        client=old_client, bridge=_SyncBridge(), connection_id=ConnectionId("conn-1")
+    )
+    _mark_ready(controller)
+    controller.close()
+
+    controller.rebind_client(new_client)
+
+    new_client.attach_sftp.assert_not_called()
+
+
+def test_manager_rebind_moves_controllers_and_open_editors():
+    import weakref
+
+    from sshpilot.remote_file_editor_service import DaemonRemoteFileService
+
+    old_client, new_client = _new_client(), _new_client()
+    manager = DaemonSftpManager.__new__(DaemonSftpManager)
+    manager._client = old_client
+    manager._bridge = "bridge"
+    manager._closed = False
+    manager._parent_widget = None
+    manager._interaction_dialogs = None
+    manager._sftp_controller = Mock()
+    manager._transfers = Mock()
+    manager._editor_services = weakref.WeakSet()
+    editor = DaemonRemoteFileService(old_client, "svc-1", "/srv/.env")
+    manager._editor_services.add(editor)
+
+    manager.rebind_client(new_client)
+
+    manager._sftp_controller.rebind_client.assert_called_once_with(new_client, "bridge")
+    manager._transfers.rebind_client.assert_called_once_with(new_client, "bridge")
+    assert editor._client is new_client
+    editor.close()
+
+
+def test_open_file_manager_windows_follow_a_replaced_client(monkeypatch):
+    from sshpilot import file_manager_window
+
+    windows = [Mock(), Mock()]
+    windows[0].rebind_daemon_client.side_effect = RuntimeError("one broken window")
+    monkeypatch.setattr(file_manager_window, "_file_manager_windows_registry", windows)
+    new_client = object()
+
+    file_manager_window.rebind_file_manager_windows(new_client, "bridge")
+
+    for window in windows:
+        window.rebind_daemon_client.assert_called_once_with(new_client, "bridge")
+
+
+def test_filesystem_usage_asks_the_daemon_for_the_path(controller, mock_client, mock_bridge):
+    _mark_ready(controller)
+    usage = SftpFilesystemUsage(
+        path="/srv", total_bytes=1000, free_bytes=400, available_bytes=300
+    )
+    mock_client.sftp_filesystem_usage.return_value = usage
+    mock_bridge.submit.side_effect = (
+        lambda factory, on_success=None, on_error=None: on_success(factory())
+    )
+
+    seen = []
+    controller.filesystem_usage(
+        "/srv",
+        on_success=seen.append,
+        on_error=lambda e: pytest.fail(f"unexpected error: {e}"),
+    )
+
+    request = mock_client.sftp_filesystem_usage.call_args[0][0]
+    assert request.service_id == SftpServiceId("svc-1")
+    assert request.path == "/srv"
+    assert seen == [usage]
+
+
+def test_file_remove_uses_non_recursive_sync_path():
+    """Plain files must not pay the SFTP_REMOVE_TREE operation lifecycle."""
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    seen = {}
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        seen["path"] = path
+        seen["recursive"] = recursive
+        on_success(None)
+
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove(manager, "/notes.txt", recursive=False)
+
+    assert future.result(timeout=1) is None
+    assert seen == {"path": "/notes.txt", "recursive": False}
+
+
+def test_remove_many_uses_sync_path_for_files_and_recursive_for_dirs():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    file_batches = []
+    dir_calls = []
+
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        file_batches.append(list(paths))
+        on_success(SftpRemoveResult())
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        dir_calls.append((path, recursive))
+        if recursive:
+            on_operation_started(OperationId(f"op-{path}"))
+        on_success(None)
+
+    controller.remove_paths.side_effect = _remove_paths
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove_many(
+        manager,
+        [("/a.txt", False), ("/tree", True), ("/b.txt", False)],
+    )
+
+    assert future.result(timeout=1) == ([], 3)
+    assert file_batches == [["/a.txt", "/b.txt"]]
+    assert dir_calls == [("/tree", True)]
+
+
+def test_remove_many_collects_per_path_errors_and_continues():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        on_success(
+            SftpRemoveResult(
+                failures=(SftpRemoveFailure(path="/missing.txt", message="gone"),)
+            )
+        )
+
+    controller.remove_paths.side_effect = _remove_paths
+    future = DaemonSftpManager.remove_many(
+        manager,
+        [("/a.txt", False), ("/missing.txt", False), ("/b.txt", False)],
+    )
+
+    failures, completed = future.result(timeout=1)
+    assert completed == 2
+    assert len(failures) == 1
+    assert failures[0][0] == "/missing.txt"
+    assert "gone" in str(failures[0][1])
+    controller.remove.assert_not_called()
+
+
+def test_remove_many_empty_resolves_immediately():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    future = DaemonSftpManager.remove_many(manager, [])
+
+    assert future.result(timeout=1) == ([], 0)
+    controller.remove.assert_not_called()
+    controller.remove_paths.assert_not_called()
+
+
+def test_remove_many_cancel_stops_before_next_dir():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    calls = []
+    captured = {}
+
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        calls.append(("files", list(paths)))
+        on_success(SftpRemoveResult())
+
+    def _remove(path, *, recursive, on_success=None, on_error=None,
+                on_operation_started=None, on_progress=None):
+        calls.append(("dir", path))
+        captured["on_error"] = on_error
+        on_operation_started(OperationId("op-tree"))
+
+    controller.remove_paths.side_effect = _remove_paths
+    controller.remove.side_effect = _remove
+    future = DaemonSftpManager.remove_many(
+        manager, [("/a.txt", False), ("/tree", True), ("/late", True)]
+    )
+
+    assert future.cancel() is True
+    controller.cancel_operation.assert_called_once_with(OperationId("op-tree"))
+    captured["on_error"](
+        SshPilotError(ErrorCode.OPERATION_CANCELLED, "cancelled")
+    )
+    failures, completed = future.result(timeout=1)
+    assert failures == []
+    assert completed == 1  # file batch finished; cancelled dir not counted
+    assert calls == [("files", ["/a.txt"]), ("dir", "/tree")]
+
+
+def test_remove_many_chunks_file_batches_and_honours_cancel_between_chunks():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    batches = []
+    pending = {}
+
+    def _remove_paths(paths, *, on_success=None, on_error=None):
+        batches.append(list(paths))
+        pending["on_success"] = on_success
+
+    controller.remove_paths.side_effect = _remove_paths
+    items = [(f"/f{i}.txt", False) for i in range(300)]
+    future = DaemonSftpManager.remove_many(manager, items)
+
+    assert len(batches) == 1
+    assert len(batches[0]) == SFTP_REMOVE_CHUNK_SIZE
+    assert future.cancel() is True
+    pending["on_success"](SftpRemoveResult())
+
+    failures, completed = future.result(timeout=1)
+    assert failures == []
+    assert completed == SFTP_REMOVE_CHUNK_SIZE
+    # Cancel prevented the remaining chunk from starting.
+    assert len(batches) == 1
+    controller.remove.assert_not_called()

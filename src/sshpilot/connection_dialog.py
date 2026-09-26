@@ -41,6 +41,11 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .platform_utils import is_macos, get_ssh_dir
+from .flatpak_ssh_import import (
+    import_certificate_into_ssh_dir,
+    import_private_key_into_ssh_dir,
+    needs_flatpak_ssh_import,
+)
 from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
@@ -2601,7 +2606,12 @@ class ConnectionDialog(
         dialog.present()
 
     def _browse_key(self, on_chosen, parent=None):
-        self._browse_file(_("Select SSH Key File"), on_chosen, parent=parent)
+        def _after(path):
+            self._confirm_flatpak_ssh_import(
+                path, on_chosen, parent=parent, kind="key"
+            )
+
+        self._browse_file(_("Select SSH Key File"), _after, parent=parent)
 
     def _browse_cert(self, on_chosen, parent=None):
         filters = None
@@ -2618,7 +2628,84 @@ class ConnectionDialog(
             filters.append(all_filter)
         except Exception:
             filters = None
-        self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters, parent=parent)
+
+        def _after(path):
+            self._confirm_flatpak_ssh_import(
+                path, on_chosen, parent=parent, kind="cert"
+            )
+
+        self._browse_file(
+            _("Select SSH Certificate File"),
+            _after,
+            filters=filters,
+            parent=parent,
+        )
+
+    def _confirm_flatpak_ssh_import(
+        self, path, on_chosen, *, parent=None, kind: str = "key"
+    ):
+        """On Flatpak, copy keys/certs outside ``~/.ssh`` in after confirmation.
+
+        Sandbox OpenSSH cannot use host paths outside ``~/.ssh``. Portal paths
+        must not be written into ssh_config, so the durable option is an
+        explicit copy into ``~/.ssh`` (plus ``.pub`` / ``-cert.pub`` sidecars
+        for private keys when present).
+        """
+        if not callable(on_chosen):
+            return
+        if not path or not needs_flatpak_ssh_import(path):
+            on_chosen(path)
+            return
+
+        transient = parent if parent is not None else self
+        if kind == "cert":
+            heading = _("Copy certificate into ~/.ssh?")
+            body = _(
+                "Flatpak can only use SSH files under ~/.ssh. Copy this "
+                "certificate into ~/.ssh and use the copy?"
+            )
+        else:
+            heading = _("Copy key into ~/.ssh?")
+            body = _(
+                "Flatpak can only use SSH keys under ~/.ssh. Copy this key "
+                "into ~/.ssh and use the copy? Matching .pub and certificate "
+                "files next to it will be copied too when present."
+            )
+
+        dialog = Adw.MessageDialog.new(transient, heading, body)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("copy", _("Copy"))
+        try:
+            dialog.set_response_appearance(
+                "copy", Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+        dialog.set_default_response("copy")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response):
+            if response != "copy":
+                return
+            try:
+                if kind == "cert":
+                    dest, _companions = import_certificate_into_ssh_dir(path)
+                else:
+                    dest, _companions = import_private_key_into_ssh_dir(path)
+            except Exception as exc:
+                logger.warning(
+                    "Flatpak SSH import failed for %s: %s", path, exc, exc_info=True
+                )
+                self.show_error(
+                    _("Could not copy the file into ~/.ssh: {error}").format(
+                        error=str(exc)
+                    )
+                )
+                return
+            on_chosen(dest)
+
+        dialog.connect("response", _on_response)
+        dialog.present()
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""

@@ -237,12 +237,13 @@ class _RemoteSftpClient:
         finally:
             self._exit_op()
 
-    def file(self, path, mode):
+    def file(self, path, mode, *, create_mode=None):
         self._enter_op()
         try:
             if mode == "wb":
+                if path not in self.files:
+                    self.modes[path] = 0o644 if create_mode is None else create_mode
                 self.files.setdefault(path, b"")
-                self.modes.setdefault(path, 0o600)
                 return _RemoteFileHandle(self, path, write=True)
             self.files.setdefault(path, b"")
             return _RemoteFileHandle(self, path, write=False)
@@ -329,7 +330,6 @@ class _RemoteFileHandle:
     def close(self):
         if self._write:
             self._client.files[self._path] = self._data
-            self._client.modes[self._path] = 0o600
 
     def __enter__(self):
         return self
@@ -347,13 +347,13 @@ class _BlockingRemoteSftpClient(_RemoteSftpClient):
         self.allow_write = threading.Event()
         self._wb_blocked = False
 
-    def file(self, path, mode):
+    def file(self, path, mode, *, create_mode=None):
         if mode == "wb" and not self._wb_blocked:
             self._wb_blocked = True
             self.first_write_blocked.set()
             if not self.allow_write.wait(timeout=5.0):
                 raise TimeoutError("blocking SFTP write was not released")
-        return super().file(path, mode)
+        return super().file(path, mode, create_mode=create_mode)
 
 
 class _RemoteFakeHandle:
@@ -1070,22 +1070,22 @@ def test_remote_replace_mkdir_failure_with_missing_parent_still_fails():
     original_stat = client.stat
 
     def _stat(path):
-        if path == "/remote/gone":
+        if path in ("/remote/gone", "/remote/gone/notes.txt"):
             raise _sftp_proto.SFTPError(_sftp_proto.FX_NO_SUCH_FILE, "No such file")
         return original_stat(path)
 
     client.stat = _stat
     runtime, _, summary = _remote_runtime(client)
-    client.files["/remote/gone/notes.txt"] = b"old\n"
-    client.modes["/remote/gone/notes.txt"] = 0o600
 
+    # Only a new file needs its parent created: an existing file proves the
+    # parent is there, so the save skips mkdir entirely.
     with pytest.raises(SshPilotError) as raised:
         runtime.replace_file(
             SftpReplaceFileRequest(
                 SftpFileTarget.REMOTE,
                 "/remote/gone/notes.txt",
                 "new\n",
-                _file_revision(b"old\n", True),
+                _file_revision(b"", False),
                 backup=False,
                 service_id=summary.id,
             ),
@@ -1093,3 +1093,137 @@ def test_remote_replace_mkdir_failure_with_missing_parent_still_fails():
         )
     assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
     assert raised.value.details["sftp_status"] == _sftp_proto.FX_FAILURE
+
+
+class _CountingSftpClient(_FxFailureMkdirClient):
+    """Counts SFTP round trips the way OpenSSHSFTPClient spends them.
+
+    Every client call is one request, and so is each read, write and close
+    on an open file handle.
+    """
+
+    def __init__(self, *, hardlink=True, hardlink_fails=False, **kwargs):
+        super().__init__(**kwargs)
+        self.round_trips = []
+        self._hardlink = hardlink
+        self._hardlink_fails = hardlink_fails
+
+    def _enter_op(self):
+        self.round_trips.append("op")
+        super()._enter_op()
+
+    def file(self, path, mode, *, create_mode=None):
+        handle = super().file(path, mode, create_mode=create_mode)
+        trips = self.round_trips
+
+        class _Counted:
+            def read(self_inner, size=None):
+                trips.append("read")
+                return handle.read(size)
+
+            def write(self_inner, data):
+                trips.append("write")
+                handle.write(data)
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *_exc):
+                trips.append("close")
+                handle.close()
+
+        return _Counted()
+
+    def stat(self, path):
+        if path not in self.files and path not in self.dirs:
+            self._enter_op()
+            self._exit_op()
+            # What OpenSSHSFTPClient raises: an SFTPError carrying ENOENT.
+            raise _sftp_proto.SFTPError(_sftp_proto.FX_NO_SUCH_FILE, "No such file")
+        return super().stat(path)
+
+    def supports_hardlink(self):
+        return self._hardlink
+
+    def hardlink(self, old, new):
+        self._enter_op()
+        try:
+            if self._hardlink_fails:
+                raise _sftp_proto.SFTPError(_sftp_proto.FX_OP_UNSUPPORTED, "no links")
+            self.files[new] = self.files[old]
+            self.modes[new] = self.modes[old]
+        finally:
+            self._exit_op()
+
+
+def _replace(runtime, summary, path, content, previous, *, backup=True, exists=True):
+    return runtime.replace_file(
+        SftpReplaceFileRequest(
+            SftpFileTarget.REMOTE,
+            path,
+            content,
+            _file_revision(previous, exists),
+            backup=backup,
+            service_id=summary.id,
+        ),
+        client_id=ClientId("client:owner"),
+    )
+
+
+def test_remote_save_of_existing_file_needs_few_round_trips():
+    """A backed-up save used 18 sequential round trips, which outran the
+    client's timeout on a ~300ms link. Keep it to 10 or fewer."""
+    client = _CountingSftpClient(existing_dirs={"/srv"})
+    runtime, _, summary = _remote_runtime(client)
+    client.files["/srv/.env"] = b"A=1\n"
+    client.modes["/srv/.env"] = 0o600
+
+    result = _replace(runtime, summary, "/srv/.env", "A=2\n", b"A=1\n")
+
+    assert len(client.round_trips) <= 10, client.round_trips
+    assert client.files["/srv/.env"] == b"A=2\n"
+    assert client.files[result.backup_path] == b"A=1\n"
+    assert "/srv" not in client.modes  # no mkdir attempted for an existing file
+
+
+def test_remote_save_preserves_the_file_mode():
+    client = _CountingSftpClient(existing_dirs={"/srv"})
+    runtime, _, summary = _remote_runtime(client)
+    client.files["/srv/run.sh"] = b"echo 1\n"
+    client.modes["/srv/run.sh"] = 0o755
+
+    _replace(runtime, summary, "/srv/run.sh", "echo 2\n", b"echo 1\n", backup=False)
+
+    assert client.files["/srv/run.sh"] == b"echo 2\n"
+    assert client.modes["/srv/run.sh"] == 0o755
+
+
+def test_remote_save_of_new_file_is_private():
+    client = _CountingSftpClient(existing_dirs={"/srv"})
+    runtime, _, summary = _remote_runtime(client)
+
+    _replace(runtime, summary, "/srv/new.txt", "x\n", b"", exists=False)
+
+    assert client.files["/srv/new.txt"] == b"x\n"
+    assert client.modes["/srv/new.txt"] == 0o600
+
+
+@pytest.mark.parametrize(
+    ("hardlink", "hardlink_fails"),
+    [(False, False), (True, True)],
+    ids=["no-extension", "link-refused"],
+)
+def test_remote_backup_falls_back_to_a_private_copy(hardlink, hardlink_fails):
+    client = _CountingSftpClient(
+        existing_dirs={"/srv"}, hardlink=hardlink, hardlink_fails=hardlink_fails
+    )
+    runtime, _, summary = _remote_runtime(client)
+    client.files["/srv/app.conf"] = b"old\n"
+    client.modes["/srv/app.conf"] = 0o644
+
+    result = _replace(runtime, summary, "/srv/app.conf", "new\n", b"old\n")
+
+    assert client.files[result.backup_path] == b"old\n"
+    assert client.modes[result.backup_path] == 0o600
+    assert client.files["/srv/app.conf"] == b"new\n"
+    assert client.modes["/srv/app.conf"] == 0o644

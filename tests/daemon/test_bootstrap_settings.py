@@ -71,6 +71,28 @@ def test_config_file_setting(tmp_path):
     assert settings.config_file == "~/.ssh/custom"
 
 
+def test_max_concurrent_transfers_default_and_clamp(tmp_path):
+    assert _settings(tmp_path).max_concurrent_transfers == 4
+    assert (
+        _settings(
+            tmp_path, payload={"file_manager": {"max_concurrent_transfers": 2}}
+        ).max_concurrent_transfers
+        == 2
+    )
+    assert (
+        _settings(
+            tmp_path, payload={"file_manager": {"max_concurrent_transfers": 99}}
+        ).max_concurrent_transfers
+        == 10
+    )
+    assert (
+        _settings(
+            tmp_path, payload={"file_manager": {"max_concurrent_transfers": 0}}
+        ).max_concurrent_transfers
+        == 4
+    )
+
+
 def test_settings_module_never_imports_config_or_gi():
     source = Path("src/sshpilot/daemon/bootstrap_settings.py").read_text(
         encoding="utf-8"

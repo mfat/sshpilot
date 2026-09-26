@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.2.1}
+Version:        %{?version}%{!?version:6.2.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -145,6 +145,14 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Sep 25 2026 mFat <newmfat@gmail.com> - 6.2.3-1
+- More SFTP improvemnets
+- Added support for OSC 52
+
+* Fri Sep 25 2026 mFat <newmfat@gmail.com> - 6.2.2-1
+- Various improvemnets to SFTP file manager
+- Minor bug fixes
+
 * Tue Sep 22 2026 mFat <newmfat@gmail.com> - 6.2.1-1
 - Fixed KeePass database creation failing with a false "pykeepass is not installed" error
 - Fixed auto-unlock after creating a KeePass database

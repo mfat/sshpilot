@@ -5,6 +5,33 @@ notes remain separate.
 
 ## Unreleased
 
+- Recursive `sftp.remove` refuses the filesystem root, `.`, `~`, `..`
+  chains, and the service's login directory with `VALIDATION_FAILED` and the
+  new `SftpFailureCode.recursive_delete_protected_path`. Operation failures
+  carry it as the structured `SftpFailure`; a direct RPC rejection names it in
+  the error details under `sftp_failure_code`, so GTK translates it instead of
+  showing the daemon's English message. The recursive copy/move rejection
+  `directory_cannot_be_copied_into_itself` now names its reason under the
+  same key. API implementation version is 0.69; Protocol remains 1.0.
+- `update_identity_configuration` rejects socket changes unless the `custom`
+  provider is selected (`VALIDATION_FAILED` /
+  `custom_socket_not_applicable`). Non-custom providers such as `auto` keep
+  the system default agent; a no-op empty-socket request remains allowed.
+- Multi-path `sftp.remove`: an additive optional `paths` list on
+  `SftpPathRequest` deletes several non-directory targets in one RPC. The
+  daemon pipelines `FXP_REMOVE` (and recursive tree deletes pipeline sibling
+  file children the same way). Multi-path non-recursive remove returns
+  `SftpRemoveResult` with per-path failures; single-path non-recursive still
+  returns `null`. Recursive multi-path remove stays one `sftp_remove_tree`
+  operation. API implementation version is 0.68; Protocol remains 1.0.
+- `sftp_filesystem_usage` (`sftp.filesystem_usage`, capability
+  `sftp.metadata`) returns the new `SftpFilesystemUsage` — total, free, and
+  available bytes of the remote filesystem holding a path — from OpenSSH's
+  `statvfs@openssh.com`. Servers without the extension fail with
+  `remote_unsupported_operation`. The file manager's properties dialog shows
+  remote free space, and the SSH-server backup pre-check now knows it. New
+  method and model, so the API implementation version is 0.67; Protocol
+  remains 1.0.
 - Generic daemon session failures now carry a strict `SessionFailureCode`,
   separate machine `ErrorCode`, exact parameters, and an optional opaque
   diagnostic. GTK translates known startup, authentication, queue, termination,
