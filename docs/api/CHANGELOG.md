@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+- Login profiles: reusable authentication bundles linked to SSH connections
+  explicitly or through groups, resolved by the daemon into each linked Host
+  block. New capabilities `login_profiles.read` / `login_profiles.write`,
+  client methods `get_login_profiles`, `create_login_profile`,
+  `update_login_profile`, `delete_login_profile`,
+  `preview_login_profile_assignment`, `assign_login_profile`,
+  `set_group_login_profile` and `set_login_profile_secret` (protected secret
+  transport), daemon methods `login_profiles.*`, the models in
+  `sshpilot.api.models.login_profiles`, and the `login_profiles.changed`
+  event. API implementation version is 0.70; Protocol remains 1.0.
+
 - Recursive `sftp.remove` refuses the filesystem root, `.`, `~`, `..`
   chains, and the service's login directory with `VALIDATION_FAILED` and the
   new `SftpFailureCode.recursive_delete_protected_path`. Operation failures

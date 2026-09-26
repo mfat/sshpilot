@@ -550,6 +550,8 @@ _BROADCAST_EVENT_TYPES = frozenset({EventType.BROADCAST_OUTPUT})
 #: ConnectionSummary, and connection_event_from_envelope would decode this
 #: payload as one.
 _PRE_COMMAND_EVENT_TYPES = frozenset({EventType.PRE_CONNECTION_COMMAND})
+#: Login profiles or their links changed (payload: LoginProfilesChangedEvent).
+_LOGIN_PROFILE_EVENT_TYPES = frozenset({EventType.LOGIN_PROFILES_CHANGED})
 _FORWARDED_EVENT_TYPES = (
     _CONNECTION_EVENT_TYPES
     | _SESSION_EVENT_TYPES
@@ -561,6 +563,7 @@ _FORWARDED_EVENT_TYPES = (
     | _OPERATION_EVENT_TYPES
     | _BROADCAST_EVENT_TYPES
     | _PRE_COMMAND_EVENT_TYPES
+    | _LOGIN_PROFILE_EVENT_TYPES
 )
 
 
@@ -626,6 +629,10 @@ def public_event_to_envelope(
                 "pre-connection command event payload is invalid"
             )
         payload = pre_connection_command_notice_to_wire(event.payload)
+    elif event.type in _LOGIN_PROFILE_EVENT_TYPES:
+        from .login_profile_codec import login_profiles_changed_event_to_wire
+
+        payload = login_profiles_changed_event_to_wire(event.payload)
     elif event.type in _BROADCAST_EVENT_TYPES:
         from ..models.broadcast import BroadcastCommandOutput
 
@@ -750,6 +757,14 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             sequence=envelope.sequence,
             connection_id=notice.connection_id,
             session_id=SessionId(notice.scope_id),
+        )
+    if event_type in _LOGIN_PROFILE_EVENT_TYPES:
+        from .login_profile_codec import login_profiles_changed_event_from_wire
+
+        return CoreEvent(
+            type=event_type,
+            payload=login_profiles_changed_event_from_wire(dict(envelope.payload)),
+            sequence=envelope.sequence,
         )
     if event_type in _BROADCAST_EVENT_TYPES:
         from ..models.broadcast import BroadcastCommandOutput

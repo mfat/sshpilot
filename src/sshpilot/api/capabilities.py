@@ -78,6 +78,8 @@ class Capability(str, Enum):
     HOST_INFO_READ = "host_info.read"
     SSH_OVERRIDES_READ = "ssh_overrides.read"
     SSH_OVERRIDES_WRITE = "ssh_overrides.write"
+    LOGIN_PROFILES_READ = "login_profiles.read"
+    LOGIN_PROFILES_WRITE = "login_profiles.write"
     PLUGINS = "plugins"
     PLUGIN_SETTINGS_READ = "plugins.settings.read"
     PLUGIN_SETTINGS_WRITE = "plugins.settings.write"

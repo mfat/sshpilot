@@ -552,6 +552,15 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: ssh_overrides.get capability=ssh_overrides.read -->
 <!-- api-daemon-method: ssh_overrides.update capability=ssh_overrides.write -->
 <!-- api-daemon-method: ssh_overrides.reset capability=ssh_overrides.write -->
+<!-- api-daemon-method: login_profiles.get capability=login_profiles.read -->
+<!-- api-daemon-method: login_profiles.preview_assignment capability=login_profiles.read -->
+<!-- api-daemon-method: login_profiles.create capability=login_profiles.write -->
+<!-- api-daemon-method: login_profiles.update capability=login_profiles.write -->
+<!-- api-daemon-method: login_profiles.delete capability=login_profiles.write -->
+<!-- api-daemon-method: login_profiles.assign capability=login_profiles.write -->
+<!-- api-daemon-method: login_profiles.set_group capability=login_profiles.write -->
+<!-- api-daemon-method: login_profiles.set_secret capability=login_profiles.write -->
+<!-- api-daemon-method: login_profiles.clear_secret capability=login_profiles.write -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 <!-- api-daemon-method: secrets.backends.get capability=secrets.read -->
@@ -2087,6 +2096,122 @@ result = client.reset_global_ssh_overrides(
     expected_revision=overrides.revision,
 )
 ```
+
+<!-- api-method: get_login_profiles -->
+## `get_login_profiles`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.read`; every login profile
+  (settings, `has_password` / `has_sudo_password` flags, revision, usage
+  counts) plus the group links and per-connection links of the active SSH
+  configuration, each with its resolved effective profile.
+- **Parameters / return:** No parameters; returns `LoginProfileSnapshot`.
+  `available=False` means the profile file could not be read and profile
+  writes are refused.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Side effects / security:** Read-only. No secret value is returned.
+
+```python
+snapshot = client.get_login_profiles()
+link = snapshot.link_for("web1")
+```
+
+<!-- api-method: create_login_profile -->
+## `create_login_profile`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.write`; create a profile.
+- **Parameters / return:** `CreateLoginProfileRequest(settings)`; returns the
+  new `LoginProfileSummary`.
+- **Errors / events:** `VALIDATION_FAILED` for invalid settings (for example a
+  managed directive in `extra_ssh_config`) or a duplicate name. Publishes
+  `login_profiles.changed`.
+
+<!-- api-method: update_login_profile -->
+## `update_login_profile`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.write`; replace a profile's
+  settings. Every linked connection's Host block is re-rendered.
+- **Parameters / return:** `UpdateLoginProfileRequest(profile_id, settings,
+  expected_revision)`; returns the updated `LoginProfileSummary`.
+- **Errors / events:** `STALE_EDITOR` when `expected_revision` does not match;
+  `VALIDATION_FAILED` for invalid settings or an unknown profile. Publishes
+  `login_profiles.changed` and the usual connection events for re-rendered
+  blocks.
+
+<!-- api-method: delete_login_profile -->
+## `delete_login_profile`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.write`; delete a profile and
+  reassign or detach everything that used it. Its secrets are deleted.
+- **Parameters / return:** `DeleteLoginProfileRequest(profile_id,
+  replacement_profile_id, overrides)`. Each affected connection id or
+  `group:<id>` key resolves to its override, else the replacement; `None`
+  detaches it (the connection keeps its current values). Returns
+  `DeleteLoginProfileResult` listing detached connections.
+- **Errors / events:** `VALIDATION_FAILED` for an unknown profile or an invalid
+  replacement. Publishes `login_profiles.changed`.
+
+<!-- api-method: preview_login_profile_assignment -->
+## `preview_login_profile_assignment`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.read`; the Host-block settings
+  linking each connection would change, as display strings, so a frontend can
+  confirm before replacing a configured connection's values.
+- **Parameters / return:** `PreviewLoginProfileAssignmentRequest(connection_ids,
+  mode, profile_id)`; returns a tuple of `LoginProfileAssignmentPreview`.
+- **Errors / events:** `CONNECTION_NOT_FOUND`; `VALIDATION_FAILED` for
+  non-SSH connections or an unknown profile. No side effects.
+
+<!-- api-method: assign_login_profile -->
+## `assign_login_profile`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.write`; link connections to a
+  profile (`explicit`), to their primary group's profile (`inherit`), or unlink
+  them (`mode=None`, the connection keeps its current values). Linked Host
+  blocks are rewritten immediately.
+- **Parameters / return:** `AssignLoginProfileRequest`; returns `True`.
+- **Errors / events:** as `preview_login_profile_assignment`. Publishes
+  `login_profiles.changed`.
+
+<!-- api-method: set_group_login_profile -->
+## `set_group_login_profile`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.write`; assign or clear a
+  group's profile. Nested groups inherit from the nearest ancestor with a
+  profile. `link_members` switch those connections to `inherit`.
+- **Parameters / return:** `SetGroupLoginProfileRequest`; returns `True`.
+- **Errors / events:** `VALIDATION_FAILED` for an unknown group or profile.
+  Publishes `login_profiles.changed`.
+
+<!-- api-method: set_login_profile_secret -->
+## `set_login_profile_secret`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.70
+- **Capability / purpose:** `login_profiles.write`; store a profile's
+  login or sudo password in the active secret backend, or clear it.
+- **Parameters / return:** `SetLoginProfileSecretRequest(profile_id, kind,
+  clear)` and, unless clearing, a non-empty `bytearray` secret sent through
+  protected secret-frame transport (`login_profiles.set_secret`); clearing
+  uses `login_profiles.clear_secret` with no secret input. Returns `True`.
+- **Errors / events:** `SECRET_STORAGE_FAILED` when the backend rejects the
+  write. Publishes `login_profiles.changed`.
+- **Side effects / security:** The secret never appears in the JSON request,
+  logs, or any result; the daemon wipes its buffer after use.
 
 <!-- api-method: bitwarden_api_key_login -->
 ## `bitwarden_api_key_login`

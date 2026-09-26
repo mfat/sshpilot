@@ -197,6 +197,22 @@ local `error.occurred` continuity notification where delivery remains possible.
   and its output never cross the wire: the command line can embed a token or a
   password, and the wording is the frontend's.
 
+<!-- api-event: login_profiles.changed -->
+## `login_profiles.changed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.70.
+- **Trigger / payload:** A login profile was created, updated or deleted; a
+  profile was assigned to connections or a group; a profile secret changed;
+  or the daemon detached a connection from its profile. Exact
+  `LoginProfilesChangedEvent` payload; `detached` lists connections the daemon
+  unlinked (reason `drift` when the Host block was edited outside the profile,
+  `profile_missing`, or `profile_deleted`).
+- **Related IDs/order/delivery:** Broadcast to every client in the shared
+  daemon sequence. Host blocks rewritten by a profile change also publish the
+  usual `connection.*` and `connection_store.changed` events.
+- **Coalescing / dropping:** Not coalesced; clients refresh with
+  `get_login_profiles`.
+
 <!-- api-event: session.created -->
 ## `session.created`
 

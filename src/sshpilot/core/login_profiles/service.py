@@ -228,6 +228,34 @@ class LoginProfileService:
         with self._lock:
             return self._state.get(profile_id)
 
+    def set_event_observer(
+        self, callback: Optional[Callable[[str, Mapping[str, Any]], None]]
+    ) -> None:
+        self._on_event = callback
+
+    def group_links(self) -> Dict[str, str]:
+        """Group id -> profile id for the active SSH configuration."""
+        with self._lock:
+            return self._group_links()
+
+    def link_states(
+        self,
+    ) -> Tuple[Tuple[str, ProfileLink, Optional[EffectiveProfile]], ...]:
+        """Every linked SSH connection with its link and effective profile."""
+        with self._lock:
+            snapshot = self._snapshot()
+            metadata = self._metadata_map(snapshot)
+            links = self._group_links()
+            states = []
+            for cid in self._ssh_ids(snapshot):
+                link = parse_link(metadata.get(cid))
+                if link is None:
+                    continue
+                states.append(
+                    (cid, link, effective_profile(cid, link, snapshot.groups, links, self._state))
+                )
+            return tuple(states)
+
     def group_profile_id(self, group_id: str) -> Optional[str]:
         with self._lock:
             return self._group_links().get(group_id)
@@ -438,23 +466,29 @@ class LoginProfileService:
     # ------------------------------------------------------------------
 
     def _set_secret(self, profile_id: str, account: str, flag: str, value: Optional[str]) -> bool:
-        with self._operation():
+        with self._lock:
             self._require_available()
-            profile = self._state.get(profile_id)
-            if profile is None:
+            if self._state.get(profile_id) is None:
                 raise _not_found()
-            store = self._secrets()
-            if value:
-                if "\x00" in value:
-                    raise _validation("Secrets must not contain NUL")
-                ok = bool(store.store(profile_id, account, value))
-            else:
-                # Deleting an absent secret already satisfies the request.
-                store.delete(profile_id, account)
-                ok = True
-            if ok:
+        if value and "\x00" in value:
+            raise _validation("Secrets must not contain NUL")
+        # The backend call may wait on an unlock prompt: never hold the
+        # service lock across it.
+        store = self._secrets()
+        if value:
+            ok = bool(store.store(profile_id, account, value))
+        else:
+            # Deleting an absent secret already satisfies the request.
+            store.delete(profile_id, account)
+            ok = True
+        if ok:
+            with self._operation():
+                profile = self._state.get(profile_id)
+                if profile is None:  # deleted meanwhile
+                    store.delete(profile_id, account)
+                    raise _not_found()
                 self._replace_profile(profile.with_changes(**{flag: bool(value)}))
-            return ok
+        return ok
 
     def set_password(self, profile_id: str, password: Optional[str]) -> bool:
         return self._set_secret(profile_id, PROFILE_PASSWORD_ACCOUNT, "has_password", password)

@@ -329,6 +329,15 @@ DAEMON_METHOD_CAPABILITIES = {
     "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
     "ssh_overrides.update": Capability.SSH_OVERRIDES_WRITE,
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
+    "login_profiles.get": Capability.LOGIN_PROFILES_READ,
+    "login_profiles.preview_assignment": Capability.LOGIN_PROFILES_READ,
+    "login_profiles.create": Capability.LOGIN_PROFILES_WRITE,
+    "login_profiles.update": Capability.LOGIN_PROFILES_WRITE,
+    "login_profiles.delete": Capability.LOGIN_PROFILES_WRITE,
+    "login_profiles.assign": Capability.LOGIN_PROFILES_WRITE,
+    "login_profiles.set_group": Capability.LOGIN_PROFILES_WRITE,
+    "login_profiles.set_secret": Capability.LOGIN_PROFILES_WRITE,
+    "login_profiles.clear_secret": Capability.LOGIN_PROFILES_WRITE,
     "secrets.configuration.get": Capability.SECRETS_READ,
     "secrets.configuration.update": Capability.SECRETS_WRITE,
     "secrets.backends.get": Capability.SECRETS_READ,
@@ -419,6 +428,13 @@ DRAIN_REJECTED_METHODS = frozenset(
         "authorized_keys.remove",
         "ssh_overrides.update",
         "ssh_overrides.reset",
+        "login_profiles.create",
+        "login_profiles.update",
+        "login_profiles.delete",
+        "login_profiles.assign",
+        "login_profiles.set_group",
+        "login_profiles.set_secret",
+        "login_profiles.clear_secret",
         "secrets.configuration.update",
         "secrets.selection.update",
         "secrets.unlock",
@@ -528,6 +544,15 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "forwards.close",
         "known_hosts.list",
         "known_hosts.remove",
+        "login_profiles.get",
+        "login_profiles.preview_assignment",
+        "login_profiles.create",
+        "login_profiles.update",
+        "login_profiles.delete",
+        "login_profiles.assign",
+        "login_profiles.set_group",
+        "login_profiles.set_secret",
+        "login_profiles.clear_secret",
         "keys.list",
         "keys.get_public",
         "keys.generate",
@@ -653,6 +678,7 @@ class RequestDispatcher:
         diagnostics_provider: Optional[Callable[[], Any]] = None,
         pre_command_runner: Optional[Any] = None,
         ssh_overrides_service: Any = None,
+        login_profiles: Any = None,
         secrets_service: Any = None,
         identity_service: Any = None,
         operation_runtime: Any = None,
@@ -671,6 +697,7 @@ class RequestDispatcher:
         self._key_service = key_service
         self._lifecycle = lifecycle_controller
         self._ssh_overrides_service = ssh_overrides_service
+        self._login_profiles = login_profiles
         self._secrets_service = secrets_service
         self._identity_service = identity_service
         self._operation_runtime = operation_runtime
@@ -849,6 +876,15 @@ class RequestDispatcher:
             "ssh_overrides.get": self._handle_get_ssh_overrides,
             "ssh_overrides.update": self._handle_update_ssh_overrides,
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
+            "login_profiles.get": self._handle_get_login_profiles,
+            "login_profiles.preview_assignment": self._handle_preview_login_profile_assignment,
+            "login_profiles.create": self._handle_create_login_profile,
+            "login_profiles.update": self._handle_update_login_profile,
+            "login_profiles.delete": self._handle_delete_login_profile,
+            "login_profiles.assign": self._handle_assign_login_profile,
+            "login_profiles.set_group": self._handle_set_group_login_profile,
+            "login_profiles.set_secret": self._handle_set_login_profile_secret,
+            "login_profiles.clear_secret": self._handle_clear_login_profile_secret,
             "secrets.configuration.get": self._handle_get_secret_configuration,
             "secrets.configuration.update": self._handle_update_secret_configuration,
             "secrets.backends.get": self._handle_get_secret_backends,
@@ -1022,6 +1058,7 @@ class RequestDispatcher:
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
+                login_profiles=getattr(self, "_login_profiles", None) is not None,
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
@@ -3355,6 +3392,7 @@ class RequestDispatcher:
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
+                login_profiles=getattr(self, "_login_profiles", None) is not None,
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
@@ -3396,6 +3434,7 @@ class RequestDispatcher:
         known_hosts: bool = False,
         keys: bool = False,
         ssh_overrides: bool = False,
+        login_profiles: bool = False,
         secrets: bool = False,
         identity: bool = False,
         operations: bool = False,
@@ -3509,6 +3548,13 @@ class RequestDispatcher:
                 {
                     Capability.SSH_OVERRIDES_READ,
                     Capability.SSH_OVERRIDES_WRITE,
+                }
+            )
+        if login_profiles:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.LOGIN_PROFILES_READ,
+                    Capability.LOGIN_PROFILES_WRITE,
                 }
             )
         if secrets:
@@ -3684,6 +3730,160 @@ class RequestDispatcher:
             raise ValueError("expected_revision must be a non-empty string or null")
         service = self._required_ssh_overrides_service()
         return global_ssh_overrides_to_wire(service.reset(expected_revision=expected_revision))
+
+    # -- login profiles ---------------------------------------------------
+
+    def _required_login_profiles(self):
+        service = getattr(self, "_login_profiles", None)
+        if service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Login profiles are unavailable",
+            )
+        return service
+
+    def _login_profile_deferred(
+        self, operation, *, command_key: str = CONFIGURATION_COMMAND_KEY
+    ) -> DeferredResult:
+        # Profile writes re-render Host blocks through the repository, so they
+        # serialize with every other authoritative configuration mutation.
+        # Secret writes may wait on a backend unlock prompt and use the
+        # interactive secret key instead (see SECRET_INTERACTIVE_COMMAND_KEY).
+        return DeferredResult(
+            operation=operation,
+            command_key=command_key,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_get_login_profiles(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport.login_profile_codec import login_profile_snapshot_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: login_profile_snapshot_to_wire(service.get_snapshot())
+        )
+
+    def _handle_preview_login_profile_assignment(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.preview_login_profile_assignment_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: codec.login_profile_assignment_previews_to_wire(
+                service.preview_assignment(typed)
+            )
+        )
+
+    def _handle_create_login_profile(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.create_login_profile_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: codec.login_profile_summary_to_wire(service.create(typed))
+        )
+
+    def _handle_update_login_profile(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.update_login_profile_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: codec.login_profile_summary_to_wire(service.update(typed))
+        )
+
+    def _handle_delete_login_profile(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.delete_login_profile_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: codec.delete_login_profile_result_to_wire(service.delete(typed))
+        )
+
+    def _handle_assign_login_profile(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.assign_login_profile_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(lambda: service.assign(typed))
+
+    def _handle_set_group_login_profile(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.set_group_login_profile_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(lambda: service.set_group_profile(typed))
+
+    def _handle_set_login_profile_secret(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        for forbidden in ("password", "secret", "value"):
+            if forbidden in request.params:
+                raise SshPilotError(
+                    ErrorCode.INVALID_REQUEST,
+                    "Profile secrets must use protected secret transport",
+                )
+        typed = codec.set_login_profile_secret_request_from_wire(request.params)
+        if typed.clear:
+            raise ValueError("login_profiles.set_secret cannot clear a secret")
+        service = self._required_login_profiles()
+        if self._command_input_waiter is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Protected secret transport is unavailable",
+            )
+
+        def _store() -> bool:
+            secret = self._command_input_waiter(request.request_id)
+            try:
+                try:
+                    value = bytes(secret).decode("utf-8")
+                except (UnicodeDecodeError, TypeError, ValueError) as error:
+                    raise SshPilotError(
+                        ErrorCode.INVALID_REQUEST,
+                        "The protected secret is invalid",
+                    ) from error
+                return service.set_secret(typed, value)
+            finally:
+                if isinstance(secret, bytearray):
+                    secret[:] = b"\0" * len(secret)
+                    secret.clear()
+
+        return self._login_profile_deferred(
+            _store, command_key=SECRET_INTERACTIVE_COMMAND_KEY
+        )
+
+    def _handle_clear_login_profile_secret(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.set_login_profile_secret_request_from_wire(request.params)
+        if not typed.clear:
+            raise ValueError("login_profiles.clear_secret requires clear=true")
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: service.set_secret(typed, None),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
+        )
 
     def _required_ssh_overrides_service(self):
         if not hasattr(self, "_ssh_overrides_service") or self._ssh_overrides_service is None:

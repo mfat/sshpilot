@@ -398,6 +398,10 @@ def _production_core_services():
         return service
 
     login_profiles = _build_login_profile_service()
+
+    from .login_profile_api import DaemonLoginProfileApi
+
+    login_profile_api = DaemonLoginProfileApi(login_profiles)
     secret_provider = DaemonConnectionSecretProvider(
         repository.get_record,
         profile_password_lookup=login_profiles.password_for_connection,
@@ -466,6 +470,7 @@ def _production_core_services():
         operations=operation_runtime,
         operation_mode=operation_mode,
         plugin_settings=PluginSettingsService(get_config_dir() / "config.json"),
+        login_profiles=login_profile_api,
     )
 
 

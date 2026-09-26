@@ -137,6 +137,7 @@ _COMMAND_INPUT_METHODS = frozenset(
         "connections.store_password",
         "connections.set_session_password",
         "broadcast.start",
+        "login_profiles.set_secret",
     }
 )
 _COMMAND_INPUT_MAX_PENDING = 64
@@ -178,6 +179,9 @@ _FORWARDED_EVENT_TYPES = frozenset(
         # connecting to the same host is about to be affected by whether the
         # knock landed.
         EventType.PRE_CONNECTION_COMMAND,
+        # Profiles are shared configuration: every client refreshes, and a
+        # drift auto-detach is surfaced by whichever frontend is open.
+        EventType.LOGIN_PROFILES_CHANGED,
     }
 )
 
@@ -225,6 +229,7 @@ class CoreServices:
     operation_mode: Any = None
     scp_backend: Any = None
     plugin_settings: Any = None
+    login_profiles: Any = None
 
 
 @dataclass
@@ -344,6 +349,8 @@ class DaemonServer:
         self._known_hosts_service: Optional[KnownHostsService] = None
         self._key_service: Optional[DaemonKeyService] = None
         self._ssh_overrides_service: Optional[SshOverridesService] = None
+        self._login_profiles: Any = None
+        self._login_profile_subscription: Optional[Subscription] = None
         self._secrets_service: Any = None
         self._identity_service: Any = None
         self._operation_runtime: Any = None
@@ -617,6 +624,7 @@ class DaemonServer:
                 self._known_hosts_service = core.known_hosts
                 self._key_service = core.keys
                 self._ssh_overrides_service = core.ssh_overrides
+                self._login_profiles = core.login_profiles
                 self._secrets_service = core.secrets
                 self._identity_service = core.identity
                 self._operation_runtime = core.operations
@@ -836,6 +844,7 @@ class DaemonServer:
                 known_hosts_service=self._known_hosts_service,
                 key_service=self._key_service,
                 ssh_overrides_service=self._ssh_overrides_service,
+                login_profiles=self._login_profiles,
                 secrets_service=self._secrets_service,
                 identity_service=self._identity_service,
                 operation_runtime=self._operation_runtime,
@@ -895,6 +904,9 @@ class DaemonServer:
         self._broadcast_subscription = self._broadcast_publisher.subscribe(
             self._on_core_event
         )
+        subscribe_profiles = getattr(self._login_profiles, "subscribe_events", None)
+        if callable(subscribe_profiles):
+            self._login_profile_subscription = subscribe_profiles(self._on_core_event)
         # Defer `_accepting_core_events` until after `mark_ready()` so the
         # initial READY lifecycle publication is not sequenced onto the
         # shared event bus (clients still poll `daemon.status`).
@@ -947,6 +959,14 @@ class DaemonServer:
         coordinator = self._configuration_reload
         if coordinator is not None:
             coordinator.refresh_paths()
+        # A mode switch changes which group links apply; the repository only
+        # notifies listeners when the two roots differ semantically.
+        reconcile = getattr(self._login_profiles, "reconcile", None)
+        if callable(reconcile):
+            try:
+                reconcile()
+            except Exception:
+                logger.exception("Login profile reconciliation after a mode switch failed")
 
     def _build_readiness_manager(self) -> Optional[Any]:
         """Construct the OpenSSH diagnostics readiness owner for this instance.
@@ -2675,6 +2695,8 @@ class DaemonServer:
             self._operation_subscription = None
             pre_command_subscription = self._pre_command_subscription
             self._pre_command_subscription = None
+            login_profile_subscription = self._login_profile_subscription
+            self._login_profile_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
         if session_subscription is not None:
@@ -2693,3 +2715,5 @@ class DaemonServer:
             operation_subscription.unsubscribe()
         if pre_command_subscription is not None:
             pre_command_subscription.unsubscribe()
+        if login_profile_subscription is not None:
+            login_profile_subscription.unsubscribe()

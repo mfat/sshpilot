@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.69",
+  "api_implementation_version": "0.70",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -912,6 +912,33 @@
     "known_hosts.remove": {
       "capability": "known_hosts.write"
     },
+    "login_profiles.assign": {
+      "capability": "login_profiles.write"
+    },
+    "login_profiles.clear_secret": {
+      "capability": "login_profiles.write"
+    },
+    "login_profiles.create": {
+      "capability": "login_profiles.write"
+    },
+    "login_profiles.delete": {
+      "capability": "login_profiles.write"
+    },
+    "login_profiles.get": {
+      "capability": "login_profiles.read"
+    },
+    "login_profiles.preview_assignment": {
+      "capability": "login_profiles.read"
+    },
+    "login_profiles.set_group": {
+      "capability": "login_profiles.write"
+    },
+    "login_profiles.set_secret": {
+      "capability": "login_profiles.write"
+    },
+    "login_profiles.update": {
+      "capability": "login_profiles.write"
+    },
     "operations.cancel": {
       "capability": "operations.control"
     },
@@ -1267,6 +1294,8 @@
       "host_info.read",
       "ssh_overrides.read",
       "ssh_overrides.write",
+      "login_profiles.read",
+      "login_profiles.write",
       "plugins",
       "plugins.settings.read",
       "plugins.settings.write",
@@ -1413,6 +1442,7 @@
       "connection.deleted",
       "connection_store.changed",
       "connection.pre_command",
+      "login_profiles.changed",
       "session.created",
       "session.state_changed",
       "session.output",
@@ -1538,6 +1568,23 @@
     "KeyStoreScope": [
       "default",
       "isolated"
+    ],
+    "LoginProfileDetachReason": [
+      "drift",
+      "profile_missing",
+      "profile_deleted"
+    ],
+    "LoginProfileLinkMode": [
+      "explicit",
+      "inherit"
+    ],
+    "LoginProfileSecretKind": [
+      "login",
+      "sudo"
+    ],
+    "LoginProfileSource": [
+      "connection",
+      "group"
     ],
     "NetworkInterfaceKind": [
       "loopback",
@@ -2008,6 +2055,32 @@
         }
       ],
       "status": "Schema only"
+    },
+    "AssignLoginProfileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileLinkMode]"
+        },
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        }
+      ],
+      "status": "Implemented"
     },
     "AttachSessionRequest": {
       "fields": [
@@ -2980,6 +3053,53 @@
       ],
       "status": "Implemented"
     },
+    "ConnectionProfileLink": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileLinkMode"
+        },
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        },
+        {
+          "default": null,
+          "name": "effective_profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        },
+        {
+          "default": null,
+          "name": "source",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileSource]"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "ConnectionStoreSnapshot": {
       "fields": [
         {
@@ -3530,6 +3650,18 @@
       ],
       "status": "Schema only"
     },
+    "CreateLoginProfileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "settings",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileSettings"
+        }
+      ],
+      "status": "Implemented"
+    },
     "DaemonDiagnostics": {
       "fields": [
         {
@@ -3989,6 +4121,44 @@
       ],
       "status": "Implemented"
     },
+    "DeleteLoginProfileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        },
+        {
+          "default": null,
+          "name": "replacement_profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        },
+        {
+          "default": [],
+          "name": "overrides",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[LoginProfileReassignment, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteLoginProfileResult": {
+      "fields": [
+        {
+          "default": [],
+          "name": "detached",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[DetachedConnectionInfo, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "DeletePluginSecretRequest": {
       "fields": [
         {
@@ -4026,6 +4196,32 @@
         }
       ],
       "status": "Implemented"
+    },
+    "DetachedConnectionInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "profile_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileDetachReason"
+        }
+      ],
+      "status": "Schema only"
     },
     "EffectiveConfigComparison": {
       "fields": [
@@ -4590,6 +4786,25 @@
         }
       ],
       "status": "Implemented"
+    },
+    "GroupProfileLink": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        }
+      ],
+      "status": "Schema only"
     },
     "GroupReference": {
       "fields": [
@@ -5915,6 +6130,286 @@
       ],
       "status": "Schema only"
     },
+    "LoginProfileAssignmentPreview": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": "",
+          "name": "profile_name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "changes",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[LoginProfileFieldChange, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "LoginProfileFieldChange": {
+      "fields": [
+        {
+          "default": null,
+          "name": "field",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "label",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "before",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "after",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "LoginProfileReassignment": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "target_profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "LoginProfileSettings": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "auth_method",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "key_select_mode",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "identity_files",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "certificate_files",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "identity_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "add_keys_to_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "pkcs11_provider",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "security_key_provider",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "pubkey_auth_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "forward_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "forward_agent_target",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "extra_ssh_config",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "LoginProfileSnapshot": {
+      "fields": [
+        {
+          "default": null,
+          "name": "available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "profiles",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[LoginProfileSummary, ...]"
+        },
+        {
+          "default": [],
+          "name": "group_links",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[GroupProfileLink, ...]"
+        },
+        {
+          "default": [],
+          "name": "connection_links",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[ConnectionProfileLink, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "LoginProfileSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        },
+        {
+          "default": null,
+          "name": "settings",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileSettings"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": false,
+          "name": "has_password",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "has_sudo_password",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "connection_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "group_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "LoginProfilesChangedEvent": {
+      "fields": [
+        {
+          "default": [],
+          "name": "detached",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[DetachedConnectionInfo, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "LoginSession": {
       "fields": [
         {
@@ -6867,6 +7362,32 @@
       ],
       "status": "Schema only"
     },
+    "PreviewLoginProfileAssignmentRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileLinkMode]"
+        },
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ProcessCounts": {
       "fields": [
         {
@@ -7759,6 +8280,58 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetGroupLoginProfileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoginProfileId]"
+        },
+        {
+          "default": [],
+          "name": "link_members",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetLoginProfileSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        },
+        {
+          "default": "login",
+          "name": "kind",
+          "required": false,
+          "sensitive": false,
+          "type": "LoginProfileSecretKind"
+        },
+        {
+          "default": false,
+          "name": "clear",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -9205,6 +9778,32 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "UpdateLoginProfileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        },
+        {
+          "default": null,
+          "name": "settings",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileSettings"
+        },
+        {
+          "default": null,
+          "name": "expected_revision",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
       "status": "Implemented"

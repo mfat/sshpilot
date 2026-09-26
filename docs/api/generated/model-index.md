@@ -183,6 +183,32 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: AssignLoginProfileRequest -->
+## `AssignLoginProfileRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Link connections explicitly, to their group (inherit), or unlink (``mode=None``).
+
+**Related methods:** `assign_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+| `mode` | `Optional[LoginProfileLinkMode]` | No | `null` | No |
+| `profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": {},
+  "mode": null,
+  "profile_id": null
+}
+```
+
 <!-- api-model: AttachSessionRequest -->
 ## `AttachSessionRequest`
 
@@ -905,6 +931,38 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConnectionProfileLink -->
+## `ConnectionProfileLink`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One connection's link and its resolved effective profile.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `mode` | `LoginProfileLinkMode` | Yes | — | No |
+| `profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+| `effective_profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+| `source` | `Optional[LoginProfileSource]` | No | `null` | No |
+| `group_id` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "effective_profile_id": null,
+  "group_id": null,
+  "mode": {},
+  "profile_id": null,
+  "source": null
+}
+```
+
 <!-- api-model: ConnectionStoreSnapshot -->
 ## `ConnectionStoreSnapshot`
 
@@ -1057,7 +1115,7 @@ Synthetic representation:
 **Purpose:** Frontend-neutral `CoreEvent` record.
 
 **Related methods:** `subscribe_events`
-**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `connection.pre_command`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `operation.created`, `operation.state_changed`, `broadcast.output`, `daemon.state_changed`, `error.occurred`
+**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `connection.pre_command`, `login_profiles.changed`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `operation.created`, `operation.state_changed`, `broadcast.output`, `daemon.state_changed`, `error.occurred`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
@@ -1294,6 +1352,28 @@ Synthetic representation:
   "color": "",
   "name": "example",
   "parent_id": ""
+}
+```
+
+<!-- api-model: CreateLoginProfileRequest -->
+## `CreateLoginProfileRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `CreateLoginProfileRequest` record.
+
+**Related methods:** `create_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `settings` | `LoginProfileSettings` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "settings": {}
 }
 ```
 
@@ -1651,6 +1731,54 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: DeleteLoginProfileRequest -->
+## `DeleteLoginProfileRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `DeleteLoginProfileRequest` record.
+
+**Related methods:** `delete_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `profile_id` | `LoginProfileId` | Yes | — | No |
+| `replacement_profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+| `overrides` | `Tuple[LoginProfileReassignment, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "overrides": [],
+  "profile_id": {},
+  "replacement_profile_id": null
+}
+```
+
+<!-- api-model: DeleteLoginProfileResult -->
+## `DeleteLoginProfileResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `DeleteLoginProfileResult` record.
+
+**Related methods:** `delete_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `detached` | `Tuple[DetachedConnectionInfo, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "detached": []
+}
+```
+
 <!-- api-model: DeletePluginSecretRequest -->
 ## `DeletePluginSecretRequest`
 
@@ -1696,6 +1824,32 @@ Synthetic representation:
 {
   "attachment_id": "attachment-2",
   "session_id": "session-12"
+}
+```
+
+<!-- api-model: DetachedConnectionInfo -->
+## `DetachedConnectionInfo`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `DetachedConnectionInfo` record.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `profile_name` | `str` | Yes | — | No |
+| `reason` | `LoginProfileDetachReason` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "profile_name": {},
+  "reason": "example"
 }
 ```
 
@@ -2087,6 +2241,30 @@ Synthetic representation:
 {
   "key": "example",
   "plugin_id": "example.plugin"
+}
+```
+
+<!-- api-model: GroupProfileLink -->
+## `GroupProfileLink`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `GroupProfileLink` record.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `str` | Yes | — | No |
+| `profile_id` | `LoginProfileId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "group_id": {},
+  "profile_id": {}
 }
 ```
 
@@ -3099,6 +3277,219 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: LoginProfileAssignmentPreview -->
+## `LoginProfileAssignmentPreview`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `LoginProfileAssignmentPreview` record.
+
+**Related methods:** `preview_login_profile_assignment`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `profile_name` | `str` | No | `` | No |
+| `changes` | `Tuple[LoginProfileFieldChange, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "changes": [],
+  "connection_id": "production",
+  "profile_name": ""
+}
+```
+
+<!-- api-model: LoginProfileFieldChange -->
+## `LoginProfileFieldChange`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One Host-block setting an assignment would change (display strings).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `field` | `str` | Yes | — | No |
+| `label` | `str` | Yes | — | No |
+| `before` | `str` | Yes | — | No |
+| `after` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "after": {},
+  "before": {},
+  "field": {},
+  "label": {}
+}
+```
+
+<!-- api-model: LoginProfileReassignment -->
+## `LoginProfileReassignment`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Target for one affected item when deleting a profile.
+
+``key`` is a connection id or ``group:<group id>``; ``target_profile_id``
+``None`` detaches the item (it keeps its current values).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `target_profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": {},
+  "target_profile_id": null
+}
+```
+
+<!-- api-model: LoginProfileSettings -->
+## `LoginProfileSettings`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The editable fields of a login profile (a complete form).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `name` | `str` | Yes | — | No |
+| `username` | `str` | No | `` | No |
+| `auth_method` | `int` | No | `0` | No |
+| `key_select_mode` | `int` | No | `0` | No |
+| `identity_files` | `Tuple[str, ...]` | No | `[]` | No |
+| `certificate_files` | `Tuple[str, ...]` | No | `[]` | No |
+| `identity_agent` | `str` | No | `` | No |
+| `add_keys_to_agent` | `str` | No | `` | No |
+| `pkcs11_provider` | `str` | No | `` | No |
+| `security_key_provider` | `str` | No | `` | No |
+| `pubkey_auth_no` | `bool` | No | `false` | No |
+| `forward_agent` | `bool` | No | `false` | No |
+| `forward_agent_target` | `str` | No | `` | No |
+| `extra_ssh_config` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "add_keys_to_agent": "",
+  "auth_method": 0,
+  "certificate_files": [],
+  "extra_ssh_config": "",
+  "forward_agent": false,
+  "forward_agent_target": "",
+  "identity_agent": "",
+  "identity_files": [],
+  "key_select_mode": 0,
+  "name": "example",
+  "pkcs11_provider": "",
+  "pubkey_auth_no": false,
+  "security_key_provider": "",
+  "username": ""
+}
+```
+
+<!-- api-model: LoginProfileSnapshot -->
+## `LoginProfileSnapshot`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** All profiles plus the link state of the active SSH configuration.
+
+**Related methods:** `get_login_profiles`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `available` | `bool` | Yes | — | No |
+| `profiles` | `Tuple[LoginProfileSummary, ...]` | No | `[]` | No |
+| `group_links` | `Tuple[GroupProfileLink, ...]` | No | `[]` | No |
+| `connection_links` | `Tuple[ConnectionProfileLink, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "available": {},
+  "connection_links": [],
+  "group_links": [],
+  "profiles": []
+}
+```
+
+<!-- api-model: LoginProfileSummary -->
+## `LoginProfileSummary`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One stored profile, with safe secret flags and usage counts.
+
+**Related methods:** `create_login_profile`, `update_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `id` | `LoginProfileId` | Yes | — | No |
+| `settings` | `LoginProfileSettings` | Yes | — | No |
+| `revision` | `int` | Yes | — | No |
+| `has_password` | `bool` | No | `false` | No |
+| `has_sudo_password` | `bool` | No | `false` | No |
+| `connection_count` | `int` | No | `0` | No |
+| `group_count` | `int` | No | `0` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_count": 0,
+  "group_count": 0,
+  "has_password": false,
+  "has_sudo_password": false,
+  "id": "production",
+  "revision": {},
+  "settings": {}
+}
+```
+
+<!-- api-model: LoginProfilesChangedEvent -->
+## `LoginProfilesChangedEvent`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Profiles or links changed; ``detached`` lists links dropped by the daemon.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `detached` | `Tuple[DetachedConnectionInfo, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "detached": []
+}
+```
+
 <!-- api-model: LoginSession -->
 ## `LoginSession`
 
@@ -3770,6 +4161,32 @@ Synthetic representation:
   "avg10": {},
   "avg300": {},
   "avg60": {}
+}
+```
+
+<!-- api-model: PreviewLoginProfileAssignmentRequest -->
+## `PreviewLoginProfileAssignmentRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `PreviewLoginProfileAssignmentRequest` record.
+
+**Related methods:** `preview_login_profile_assignment`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+| `mode` | `Optional[LoginProfileLinkMode]` | No | `null` | No |
+| `profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": {},
+  "mode": null,
+  "profile_id": null
 }
 ```
 
@@ -4584,6 +5001,64 @@ Synthetic representation:
 {
   "color": {},
   "group_id": {}
+}
+```
+
+<!-- api-model: SetGroupLoginProfileRequest -->
+## `SetGroupLoginProfileRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Assign or clear (``profile_id=None``) a group's profile.
+
+``link_members`` are switched to inherit the group's profile.
+
+**Related methods:** `set_group_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `str` | Yes | — | No |
+| `profile_id` | `Optional[LoginProfileId]` | No | `null` | No |
+| `link_members` | `Tuple[ConnectionId, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "group_id": {},
+  "link_members": [],
+  "profile_id": null
+}
+```
+
+<!-- api-model: SetLoginProfileSecretRequest -->
+## `SetLoginProfileSecretRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Store or clear one profile secret.
+
+The secret value is never part of this model: clients send it through the
+protected secret-frame transport. ``clear=True`` deletes the secret and
+takes no secret input.
+
+**Related methods:** `set_login_profile_secret`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `profile_id` | `LoginProfileId` | Yes | — | No |
+| `kind` | `LoginProfileSecretKind` | No | `login` | No |
+| `clear` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "clear": false,
+  "kind": "login",
+  "profile_id": {}
 }
 ```
 
@@ -5774,6 +6249,32 @@ Synthetic representation:
   "plugin_data": {},
   "port": "`UNSET`",
   "username": "`UNSET`"
+}
+```
+
+<!-- api-model: UpdateLoginProfileRequest -->
+## `UpdateLoginProfileRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Replace a profile's settings; linked Host blocks are re-rendered.
+
+**Related methods:** `update_login_profile`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `profile_id` | `LoginProfileId` | Yes | — | No |
+| `settings` | `LoginProfileSettings` | Yes | — | No |
+| `expected_revision` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "expected_revision": null,
+  "profile_id": {},
+  "settings": {}
 }
 ```
 

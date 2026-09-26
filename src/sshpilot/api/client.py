@@ -1,6 +1,6 @@
 """Typed frontend-independent sshPilot client contract."""
 
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 from .capabilities import Capabilities
 from .events import CoreEventCallback, Subscription
@@ -169,6 +169,19 @@ from .models.host_info import HostInfoRequest, HostInfoSummary
 from .models.settings import (
     GlobalSshOverrides,
     UpdateGlobalSshOverridesRequest,
+)
+from .models.login_profiles import (
+    AssignLoginProfileRequest,
+    CreateLoginProfileRequest,
+    DeleteLoginProfileRequest,
+    DeleteLoginProfileResult,
+    LoginProfileAssignmentPreview,
+    LoginProfileSnapshot,
+    LoginProfileSummary,
+    PreviewLoginProfileAssignmentRequest,
+    SetGroupLoginProfileRequest,
+    SetLoginProfileSecretRequest,
+    UpdateLoginProfileRequest,
 )
 
 
@@ -674,6 +687,47 @@ class SshPilotClient(Protocol):
         self,
         expected_revision: Optional[str] = None,
     ) -> GlobalSshOverrides:
+        ...
+
+    def get_login_profiles(self) -> LoginProfileSnapshot:
+        """All login profiles plus group and connection links."""
+        ...
+
+    def create_login_profile(
+        self, request: CreateLoginProfileRequest
+    ) -> LoginProfileSummary:
+        ...
+
+    def update_login_profile(
+        self, request: UpdateLoginProfileRequest
+    ) -> LoginProfileSummary:
+        """Replace a profile's settings and re-render every linked Host block."""
+        ...
+
+    def delete_login_profile(
+        self, request: DeleteLoginProfileRequest
+    ) -> DeleteLoginProfileResult:
+        """Delete a profile, reassigning or detaching whatever used it."""
+        ...
+
+    def preview_login_profile_assignment(
+        self, request: PreviewLoginProfileAssignmentRequest
+    ) -> Tuple[LoginProfileAssignmentPreview, ...]:
+        """Host-block settings an assignment would change, per connection."""
+        ...
+
+    def assign_login_profile(self, request: AssignLoginProfileRequest) -> bool:
+        ...
+
+    def set_group_login_profile(self, request: SetGroupLoginProfileRequest) -> bool:
+        ...
+
+    def set_login_profile_secret(
+        self,
+        request: SetLoginProfileSecretRequest,
+        secret: Optional[bytearray] = None,
+    ) -> bool:
+        """Store (protected secret transport) or clear one profile secret."""
         ...
 
     def get_secret_configuration(self) -> SecretConfiguration:
