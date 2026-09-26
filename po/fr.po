@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-25 13:42+0200\n"
-"PO-Revision-Date: 2026-09-25 15:46+0200\n"
+"POT-Creation-Date: 2026-09-26 09:27+0200\n"
+"PO-Revision-Date: 2026-09-26 09:34+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -5611,6 +5611,39 @@ msgstr ""
 "Le clic droit colle ; Maj+clic droit ouvre le menu. Cette fonction est "
 "automatiquement désactivée lorsqu’une application distante (htop, vim, tmux) "
 "utilise la souris."
+
+#: src/sshpilot/preferences.py:810
+msgid "Remote Clipboard"
+msgstr "Presse-papiers distant"
+
+#: src/sshpilot/preferences.py:812
+msgid ""
+"Programs on the remote host (tmux, Neovim, osc52 tools) can ask to copy text "
+"to this computer's clipboard using OSC 52. They can never read the clipboard."
+msgstr ""
+"Les programmes exécutés sur l’hôte distant (tmux, Neovim, outils osc52) "
+"peuvent demander à copier du texte dans le presse-papiers de cet "
+"ordinateur via OSC 52. Ils ne peuvent jamais lire le presse-papiers."
+
+#: src/sshpilot/preferences.py:818
+msgid "Allow remote programs to copy"
+msgstr "Autoriser les programmes distants à copier"
+
+#: src/sshpilot/preferences.py:820
+msgid "Only the focused terminal can copy"
+msgstr "Seul le terminal ayant le focus peut copier"
+
+#: src/sshpilot/preferences.py:824
+msgid "Ask Each Time"
+msgstr "Demander à chaque fois"
+
+#: src/sshpilot/preferences.py:847
+msgid "Maximum copy size (KiB)"
+msgstr "Taille maximale d’une copie (Kio)"
+
+#: src/sshpilot/preferences.py:849
+msgid "Larger copy requests are ignored"
+msgstr "Les demandes de copie dépassant cette taille sont ignorées"
 
 #: src/sshpilot/preferences.py:698
 msgid "Preferred Terminal"
@@ -13903,6 +13936,20 @@ msgstr "Que doit-il advenir de la session de terminal distante ?"
 msgid "Detach"
 msgstr "Détacher"
 
+#: src/sshpilot/terminal.py:3483
+#, python-brace-format
+msgid "Remote program copied {count} character to the clipboard"
+msgid_plural "Remote program copied {count} characters to the clipboard"
+msgstr[0] "Un programme distant a copié {count} caractère dans le presse-papiers"
+msgstr[1] "Un programme distant a copié {count} caractères dans le presse-papiers"
+
+#: src/sshpilot/terminal.py:3510
+#, python-brace-format
+msgid "Remote program wants to copy {count} character to the clipboard"
+msgid_plural "Remote program wants to copy {count} characters to the clipboard"
+msgstr[0] "Un programme distant souhaite copier {count} caractère dans le presse-papiers"
+msgstr[1] "Un programme distant souhaite copier {count} caractères dans le presse-papiers"
+
 #: src/sshpilot/terminal.py:3364
 #, python-brace-format
 msgid "Encoding '{requested}' is not supported. Using {fallback} instead."
@@ -14343,6 +14390,14 @@ msgstr[1] "Cela déconnectera {n} sessions de terminal. Continuer ?"
 #: data/io.github.mfat.sshpilot.desktop.in:10
 msgid "ssh;sftp;terminal;"
 msgstr "ssh;sftp;terminal;"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid "More SFTP improvemnets"
+msgstr "Autres améliorations SFTP"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
+msgid "Added support for OSC 52"
+msgstr "Ajout de la prise en charge d’OSC 52"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:66
 msgid "Various improvemnets to SFTP file manager"
