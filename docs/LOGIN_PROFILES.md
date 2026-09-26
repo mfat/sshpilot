@@ -100,6 +100,7 @@ ConnectionRepository.update_connection   login_profiles.json + secret backend
 
 - **Controller:** `gtk/login_profile_controller.py` is GTK-free. It wraps the client, caches the snapshot, and holds the pure helpers for picker choices, delete plans and preview text.
 - **Dialogs:** `login_profile_dialogs.py` contains the window, editor, delete, assign and group dialogs.
+- **Keys and certificates:** the profile editor uses the connection dialog's own `FileListEditor` and key chooser: daemon-discovered disk keys, agent keys, browse with the Flatpak import confirmation, reordering, and per-key passphrases stored by key path. The shared discovery and chooser logic lives in `key_sources.py` (`KeySourcesMixin`), which both `ConnectionDialog` and the profile editor window inherit.
 - **Connection dialog:** `connection_dialog_login_profile.py` is the picker mixin. The chosen link is applied by `MainWindow._save_connection_via_client`:
   - unlinking runs before the config write, so edited auth fields are not mistaken for drift;
   - linking runs after the config write commits.

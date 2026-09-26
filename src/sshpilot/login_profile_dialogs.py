@@ -8,6 +8,7 @@ dialogs never touch SSH config, secrets, or connection state directly.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from gettext import gettext as _, ngettext
 from typing import Callable, Dict, List, Mapping, Optional, Sequence
@@ -19,10 +20,12 @@ from sshpilot.api.models.login_profiles import (
     LoginProfileSettings,
     LoginProfileSummary,
 )
+from sshpilot.key_sources import KeySourcesMixin
 from sshpilot.gtk.login_profile_controller import (
     CHOICE_CUSTOM,
     CHOICE_INHERIT,
     LoginProfileController,
+    LoginProfileSecretError,
     ProfileChoice,
     affected_items,
     current_choice_index,
@@ -108,66 +111,69 @@ def _show_error(banner: Adw.Banner, error: BaseException) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Path list (identity / certificate files)
+# Editor window host (shared key/certificate sources)
 # ---------------------------------------------------------------------------
 
-class _PathListGroup:
-    """A preferences group editing an ordered list of file paths."""
+def find_main_window(widget: Optional[Gtk.Widget]):
+    """The application main window (``client`` + ``key_manager``) above *widget*."""
+    window = widget.get_root() if widget is not None and hasattr(widget, "get_root") else None
+    seen = set()
+    while window is not None and id(window) not in seen:
+        seen.add(id(window))
+        if getattr(window, "client", None) is not None:
+            return window
+        getter = getattr(window, "get_transient_for", None)
+        window = getter() if callable(getter) else None
+    return None
 
-    def __init__(self, title: str, description: str, paths: Sequence[str]) -> None:
-        self.group = Adw.PreferencesGroup(title=title, description=description)
-        add = Gtk.Button(icon_name="list-add-symbolic")
-        add.add_css_class("flat")
-        add.set_tooltip_text(_("Add file…"))
-        add.connect("clicked", self._on_add)
-        self.group.set_header_suffix(add)
-        self._rows: List[Adw.ActionRow] = []
-        self._paths: List[str] = []
-        for path in paths:
-            self._append(path)
 
-    @property
-    def paths(self) -> List[str]:
-        return list(self._paths)
+class _ProfileEditorWindow(Adw.Window, KeySourcesMixin):
+    """Modal window hosting the profile form.
 
-    def set_sensitive(self, value: bool) -> None:
-        self.group.set_sensitive(value)
+    A real window (like ``ConnectionDialog``) so the shared key chooser, file
+    browsing and Flatpak import confirmation stack above it correctly.
+    """
 
-    def _append(self, path: str) -> None:
-        path = path.strip()
-        if not path or path in self._paths:
-            return
-        row = Adw.ActionRow(title=path)
-        row.set_title_lines(1)
-        remove = Gtk.Button(icon_name="user-trash-symbolic")
-        remove.add_css_class("flat")
-        remove.set_valign(Gtk.Align.CENTER)
-        remove.set_tooltip_text(_("Remove"))
-        remove.connect("clicked", lambda *_a: self._remove(row, path))
-        row.add_suffix(remove)
-        self.group.add(row)
-        self._rows.append(row)
-        self._paths.append(path)
+    def __init__(self, parent_window) -> None:
+        super().__init__()
+        self.parent_window = parent_window
+        self.set_modal(True)
+        self.set_default_size(560, 720)
+        self._banner: Optional[Adw.Banner] = None
+        try:
+            from .shortcut_utils import install_esc_to_close
 
-    def _remove(self, row: Adw.ActionRow, path: str) -> None:
-        self.group.remove(row)
-        self._rows.remove(row)
-        self._paths.remove(path)
+            install_esc_to_close(self)
+        except Exception:
+            logger.debug("Escape-to-close unavailable", exc_info=True)
 
-    def _on_add(self, button: Gtk.Button) -> None:
-        chooser = Gtk.FileDialog()
-        chooser.set_title(_("Select a file"))
-        root = button.get_root()
+    def show_error(self, message: str) -> None:
+        if self._banner is not None:
+            self._banner.set_title(str(message))
+            self._banner.set_revealed(True)
 
-        def _done(dialog, result):
-            try:
-                file = dialog.open_finish(result)
-            except GLib.Error:
-                return
-            if file is not None and file.get_path():
-                self._append(file.get_path())
 
-        chooser.open(root if isinstance(root, Gtk.Window) else None, None, _done)
+def _editor_frame(window: _ProfileEditorWindow, title: str) -> tuple:
+    window.set_title(title)
+    toolbar = Adw.ToolbarView()
+    header = Adw.HeaderBar()
+    header.set_show_end_title_buttons(False)
+    header.set_show_start_title_buttons(False)
+    cancel = Gtk.Button(label=_("Cancel"))
+    cancel.connect("clicked", lambda *_a: window.close())
+    header.pack_start(cancel)
+    save = Gtk.Button(label=_("Save"))
+    save.add_css_class("suggested-action")
+    header.pack_end(save)
+    toolbar.add_top_bar(header)
+    banner = Adw.Banner()
+    banner.set_revealed(False)
+    toolbar.add_top_bar(banner)
+    window._banner = banner
+    page = Adw.PreferencesPage()
+    toolbar.set_content(page)
+    window.set_content(toolbar)
+    return page, save, banner
 
 
 # ---------------------------------------------------------------------------
@@ -175,11 +181,19 @@ class _PathListGroup:
 # ---------------------------------------------------------------------------
 
 class LoginProfileEditor:
-    """Form for one profile. ``on_submit(settings, password, sudo, done)``.
+    """Form for one profile.
 
-    ``password``/``sudo`` are secret edits: ``None`` keeps the stored secret,
-    ``""`` clears it, any other value replaces it. ``done(error)`` re-enables
-    the form (and shows ``error``) or closes it when ``error`` is ``None``.
+    ``on_submit(settings, password, sudo, passphrase_ops, done)``:
+    ``password``/``sudo`` are secret edits (``None`` keeps the stored secret,
+    ``""`` clears it, any other value replaces it); ``passphrase_ops`` are the
+    key passphrase changes from the shared key editor, as
+    ``FileListEditor.pending_passphrase_operations`` returns them. ``done(error)``
+    re-enables the form (and shows ``error``) or closes it when ``error`` is
+    ``None``.
+
+    Keys and certificates use the connection dialog's own ``FileListEditor``
+    and key chooser (disk and agent keys, browse, Flatpak import, per-key
+    passphrases), so both editors behave identically.
     """
 
     def __init__(
@@ -188,14 +202,19 @@ class LoginProfileEditor:
         profile: Optional[LoginProfileSummary] = None,
         initial: Optional[LoginProfileSettings] = None,
         on_submit: Callable[..., None],
+        parent_window=None,
     ) -> None:
+        from .connection_dialog import FileListEditor
+
         self.profile = profile
+        self.parent_window = parent_window
         settings = profile.settings if profile is not None else initial
         if settings is None:
             settings = LoginProfileSettings(name=_("New profile"))
         self._on_submit = on_submit
         title = _("Edit Login Profile") if profile else _("New Login Profile")
-        self.dialog, page, self._save, self._banner = _dialog_frame(title, _("Save"))
+        self.dialog = _ProfileEditorWindow(parent_window)
+        page, self._save, self._banner = _editor_frame(self.dialog, title)
         self._save.connect("clicked", self._on_save_clicked)
 
         general = Adw.PreferencesGroup(title=_("Profile"))
@@ -226,14 +245,39 @@ class LoginProfileEditor:
         auth.add(self.pubkey_no_row)
         page.add(auth)
 
-        self.keys = _PathListGroup(
-            _("Private keys"), _("IdentityFile, in order"), settings.identity_files
+        window = self.dialog
+        key_manager = getattr(parent_window, "key_manager", None)
+        self.key_editor = FileListEditor(
+            title=_("Private Keys"),
+            with_passphrase=True,
+            parent_window=parent_window,
+            add_actions=[{
+                "icon": "plus-large-symbolic",
+                "label": _("Add"),
+                "chooser": lambda editor: window._open_key_chooser(editor),
+            }],
+            add_at_bottom=True,
+            reorderable=True,
+            verify=(
+                (lambda path, secret: key_manager.verify_key_passphrase(
+                    os.path.expanduser(path), secret))
+                if key_manager is not None else None
+            ),
         )
-        page.add(self.keys.group)
-        self.certs = _PathListGroup(
-            _("Certificates"), _("CertificateFile"), settings.certificate_files
+        self.key_editor.set_paths(list(settings.identity_files))
+        page.add(self.key_editor)
+        self.cert_editor = FileListEditor(
+            title=_("Certificates"),
+            add_actions=[
+                {"icon": "plus-large-symbolic", "label": _("Add"),
+                 "discover": window._discover_certs, "browse": window._browse_cert},
+            ],
+            add_at_bottom=True,
+            with_passphrase=False,
+            parent_window=parent_window,
         )
-        page.add(self.certs.group)
+        self.cert_editor.set_paths(list(settings.certificate_files))
+        page.add(self.cert_editor)
 
         agent = Adw.PreferencesGroup(title=_("Agent and hardware keys"))
         self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent"))
@@ -302,14 +346,17 @@ class LoginProfileEditor:
         self._sync_visibility()
 
     def present(self, parent: Gtk.Widget) -> None:
-        self.dialog.present(parent)
+        root = parent.get_root() if parent is not None and hasattr(parent, "get_root") else None
+        if isinstance(root, Gtk.Window):
+            self.dialog.set_transient_for(root)
+        self.dialog.present()
 
     def _sync_visibility(self, *_args) -> None:
         key_auth = self.auth_row.get_selected() == 0
         specific = self.key_mode_row.get_selected() in (1, 2)
         self.key_mode_row.set_visible(key_auth)
-        self.keys.group.set_visible(key_auth and specific)
-        self.certs.group.set_visible(key_auth)
+        self.key_editor.set_visible(key_auth and specific)
+        self.cert_editor.set_visible(key_auth)
         self.pubkey_no_row.set_visible(not key_auth)
         self.forward_target_row.set_visible(self.forward_agent_row.get_active())
 
@@ -325,8 +372,8 @@ class LoginProfileEditor:
             "username": self.username_row.get_text(),
             "auth_method": self.auth_row.get_selected(),
             "key_select_mode": self.key_mode_row.get_selected(),
-            "identity_files": self.keys.paths,
-            "certificate_files": self.certs.paths,
+            "identity_files": list(self.key_editor.get_paths()),
+            "certificate_files": list(self.cert_editor.get_paths()),
             "identity_agent": self.identity_agent_row.get_text(),
             "add_keys_to_agent": add_keys,
             "pkcs11_provider": self.pkcs11_row.get_text(),
@@ -350,6 +397,12 @@ class LoginProfileEditor:
         except (TypeError, ValueError) as error:
             _show_error(self._banner, error)
             return
+        passphrase_ops: list = []
+        if self.key_editor.get_visible():
+            passphrase_ops = self.key_editor.pending_passphrase_operations()
+            if passphrase_ops is None:
+                self.dialog.show_error(_("Please correct the invalid key passphrase."))
+                return
         self._banner.set_revealed(False)
         self._save.set_sensitive(False)
 
@@ -364,8 +417,39 @@ class LoginProfileEditor:
             settings,
             self._secret_edit(self.password_row, self.clear_password_row),
             self._secret_edit(self.sudo_row, self.clear_sudo_row),
+            list(passphrase_ops),
             _done,
         )
+
+
+def persist_key_passphrases(parent_window, operations) -> None:
+    """Store/delete key passphrases exactly like the connection dialog does.
+
+    Blocking; call off the GTK thread. Passphrases are keyed by key path, so
+    they are shared with every connection that uses the key.
+    """
+    if not operations:
+        return
+    key_manager = getattr(parent_window, "key_manager", None)
+    client = getattr(parent_window, "client", None)
+    for action, path, value in operations:
+        if action == "store":
+            if key_manager is None:
+                raise RuntimeError("Key passphrase storage is unavailable")
+            secret = bytearray(value.encode("utf-8"))
+            try:
+                ok = key_manager.store_key_passphrase(path, secret)
+            finally:
+                secret[:] = b"\0" * len(secret)
+                secret.clear()
+        else:
+            if client is None:
+                raise RuntimeError("Key passphrase storage is unavailable")
+            from .api.models.connections import DeleteKeyPassphraseRequest
+
+            ok = client.delete_key_passphrase(DeleteKeyPassphraseRequest(key_path=path))
+        if not ok:
+            raise RuntimeError("The key passphrase could not be stored")
 
 
 def open_profile_editor(
@@ -375,27 +459,35 @@ def open_profile_editor(
     profile: Optional[LoginProfileSummary] = None,
     initial: Optional[LoginProfileSettings] = None,
     on_saved: Optional[Callable[[LoginProfileSummary], None]] = None,
+    parent_window=None,
 ) -> LoginProfileEditor:
     """Create or edit a profile through the daemon."""
+    if parent_window is None:
+        parent_window = find_main_window(parent)
 
     # After a create, later saves from the same form must update that
     # profile (e.g. retrying a password the backend rejected).
     state = {"profile": profile}
 
-    def _submit(settings, password, sudo, done):
+    def _submit(settings, password, sudo, passphrase_ops, done):
         current = state["profile"]
-        if current is None:
-            operation = lambda: controller.create(  # noqa: E731
-                settings, password=password, sudo_password=sudo
-            )
-        else:
-            operation = lambda: controller.update(  # noqa: E731
-                current.id,
-                settings,
-                expected_revision=None if current is not profile else current.revision,
-                password=password,
-                sudo_password=sudo,
-            )
+
+        def operation():
+            if current is None:
+                summary = controller.create(settings, password=password, sudo_password=sudo)
+            else:
+                summary = controller.update(
+                    current.id,
+                    settings,
+                    expected_revision=None if current is not profile else current.revision,
+                    password=password,
+                    sudo_password=sudo,
+                )
+            try:
+                persist_key_passphrases(parent_window, passphrase_ops)
+            except Exception as error:
+                raise LoginProfileSecretError(summary, error) from error
+            return summary
 
         def _ok(summary):
             done(None)
@@ -412,7 +504,9 @@ def open_profile_editor(
 
         run_async(operation, _ok, _failed)
 
-    editor = LoginProfileEditor(profile=profile, initial=initial, on_submit=_submit)
+    editor = LoginProfileEditor(
+        profile=profile, initial=initial, on_submit=_submit, parent_window=parent_window
+    )
     editor.present(parent)
     return editor
 

@@ -211,7 +211,7 @@ class LoginProfileSecretError(RuntimeError):
         super().__init__(getattr(error, "message", None) or str(error))
         self.summary = summary
         self.message = (
-            "The profile was saved, but its password could not be stored: "
+            "The profile was saved, but a password or passphrase could not be stored: "
             + (getattr(error, "message", None) or str(error))
         )
 

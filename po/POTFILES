@@ -47,6 +47,7 @@ src/sshpilot/host_info_payload.py
 src/sshpilot/host_info_shell.py
 src/sshpilot/host_info_tab.py
 src/sshpilot/host_picker.py
+src/sshpilot/key_sources.py
 src/sshpilot/known_hosts_editor.py
 src/sshpilot/log_viewer.py
 src/sshpilot/login_profile_dialogs.py
