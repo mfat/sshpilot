@@ -1054,7 +1054,12 @@ class DaemonServer:
             return None
         from .privileged_file_service import PrivilegedFileService
 
-        return PrivilegedFileService(launch_provider, broker)
+        profile_lookup = getattr(self._login_profiles, "sudo_password_for_connection", None)
+        return PrivilegedFileService(
+            launch_provider,
+            broker,
+            profile_sudo_lookup=profile_lookup if callable(profile_lookup) else None,
+        )
 
 
     def _prepare_sftp_launch(self, spec: Any, launch_builder: Any = None) -> tuple:

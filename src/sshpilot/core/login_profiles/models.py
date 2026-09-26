@@ -56,13 +56,24 @@ def revision_token(profile: "LoginProfile") -> str:
     return f"{profile.id}:{profile.revision}"
 
 
+PROFILE_SECRET_HOST_PREFIX = "sshpilot-login-profile/"
+
+
+def profile_id_from_secret_host(host: object) -> Optional[str]:
+    """Profile id for a :func:`profile_secret_host` value, else ``None``."""
+    if isinstance(host, str) and host.startswith(PROFILE_SECRET_HOST_PREFIX):
+        candidate = host[len(PROFILE_SECRET_HOST_PREFIX):]
+        return candidate if is_profile_id(candidate) else None
+    return None
+
+
 def profile_secret_host(profile_id: str) -> str:
     """Pseudo host under which a profile's secrets are keyed.
 
     Mirrors the plugin-secret convention (``sshpilot-plugin/<id>``) so every
     secret backend, backup, and the Credential Manager handle it unchanged.
     """
-    return f"sshpilot-login-profile/{profile_id}"
+    return f"{PROFILE_SECRET_HOST_PREFIX}{profile_id}"
 
 
 # Secret "usernames" under :func:`profile_secret_host`.

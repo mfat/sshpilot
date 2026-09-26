@@ -425,6 +425,11 @@ def _production_core_services():
     def _build_secrets_service():
         from sshpilot.daemon.secret_backend_service import SecretBackendService
 
+        from .login_profile_backup import (
+            ConnectionStoreBackupRestore,
+            ConnectionStoreBackupSnapshot,
+        )
+
         return SecretBackendService(
             get_config_dir() / "config.json",
             # Callables so daemon export/import can read and restore
@@ -433,8 +438,12 @@ def _production_core_services():
             # iterable of records; backup export/import call these two
             # bound methods directly).
             connections_source=repository.list_records,
-            connection_store_snapshot=repository.snapshot_for_backup,
-            connection_store_restore=repository.restore_connection_store,
+            connection_store_snapshot=ConnectionStoreBackupSnapshot(
+                repository.snapshot_for_backup, login_profiles
+            ),
+            connection_store_restore=ConnectionStoreBackupRestore(
+                repository.restore_connection_store, login_profiles
+            ),
         )
 
     secrets_service = _build_secrets_service()

@@ -638,15 +638,24 @@ class BackupManager:
     def _gather_credentials(self, connections) -> List[Dict[str, Any]]:
         """Serialized credentials (password/sudo/key passphrase) for the given connections —
         only their secrets, no enumerated orphans."""
+        out: List[Dict[str, Any]] = []
+        # Secrets not tied to one connection (login profiles) come from the
+        # connection store, which owns them.
+        extra = getattr(self.connection_store, 'backup_credentials', None)
+        if callable(extra):
+            try:
+                out.extend(extra())
+            except Exception:
+                logger.warning("Gathering login profile credentials for backup failed",
+                               exc_info=True)
         if not connections:
-            return []
+            return out
         try:
             from .credential_manager import CredentialManager
             creds = CredentialManager(list(connections)).list_credentials(include_orphans=False)
         except Exception:
             logger.warning("Gathering credentials for backup failed", exc_info=True)
-            return []
-        out: List[Dict[str, Any]] = []
+            return out
         for c in creds:
             if c.secret is None:
                 continue

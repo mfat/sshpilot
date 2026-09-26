@@ -245,6 +245,7 @@ class PrivilegedFileService:
         secret_lookup: Callable[[str, str], str] = lookup_sudo_password,
         secret_store: Callable[[str, str, str], bool] = store_sudo_password,
         secret_clear: Callable[[str, str], bool] = clear_sudo_password,
+        profile_sudo_lookup: Optional[Callable[[ConnectionId], Optional[str]]] = None,
     ) -> None:
         if launch_provider is None or broker is None:
             raise TypeError("a launch provider and interaction broker are required")
@@ -271,6 +272,10 @@ class PrivilegedFileService:
         self._secret_lookup = secret_lookup
         self._secret_store = secret_store
         self._secret_clear = secret_clear
+        # A linked login profile's sudo password is shared by every
+        # connection using the profile; it is tried before the per-host secret
+        # and is never deleted here when it turns out to be wrong.
+        self._profile_sudo_lookup = profile_sudo_lookup
 
     # -- public operations -------------------------------------------------
 
@@ -468,8 +473,19 @@ class PrivilegedFileService:
         context_password = (
             password_context.password if password_context is not None else None
         )
-        password = context_password or self._secret_lookup(hostname, username)
-        from_stored = bool(password) and not context_password
+        profile_password = None
+        if not context_password and self._profile_sudo_lookup is not None:
+            try:
+                profile_password = self._profile_sudo_lookup(connection_id) or None
+            except Exception:
+                logger.debug("Login profile sudo password lookup failed", exc_info=True)
+        password = (
+            context_password
+            or profile_password
+            or self._secret_lookup(hostname, username)
+        )
+        from_profile = bool(profile_password) and not context_password
+        from_stored = bool(password) and not context_password and not from_profile
         from_context = bool(context_password)
         attempt = 1
         while attempt <= self._max_password_attempts:
@@ -538,6 +554,7 @@ class PrivilegedFileService:
                 if password_context is not None:
                     password_context.password = None
                 from_context = False
+            from_profile = False
             password = None
             attempt += 1
         raise SshPilotError(

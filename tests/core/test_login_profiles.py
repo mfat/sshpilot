@@ -334,7 +334,8 @@ def test_backup_roundtrip_merges_with_suffix(env):
     service.set_password(profile.id, "pw")
     section = service.snapshot_for_backup()
     assert "pw" not in json.dumps(section)
-    assert section["profiles"][profile.id]["has_password"] is False
+    assert section["profiles"][profile.id]["has_password"] is True
+    assert service.backup_secrets() == ((profile.id, "login", "pw"),)
 
     other = LoginProfileState.from_dict(section)
     renamed = other.profiles[0].with_changes(id="lp-aaaaaaaaaaaaaaaa")
@@ -374,3 +375,26 @@ def test_daemon_secret_provider_prefers_profile_password(env):
     )
     assert provider.lookup_connection_password("web1") == "from-profile"
     assert provider.lookup_connection_password("web2") is None
+
+
+def test_credential_model_tags_profile_secrets():
+    from sshpilot.credential_model import credential_from_attributes
+
+    cred = credential_from_attributes(
+        {"type": "ssh_password", "host": "sshpilot-login-profile/lp-0123456789abcdef",
+         "username": "login"},
+        "pw",
+        "libsecret",
+    )
+    assert cred.metadata["login_profile"] == "lp-0123456789abcdef"
+    plain = credential_from_attributes(
+        {"type": "ssh_password", "host": "example.com", "username": "alice"}, "pw", "libsecret"
+    )
+    assert "login_profile" not in plain.metadata
+
+
+def test_credential_prefix_matches_core_constant():
+    from sshpilot import credential_model
+    from sshpilot.core.login_profiles.models import PROFILE_SECRET_HOST_PREFIX
+
+    assert credential_model._LOGIN_PROFILE_SECRET_PREFIX == PROFILE_SECRET_HOST_PREFIX

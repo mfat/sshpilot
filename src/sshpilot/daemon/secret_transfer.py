@@ -180,6 +180,10 @@ class _CallableConnectionStore:
     def snapshot_for_backup(self) -> Dict[str, Any]:
         return self._snapshot_fn() if self._snapshot_fn is not None else {}
 
+    def backup_credentials(self) -> List[Dict[str, Any]]:
+        extra = getattr(self._snapshot_fn, "backup_credentials", None)
+        return list(extra()) if callable(extra) else []
+
     def restore_connection_store(self, section: Dict[str, Any], *, mode: str = "merge"):
         if self._restore_fn is None:
             from sshpilot.core.connections.repository import ConnectionStoreRestoreResult

@@ -502,17 +502,36 @@ class LoginProfileService:
     def lookup_sudo_password(self, profile_id: str) -> Optional[str]:
         return self._secrets().lookup(profile_id, PROFILE_SUDO_ACCOUNT) or None
 
+    # ``has_*`` flags are display hints only: a backup restores profiles before
+    # their secrets, so runtime lookups always consult the secret store.
+
     def password_for_connection(self, connection_id: str) -> Optional[str]:
         eff = self.effective_for(connection_id)
-        if eff is None or not eff.profile.has_password:
+        if eff is None or self._secret_store is None:
             return None
         return self.lookup_password(eff.profile.id)
 
     def sudo_password_for_connection(self, connection_id: str) -> Optional[str]:
         eff = self.effective_for(connection_id)
-        if eff is None or not eff.profile.has_sudo_password:
+        if eff is None or self._secret_store is None:
             return None
         return self.lookup_sudo_password(eff.profile.id)
+
+    def backup_secrets(self) -> Tuple[Tuple[str, str, str], ...]:
+        """``(profile_id, account, value)`` for every stored profile secret."""
+        if self._secret_store is None:
+            return ()
+        out = []
+        for profile in self.list_profiles():
+            for account in (PROFILE_PASSWORD_ACCOUNT, PROFILE_SUDO_ACCOUNT):
+                try:
+                    value = self._secret_store.lookup(profile.id, account)
+                except Exception:
+                    logger.warning("Could not read a login profile secret for backup")
+                    continue
+                if value:
+                    out.append((profile.id, account, value))
+        return tuple(out)
 
     def _delete_secrets(self, profile_id: str) -> None:
         try:
@@ -724,13 +743,9 @@ class LoginProfileService:
     # ------------------------------------------------------------------
 
     def snapshot_for_backup(self) -> Dict[str, Any]:
-        """Profiles and group links, without secrets or secret flags."""
+        """Profiles and group links. Secrets travel separately (backup credentials)."""
         with self._lock:
-            data = self._state.to_dict()
-            for item in data["profiles"].values():
-                item["has_password"] = False
-                item["has_sudo_password"] = False
-            return data
+            return self._state.to_dict()
 
     def restore_from_backup(self, section: Mapping[str, Any], *, mode: str = "merge") -> int:
         """Restore profiles; ``merge`` keeps existing ones and suffixes clashing names."""

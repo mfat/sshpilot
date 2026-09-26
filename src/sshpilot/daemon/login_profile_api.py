@@ -155,6 +155,9 @@ class DaemonLoginProfileApi:
         except RuntimeError:
             pass  # publisher closed during shutdown
 
+    def sudo_password_for_connection(self, connection_id: str) -> Optional[str]:
+        return self._service.sudo_password_for_connection(connection_id)
+
     def reconcile(self) -> None:
         self._service.reconcile()
         self._on_service_event("changed", {})
