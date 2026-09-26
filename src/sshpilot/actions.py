@@ -1579,6 +1579,12 @@ def register_window_actions(window):
         window.edit_known_hosts_action.connect('activate', window.on_edit_known_hosts_action)
         window.add_action(window.edit_known_hosts_action)
 
+    # Action for managing login profiles
+    if hasattr(window, 'on_manage_login_profiles_action'):
+        window.manage_login_profiles_action = Gio.SimpleAction.new('manage-login-profiles', None)
+        window.manage_login_profiles_action.connect('activate', window.on_manage_login_profiles_action)
+        window.add_action(window.manage_login_profiles_action)
+
     # Action for managing the local authorized_keys file
     if hasattr(window, 'on_manage_local_authorized_keys_action'):
         window.manage_local_authorized_keys_action = Gio.SimpleAction.new('manage-local-authorized-keys', None)

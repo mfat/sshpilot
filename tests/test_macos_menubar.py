@@ -135,6 +135,7 @@ def test_build_menubar_uses_existing_actions():
         "win.open-file-manager",
         "app.edit-ssh-config",
         "win.edit-known-hosts",
+        "win.manage-login-profiles",
         "win.manage-local-authorized-keys",
     ]
     assert [a for _l, a in _flatten_items(menus["Window"])] == [

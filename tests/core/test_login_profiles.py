@@ -398,3 +398,15 @@ def test_credential_prefix_matches_core_constant():
     from sshpilot.core.login_profiles.models import PROFILE_SECRET_HOST_PREFIX
 
     assert credential_model._LOGIN_PROFILE_SECRET_PREFIX == PROFILE_SECRET_HOST_PREFIX
+
+
+def test_added_directives_stay_above_the_block_separator(env):
+    """Appended extra directives must not land after the blank line that
+    separates the block from the next Host (pre-existing formatter bug that
+    every profile with extra directives would otherwise hit)."""
+    _repo, service, root, *_ = env
+    profile = _deploy(service, extra_ssh_config="ServerAliveInterval 30")
+    service.assign_connections(["web1"], LINK_EXPLICIT, profile.id)
+    text = root.read_text()
+    assert "    ServerAliveInterval 30\n\nHost web2\n" in text
+    assert "IdentitiesOnly yes\n    ServerAliveInterval 30\n" in text

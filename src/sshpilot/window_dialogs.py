@@ -719,6 +719,169 @@ class WindowConfigDialogsMixin:
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
 
+    # -- login profiles ------------------------------------------------------
+
+    def _login_profile_controller(self):
+        """The window's login profile controller, or ``None`` if unsupported."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return None
+        try:
+            from .api.capabilities import Capability
+
+            if not client.get_capabilities().supports(Capability.LOGIN_PROFILES_READ):
+                return None
+        except Exception:
+            return None
+        controller = getattr(self, "_login_profiles_controller", None)
+        if controller is None:
+            from .gtk.login_profile_controller import LoginProfileController
+
+            # A getter: the window replaces ``self.client`` on daemon reconnect.
+            controller = LoginProfileController(lambda: getattr(self, "client", None))
+            self._login_profiles_controller = controller
+        return controller
+
+    def _login_profile_group_names(self):
+        manager = getattr(self, "group_manager", None)
+        groups = getattr(manager, "groups", None) or {}
+        return {gid: str(info.get("name") or gid) for gid, info in groups.items()}
+
+    def _require_login_profiles(self):
+        controller = self._login_profile_controller()
+        if controller is None:
+            self._simple_dialog(
+                _("Login profiles unavailable"),
+                _("The SSH Pilot daemon does not support login profiles."),
+            )
+        return controller
+
+    def _after_login_profile_change(self):
+        try:
+            self.connection_manager.refresh()
+            self.rebuild_connection_list()
+        except Exception:
+            logger.debug("Refresh after a login profile change failed", exc_info=True)
+
+    def show_login_profiles_window(self):
+        controller = self._require_login_profiles()
+        if controller is None:
+            return
+        from .login_profile_dialogs import LoginProfilesWindow
+
+        window = getattr(self, "_login_profiles_window", None)
+        if window is not None:
+            window.present()
+            window.reload()
+            return
+        window = LoginProfilesWindow(
+            self, controller, group_names=self._login_profile_group_names
+        )
+
+        def _closed(*_args):
+            self._login_profiles_window = None
+            return False
+
+        window.connect("close-request", _closed)
+        self._login_profiles_window = window
+        window.present()
+
+    def on_manage_login_profiles_action(self, action=None, param=None):
+        try:
+            self.show_login_profiles_window()
+        except Exception:
+            logger.exception("Failed to open the login profiles window")
+
+    def on_assign_login_profile_action(self, action=None, param=None):
+        controller = self._require_login_profiles()
+        if controller is None:
+            return
+        connections = [
+            conn for conn in self._get_target_connections(prefer_context=True)
+            if str(getattr(conn, "protocol", "ssh") or "ssh") == "ssh"
+        ]
+        ids = [str(getattr(conn, "nickname", "") or getattr(conn, "id", "")) for conn in connections]
+        ids = [cid for cid in dict.fromkeys(ids) if cid]
+        if not ids:
+            self._simple_dialog(
+                _("No SSH connections selected"),
+                _("Login profiles apply to SSH connections."),
+            )
+            return
+        from .login_profile_dialogs import show_assign_dialog
+
+        # Refreshes first when no snapshot is cached yet.
+        show_assign_dialog(self, controller, ids, on_done=self._after_login_profile_change)
+
+    def on_set_group_login_profile_action(self, action=None, param=None):
+        controller = self._require_login_profiles()
+        if controller is None:
+            return
+        row = getattr(self, "_context_menu_group_row", None)
+        if row is None:
+            try:
+                row = self.connection_list.get_selected_row()
+            except Exception:
+                row = None
+        group_id = getattr(row, "group_id", None)
+        groups = getattr(getattr(self, "group_manager", None), "groups", None) or {}
+        info = groups.get(group_id) if group_id else None
+        if not info:
+            return
+        members = [str(cid) for cid in info.get("connections", []) or [] if cid]
+        from .login_profile_dialogs import run_async, show_error_alert, show_group_profile_dialog
+
+        def _open(_snapshot=None):
+            show_group_profile_dialog(
+                self,
+                controller,
+                group_id,
+                str(info.get("name") or group_id),
+                members,
+                on_done=self._after_login_profile_change,
+            )
+
+        run_async(
+            controller.refresh,
+            _open,
+            lambda error: show_error_alert(self, _("Login profiles unavailable"), error),
+        )
+
+    def notify_login_profiles_changed(self, event_payload=None):
+        """Handle a ``login_profiles.changed`` event on the GTK thread."""
+        controller = getattr(self, "_login_profiles_controller", None)
+        window = getattr(self, "_login_profiles_window", None)
+        if window is not None:
+            window.reload()
+        elif controller is not None:
+            from .login_profile_dialogs import run_async
+
+            run_async(controller.refresh, lambda _s: None, lambda _e: None)
+        detached = tuple(getattr(event_payload, "detached", ()) or ())
+        drifted = [d for d in detached if getattr(d.reason, "value", d.reason) == "drift"]
+        if not drifted:
+            return
+        if len(drifted) == 1:
+            message = _(
+                "{connection} was detached from login profile “{profile}” because "
+                "its SSH config was edited."
+            ).format(connection=drifted[0].connection_id, profile=drifted[0].profile_name)
+        else:
+            message = _(
+                "{count} connections were detached from their login profile because "
+                "their SSH config was edited."
+            ).format(count=len(drifted))
+        overlay = getattr(self, "toast_overlay", None)
+        if overlay is not None:
+            try:
+                from gi.repository import Adw
+
+                toast = Adw.Toast.new(message)
+                toast.set_timeout(6)
+                overlay.add_toast(toast)
+            except Exception:
+                logger.debug("Could not show the detach toast", exc_info=True)
+
     def show_preferences(self, page_id=None):
         """Enter Settings mode (pushes onto the main NavigationView).
 

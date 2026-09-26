@@ -441,6 +441,12 @@ def merged_block_lines(old_block: Optional[HostBlock],
             remaining_extras.remove(match)
             out_body.append(raw)
 
+    # Appended lines go before the block's trailing blank lines: those
+    # separate this block from the next one and must stay last.
+    trailing_blank: List[str] = []
+    while out_body and not out_body[-1].strip():
+        trailing_blank.insert(0, out_body.pop())
     _insert_managed()
     out_body.extend(f"    {authored}\n" for _entry, authored in remaining_extras)
+    out_body.extend(trailing_blank)
     return [header] + out_body

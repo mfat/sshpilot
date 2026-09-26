@@ -2341,3 +2341,98 @@ def test_ssh_editor_dialog_opens_recoverable_when_daemon_unavailable(monkeypatch
     assert dialog._editor_load_failed is True
     assert dialog.load_error_shown is True
     assert callable(dialog.load_error_on_retry)
+
+
+# -- login profile link applied around the save ----------------------------------
+
+class _ProfileClient(_Client):
+    def __init__(self):
+        super().__init__()
+        self.assignments = []
+
+    def assign_login_profile(self, request):
+        self.assignments.append((request.connection_ids, request.mode, request.profile_id))
+        return True
+
+
+def test_profile_link_is_applied_after_the_config_save_commits():
+    from sshpilot.api.models.login_profiles import LoginProfileLinkMode
+
+    window = _MutationWindow()
+    window.client = _ProfileClient()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    dialog._login_profile_change = (LoginProfileLinkMode.EXPLICIT, "lp-aaaaaaaaaaaaaaaa")
+    completed = []
+    data = _basic_data(nickname="demo", hostname="demo.example", __changed_fields=("hostname",))
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append((ok, kwargs))
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    assert window.client.assignments == []  # nothing before the config write
+    success(SimpleNamespace(connection_id="demo", generation=8, nickname="demo"))
+
+    assign_op, assign_ok, _assign_err = window.client_bridge.calls[1]
+    assign_ok(assign_op())
+    assert window.client.assignments == [
+        (("demo",), LoginProfileLinkMode.EXPLICIT, "lp-aaaaaaaaaaaaaaaa")
+    ]
+    assert completed[0][0] is True
+    assert dialog._login_profile_applied is True
+
+
+def test_unlinking_runs_before_the_config_write():
+    window = _MutationWindow()
+    window.client = _ProfileClient()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    dialog._login_profile_change = (None, None)
+    order = []
+    original_update = window.client.update_connection
+
+    def _update(connection_id, request):
+        order.append("update")
+        return original_update(connection_id, request)
+
+    window.client.update_connection = _update
+    original_assign = window.client.assign_login_profile
+
+    def _assign(request):
+        order.append("unlink")
+        return original_assign(request)
+
+    window.client.assign_login_profile = _assign
+    completed = []
+    data = _basic_data(nickname="demo", hostname="demo.example", __changed_fields=("hostname",))
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    success(operation())
+
+    assert order == ["unlink", "update"]
+    assert window.client.assignments == [(("demo",), None, None)]
+    assert completed == [True]
+    assert len(window.client_bridge.calls) == 1  # no second assignment
+
+
+def test_failed_profile_link_still_completes_the_save_with_a_warning():
+    from sshpilot.api.models.login_profiles import LoginProfileLinkMode
+
+    window = _MutationWindow()
+    window.client = _ProfileClient()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    dialog._login_profile_change = (LoginProfileLinkMode.INHERIT, None)
+    completed = []
+    data = _basic_data(nickname="demo", hostname="demo.example", __changed_fields=("hostname",))
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append((ok, kwargs))
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    success(SimpleNamespace(connection_id="demo", generation=8, nickname="demo"))
+    _op, _ok, assign_err = window.client_bridge.calls[1]
+    assign_err(RuntimeError("boom"))
+
+    assert completed[0][0] is True
+    assert "login profile" in completed[0][1]["meta_error"]

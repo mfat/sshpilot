@@ -687,6 +687,8 @@ class SshPilotApplication(Adw.Application):
                 # end. The inline status on the tab or pane is the nicety; the
                 # window toast is the guarantee.
                 GLib.idle_add(self._handle_pre_command_event, event.payload)
+            elif event.type is EventType.LOGIN_PROFILES_CHANGED:
+                GLib.idle_add(self._handle_login_profiles_event, event.payload)
 
         try:
             self._api_event_subscription = client.subscribe_events(_on_event)
@@ -1277,6 +1279,18 @@ class SshPilotApplication(Adw.Application):
             if isinstance(value, str) and value.strip():
                 return value
         return ''
+
+    def _handle_login_profiles_event(self, payload) -> bool:
+        window = self.window
+        if window is None or getattr(window, '_is_quitting', False):
+            return False
+        notify = getattr(window, 'notify_login_profiles_changed', None)
+        if callable(notify):
+            try:
+                notify(payload)
+            except Exception:
+                logger.debug("Login profile event handling failed", exc_info=True)
+        return False
 
     def _handle_api_client_event(self, event_type) -> bool:
         from .api.events import EventType

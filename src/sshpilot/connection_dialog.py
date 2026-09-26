@@ -56,6 +56,10 @@ from .ssh_connection_validator import (  # SSHConnectionValidator also re-export
     ValidationResult,
 )
 from .path_list import PathList
+from .connection_dialog_login_profile import (
+    ConnectionDialogLoginProfileMixin,
+    login_profile_locked_widgets,
+)
 from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
@@ -1811,6 +1815,7 @@ class FileListEditor(Adw.PreferencesGroup):
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/connection_dialog.ui")
 class ConnectionDialog(
     Adw.Window,
+    ConnectionDialogLoginProfileMixin,
     ConnectionDialogValidationMixin,
     ConnectionDialogFieldHelpersMixin,
     ConnectionDialogPortForwardingMixin,
@@ -1954,6 +1959,10 @@ class ConnectionDialog(
                 pass
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
+        try:
+            self.start_login_profile_load()
+        except Exception:
+            logger.debug("Login profile picker unavailable", exc_info=True)
     
     def _build_connection_tab_pages(self):
         """Build the connection editor tab pages as (name, title, widget) tuples."""
@@ -1978,6 +1987,13 @@ class ConnectionDialog(
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
             authentication_page.append(group)
+        # A linked login profile owns these (username lives on the Connection
+        # page, agent forwarding on Advanced).
+        self._register_login_profile_locked_widgets(
+            login_profile_locked_widgets(self, self._auth_groups_for_login_profile)
+            + [getattr(self, 'forward_agent_row', None),
+               getattr(self, 'forward_agent_value_row', None)]
+        )
 
         forwarding_page = _page_box()
         for group in self.build_port_forwarding_groups():
@@ -3814,7 +3830,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             pass
 
-        return [
+        auth_groups = [
             auth_group,
             self.key_selection_group,
             self.key_editor,
@@ -3823,6 +3839,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             password_group,
             hw_group,
         ]
+        self._auth_groups_for_login_profile = auth_groups
+        return [self._build_login_profile_group(), *auth_groups]
 
     def build_connection_groups(self):
         """Build PreferencesGroups for the General page"""
@@ -5244,6 +5262,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 passphrase_ops = ops
         except Exception:
             logger.debug("Failed to collect key passphrase changes", exc_info=True)
+
+        # Login profile link change, applied by the window around the save.
+        try:
+            self._login_profile_change = self.collect_login_profile_change()
+        except Exception:
+            logger.debug("Could not read the login profile choice", exc_info=True)
+            self._login_profile_change = None
+        self._login_profile_applied = False
 
         secret_plan = {
             'password_changed': bool(password_changed),

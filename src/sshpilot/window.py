@@ -3849,6 +3849,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ssh_section = Gio.Menu()
         ssh_section.append(_('SSH Config Editor'), 'app.edit-ssh-config')
         ssh_section.append(_('Known Hosts Editor'), 'win.edit-known-hosts')
+        ssh_section.append(_('Login Profiles'), 'win.manage-login-profiles')
         ssh_section.append(_('Manage Local authorized_keys…'), 'win.manage-local-authorized-keys')
         menu.append_section(None, ssh_section)
 
@@ -8043,6 +8044,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             complete_save(False)
             return
 
+        # Login profile link chosen in the dialog: (mode, profile_id), where
+        # mode None means "custom" (unlink). Unlinking runs before the config
+        # write so edited auth fields are never mistaken for drift; linking
+        # runs after it commits so the profile renders onto the saved block.
+        profile_change = getattr(dialog, '_login_profile_change', None)
+        if (
+            profile_change is not None
+            and profile_change[0] is None
+            and was_editing
+            and checkpoint is None
+            and not getattr(dialog, '_login_profile_applied', False)
+        ):
+            from .api.models.login_profiles import AssignLoginProfileRequest
+
+            unlink_id = str(getattr(getattr(dialog, 'connection', None), 'nickname', '') or '')
+            config_operation = operation
+
+            def operation():
+                if unlink_id:
+                    self.client.assign_login_profile(
+                        AssignLoginProfileRequest((unlink_id,), None, None)
+                    )
+                dialog._login_profile_applied = True
+                return config_operation()
+
         def _success(_details):
             if self._is_quitting:
                 complete_save(False, None)
@@ -8097,6 +8123,46 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         "Post-mutation connection refresh failed type=%s",
                         type(error).__name__,
                     )
+
+            finish_config_flow = _finish_save_flow
+
+            def _finish_save_flow(meta_error=None):
+                change = getattr(dialog, '_login_profile_change', None)
+                if (
+                    change is None
+                    or change[0] is None
+                    or getattr(dialog, '_login_profile_applied', False)
+                ):
+                    finish_config_flow(meta_error)
+                    return
+                from .api.models.login_profiles import AssignLoginProfileRequest
+
+                mode, profile_id = change
+
+                def _applied(_result):
+                    dialog._login_profile_applied = True
+                    finish_config_flow(meta_error)
+
+                def _not_applied(error):
+                    logger.warning(
+                        "Applying the login profile failed type=%s",
+                        type(error).__name__,
+                    )
+                    finish_config_flow(
+                        meta_error
+                        or _("Saved, but the login profile could not be applied.")
+                    )
+
+                try:
+                    bridge.submit(
+                        lambda: self.client.assign_login_profile(
+                            AssignLoginProfileRequest((new_conn_id,), mode, profile_id)
+                        ),
+                        on_success=_applied,
+                        on_error=_not_applied,
+                    )
+                except RuntimeError as error:
+                    _not_applied(error)
 
             pending_meta_local = pending_meta or {}
             metadata_saved = getattr(dialog, '_daemon_metadata_saved', False)

@@ -5020,6 +5020,7 @@ def _attach_connection_list_context_menu(window):
                 else:
                     menu.add_section(
                         menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: window.on_edit_group_action(None, None)),
+                        menu.add_item('avatar-default-symbolic', _('Set Login Profile…'), lambda: window.on_set_group_login_profile_action(None, None)) if hasattr(window, 'on_set_group_login_profile_action') else None,
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_group_in_split_view_action(None, None)),
                         menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: window.on_run_command_action()),
                         menu.add_item('edit-undo-symbolic', _('Ungroup'), lambda: window.on_move_group_to_root_action(None, None)) if is_nested else None,
@@ -5110,6 +5111,10 @@ def _attach_connection_list_context_menu(window):
                     menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: window.on_copy_to_group_action(None, None)),
                     menu.add_item('edit-undo-symbolic', ungroup_label, lambda: window.on_move_to_ungrouped_action(None, None)) if any_grouped else None,
                 )
+                if hasattr(window, 'on_assign_login_profile_action'):
+                    menu.add_section(
+                        menu.add_item('avatar-default-symbolic', _('Assign Login Profile…'), lambda: window.on_assign_login_profile_action(None, None)),
+                    )
 
                 try:
                     pin_targets = selected_conns if multi else ([conn] if conn else [])

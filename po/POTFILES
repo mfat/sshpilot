@@ -10,6 +10,7 @@ src/sshpilot/command_palette.py
 src/sshpilot/command_progress_dialog.py
 src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_field_helpers.py
+src/sshpilot/connection_dialog_login_profile.py
 src/sshpilot/connection_dialog_port_forwarding.py
 src/sshpilot/connection_dialog_validation.py
 src/sshpilot/connection_display.py
@@ -48,6 +49,7 @@ src/sshpilot/host_info_tab.py
 src/sshpilot/host_picker.py
 src/sshpilot/known_hosts_editor.py
 src/sshpilot/log_viewer.py
+src/sshpilot/login_profile_dialogs.py
 src/sshpilot/machine_info_dialog.py
 src/sshpilot/macos_menubar.py
 src/sshpilot/main.py
