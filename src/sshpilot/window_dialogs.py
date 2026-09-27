@@ -884,10 +884,9 @@ class WindowConfigDialogsMixin:
                 "its SSH config was edited."
             ).format(connection=drifted[0].connection_id, profile=drifted[0].profile_name)
         else:
-            message = _(
-                "{count} connections were detached from their login profile because "
-                "their SSH config was edited."
-            ).format(count=len(drifted))
+            from .gtk.login_profile_messages import format_detached_connections
+
+            message = format_detached_connections(len(drifted))
         overlay = getattr(self, "toast_overlay", None)
         if overlay is not None:
             try:
