@@ -31,7 +31,7 @@ def _window(mode='compact', **pref_overrides):
         _update_forwarding_indicators=MagicMock(name='fwd'),
         apply_row_style=MagicMock(name='apply_row_style'),
         apply_sidebar_mode=MagicMock(name='apply_sidebar_mode'),
-        _reveal_file_manager_button=MagicMock(name='reveal_fm'),
+        _reveal_hover_actions=MagicMock(name='reveal_hover'),
         _pointer_is_on_row=MagicMock(return_value=False),
     )
     group = SimpleNamespace(

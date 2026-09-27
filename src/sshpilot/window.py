@@ -2533,17 +2533,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 row.expand_button.set_visible(True)
 
             # Re-evaluate hover action buttons against current prefs / hover.
-            if hasattr(row, '_reveal_file_manager_button'):
+            if hasattr(row, '_reveal_hover_actions'):
                 try:
                     on_row = (
                         row._pointer_is_on_row()
                         if hasattr(row, '_pointer_is_on_row')
                         else False
                     )
-                    row._reveal_file_manager_button(on_row)
+                    row._reveal_hover_actions(on_row)
                 except Exception:
                     logger.debug(
-                        "Failed to refresh connection-row file manager button",
+                        "Failed to refresh connection-row hover actions",
                         exc_info=True,
                     )
             if hasattr(row, '_reveal_row_actions'):
@@ -4258,6 +4258,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
+            dashboard_callback=self._open_dashboard_for_connection,
             status_resolver=status_resolver,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
@@ -7255,6 +7256,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             connection = getattr(row, 'connection', None) if row else None
         if connection is None:
             return
+        self._open_dashboard_for_connection(connection)
+
+    def _open_dashboard_for_connection(self, connection):
+        """Open the Dashboard tab for ``connection``."""
         from .host_info_tab import open_host_info_tab
         from .machine_info_dialog import open_machine_info_tab
 

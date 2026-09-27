@@ -145,6 +145,90 @@ def test_a_row_without_a_file_manager_never_shows_the_action():
     row.file_manager_button.set_opacity.assert_called_with(0.0)
 
 
+def _dashboard_row(monkeypatch, show_dashboard=True, callback=True,
+                   remote_command=True):
+    mod = importlib.import_module('sshpilot.sidebar')
+    caps = frozenset({mod.Capability.REMOTE_COMMAND}) if remote_command else frozenset()
+    monkeypatch.setattr(mod, 'capabilities_for', lambda _conn: caps)
+    row = mod.ConnectionRow.__new__(mod.ConnectionRow)
+    row._is_hovering = False
+    row._file_manager_callback = None
+    row._dashboard_callback = MagicMock() if callback else None
+    row.connection = SimpleNamespace(nickname='host')
+    row.config = SimpleNamespace(
+        get_setting=lambda key, default=None: (
+            show_dashboard
+            if key == 'ui.sidebar_show_dashboard_button'
+            else default
+        )
+    )
+    row.dashboard_button = MagicMock(name='dashboard_button')
+    row._dashboard_slot = MagicMock(name='dashboard_slot')
+    return row, mod
+
+
+def test_dashboard_button_reveals_on_hover_when_enabled(monkeypatch):
+    row, mod = _dashboard_row(monkeypatch)
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
+    row._dashboard_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
+    row.dashboard_button.set_opacity.assert_called_with(1.0)
+
+    row._is_hovering = False
+    mod.ConnectionRow._maybe_hide_button(row)
+    row._dashboard_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
+    row.dashboard_button.set_opacity.assert_called_with(0.0)
+
+
+def test_dashboard_button_pref_off_costs_no_width(monkeypatch):
+    """Preferences ▸ Sidebar ▸ Dashboard Button defaults off. The slot is
+    hidden rather than left on its empty page: a visible zero-width slot still
+    costs the actions box its spacing. Manage Files holds the row height."""
+    row, mod = _dashboard_row(monkeypatch, show_dashboard=False)
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
+    row._dashboard_slot.set_visible.assert_called_with(False)
+    row.dashboard_button.set_opacity.assert_called_with(0.0)
+
+
+def test_dashboard_alone_hides_the_manage_files_slot(monkeypatch):
+    """With only the Dashboard enabled, its button holds the row height, so
+    the Manage Files slot is hidden instead of left on its empty page."""
+    row, mod = _dashboard_row(monkeypatch)
+    row.file_manager_button = MagicMock(name='file_manager_button')
+    row._file_manager_slot = MagicMock(name='file_manager_slot')
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
+    row._file_manager_slot.set_visible.assert_called_with(False)
+    row._dashboard_slot.set_visible.assert_called_with(True)
+    row.dashboard_button.set_opacity.assert_called_with(1.0)
+
+
+def test_dashboard_button_needs_remote_commands(monkeypatch):
+    """The Dashboard runs remote commands; protocols without them never show
+    the button (mirrors the context menu's Dashboard… entry)."""
+    row, mod = _dashboard_row(monkeypatch, remote_command=False)
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
+    row._dashboard_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
+    row.dashboard_button.set_opacity.assert_called_with(0.0)
+
+
+def test_dashboard_button_click_opens_the_rows_connection(monkeypatch):
+    row, mod = _dashboard_row(monkeypatch)
+
+    mod.ConnectionRow._on_dashboard_clicked(row, None)
+
+    row._dashboard_callback.assert_called_once_with(row.connection)
+
+
 def _window(width):
     win_mod = importlib.import_module('sshpilot.window')
     win = win_mod.MainWindow.__new__(win_mod.MainWindow)
