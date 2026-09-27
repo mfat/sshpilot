@@ -212,10 +212,17 @@ def _show(value, json_output, stdout, title):
 
 
 def _resolve_connection(client, name: str) -> ConnectionId:
+    items = list(client.list_connections())
     matches = []
-    for item in client.list_connections():
+    for item in items:
         if name in {str(item.id), item.nickname, item.host, item.hostname}:
             if item.id not in matches:
+                matches.append(item.id)
+    if not matches:
+        # The name shown in the app: for a non-SSH connection the ID is
+        # generated, so this is the only name its user ever typed.
+        for item in items:
+            if name == getattr(item, "display_name", "") and item.id not in matches:
                 matches.append(item.id)
     if not matches:
         raise CliUsageError(f"connection not found: {name}")

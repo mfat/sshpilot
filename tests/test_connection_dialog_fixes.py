@@ -550,6 +550,8 @@ def _save_plugin_password(typed, original):
     emitted = []
     form = types.SimpleNamespace(
         nickname_row=types.SimpleNamespace(get_text=lambda: 'desk'),
+        display_name_row=types.SimpleNamespace(get_text=lambda: 'Desk'),
+        is_editing=True,
         _plugin_field_widgets={
             'password': (
                 types.SimpleNamespace(default=None, required=False, label='Password'),

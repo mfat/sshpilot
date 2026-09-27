@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Keep in sync with sshpilot.plugins.api.API_VERSION
-API_VERSION: Tuple[int, int] = (1, 14)
+API_VERSION: Tuple[int, int] = (1, 15)
 
 
 class Capability(enum.Enum):

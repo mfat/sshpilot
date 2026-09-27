@@ -53,6 +53,8 @@ class SerialProtocolBackend(ProtocolBackend):
     protocol_id = "serial"
     display_name = "Serial"
     default_port = None
+    # A local device: there is no network path for a pre-connection step to open.
+    pre_connect = False
 
     def capabilities(self) -> frozenset:
         return frozenset()

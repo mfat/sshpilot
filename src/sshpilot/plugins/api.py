@@ -62,6 +62,8 @@ logger = logging.getLogger(__name__)
 #      same native SSH/local paths as the one-shot command APIs; returns a
 #      StreamHandle the caller stops when done.
 # 1.14: daemon-owned remote commands, streams, settings, and session views.
+# 1.15: ProtocolBackend.pre_connect — False hides the connection editor's
+#      pre-connection page for a protocol that opens no network connection.
 #
 # Headless contracts (Capability, SpawnSpec, FieldSpec, Events, …) live in
 # ``sshpilot.core.plugins``; this module re-exports them for plugin compatibility.
@@ -95,6 +97,12 @@ class ProtocolBackend(abc.ABC):
     #: Human-readable name for the connection dialog's protocol selector.
     display_name: str = ""
     default_port: Optional[int] = None
+    #: Whether the pre-connection step (a command such as a VPN dial-up) can
+    #: apply. False for a protocol that opens no network connection of its
+    #: own, such as a local serial console. The port-knock half of that step
+    #: and Wake-on-LAN additionally need a field keyed ``host``: that is the
+    #: machine they target.
+    pre_connect: bool = True
 
     @abc.abstractmethod
     def capabilities(self) -> frozenset:

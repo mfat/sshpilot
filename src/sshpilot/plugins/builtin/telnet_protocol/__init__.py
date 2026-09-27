@@ -35,7 +35,7 @@ class TelnetProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="host", label=_("Host"), kind="text", required=True,
-                      placeholder="hostname or IP address"),
+                      placeholder=_("hostname or IP address")),
             FieldSpec(key="port", label=_("Port"), kind="int",
                       default=self.default_port),
         ]
@@ -43,15 +43,15 @@ class TelnetProtocolBackend(ProtocolBackend):
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
         if not (data.get("host") or data.get("hostname")):
-            errors.append("A host is required.")
+            errors.append(_("A host is required."))
         raw_port = data.get("port", self.default_port)
         if raw_port is None:
             raw_port = self.default_port
         try:
             if not 0 < int(raw_port) < 65536:
-                errors.append("Port must be between 1 and 65535.")
+                errors.append(_("Port must be between 1 and 65535."))
         except (TypeError, ValueError):
-            errors.append("Port must be a number.")
+            errors.append(_("Port must be a number."))
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:

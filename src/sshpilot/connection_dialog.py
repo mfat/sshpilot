@@ -83,6 +83,44 @@ def _protocol_display_name(backend) -> str:
     return getattr(backend, "display_name", "") or protocol_id
 
 
+def _entry_row_text(row):
+    """The Gtk.Text inside an Adw.EntryRow, or None.
+
+    Adw.EntryRow has no placeholder or input-purpose API and its direct child
+    is a layout Box, so those have to be set on the text widget it wraps. The
+    placeholder then shows while the empty row has focus, after the title has
+    moved up out of its way.
+    """
+    try:
+        pending = [row.get_first_child()]
+        while pending:
+            widget = pending.pop()
+            if widget is None:
+                continue
+            if isinstance(widget, Gtk.Text):
+                return widget
+            pending.append(widget.get_next_sibling())
+            pending.append(widget.get_first_child())
+    except Exception:
+        pass
+    return None
+
+
+def _set_entry_row_hint(row, placeholder="", *, digits=False, max_length=0):
+    text = _entry_row_text(row)
+    if text is None:
+        return
+    try:
+        if placeholder:
+            text.set_placeholder_text(placeholder)
+        if digits:
+            text.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        if max_length:
+            text.set_max_length(max_length)
+    except Exception:
+        logger.debug("Could not set an entry-row hint", exc_info=True)
+
+
 def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
     """Run ``start_worker`` once the secret backend is confirmed unlocked.
 
@@ -3017,6 +3055,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     or self.connection.nickname or ""
                 )
                 self._load_shared_meta_rows()
+                # That load set the stored knock/command mode; a knock means
+                # nothing for a protocol with no host, so rescope after it.
+                self._apply_pre_connect_scope(
+                    'host' in self._backend_field_keys(
+                        self._selected_protocol_backend()
+                    )
+                )
                 self._load_plugin_field_values()
                 self._load_plugin_password()
             finally:
@@ -3349,9 +3394,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Gate every save button on the daemon snapshot (daemon edits only)."""
         has_errors = False
         if hasattr(self, 'validation_results'):
+            # A plugin protocol hides the SSH rows (its ID is generated, not
+            # typed), so text left in them must not disable a save whose
+            # error nobody can see.
+            keys = (('name', 'hostname', 'port', 'username')
+                    if self._selected_protocol_id() == 'ssh' else ())
             has_errors = any(
                 (k in self.validation_results and not self.validation_results[k].is_valid)
-                for k in ('name', 'hostname', 'port', 'username')
+                for k in keys
             )
         form_is_valid = not has_errors
         secret_busy = getattr(self, '_secret_save_in_progress', False)
@@ -3598,7 +3648,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Protocol selector. Invisible while SSH is the only registered
         # backend; insensitive when editing (no cross-store migration).
         try:
-            self._protocol_backends = list(protocol_registry().all())
+            # SSH leads: it is the default and the common case, while
+            # registry.all() is alphabetical and would bury it mid-list.
+            self._protocol_backends = sorted(
+                protocol_registry().all(),
+                key=lambda b: getattr(b, 'protocol_id', '') != 'ssh',
+            )
         except Exception:
             self._protocol_backends = []
         self.protocol_row = Adw.ComboRow(title=_("Protocol"))
@@ -3613,9 +3668,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if self.is_editing:
             self.protocol_row.set_sensitive(False)
         # Reflect the right protocol in the dropdown: the connection's own when
-        # editing, otherwise SSH. registry.all() is alphabetical, so index 0 is
-        # not SSH — without this an edited SSH connection would show the first
-        # listed protocol (e.g. Docker/Podman).
+        # editing, otherwise SSH. Selected by id rather than trusting index 0,
+        # which is SSH only while an SSH backend is registered.
         target_protocol = 'ssh'
         if self.is_editing:
             target_protocol = getattr(self.connection, 'protocol', 'ssh') or 'ssh'
@@ -3626,6 +3680,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     break
         except Exception:
             pass
+        # What the form currently shows, so the first switch away can keep
+        # the values typed for it (_stash_protocol_values).
+        self._ui_protocol_id = target_protocol
         self.protocol_row.connect('notify::selected', self._on_protocol_changed)
         basic_group.add(self.protocol_row)
 
@@ -3653,14 +3710,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         
         # Port (match style of fields above using EntryRow)
         self.port_row = Adw.EntryRow(title=_("Port"))
-        try:
-            entry = self.port_row.get_child()
-            if entry and hasattr(entry, 'set_input_purpose'):
-                entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if entry and hasattr(entry, 'set_max_length'):
-                entry.set_max_length(5)
-        except Exception:
-            pass
+        _set_entry_row_hint(self.port_row, digits=True, max_length=5)
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
 
@@ -3686,23 +3736,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             description=_("Optional. Set MAC address to wake this host from the context menu. Host must be on the same subnet for detection.")
         )
         self.wol_mac_row = Adw.EntryRow(title=_("MAC address"))
-        entry = self.wol_mac_row.get_child()
-        if entry and hasattr(entry, 'set_placeholder_text'):
-            entry.set_placeholder_text("aa:bb:cc:dd:ee:ff")
+        _set_entry_row_hint(self.wol_mac_row, "aa:bb:cc:dd:ee:ff")
         wol_group.add(self.wol_mac_row)
         self.wol_broadcast_row = Adw.EntryRow(title=_("Broadcast IP (optional)"))
-        if self.wol_broadcast_row.get_child() and hasattr(self.wol_broadcast_row.get_child(), 'set_placeholder_text'):
-            self.wol_broadcast_row.get_child().set_placeholder_text(_("e.g. 192.168.1.255"))
+        _set_entry_row_hint(self.wol_broadcast_row, _("e.g. 192.168.1.255"))
         wol_group.add(self.wol_broadcast_row)
         self.wol_port_row = Adw.EntryRow(title=_("WoL port (optional)"))
-        try:
-            wpe = self.wol_port_row.get_child()
-            if wpe and hasattr(wpe, 'set_input_purpose'):
-                wpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if wpe and hasattr(wpe, 'set_max_length'):
-                wpe.set_max_length(5)
-        except Exception:
-            pass
+        _set_entry_row_hint(self.wol_port_row, digits=True, max_length=5)
         self.wol_port_row.set_text("9")
         wol_group.add(self.wol_port_row)
         # Detect MAC button (run in thread, update row from main thread)
@@ -3803,8 +3843,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._routing_group = proxy_group
         self._wol_group = wol_group
 
-        # Wake on LAN lives on its own (SSH-only) tab — see
-        # _build_connection_tab_pages — so it isn't shown for non-SSH protocols.
+        # Wake on LAN lives on its own tab — see _build_connection_tab_pages —
+        # shown only for protocols that target a host (_apply_protocol_to_ui).
         return [basic_group, proxy_group]
     
     def build_port_forwarding_groups(self):
@@ -3922,6 +3962,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     _PRE_COMMAND_HELP = N_(
         "Opens the way to the host before SSH Pilot connects. Choose one."
     )
+    #: For a protocol with no host of its own (a container, a pod): there is
+    #: nothing to knock, so the command is the whole group.
+    _PRE_COMMAND_HELP_NO_HOST = N_(
+        "Runs before SSH Pilot connects, for example to bring up a VPN."
+    )
     #: Carries the knock syntax: an Adw.EntryRow has no subtitle to put it in,
     #: and the syntax is the one thing a user cannot guess.
     _KNOCK_HELP = N_(
@@ -4004,6 +4049,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         knock_row.set_activatable(False)
         knock_row.set_child(knock_box)
         pre_group.add(knock_row)
+        # Hidden, with the radios, for a protocol that has no host to knock.
+        self._pre_command_knock_prow = knock_row
 
         self.pre_command_view = Gtk.TextView()
         self.pre_command_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -4302,9 +4349,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         hostname = username = ""
         port = 0
         try:
-            hostname = (self.hostname_row.get_text() or "").strip()
-            username = (self.username_row.get_text() or "").strip()
-            port = int((self.port_row.get_text() or "0").strip() or 0)
+            hostname, username, port = self._connection_target()
         except Exception:
             logger.debug("Could not read the host fields for Test", exc_info=True)
         self.pre_command_test_button.set_sensitive(False)
@@ -4381,17 +4426,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     
     # --- Protocol selector / plugin protocol support ----------------------
 
-    # "commands" is not here: every protocol that dials out can need a
-    # pre-connection command (a port knock, a VPN dial-up), including the
-    # plugin ones -- Docker over ``ssh://`` and Mosh both open a real SSH
-    # connection. The two OpenSSH-directive rows on that page are hidden
-    # per protocol instead; see _apply_protocol_to_ui.
-    _SSH_ONLY_PAGES = ("authentication", "forwarding", "advanced", "wol")
+    # "commands" and "wol" are not here: they are decided per protocol in
+    # _apply_protocol_to_ui. The pre-connection command applies to every
+    # protocol that dials out (a VPN dial-up for a cluster, a port knock in
+    # front of a Mosh host); the knock and Wake-on-LAN also need a host.
+    _SSH_ONLY_PAGES = ("authentication", "forwarding", "advanced")
     #: Groups on the Commands page that are OpenSSH directives, so they mean
-    #: nothing to a protocol sshPilot does not build an ssh command for. The
-    #: pre-connection group stays: Docker over ``ssh://`` and Mosh open real
-    #: SSH connections, so they can sit behind a port knock too.
+    #: nothing to a protocol sshPilot does not build an ssh command for.
     _SSH_ONLY_GROUPS = ("_ssh_commands_group",)
+
+    @staticmethod
+    def _backend_field_keys(backend):
+        try:
+            return {spec.key for spec in (backend.connection_fields() or [])}
+        except Exception:
+            return set()
 
     def _selected_protocol_backend(self):
         """The ProtocolBackend chosen in the selector (None -> SSH default)."""
@@ -4469,9 +4518,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._apply_protocol_to_ui()
 
     def _apply_protocol_to_ui(self):
-        """Show/hide SSH-specific UI according to the selected protocol."""
+        """Show only what the selected protocol uses.
+
+        SSH owns the hand-built rows and pages. A plugin protocol shows its
+        FieldSpec rows -- the general ones in the first group, beside the
+        connection's name -- plus the shared pages that apply to it: the
+        pre-connection command unless it opts out (``pre_connect``), and the
+        port knock and Wake-on-LAN only when it has a ``host`` to target.
+        """
         backend = self._selected_protocol_backend()
-        is_ssh = self._selected_protocol_id() == 'ssh'
+        protocol_id = self._selected_protocol_id()
+        is_ssh = protocol_id == 'ssh'
+        previous = getattr(self, '_ui_protocol_id', None)
+        switched = previous is not None and previous != protocol_id
+        if switched:
+            self._stash_protocol_values(previous)
+        self._ui_protocol_id = protocol_id
+        targets_host = is_ssh or 'host' in self._backend_field_keys(backend)
+        pre_connect = is_ssh or bool(getattr(backend, 'pre_connect', True))
 
         for row_name in ('hostname_row', 'username_row', 'port_row'):
             row = getattr(self, row_name, None)
@@ -4488,6 +4552,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
         for page_name in self._SSH_ONLY_PAGES:
             self._set_page_visible(page_name, is_ssh)
+        self._set_page_visible('commands', pre_connect)
+        self._set_page_visible('wol', targets_host)
+        self._apply_identity_labels(is_ssh, backend)
+        self._apply_pre_connect_scope(targets_host)
         for group_name in self._SSH_ONLY_GROUPS:
             group = getattr(self, group_name, None)
             if group is not None:
@@ -4497,10 +4565,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     pass
         # A single remaining page (non-SSH protocols) shouldn't show a lone tab.
         self._update_switcher_visibility()
+        # Which rows gate saving depends on the protocol.
+        self._update_save_buttons()
 
         box = getattr(self, '_plugin_fields_box', None)
         if box is None:
             return
+        host_group = getattr(self, '_host_group', None)
+        for row in getattr(self, '_plugin_header_rows', None) or []:
+            try:
+                host_group.remove(row)
+            except Exception:
+                pass
+        self._plugin_header_rows = []
         try:
             while box.get_first_child():
                 box.remove(box.get_first_child())
@@ -4508,13 +4585,201 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             pass
         self._plugin_field_widgets = {}
         if not is_ssh and backend is not None:
-            for group in self._build_plugin_field_rows(backend):
+            header_rows = []
+            for group in self._build_plugin_field_rows(backend, header_rows):
                 box.append(group)
+            self._add_header_rows(header_rows)
         box.set_visible(not is_ssh)
+        if switched:
+            self._restore_protocol_values(protocol_id, previous)
 
-    def _build_plugin_field_rows(self, backend):
+    def _add_header_rows(self, rows):
+        """Put a protocol's general fields in the first group, before Tags.
+
+        PreferencesGroup only appends, so Tags is taken out and put back
+        after them: it is app metadata and reads as the group's last word.
+        """
+        host_group = getattr(self, '_host_group', None)
+        if host_group is None or not rows:
+            return
+        tags_row = getattr(self, 'tags_row', None)
+        try:
+            if tags_row is not None:
+                host_group.remove(tags_row)
+            for row in rows:
+                host_group.add(row)
+            if tags_row is not None:
+                host_group.add(tags_row)
+        except Exception:
+            logger.debug("Could not place protocol fields", exc_info=True)
+        self._plugin_header_rows = list(rows)
+
+    def _apply_identity_labels(self, is_ssh, backend):
+        """Name the first group and the connection for what they are.
+
+        For SSH the identifier is the ``Host`` alias in ssh_config, which the
+        user types (``ssh <alias>``) and which cannot hold spaces, so it gets
+        its own row beside the free-text name. Other protocols live in the
+        connection store, where the ID is only a key: it is generated from
+        the name (_generate_connection_id), so they show the name alone.
+        """
+        try:
+            host_group = getattr(self, '_host_group', None)
+            if host_group is not None:
+                host_group.set_title(
+                    _("Host") if is_ssh or backend is None
+                    else _protocol_display_name(backend)
+                )
+            self.nickname_row.set_visible(is_ssh)
+            if is_ssh:
+                self.display_name_row.set_title(_("Name (optional)"))
+                self.display_name_row.set_tooltip_text(
+                    _("Shown in the connection list. Leave empty to use the SSH alias.")
+                )
+            else:
+                self.display_name_row.set_title(_("Name"))
+                self.display_name_row.set_tooltip_text(
+                    _("Shown in the connection list")
+                )
+        except Exception:
+            logger.debug("Could not relabel the identity rows", exc_info=True)
+
+    def _apply_pre_connect_scope(self, targets_host):
+        """Offer the port knock only where there is a host to knock.
+
+        Without one (a container, a pod) the command is the only choice, so
+        the radios go too and the command stays live.
+        """
+        if not targets_host and self.get_pre_command_mode_is_knock():
+            try:
+                self.pre_command_command_radio.set_active(True)
+            except Exception:
+                pass
+        for name in ('_pre_command_knock_prow', 'pre_command_command_radio',
+                     '_pre_command_hint'):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                try:
+                    widget.set_visible(targets_host)
+                except Exception:
+                    pass
+        group = getattr(self, '_pre_command_group', None)
+        abort_row = getattr(self, 'pre_command_abort_row', None)
+        try:
+            if group is not None:
+                if targets_host:
+                    group.set_title(_("Port Knocking and Pre-Connect"))
+                    group.set_description(_(self._PRE_COMMAND_HELP))
+                else:
+                    group.set_title(_("Pre-Connect Command"))
+                    group.set_description(_(self._PRE_COMMAND_HELP_NO_HOST))
+            if abort_row is not None:
+                abort_row.set_subtitle(
+                    _("Off: SSH Pilot warns and connects anyway, so the SSH error is "
+                      "the one you see.")
+                    if self._selected_protocol_id() == 'ssh'
+                    else _("Off: SSH Pilot warns and connects anyway, so the "
+                           "connection's own error is the one you see.")
+                )
+        except Exception:
+            logger.debug("Could not rescope the pre-connection group", exc_info=True)
+
+    def _current_protocol_values(self, protocol_id):
+        if protocol_id == 'ssh':
+            values = {}
+            for key, row_name in (('host', 'hostname_row'),
+                                  ('username', 'username_row'),
+                                  ('port', 'port_row')):
+                try:
+                    values[key] = getattr(self, row_name).get_text().strip()
+                except Exception:
+                    pass
+            return values
+        values = {}
+        for key, (_spec, _row, getter, _setter) in (
+                getattr(self, '_plugin_field_widgets', None) or {}).items():
+            try:
+                values[key] = getter()
+            except Exception:
+                pass
+        return values
+
+    def _stash_protocol_values(self, protocol_id):
+        """Remember what was typed for a protocol the user is switching away
+        from, so switching back does not lose it."""
+        cache = getattr(self, '_protocol_value_cache', None)
+        if cache is None:
+            cache = self._protocol_value_cache = {}
+        cache[protocol_id] = self._current_protocol_values(protocol_id)
+
+    def _restore_protocol_values(self, protocol_id, previous):
+        """Refill a protocol's rows after a switch.
+
+        Its own earlier values win. Otherwise the host and username typed for
+        the previous protocol carry over -- the same machine is the likely
+        intent -- but not the port, whose meaning differs per protocol.
+        """
+        cache = getattr(self, '_protocol_value_cache', None) or {}
+        own = cache.get(protocol_id)
+        carried = {
+            key: value for key, value in (cache.get(previous) or {}).items()
+            if key in ('host', 'username') and value
+        }
+        if protocol_id == 'ssh':
+            for key, row_name in (('host', 'hostname_row'),
+                                  ('username', 'username_row'),
+                                  ('port', 'port_row')):
+                row = getattr(self, row_name, None)
+                value = (own or carried).get(key)
+                if row is None or value in (None, ''):
+                    continue
+                try:
+                    if own is not None or not row.get_text().strip():
+                        row.set_text(str(value))
+                except Exception:
+                    pass
+            return
+        for key, (_spec, _row, _getter, setter) in (
+                getattr(self, '_plugin_field_widgets', None) or {}).items():
+            value = (own if own is not None else carried).get(key)
+            if value is None or (own is None and value == ''):
+                continue
+            try:
+                setter(value)
+            except Exception:
+                logger.debug("Could not restore %r", key, exc_info=True)
+
+    def _connection_target(self):
+        """(host, username, port) as typed, for whichever protocol is shown.
+
+        The pre-connection Test and the MAC detection both act on the host
+        in the form, and for a plugin protocol that is its own ``host``
+        field, not the hidden SSH rows.
+        """
+        if self._selected_protocol_id() == 'ssh':
+            hostname = (self.hostname_row.get_text() or "").strip()
+            username = (self.username_row.get_text() or "").strip()
+            try:
+                port = int((self.port_row.get_text() or "0").strip() or 0)
+            except ValueError:
+                port = 0
+            return hostname, username, port
+        values = self._current_protocol_values(self._selected_protocol_id())
+        backend = self._selected_protocol_backend()
+        try:
+            port = int(values.get('port') or getattr(backend, 'default_port', 0) or 0)
+        except (TypeError, ValueError):
+            port = 0
+        return (str(values.get('host') or '').strip(),
+                str(values.get('username') or '').strip(), port)
+
+    def _build_plugin_field_rows(self, backend, header_rows=None):
         """Render the backend's FieldSpec list as Adw rows, grouped by
-        FieldSpec.group. Returns a list of Adw.PreferencesGroup."""
+        FieldSpec.group. Returns a list of Adw.PreferencesGroup.
+
+        With *header_rows*, ``general`` rows are appended to it instead of a
+        group of their own, for the caller to place in the first group.
+        """
         try:
             specs = list(backend.connection_fields() or [])
         except Exception:
@@ -4528,7 +4793,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         for spec in specs:
             group_key = getattr(spec, 'group', 'general') or 'general'
-            if group_key not in groups:
+            to_header = header_rows is not None and group_key == 'general'
+            if not to_header and group_key not in groups:
                 if group_key == 'general':
                     title = _protocol_display_name(backend)
                 elif group_key == 'advanced':
@@ -4542,12 +4808,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 group = Adw.PreferencesGroup(title=title)
                 groups[group_key] = group
                 ordered_groups.append(group)
-            group = groups[group_key]
+            group = None if to_header else groups[group_key]
 
             kind = getattr(spec, 'kind', 'text') or 'text'
             default = spec.default
             if kind == 'int':
-                row = Adw.SpinRow.new_with_range(0, 2 ** 31 - 1, 1)
+                # A port gets the range every backend's validate() enforces,
+                # so the spinner cannot offer a value saving then refuses.
+                if spec.key == 'port':
+                    row = Adw.SpinRow.new_with_range(1, 65535, 1)
+                else:
+                    row = Adw.SpinRow.new_with_range(0, 2 ** 31 - 1, 1)
                 row.set_title(spec.label)
                 initial = default
                 if initial is None and spec.key == 'port':
@@ -4601,7 +4872,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 browse_btn.add_css_class('flat')
                 browse_btn.set_valign(Gtk.Align.CENTER)
 
-                def _on_browse(_btn, r=row, h=holder, title=spec.label):
+                # Without it a chosen file could never be unset again.
+                clear_btn = Gtk.Button()
+                clear_btn.set_icon_name('edit-clear-symbolic')
+                clear_btn.set_tooltip_text(_("Clear"))
+                clear_btn.add_css_class('flat')
+                clear_btn.set_valign(Gtk.Align.CENTER)
+                clear_btn.set_visible(bool(holder[0]))
+
+                def _on_browse(_btn, r=row, h=holder, title=spec.label,
+                               clear=clear_btn):
                     dialog = Gtk.FileDialog()
                     dialog.set_title(title)
 
@@ -4611,32 +4891,37 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                             if gfile and gfile.get_path():
                                 h[0] = gfile.get_path()
                                 r.set_subtitle(h[0])
+                                clear.set_visible(True)
                         except Exception:
                             pass
 
                     dialog.open(self, None, _done)
 
-                browse_btn.connect('clicked', _on_browse)
-                row.add_suffix(browse_btn)
-                getter = lambda h=holder: h[0]
-
-                def _file_setter(v, r=row, h=holder):
+                def _file_setter(v, r=row, h=holder, clear=clear_btn):
                     h[0] = str(v or '')
                     r.set_subtitle(h[0])
+                    clear.set_visible(bool(h[0]))
+
+                clear_btn.connect('clicked', lambda _b, f=_file_setter: f(''))
+                browse_btn.connect('clicked', _on_browse)
+                row.add_suffix(clear_btn)
+                row.add_suffix(browse_btn)
+                getter = lambda h=holder: h[0]
 
                 setter = _file_setter
             else:  # text
                 row = Adw.EntryRow(title=spec.label)
                 if default:
                     row.set_text(str(default))
-                if getattr(spec, 'placeholder', ''):
-                    entry = row.get_child()
-                    if entry and hasattr(entry, 'set_placeholder_text'):
-                        entry.set_placeholder_text(spec.placeholder)
                 getter = lambda r=row: r.get_text().strip()
                 setter = lambda v, r=row: r.set_text(str(v or ''))
 
-            group.add(row)
+            if isinstance(row, Adw.EntryRow) and getattr(spec, 'placeholder', ''):
+                _set_entry_row_hint(row, spec.placeholder)
+            if group is None:
+                header_rows.append(row)
+            else:
+                group.add(row)
             self._plugin_field_widgets[spec.key] = (spec, row, getter, setter)
 
         return ordered_groups
@@ -4779,16 +5064,48 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         self._reveal_saved_password_async(_apply)
 
+    def _generate_connection_id(self, name, protocol_id):
+        """A free ID for a new non-SSH connection, derived from its name.
+
+        "Office PC" becomes ``office-pc`` (``office-pc-2`` when taken). Any
+        script's letters are kept -- the store only forbids a leading ``-``
+        and NUL -- so a name in Persian or Chinese still reads in the ID;
+        a name with nothing usable falls back to the protocol.
+        """
+        slug = re.sub(r'[^\w.]+', '-', name.lower()).strip('-.')[:64].strip('-.')
+        slug = slug or protocol_id or 'connection'
+        taken = set()
+        try:
+            manager = getattr(self.parent_window, 'connection_manager', None)
+            for conn in getattr(manager, 'connections', None) or []:
+                nickname = getattr(conn, 'nickname', None)
+                if nickname:
+                    taken.add(str(nickname).lower())
+        except Exception:
+            logger.debug("Could not list existing connection IDs", exc_info=True)
+        candidate, suffix = slug, 2
+        while candidate.lower() in taken:
+            candidate = f"{slug}-{suffix}"
+            suffix += 1
+        return candidate
+
     def _save_plugin_connection(self, backend):
         """Collect, validate, and emit connection data for a plugin protocol."""
-        nickname = self.nickname_row.get_text().strip()
-        if not nickname:
-            self.show_error(_("Please enter a nickname for this connection"))
+        name = self.display_name_row.get_text().strip()
+        if not name:
+            self.show_error(_("Please enter a name for this connection"))
+            self._focus_row(self.display_name_row)
             return
+        # The ID is the store's key, so it stays put once created: renaming
+        # changes only the name, and tags, groups and metadata never move.
+        nickname = self.nickname_row.get_text().strip() if self.is_editing else ''
+        if not nickname:
+            nickname = self._generate_connection_id(name, backend.protocol_id)
 
         data = {
             'nickname': nickname,
             'protocol': backend.protocol_id,
+            'display_name': name,
         }
         for key, (spec, row, getter, _setter) in (
                 getattr(self, '_plugin_field_widgets', None) or {}).items():

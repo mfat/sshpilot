@@ -7,10 +7,9 @@ command: it reuses sshPilot's single SSH path — ``build_native_command`` for t
 environment (askpass + keyring autofill, agent) — then hands that to mosh via
 ``--ssh=…`` and runs ``mosh --ssh="ssh …" <host>`` inside the VTE.
 
-Key/agent auth (askpass passphrase autofill) works through the merged env. For a
-stored *password* connection, the inner ssh prompts interactively in the
-terminal during the mosh bootstrap (sshpass FIFO wiring is owned by terminal.py
-and isn't applied to the wrapping mosh process yet).
+Auth rides the merged env: askpass answers a key passphrase or the stored
+login password (the ``password`` field, kept in secure storage like every
+protocol's) during the SSH bootstrap, and prompts when nothing is stored.
 """
 
 from __future__ import annotations
@@ -47,6 +46,8 @@ class MoshProtocolBackend(ProtocolBackend):
                       placeholder=_("hostname or IP address")),
             FieldSpec(key="username", label=_("Username"), kind="text",
                       placeholder=_("(from ~/.ssh/config)")),
+            # Stored in secure storage, never in the connection data.
+            FieldSpec(key="password", label=_("Password"), kind="password"),
             FieldSpec(key="port", label=_("SSH port"), kind="int", default=22),
             FieldSpec(key="keyfile", label=_("Key file"), kind="file", group="advanced"),
             FieldSpec(key="extra_ssh_opts", label=_("Extra SSH options"), kind="text",

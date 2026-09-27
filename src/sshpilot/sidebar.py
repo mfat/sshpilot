@@ -5160,7 +5160,9 @@ def _attach_connection_list_context_menu(window):
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_in_split_view_action(None, None)),
                         menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: window.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                         menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: window.on_duplicate_connection_action(None, None)),
-                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()),
+                        # A container, pod or serial console has no address: the
+                        # fallback would copy the connection's own ID.
+                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()) if (conn and (getattr(conn, 'protocol', 'ssh') == 'ssh' or getattr(conn, 'hostname', ''))) else None,
                         menu.add_item('utilities-terminal-symbolic', _('Copy SSH Command'), lambda: window.on_copy_ssh_command_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                         menu.add_item('info-outline-symbolic', _('Dashboard…'), lambda: window.on_machine_info_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                     )
@@ -5202,7 +5204,11 @@ def _attach_connection_list_context_menu(window):
                     menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: window.on_copy_to_group_action(None, None)),
                     menu.add_item('edit-undo-symbolic', ungroup_label, lambda: window.on_move_to_ungrouped_action(None, None)) if any_grouped else None,
                 )
-                if hasattr(window, 'on_assign_login_profile_action'):
+                # Login profiles are SSH-only; the action refuses anything else.
+                if hasattr(window, 'on_assign_login_profile_action') and any(
+                    getattr(c, 'protocol', 'ssh') == 'ssh'
+                    for c in (selected_conns or ([conn] if conn else []))
+                ):
                     menu.add_section(
                         menu.add_item('avatar-default-symbolic', _('Assign Login Profile…'), lambda: window.on_assign_login_profile_action(None, None)),
                     )

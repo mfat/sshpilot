@@ -84,7 +84,7 @@ CASES = {
     },
     "mosh": {
         "fields": {
-            "host": "shell.example", "username": "alice", "port": 2222,
+            "host": "shell.example", "username": "alice", "password": "", "port": 2222,
             "keyfile": "", "extra_ssh_opts": "", "predict": "never",
             "mosh_port": "60000:60010",
         },

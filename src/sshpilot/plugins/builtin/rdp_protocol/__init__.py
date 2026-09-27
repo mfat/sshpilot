@@ -293,6 +293,9 @@ class RdpProtocolBackend(ProtocolBackend):
         gateway = _text(data, "gateway")
         if gateway and not _GATEWAY_RE.match(gateway):
             errors.append(_("RD Gateway must be a host name, optionally with :port."))
+        # build_spawn only hands FreeRDP a saved password alongside /u:.
+        if data.get("password") and not _text(data, "username"):
+            errors.append(_("Enter a username to use the saved password."))
         if "," in _text(data, "shared_folder"):
             errors.append(_("The shared folder path cannot contain a comma."))
         diagnostic = command_split_diagnostic(data.get("extra_rdp_args"))
