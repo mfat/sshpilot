@@ -61,6 +61,14 @@
 
 
 
+    <release version="6.2.4" date="2026-09-27">
+      <description>
+        <p>Introducing &quot;Login Profiles&quot;, reusable, saved idenities you can assign to any connection or group</p>
+        <p>New &quot;Dashboard&quot; button in connection rows</p>
+        <p>UI improvements</p>
+        <p>Updated translations</p>
+      </description>
+    </release>
     <release version="6.2.3" date="2026-09-25">
       <description>
         <p>More SFTP improvemnets</p>
