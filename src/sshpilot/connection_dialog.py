@@ -1984,8 +1984,8 @@ class ConnectionDialog(
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
             authentication_page.append(group)
-        # A linked login profile owns these (username lives on the Connection
-        # page, agent forwarding on Advanced).
+        # A linked login profile locks these (agent forwarding lives on
+        # Advanced; the Username row is greyed out via _sync_username_row).
         self._register_login_profile_locked_widgets(
             login_profile_locked_widgets(self, self._auth_groups_for_login_profile)
             + [getattr(self, 'forward_agent_row', None),
@@ -3636,6 +3636,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Username
         self.username_row = Adw.EntryRow(title=_("Username"))
+        self._add_username_profile_button(self.username_row)
         basic_group.add(self.username_row)
         
         # Port (match style of fields above using EntryRow)

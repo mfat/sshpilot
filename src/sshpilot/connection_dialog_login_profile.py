@@ -1,8 +1,10 @@
 """Login profile picker for the connection dialog's Authentication page.
 
 While a profile is linked (explicitly or inherited from the connection's
-group) the profile decides the authentication settings: the auth rows and the
-Username row are locked, and the dialog shows what the profile provides. The
+group) the profile decides the authentication settings: the auth rows are
+locked, the Username row is dimmed showing the profile's username, and the
+dialog shows what the profile provides. The Username row also carries a
+picker button so a profile can be chosen from the Connection page. The
 chosen link is stored as ``self._login_profile_change`` — ``(mode, profile_id)``
 or ``None`` when unchanged — and the window applies it around the config save
 (see ``MainWindow._save_connection_via_client``). An existing connection also
@@ -30,6 +32,11 @@ class ConnectionDialogLoginProfileMixin:
     _login_profile_controller_obj = None
     _login_profile_loading = False
     _login_profile_locked_widgets: Sequence[Any] = ()
+    _username_profile_button = None
+    _username_profile_list = None
+    # The user's own username, kept while the row shows a profile's.
+    _username_before_profile: Optional[str] = None
+    _applying_inherited_value = False
 
     # -- building --------------------------------------------------------------
 
@@ -72,6 +79,98 @@ class ConnectionDialogLoginProfileMixin:
         # Hidden until the daemon answers (and entirely without the capability).
         group.set_visible(False)
         return group
+
+    def _add_username_profile_button(self, row) -> None:
+        """Suffix on the Username row that picks a login profile."""
+        button = Gtk.MenuButton()
+        button.set_icon_name("system-users-symbolic")
+        button.set_tooltip_text(_("Use a login profile"))
+        button.add_css_class("flat")
+        button.set_valign(Gtk.Align.CENTER)
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        listbox.add_css_class("navigation-sidebar")
+        listbox.connect("row-activated", self._on_username_profile_activated)
+        popover = Gtk.Popover()
+        popover.set_child(listbox)
+        popover.connect("show", lambda *_a: self._fill_username_profile_list())
+        button.set_popover(popover)
+        # Hidden until the daemon answers, like the Authentication page group.
+        button.set_visible(False)
+        row.add_suffix(button)
+        self._username_profile_button = button
+        self._username_profile_list = listbox
+
+    def _fill_username_profile_list(self) -> None:
+        listbox = self._username_profile_list
+        if listbox is None:
+            return
+        child = listbox.get_first_child()
+        while child is not None:
+            listbox.remove(child)
+            child = listbox.get_first_child()
+        selected = self.login_profile_row.get_selected()
+        for index, choice in enumerate(self._login_profile_choices):
+            box = Gtk.Box(spacing=12)
+            label = Gtk.Label(label=choice.label, xalign=0, hexpand=True)
+            box.append(label)
+            check = Gtk.Image.new_from_icon_name("object-select-symbolic")
+            check.set_opacity(1.0 if index == selected else 0.0)
+            box.append(check)
+            listbox.append(box)
+
+    def _on_username_profile_activated(self, _listbox, row) -> None:
+        index = row.get_index()
+        if 0 <= index < len(self._login_profile_choices):
+            self.login_profile_row.set_selected(index)
+        button = self._username_profile_button
+        if button is not None:
+            button.popdown()
+
+    def _set_username_row_greyed(self, row, greyed: bool) -> None:
+        """Dim the row's title and text the way an inherited value is dimmed.
+
+        ``dim-label`` goes on the editable area rather than the row so the
+        profile button beside it stays bright. A row already dimmed as
+        inherited is left as is; dimming twice makes it unreadable.
+        """
+        delegate = row.get_delegate() if hasattr(row, "get_delegate") else None
+        area = delegate.get_parent() if delegate is not None else None
+        if area is None:
+            return
+        if greyed and not row.has_css_class("dim-label"):
+            area.add_css_class("dim-label")
+        else:
+            area.remove_css_class("dim-label")
+
+    def _set_username_text(self, row, text: str) -> None:
+        # Not a user edit: must not adopt an inherited username.
+        self._applying_inherited_value = True
+        try:
+            row.set_text(text)
+        finally:
+            self._applying_inherited_value = False
+
+    def _sync_username_row(self, profile) -> None:
+        """Dim the Username row showing a linked profile's username."""
+        row = getattr(self, "username_row", None)
+        if row is None:
+            return
+        if profile is None:
+            if self._username_before_profile is not None:
+                self._set_username_text(row, self._username_before_profile)
+                self._username_before_profile = None
+            row.set_editable(True)
+            row.set_title(_("Username"))
+            self._set_username_row_greyed(row, False)
+            return
+        if self._username_before_profile is None:
+            self._username_before_profile = row.get_text()
+        # The profile's username replaces the connection's on save.
+        self._set_username_text(row, profile.settings.username)
+        row.set_editable(False)
+        row.set_title(_("Username (using a login profile)"))
+        self._set_username_row_greyed(row, True)
 
     def _register_login_profile_locked_widgets(self, widgets: Sequence[Any]) -> None:
         self._login_profile_locked_widgets = tuple(w for w in widgets if w is not None)
@@ -174,6 +273,8 @@ class ConnectionDialogLoginProfileMixin:
         self.login_profile_row.set_model(model)
         self.login_profile_row.set_selected(index)
         self.login_profile_group.set_visible(snapshot.available)
+        if self._username_profile_button is not None:
+            self._username_profile_button.set_visible(snapshot.available)
         self._on_login_profile_selected()
 
     # -- selection ---------------------------------------------------------------
@@ -206,6 +307,7 @@ class ConnectionDialogLoginProfileMixin:
                 widget.set_sensitive(not locked)
             except Exception:
                 pass
+        self._sync_username_row(profile)
         self.login_profile_edit_button.set_visible(locked)
         self.login_profile_save_as_button.set_visible(not locked)
         info = self.login_profile_info_row
@@ -345,5 +447,9 @@ class ConnectionDialogLoginProfileMixin:
 
 
 def login_profile_locked_widgets(dialog: Any, auth_groups: List[Any]) -> List[Any]:
-    """Widgets a linked profile owns: every auth group plus the Username row."""
-    return [*auth_groups, getattr(dialog, "username_row", None)]
+    """Widgets a linked profile locks: every auth group.
+
+    The Username row is handled by ``_sync_username_row`` instead, so its
+    profile picker button stays usable while a profile is linked.
+    """
+    return list(auth_groups)

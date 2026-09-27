@@ -16,8 +16,8 @@ In code and UI the feature is called *login profile*. "Identity" already means t
 
 - **Manage profiles:** main menu → **Login Profiles**. Here you can create, edit or delete profiles. Each row shows the profile's user and keys, and how many connections and groups use it.
 - **One connection:** in the connection editor, open **Authentication** and use **Login profile**:
-  - Pick *Custom (no profile)*, *Inherit from group (…)*, or a profile.
-  - While a profile is linked, the authentication rows, **Username** and agent forwarding are locked and show the profile's values.
+  - Pick *Custom (no profile)*, *Inherit from group (…)*, or a profile. The same list is on the **Username** row of the **Connection** page (the people button).
+  - While a profile is linked, the authentication rows and agent forwarding are locked, and **Username** is greyed out and shows the profile's username. Going back to *Custom* restores the username you had.
   - For an existing connection, the editor lists the settings the profile will replace before you save.
   - **New…** creates a profile. **Save as Profile…** creates one from the connection's current settings. **Edit Profile…** edits the linked profile.
 - **Several connections:** select them in the sidebar → right-click → **Assign Login Profile…**. A confirmation lists what changes before anything is written.
