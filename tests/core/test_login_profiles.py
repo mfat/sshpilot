@@ -426,3 +426,29 @@ def test_added_directives_stay_above_the_block_separator(env):
     text = root.read_text()
     assert "    ServerAliveInterval 30\n\nHost web2\n" in text
     assert "IdentitiesOnly yes\n    ServerAliveInterval 30\n" in text
+
+
+def test_group_profile_skips_non_ssh_members(env):
+    repo, service, root, *_ = env
+    repo.create_connection({"nickname": "tel1", "protocol": "telnet", "host": "h"})
+    group = repo.create_group("Mixed").id
+    repo.assign_connection_to_group("web1", group)
+    repo.assign_connection_to_group("tel1", group)
+    deploy = _deploy(service)
+
+    service.set_group_profile(group, deploy.id, link_members=["tel1", "web1"])
+
+    assert service.group_profile_id(group) == deploy.id
+    assert _link(repo, "web1").mode == LINK_INHERIT
+    assert "User deploy" in _block(root, "web1")
+    assert _link(repo, "tel1") is None
+
+
+def test_group_profile_unknown_member_changes_nothing(env):
+    repo, service, *_ = env
+    group = repo.create_group("Prod").id
+    deploy = _deploy(service)
+
+    with pytest.raises(CoreError):
+        service.set_group_profile(group, deploy.id, link_members=["missing"])
+    assert service.group_profile_id(group) is None
