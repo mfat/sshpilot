@@ -1961,7 +1961,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         # shedding it (preference off, or no callback) frees the width without
         # collapsing the row — the button is taller than the labels beside it.
         # Compact mode drops the slot entirely (title-only rows).
-        self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
+        self.file_manager_button = icon_utils.new_button_from_icon_name("file-cabinet-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
@@ -2838,7 +2838,7 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         # same metrics with a non-interactive placeholder (empty page up → zero
         # width, button height reserved). Compact drops the placeholder so this
         # row matches title-only connection rows.
-        placeholder = icon_utils.new_button_from_icon_name("folder-symbolic")
+        placeholder = icon_utils.new_button_from_icon_name("file-cabinet-symbolic")
         placeholder.add_css_class("flat")
         placeholder.add_css_class("file-manager-button")
         placeholder.set_valign(Gtk.Align.CENTER)

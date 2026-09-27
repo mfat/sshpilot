@@ -35,6 +35,7 @@ _patched = False
 # resolved via Gtk.IconTheme; alias entries fall back to Gio.FileIcon.
 _ICON_RESOURCE_MAP = {
     'folder-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-symbolic.svg',
+    'file-cabinet-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/file-cabinet-symbolic.svg',
     'text-x-generic-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-x-generic-symbolic.svg',
     'folder-open-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-open-symbolic.svg',
     'folder-new-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-new-symbolic.svg',
