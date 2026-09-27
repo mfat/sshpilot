@@ -9,7 +9,7 @@ appended as an opaque diagnostic.
 
 from __future__ import annotations
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 from typing import Iterable, List
 
 from ..api.errors import ErrorCode, SshPilotError
@@ -174,6 +174,17 @@ def profile_summary_line(profile: LoginProfileSummary) -> str:
     else:
         parts.append(_("automatic keys"))
     return " · ".join(parts)
+
+
+def format_detached_connections(count: int) -> str:
+    """Counted notice for connections detached after an SSH config edit."""
+    return ngettext(
+        "{count} connection was detached from its login profile because "
+        "its SSH config was edited.",
+        "{count} connections were detached from their login profile because "
+        "their SSH config was edited.",
+        count,
+    ).format(count=count)
 
 
 # ---------------------------------------------------------------------------
