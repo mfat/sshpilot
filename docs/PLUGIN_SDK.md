@@ -359,6 +359,10 @@ CommandResult(exit_code: int, stdout: str, stderr: str)   # .ok == (exit_code ==
 HttpResponse(status: int, text: str, headers: dict)        # .json() parses text; .ok == 2xx
 ```
 
+`ConnectionInfo.port` is always a valid TCP port, but it only means something
+for a protocol that has one. Docker, Kubernetes and serial connections report
+`22`, and their `host` is usually empty; check `protocol` before using either.
+
 ---
 
 ## 6. UI hosting

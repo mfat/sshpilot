@@ -167,9 +167,12 @@ def _dispatch(client, args, *, stdout, stderr, input_fn, getpass_fn, sleep_fn) -
             write_json(stdout, values)
         else:
             for item in values:
-                stdout.write(
-                    f"{item.id}\t{item.nickname}\t{item.display_target}:{item.port}\n"
-                )
+                # A built-in non-SSH protocol comes with its own one-line
+                # target ("web · docker", "/dev/ttyUSB0 @ 115200"). Its record
+                # still carries an SSH-shaped port 22 even when it has no port
+                # at all, so that is never printed as "web-shell:22".
+                target = item.target_summary or f"{item.display_target}:{item.port}"
+                stdout.write(f"{item.id}\t{item.nickname}\t{target}\n")
         return EXIT_OK
     if handler == "connections_show":
         value = client.get_connection(_resolve_connection(client, args.connection))

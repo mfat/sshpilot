@@ -468,3 +468,39 @@ def test_public_dataclass_json_conversion_never_uses_repr():
     converted = to_jsonable(value)
     assert converted["id"] == "demo"
     assert "ConnectionSummary" not in str(converted)
+
+
+def test_connection_list_prints_a_described_target_instead_of_a_fake_port():
+    """Docker and serial records carry port 22 because the model requires a
+    port; the text list shows the protocol's own target line instead."""
+    client = FakeClient()
+    client.connections = [
+        client.connections[0],
+        ConnectionSummary(
+            ConnectionId("web-shell"), "web-shell", "", "", "", 22,
+            protocol="docker", target_summary="web · docker",
+        ),
+        ConnectionSummary(
+            ConnectionId("console"), "console", "", "", "", 22,
+            protocol="serial", target_summary="/dev/ttyUSB0 @ 115200",
+        ),
+        ConnectionSummary(
+            ConnectionId("thing"), "thing", "", "thing.example", "", 4444,
+            protocol="third-party",
+        ),
+    ]
+    out, err = StringIO(), StringIO()
+
+    assert run(
+        ["connections", "list"],
+        client_factory=lambda **_: client,
+        stdout=out,
+        stderr=err,
+    ) == 0
+
+    assert out.getvalue().splitlines() == [
+        "demo\tdemo\talice@demo.example:22",
+        "web-shell\tweb-shell\tweb · docker",
+        "console\tconsole\t/dev/ttyUSB0 @ 115200",
+        "thing\tthing\tthing.example:4444",
+    ]
