@@ -299,20 +299,8 @@ class SshPilotApplication(Adw.Application):
                     self._config_handler = cfg.connect('setting-changed', self._on_config_setting_changed)
                 except Exception:
                     self._config_handler = None
-            saved_theme = str(cfg.get_setting('app-theme', 'default'))
-            if saved_theme in ('light', 'dark'):
-                def _apply_saved_theme():
-                    try:
-                        style_manager = Adw.StyleManager.get_default()
-                        if saved_theme == 'light':
-                            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-                        elif saved_theme == 'dark':
-                            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-                    except Exception:
-                        pass
-                    return False
-
-                GLib.idle_add(_apply_saved_theme)
+            # Applied in do_startup, before the first window exists.
+            self._saved_app_theme = str(cfg.get_setting('app-theme', 'default'))
 
             # Apply color overrides
             self.apply_color_overrides(cfg)
@@ -485,6 +473,19 @@ class SshPilotApplication(Adw.Application):
         builds never call ``install_menubar``.
         """
         Adw.Application.do_startup(self)
+
+        # The saved light/dark choice has to be set before on_activate builds
+        # the window: deferring it to an idle callback let the first frame
+        # render in the system scheme and then visibly flip.
+        saved_theme = getattr(self, "_saved_app_theme", "default")
+        if saved_theme in ("light", "dark"):
+            try:
+                Adw.StyleManager.get_default().set_color_scheme(
+                    Adw.ColorScheme.FORCE_LIGHT if saved_theme == "light"
+                    else Adw.ColorScheme.FORCE_DARK
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Could not apply the saved app theme: %s", exc)
 
         # Before any widget exists: widgets read the default text direction at
         # construction, so an RTL interface language has to be applied here or
@@ -687,6 +688,8 @@ class SshPilotApplication(Adw.Application):
                 # end. The inline status on the tab or pane is the nicety; the
                 # window toast is the guarantee.
                 GLib.idle_add(self._handle_pre_command_event, event.payload)
+            elif event.type is EventType.LOGIN_PROFILES_CHANGED:
+                GLib.idle_add(self._handle_login_profiles_event, event.payload)
 
         try:
             self._api_event_subscription = client.subscribe_events(_on_event)
@@ -1277,6 +1280,18 @@ class SshPilotApplication(Adw.Application):
             if isinstance(value, str) and value.strip():
                 return value
         return ''
+
+    def _handle_login_profiles_event(self, payload) -> bool:
+        window = self.window
+        if window is None or getattr(window, '_is_quitting', False):
+            return False
+        notify = getattr(window, 'notify_login_profiles_changed', None)
+        if callable(notify):
+            try:
+                notify(payload)
+            except Exception:
+                logger.debug("Login profile event handling failed", exc_info=True)
+        return False
 
     def _handle_api_client_event(self, event_type) -> bool:
         from .api.events import EventType

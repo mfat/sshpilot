@@ -915,7 +915,7 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
 #: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
 #: floor GTK never lays the label out below (~80px at 10 characters); natural
 #: width is capped by ``max-width-chars``. These labels still ellipsize.
-FULL_LABEL_MIN_CHARS = 6
+FULL_LABEL_MIN_CHARS = 8
 FULL_LABEL_MAX_CHARS = 25
 
 #: Page names of a row hover-action slot (group split-view / connection
@@ -925,6 +925,11 @@ FULL_LABEL_MAX_CHARS = 25
 #: the empty page keeps height.
 ROW_ACTION_SLOT_BUTTON = 'button'
 ROW_ACTION_SLOT_EMPTY = 'none'
+
+#: Spacing between a connection row's hover-action buttons. Flat buttons pad
+#: their 16px icon by ~9px a side, so 3px puts the icons 21px apart — the same
+#: as the last button's icon to the status lock across the row's 12px spacing.
+_ROW_ACTIONS_SPACING = 3
 
 
 def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
@@ -1839,6 +1844,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         status_resolver=None,
         display_group_id: Optional[str] = None,
         in_tag_section: bool = False,
+        dashboard_callback=None,
     ):
         super().__init__()
         _install_sidebar_color_css()
@@ -1849,6 +1855,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._in_tag_section = in_tag_section
         _apply_sidebar_row_style(self, config, in_tag_section=in_tag_section)
         self._file_manager_callback = file_manager_callback
+        self._dashboard_callback = dashboard_callback
         self._status_resolver = status_resolver
         self._tint_provider = None
         self._color_badge_provider = None
@@ -1956,12 +1963,18 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
 
-        # File manager button — revealed on hover with its width reserved, so
-        # hovering never reflows the row. Parked in a height-only stack so
-        # shedding it (preference off, or no callback) frees the width without
-        # collapsing the row — the button is taller than the labels beside it.
-        # Compact mode drops the slot entirely (title-only rows).
-        self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
+        # Hover actions (Manage Files, Dashboard) — revealed on hover with
+        # their width reserved, so hovering never reflows the row. They share
+        # a box with tighter spacing than the row's, so the button icons sit as
+        # far apart as the last one does from the status lock. Each button is
+        # parked in a height-only stack; see _reveal_hover_actions for how a
+        # shed action frees its width without collapsing the row. Compact mode
+        # drops the actions entirely (title-only rows).
+        self._hover_actions_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=_ROW_ACTIONS_SPACING)
+        self._hover_actions_box.set_valign(Gtk.Align.CENTER)
+
+        self.file_manager_button = icon_utils.new_button_from_icon_name("file-cabinet-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
@@ -1970,9 +1983,23 @@ class ConnectionRow(Gtk.ListBoxRow):
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
+        self._hover_actions_box.append(self._file_manager_slot)
+
+        # Dashboard button — on for new installs (see core/settings/defaults).
+        self.dashboard_button = icon_utils.new_button_from_icon_name("info-outline-symbolic")
+        self.dashboard_button.add_css_class("flat")
+        self.dashboard_button.add_css_class("file-manager-button")
+        label_icon_button(self.dashboard_button, _("Dashboard"))
+        self.dashboard_button.set_valign(Gtk.Align.CENTER)
+        self.dashboard_button.set_opacity(0.0)
+        if dashboard_callback:
+            self.dashboard_button.connect("clicked", self._on_dashboard_clicked)
+        self._dashboard_slot = _make_row_action_slot(self.dashboard_button)
+        self._hover_actions_box.append(self._dashboard_slot)
+
         if compact:
-            self._file_manager_slot.set_visible(False)
-        content.append(self._file_manager_slot)
+            self._hover_actions_box.set_visible(False)
+        content.append(self._hover_actions_box)
 
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
@@ -2057,6 +2084,14 @@ class ConnectionRow(Gtk.ListBoxRow):
             except Exception as e:
                 logger.error(f"Error opening file manager for {self.connection.nickname}: {e}")
 
+    def _on_dashboard_clicked(self, button):
+        """Open the Dashboard for this row's connection."""
+        if self._dashboard_callback:
+            try:
+                self._dashboard_callback(self.connection)
+            except Exception as e:
+                logger.error(f"Error opening dashboard for {self.connection.nickname}: {e}")
+
     def _setup_file_manager_button_hover(self):
         """Set up hover events to show/hide file manager button"""
         # Track hover state
@@ -2068,14 +2103,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         motion_controller.connect("leave", self._on_row_leave)
         self.add_controller(motion_controller)
 
-        # Motion controller for the button itself (to keep it visible when hovering over button)
-        if self.file_manager_button:
+        # Motion controllers for the buttons themselves (to keep them visible
+        # while the pointer is over one)
+        for button in (self.file_manager_button, self.dashboard_button):
             button_motion_controller = Gtk.EventControllerMotion()
             button_motion_controller.connect("enter", self._on_button_enter)
             button_motion_controller.connect("leave", self._on_button_leave)
-            self.file_manager_button.add_controller(button_motion_controller)
+            button.add_controller(button_motion_controller)
 
-        self._reveal_file_manager_button(False)
+        self._reveal_hover_actions(False)
 
     def _file_manager_button_enabled(self) -> bool:
         """Whether Preferences allows the connection-row file manager button."""
@@ -2092,30 +2128,59 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Whether the row's hover latch currently says the pointer is here."""
         return bool(getattr(self, '_is_hovering', False))
 
-    def _reveal_file_manager_button(self, revealed: bool) -> None:
-        """Fade Manage Files in or out of its reserved space.
+    def _dashboard_button_enabled(self) -> bool:
+        """Whether Preferences allows the Dashboard button and the protocol
+        can run the remote commands the Dashboard needs."""
+        if _sidebar_is_compact(self.config) or not getattr(self, '_dashboard_callback', None):
+            return False
+        try:
+            if not self.config.get_setting('ui.sidebar_show_dashboard_button', False):
+                return False
+        except Exception:
+            return False
+        return Capability.REMOTE_COMMAND in capabilities_for(self.connection)
 
-        The slot's button page is up while Preferences enables the action and a
-        callback is available; opacity then tracks the pointer so hovering
-        never reflows the row. Otherwise the empty page stays up — zero width,
-        but the same height as the button, so shedding the action never
-        collapses the row.
+    def _reveal_hover_actions(self, revealed: bool) -> None:
+        """Fade the hover actions in or out of their reserved space.
 
-        Compact mode hides the slot entirely so rows stay title-height.
+        An enabled action (Preferences allows it and a callback is available)
+        keeps its button page up; opacity then tracks the pointer so hovering
+        never reflows the row. A disabled action's slot is hidden, so it costs
+        no width and no spacing — except that, with every action disabled, the
+        Manage Files slot stays up on its empty page: zero width, but the
+        button's height, so shedding the actions never collapses the row.
+
+        Compact mode hides the slots entirely so rows stay title-height.
         """
-        slot = getattr(self, '_file_manager_slot', None)
-        btn = getattr(self, 'file_manager_button', None)
+        compact = _sidebar_is_compact(self.config)
+        box = getattr(self, '_hover_actions_box', None)
+        if box is not None:
+            box.set_visible(not compact)
+        fm_enabled = (
+            self._file_manager_button_enabled()
+            and bool(getattr(self, '_file_manager_callback', None))
+        )
+        dash_enabled = self._dashboard_button_enabled()
+        self._apply_hover_action(
+            getattr(self, '_file_manager_slot', None),
+            getattr(self, 'file_manager_button', None),
+            enabled=fm_enabled,
+            revealed=revealed,
+            hold_height=not compact and not dash_enabled,
+        )
+        self._apply_hover_action(
+            getattr(self, '_dashboard_slot', None),
+            getattr(self, 'dashboard_button', None),
+            enabled=dash_enabled,
+            revealed=revealed,
+            hold_height=False,
+        )
+
+    @staticmethod
+    def _apply_hover_action(slot, btn, *, enabled, revealed, hold_height) -> None:
         if slot is None or btn is None:
             return
-        enabled = (
-            self._file_manager_button_enabled()
-            and bool(self._file_manager_callback)
-        )
-        if not enabled and _sidebar_is_compact(self.config):
-            slot.set_visible(False)
-            btn.set_opacity(0.0)
-            return
-        slot.set_visible(True)
+        slot.set_visible(enabled or hold_height)
         slot.set_visible_child_name(
             ROW_ACTION_SLOT_BUTTON if enabled else ROW_ACTION_SLOT_EMPTY)
         btn.set_opacity(1.0 if (enabled and revealed) else 0.0)
@@ -2123,7 +2188,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_row_enter(self, controller, x, y):
         """Reveal hover actions when the mouse enters the row."""
         self._is_hovering = True
-        self._reveal_file_manager_button(True)
+        self._reveal_hover_actions(True)
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
@@ -2134,7 +2199,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_button_enter(self, controller, x, y):
         """Keep row actions visible while hovering over either button."""
         self._is_hovering = True
-        self._reveal_file_manager_button(True)
+        self._reveal_hover_actions(True)
 
     def _on_button_leave(self, controller):
         """Handle mouse leaving the button"""
@@ -2144,7 +2209,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _maybe_hide_button(self):
         """Hide row actions when the pointer is no longer hovering."""
         if not self._is_hovering:
-            self._reveal_file_manager_button(False)
+            self._reveal_hover_actions(False)
         return False  # Don't repeat
 
     def show_drop_indicator(self, top: bool):
@@ -2608,7 +2673,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.nickname_label,
                 single_line=not show_host,
             )
-        self._reveal_file_manager_button(self._pointer_is_on_row())
+        self._reveal_hover_actions(self._pointer_is_on_row())
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -2838,7 +2903,7 @@ class LocalTerminalRow(Gtk.ListBoxRow):
         # same metrics with a non-interactive placeholder (empty page up → zero
         # width, button height reserved). Compact drops the placeholder so this
         # row matches title-only connection rows.
-        placeholder = icon_utils.new_button_from_icon_name("folder-symbolic")
+        placeholder = icon_utils.new_button_from_icon_name("file-cabinet-symbolic")
         placeholder.add_css_class("flat")
         placeholder.add_css_class("file-manager-button")
         placeholder.set_valign(Gtk.Align.CENTER)
@@ -4642,6 +4707,31 @@ def _horizontal_clip(child: Gtk.Widget) -> Gtk.ScrolledWindow:
     return clip
 
 
+def update_hide_hosts_button_visibility(window) -> None:
+    """Offer the hide-hostnames toggle only while rows show user@hostname.
+
+    Compact mode never shows the subtitle, so the toggle would do nothing
+    visible in the sidebar there either.
+    """
+    button = getattr(window, '_hide_hosts_button', None)
+    if button is None:
+        return
+    config = getattr(window, 'config', None)
+    relevant = False
+    try:
+        relevant = bool(
+            config is not None
+            and not _sidebar_is_compact(config)
+            and config.get_setting('ui.sidebar_show_user_hostname', False)
+        )
+    except Exception:
+        logger.debug("Failed to read hostname display settings", exc_info=True)
+    from sshpilot.overflow_toolbar import mark_force_hidden
+    # The overflow toolbar owns item visibility; exclude the button from
+    # packing rather than toggling it directly.
+    mark_force_hidden(button, not relevant)
+
+
 def _build_sidebar_header(window, sidebar_box):
     """Build the sidebar action header (add/search/filter/sort/…)."""
     from sshpilot.overflow_toolbar import OverflowToolbar
@@ -4679,6 +4769,17 @@ def _build_sidebar_header(window, sidebar_box):
     header.add_item(add_button)
     window._sidebar_add_button = add_button
 
+    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
+    new_group_button.add_css_class('flat')
+    label_icon_button(new_group_button, _('New Group'))
+    new_group_button.set_action_name('win.create-group')
+    try:
+        new_group_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.add_item(new_group_button)
+    window._sidebar_new_group_button = new_group_button
+
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
     window.search_button.add_css_class('flat')
     shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
@@ -4693,17 +4794,6 @@ def _build_sidebar_header(window, sidebar_box):
     except Exception:
         pass
     header.add_item(window.search_button)
-
-    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
-    new_group_button.add_css_class('flat')
-    label_icon_button(new_group_button, _('New Group'))
-    new_group_button.set_action_name('win.create-group')
-    try:
-        new_group_button.set_can_focus(False)
-    except Exception:
-        pass
-    header.add_item(new_group_button)
-    window._sidebar_new_group_button = new_group_button
 
     def _update_eye_icon(btn):
         try:
@@ -4761,6 +4851,7 @@ def _build_sidebar_header(window, sidebar_box):
         pass
     window._hide_hosts_button = hide_button
     header.add_item(hide_button)
+    update_hide_hosts_button_visibility(window)
 
     tag_button = Gtk.MenuButton()
     tag_button.add_css_class('flat')
@@ -5020,6 +5111,7 @@ def _attach_connection_list_context_menu(window):
                 else:
                     menu.add_section(
                         menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: window.on_edit_group_action(None, None)),
+                        menu.add_item('avatar-default-symbolic', _('Set Login Profile…'), lambda: window.on_set_group_login_profile_action(None, None)) if hasattr(window, 'on_set_group_login_profile_action') else None,
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_group_in_split_view_action(None, None)),
                         menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: window.on_run_command_action()),
                         menu.add_item('edit-undo-symbolic', _('Ungroup'), lambda: window.on_move_group_to_root_action(None, None)) if is_nested else None,
@@ -5110,6 +5202,10 @@ def _attach_connection_list_context_menu(window):
                     menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: window.on_copy_to_group_action(None, None)),
                     menu.add_item('edit-undo-symbolic', ungroup_label, lambda: window.on_move_to_ungrouped_action(None, None)) if any_grouped else None,
                 )
+                if hasattr(window, 'on_assign_login_profile_action'):
+                    menu.add_section(
+                        menu.add_item('avatar-default-symbolic', _('Assign Login Profile…'), lambda: window.on_assign_login_profile_action(None, None)),
+                    )
 
                 try:
                     pin_targets = selected_conns if multi else ([conn] if conn else [])

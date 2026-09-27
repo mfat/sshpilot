@@ -5,15 +5,16 @@ from __future__ import annotations
 import types
 
 from sshpilot import connection_dialog as cd
-from sshpilot.connection_dialog import ConnectionDialog
+from sshpilot import key_sources
+from sshpilot.key_sources import KeySourcesMixin
 
 
 def test_confirm_import_passes_through_when_not_needed(monkeypatch):
     calls = []
-    monkeypatch.setattr(cd, "needs_flatpak_ssh_import", lambda path: False)
+    monkeypatch.setattr(key_sources, "needs_flatpak_ssh_import", lambda path: False)
 
     self = types.SimpleNamespace(show_error=lambda msg: calls.append(("error", msg)))
-    method = ConnectionDialog.__dict__["_confirm_flatpak_ssh_import"]
+    method = KeySourcesMixin.__dict__["_confirm_flatpak_ssh_import"]
     types.MethodType(method, self)(
         "/home/u/.ssh/id_ed25519", calls.append, kind="key"
     )
@@ -53,10 +54,8 @@ def test_confirm_import_copies_on_accept(monkeypatch, tmp_path):
         def present(self):
             presented.append(True)
 
-    monkeypatch.setattr(cd, "needs_flatpak_ssh_import", lambda path: True)
-    monkeypatch.setattr(
-        cd,
-        "import_private_key_into_ssh_dir",
+    monkeypatch.setattr(key_sources, "needs_flatpak_ssh_import", lambda path: True)
+    monkeypatch.setattr(key_sources, "import_private_key_into_ssh_dir",
         lambda path: (str(tmp_path / ".ssh" / "id_ed25519"), []),
     )
     monkeypatch.setattr(cd.Adw, "MessageDialog", _FakeMsg)
@@ -67,7 +66,7 @@ def test_confirm_import_copies_on_accept(monkeypatch, tmp_path):
     chosen = []
     parent = object()
     self = types.SimpleNamespace(show_error=lambda msg: chosen.append(("error", msg)))
-    method = ConnectionDialog.__dict__["_confirm_flatpak_ssh_import"]
+    method = KeySourcesMixin.__dict__["_confirm_flatpak_ssh_import"]
     types.MethodType(method, self)(
         "/run/user/1000/doc/ABC/id_ed25519",
         chosen.append,
@@ -108,7 +107,7 @@ def test_confirm_import_cancel_does_not_call_on_chosen(monkeypatch):
         def present(self):
             pass
 
-    monkeypatch.setattr(cd, "needs_flatpak_ssh_import", lambda path: True)
+    monkeypatch.setattr(key_sources, "needs_flatpak_ssh_import", lambda path: True)
     monkeypatch.setattr(cd.Adw, "MessageDialog", _FakeMsg)
     monkeypatch.setattr(
         cd.Adw, "ResponseAppearance", types.SimpleNamespace(SUGGESTED="suggested")
@@ -116,7 +115,7 @@ def test_confirm_import_cancel_does_not_call_on_chosen(monkeypatch):
 
     chosen = []
     self = types.SimpleNamespace(show_error=lambda msg: None)
-    method = ConnectionDialog.__dict__["_confirm_flatpak_ssh_import"]
+    method = KeySourcesMixin.__dict__["_confirm_flatpak_ssh_import"]
     types.MethodType(method, self)("/run/user/1/doc/X/key", chosen.append, kind="key")
     _FakeMsg.handler(object(), "cancel")
     assert chosen == []
@@ -148,10 +147,8 @@ def test_confirm_import_shows_error_on_copy_failure(monkeypatch):
         def present(self):
             pass
 
-    monkeypatch.setattr(cd, "needs_flatpak_ssh_import", lambda path: True)
-    monkeypatch.setattr(
-        cd,
-        "import_certificate_into_ssh_dir",
+    monkeypatch.setattr(key_sources, "needs_flatpak_ssh_import", lambda path: True)
+    monkeypatch.setattr(key_sources, "import_certificate_into_ssh_dir",
         lambda path: (_ for _ in ()).throw(OSError("denied")),
     )
     monkeypatch.setattr(cd.Adw, "MessageDialog", _FakeMsg)
@@ -162,7 +159,7 @@ def test_confirm_import_shows_error_on_copy_failure(monkeypatch):
     errors = []
     chosen = []
     self = types.SimpleNamespace(show_error=lambda msg: errors.append(msg))
-    method = ConnectionDialog.__dict__["_confirm_flatpak_ssh_import"]
+    method = KeySourcesMixin.__dict__["_confirm_flatpak_ssh_import"]
     types.MethodType(method, self)(
         "/run/user/1/doc/X/id-cert.pub", chosen.append, kind="cert"
     )
@@ -173,7 +170,6 @@ def test_confirm_import_shows_error_on_copy_failure(monkeypatch):
 
 def test_browse_key_routes_through_flatpak_confirm(monkeypatch, tmp_path):
     """Successful file pick is offered to ``_confirm_flatpak_ssh_import``."""
-    from sshpilot.connection_dialog import ConnectionDialog
 
     routed = []
     holder = {}
@@ -199,7 +195,7 @@ def test_browse_key_routes_through_flatpak_confirm(monkeypatch, tmp_path):
             )
 
     monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
-    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(key_sources, "get_ssh_dir", lambda: str(tmp_path))
 
     self = types.SimpleNamespace(
         get_transient_for=lambda: cd.Gtk.Window.__new__(cd.Gtk.Window)
@@ -211,9 +207,9 @@ def test_browse_key_routes_through_flatpak_confirm(monkeypatch, tmp_path):
 
     self._confirm_flatpak_ssh_import = _confirm
     self._browse_file = types.MethodType(
-        ConnectionDialog.__dict__["_browse_file"], self
+        KeySourcesMixin.__dict__["_browse_file"], self
     )
-    browse_key = types.MethodType(ConnectionDialog.__dict__["_browse_key"], self)
+    browse_key = types.MethodType(KeySourcesMixin.__dict__["_browse_key"], self)
 
     chosen = []
     parent = object()
@@ -223,3 +219,13 @@ def test_browse_key_routes_through_flatpak_confirm(monkeypatch, tmp_path):
     assert holder["parent"] is parent
     assert routed == [("/run/user/1000/doc/ABC/id_ed25519", parent, "key")]
     assert chosen == ["/run/user/1000/doc/ABC/id_ed25519"]
+
+
+def test_connection_dialog_uses_the_shared_key_sources():
+    """The dialog and the login profile editor share one implementation."""
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    assert issubclass(ConnectionDialog, KeySourcesMixin)
+    for name in ("_open_key_chooser", "_browse_key", "_browse_cert",
+                 "_discover_certs", "_confirm_flatpak_ssh_import"):
+        assert getattr(ConnectionDialog, name) is KeySourcesMixin.__dict__[name]

@@ -379,7 +379,33 @@ def _production_core_services():
         return IdentityStateService(get_config_dir() / "config.json")
 
     identity_state_service = _build_identity_state_service()
-    secret_provider = DaemonConnectionSecretProvider(repository.get_record)
+
+    def _build_login_profile_service():
+        from sshpilot.core.login_profiles.service import LoginProfileService
+
+        from .connection_secret_provider import DaemonLoginProfileSecretStore
+
+        service = LoginProfileService(
+            repository,
+            get_config_dir() / "login_profiles.json",
+            secret_store=DaemonLoginProfileSecretStore(),
+        )
+        # Catch Host blocks edited while the daemon was not running.
+        try:
+            service.reconcile()
+        except Exception:
+            logger.exception("Initial login profile reconciliation failed")
+        return service
+
+    login_profiles = _build_login_profile_service()
+
+    from .login_profile_api import DaemonLoginProfileApi
+
+    login_profile_api = DaemonLoginProfileApi(login_profiles)
+    secret_provider = DaemonConnectionSecretProvider(
+        repository.get_record,
+        profile_password_lookup=login_profiles.password_for_connection,
+    )
     launch_provider = DaemonConnectionLaunchProvider(
         repository.get_record,
         secret_provider=secret_provider,
@@ -399,6 +425,11 @@ def _production_core_services():
     def _build_secrets_service():
         from sshpilot.daemon.secret_backend_service import SecretBackendService
 
+        from .login_profile_backup import (
+            ConnectionStoreBackupRestore,
+            ConnectionStoreBackupSnapshot,
+        )
+
         return SecretBackendService(
             get_config_dir() / "config.json",
             # Callables so daemon export/import can read and restore
@@ -407,8 +438,12 @@ def _production_core_services():
             # iterable of records; backup export/import call these two
             # bound methods directly).
             connections_source=repository.list_records,
-            connection_store_snapshot=repository.snapshot_for_backup,
-            connection_store_restore=repository.restore_connection_store,
+            connection_store_snapshot=ConnectionStoreBackupSnapshot(
+                repository.snapshot_for_backup, login_profiles
+            ),
+            connection_store_restore=ConnectionStoreBackupRestore(
+                repository.restore_connection_store, login_profiles
+            ),
         )
 
     secrets_service = _build_secrets_service()
@@ -444,6 +479,7 @@ def _production_core_services():
         operations=operation_runtime,
         operation_mode=operation_mode,
         plugin_settings=PluginSettingsService(get_config_dir() / "config.json"),
+        login_profiles=login_profile_api,
     )
 
 

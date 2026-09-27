@@ -123,6 +123,9 @@ def _account_for(raw_type: str, attrs: Dict[str, str]) -> str:
     return attrs.get("key_path") or f"{user}@{host}"
 
 
+_LOGIN_PROFILE_SECRET_PREFIX = "sshpilot-login-profile/"
+
+
 def credential_from_attributes(attributes: Dict[str, str], value: str, backend_name: str,
                                *, label: Optional[str] = None) -> Credential:
     """Build a Credential from raw enumerated attributes + value (the ``iter_credentials``
@@ -139,6 +142,11 @@ def credential_from_attributes(attributes: Dict[str, str], value: str, backend_n
         metadata["label"] = label
     if key_path:
         metadata["key_path"] = key_path
+    # Login profile secrets share the login-password spec shape but are not a
+    # host's credential; tag them so no host-keyed consumer mistakes them.
+    # (Prefix mirrors core.login_profiles.models.PROFILE_SECRET_HOST_PREFIX.)
+    if host and host.startswith(_LOGIN_PROFILE_SECRET_PREFIX):
+        metadata["login_profile"] = host[len(_LOGIN_PROFILE_SECRET_PREFIX):]
     return Credential(
         id=_account_for(raw_type, attrs),
         type=ctype,

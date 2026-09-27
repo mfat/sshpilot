@@ -45,6 +45,7 @@ the file, process, secret, or service represented by that DTO.
 | Known-host entries | `KnownHostsService` | `known_hosts.*` API and staged GTK editor state |
 | SSH key discovery, public-key reads, and generation | `DaemonKeyService` over the core key service | `keys.*` API; private-key contents never cross the API |
 | Global SSH overrides | `SshOverridesService` | `ssh_overrides.*` API with revision-safe writes |
+| Login profiles, group profile links, and their resolution into Host blocks | `LoginProfileService` through `DaemonLoginProfileApi` | `login_profiles.*` API; profile secrets only through protected secret frames (see [LOGIN_PROFILES.md](LOGIN_PROFILES.md)) |
 | Secret backend selection and lifecycle | `SecretBackendService` | `secrets.*` API and protected interactions |
 | Runtime connection secret resolution | `DaemonConnectionSecretProvider` | Daemon session/connection services; no ordinary secret-bearing DTOs |
 | Identity provider state, agent inspection, effective identities, and native deployment | `IdentityStateService` and `DaemonIdentityService` | `identity.*` APIs; GTK receives safe metadata and operation snapshots only |

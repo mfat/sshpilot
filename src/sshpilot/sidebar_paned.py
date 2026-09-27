@@ -271,6 +271,13 @@ class SidebarPaned(Gtk.Paned):
             if width > 0 and width != self._last_alloc_width:
                 self._last_alloc_width = width
                 self._sync_position(width)
+            elif (width > 0 and self._show_sidebar
+                  and self.get_position() != self._target_position(width)):
+                # Same window width, but the sidebar's content floor moved —
+                # a row grew a status lock, or lost it. Follow it, so a
+                # sidebar dragged down to its floor is never clipped and
+                # returns to the dragged width once the extra width goes.
+                self._sync_position(width)
             Gtk.Paned.do_size_allocate(self, width, height, baseline)
         finally:
             self._allocating = False

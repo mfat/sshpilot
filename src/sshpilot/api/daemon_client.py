@@ -379,6 +379,9 @@ SECRET_BACKEND_METHODS = frozenset({
     "connections.store_plugin_secret",
     "connections.get_plugin_secret",
     "connections.delete_plugin_secret",
+    "login_profiles.set_secret",
+    "login_profiles.clear_secret",
+    "login_profiles.delete",
 })
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
@@ -484,6 +487,14 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_global_ssh_overrides": Capability.SSH_OVERRIDES_READ,
     "update_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
+    "get_login_profiles": Capability.LOGIN_PROFILES_READ,
+    "preview_login_profile_assignment": Capability.LOGIN_PROFILES_READ,
+    "create_login_profile": Capability.LOGIN_PROFILES_WRITE,
+    "update_login_profile": Capability.LOGIN_PROFILES_WRITE,
+    "delete_login_profile": Capability.LOGIN_PROFILES_WRITE,
+    "assign_login_profile": Capability.LOGIN_PROFILES_WRITE,
+    "set_group_login_profile": Capability.LOGIN_PROFILES_WRITE,
+    "set_login_profile_secret": Capability.LOGIN_PROFILES_WRITE,
     "get_secret_configuration": Capability.SECRETS_READ,
     "update_secret_configuration": Capability.SECRETS_WRITE,
     "get_secret_backends": Capability.SECRETS_READ,
@@ -1929,6 +1940,126 @@ class DaemonClient:
             return global_ssh_overrides_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid SSH overrides")
+
+    # -- login profiles ------------------------------------------------------
+
+    def _login_profile_write(self, method, payload, decode, description, *, secret_input=None):
+        self._require_write_compatibility(description)
+        self._require_capability(Capability.LOGIN_PROFILES_WRITE)
+        kwargs = {"mutation_description": description}
+        if secret_input is not None:
+            kwargs["secret_input"] = secret_input
+        result = self._request(method, payload, **kwargs)
+        try:
+            return decode(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid login profile result")
+
+    @staticmethod
+    def _decode_bool(result):
+        if type(result) is not bool:
+            raise ValueError("expected a boolean result")
+        return result
+
+    def get_login_profiles(self):
+        from sshpilot.api.transport.login_profile_codec import (
+            login_profile_snapshot_from_wire,
+        )
+
+        self._require_capability(Capability.LOGIN_PROFILES_READ)
+        result = self._request("login_profiles.get", {})
+        try:
+            return login_profile_snapshot_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid login profile snapshot")
+
+    def preview_login_profile_assignment(self, request):
+        from sshpilot.api.transport.login_profile_codec import (
+            login_profile_assignment_previews_from_wire,
+            preview_login_profile_assignment_request_to_wire,
+        )
+
+        self._require_capability(Capability.LOGIN_PROFILES_READ)
+        result = self._request(
+            "login_profiles.preview_assignment",
+            preview_login_profile_assignment_request_to_wire(request),
+        )
+        try:
+            return login_profile_assignment_previews_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid assignment preview")
+
+    def create_login_profile(self, request):
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        return self._login_profile_write(
+            "login_profiles.create",
+            codec.create_login_profile_request_to_wire(request),
+            codec.login_profile_summary_from_wire,
+            "create login profile",
+        )
+
+    def update_login_profile(self, request):
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        return self._login_profile_write(
+            "login_profiles.update",
+            codec.update_login_profile_request_to_wire(request),
+            codec.login_profile_summary_from_wire,
+            "update login profile",
+        )
+
+    def delete_login_profile(self, request):
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        return self._login_profile_write(
+            "login_profiles.delete",
+            codec.delete_login_profile_request_to_wire(request),
+            codec.delete_login_profile_result_from_wire,
+            "delete login profile",
+        )
+
+    def assign_login_profile(self, request):
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        return self._login_profile_write(
+            "login_profiles.assign",
+            codec.assign_login_profile_request_to_wire(request),
+            self._decode_bool,
+            "assign login profile",
+        )
+
+    def set_group_login_profile(self, request):
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        return self._login_profile_write(
+            "login_profiles.set_group",
+            codec.set_group_login_profile_request_to_wire(request),
+            self._decode_bool,
+            "set group login profile",
+        )
+
+    def set_login_profile_secret(self, request, secret=None):
+        from sshpilot.api.models.login_profiles import SetLoginProfileSecretRequest
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        if type(request) is not SetLoginProfileSecretRequest:
+            raise TypeError("a SetLoginProfileSecretRequest is required")
+        if request.clear:
+            if secret:
+                raise ValueError("a cleared secret takes no secret input")
+            secret_input = None
+        else:
+            if type(secret) is not bytearray or not secret:
+                raise ValueError("a non-empty bytearray secret is required")
+            secret_input = secret
+        return self._login_profile_write(
+            "login_profiles.clear_secret" if request.clear else "login_profiles.set_secret",
+            codec.set_login_profile_secret_request_to_wire(request),
+            self._decode_bool,
+            "set login profile secret",
+            secret_input=secret_input,
+        )
 
     # ------------------------------------------------------------------
     # Secret backend management (daemon-owned)

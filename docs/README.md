@@ -19,6 +19,7 @@ platform documentation that versions with the code:
 | [PLUGIN_SDK.md](PLUGIN_SDK.md) | The plugin API reference: context objects, protocol backends, UI pages, credential dialogs. |
 | [IDENTITY_PROVIDERS.md](IDENTITY_PROVIDERS.md) | The identity-provider contract (which key authenticates a connection, and who supplies it). |
 | [CREDENTIAL_MANAGER.md](CREDENTIAL_MANAGER.md) | The credential export/backup layer and its secret backends. |
+| [LOGIN_PROFILES.md](LOGIN_PROFILES.md) | Reusable login profiles for connections and groups: usage, design, and daemon architecture. |
 | [mcp/README.md](mcp/README.md) | Five-minute coding-agent setup for the contributor and runtime MCP servers. |
 | [plugins/](plugins/) | Writing, packaging and publishing plugins, plus copyable templates. |
 

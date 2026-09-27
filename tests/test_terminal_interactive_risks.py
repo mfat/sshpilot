@@ -614,7 +614,12 @@ def test_replay_request_waits_until_previous_chunk_reaches_frontend(
             if delivered < total_expected:
                 request_count += 1
                 client.wait_for_replay_requests(request_count)
-                dispatcher.run_one()
+                # The last frame's drain submits the next request; its response
+                # may already have been dispatched by that drain, so wait for
+                # the response state rather than for one more queued callback.
+                dispatcher.run_until(
+                    lambda: controller._recovery_replay_pending is not None,
+                )
 
         dispatcher.run_until(
             lambda: controller.state is TerminalSessionState.ACTIVE,

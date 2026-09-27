@@ -147,7 +147,10 @@ def _popen_factory(script):
     return calls, popen
 
 
-def _service(script, *, broker=None, lookup=None, store=None, clear=None, max_attempts=3):
+def _service(
+    script, *, broker=None, lookup=None, store=None, clear=None, max_attempts=3,
+    profile_lookup=None,
+):
     calls, popen = _popen_factory(script)
     broker = broker or _Broker()
     service = PrivilegedFileService(
@@ -159,6 +162,7 @@ def _service(script, *, broker=None, lookup=None, store=None, clear=None, max_at
         secret_lookup=lookup or (lambda _host, _user: ""),
         secret_store=store or (lambda _host, _user, _password: True),
         secret_clear=clear or (lambda _host, _user: True),
+        profile_sudo_lookup=profile_lookup,
     )
     return service, calls, broker
 
@@ -881,3 +885,51 @@ def test_remembered_sudo_password_is_committed_to_the_borrowed_scope():
     assert broker.authenticated == [SCOPE_ID]
     # The session owns this scope; a privileged read must never tear it down.
     assert broker.cancelled == []
+
+
+def test_login_profile_sudo_password_is_preferred_over_host_secret():
+    seen_stdin = []
+
+    def script(argv, data):
+        seen_stdin.append(data)
+        if "sudo -n" in " ".join(argv):
+            return 1, b"", b"sudo: a password is required"
+        return 0, b"root content\n", b""
+
+    looked_up = []
+    service, _, broker = _service(
+        script,
+        lookup=lambda _h, _u: looked_up.append(1) or "hostpw",
+        profile_lookup=lambda cid: "profilepw" if cid == CONNECTION_ID else None,
+    )
+    assert _read(service).content == b"root content\n"
+    assert seen_stdin == [None, b"profilepw\n"]
+    assert looked_up == []
+    assert broker.created == []
+
+
+def test_wrong_login_profile_sudo_password_is_never_cleared():
+    attempts = {"n": 0}
+
+    def script(argv, data):
+        if "sudo -n" in " ".join(argv):
+            return 1, b"", b"sudo: a password is required"
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            assert data == b"profilepw\n"
+            return 1, b"", b"Sorry, try again."
+        return 0, b"ok\n", b""
+
+    cleared = []
+    broker = _Broker(
+        [_BrokerResult(secret=b"goodpw", remember_policy=RememberPolicy.DO_NOT_STORE)]
+    )
+    service, _, _ = _service(
+        script,
+        broker=broker,
+        clear=lambda _h, _u: cleared.append(1) or True,
+        profile_lookup=lambda _cid: "profilepw",
+    )
+    assert _read(service).content == b"ok\n"
+    assert cleared == []
+    assert len(broker.created) == 1

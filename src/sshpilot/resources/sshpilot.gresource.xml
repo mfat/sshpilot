@@ -42,6 +42,7 @@
     <file alias="folder-open-symbolic.svg">icons/scalable/actions/folder-open-symbolic.svg</file>
     <file alias="folder-remote-symbolic.svg">icons/scalable/actions/folder-remote-symbolic.svg</file>
     <file alias="folder-symbolic.svg">icons/scalable/actions/folder-symbolic.svg</file>
+    <file alias="file-cabinet-symbolic.svg">icons/scalable/actions/file-cabinet-symbolic.svg</file>
     <file alias="format-justify-fill-symbolic.svg">icons/scalable/actions/format-justify-fill-symbolic.svg</file>
     <file alias="go-previous-symbolic.svg">icons/scalable/actions/go-previous-symbolic.svg</file>
     <file alias="go-down-symbolic.svg">icons/scalable/actions/go-down-symbolic.svg</file>
@@ -135,6 +136,7 @@
     <file alias="process-stop-symbolic.svg">icons/scalable/actions/process-stop-symbolic.svg</file>
     <file alias="starred-symbolic.svg">icons/scalable/actions/starred-symbolic.svg</file>
     <file alias="system-reboot-symbolic.svg">icons/scalable/actions/system-reboot-symbolic.svg</file>
+    <file alias="system-users-symbolic.svg">icons/scalable/actions/system-users-symbolic.svg</file>
     <file alias="view-more-horizontal-symbolic.svg">icons/scalable/actions/view-more-horizontal-symbolic.svg</file>
     <file alias="view-more-symbolic.svg">icons/scalable/actions/view-more-symbolic.svg</file>
     <file alias="view-paged-symbolic.svg">icons/scalable/actions/view-paged-symbolic.svg</file>

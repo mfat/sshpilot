@@ -10,6 +10,7 @@ src/sshpilot/command_palette.py
 src/sshpilot/command_progress_dialog.py
 src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_field_helpers.py
+src/sshpilot/connection_dialog_login_profile.py
 src/sshpilot/connection_dialog_port_forwarding.py
 src/sshpilot/connection_dialog_validation.py
 src/sshpilot/connection_display.py
@@ -33,6 +34,7 @@ src/sshpilot/forwarding_only_ui.py
 src/sshpilot/gtk/asbru_import_messages.py
 src/sshpilot/gtk/host_info_failure_messages.py
 src/sshpilot/gtk/identity_failure_messages.py
+src/sshpilot/gtk/login_profile_messages.py
 src/sshpilot/gtk/plugin_session_failure_messages.py
 src/sshpilot/gtk/pre_command_messages.py
 src/sshpilot/gtk/scp_failure_messages.py
@@ -46,8 +48,10 @@ src/sshpilot/host_info_payload.py
 src/sshpilot/host_info_shell.py
 src/sshpilot/host_info_tab.py
 src/sshpilot/host_picker.py
+src/sshpilot/key_sources.py
 src/sshpilot/known_hosts_editor.py
 src/sshpilot/log_viewer.py
+src/sshpilot/login_profile_dialogs.py
 src/sshpilot/machine_info_dialog.py
 src/sshpilot/macos_menubar.py
 src/sshpilot/main.py

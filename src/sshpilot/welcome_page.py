@@ -161,73 +161,12 @@ class WelcomePage(Gtk.Overlay):
             logger.error('Start page local-terminal drop failed: %s', exc)
         return False
 
-    # --- New connection pill ---
-
-    def _build_new_connection_pill(self):
-        btn_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_content.append(icon_utils.new_image_from_icon_name('list-add-symbolic'))
-        btn_content.append(Gtk.Label(label=_('New connection')))
-        new_btn = Gtk.Button()
-        new_btn.set_child(btn_content)
-        new_btn.add_css_class('suggested-action')
-        new_btn.add_css_class('pill')
-        new_btn.set_can_focus(False)
-        new_btn.set_tooltip_text(self._tooltip(_('New connection'), 'new-connection'))
-        new_btn.connect('clicked', lambda *_a: self.window.get_application().activate_action('new-connection'))
-        return new_btn
-
-    # --- Collapsible extra actions ---
-
-    def _build_extras(self, current_shortcuts):
-        """Secondary actions + pinned sections, hidden behind a revealer."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_margin_top(8)
-
-        pill = self._build_new_connection_pill()
-        pill.set_halign(Gtk.Align.CENTER)
-        pill.set_margin_bottom(16)
-        box.append(pill)
-
-        # Shared size group keeps every chip (both rows) the same width.
-        chip_sizes = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
-
-        chips = self._make_chip_row([
-            ('document-edit-symbolic', _('Edit SSH Configuration'),
-             lambda _b: self.window.get_application().activate_action('edit-ssh-config'),
-             'edit-ssh-config'),
-            ('folder-remote-symbolic', _('SFTP File Manager'),
-             self._open_file_manager,
-             'manage-files'),
-            ('system-run-symbolic', _('Command Snippets'),
-             lambda _b: self._open_command_blocks_sidebar(),
-             'toggle-command-blocks'),
-        ], chip_sizes)
-        chips.set_margin_bottom(8)
-        box.append(chips)
-
-        more_chips = self._make_chip_row([
-            ('network-server-symbolic', _('Manage Known hosts'),
-             lambda _b: self.window.on_edit_known_hosts_action(None, None),
-             'edit-known-hosts'),
-            ('dialog-password-symbolic', _('Authorized keys'),
-             lambda _b: self.window.on_manage_local_authorized_keys_action(None, None),
-             'manage-local-authorized-keys'),
-            ('brand-docker-symbolic', _('Docker Console'),
-             self._open_docker_console,
-             None),
-        ], chip_sizes)
-        more_chips.set_margin_top(8)
-        box.append(more_chips)
-
-        return box
-
     # --- Main view ---
 
     def _build_minimal_view(self, current_shortcuts):
         """Compact start page: omnisearch anchored at the vertical midpoint
         (top half of a homogeneous split), lists in a scrollable bottom half so
-        the search never drifts, and secondary actions in a popover."""
+        the search never drifts."""
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, homogeneous=True)
         outer.set_hexpand(True)
         outer.set_vexpand(True)
@@ -274,40 +213,8 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_child(lists)
         inner.append(clamp)
 
-        # Secondary actions, tucked behind a popover so they never fight the
-        # lists for the bottom half's limited height.
-        extras = self._build_extras(current_shortcuts)
-        extras.set_margin_top(12)
-        extras.set_margin_bottom(12)
-        extras.set_margin_start(12)
-        extras.set_margin_end(12)
-        popover = Gtk.Popover()
-        # Prefer opening upward from the bottom edge; GTK may still flip it
-        # below (outside the window) when monitor space above runs out.
-        popover.set_position(Gtk.PositionType.TOP)
-        popover.set_child(extras)
-        self._close_on_click(extras, popover.popdown)
-
-        more_icon = icon_utils.new_image_from_icon_name('view-more-horizontal-symbolic')
-        more_icon.add_css_class('dim-label')
-        more_btn = Gtk.MenuButton()
-        more_btn.set_child(more_icon)
-        more_btn.set_popover(popover)
-        more_btn.add_css_class('flat')
-        more_btn.add_css_class('circular')
-        more_btn.add_css_class('dim-label')
-        more_btn.set_halign(Gtk.Align.CENTER)
-        more_btn.set_margin_top(8)
-        more_btn.set_can_focus(False)
-        more_btn.set_tooltip_text(_('Show more actions'))
-
         scrolled.set_child(inner)
-        # Keep the "…" button out of the scroll area so it is always visible,
-        # pinned under the lists just above the footer band.
-        bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        bottom.append(scrolled)
-        bottom.append(more_btn)
-        outer.append(bottom)
+        outer.append(scrolled)
         return outer
 
     # --- Shared row/section widgets ---
@@ -770,126 +677,16 @@ class WelcomePage(Gtk.Overlay):
         footer.append(docs_link)
         return footer
 
-    def _make_chip_row(self, actions, size_group=None):
-        """Build a row of equal-width chip buttons."""
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.set_halign(Gtk.Align.CENTER)
-        for icon_name, label, cb, action_name in actions:
-            row.append(self._build_chip(icon_name, label, cb, action_name, size_group))
-        return row
-
-    def _build_chip(self, icon_name, label, callback, action_name=None, size_group=None):
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        content.set_halign(Gtk.Align.CENTER)
-        content.append(icon_utils.new_image_from_icon_name(icon_name))
-        content.append(Gtk.Label(label=label))
-        btn = Gtk.Button()
-        btn.set_child(content)
-        btn.add_css_class('pill')
-        btn.set_can_focus(False)
-        if size_group is not None:
-            size_group.add_widget(btn)
-        btn.set_tooltip_text(self._tooltip(label, action_name))
-        # clicked passes the button as first arg; callbacks accept it (used as
-        # the popover anchor for Copy key to server).
-        btn.connect('clicked', callback)
-        return btn
-
     def _tooltip(self, text, action_name=None):
         """Label plus the action's current keyboard shortcut, if one is set."""
         accel = self._get_action_accel_display(getattr(self, '_shortcuts', {}) or {}, action_name) if action_name else ''
         return f"{text}  ({accel})" if accel else text
-
-    @classmethod
-    def _close_on_click(cls, widget, close_fn):
-        """Close the extras popover after any of its buttons is clicked.
-
-        Connected after each button's own handler, so the action (which may use
-        the button as a dialog/popover anchor) runs before the close."""
-        child = widget.get_first_child()
-        while child is not None:
-            if isinstance(child, Gtk.Button):
-                child.connect('clicked', lambda *_a: close_fn())
-            else:
-                cls._close_on_click(child, close_fn)
-            child = child.get_next_sibling()
-
-    def _prompt_create_connection(self):
-        """No hosts yet — offer to create one."""
-        dialog = Adw.MessageDialog(
-            transient_for=self.window,
-            modal=True,
-            heading=_('No Connections Yet'),
-            body=_('Create a connection first to use this action.'),
-        )
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('create', _('New Connection'))
-        dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('create')
-        dialog.set_close_response('cancel')
-        dialog.connect(
-            'response',
-            lambda _d, resp: self.window.get_application().activate_action('new-connection')
-            if resp == 'create' else None,
-        )
-        dialog.present()
-
-    def _open_docker_console(self, anchor):
-        """Open the Docker Console page (it has its own host chooser), or, if the
-        docker-manager plugin is disabled, prompt the user to enable it.
-
-        Mirrors the Tools-menu entry: open_page honors the page's on_activate.
-        The page is only registered while the plugin is active, so its presence
-        is the enabled signal.
-        """
-        ui = getattr(getattr(self.window, 'plugin_host', None), 'ui', None)
-        manager_id = 'docker-manager:manager'
-        if ui is None or manager_id not in ui.page_ids_for_plugin('docker-manager'):
-            self._prompt_enable_plugin(_('Docker Console'))
-            return
-        ui.open_page(manager_id)
-
-    def _prompt_enable_plugin(self, plugin_name):
-        """Tell the user the plugin is off and offer to open Settings."""
-        dialog = Adw.AlertDialog(
-            heading=_('Plugin Disabled'),
-            body=_(
-                'The %s plugin is disabled. Enable it from Settings ▸ Plugins, '
-                'then restart SSH Pilot to use this feature.'
-            ) % plugin_name,
-        )
-        dialog.add_response('close', _('Close'))
-        dialog.add_response('open', _('Open Settings'))
-        dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('open')
-        dialog.set_close_response('close')
-        dialog.connect(
-            'response',
-            lambda _d, resp: self.window.show_preferences('plugins') if resp == 'open' else None,
-        )
-        dialog.present(self.window)
-
-    def _open_file_manager(self, anchor):
-        """Same behavior as the Manage Files menu item: selected connection,
-        or the file manager with a host picker in the remote pane."""
-        if not list(getattr(self.connection_manager, 'connections', [])):
-            self._prompt_create_connection()
-            return
-        try:
-            self.window.open_file_manager_from_menu()
-        except Exception:
-            logger.error("Failed to open file manager", exc_info=True)
 
     def _show_toast(self, message):
         try:
             self.window.add_toast(Adw.Toast.new(message))
         except Exception:
             pass
-
-    def _open_command_blocks_sidebar(self) -> None:
-        """Toggle the command blocks right sidebar from the start page."""
-        if hasattr(self.window, '_toggle_command_blocks_panel'):
-            self.window._toggle_command_blocks_panel()
 
     # --- Pinned connections ---
 

@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.2.3}
+Version:        %{?version}%{!?version:6.2.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -145,6 +145,12 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sun Sep 27 2026 mFat <newmfat@gmail.com> - 6.2.4-1
+- Introducing "Login Profiles", reusable, saved idenities you can assign to any connection or group
+- New "Dashboard" button in connection rows
+- UI improvements
+- Updated translations
+
 * Fri Sep 25 2026 mFat <newmfat@gmail.com> - 6.2.3-1
 - More SFTP improvemnets
 - Added support for OSC 52

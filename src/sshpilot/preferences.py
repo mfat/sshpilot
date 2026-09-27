@@ -1698,6 +1698,21 @@ class PreferencesWindow(Adw.NavigationPage):
         sidebar_group.add(show_file_manager_button_switch)
         self._sidebar_mode_dependent_rows.append(show_file_manager_button_switch)
 
+        # Dashboard hover button on connection rows (on for new installs)
+        show_dashboard_button_switch = Adw.SwitchRow()
+        show_dashboard_button_switch.set_title(_("Dashboard Button"))
+        show_dashboard_button_switch.set_subtitle(
+            _("Show the dashboard button in connection rows")
+        )
+        show_dashboard_button_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_dashboard_button', False))
+        )
+        show_dashboard_button_switch.connect(
+            'notify::active', self.on_sidebar_show_dashboard_button_changed
+        )
+        sidebar_group.add(show_dashboard_button_switch)
+        self._sidebar_mode_dependent_rows.append(show_dashboard_button_switch)
+
         # Split-view hover button on group rows (off by default)
         show_split_view_button_switch = Adw.SwitchRow()
         show_split_view_button_switch.set_title(_("Split View Button"))
@@ -6861,6 +6876,18 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error(
                 "Failed to update sidebar show file manager button preference: %s", exc
+            )
+
+    def on_sidebar_show_dashboard_button_changed(self, switch, *args):
+        """Persist the preference for the connection-row Dashboard button."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_dashboard_button', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show dashboard button preference: %s", exc
             )
 
     def on_sidebar_show_split_view_button_changed(self, switch, *args):

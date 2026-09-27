@@ -587,6 +587,21 @@ Implemented when the SSH overrides service is installed. Partially updates
 Gated behind `SSH_OVERRIDES_WRITE`. Write operations use optimistic concurrency
 control via `expected_revision`.
 
+<!-- api-capability: login_profiles.read -->
+## `login_profiles.read`
+
+Implemented when the login profile service is installed. Reads profiles and
+their group/connection links (`login_profiles.get`) and previews assignments
+(`login_profiles.preview_assignment`). Gated behind `LOGIN_PROFILES_READ`.
+
+<!-- api-capability: login_profiles.write -->
+## `login_profiles.write`
+
+Implemented when the login profile service is installed. Creates, updates and
+deletes profiles, assigns them to connections and groups, and stores or clears
+profile secrets through protected secret transport. Gated behind
+`LOGIN_PROFILES_WRITE`.
+
 <!-- api-capability: secrets.read -->
 ## `secrets.read`
 

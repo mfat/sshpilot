@@ -21,7 +21,7 @@ Resolved Gio.Icon instances are cached per icon name for the process lifetime.
 import logging
 from typing import Dict, Optional
 
-from gi.repository import Gtk, Gio
+from gi.repository import Gdk, Gtk, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ _patched = False
 # resolved via Gtk.IconTheme; alias entries fall back to Gio.FileIcon.
 _ICON_RESOURCE_MAP = {
     'folder-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-symbolic.svg',
+    'file-cabinet-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/file-cabinet-symbolic.svg',
     'text-x-generic-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-x-generic-symbolic.svg',
     'folder-open-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-open-symbolic.svg',
     'folder-new-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-new-symbolic.svg',
@@ -72,6 +73,7 @@ _ICON_RESOURCE_MAP = {
     'edit-redo-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-redo-symbolic.svg',
     'system-search-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-search-symbolic.svg',
     'system-run-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-run-symbolic.svg',
+    'system-users-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-users-symbolic.svg',
     'sidebar-show-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/sidebar-show-symbolic.svg',
     'sidebar-expand-left-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/sidebar-expand-left-symbolic.svg',
     'open-menu-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/open-menu-symbolic.svg',
@@ -236,6 +238,20 @@ def patch_gtk_image():
 def new_gicon_from_icon_name(icon_name: str) -> Gio.Icon:
     """Create a Gio.Icon from an icon name (cached; same resolver as Gtk.Image helpers)."""
     return get_gicon_for_icon_name(icon_name)
+
+def new_paintable_from_icon_name(icon_name: str, size: int) -> Optional[Gdk.Paintable]:
+    """A paintable for *icon_name* (bundled first), for widgets such as
+    Adw.StatusPage that take a paintable but resolve ``icon_name`` only
+    through the system theme. ``None`` without a display.
+    """
+    display = Gdk.Display.get_default()
+    if display is None:
+        return None
+    theme = Gtk.IconTheme.get_for_display(display)
+    return theme.lookup_by_gicon(
+        get_gicon_for_icon_name(icon_name), size, 1, Gtk.TextDirection.NONE, 0
+    )
+
 
 def new_button_from_icon_name(icon_name: str) -> Gtk.Button:
     """

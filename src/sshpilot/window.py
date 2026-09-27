@@ -2486,6 +2486,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 "Failed to apply sidebar-compact list class",
                 exc_info=True,
             )
+        try:
+            from sshpilot.sidebar import update_hide_hosts_button_visibility
+            update_hide_hosts_button_visibility(self)
+        except Exception:
+            logger.debug(
+                "Failed to update hide-hostnames button visibility",
+                exc_info=True,
+            )
 
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
@@ -2525,17 +2533,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 row.expand_button.set_visible(True)
 
             # Re-evaluate hover action buttons against current prefs / hover.
-            if hasattr(row, '_reveal_file_manager_button'):
+            if hasattr(row, '_reveal_hover_actions'):
                 try:
                     on_row = (
                         row._pointer_is_on_row()
                         if hasattr(row, '_pointer_is_on_row')
                         else False
                     )
-                    row._reveal_file_manager_button(on_row)
+                    row._reveal_hover_actions(on_row)
                 except Exception:
                     logger.debug(
-                        "Failed to refresh connection-row file manager button",
+                        "Failed to refresh connection-row hover actions",
                         exc_info=True,
                     )
             if hasattr(row, '_reveal_row_actions'):
@@ -3849,6 +3857,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ssh_section = Gio.Menu()
         ssh_section.append(_('SSH Config Editor'), 'app.edit-ssh-config')
         ssh_section.append(_('Known Hosts Editor'), 'win.edit-known-hosts')
+        ssh_section.append(_('Login Profiles'), 'win.manage-login-profiles')
         ssh_section.append(_('Manage Local authorized_keys…'), 'win.manage-local-authorized-keys')
         menu.append_section(None, ssh_section)
 
@@ -4249,6 +4258,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
+            dashboard_callback=self._open_dashboard_for_connection,
             status_resolver=status_resolver,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
@@ -7246,6 +7256,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             connection = getattr(row, 'connection', None) if row else None
         if connection is None:
             return
+        self._open_dashboard_for_connection(connection)
+
+    def _open_dashboard_for_connection(self, connection):
+        """Open the Dashboard tab for ``connection``."""
         from .host_info_tab import open_host_info_tab
         from .machine_info_dialog import open_machine_info_tab
 
@@ -8043,6 +8057,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             complete_save(False)
             return
 
+        # Login profile link chosen in the dialog: (mode, profile_id), where
+        # mode None means "custom" (unlink). Unlinking runs before the config
+        # write so edited auth fields are never mistaken for drift; linking
+        # runs after it commits so the profile renders onto the saved block.
+        profile_change = getattr(dialog, '_login_profile_change', None)
+        if (
+            profile_change is not None
+            and profile_change[0] is None
+            and was_editing
+            and checkpoint is None
+            and not getattr(dialog, '_login_profile_applied', False)
+        ):
+            from .api.models.login_profiles import AssignLoginProfileRequest
+
+            unlink_id = str(getattr(getattr(dialog, 'connection', None), 'nickname', '') or '')
+            config_operation = operation
+
+            def operation():
+                if unlink_id:
+                    self.client.assign_login_profile(
+                        AssignLoginProfileRequest((unlink_id,), None, None)
+                    )
+                dialog._login_profile_applied = True
+                return config_operation()
+
         def _success(_details):
             if self._is_quitting:
                 complete_save(False, None)
@@ -8097,6 +8136,46 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         "Post-mutation connection refresh failed type=%s",
                         type(error).__name__,
                     )
+
+            finish_config_flow = _finish_save_flow
+
+            def _finish_save_flow(meta_error=None):
+                change = getattr(dialog, '_login_profile_change', None)
+                if (
+                    change is None
+                    or change[0] is None
+                    or getattr(dialog, '_login_profile_applied', False)
+                ):
+                    finish_config_flow(meta_error)
+                    return
+                from .api.models.login_profiles import AssignLoginProfileRequest
+
+                mode, profile_id = change
+
+                def _applied(_result):
+                    dialog._login_profile_applied = True
+                    finish_config_flow(meta_error)
+
+                def _not_applied(error):
+                    logger.warning(
+                        "Applying the login profile failed type=%s",
+                        type(error).__name__,
+                    )
+                    finish_config_flow(
+                        meta_error
+                        or _("Saved, but the login profile could not be applied.")
+                    )
+
+                try:
+                    bridge.submit(
+                        lambda: self.client.assign_login_profile(
+                            AssignLoginProfileRequest((new_conn_id,), mode, profile_id)
+                        ),
+                        on_success=_applied,
+                        on_error=_not_applied,
+                    )
+                except RuntimeError as error:
+                    _not_applied(error)
 
             pending_meta_local = pending_meta or {}
             metadata_saved = getattr(dialog, '_daemon_metadata_saved', False)

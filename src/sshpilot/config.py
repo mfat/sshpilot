@@ -12,7 +12,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 
-from gi.repository import Gio, GLib, GObject
+from gi.repository import Gio, GObject
 from .platform.locking import settings_transaction_lock
 from .platform_utils import get_config_dir
 from sshpilot.core.settings import (
@@ -37,35 +37,54 @@ class Config(GObject.Object):
     def __init__(self):
         super().__init__()
         
-        # Try to use GSettings ONLY if schema is installed; otherwise use JSON
-        self.settings = None
-        self.use_gsettings = False
-        try:
-            schema_id = 'io.github.mfat.sshpilot'
-            source = Gio.SettingsSchemaSource.get_default()
-            schema = source.lookup(schema_id, True) if source else None
-            if schema is not None:
-                self.settings = Gio.Settings.new_full(schema, None, None)
-                self.use_gsettings = True
-                logger.debug("Using GSettings for configuration")
-            else:
-                logger.debug("GSettings schema not found; using JSON config")
-        except Exception as e:
-            logger.warning(f"GSettings unavailable; using JSON config: {e}")
-
-        # JSON config is used either as primary or as fallback store
+        # config.json is the only settings store: the daemon and core read it
+        # directly, so a second store would split the settings between them.
         self.config_file = os.path.join(get_config_dir(), 'config.json')
         self.config_data = self.load_json_config()
         # config.json is also mutated by the daemon. Track the tree observed
         # at load time so frontend saves can merge only their changed keys.
         self._config_snapshot = deepcopy(self.config_data)
+        self._import_legacy_gsettings()
         
         # Load built-in themes
         self.terminal_themes = self.load_builtin_themes()
-        
-        # Connect to settings changes
-        if self.use_gsettings:
-            self.settings.connect('changed', self.on_setting_changed)
+
+    def _import_legacy_gsettings(self) -> None:
+        """Move values a stale ``io.github.mfat.sshpilot`` schema holds into JSON.
+
+        Older builds read and wrote some keys through GSettings whenever that
+        schema was installed, so user changes to them live in dconf. Each
+        user-set key is copied into config.json and then reset in dconf, which
+        makes the import run once without a marker key.
+        """
+        try:
+            source = Gio.SettingsSchemaSource.get_default()
+            schema = source.lookup('io.github.mfat.sshpilot', True) if source else None
+            if schema is None:
+                return
+            settings = Gio.Settings.new_full(schema, None, None)
+            imported = []
+            for gsettings_key in schema.list_keys():
+                user_value = settings.get_user_value(gsettings_key)
+                if user_value is None:
+                    continue
+                # Legacy lookups mapped ``a.b`` to ``a-b``; only JSON keys that
+                # mapped onto a schema key were ever stored in dconf.
+                section, _, name = gsettings_key.partition('-')
+                section_data = self.config_data.get(section)
+                if isinstance(section_data, dict) and name in section_data:
+                    section_data[name] = user_value.unpack()
+                    imported.append(gsettings_key)
+            if not imported:
+                return
+            self.save_json_config()
+            for gsettings_key in imported:
+                settings.reset(gsettings_key)
+            Gio.Settings.sync()
+            logger.info("Imported legacy GSettings keys into config.json: %s",
+                        ", ".join(imported))
+        except Exception as e:
+            logger.warning(f"Could not import legacy GSettings values: {e}")
 
     def load_json_config(self) -> Dict[str, Any]:
         """Load configuration from JSON file"""
@@ -547,32 +566,13 @@ class Config(GObject.Object):
     def get_setting(self, key: str, default=None):
         """Get a setting value"""
         try:
-            if self.use_gsettings:
-                # Convert key format for GSettings
-                gsettings_key = key.replace('.', '-')
-                # If key exists in schema, use it
-                if self.settings.list_keys().__contains__(gsettings_key):
-                    return self.settings.get_value(gsettings_key).unpack()
-                # Fallback to JSON store for keys outside schema
-                # Navigate nested dictionary
-                keys = key.split('.')
-                value = self.config_data
-                for k in keys:
-                    if isinstance(value, dict) and k in value:
-                        value = value[k]
-                    else:
-                        return default
-                return value
-            else:
-                # Navigate nested dictionary
-                keys = key.split('.')
-                value = self.config_data
-                for k in keys:
-                    if isinstance(value, dict) and k in value:
-                        value = value[k]
-                    else:
-                        return default
-                return value
+            value = self.config_data
+            for k in key.split('.'):
+                if isinstance(value, dict) and k in value:
+                    value = value[k]
+                else:
+                    return default
+            return value
         except Exception as e:
             logger.error(f"Failed to get setting {key}: {e}")
             return default
@@ -580,64 +580,14 @@ class Config(GObject.Object):
     def set_setting(self, key: str, value: Any):
         """Set a setting value"""
         try:
-            if self.use_gsettings:
-                # Convert key format for GSettings
-                gsettings_key = key.replace('.', '-')
-                if self.settings.list_keys().__contains__(gsettings_key):
-                    # Use proper GSettings setter based on Python type
-                    try:
-                        if isinstance(value, bool):
-                            self.settings.set_boolean(gsettings_key, bool(value))
-                        elif isinstance(value, int) and not isinstance(value, bool):
-                            # bool is subclass of int; ensure pure int here
-                            self.settings.set_int(gsettings_key, int(value))
-                        elif isinstance(value, float):
-                            try:
-                                self.settings.set_double(gsettings_key, float(value))
-                            except Exception:
-                                # Fallback to string if schema type is not double
-                                self.settings.set_string(gsettings_key, str(value))
-                        elif isinstance(value, str):
-                            self.settings.set_string(gsettings_key, value)
-                        else:
-                            # Fallback: try to coerce to the existing key's variant type
-                            try:
-                                current_variant = self.settings.get_value(gsettings_key)
-                                variant_type = current_variant.get_type_string()
-                                self.settings.set_value(gsettings_key, GLib.Variant(variant_type, value))
-                            except Exception:
-                                # Last resort: store as string
-                                self.settings.set_string(gsettings_key, str(value))
-                    except Exception:
-                        # If anything goes wrong, fall back to storing in JSON config
-                        keys = key.split('.')
-                        current = self.config_data
-                        for k in keys[:-1]:
-                            if k not in current or not isinstance(current[k], dict):
-                                current[k] = {}
-                            current = current[k]
-                        current[keys[-1]] = value
-                        self.save_json_config()
-                else:
-                    # Fallback to JSON store when key not present in schema
-                    keys = key.split('.')
-                    current = self.config_data
-                    for k in keys[:-1]:
-                        if k not in current or not isinstance(current[k], dict):
-                            current[k] = {}
-                        current = current[k]
-                    current[keys[-1]] = value
-                    self.save_json_config()
-            else:
-                # Navigate nested dictionary and set value (pure JSON mode)
-                keys = key.split('.')
-                current = self.config_data
-                for k in keys[:-1]:
-                    if k not in current:
-                        current[k] = {}
-                    current = current[k]
-                current[keys[-1]] = value
-                self.save_json_config()
+            keys = key.split('.')
+            current = self.config_data
+            for k in keys[:-1]:
+                if k not in current or not isinstance(current[k], dict):
+                    current[k] = {}
+                current = current[k]
+            current[keys[-1]] = value
+            self.save_json_config()
             
             # Emit signal
             self.emit('setting-changed', key, value)
@@ -646,13 +596,6 @@ class Config(GObject.Object):
             
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
-
-    def on_setting_changed(self, settings, key):
-        """Handle GSettings change"""
-        value = settings.get_value(key).unpack()
-        # Convert key format back
-        config_key = key.replace('-', '.')
-        self.emit('setting-changed', config_key, value)
 
     def get_terminal_profile(self, theme_name: Optional[str] = None) -> Dict[str, str]:
         """Get terminal theme profile"""
@@ -903,14 +846,8 @@ class Config(GObject.Object):
     def reset_to_defaults(self):
         """Reset all settings to defaults"""
         try:
-            if self.use_gsettings:
-                # Reset all GSettings keys
-                for key in self.settings.list_keys():
-                    self.settings.reset(key)
-            else:
-                # Reset JSON config
-                self.config_data = self.get_default_config()
-                self.save_json_config()
+            self.config_data = self.get_default_config()
+            self.save_json_config()
             
             logger.info("Configuration reset to defaults")
             
@@ -920,15 +857,7 @@ class Config(GObject.Object):
     def export_config(self, file_path: str) -> bool:
         """Export configuration to file"""
         try:
-            config_data = {}
-            
-            if self.use_gsettings:
-                # Export GSettings
-                for key in self.settings.list_keys():
-                    config_key = key.replace('-', '.')
-                    config_data[config_key] = self.settings.get_value(key).unpack()
-            else:
-                config_data = self.config_data.copy()
+            config_data = self.config_data.copy()
             
             # Add custom themes
             builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe', 'catppuccin_macchiato', 'catppuccin_mocha']

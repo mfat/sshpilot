@@ -113,6 +113,9 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_group_icon': False,
             # Hover action buttons on sidebar rows (Settings ▸ Interface ▸ Sidebar)
             'sidebar_show_file_manager_button': True,
+            # On for new installs only: existing configs lack the key, and the
+            # call sites fall back to False, so upgraders keep their rows as-is.
+            'sidebar_show_dashboard_button': True,
             'sidebar_show_split_view_button': False,
             # Pinned Local Terminal row at the top of the connection list
             'sidebar_show_local_terminal': False,

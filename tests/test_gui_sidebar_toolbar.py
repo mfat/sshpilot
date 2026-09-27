@@ -46,8 +46,9 @@ def test_new_group_button_is_in_sidebar_header(gui):
     assert new_group.get_parent() is not None
     assert new_group.get_action_name() == 'win.create-group'
     assert new_group.get_child().get_icon_name() == 'folder-new-symbolic'
-    # New Connection stays the first priority control.
-    assert gui.window._sidebar_add_button is header._items[0]
+    # New Connection and New Group lead, side by side, then Search.
+    assert header._items[:3] == [
+        gui.window._sidebar_add_button, new_group, gui.window.search_button]
 
 
 

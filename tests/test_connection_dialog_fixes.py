@@ -1,6 +1,8 @@
 import types
 from sshpilot.connection_dialog import _editor_details_to_connection
 from sshpilot.key_manager import SSHKey
+from sshpilot import key_sources
+from sshpilot.key_sources import KeySourcesMixin
 
 def test_editor_details_to_connection_empty_hostname():
     details = types.SimpleNamespace(
@@ -129,9 +131,8 @@ class _FakeKeyManager:
 
 def _discover_disk_keys(parent):
     """Invoke the production method without constructing the GTK dialog."""
-    from sshpilot.connection_dialog import ConnectionDialog
 
-    method = ConnectionDialog.__dict__["_discover_disk_keys"]
+    method = KeySourcesMixin.__dict__["_discover_disk_keys"]
     return types.MethodType(method, types.SimpleNamespace(parent_window=parent))()
 
 
@@ -185,9 +186,8 @@ def test_dialog_disk_key_discovery_swallows_failures():
 
 def _browse_file(self, title="Pick a file", on_chosen=None, filters=None):
     """Invoke the production method without constructing the GTK dialog."""
-    from sshpilot.connection_dialog import ConnectionDialog
 
-    method = ConnectionDialog.__dict__["_browse_file"]
+    method = KeySourcesMixin.__dict__["_browse_file"]
     return types.MethodType(method, self)(title, on_chosen, filters=filters)
 
 
@@ -213,7 +213,7 @@ def test_browse_file_parents_dialog_to_self(monkeypatch, tmp_path):
             opened.append(parent)
 
     monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
-    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(key_sources, "get_ssh_dir", lambda: str(tmp_path))
 
     # The transient-for window is what the old code reached across to.
     main_window = cd.Gtk.Window.__new__(cd.Gtk.Window)
@@ -254,7 +254,7 @@ def test_browse_file_delivers_chosen_path(monkeypatch, tmp_path):
                 get_path=lambda: "/home/alice/.ssh/id_ed25519")
 
     monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
-    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(key_sources, "get_ssh_dir", lambda: str(tmp_path))
     self = types.SimpleNamespace(
         get_transient_for=lambda: cd.Gtk.Window.__new__(cd.Gtk.Window))
 
@@ -274,7 +274,6 @@ def test_browse_key_uses_explicit_parent_when_given(monkeypatch, tmp_path):
     ConnectionDialog reopens the file chooser one window layer below the
     modal the user is actually looking at, so it appears hidden again."""
     from sshpilot import connection_dialog as cd
-    from sshpilot.connection_dialog import ConnectionDialog
 
     opened = []
 
@@ -292,16 +291,16 @@ def test_browse_key_uses_explicit_parent_when_given(monkeypatch, tmp_path):
             opened.append(parent)
 
     monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
-    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(key_sources, "get_ssh_dir", lambda: str(tmp_path))
 
     connection_dialog_self = types.SimpleNamespace(
         get_transient_for=lambda: cd.Gtk.Window.__new__(cd.Gtk.Window))
     connection_dialog_self._browse_file = types.MethodType(
-        ConnectionDialog.__dict__["_browse_file"], connection_dialog_self)
+        KeySourcesMixin.__dict__["_browse_file"], connection_dialog_self)
     key_chooser_dialog = types.SimpleNamespace(name="key-chooser")
 
     browse_key = types.MethodType(
-        ConnectionDialog.__dict__["_browse_key"], connection_dialog_self)
+        KeySourcesMixin.__dict__["_browse_key"], connection_dialog_self)
     browse_key(lambda path: None, key_chooser_dialog)
 
     assert opened == [key_chooser_dialog], (
