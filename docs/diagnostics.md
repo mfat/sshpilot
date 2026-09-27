@@ -82,6 +82,22 @@ port knock finished ports=3 duration_ms=412 kind=terminal
   command itself. A timeout kills the shell but not any
   descendants it left running; the WARNING says so.
 
+## Tracing a failed RDP, telnet or serial client
+
+A non-SSH connection's client (FreeRDP, telnet, a serial console) reports its
+errors only in its session tab. When it exits with a non-zero status, the daemon
+logs a WARNING in `daemon.log`:
+
+```
+rdp client exited status=131 output_lines=18 [connection=… session=…]
+```
+
+and, at DEBUG, the last 40 non-empty lines the tab showed (escape sequences
+stripped), each prefixed `  | `. The output may be the remote screen, so it is
+DEBUG-only: reproduce with `--diagnostics` to capture it. A clean exit, a tab
+closed by the user (the client is killed by a signal) and SSH sessions log
+neither line; SSH has its own `-E` diagnostics.
+
 ## Command-line flags
 
 By default the logs already capture **GTK/GLib warnings & criticals** (the

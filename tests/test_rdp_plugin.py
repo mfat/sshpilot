@@ -67,8 +67,20 @@ def test_defaults_give_a_short_command(monkeypatch):
     spec = _spawn(monkeypatch, host="win.example")
     assert spec.argv == [
         "/usr/bin/xfreerdp3", "/v:win.example:3389", "/t:desk",
-        "/dynamic-resolution", "/sound",
+        "/dynamic-resolution", "/sound", "/tune:FreeRDP_AutoLogonEnabled:true",
     ]
+
+
+def test_logs_on_with_the_checked_credentials(monkeypatch):
+    """Without INFO_AUTOLOGON Windows waits at its own logon screen, which
+    some hosts draw as a black desktop until the session is dropped."""
+    _installed(monkeypatch, "xfreerdp3")
+    spec = _spawn(monkeypatch, host="win.example", username="alice",
+                  extra_rdp_args="/tune:FreeRDP_AutoLogonEnabled:false")
+    tune = [arg for arg in spec.argv if arg.startswith("/tune:")]
+    # Extra arguments come last, so a user can still turn it off.
+    assert tune == ["/tune:FreeRDP_AutoLogonEnabled:true",
+                    "/tune:FreeRDP_AutoLogonEnabled:false"]
 
 
 def test_never_reads_credentials_from_stdin(monkeypatch):
@@ -215,7 +227,8 @@ def test_stored_password_travels_on_a_one_shot_fifo(monkeypatch, tmp_path):
     lines = _read_fifo(path)
     assert lines == [
         "/v:win.example:3389", "/u:alice", "/t:desk",
-        "/dynamic-resolution", "/sound", "/p:s3cret",
+        "/dynamic-resolution", "/sound", "/tune:FreeRDP_AutoLogonEnabled:true",
+        "/p:s3cret",
     ]
     # Read once, then gone with its directory.
     for _ in range(100):

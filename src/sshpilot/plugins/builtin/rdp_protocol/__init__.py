@@ -442,6 +442,11 @@ class RdpProtocolBackend(ProtocolBackend):
                 if _text(data, key):
                     spec += f",{option}:{_text(data, key)}"
             argv.append(f"/gateway:{spec}")
+        # Log on with the credentials NLA already checked, as Remmina does.
+        # FreeRDP's own clients never set INFO_AUTOLOGON (there is no switch
+        # for it before /tune), so Windows stops at its logon screen, which
+        # some hosts draw as a black desktop until the logon times out.
+        argv.append("/tune:FreeRDP_AutoLogonEnabled:true")
 
         argv += extra
 

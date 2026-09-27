@@ -60,6 +60,7 @@ from sshpilot.api.session_identity import new_session_id
 from sshpilot.core.connection_evidence import (
     classify_connection_evidence,
     post_auth_exit_failure_reason,
+    visible_terminal_text,
 )
 from sshpilot.core.ssh_diagnostics import SshDiagnosticResult, SshDiagnosticState
 from sshpilot.logging_support import log_context
@@ -79,6 +80,9 @@ DEFAULT_MAX_RETAINED_CLOSED_SESSIONS = 100
 from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process_or_abandon
 
 logger = logging.getLogger(__name__)
+
+# How much of a failed plugin client's output reaches the debug log.
+_PLUGIN_EXIT_TAIL_LINES = 40
 
 
 @dataclass
@@ -2043,6 +2047,48 @@ class SessionRuntime:
             self._finish_readiness(session_id)
         self._publish(events)
 
+    def _log_plugin_exit_tail_locked(
+        self,
+        record: _SessionRecord,
+        exit_info: SessionExitInfo,
+    ) -> None:
+        """Log how a non-SSH client ended, with the tail of its output.
+
+        A plugin client (FreeRDP, telnet, a serial console) reports its errors
+        only in the session tab, and the tab is gone once it closes; SSH has
+        its own ``-E`` diagnostics. The WARNING says a client failed; the
+        output itself may be the remote screen, so it stays at DEBUG.
+        """
+        spec = record.launch_spec
+        if spec is None or spec.protocol == "ssh":
+            return
+        if exit_info.exit_code in {None, 0}:
+            return
+        lines = [
+            line.rstrip()
+            for line in visible_terminal_text(
+                self._recent_terminal_text_locked(record)
+            ).split("\n")
+            if line.strip()
+        ][-_PLUGIN_EXIT_TAIL_LINES:]
+        with log_context(
+            session=record.session_id,
+            client=record.originating_client_id,
+            connection=record.connection_id,
+        ):
+            logger.warning(
+                "%s client exited status=%s output_lines=%d",
+                spec.protocol,
+                exit_info.exit_code,
+                len(lines),
+            )
+            if lines and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "%s client output tail:\n%s",
+                    spec.protocol,
+                    "\n".join(f"  | {line}" for line in lines),
+                )
+
     def _final_exit_events_locked(
         self,
         record: _SessionRecord,
@@ -2051,6 +2097,7 @@ class SessionRuntime:
         if record.state in {SessionState.EXITED, SessionState.CLOSED}:
             return events
         exit_info = record.exit_info or SessionExitInfo(reason="process_exit")
+        self._log_plugin_exit_tail_locked(record, exit_info)
         if (
             record.state is SessionState.STARTING
             and (self._connection_evidence_gate or record.diagnostic_primary)
