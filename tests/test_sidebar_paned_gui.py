@@ -38,6 +38,17 @@ def _pump(rounds=50):
             break
 
 
+def _settle(done, timeout=2.0):
+    """Run the loop until ``done()`` or ``timeout``: a resize is laid out on
+    the next frame-clock tick, which an idle-only pump returns before."""
+    import time
+
+    context = _GLib.MainContext.default()
+    deadline = time.monotonic() + timeout
+    while not done() and time.monotonic() < deadline:
+        context.iteration(False)
+
+
 def _shown(paned, width=1000, height=600):
     """Put the paned on screen and pump the loop until it has an allocation."""
     window = Gtk.Window()
@@ -113,6 +124,28 @@ def test_a_drag_into_the_wall_stops_at_the_content_floor():
     window = _shown(paned)
     try:
         paned.set_position(120)          # under the 200px content minimum
+        assert paned.get_position() == 200
+    finally:
+        window.destroy()
+
+
+def test_a_sidebar_at_its_floor_follows_content_that_grows():
+    """A row that gains a status lock raises the content floor with no window
+    resize; the divider must follow it rather than clip the lock, and go back
+    to the dragged width once the lock is gone."""
+    paned = _paned()
+    sidebar = Gtk.Box()
+    sidebar.set_size_request(200, -1)
+    paned.set_sidebar(sidebar)
+    window = _shown(paned)
+    try:
+        paned.set_position(120)          # drag into the wall
+        assert paned.get_position() == 200
+        sidebar.set_size_request(240, -1)  # the lock appears
+        _settle(lambda: paned.get_position() == 240)
+        assert paned.get_position() == 240
+        sidebar.set_size_request(200, -1)  # and goes away
+        _settle(lambda: paned.get_position() == 200)
         assert paned.get_position() == 200
     finally:
         window.destroy()
