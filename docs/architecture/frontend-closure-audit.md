@@ -76,7 +76,7 @@ update both this audit and `tests/architecture/test_frontend_closure.py`.
 | Session list/read/input | plugin session observers and terminal actions | `PluginContext.list_sessions`, `PluginContext.read_terminal`, `PluginContext.send_terminal`; `PluginHost.list_sessions`, `PluginHost.read_terminal`, `PluginHost.send_terminal` | `SshPilotClient` session, replay, and terminal-input APIs | daemon session/replay/input tests and plugin host tests | API/daemon owned | The host projects daemon DTOs and replay bytes; widget references remain presentation/event bookkeeping only. |
 | Captured remote commands | Docker/plugin actions | `PluginContext.run_command` → broadcast API | `BroadcastCommandService`/native runner | daemon broadcast/API tests and plugin command tests | API/daemon owned | Protected stdin never enters ordinary request parameters. |
 | Streamed remote commands | Docker console/log follow | `PluginContext.run_command_stream` → broadcast output events | daemon broadcast operation and event publisher | daemon broadcast/API tests and Docker stream tests | API/daemon owned | Stop cancels the daemon operation; local stream helpers remain local. |
-| Local commands | plugin-local actions | `PluginContext.run_local_command`, `PluginContext.run_local_command_stream` | Local plugin/OS process | plugin local-command tests | legitimate frontend/platform-local | These are explicitly local plugin commands and do not own SSH Pilot remote state. They remain narrow local exceptions in the guard. |
+| Local commands | plugin-local actions; connection-editor field suggestions | `PluginContext.run_local_command`, `PluginContext.run_local_command_stream`, `PluginContext.for_editor` | Local plugin/OS process | plugin local-command tests, `tests/test_protocol_suggestions.py` | legitimate frontend/platform-local | These are explicitly local plugin commands and do not own SSH Pilot remote state. They remain narrow local exceptions in the guard. `for_editor` is the host-less context a `FieldSpec.suggest` provider gets to ask a local tool (`docker ps`, `kubectl get`). |
 | Multiplex acquire/release | deprecated external plugin compatibility | `PluginContext.acquire_multiplex`, `PluginContext.release_multiplex` | none; daemon transport owns reuse | Docker behavior tests | dead/unreachable code | Both methods are compatibility no-ops and do not run SSH or touch frontend mux state. |
 | Local forwarding, active route | Docker service links | `PluginContext.ensure_local_forward` | daemon forward runtime via `open_forward`/`get_forward` | `tests/daemon/test_forward_*`, `tests/integration/test_forward_phase10.py` | API/daemon owned | Current production policy requires the daemon route and rejects silent fallback. |
 | Local forwarding, daemon-only route | `PluginContext.ensure_local_forward` | `open_forward` / `get_forward` | daemon forward runtime | daemon forward tests | API/daemon owned | The old frontend process branch was deleted; no ControlMaster or `ssh -N` fallback remains. |
@@ -90,6 +90,7 @@ identity; the prose matrix above remains the human-readable operation audit.
 <!-- plugin-facade-classification:start -->
 `PluginContext.daemon_client` | `API/daemon owned`
 `PluginContext.for_spawn` | `API/daemon owned`
+`PluginContext.for_editor` | `legitimate frontend/platform-local`
 `PluginContext.register_protocol` | `API/daemon owned`
 `PluginContext.add_connection` | `API/daemon owned`
 `PluginContext.update_connection` | `API/daemon owned`
@@ -197,9 +198,9 @@ compatibility methods are inert no-ops.
 ## Required Phase 7 report
 
 <!-- phase7-plugin-report:start -->
-plugin capabilities audited: 52
+plugin capabilities audited: 53
 api/daemon owned: 30
-legitimate frontend/platform-local: 20
+legitimate frontend/platform-local: 21
 dead/unreachable compatibility: 2
 migration-required public identities: 0
 semantic migration capabilities: 0

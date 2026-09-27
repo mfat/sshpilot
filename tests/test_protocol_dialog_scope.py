@@ -154,7 +154,7 @@ def test_plugin_fields_join_the_first_group_without_ssh_rows():
     _select(dlg, "rdp")
     assert dlg._host_group.get_title() == "RDP"
     assert _visible_row_titles(dlg._host_group) == [
-        "Protocol", "Name",
+        "Protocol", "Name (optional)",
         "Host", "Port", "Username", "Domain", "Password",
         "Tags (comma-separated)",
     ]
@@ -238,20 +238,86 @@ def _save(dlg):
 
 
 @pytest.mark.integration
-def test_a_new_plugin_connection_needs_only_a_name():
+def test_an_unnamed_plugin_connection_is_named_after_its_target():
+    _require_gtk()
+    dlg = _dialog(connections=[SimpleNamespace(nickname="Router")])
+    _select(dlg, "telnet")
+    dlg._plugin_field_widgets["host"][3]("router")
+    dlg._plugin_field_widgets["port"][3](2323)
+    saved, errors = _save(dlg)
+    assert not errors
+    # As Tabby and GNOME Connections do; the ID is clear of an existing one
+    # in any case.
+    assert saved[-1]["display_name"] == "router:2323"
+    assert saved[-1]["nickname"] == "router-2323"
+
+
+@pytest.mark.integration
+def test_a_named_plugin_connection_takes_its_id_from_the_name():
     _require_gtk()
     dlg = _dialog(connections=[SimpleNamespace(nickname="Core-Router")])
     _select(dlg, "telnet")
     dlg._plugin_field_widgets["host"][3]("router")
-
-    saved, errors = _save(dlg)
-    assert not saved and errors  # no name yet
-
     dlg.display_name_row.set_text("Core router")
-    saved, errors = _save(dlg)
-    # The ID comes from the name, clear of an existing one in any case.
+    saved, _errors = _save(dlg)
     assert saved[-1]["nickname"] == "core-router-2"
     assert saved[-1]["display_name"] == "Core router"
+
+
+def _spin_until(condition, timeout=5.0):
+    import time
+    from gi.repository import GLib
+
+    deadline = time.monotonic() + timeout
+    context = GLib.MainContext.default()
+    while not condition() and time.monotonic() < deadline:
+        context.iteration(False)
+        time.sleep(0.01)
+    return condition()
+
+
+@pytest.mark.integration
+def test_a_suggestion_fills_its_field():
+    _require_gtk()
+    from gi.repository import Adw, Gtk
+
+    dlg = _dialog()
+    _select(dlg, "serial")
+    _spec, row, getter, _setter = dlg._plugin_field_widgets["baud"]
+    button = None
+    pending = [row.get_first_child()]
+    while pending and button is None:
+        widget = pending.pop()
+        while widget is not None:
+            if isinstance(widget, Gtk.Button) and widget.get_icon_name() == "view-list-symbolic":
+                button = widget
+                break
+            pending.append(widget.get_first_child())
+            widget = widget.get_next_sibling()
+    assert button is not None
+    button.emit("clicked")
+
+    def _rows():
+        popover = next((c for c in _children(button) if isinstance(c, Gtk.Popover)), None)
+        return [w for w in _walk(popover) if isinstance(w, Adw.ActionRow)] if popover else []
+
+    assert _spin_until(lambda: len(_rows()) >= 10), "list never appeared"
+    picked = next(r for r in _rows() if r.get_title() == "921600")
+    picked.activate()
+    assert _spin_until(lambda: getter() == "921600")
+
+
+def _children(widget):
+    child = widget.get_first_child()
+    while child is not None:
+        yield child
+        child = child.get_next_sibling()
+
+
+def _walk(widget):
+    for child in _children(widget):
+        yield child
+        yield from _walk(child)
 
 
 @pytest.mark.integration

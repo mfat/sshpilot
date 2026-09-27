@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.72",
+  "api_implementation_version": "0.73",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1662,6 +1662,8 @@
       "serial_screen_databits_unsupported",
       "serial_screen_hardware_flow_and_databits_unsupported",
       "serial_programs_unavailable",
+      "serial_screen_terminal_options_unsupported",
+      "serial_device_access_denied",
       "rdp_client_unavailable"
     ],
     "RememberPolicy": [
@@ -2615,6 +2617,13 @@
           "type": "str"
         },
         {
+          "default": "",
+          "name": "target_summary",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
           "default": [],
           "name": "aliases",
           "required": false,
@@ -2781,6 +2790,13 @@
         {
           "default": "",
           "name": "display_name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "target_summary",
           "required": false,
           "sensitive": false,
           "type": "str"
@@ -3240,6 +3256,13 @@
         {
           "default": "",
           "name": "display_name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "target_summary",
           "required": false,
           "sensitive": false,
           "type": "str"

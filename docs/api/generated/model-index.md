@@ -698,6 +698,7 @@ Synthetic representation:
 | `health` | `ConnectionHealth` | No | `unknown` | No |
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
+| `target_summary` | `str` | No | `` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -727,6 +728,7 @@ Synthetic representation:
   "port": 22,
   "protocol": "ssh",
   "proxy_jump": [],
+  "target_summary": "",
   "username": "user",
   "x11_forwarding": false
 }
@@ -791,6 +793,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `health` | `ConnectionHealth` | No | `unknown` | No |
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
+| `target_summary` | `str` | No | `` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -869,6 +872,7 @@ Synthetic representation:
   "request_tty": "",
   "security_key_provider": "",
   "source": "",
+  "target_summary": "",
   "username": "user",
   "x11_forwarding": false,
   "x11_forwarding_explicit_no": false
@@ -1015,6 +1019,7 @@ Synthetic representation:
 | `health` | `ConnectionHealth` | No | `unknown` | No |
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
+| `target_summary` | `str` | No | `` | No |
 
 Synthetic representation:
 
@@ -1029,6 +1034,7 @@ Synthetic representation:
   "nickname": "example",
   "port": 22,
   "protocol": "ssh",
+  "target_summary": "",
   "username": "user"
 }
 ```

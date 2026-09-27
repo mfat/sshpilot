@@ -4637,9 +4637,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     _("Shown in the connection list. Leave empty to use the SSH alias.")
                 )
             else:
-                self.display_name_row.set_title(_("Name"))
+                self.display_name_row.set_title(_("Name (optional)"))
                 self.display_name_row.set_tooltip_text(
-                    _("Shown in the connection list")
+                    _("Shown in the connection list. Leave empty to name it "
+                      "after what it connects to.")
                 )
         except Exception:
             logger.debug("Could not relabel the identity rows", exc_info=True)
@@ -4803,6 +4804,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     title = _("Display")
                 elif group_key == 'devices':
                     title = _("Devices")
+                elif group_key == 'terminal':
+                    title = _("Terminal")
                 else:
                     title = group_key.replace('_', ' ').title()
                 group = Adw.PreferencesGroup(title=title)
@@ -4918,6 +4921,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
             if isinstance(row, Adw.EntryRow) and getattr(spec, 'placeholder', ''):
                 _set_entry_row_hint(row, spec.placeholder)
+            if isinstance(row, Adw.EntryRow) and callable(getattr(spec, 'suggest', None)):
+                self._add_field_suggestions(row, spec, backend)
             if group is None:
                 header_rows.append(row)
             else:
@@ -4925,6 +4930,108 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._plugin_field_widgets[spec.key] = (spec, row, getter, setter)
 
         return ordered_groups
+
+    def _add_field_suggestions(self, row, spec, backend):
+        button = Gtk.Button(icon_name='view-list-symbolic')
+        button.add_css_class('flat')
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_tooltip_text(_("Show suggestions"))
+        button.connect(
+            'clicked',
+            lambda btn: self._show_field_suggestions(btn, row, spec, backend),
+        )
+        row.add_suffix(button)
+
+    def _show_field_suggestions(self, button, row, spec, backend):
+        """List what a field's ``suggest`` provider finds; picking one fills it.
+
+        The provider may ask a local tool (``docker ps``, ``kubectl get``),
+        so it runs on a worker thread against a snapshot of the form, and the
+        popover says so while it waits. A failure shows the tool's own
+        message -- "no context named x" is what the user needs to read.
+        """
+        from .plugins.api import PluginContext
+
+        popover = Gtk.Popover()
+        popover.set_parent(button)
+        state = {'closed': False}
+
+        def _on_closed(_popover):
+            state['closed'] = True
+            GLib.idle_add(lambda: (popover.unparent(), False)[1])
+
+        popover.connect('closed', _on_closed)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        for side in ('top', 'bottom', 'start', 'end'):
+            getattr(outer, f'set_margin_{side}')(8)
+        outer.set_size_request(320, -1)
+        status = Gtk.Label(label=_("Looking…"), xalign=0)
+        status.add_css_class('dim-label')
+        status.set_wrap(True)
+        outer.append(status)
+        popover.set_child(outer)
+        popover.popup()
+
+        protocol_id = getattr(backend, 'protocol_id', '')
+        values = self._current_protocol_values(protocol_id)
+        registry = protocol_registry()
+        ctx = PluginContext.for_editor(
+            plugin_id=registry.plugin_id_for(protocol_id) or protocol_id,
+            protocol_registry=registry,
+        )
+
+        def _work():
+            try:
+                items = [(str(v), str(label)) for v, label in (spec.suggest(values, ctx) or [])]
+                error = ''
+            except Exception as exc:
+                logger.debug("Suggestions for %r failed", spec.key, exc_info=True)
+                items, error = [], str(exc) or type(exc).__name__
+            GLib.idle_add(_show, items, error)
+
+        def _show(items, error):
+            if state['closed']:
+                return False
+            if error:
+                status.set_text(_("Could not list suggestions: {error}").format(error=error))
+                return False
+            if not items:
+                status.set_text(_("Nothing found"))
+                return False
+            outer.remove(status)
+            list_box = Gtk.ListBox()
+            list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+            list_box.add_css_class('boxed-list')
+            def _picked(item):
+                row.set_text(item._value)
+                popover.popdown()
+
+            for value, label in items:
+                item = Adw.ActionRow(title=label)
+                item.set_activatable(True)
+                item._value = value
+                # ``activated`` fires for a click (libadwaita relays the
+                # list's row-activated) and for the keyboard alike.
+                item.connect('activated', _picked)
+                list_box.append(item)
+            if len(items) > 8:
+                search = Gtk.SearchEntry()
+                search.set_placeholder_text(_("Filter…"))
+                list_box.set_filter_func(
+                    lambda r: search.get_text().lower().strip() in r.get_title().lower()
+                )
+                search.connect('search-changed', lambda _e: list_box.invalidate_filter())
+                outer.append(search)
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scrolled.set_propagate_natural_height(True)
+            scrolled.set_max_content_height(320)
+            scrolled.set_child(list_box)
+            outer.append(scrolled)
+            return False
+
+        threading.Thread(target=_work, name="field-suggest", daemon=True).start()
 
     def _load_shared_meta_rows(self):
         """Load protocol-agnostic app metadata into rows.
@@ -5092,21 +5199,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _save_plugin_connection(self, backend):
         """Collect, validate, and emit connection data for a plugin protocol."""
         name = self.display_name_row.get_text().strip()
-        if not name:
-            self.show_error(_("Please enter a name for this connection"))
-            self._focus_row(self.display_name_row)
-            return
-        # The ID is the store's key, so it stays put once created: renaming
-        # changes only the name, and tags, groups and metadata never move.
-        nickname = self.nickname_row.get_text().strip() if self.is_editing else ''
-        if not nickname:
-            nickname = self._generate_connection_id(name, backend.protocol_id)
-
-        data = {
-            'nickname': nickname,
-            'protocol': backend.protocol_id,
-            'display_name': name,
-        }
+        data = {'protocol': backend.protocol_id}
         for key, (spec, row, getter, _setter) in (
                 getattr(self, '_plugin_field_widgets', None) or {}).items():
             try:
@@ -5129,6 +5222,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if errors:
             self.show_error("\n".join(errors))
             return
+
+        # Name is optional: left empty, the connection is named after what
+        # it reaches ("web · Podman"), as Tabby and GNOME Connections do.
+        if not name:
+            try:
+                name = str(backend.summary(dict(data)) or '').strip()
+            except Exception:
+                logger.debug("summary() failed for %r", backend.protocol_id,
+                             exc_info=True)
+            name = name or _protocol_display_name(backend)
+        data['display_name'] = name
+        # The ID is the store's key, so it stays put once created: renaming
+        # changes only the name, and tags, groups and metadata never move.
+        nickname = self.nickname_row.get_text().strip() if self.is_editing else ''
+        data['nickname'] = nickname or self._generate_connection_id(
+            name, backend.protocol_id
+        )
 
         if 'password' in data:
             data['password_changed'] = (

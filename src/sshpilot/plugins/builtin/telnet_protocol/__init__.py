@@ -14,6 +14,7 @@ import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._summary import host_port
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -39,6 +40,10 @@ class TelnetProtocolBackend(ProtocolBackend):
             FieldSpec(key="port", label=_("Port"), kind="int",
                       default=self.default_port),
         ]
+
+    def summary(self, data: Dict[str, Any]) -> str:
+        return host_port(data.get("host") or data.get("hostname"),
+                         data.get("port"), self.default_port)
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []

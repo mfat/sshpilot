@@ -153,6 +153,10 @@ class PluginSessionFailureCode(str, Enum):
         "serial_screen_hardware_flow_and_databits_unsupported"
     )
     SERIAL_PROGRAMS_UNAVAILABLE = "serial_programs_unavailable"
+    SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED = (
+        "serial_screen_terminal_options_unsupported"
+    )
+    SERIAL_DEVICE_ACCESS_DENIED = "serial_device_access_denied"
     RDP_CLIENT_UNAVAILABLE = "rdp_client_unavailable"
 
 
@@ -180,6 +184,12 @@ _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS.update(
         ),
         PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE: frozenset(
             {"preferred_program", "fallback_program"}
+        ),
+        PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED: frozenset(
+            {"fallback_program", "preferred_program"}
+        ),
+        PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED: frozenset(
+            {"device", "group"}
         ),
         PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: frozenset(
             {"preferred_program", "fallback_program"}
@@ -238,6 +248,7 @@ class PluginSessionFailure:
             PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED,
             PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED,
             PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE,
+            PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED,
         }:
             if (
                 parameters["fallback_program"] != "screen"

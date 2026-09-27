@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .._session_failure import BuiltinProtocolError
 from .._shell import command_split_diagnostic, split_command
+from .._summary import host_port, with_user
 from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
@@ -62,6 +63,11 @@ _SIZE_RE = re.compile(r"^[1-9][0-9]{2,4}x[1-9][0-9]{2,4}$")
 _GATEWAY_RE = re.compile(r"^[^\s,:]+(:[0-9]{1,5})?$")
 
 _SECURITY = ("auto", "nla", "tls", "rdp")
+# One display choice (as GNOME Connections offers) instead of switches that
+# interact; each maps to the FreeRDP option that produces it.
+_DISPLAY_MODES = {"resize": "/dynamic-resolution", "fit": "/smart-sizing",
+                  "original": None, "fullscreen": "/f"}
+_SCALES = ("125", "150", "175", "200", "250", "300")
 _CERT_POLICIES = ("prompt", "tofu", "ignore")
 
 _version_cache: Dict[Tuple[str, ...], bool] = {}
@@ -222,6 +228,17 @@ def _text(data: Dict[str, Any], key: str) -> str:
     return str(data.get(key) or "").strip()
 
 
+def _display_mode(data: Dict[str, Any]) -> str:
+    """The display choice; connections saved before it existed kept two
+    switches (full screen, resize with the window), read the same way."""
+    mode = _text(data, "display_mode")
+    if mode in _DISPLAY_MODES:
+        return mode
+    if data.get("fullscreen"):
+        return "fullscreen"
+    return "resize" if data.get("dynamic_resolution", True) else "original"
+
+
 class RdpProtocolBackend(ProtocolBackend):
     protocol_id = "rdp"
     display_name = "RDP"
@@ -241,17 +258,30 @@ class RdpProtocolBackend(ProtocolBackend):
             FieldSpec(key="domain", label=_("Domain"), kind="text"),
             # Stored in secure storage, never in the connection data.
             FieldSpec(key="password", label=_("Password"), kind="password"),
-            FieldSpec(key="fullscreen", label=_("Full screen"), kind="switch",
-                      default=False, group="display"),
+            # GNOME Connections' wording: short enough to fit the row.
+            FieldSpec(key="display_mode", label=_("Scale mode"), kind="choice",
+                      default="resize", group="display",
+                      choices=[("resize", _("Resize desktop")),
+                               ("fit", _("Fit window")),
+                               ("original", _("Original size")),
+                               ("fullscreen", _("Full screen"))]),
             FieldSpec(key="size", label=_("Window size"), kind="text",
                       placeholder="1600x900", group="display"),
-            FieldSpec(key="dynamic_resolution",
-                      label=_("Resize the remote desktop with the window"),
-                      kind="switch", default=True, group="display"),
+            # For a HiDPI screen, where a 100% remote desktop is tiny.
+            FieldSpec(key="scale", label=_("Remote desktop scaling"), kind="choice",
+                      default="", group="display",
+                      choices=[("", _("Default (100%)"))]
+                      + [(v, f"{v}%") for v in _SCALES]),
+            FieldSpec(key="multimon", label=_("Use all monitors"), kind="switch",
+                      default=False, group="display"),
             FieldSpec(key="clipboard", label=_("Share clipboard"), kind="switch",
                       default=True, group="devices"),
             FieldSpec(key="sound", label=_("Play remote audio locally"),
                       kind="switch", default=True, group="devices"),
+            FieldSpec(key="microphone", label=_("Share microphone"), kind="switch",
+                      default=False, group="devices"),
+            FieldSpec(key="printer", label=_("Share printers"), kind="switch",
+                      default=False, group="devices"),
             FieldSpec(key="shared_folder", label=_("Shared folder"), kind="text",
                       placeholder="~/Public", group="devices"),
             FieldSpec(key="security", label=_("Security"), kind="choice",
@@ -265,8 +295,14 @@ class RdpProtocolBackend(ProtocolBackend):
                       choices=[("prompt", _("Ask when unknown or changed")),
                                ("tofu", _("Trust on first use")),
                                ("ignore", _("Ignore (insecure)"))]),
+            FieldSpec(key="admin", label=_("Connect to the console session"),
+                      kind="switch", default=False, group="advanced"),
             FieldSpec(key="gateway", label=_("RD Gateway"), kind="text",
                       placeholder="gateway.example.com:443", group="advanced"),
+            FieldSpec(key="gateway_username", label=_("Gateway username"), kind="text",
+                      placeholder=_("(same as the login)"), group="advanced"),
+            FieldSpec(key="gateway_domain", label=_("Gateway domain"), kind="text",
+                      group="advanced"),
             FieldSpec(key="client", label=_("FreeRDP client"), kind="choice",
                       default="auto", group="advanced",
                       choices=[("auto", _("Automatic")),
@@ -275,6 +311,13 @@ class RdpProtocolBackend(ProtocolBackend):
             FieldSpec(key="extra_rdp_args", label=_("Extra FreeRDP arguments"),
                       kind="text", placeholder="/network:auto", group="advanced"),
         ]
+
+    def summary(self, data: Dict[str, Any]) -> str:
+        return with_user(
+            data.get("username"),
+            host_port(_text(data, "host") or _text(data, "hostname"),
+                      data.get("port"), self.default_port),
+        )
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
@@ -296,6 +339,10 @@ class RdpProtocolBackend(ProtocolBackend):
         # build_spawn only hands FreeRDP a saved password alongside /u:.
         if data.get("password") and not _text(data, "username"):
             errors.append(_("Enter a username to use the saved password."))
+        for key, label in (("gateway_username", _("Gateway username")),
+                           ("gateway_domain", _("Gateway domain"))):
+            if "," in _text(data, key):
+                errors.append(_("{field} cannot contain a comma.").format(field=label))
         if "," in _text(data, "shared_folder"):
             errors.append(_("The shared folder path cannot contain a comma."))
         diagnostic = command_split_diagnostic(data.get("extra_rdp_args"))
@@ -353,18 +400,26 @@ class RdpProtocolBackend(ProtocolBackend):
         if title:
             argv.append(f"/t:{title}")
 
-        if data.get("fullscreen"):
-            argv.append("/f")
+        flag = _DISPLAY_MODES.get(_display_mode(data))
+        if flag:
+            argv.append(flag)
         size = _text(data, "size")
         if size:
             argv.append(f"/size:{size}")
-        if data.get("dynamic_resolution", True):
-            argv.append("/dynamic-resolution")
+        scale = _text(data, "scale")
+        if scale in _SCALES:
+            argv.append(f"/scale-desktop:{scale}")
+        if data.get("multimon"):
+            argv.append("/multimon")
 
         if not data.get("clipboard", True):
             argv.append("-clipboard")
         if data.get("sound", True):
             argv.append("/sound")
+        if data.get("microphone"):
+            argv.append("/microphone")
+        if data.get("printer"):
+            argv.append("/printer")
         shared = _text(data, "shared_folder")
         if shared:
             argv.append(f"/drive:sshpilot,{os.path.expanduser(shared)}")
@@ -375,9 +430,18 @@ class RdpProtocolBackend(ProtocolBackend):
         cert_policy = _text(data, "cert_policy")
         if cert_policy in _CERT_POLICIES and cert_policy != "prompt":
             argv.append(f"/cert:{cert_policy}")
+        if data.get("admin"):
+            argv.append("+admin")
         gateway = _text(data, "gateway")
         if gateway:
-            argv.append(f"/gateway:g:{gateway}")
+            # g: alone makes FreeRDP reuse the login for the gateway; a u: or
+            # d: switches it to separate gateway credentials (FreeRDP 3
+            # client/common/cmdline.c, GatewayUseSameCredentials).
+            spec = f"g:{gateway}"
+            for key, option in (("gateway_username", "u"), ("gateway_domain", "d")):
+                if _text(data, key):
+                    spec += f",{option}:{_text(data, key)}"
+            argv.append(f"/gateway:{spec}")
 
         argv += extra
 

@@ -1745,6 +1745,10 @@ def connection_summary_to_wire(summary: ConnectionSummary) -> Dict[str, Any]:
         "health": summary.health.value,
         "groups": _groups_to_wire(summary.groups),
         "display_name": summary.display_name,
+        # Additive: sent only when there is one, so an older client that
+        # validates fields strictly still reads SSH-only lists.
+        **({"target_summary": summary.target_summary}
+           if summary.target_summary else {}),
     }
 
 
@@ -1765,7 +1769,7 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS,
-        optional={"display_name"},
+        optional={"display_name", "target_summary"},
         context="connection summary",
     )
     try:
@@ -1791,6 +1795,9 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
         health=health,
         groups=_groups_from_wire(data["groups"]),
         display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
+        target_summary=_text(
+            data.get("target_summary", ""), "connection target summary", allow_empty=True
+        ),
     )
 
 
@@ -1858,12 +1865,13 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS | detail_fields,
-        optional={"display_name", "plugin_data"},
+        optional={"display_name", "target_summary", "plugin_data"},
         context="connection details",
     )
     summary_payload = {key: data[key] for key in _SUMMARY_FIELDS}
-    if "display_name" in data:
-        summary_payload["display_name"] = data["display_name"]
+    for key in ("display_name", "target_summary"):
+        if key in data:
+            summary_payload[key] = data[key]
     summary = connection_summary_from_wire(summary_payload)
     if type(data["aliases"]) is not list or type(data["proxy_jump"]) is not list:
         raise ValueError("connection aliases and proxy jump must be arrays")
@@ -2174,12 +2182,13 @@ def connection_editor_details_from_wire(
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
         # Additive: a daemon predating authorship evidence simply omits it, and
         # an empty tuple already means "no evidence".
-        optional={"display_name", "authored_directives", "plugin_data"},
+        optional={"display_name", "target_summary", "authored_directives", "plugin_data"},
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
-    if "display_name" in data:
-        summary_payload["display_name"] = data["display_name"]
+    for key in ("display_name", "target_summary"):
+        if key in data:
+            summary_payload[key] = data[key]
     summary = connection_summary_from_wire(summary_payload)
     if type(data["aliases"]) is not list or type(data["proxy_jump"]) is not list:
         raise ValueError("connection aliases and proxy jump must be arrays")

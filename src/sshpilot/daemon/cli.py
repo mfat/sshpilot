@@ -413,6 +413,11 @@ def _production_core_services():
         headless_settings=settings,
         identity_env=identity_state_service.agent_environment,
     )
+    # List views describe a non-SSH connection's target through its
+    # protocol backend; core cannot import plugins, so it is handed this.
+    from sshpilot.core.connections.target_summary import set_describer
+
+    set_describer(launch_provider.describe_target)
     connections = ConnectionApplicationService(
         repository,
         launch_provider=launch_provider,

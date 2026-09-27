@@ -71,6 +71,7 @@ from .identity_state_v2 import (
     new_uuid4,
 )
 from .service import ConnectionService
+from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
 from .ssh_config_store import SshConfigStore, _atomic_write_text
 from .state_file import (
@@ -155,14 +156,21 @@ CONNECTION_STORE_SECTION_VERSION = 1
 # loaded protocol gets no portable-field backup support until it's added here;
 # its connections still round-trip with the generic fields only.
 _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
-    "serial": ("device", "baud", "flow", "databits", "parity", "stopbits"),
-    "docker": ("container", "command", "runtime", "docker_host", "user", "workdir"),
+    "serial": (
+        "device", "baud", "flow", "databits", "parity", "stopbits",
+        "send_newline", "recv_add_cr", "local_echo", "logfile",
+    ),
+    "docker": (
+        "container", "command", "runtime", "docker_context", "docker_host",
+        "user", "workdir",
+    ),
     "k8s": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
-    "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
+    "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port", "server_path"),
     "rdp": (
-        "domain", "fullscreen", "size", "dynamic_resolution", "clipboard",
-        "sound", "shared_folder", "security", "cert_policy", "gateway",
-        "client", "extra_rdp_args",
+        "domain", "display_mode", "size", "scale", "multimon", "clipboard",
+        "sound", "microphone", "printer", "shared_folder", "security",
+        "cert_policy", "admin", "gateway", "gateway_username",
+        "gateway_domain", "client", "extra_rdp_args",
     ),
 }
 
@@ -1080,6 +1088,7 @@ class ConnectionRepository:
                 health=ConnectionHealth.UNKNOWN,
                 groups=groups,
                 display_name=_display_name_for_record(record),
+                target_summary=describe_target(record.protocol, record.data),
             )
 
         connections = tuple(_summary(r) for r in records)
@@ -1189,6 +1198,7 @@ class ConnectionRepository:
                     health=ConnectionHealth.UNKNOWN,
                     groups=groups_for_record,
                     display_name=_display_name_for_record(record, identity),
+                    target_summary=describe_target(record.protocol, record.data),
                 )
             )
         metadata = tuple(

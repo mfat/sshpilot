@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Keep in sync with sshpilot.plugins.api.API_VERSION
-API_VERSION: Tuple[int, int] = (1, 15)
+API_VERSION: Tuple[int, int] = (1, 16)
 
 
 class Capability(enum.Enum):
@@ -48,6 +48,12 @@ class FieldSpec:
     placeholder: str = ""
     required: bool = False
     group: str = "general"
+    #: Text fields only: ``suggest(values, ctx) -> [(value, label), ...]``.
+    #: The editor calls it off the UI thread when the user opens the field's
+    #: list, with the form's current values and a host-less PluginContext
+    #: (``ctx.run_local_command`` is the way to ask a local tool). It may
+    #: block briefly but must not prompt; the field stays free text.
+    suggest: Optional[Callable[..., List[Tuple[str, str]]]] = None
 
 
 class Events:

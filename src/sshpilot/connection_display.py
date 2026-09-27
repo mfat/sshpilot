@@ -120,6 +120,12 @@ def get_connection_alias(connection: Any) -> str:
 
 def format_connection_host_display(connection: Any, include_port: bool = False) -> str:
     """Create a user-facing string describing host/alias details for a connection."""
+    # A non-SSH connection is described by its protocol backend (a container,
+    # a serial device, a host with its non-default port); SSH never is.
+    if str(getattr(connection, "protocol", "ssh") or "ssh") != "ssh":
+        summary = str(getattr(connection, "target_summary", "") or "")
+        if summary:
+            return summary
     username = str(getattr(connection, "username", "") or "")
     hostname = str(getattr(connection, "hostname", "") or "")
     nickname = str(getattr(connection, "nickname", "") or "")

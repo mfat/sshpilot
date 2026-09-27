@@ -23,6 +23,7 @@ from typing import Any, Dict, List
 from .._shell import command_split_diagnostic, split_command
 from .._session_failure import BuiltinProtocolError
 from ....api.models.sessions import PluginSessionFailureCode
+from .._summary import host_port, with_user
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -60,7 +61,18 @@ class MoshProtocolBackend(ProtocolBackend):
                                ("experimental", _("Experimental"))]),
             FieldSpec(key="mosh_port", label=_("UDP port / range"), kind="text",
                       placeholder="60000:60010", group="advanced"),
+            # Where the host keeps mosh-server off the login PATH (Homebrew
+            # on macOS, ~/.local): the most common reason mosh cannot start.
+            FieldSpec(key="server_path", label=_("Remote mosh-server"), kind="text",
+                      placeholder="mosh-server", group="advanced"),
         ]
+
+    def summary(self, data: Dict[str, Any]) -> str:
+        return with_user(
+            data.get("username"),
+            host_port(data.get("host") or data.get("hostname"),
+                      data.get("port"), self.default_port),
+        )
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
@@ -167,6 +179,9 @@ class MoshProtocolBackend(ProtocolBackend):
         mosh_port = (data.get("mosh_port") or "").strip()
         if mosh_port:
             argv += ["--port", mosh_port]
+        server_path = (data.get("server_path") or "").strip()
+        if server_path:
+            argv.append("--server=" + server_path)
         argv += ["--ssh=" + shlex.join(ssh_prefix), host]
         return SpawnSpec(argv=argv, env=env)
 

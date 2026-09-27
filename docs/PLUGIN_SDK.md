@@ -12,7 +12,7 @@ change without notice.
 > and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.15` (see [Versioning](#9-versioning)).
+- **Current API version:** `1.16` (see [Versioning](#9-versioning)).
 - **Worked examples** — both are **IP/SSH** providers (provision → get an address
   → `add_connection` a normal SSH connection); they differ in how much they do:
   - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — the minimal shape, against a fake provider.
@@ -431,7 +431,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 15)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 16)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -453,7 +453,7 @@ must be made on the UI thread.
   `run_command_stream` / `run_local_command_stream` (line-oriented streams +
   `StreamHandle.stop()`); `1.14` remote commands, streams, settings and session
   views became daemon-owned, which turned `acquire_multiplex` /
-  `release_multiplex` into no-ops; `1.15` `ProtocolBackend.pre_connect`.
+  `release_multiplex` into no-ops; `1.15` `ProtocolBackend.pre_connect`; `1.16` `ProtocolBackend.summary`, `FieldSpec.suggest`, `PluginContext.for_editor`.
 
 ---
 

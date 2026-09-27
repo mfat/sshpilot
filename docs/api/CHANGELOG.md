@@ -5,6 +5,18 @@ notes remain separate.
 
 ## Unreleased
 
+- `ConnectionSummary.target_summary` (wire field `target_summary`, sent only
+  when non-empty) describes a non-SSH connection's target in one line —
+  `web · podman`, `/dev/ttyUSB0 @ 115200` — from its built-in protocol
+  backend's `summary()`. Empty for SSH and for third-party protocols; list
+  views fall back to the host. `PluginSessionFailureCode` gains
+  `SERIAL_DEVICE_ACCESS_DENIED` (`serial_device_access_denied`, parameters
+  `device` / `group`: the group to join) and
+  `SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED`
+  (`serial_screen_terminal_options_unsupported`, parameters
+  `fallback_program` / `preferred_program`) for line-ending, echo and log
+  options only picocom provides. API implementation version is 0.73;
+  Protocol remains 1.0.
 - `PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE` (`rdp_client_unavailable`,
   parameters `preferred_program` / `fallback_program`) reports a missing
   FreeRDP 3 client for the new built-in `rdp` protocol. A bad

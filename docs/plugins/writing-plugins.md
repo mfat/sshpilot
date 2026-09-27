@@ -274,6 +274,11 @@ Subclass and implement:
 - `connection_fields() -> list[FieldSpec]` — declarative editor fields; the
   dialog renders them and persists values into the connection's data.
 - `validate(data) -> list[str]` — human-readable errors (empty = ok).
+- `summary(data) -> str` — what the connection reaches, in one line
+  (`office-pc:3390`, `web · podman`, `/dev/ttyUSB0 @ 115200`). Shown under
+  the connection's name, and used to name a connection saved without one.
+  The daemon calls it for every listed connection, so keep it cheap and pure.
+  Default: the `host` field.
 - `pre_connect` (class attribute, default `True`) — whether the editor offers
   the pre-connection command. Set it to `False` for a protocol that opens no
   network connection (a local console). The port knock and Wake-on-LAN are
@@ -291,6 +296,10 @@ required=..., group=...)` — `kind` is one of `text|int|password|file|choice|sw
 `group` puts fields into a labelled section (e.g. `"advanced"`). Fields in the
 default `"general"` group appear in the editor's first section, beside the
 connection's name; a `placeholder` is shown while the empty field has focus.
+A text field may add `suggest=fn`: the editor gives it a list button, and
+calls `fn(values, ctx)` off the UI thread with the form's current values and a
+host-less `PluginContext` (use `ctx.run_local_command` to ask a local tool);
+return `[(value, label), ...]`. The field stays free text.
 
 A field keyed `password` is the connection's login password: sshPilot keeps it
 in secure storage (keyed on the connection's host and username), never in the
@@ -500,7 +509,7 @@ logic without a display (see each plugin's `tests/`).
 ## API versioning & stability
 
 `API_VERSION = (major, minor)` — exported from `sshpilot.plugins.api` and defined
-in `src/sshpilot/core/plugins/contracts.py`. It is currently **`(1, 15)`**; the
+in `src/sshpilot/core/plugins/contracts.py`. It is currently **`(1, 16)`**; the
 per-minor changelog is the comment block at the top of
 `src/sshpilot/plugins/api.py`.
 

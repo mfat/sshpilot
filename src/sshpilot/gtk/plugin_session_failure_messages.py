@@ -53,6 +53,15 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
         "({flow}) flow control or {databits} data bits. Install "
         "'{preferred_program}' to use this connection."
     ),
+    PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED: N_(
+        "Only '{fallback_program}' is available, which cannot change line "
+        "endings, echo locally or log to a file. Install '{preferred_program}' "
+        "to use this connection."
+    ),
+    PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED: N_(
+        "You do not have permission to open {device}. Add your user to the "
+        "'{group}' group and log in again."
+    ),
     PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE: N_(
         "Neither '{preferred_program}' nor '{fallback_program}' is installed. "
         "Install one to use serial connections."

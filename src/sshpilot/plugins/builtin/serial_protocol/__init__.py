@@ -8,10 +8,12 @@ tool and stays entirely within the terminal seam.
 
 from __future__ import annotations
 
+import glob
+import grp
 import os
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from .._session_failure import BuiltinProtocolError
 from ....api.models.sessions import PluginSessionFailureCode
@@ -23,7 +25,14 @@ from ...api import (
     SshPilotPlugin,
 )
 
-_BAUDS = ("9600", "19200", "38400", "57600", "115200")
+# Offered as suggestions; any positive rate may be typed. From legacy
+# equipment (1200) to board consoles (921600 for ESP flashing, 1500000 on
+# Raspberry Pi 5 and Rockchip boards).
+_BAUDS = ("1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200",
+          "230400", "460800", "921600", "1500000")
+_BY_ID = "/dev/serial/by-id"
+# picocom --omap: what the Enter key's CR becomes on the wire.
+_PICOCOM_SEND = {"lf": "crlf", "crlf": "crcrlf"}
 # picocom -f flag values keyed by our choice value
 _PICOCOM_FLOW = {"none": "n", "hard": "h", "soft": "x"}
 _PICOCOM_PARITY = {"none": "n", "even": "e", "odd": "o"}
@@ -49,6 +58,51 @@ _SCREEN_FLOW = {
 }
 
 
+def _serial_ports(_values: Dict[str, Any], _ctx: Any) -> List[Tuple[str, str]]:
+    """Connected serial ports, stable names first.
+
+    ``/dev/serial/by-id`` names survive replugging and reboots where
+    ``ttyUSB0`` can become ``ttyUSB1``, so they are offered as the value, with
+    the tty they point at in the label.
+    """
+    ports: List[Tuple[str, str]] = []
+    covered = set()
+    for path in sorted(glob.glob(os.path.join(_BY_ID, "*"))):
+        target = os.path.realpath(path)
+        covered.add(target)
+        ports.append((path, f"{os.path.basename(path)} ({os.path.basename(target)})"))
+    for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAMA*",
+                    "/dev/rfcomm*", "/dev/cu.*"):
+        for path in sorted(glob.glob(pattern)):
+            if os.path.realpath(path) not in covered:
+                ports.append((path, path))
+    return ports
+
+
+def _baud_rates(_values: Dict[str, Any], _ctx: Any) -> List[Tuple[str, str]]:
+    return [(rate, rate) for rate in _BAUDS]
+
+
+def _access_denied_group(device: str) -> str:
+    """The group that may open *device*, when this user may not; else ``""``.
+
+    The usual first-day failure is a device only its group may open
+    (dialout on Debian/Ubuntu, uucp on Arch), which the tools report as a
+    bare "Permission denied". A Flatpak sees the sandbox's view of /dev,
+    not the host's permissions, so it is left to the tool there.
+    """
+    from .._flatpak import is_flatpak  # noqa: PLC0415
+
+    if is_flatpak() or not os.path.exists(device):
+        return ""
+    if os.access(device, os.R_OK | os.W_OK):
+        return ""
+    try:
+        return grp.getgrgid(os.stat(device).st_gid).gr_name
+    except (OSError, KeyError):
+        return ""
+
+
 class SerialProtocolBackend(ProtocolBackend):
     protocol_id = "serial"
     display_name = "Serial"
@@ -62,9 +116,9 @@ class SerialProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="device", label=_("Device"), kind="text", required=True,
-                      placeholder="/dev/ttyUSB0"),
-            FieldSpec(key="baud", label=_("Baud rate"), kind="choice", default="115200",
-                      choices=[(b, b) for b in _BAUDS]),
+                      placeholder="/dev/ttyUSB0", suggest=_serial_ports),
+            FieldSpec(key="baud", label=_("Baud rate"), kind="text", default="115200",
+                      placeholder="115200", suggest=_baud_rates),
             FieldSpec(key="flow", label=_("Flow control"), kind="choice", default="none",
                       choices=[("none", _("None")),
                                ("hard", _("Hardware (RTS/CTS)")),
@@ -77,13 +131,32 @@ class SerialProtocolBackend(ProtocolBackend):
                                ("odd", _("Odd"))], group="advanced"),
             FieldSpec(key="stopbits", label=_("Stop bits"), kind="choice", default="1",
                       choices=[("1", "1"), ("2", "2")], group="advanced"),
+            FieldSpec(key="send_newline", label=_("Enter key sends"), kind="choice",
+                      default="cr", group="terminal",
+                      choices=[("cr", _("CR (default)")), ("lf", _("LF")),
+                               ("crlf", _("CR LF"))]),
+            FieldSpec(key="recv_add_cr", label=_("Start received lines at the left edge"),
+                      kind="switch", default=False, group="terminal"),
+            FieldSpec(key="local_echo", label=_("Local echo"), kind="switch",
+                      default=False, group="terminal"),
+            FieldSpec(key="logfile", label=_("Log to file"), kind="text",
+                      placeholder="~/serial.log", group="terminal"),
         ]
+
+    def summary(self, data: Dict[str, Any]) -> str:
+        device = str(data.get("device") or "").strip()
+        if not device:
+            return ""
+        # A by-id name is long; the name itself is the informative part.
+        if device.startswith(_BY_ID + "/"):
+            device = os.path.basename(device)
+        return f"{device} @ {str(data.get('baud') or '115200').strip()}"
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
         if not (data.get("device") or "").strip():
             errors.append(_("A serial device is required."))
-        baud = data.get("baud") or "115200"
+        baud = str(data.get("baud") or "115200").strip()
         try:
             if int(baud) <= 0:
                 errors.append(_("Baud rate must be a positive number."))
@@ -99,10 +172,22 @@ class SerialProtocolBackend(ProtocolBackend):
                 PluginSessionFailureCode.SERIAL_DEVICE_REQUIRED,
                 "No serial device configured for this connection.",
             )
-        baud = str(data.get("baud") or "115200")
+        baud = str(data.get("baud") or "115200").strip()
         flow = str(data.get("flow") or "none")
+        send_newline = str(data.get("send_newline") or "cr")
+        logfile = str(data.get("logfile") or "").strip()
+        terminal_options = (send_newline != "cr" or bool(data.get("recv_add_cr"))
+                            or bool(data.get("local_echo")) or bool(logfile))
 
         from .._flatpak import resolve_host_binary  # noqa: PLC0415
+        group = _access_denied_group(device)
+        if group:
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED,
+                f"Permission denied opening {device}; join the '{group}' group.",
+                parameters={"device": device, "group": group},
+            )
+
         picocom = resolve_host_binary("picocom")
         if picocom:
             argv = [*picocom, "-b", baud]
@@ -118,11 +203,31 @@ class SerialProtocolBackend(ProtocolBackend):
             stopbits = str(data.get("stopbits") or "1")
             if stopbits != "1":
                 argv += ["--stopbits", stopbits]
+            if send_newline in _PICOCOM_SEND:
+                argv += ["--omap", _PICOCOM_SEND[send_newline]]
+            if data.get("recv_add_cr"):
+                argv += ["--imap", "lfcrlf"]
+            if data.get("local_echo"):
+                argv.append("--echo")
+            if logfile:
+                argv += ["--logfile", os.path.expanduser(logfile)]
             argv.append(device)
             return SpawnSpec(argv=argv, env=dict(os.environ))
 
         screen = resolve_host_binary("screen")
         if screen:
+            # screen has no line-ending maps or local echo; refused with the
+            # line settings below rather than quietly behaving differently.
+            if terminal_options:
+                raise BuiltinProtocolError(
+                    PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED,
+                    "Only 'screen' is available, which cannot change line endings, "
+                    "echo locally or log. Install 'picocom' to use this connection.",
+                    parameters={
+                        "fallback_program": "screen",
+                        "preferred_program": "picocom",
+                    },
+                )
             databits = str(data.get("databits") or "8")
             parity = str(data.get("parity") or "none")
             stopbits = str(data.get("stopbits") or "1")
