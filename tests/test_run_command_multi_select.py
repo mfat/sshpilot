@@ -46,3 +46,28 @@ def test_empty_connections_falls_through_to_connection():
     connection = object()
     panel._dispatch_to_target("uptime", None, connections=[], connection=connection)
     assert calls == [("interactive", [connection], "uptime", None)]
+
+def test_group_members_without_remote_command_are_left_out(monkeypatch):
+    from types import SimpleNamespace
+
+    from sshpilot.plugins import registry
+    from sshpilot.plugins.api import Capability
+
+    monkeypatch.setattr(
+        registry,
+        "capabilities_for",
+        lambda c: frozenset({Capability.REMOTE_COMMAND}) if c.protocol == "ssh" else frozenset(),
+    )
+    web = SimpleNamespace(nickname="web", protocol="ssh")
+    console = SimpleNamespace(nickname="console", protocol="serial")
+    other = SimpleNamespace(nickname="other", protocol="ssh")
+    panel = command_blocks.CommandBlocksPanel.__new__(command_blocks.CommandBlocksPanel)
+    panel.window = SimpleNamespace(connection_manager=SimpleNamespace(connections=[web, console, other]))
+    toasts = []
+    panel._show_toast = toasts.append
+
+    assert panel._group_connections({"connections": ["web", "console"]}) == [web]
+    assert toasts == []
+
+    assert panel._group_connections({"connections": ["console"]}) == []
+    assert toasts == ["No connections in group can run commands"]

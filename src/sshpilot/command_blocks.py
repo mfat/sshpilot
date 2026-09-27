@@ -2333,10 +2333,21 @@ class CommandBlocksPanel(Gtk.Box):
         cm = getattr(self.window, "connection_manager", None)
         if cm is None:
             return []
+        from .plugins.api import Capability
+        from .plugins.registry import capabilities_for
+
         nicknames = set(group.get("connections", []))
-        connections = [c for c in cm.connections if c.nickname in nicknames]
-        if not connections:
+        members = [c for c in cm.connections if c.nickname in nicknames]
+        if not members:
             self._show_toast(_("No connections in group"))
+            return []
+        # A command typed into a serial console, telnet box or RDP log tab is
+        # not a remote command; only protocols that declare one take part.
+        connections = [
+            c for c in members if Capability.REMOTE_COMMAND in capabilities_for(c)
+        ]
+        if not connections:
+            self._show_toast(_("No connections in group can run commands"))
         return connections
 
     # ------------------------------------------------------------------
