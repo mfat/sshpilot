@@ -2771,6 +2771,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _load_password_async(self):
         """Load the saved password into the masked editor field."""
+        def _apply(value):
+            try:
+                if type(value) is str and not self.password_row.get_text():
+                    self.password_row.set_text(value)
+                    self._orig_password = value
+                self._password_saved = bool(value)
+            except Exception:
+                pass
+
+        self._reveal_saved_password_async(_apply)
+
+    def _reveal_saved_password_async(self, apply):
+        """Fetch this connection's saved login password off the main thread.
+
+        ``apply`` runs on the main loop with the password string, or False
+        when the reveal failed. Nothing runs without a ready daemon.
+        """
         if not hasattr(self.connection, 'username'):
             return
 
@@ -2785,16 +2802,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
 
         def _apply(value):
-            try:
-                if type(value) is str:
-                    if not self.password_row.get_text():
-                        self.password_row.set_text(value)
-                        self._orig_password = value
-                    self._password_saved = bool(value)
-                else:
-                    self._password_saved = bool(value)
-            except Exception:
-                pass
+            apply(value)
             return False
 
         def _start_worker():
@@ -3010,6 +3018,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
                 self._load_shared_meta_rows()
                 self._load_plugin_field_values()
+                self._load_plugin_password()
             finally:
                 self._loading_connection_data = False
             return
@@ -4741,6 +4750,31 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception as e:
                 logger.debug("Failed to load plugin field %r: %s", key, e)
 
+    def _load_plugin_password(self):
+        """Fill a plugin ``password`` field from secure storage.
+
+        The field is never part of ``plugin_data``: saves route it to the
+        connection's stored login password, so an edit reads it back from
+        there. The revealed value becomes the baseline for
+        ``password_changed``; a reveal that fails leaves the field empty and
+        unchanged, which a save must not mistake for clearing it.
+        """
+        self._orig_plugin_password = ''
+        widget = (getattr(self, '_plugin_field_widgets', None) or {}).get('password')
+        if widget is None or not self.is_editing:
+            return
+        _spec, _row, getter, setter = widget
+
+        def _apply(value):
+            try:
+                if type(value) is str and value and not getter():
+                    setter(value)
+                    self._orig_plugin_password = value
+            except Exception as e:
+                logger.debug("Failed to load plugin password: %s", e)
+
+        self._reveal_saved_password_async(_apply)
+
     def _save_plugin_connection(self, backend):
         """Collect, validate, and emit connection data for a plugin protocol."""
         nickname = self.nickname_row.get_text().strip()
@@ -4774,6 +4808,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if errors:
             self.show_error("\n".join(errors))
             return
+
+        if 'password' in data:
+            data['password_changed'] = (
+                (data['password'] or '')
+                != (getattr(self, '_orig_plugin_password', '') or '')
+            )
 
         # The live object is only mutated by the manager after a successful
         # persist; metadata rides the payload and the dialog closes only once

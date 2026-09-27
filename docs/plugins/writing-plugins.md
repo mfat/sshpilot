@@ -285,6 +285,13 @@ command + args run inside the terminal; `env` is the child environment.
 required=..., group=...)` — `kind` is one of `text|int|password|file|choice|switch`;
 `group` puts fields into a labelled section (e.g. `"advanced"`).
 
+A field keyed `password` is the connection's login password: sshPilot keeps it
+in secure storage (keyed on the connection's host and username), never in the
+saved connection data, and fills the field back in when the editor reopens.
+`build_spawn` reads it with `ctx.connection_manager.get_connection_password(connection)`.
+Any other key whose name contains `password`, `passphrase`, `secret`, `token`,
+`credential` or `private_key` is **not** saved; keep such values in `ctx.secrets`.
+
 See `builtin/telnet_protocol/__init__.py` (minimal) and
 `builtin/{ssh,serial,docker,kubernetes,mosh}_protocol/` for real backends — note
 their directory names carry a `_protocol` suffix that the manifest `id` does not

@@ -12,6 +12,7 @@ from threading import RLock
 from sshpilot.api.connection_identity import connection_id_for
 from sshpilot.api.models import (
     CreateConnectionRequest,
+    DeleteConnectionPasswordRequest,
     EDITABLE_CONFIG_FIELDS,
     UNSET,
     StoreConnectionPasswordRequest,
@@ -109,14 +110,7 @@ class DaemonConnectionServices:
             plugin_data=self._plugin_data(protocol, values),
         )
         result = client.create_connection(request)
-        password = values.get("password")
-        if protocol == "ssh" and password:
-            client.store_connection_password(
-                StoreConnectionPasswordRequest(
-                    connection_id=result.connection_id,
-                    password=str(password),
-                )
-            )
+        self._sync_password(client, result.connection_id, values)
         return client.get_connection(result.connection_id)
 
     create_connection = add_connection_from_data
@@ -140,16 +134,64 @@ class DaemonConnectionServices:
             plugin_data=self._plugin_data(protocol, values),
         )
         connection_id = connection_id_for(connection)
-        client.update_connection(connection_id, request)
-        password = values.get("password")
-        if protocol == "ssh" and password:
+        result = client.update_connection(connection_id, request)
+        self._sync_password(
+            client,
+            # A rename moves the record to a new id.
+            getattr(result, "connection_id", None) or connection_id,
+            values,
+            previous_hostname=str(getattr(connection, "hostname", "") or ""),
+            previous_username=str(getattr(connection, "username", "") or ""),
+            identity_changed=(
+                str(request.hostname or "") != str(getattr(connection, "hostname", "") or "")
+                or str(request.username or "") != str(getattr(connection, "username", "") or "")
+            ),
+        )
+        return True
+
+    @staticmethod
+    def _sync_password(
+        client,
+        connection_id,
+        values,
+        *,
+        previous_hostname="",
+        previous_username="",
+        identity_changed=False,
+    ):
+        """Keep the connection's stored login password in step with a save.
+
+        Applies to every protocol: a plugin FieldSpec keyed ``password`` goes
+        to secure storage, never into ``plugin_data`` (which strips it).
+
+        An editor that tracks edits sends ``password_changed``; a cleared
+        field then deletes the saved secret, and an untouched one costs no
+        backend I/O unless the host or username moved, since the secret is
+        keyed on them.  Without the flag (plugin API callers) only a
+        non-empty value is written, so an omitted password never wipes one
+        already stored.
+        """
+        password = str(values.get("password") or "")
+        changed = values.get("password_changed")
+        if changed is False and not (identity_changed and password):
+            return
+        if password:
             client.store_connection_password(
                 StoreConnectionPasswordRequest(
                     connection_id=connection_id,
-                    password=str(password),
+                    password=password,
+                    previous_hostname=previous_hostname,
+                    previous_username=previous_username,
                 )
             )
-        return True
+        elif changed:
+            client.delete_connection_password(
+                DeleteConnectionPasswordRequest(
+                    connection_id=connection_id,
+                    previous_hostname=previous_hostname,
+                    previous_username=previous_username,
+                )
+            )
 
     def store_plugin_secret(self, plugin_id, key, value):
         return self._require_client().store_plugin_secret(plugin_id, key, value)

@@ -491,3 +491,88 @@ def test_browse_row_activation_reaches_callback_with_real_gtk(monkeypatch):
     listbox.emit('row-activated', row)
 
     assert parents == [self], "Activating the Browse row must call on_browse"
+
+
+# A plugin ``password`` field reopens from secure storage, and a save says
+# whether the user touched it, so an empty row never deletes a saved secret.
+
+
+def _plugin_password_form(*, editing, revealed):
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    values = {'password': ''}
+    form = types.SimpleNamespace(
+        is_editing=editing,
+        _plugin_field_widgets={
+            'password': (
+                types.SimpleNamespace(key='password', default=None, required=False),
+                None,
+                lambda: values['password'],
+                lambda value: values.__setitem__('password', value),
+            ),
+        },
+        _reveal_saved_password_async=lambda apply: apply(revealed),
+    )
+    types.MethodType(ConnectionDialog.__dict__['_load_plugin_password'], form)()
+    return form, values
+
+
+def test_plugin_password_reopens_from_secure_storage():
+    form, values = _plugin_password_form(editing=True, revealed='hunter2')
+    assert values['password'] == 'hunter2'
+    assert form._orig_plugin_password == 'hunter2'
+
+
+def test_failed_plugin_password_reveal_is_not_a_cleared_field():
+    form, values = _plugin_password_form(editing=True, revealed=False)
+    assert values['password'] == ''
+    assert form._orig_plugin_password == ''
+
+
+def test_new_plugin_connection_reveals_nothing():
+    def _never(_apply):
+        raise AssertionError("a new connection has no saved password")
+
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    form = types.SimpleNamespace(
+        is_editing=False,
+        _plugin_field_widgets={'password': (None, None, None, None)},
+        _reveal_saved_password_async=_never,
+    )
+    types.MethodType(ConnectionDialog.__dict__['_load_plugin_password'], form)()
+    assert form._orig_plugin_password == ''
+
+
+def _save_plugin_password(typed, original):
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    emitted = []
+    form = types.SimpleNamespace(
+        nickname_row=types.SimpleNamespace(get_text=lambda: 'desk'),
+        _plugin_field_widgets={
+            'password': (
+                types.SimpleNamespace(default=None, required=False, label='Password'),
+                None,
+                lambda: typed,
+                None,
+            ),
+        },
+        _orig_plugin_password=original,
+        _collect_connection_meta=lambda: {},
+        SaveRequest=ConnectionDialog.SaveRequest,
+        emit=lambda _signal, data, *_rest: emitted.append(data),
+        close=lambda: None,
+        show_error=lambda message: emitted.append(('error', message)),
+    )
+    backend = types.SimpleNamespace(protocol_id='rdp', validate=lambda _data: [])
+    types.MethodType(ConnectionDialog.__dict__['_save_plugin_connection'], form)(backend)
+    [data] = emitted
+    return data
+
+
+def test_plugin_password_save_flags_only_real_edits():
+    assert _save_plugin_password('hunter2', 'hunter2')['password_changed'] is False
+    assert _save_plugin_password('', '')['password_changed'] is False
+    assert _save_plugin_password('new', 'hunter2')['password_changed'] is True
+    assert _save_plugin_password('', 'hunter2')['password_changed'] is True
