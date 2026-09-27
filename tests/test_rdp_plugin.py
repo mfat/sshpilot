@@ -1,5 +1,7 @@
 """Tests for the built-in RDP protocol plugin (FreeRDP 3 in its own window)."""
 
+import os
+import time
 import types
 
 import pytest
@@ -168,3 +170,97 @@ def test_validation_accepts_a_full_connection():
         "gateway": "gw.example:443", "shared_folder": "~/Public",
         "extra_rdp_args": "/network:auto +fonts",
     }) == []
+
+
+# A stored password reaches FreeRDP through a one-shot FIFO, never argv.
+
+
+class _Seam:
+    def __init__(self, password):
+        self.password = password
+        self.asked = 0
+
+    def get_connection_password(self, _connection):
+        self.asked += 1
+        return self.password
+
+
+def _spawn_with_password(monkeypatch, tmp_path, password, **data):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    seam = _Seam(password)
+    connection = types.SimpleNamespace(nickname="desk", data=data)
+    ctx = types.SimpleNamespace(connection_manager=seam)
+    return RdpProtocolBackend().build_spawn(connection, ctx), seam
+
+
+def _read_fifo(path):
+    with open(path, encoding="utf-8") as stream:
+        return stream.read().splitlines()
+
+
+def test_stored_password_travels_on_a_one_shot_fifo(monkeypatch, tmp_path):
+    _installed(monkeypatch, "xfreerdp3")
+    spec, _ = _spawn_with_password(
+        monkeypatch, tmp_path, "s3cret", host="win.example", username="alice")
+
+    assert spec.argv[0] == "/usr/bin/xfreerdp3"
+    [only] = spec.argv[1:]
+    assert only.startswith("/args-from:file:")
+    assert not any("s3cret" in arg for arg in spec.argv)
+    assert "s3cret" not in "".join(spec.env.values())
+
+    path = only[len("/args-from:file:"):]
+    assert oct(os.stat(os.path.dirname(path)).st_mode & 0o777) == "0o700"
+    lines = _read_fifo(path)
+    assert lines == [
+        "/v:win.example:3389", "/u:alice", "/t:desk",
+        "/dynamic-resolution", "/sound", "/p:s3cret",
+    ]
+    # Read once, then gone with its directory.
+    for _ in range(100):
+        if not os.path.exists(os.path.dirname(path)):
+            break
+        time.sleep(0.02)
+    assert not os.path.exists(os.path.dirname(path))
+
+
+def test_no_stored_password_keeps_a_plain_command(monkeypatch, tmp_path):
+    _installed(monkeypatch, "xfreerdp3")
+    spec, _ = _spawn_with_password(
+        monkeypatch, tmp_path, None, host="win.example", username="alice")
+    assert "/u:alice" in spec.argv
+    assert not any(arg.startswith("/args-from") for arg in spec.argv)
+
+
+def test_no_username_means_no_password_lookup(monkeypatch, tmp_path):
+    """Secrets are keyed on host and user; without a user there is none."""
+    _installed(monkeypatch, "xfreerdp3")
+    spec, seam = _spawn_with_password(
+        monkeypatch, tmp_path, "s3cret", host="win.example")
+    assert seam.asked == 0
+    assert not any(arg.startswith("/args-from") for arg in spec.argv)
+
+
+def test_an_uncarriable_password_falls_back_to_asking(monkeypatch, tmp_path):
+    """FreeRDP's argument file has no escape for a line break."""
+    _installed(monkeypatch, "xfreerdp3")
+    spec, _ = _spawn_with_password(
+        monkeypatch, tmp_path, "two\nlines", host="win.example", username="alice")
+    assert not any(arg.startswith("/args-from") for arg in spec.argv)
+    assert not any("two" in arg for arg in spec.argv)
+    assert os.listdir(tmp_path) == []
+
+
+def test_an_unread_fifo_is_withdrawn(monkeypatch, tmp_path):
+    """A launch that never execs must not leave the handover waiting."""
+    monkeypatch.setattr(rdp, "_ARGS_FIFO_DEADLINE", 0.2)
+    _installed(monkeypatch, "xfreerdp3")
+    spec, _ = _spawn_with_password(
+        monkeypatch, tmp_path, "s3cret", host="win.example", username="alice")
+    path = spec.argv[1][len("/args-from:file:"):]
+    for _ in range(100):
+        if not os.path.exists(os.path.dirname(path)):
+            break
+        time.sleep(0.02)
+    assert not os.path.exists(os.path.dirname(path))

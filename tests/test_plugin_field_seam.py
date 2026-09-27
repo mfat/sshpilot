@@ -100,7 +100,8 @@ CASES = {
     "rdp": {
         "fields": {
             "host": "win.example", "port": 3390, "username": "alice",
-            "domain": "CORP", "fullscreen": True, "size": "1600x900",
+            # Secure storage, not plugin_data: nothing to round-trip here.
+            "domain": "CORP", "password": "", "fullscreen": True, "size": "1600x900",
             "dynamic_resolution": True, "clipboard": False, "sound": True,
             "shared_folder": "/srv/share", "security": "nla",
             "cert_policy": "tofu", "gateway": "gw.example:443",

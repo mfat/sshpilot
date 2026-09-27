@@ -9,6 +9,12 @@ above certificate? (Y/T/N)"), ``sdl-freerdp3`` in dialogs of its own window.
 ``/from-stdin`` is deliberately never passed: with it, FreeRDP rejects an
 unknown certificate outright instead of asking.
 
+A stored password never goes on the command line (``/p:`` is visible to
+every local user in the process list). With one, the whole command line is
+handed over through ``/args-from:file:`` on a one-shot FIFO in a private
+directory: a daemon thread writes it once when FreeRDP opens the FIFO, then
+removes it, so nothing is left on disk.
+
 FreeRDP 3 only. Debian/Ubuntu/Arch install ``xfreerdp3``/``sdl-freerdp3``;
 Fedora and Homebrew install the unsuffixed names, where ``xfreerdp`` may
 still be a FreeRDP 2 build whose options differ, so it must prove its
@@ -18,9 +24,14 @@ no check.
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import re
 import sys
+import tempfile
+import threading
+import time
 from gettext import gettext as _
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -54,6 +65,12 @@ _SECURITY = ("auto", "nla", "tls", "rdp")
 _CERT_POLICIES = ("prompt", "tofu", "ignore")
 
 _version_cache: Dict[Tuple[str, ...], bool] = {}
+
+# How long FreeRDP has to open the arguments FIFO before it is withdrawn.
+_ARGS_FIFO_DEADLINE = 60.0
+_ARGS_FIFO_POLL = 0.05
+
+logger = logging.getLogger(__name__)
 
 
 def _is_freerdp3(argv: Sequence[str]) -> bool:
@@ -95,6 +112,105 @@ def _resolve_client(choice: str, environment: Dict[str, str]) -> Optional[List[s
     return None
 
 
+def _stored_password(connection: Any, ctx: Any) -> str:
+    """The connection's saved login password, or ``""``.
+
+    ``ctx.connection_manager`` is the daemon's credential seam at spawn
+    time; anything else (no seam, a lookup error) means "none saved", and
+    FreeRDP then asks for it.
+    """
+    manager = getattr(ctx, "connection_manager", None)
+    getter = getattr(manager, "get_connection_password", None)
+    if not callable(getter):
+        return ""
+    try:
+        return str(getter(connection) or "")
+    except Exception:
+        logger.debug("RDP password lookup failed", exc_info=True)
+        return ""
+
+
+def _args_fifo_directory() -> Optional[str]:
+    """Where the arguments FIFO lives: somewhere FreeRDP can open it.
+
+    A Flatpak's own ``$XDG_RUNTIME_DIR`` is private to the sandbox, while a
+    host FreeRDP runs outside it; ``$XDG_RUNTIME_DIR/app/<app-id>`` is the
+    part both sides share.
+    """
+    from .._flatpak import is_flatpak  # noqa: PLC0415
+
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        return None
+    app_id = os.environ.get("FLATPAK_ID")
+    if is_flatpak() and app_id:
+        shared = os.path.join(runtime, "app", app_id)
+        if os.path.isdir(shared):
+            return shared
+    return runtime
+
+
+def _serve_args_once(path: str, payload: bytearray) -> None:
+    """Write ``payload`` to the FIFO once, then remove it and its directory.
+
+    Opening for write without a reader fails with ENXIO, so the thread polls
+    until FreeRDP opens its end or the deadline passes; either way the FIFO
+    is unlinked as soon as the outcome is known.
+    """
+    fd = -1
+    try:
+        deadline = time.monotonic() + _ARGS_FIFO_DEADLINE
+        while True:
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+                break
+            except OSError as exc:
+                if exc.errno != errno.ENXIO or time.monotonic() > deadline:
+                    logger.warning("FreeRDP did not read its arguments; withdrawn")
+                    return
+                time.sleep(_ARGS_FIFO_POLL)
+        # The reader holds it open now; nobody else needs the name.
+        os.unlink(path)
+        os.set_blocking(fd, True)
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(fd, view):]
+    except OSError:
+        logger.warning("Could not hand FreeRDP its arguments", exc_info=True)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        payload[:] = b"\0" * len(payload)
+        for remove, target in ((os.unlink, path), (os.rmdir, os.path.dirname(path))):
+            try:
+                remove(target)
+            except OSError:
+                pass
+
+
+def _args_file(arguments: Sequence[str]) -> Optional[str]:
+    """Publish ``arguments`` (one per line) on a one-shot FIFO; its path.
+
+    Returns None when an argument cannot be carried: FreeRDP ends the list
+    at an empty line and has no escape for a newline inside one.
+    """
+    if any(not arg or "\n" in arg or "\r" in arg for arg in arguments):
+        return None
+    directory = tempfile.mkdtemp(prefix="sshpilot-rdp-", dir=_args_fifo_directory())
+    path = os.path.join(directory, "args")
+    try:
+        os.mkfifo(path, 0o600)
+    except OSError:
+        os.rmdir(directory)
+        raise
+    payload = bytearray("".join(f"{arg}\n" for arg in arguments).encode("utf-8"))
+    threading.Thread(
+        target=_serve_args_once, args=(path, payload),
+        name="rdp-args", daemon=True,
+    ).start()
+    return path
+
+
 def _server_address(host: str, port: int) -> str:
     # A bare IPv6 literal needs brackets before FreeRDP can split the port.
     if ":" in host and not host.startswith("["):
@@ -123,6 +239,8 @@ class RdpProtocolBackend(ProtocolBackend):
             FieldSpec(key="username", label=_("Username"), kind="text",
                       placeholder=_("(asked when connecting)")),
             FieldSpec(key="domain", label=_("Domain"), kind="text"),
+            # Stored in secure storage, never in the connection data.
+            FieldSpec(key="password", label=_("Password"), kind="password"),
             FieldSpec(key="fullscreen", label=_("Full screen"), kind="switch",
                       default=False, group="display"),
             FieldSpec(key="size", label=_("Window size"), kind="text",
@@ -259,6 +377,19 @@ class RdpProtocolBackend(ProtocolBackend):
             argv.append(f"/gateway:g:{gateway}")
 
         argv += extra
+
+        password = _stored_password(connection, ctx) if username else ""
+        if password:
+            arguments = [*argv[len(client):], f"/p:{password}"]
+            try:
+                args_path = _args_file(arguments)
+            except OSError:
+                logger.warning("No private FIFO for FreeRDP; it will ask instead",
+                               exc_info=True)
+                args_path = None
+            if args_path is not None:
+                # /args-from must be FreeRDP's only argument.
+                return SpawnSpec(argv=[*client, f"/args-from:file:{args_path}"], env=env)
         return SpawnSpec(argv=argv, env=env)
 
 
