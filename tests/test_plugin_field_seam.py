@@ -120,7 +120,8 @@ CASES = {
             "/t:rdp-demo", "/f", "/size:1600x900", "/scale-desktop:150",
             "/multimon", "-clipboard", "/sound", "/microphone", "/printer",
             "/drive:sshpilot,/srv/share", "/sec:nla", "/cert:tofu", "+admin",
-            "/gateway:g:gw.example:443,u:gwuser,d:GW", "/network:auto",
+            "/gateway:g:gw.example:443,u:gwuser,d:GW",
+            "/tune:FreeRDP_AutoLogonEnabled:true", "/network:auto",
         ],
     },
 }
