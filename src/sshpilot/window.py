@@ -2486,6 +2486,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 "Failed to apply sidebar-compact list class",
                 exc_info=True,
             )
+        try:
+            from sshpilot.sidebar import update_hide_hosts_button_visibility
+            update_hide_hosts_button_visibility(self)
+        except Exception:
+            logger.debug(
+                "Failed to update hide-hostnames button visibility",
+                exc_info=True,
+            )
 
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()

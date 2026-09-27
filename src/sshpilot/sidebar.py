@@ -4642,6 +4642,31 @@ def _horizontal_clip(child: Gtk.Widget) -> Gtk.ScrolledWindow:
     return clip
 
 
+def update_hide_hosts_button_visibility(window) -> None:
+    """Offer the hide-hostnames toggle only while rows show user@hostname.
+
+    Compact mode never shows the subtitle, so the toggle would do nothing
+    visible in the sidebar there either.
+    """
+    button = getattr(window, '_hide_hosts_button', None)
+    if button is None:
+        return
+    config = getattr(window, 'config', None)
+    relevant = False
+    try:
+        relevant = bool(
+            config is not None
+            and not _sidebar_is_compact(config)
+            and config.get_setting('ui.sidebar_show_user_hostname', False)
+        )
+    except Exception:
+        logger.debug("Failed to read hostname display settings", exc_info=True)
+    from sshpilot.overflow_toolbar import mark_force_hidden
+    # The overflow toolbar owns item visibility; exclude the button from
+    # packing rather than toggling it directly.
+    mark_force_hidden(button, not relevant)
+
+
 def _build_sidebar_header(window, sidebar_box):
     """Build the sidebar action header (add/search/filter/sort/…)."""
     from sshpilot.overflow_toolbar import OverflowToolbar
@@ -4761,6 +4786,7 @@ def _build_sidebar_header(window, sidebar_box):
         pass
     window._hide_hosts_button = hide_button
     header.add_item(hide_button)
+    update_hide_hosts_button_visibility(window)
 
     tag_button = Gtk.MenuButton()
     tag_button.add_css_class('flat')
