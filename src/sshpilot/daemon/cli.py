@@ -405,6 +405,9 @@ def _production_core_services():
     secret_provider = DaemonConnectionSecretProvider(
         repository.get_record,
         profile_password_lookup=login_profiles.password_for_connection,
+        records=repository.list_records,
+        metadata_lookup=repository.get_connection_metadata,
+        metadata_update=repository.update_connection_metadata,
     )
     launch_provider = DaemonConnectionLaunchProvider(
         repository.get_record,

@@ -316,3 +316,130 @@ def test_delete_clears_all_candidate_aliases(provider):
     assert manager.lookup(password_spec("b.example", "bob")) is None
     assert manager.lookup(password_spec("alias", "bob")) is None
     assert manager.lookup(password_spec("bnick", "bob")) is None
+
+
+# -- one saved login shared by several connections ---------------------------
+#
+# The keyring entry is keyed only on ``username@host``: an SSH and an RDP
+# connection to one Windows host, or two ports on one machine, read the same
+# entry. Clearing one connection's password must not take it from the others.
+
+
+def _shared(*records):
+    by_id = {record.id: record for record in records}
+    metadata: Dict[str, dict] = {}
+    manager = FakeSecretManager()
+
+    def update(connection_id, values):
+        current = metadata.setdefault(connection_id, {})
+        for key, value in values.items():
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
+
+    provider = DaemonConnectionSecretProvider(
+        by_id.get,
+        secret_manager_factory=lambda: manager,
+        records=lambda: tuple(by_id.values()),
+        metadata_lookup=lambda connection_id: metadata.get(connection_id, {}),
+        metadata_update=update,
+    )
+    return provider, manager, metadata
+
+
+def _windows_pair():
+    return _shared(
+        _record("win-ssh", hostname="10.0.0.5"),
+        _record("win-rdp", hostname="10.0.0.5", protocol="rdp", port=3389),
+    )
+
+
+def test_clearing_a_shared_password_keeps_it_for_the_other_connection():
+    provider, manager, _metadata = _windows_pair()
+    assert provider.store_connection_password("win-rdp", "pw")
+
+    assert provider.delete_connection_password("win-rdp")
+
+    assert manager.deleted == []
+    assert provider.lookup_connection_password("win-ssh") == "pw"
+    assert provider.lookup_connection_password("win-rdp") is None
+    assert provider.has_connection_password("win-rdp") is False
+
+
+def test_clearing_a_password_nobody_else_reads_deletes_it():
+    provider, manager, _metadata = _shared(_record("web"), _record("other", hostname="other.example"))
+    provider.store_connection_password("web", "pw")
+
+    provider.delete_connection_password("web")
+
+    assert manager.deleted == ["alice@example.com"]
+
+
+def test_a_cleared_connection_does_not_pick_up_a_sibling_s_later_save():
+    provider, _manager, _metadata = _windows_pair()
+    provider.delete_connection_password("win-rdp")
+
+    provider.store_connection_password("win-ssh", "pw")
+
+    assert provider.lookup_connection_password("win-rdp") is None
+
+
+def test_saving_a_password_again_undoes_the_clear():
+    provider, _manager, metadata = _windows_pair()
+    provider.store_connection_password("win-ssh", "pw")
+    provider.delete_connection_password("win-rdp")
+
+    provider.store_connection_password("win-rdp", "pw2")
+
+    assert "use_saved_login" not in metadata.get("win-rdp", {})
+    assert provider.lookup_connection_password("win-rdp") == "pw2"
+    # Still one entry: saving through RDP replaces SSH's (keyed on user@host).
+    assert provider.lookup_connection_password("win-ssh") == "pw2"
+
+
+def test_the_last_connection_to_clear_a_shared_entry_deletes_it():
+    provider, manager, _metadata = _windows_pair()
+    provider.store_connection_password("win-ssh", "pw")
+    provider.delete_connection_password("win-ssh")
+    assert manager.deleted == []
+
+    provider.delete_connection_password("win-rdp")
+
+    assert manager.deleted == ["alice@10.0.0.5"]
+
+
+def test_alias_cleanup_on_save_spares_another_connection_s_entry():
+    """``box`` has the nickname ``gw``, a legacy alias its save cleans up --
+    but ``gw`` is also another connection's real host."""
+    provider, manager, _metadata = _shared(
+        _record("gw", hostname="gw"),
+        _record("box", hostname="10.0.0.9", host="gw"),
+    )
+    provider.store_connection_password("gw", "gateway-pw")
+
+    provider.store_connection_password("box", "box-pw")
+
+    assert "alice@gw" not in manager.deleted
+    assert provider.lookup_connection_password("gw") == "gateway-pw"
+
+
+def test_unknown_other_connections_are_treated_as_sharing():
+    manager = FakeSecretManager()
+    records = {"web": _record()}
+
+    def failing():
+        raise RuntimeError("store unavailable")
+
+    provider = DaemonConnectionSecretProvider(
+        records.get,
+        secret_manager_factory=lambda: manager,
+        records=failing,
+        metadata_lookup=lambda _cid: {},
+        metadata_update=lambda _cid, _values: None,
+    )
+    provider.store_connection_password("web", "pw")
+
+    provider.delete_connection_password("web")
+
+    assert manager.deleted == []

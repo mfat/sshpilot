@@ -221,3 +221,53 @@ def test_secret_provider_previous_identity_cleanup():
     # Canonical host wins; the previous identity key is removed.
     assert backend.data[password_spec('10.0.0.5', 'root').keyring_account] == 'new-pw'
     assert password_spec('old.example', 'root').keyring_account not in backend.data
+
+
+def test_clearing_an_rdp_password_keeps_the_ssh_one_and_survives_reload(tmp_path):
+    """RDP and SSH to one host and user share the ``root@host`` keyring
+    entry. Clearing it on the RDP connection is recorded in the daemon's own
+    metadata, so SSH keeps its password and RDP stays cleared after reload."""
+    class FakeBackend(ss.SecretBackend):
+        def __init__(self):
+            self.data = {}
+
+        def is_available(self):
+            return True
+
+        def store(self, spec, secret):
+            self.data[spec.keyring_account] = secret
+            return True
+
+        def lookup(self, spec):
+            return self.data.get(spec.keyring_account)
+
+        def delete(self, spec):
+            return self.data.pop(spec.keyring_account, None) is not None
+
+    backend = FakeBackend()
+    manager = SecretManager()
+    manager._backends = {'libsecret': backend, 'keyring': FakeBackend()}
+
+    def provider_for(repo):
+        return DaemonConnectionSecretProvider(
+            repo.get_record,
+            secret_manager_factory=lambda: manager,
+            records=repo.list_records,
+            metadata_lookup=repo.get_connection_metadata,
+            metadata_update=repo.update_connection_metadata,
+        )
+
+    repo, _root, _state_path = _repo(tmp_path)
+    repo.create_connection(
+        {'nickname': 'alpha-rdp', 'protocol': 'rdp',
+         'hostname': 'alpha.example.com', 'username': 'root'}
+    )
+    provider = provider_for(repo)
+    assert provider.store_connection_password('alpha', 'pw') is True
+
+    assert provider.delete_connection_password('alpha-rdp') is True
+
+    assert backend.data == {'root@alpha.example.com': 'pw'}
+    fresh = provider_for(_repo(tmp_path)[0])
+    assert fresh.lookup_connection_password('alpha') == 'pw'
+    assert fresh.lookup_connection_password('alpha-rdp') is None

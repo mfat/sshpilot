@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 from ..api.models.connections import ConnectionId
 from ..core.connections.models import ConnectionRecord
@@ -28,6 +28,14 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+#: Connection metadata key. ``False`` means the user cleared this connection's
+#: saved password: the per-host keyring entry is not used for it. The entry is
+#: keyed only on ``username@host`` and so may be shared with other connections
+#: (an SSH and an RDP connection to one Windows host, two ports on one
+#: machine), which is why clearing cannot always delete it.
+USE_SAVED_LOGIN_KEY = "use_saved_login"
+
+
 class DaemonConnectionSecretProvider:
     """Secret contract implementation backed by the legacy secret subsystem."""
 
@@ -37,6 +45,9 @@ class DaemonConnectionSecretProvider:
         *,
         secret_manager_factory: Optional[Callable[[], Any]] = None,
         profile_password_lookup: Optional[Callable[[ConnectionId], Optional[str]]] = None,
+        records: Optional[Callable[[], Iterable[ConnectionRecord]]] = None,
+        metadata_lookup: Optional[Callable[[ConnectionId], Mapping[str, Any]]] = None,
+        metadata_update: Optional[Callable[[ConnectionId, Mapping[str, Any]], Any]] = None,
     ) -> None:
         if resolver is None:
             raise ValueError("a connection resolver is required")
@@ -49,6 +60,11 @@ class DaemonConnectionSecretProvider:
         # A linked login profile's password is shared by all its connections
         # and takes precedence over a per-host entry.
         self._profile_password_lookup = profile_password_lookup
+        # Without these the provider cannot see other connections or record
+        # an opt-out, and keeps the old behaviour: delete, and always autofill.
+        self._records = records
+        self._metadata_lookup = metadata_lookup
+        self._metadata_update = metadata_update
         self._session_passwords: Dict[ConnectionId, tuple[float, str]] = {}
         self._session_password_lock = threading.RLock()
         self._session_password_ttl = 3600.0
@@ -57,6 +73,69 @@ class DaemonConnectionSecretProvider:
 
     def _record(self, connection_id: ConnectionId) -> Optional[ConnectionRecord]:
         return self._resolver(connection_id)
+
+    def _saved_login_off(self, connection_id: ConnectionId) -> bool:
+        if self._metadata_lookup is None:
+            return False
+        try:
+            metadata = self._metadata_lookup(connection_id) or {}
+        except Exception:
+            logger.debug("Connection metadata unavailable", exc_info=True)
+            return False
+        return metadata.get(USE_SAVED_LOGIN_KEY) is False
+
+    def _set_saved_login_off(self, connection_id: ConnectionId, off: bool) -> None:
+        if self._metadata_update is None or self._saved_login_off(connection_id) is off:
+            return
+        try:
+            self._metadata_update(
+                connection_id, {USE_SAVED_LOGIN_KEY: False if off else None}
+            )
+        except Exception:
+            logger.warning(
+                "Could not record the saved-password choice connection=%s",
+                connection_id,
+            )
+
+    def _entry_used_elsewhere(self, host: str, user: str, record: ConnectionRecord) -> bool:
+        """Whether a connection other than *record* reads ``user@host``.
+
+        A connection reads every entry among its host candidates, so any of
+        them matching counts -- unless that connection opted out.
+        """
+        if self._records is None:
+            return False
+        from ..credential_model import password_host_candidates
+
+        try:
+            others = tuple(self._records())
+        except Exception:
+            # Unknown is treated as shared: keeping a secret is recoverable,
+            # deleting one another connection needs is not.
+            logger.debug("Connection records unavailable", exc_info=True)
+            return True
+        for other in others:
+            if other.id == record.id or _string(other.username) != user:
+                continue
+            if host not in password_host_candidates(self._record_dict(other)):
+                continue
+            if not self._saved_login_off(ConnectionId(other.id)):
+                return True
+        return False
+
+    def _delete_unless_shared(
+        self, manager: Any, host: str, user: str, record: Optional[ConnectionRecord]
+    ) -> None:
+        from ..secret_storage import password_spec
+
+        if record is not None and self._entry_used_elsewhere(host, user, record):
+            logger.info(
+                "Connection password kept connection=%s: another connection "
+                "uses the same saved login",
+                record.id,
+            )
+            return
+        manager.delete(password_spec(host, user))
 
     def _record_dict(self, record: ConnectionRecord) -> Dict[str, Any]:
         """Compatibility mapping for ``credential_model`` host helpers."""
@@ -91,6 +170,8 @@ class DaemonConnectionSecretProvider:
                 profile_value = None
             if profile_value:
                 return profile_value
+        if self._saved_login_off(connection_id):
+            return None
         user = _string(record.username)
         if not user:
             return None
@@ -108,7 +189,7 @@ class DaemonConnectionSecretProvider:
                 if canonical and host != canonical:
                     try:
                         if manager.store(password_spec(canonical, user), value):
-                            manager.delete(password_spec(host, user))
+                            self._delete_unless_shared(manager, host, user, record)
                     except Exception:
                         pass
                 return value
@@ -218,11 +299,12 @@ class DaemonConnectionSecretProvider:
                     cleanup.add((prev_host, prev_user))
             for host, cleanup_user in cleanup:
                 try:
-                    manager.delete(password_spec(host, cleanup_user))
+                    self._delete_unless_shared(manager, host, cleanup_user, record)
                 except Exception:
                     pass
         if stored:
             self.clear_session_connection_password(connection_id)
+            self._set_saved_login_off(connection_id, False)
         return bool(stored)
 
     def delete_connection_password(
@@ -233,9 +315,14 @@ class DaemonConnectionSecretProvider:
         previous_host: str = "",
         previous_username: str = "",
     ) -> bool:
+        """Stop *connection_id* using a saved login password.
+
+        The keyring entry is deleted only when no other connection reads it;
+        either way the connection is marked so it stops reading it, which
+        also keeps it from picking up an entry another connection saves later.
+        """
         record = self._record(connection_id)
         from ..credential_model import password_host_candidates
-        from ..secret_storage import password_spec
 
         manager = self._secret_manager_factory()
         if record is not None:
@@ -245,7 +332,7 @@ class DaemonConnectionSecretProvider:
             if user:
                 for host in password_host_candidates(conn):
                     if host:
-                        manager.delete(password_spec(host, user))
+                        self._delete_unless_shared(manager, host, user, record)
         if previous_hostname or previous_host:
             prev_host = _string(previous_hostname) or _string(previous_host)
             prev_user = _string(previous_username) or (
@@ -253,9 +340,11 @@ class DaemonConnectionSecretProvider:
             )
             if prev_host and prev_user:
                 try:
-                    manager.delete(password_spec(prev_host, prev_user))
+                    self._delete_unless_shared(manager, prev_host, prev_user, record)
                 except Exception:
                     pass
+        if record is not None:
+            self._set_saved_login_off(connection_id, True)
         # Idempotent by contract: an absent credential satisfies the request.
         self.clear_session_connection_password(connection_id)
         return True
