@@ -4769,6 +4769,17 @@ def _build_sidebar_header(window, sidebar_box):
     header.add_item(add_button)
     window._sidebar_add_button = add_button
 
+    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
+    new_group_button.add_css_class('flat')
+    label_icon_button(new_group_button, _('New Group'))
+    new_group_button.set_action_name('win.create-group')
+    try:
+        new_group_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.add_item(new_group_button)
+    window._sidebar_new_group_button = new_group_button
+
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
     window.search_button.add_css_class('flat')
     shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
@@ -4783,17 +4794,6 @@ def _build_sidebar_header(window, sidebar_box):
     except Exception:
         pass
     header.add_item(window.search_button)
-
-    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
-    new_group_button.add_css_class('flat')
-    label_icon_button(new_group_button, _('New Group'))
-    new_group_button.set_action_name('win.create-group')
-    try:
-        new_group_button.set_can_focus(False)
-    except Exception:
-        pass
-    header.add_item(new_group_button)
-    window._sidebar_new_group_button = new_group_button
 
     def _update_eye_icon(btn):
         try:
