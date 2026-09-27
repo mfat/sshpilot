@@ -52,6 +52,7 @@ from .dialog_focus import capture_toplevels, mark_new_dialog_default_visible
 from .key_manager import KeyManager
 from sshpilot.api.models.keys import KeyStoreScope
 from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
+from sshpilot.api.models.pre_command import PRE_COMMAND_METADATA_KEYS
 from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
@@ -7731,7 +7732,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     key: meta[key]
                     for key in (
                         "wol_mac", "wol_broadcast_ip", "wol_port",
-                        "pre_command", "pre_command_timeout", "pre_command_abort",
+                        *PRE_COMMAND_METADATA_KEYS,
                     )
                     if key in meta
                 }
@@ -7773,14 +7774,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 _done(False)
                 return
             new_nickname = connection_data.get('nickname') or original_nickname
-            # Meta goes under the new nickname BEFORE the rename migration so
-            # the dialog's fields win the merge, and before rows re-read tags.
+            # Meta goes in before rows re-read tags. The ID is immutable, so
+            # there is no group/metadata migration to follow.
             self._apply_saved_connection_meta(new_nickname, pending_meta)
-            if original_nickname != new_nickname:
-                try:
-                    self.group_manager.rename_connection(original_nickname, new_nickname)
-                except Exception:
-                    pass
             try:
                 object.__setattr__(
                     old_connection,

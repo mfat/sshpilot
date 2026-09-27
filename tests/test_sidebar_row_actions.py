@@ -88,10 +88,13 @@ def test_widening_restores_the_reservation():
         mod.ROW_ACTION_SLOT_BUTTON)
 
 
-def _connection_row(callback=True, show_file_manager=True):
+def _connection_row(callback=True, show_file_manager=True, protocol='ssh'):
     mod = importlib.import_module('sshpilot.sidebar')
+    from sshpilot.plugins.loader import ensure_builtin_protocols
+    ensure_builtin_protocols()
     row = mod.ConnectionRow.__new__(mod.ConnectionRow)
     row._is_hovering = False
+    row.connection = SimpleNamespace(nickname='host', protocol=protocol)
     row._file_manager_callback = MagicMock() if callback else None
     row.config = SimpleNamespace(
         get_setting=lambda key, default=None: (
@@ -137,6 +140,18 @@ def test_file_manager_button_pref_off_keeps_height_without_width():
 
 def test_a_row_without_a_file_manager_never_shows_the_action():
     row, mod = _connection_row(callback=False)
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
+    row.file_manager_button.set_opacity.assert_called_with(0.0)
+
+
+def test_a_protocol_without_file_transfer_never_shows_manage_files():
+    """The context and tab menus already drop Manage Files for a telnet row;
+    the hover button must not offer a click that can only be ignored."""
+    row, mod = _connection_row(protocol='telnet')
 
     mod.ConnectionRow._on_row_enter(row, None, 0, 0)
 

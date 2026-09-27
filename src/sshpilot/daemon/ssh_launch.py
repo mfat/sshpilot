@@ -756,6 +756,7 @@ class SshLauncher:
             scope_id=getattr(spec, "session_id", None),
             argv=argv,
             environment=environment,
+            protocol=getattr(spec, "protocol", "ssh") or "ssh",
         )
         return argv, environment
 
@@ -770,6 +771,7 @@ class SshLauncher:
         scope_id: Optional[ScopeId],
         argv: Sequence[str] = (),
         environment: Mapping[str, str] = {},
+        protocol: str = "ssh",
     ) -> None:
         """Run the connection's pre-connection command for this launch.
 
@@ -790,6 +792,11 @@ class SshLauncher:
         """
 
         if not policy.pre_connection_command:
+            return
+        if not _protocol_wants_pre_connect(protocol):
+            # The editor hides the page for such a protocol, but a command
+            # typed before switching to it is still in the metadata.
+            logger.info("pre-connection command skipped reason=protocol_opt_out")
             return
         # Injected for tests; in the daemon it rides the launch provider, so
         # every launcher finds the one runner without four services having to
@@ -898,6 +905,27 @@ class SshLauncher:
             ErrorCode.SESSION_STARTUP_FAILED,
             "The launch provider cannot prepare this launch",
         )
+
+
+def _protocol_wants_pre_connect(protocol: str) -> bool:
+    """Whether *protocol* opens a connection a pre-connection step could serve.
+
+    A backend declares ``pre_connect = False`` when it reaches nothing over
+    the network (a local serial console). Its launch has already loaded the
+    registry by the time this runs; an unknown protocol keeps the step.
+    """
+    if protocol == "ssh":
+        return True
+    try:
+        from ..plugins.registry import protocol_registry
+
+        backend = protocol_registry().get_or_none(protocol)
+    except Exception:
+        logger.debug("protocol registry unavailable", exc_info=True)
+        return True
+    if backend is None:
+        return True
+    return bool(getattr(backend, "pre_connect", True))
 
 
 def _policy_for(intent: "LaunchIntent") -> _KindPolicy:

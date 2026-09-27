@@ -85,6 +85,10 @@ class MoshProtocolBackend(ProtocolBackend):
                     errors.append(_("Port must be between 1 and 65535."))
             except (TypeError, ValueError):
                 errors.append(_("Port must be a number."))
+        # The saved password is keyed on host and username; without one the
+        # secret store refuses it and the password is silently gone.
+        if data.get("password") and not str(data.get("username") or "").strip():
+            errors.append(_("Enter a username to use the saved password."))
         diagnostic = command_split_diagnostic(data.get("extra_ssh_opts"))
         if diagnostic:
             errors.append(

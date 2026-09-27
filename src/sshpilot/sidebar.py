@@ -2114,15 +2114,16 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._reveal_hover_actions(False)
 
     def _file_manager_button_enabled(self) -> bool:
-        """Whether Preferences allows the connection-row file manager button."""
+        """Whether Preferences allows the connection-row file manager button
+        and the protocol can transfer files."""
         if _sidebar_is_compact(self.config):
             return False
         try:
-            return bool(
-                self.config.get_setting('ui.sidebar_show_file_manager_button', True)
-            )
+            if not self.config.get_setting('ui.sidebar_show_file_manager_button', True):
+                return False
         except Exception:
-            return True
+            pass
+        return Capability.FILE_TRANSFER in capabilities_for(self.connection)
 
     def _pointer_is_on_row(self) -> bool:
         """Whether the row's hover latch currently says the pointer is here."""

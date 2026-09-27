@@ -2436,3 +2436,35 @@ def test_failed_profile_link_still_completes_the_save_with_a_warning():
 
     assert completed[0][0] is True
     assert "login profile" in completed[0][1]["meta_error"]
+
+
+def test_plugin_meta_keeps_the_port_knock_and_its_mode():
+    """The dialog offers the knock half to telnet/mosh/rdp. The plugin save
+    must persist every pre-connection key, not a hand-kept subset of them."""
+    from sshpilot.api.models.pre_command import PRE_COMMAND_METADATA_KEYS
+
+    calls = []
+    window = SimpleNamespace(
+        client=SimpleNamespace(
+            update_connection_metadata=lambda nickname, values: calls.append(
+                (nickname, values)
+            )
+        )
+    )
+    meta = {
+        "tags": ["lab"],
+        "wol_mac": "",
+        "pre_command": "",
+        "pre_command_knock": "7000 8000 9000",
+        "pre_command_mode": "knock",
+        "pre_command_timeout": 10,
+        "pre_command_abort": False,
+    }
+
+    MainWindow._apply_saved_connection_meta(window, "router", meta)
+
+    [(nickname, values)] = calls
+    assert nickname == "router"
+    assert values["pre_command_knock"] == "7000 8000 9000"
+    assert values["pre_command_mode"] == "knock"
+    assert set(PRE_COMMAND_METADATA_KEYS) <= set(values)
