@@ -9,7 +9,8 @@
 # binaries. The bundled interpreter finds the bundled modules on its own,
 # because it sits in the usual $prefix/bin + $prefix/lib layout under usr/.
 #
-# What is left below is the data GTK can only find through the environment.
+# What is left below is the data GTK can only find through the environment,
+# and the choice of C library.
 
 set -eu
 
@@ -53,4 +54,41 @@ if [ -f "$pixbuf_template" ]; then
     fi
 fi
 
-exec "$APPDIR/usr/bin/python3" "$APPDIR/usr/bin/sshpilot" "$@"
+# The C library. Everything bundled was linked against the build host's glibc,
+# which the image also carries in usr/lib/libc. A host at least that new runs
+# the app on its own glibc, as any other package would; an older one gets the
+# bundled glibc through the wrappers the build writes, which run the
+# interpreter and the WebKit helpers through the bundled loader. The host's
+# glibc is preferred whenever it can work because the libraries still taken
+# from the host (GL drivers, X11, fonts) are built against it, and a newer
+# host's copies would not load on an older bundled glibc.
+#
+# SSHPILOT_APPIMAGE_LIBC=host|bundled overrides the choice, for diagnosis.
+version_older() { # $1 < $2, both "major.minor"
+    [ "${1%%.*}" -lt "${2%%.*}" ] ||
+        { [ "${1%%.*}" -eq "${2%%.*}" ] && [ "${1#*.}" -lt "${2#*.}" ]; }
+}
+
+use_bundled_libc() {
+    case "${SSHPILOT_APPIMAGE_LIBC:-auto}" in
+        bundled) return 0 ;;
+        host) return 1 ;;
+    esac
+    bundled=$(cat "$APPDIR/usr/lib/libc/VERSION" 2>/dev/null) || return 1
+    # getconf is part of glibc itself; a host without it has nothing better to
+    # offer than its own C library, so keep to the host there.
+    host=$(getconf GNU_LIBC_VERSION 2>/dev/null) || return 1
+    host=${host#glibc }
+    case "$host.$bundled" in
+        *[!0-9.]*) return 1 ;;
+    esac
+    version_older "$host" "$bundled"
+}
+
+SSHPILOT_PYTHON="$APPDIR/usr/bin/python3"
+if use_bundled_libc; then
+    SSHPILOT_PYTHON="$APPDIR/usr/bin/python3-bundled-libc"
+    export WEBKIT_EXEC_PATH="$APPDIR/usr/lib/webkitgtk-6.0-bundled-libc"
+fi
+
+exec "$SSHPILOT_PYTHON" "$APPDIR/usr/bin/sshpilot" "$@"

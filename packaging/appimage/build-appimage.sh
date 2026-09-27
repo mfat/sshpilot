@@ -7,9 +7,10 @@
 #
 # The AppImage bundles the GTK 4 stack (GTK, libadwaita, VTE, GtkSourceView,
 # libsecret, WebKitGTK), their typelibs, a CPython interpreter, PyGObject and
-# the Python dependencies from pyproject.toml. Not bundled: anything glibc- or
+# the Python dependencies from pyproject.toml. Not bundled: anything
 # host-coupled (see packaging/appimage/excludelist), and OpenSSH -- the app
-# drives the host's ssh, as it does in every other package.
+# drives the host's ssh, as it does in every other package. glibc is bundled
+# too, but off to the side, for hosts older than the build host only (see 8b).
 #
 # WebKitGTK is the expensive part of that list and the fiddly one: it runs its
 # renderer out of process, so the WebKit*Process helpers and the injected
@@ -30,9 +31,10 @@
 #     $prefix from their own location instead of the /usr baked in at install
 #     time, which would otherwise resolve to the *host's* sshpilot.
 #
-# Build host: this must run on the oldest distro the AppImage should support,
-# because glibc is taken from the host. Ubuntu 24.04 is the floor -- older
-# releases do not carry libadwaita >= 1.5.
+# Build host: Ubuntu 24.04, the oldest release carrying libadwaita >= 1.5.
+# Hosts with an older glibc than the build host's run on the bundled copy
+# (step 8b and AppRun); the host libraries in the excludelist -- GL, X11,
+# Wayland, fonts -- are what still sets a floor there.
 set -euo pipefail
 
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -445,6 +447,75 @@ while IFS= read -r -d '' elf; do
 done < <(find "$LIBDIR" "$MODULEDIR" \( -name '*.so' -o -name '*.so.*' \) -print0 2>/dev/null | sort -zu)
 
 # --------------------------------------------------------------------------
+# 8b. The C library, for hosts older than this build host. Done after the
+#     RPATH pass on purpose: patchelf must never touch the loader or libc.
+# --------------------------------------------------------------------------
+log "Bundling the C library for hosts older than the build host"
+# Everything above was linked against this host's glibc, so a host with an
+# older one cannot run it natively. AppRun compares the two versions: on an
+# older host it starts the interpreter and the WebKit helpers through the
+# bundled loader instead, which then takes glibc -- and the C++ runtime, which
+# is just as new -- from here. On anything as new as the build host nothing
+# below is used, and the app runs on the host's C library exactly as before.
+#
+# The directory is reached only through the loader's --library-path, never an
+# RPATH: a bundled libc.so.6 found by the *host's* loader would be a mixed
+# glibc, which crashes.
+LIBC_DIR=$LIBDIR/libc
+mkdir -p "$LIBC_DIR"
+LOADER=$(patchelf --print-interpreter "$APPDIR/usr/bin/python$PY_VER")
+LOADER_NAME=$(basename "$LOADER")
+install -Dm755 "$(readlink -f "$LOADER")" "$LIBC_DIR/$LOADER_NAME"
+# HarfBuzz rides along: it is in the excludelist, but GTK and Pango here need
+# HarfBuzz >= 7 and the hosts that get this directory can be older (Ubuntu
+# 22.04 has 2.7). Newer hosts keep their own, as before.
+for soname in libc.so.6 libm.so.6 libmvec.so.1 libpthread.so.0 libdl.so.2 \
+              librt.so.1 libresolv.so.2 libutil.so.1 libanl.so.1 \
+              libnss_files.so.2 libnss_dns.so.2 \
+              libstdc++.so.6 libgcc_s.so.1 \
+              libharfbuzz.so.0; do
+    path=$(resolve_soname "$soname")
+    if [ -z "$path" ]; then
+        # Merged into libc.so.6 on some glibc versions; libc itself is not optional.
+        [ "$soname" != libc.so.6 ] || die "ldconfig cannot find libc.so.6"
+        continue
+    fi
+    install -Dm644 "$(readlink -f "$path")" "$LIBC_DIR/$soname"
+done
+LIBC_VERSION=$(getconf GNU_LIBC_VERSION | awk '{ print $2 }')
+[ -n "$LIBC_VERSION" ] || die "getconf cannot report the glibc version"
+printf '%s\n' "$LIBC_VERSION" > "$LIBC_DIR/VERSION"
+echo "bundled glibc $LIBC_VERSION ($LOADER_NAME)"
+
+# The loader cannot be named in PT_INTERP -- that has to be an absolute path,
+# and the mount point changes on every run -- so each bundled executable gets a
+# wrapper that runs it through the loader. --argv0 keeps the wrapper's own path
+# in argv[0]: that is what Python reports as sys.executable, so every Python
+# child the app starts (daemon, askpass, restarts) comes back through here.
+write_libc_wrapper() {
+    local wrapper=$1 target=$2 rel_libc rel_target
+    rel_libc=$(realpath --relative-to="$(dirname "$wrapper")" "$LIBC_DIR")
+    rel_target=$(realpath --relative-to="$(dirname "$wrapper")" "$target")
+    mkdir -p "$(dirname "$wrapper")"
+    cat > "$wrapper" <<EOF
+#!/bin/sh
+# Runs ${target#"$APPDIR"/} on the C library bundled in ${LIBC_DIR#"$APPDIR"/}.
+# AppRun picks this only on hosts whose glibc is older than $LIBC_VERSION.
+here=\$(dirname "\$0")
+exec "\$here/$rel_libc/$LOADER_NAME" --library-path "\$here/$rel_libc" \\
+    --argv0 "\$0" "\$here/$rel_target" "\$@"
+EOF
+    chmod 755 "$wrapper"
+}
+
+write_libc_wrapper "$APPDIR/usr/bin/python3-bundled-libc" "$APPDIR/usr/bin/python$PY_VER"
+# WebKit exec's its helpers by name from WEBKIT_EXEC_PATH, so a directory of
+# same-named wrappers is all it takes to move them onto the bundled libc.
+for helper in "${webkit_helpers[@]}"; do
+    write_libc_wrapper "$LIBDIR/webkitgtk-6.0-bundled-libc/$(basename "$helper")" "$helper"
+done
+
+# --------------------------------------------------------------------------
 # 9. Data GTK looks up by path: schemas, icon themes, pixbuf loader cache.
 # --------------------------------------------------------------------------
 log "Bundling GSettings schemas and icon themes"
@@ -491,19 +562,48 @@ grep -v '^exec ' "$APPDIR/AppRun" > "$BUILD_DIR/apprun-env.sh"
 # GI or Python environment leaking in. DISPLAY, when the caller has one, turns
 # on the WebKit render check below -- run the build under xvfb-run to get it in
 # CI.
-env -i \
-    HOME="${HOME:-/tmp}" \
-    PATH=/usr/bin:/bin \
-    APPDIR="$APPDIR" \
-    ${DISPLAY:+DISPLAY="$DISPLAY"} \
-    ${XAUTHORITY:+XAUTHORITY="$XAUTHORITY"} \
-    bash -c '. "$1"; shift; exec "$@"' _ "$BUILD_DIR/apprun-env.sh" \
-    "$APPDIR/usr/bin/python3" - "$APPDIR" <<'PY'
+#
+# It runs twice, once per C library AppRun can choose. The build host is never
+# older than itself, so the bundled-libc run is forced -- it is the only run
+# the build gets of what users on older distros start.
+smoke_test() {
+    log "Smoke test on the $1 C library"
+    env -i \
+        HOME="${HOME:-/tmp}" \
+        PATH=/usr/bin:/bin \
+        APPDIR="$APPDIR" \
+        SSHPILOT_APPIMAGE_LIBC="$1" \
+        ${DISPLAY:+DISPLAY="$DISPLAY"} \
+        ${XAUTHORITY:+XAUTHORITY="$XAUTHORITY"} \
+        bash -c '. "$1"; shift; exec "$SSHPILOT_PYTHON" "$@"' _ "$BUILD_DIR/apprun-env.sh" \
+        - "$APPDIR" < "$BUILD_DIR/smoke-test.py"
+}
+
+cat > "$BUILD_DIR/smoke-test.py" <<'PY'
 import os
+import subprocess
 import sys
 
 appdir = sys.argv[1]
 assert sys.executable.startswith(appdir), sys.executable
+
+# Which libc.so.6 is really mapped, not which one AppRun meant to pick.
+with open("/proc/self/maps", encoding="utf-8") as maps:
+    libc_paths = {line.split()[-1] for line in maps if line.rstrip().endswith("/libc.so.6")}
+bundled_libc = os.path.join(appdir, "usr", "lib", "libc", "libc.so.6")
+if os.environ["SSHPILOT_APPIMAGE_LIBC"] == "bundled":
+    assert libc_paths == {bundled_libc}, libc_paths
+    # sys.executable is what the app hands its children (daemon, askpass), so
+    # it has to be the wrapper, or they would start on the host's libc again.
+    assert sys.executable.endswith("/python3-bundled-libc"), sys.executable
+else:
+    assert bundled_libc not in libc_paths, libc_paths
+child = subprocess.run(
+    [sys.executable, "-c",
+     "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk"],
+    capture_output=True, text=True,
+)
+assert child.returncode == 0, child.stderr
 
 # Everything below runs under AppRun's environment, so these are AppRun's
 # paths, not ones this test invented.
@@ -600,6 +700,8 @@ else:
 
 print("smoke test ok: sshpilot %s" % sshpilot.__version__)
 PY
+smoke_test host
+smoke_test bundled
 
 # --------------------------------------------------------------------------
 # 12. Pack it.

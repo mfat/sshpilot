@@ -12,10 +12,11 @@ permissions:
 
 jobs:
   build-appimage:
-    # Pinned, not ubuntu-latest: glibc comes from the build host, so the runner
-    # image is what decides which distros can run the AppImage. 24.04 is the
-    # oldest Ubuntu that carries libadwaita >= 1.5, and moving to a newer image
-    # would silently raise the glibc floor for users.
+    # Pinned, not ubuntu-latest: 24.04 is the oldest Ubuntu that carries
+    # libadwaita >= 1.5. Its glibc is bundled for hosts older than it (AppRun
+    # chooses), but hosts at least as new run on their own, and the host GL,
+    # X11 and font libraries the image does not bundle must be ABI-compatible
+    # with this build -- so moving to a newer image still raises the floor.
     runs-on: ubuntu-24.04
 
     steps:
