@@ -763,19 +763,25 @@ class WindowConfigDialogsMixin:
         except Exception:
             logger.debug("Refresh after a login profile change failed", exc_info=True)
 
-    def show_login_profiles_window(self):
+    def show_login_profiles_window(self, transient_for=None):
+        """Show the Login Profiles window and return it (``None`` if unsupported).
+
+        *transient_for* stacks it over another window, such as the modal
+        connection dialog, instead of the main window.
+        """
         controller = self._require_login_profiles()
         if controller is None:
-            return
+            return None
         from .login_profile_dialogs import LoginProfilesWindow
 
         window = getattr(self, "_login_profiles_window", None)
         if window is not None:
+            window.set_transient_for(transient_for or self)
             window.present()
             window.reload()
-            return
+            return window
         window = LoginProfilesWindow(
-            self, controller, group_names=self._login_profile_group_names
+            transient_for or self, controller, group_names=self._login_profile_group_names
         )
 
         def _closed(*_args):
@@ -785,6 +791,7 @@ class WindowConfigDialogsMixin:
         window.connect("close-request", _closed)
         self._login_profiles_window = window
         window.present()
+        return window
 
     def on_manage_login_profiles_action(self, action=None, param=None):
         try:

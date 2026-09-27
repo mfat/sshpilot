@@ -37,6 +37,7 @@ class ConnectionDialogLoginProfileMixin:
     # The user's own username, kept while the row shows a profile's.
     _username_before_profile: Optional[str] = None
     _applying_inherited_value = False
+    _login_profiles_window = None
 
     # -- building --------------------------------------------------------------
 
@@ -58,20 +59,20 @@ class ConnectionDialogLoginProfileMixin:
         group.add(self.login_profile_info_row)
 
         buttons = Gtk.Box(spacing=6)
-        self.login_profile_new_button = Gtk.Button(label=_("New…"))
-        self.login_profile_new_button.set_tooltip_text(_("Create a login profile"))
-        self.login_profile_new_button.connect("clicked", self._on_login_profile_new)
+        self.login_profile_manage_button = Gtk.Button()
+        manage_content = Gtk.Box(spacing=6)
+        manage_content.append(_profile_icon())
+        manage_content.append(Gtk.Label(label=_("Manage login profiles")))
+        self.login_profile_manage_button.set_child(manage_content)
+        self.login_profile_manage_button.connect("clicked", self._on_login_profile_manage)
         self.login_profile_save_as_button = Gtk.Button(label=_("Save as Profile…"))
         self.login_profile_save_as_button.set_tooltip_text(
             _("Create a login profile from this connection's current settings")
         )
         self.login_profile_save_as_button.connect("clicked", self._on_login_profile_save_as)
-        self.login_profile_edit_button = Gtk.Button(label=_("Edit Profile…"))
-        self.login_profile_edit_button.connect("clicked", self._on_login_profile_edit)
         for button in (
-            self.login_profile_new_button,
             self.login_profile_save_as_button,
-            self.login_profile_edit_button,
+            self.login_profile_manage_button,
         ):
             button.add_css_class("flat")
             buttons.append(button)
@@ -83,7 +84,7 @@ class ConnectionDialogLoginProfileMixin:
     def _add_username_profile_button(self, row) -> None:
         """Suffix on the Username row that picks a login profile."""
         button = Gtk.MenuButton()
-        button.set_icon_name("system-users-symbolic")
+        button.set_child(_profile_icon())
         button.set_tooltip_text(_("Use a login profile"))
         button.add_css_class("flat")
         button.set_valign(Gtk.Align.CENTER)
@@ -308,7 +309,6 @@ class ConnectionDialogLoginProfileMixin:
             except Exception:
                 pass
         self._sync_username_row(profile)
-        self.login_profile_edit_button.set_visible(locked)
         self.login_profile_save_as_button.set_visible(not locked)
         info = self.login_profile_info_row
         if not locked:
@@ -379,22 +379,21 @@ class ConnectionDialogLoginProfileMixin:
         if snapshot is not None:
             self._on_login_profile_snapshot(snapshot, select_profile_id=summary.id)
 
-    def _on_login_profile_new(self, *_args) -> None:
-        controller = self._login_profile_controller()
-        if controller is None:
+    def _on_login_profile_manage(self, *_args) -> None:
+        """Open the Login Profiles window; refresh the picker when it closes."""
+        parent = getattr(self, "parent_window", None)
+        show = getattr(parent, "show_login_profiles_window", None)
+        if not callable(show):
             return
-        from .login_profile_dialogs import open_profile_editor
+        window = show(transient_for=self)
+        if window is not None and window is not self._login_profiles_window:
+            self._login_profiles_window = window
+            window.connect("close-request", self._on_login_profiles_window_closed)
 
-        open_profile_editor(self, controller, on_saved=self._after_profile_saved)
-
-    def _on_login_profile_edit(self, *_args) -> None:
-        controller = self._login_profile_controller()
-        profile = self._selected_login_profile()
-        if controller is None or profile is None:
-            return
-        from .login_profile_dialogs import open_profile_editor
-
-        open_profile_editor(self, controller, profile=profile, on_saved=self._after_profile_saved)
+    def _on_login_profiles_window_closed(self, *_args) -> bool:
+        self._login_profiles_window = None
+        self.start_login_profile_load()
+        return False
 
     def _login_profile_values_from_dialog(self) -> dict:
         def text(name: str) -> str:
@@ -444,6 +443,13 @@ class ConnectionDialogLoginProfileMixin:
         except (TypeError, ValueError):
             initial = None
         open_profile_editor(self, controller, initial=initial, on_saved=self._after_profile_saved)
+
+
+def _profile_icon() -> Gtk.Image:
+    """The login profile icon, from the bundled copy rather than the theme."""
+    from .icon_utils import new_image_from_icon_name
+
+    return new_image_from_icon_name("system-users-symbolic")
 
 
 def login_profile_locked_widgets(dialog: Any, auth_groups: List[Any]) -> List[Any]:

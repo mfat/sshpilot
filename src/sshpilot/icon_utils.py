@@ -72,6 +72,7 @@ _ICON_RESOURCE_MAP = {
     'edit-redo-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-redo-symbolic.svg',
     'system-search-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-search-symbolic.svg',
     'system-run-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-run-symbolic.svg',
+    'system-users-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-users-symbolic.svg',
     'sidebar-show-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/sidebar-show-symbolic.svg',
     'sidebar-expand-left-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/sidebar-expand-left-symbolic.svg',
     'open-menu-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/open-menu-symbolic.svg',
