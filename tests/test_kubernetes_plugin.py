@@ -46,7 +46,10 @@ def test_fields_and_validate(monkeypatch):
     assert backend.capabilities() == frozenset()
     by_key = {f.key: f for f in backend.connection_fields()}
     assert by_key['pod'].required
-    assert by_key['pod'].placeholder == 'translated:pod name'
+    # Pods are renamed on every rollout; the hint offers the stable forms
+    # kubectl exec also takes.
+    assert by_key['pod'].placeholder == 'translated:pod, deploy/name or svc/name'
+    assert by_key['namespace'].placeholder == "translated:(context's namespace)"
     assert by_key['container'].placeholder == 'translated:(default container)'
     assert by_key['kube_context'].placeholder == 'translated:(current context)'
     assert backend.validate({'pod': 'web-0'}) == []

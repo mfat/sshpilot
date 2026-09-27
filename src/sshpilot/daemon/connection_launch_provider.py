@@ -753,8 +753,8 @@ class DaemonConnectionLaunchProvider:
         connection = HeadlessConnectionView(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
-                ErrorCode.SFTP_SERVICE_NOT_READY,
-                "The SFTP session could not be prepared",
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "SFTP requires an SSH connection",
                 connection_id=connection_id,
             )
         return self._prepare_ssh_launch(
@@ -790,8 +790,8 @@ class DaemonConnectionLaunchProvider:
         connection = HeadlessConnectionView(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
-                ErrorCode.FORWARD_STARTUP_FAILED,
-                "The forward could not be prepared",
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "Port forwarding requires an SSH connection",
                 connection_id=connection_id,
             )
         if forward_type == "local":
@@ -1025,6 +1025,18 @@ class DaemonConnectionLaunchProvider:
             )
         argv[0] = executable
         return tuple(argv), environment
+
+    def describe_target(self, protocol: str, data: Any) -> str:
+        """A non-SSH record's one-line target for the connection list.
+
+        Built-in backends only, and without activating them: listing
+        connections must never run third-party code (the daemon loads it
+        just to launch) nor read settings (see builtin_protocol_backends).
+        """
+        from ..plugins.loader import builtin_protocol_backends
+
+        backend = builtin_protocol_backends().get(protocol)
+        return backend.summary(dict(data or {})) if backend is not None else ""
 
     def _prepare_protocol_launch(
         self,

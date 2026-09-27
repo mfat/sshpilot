@@ -25,6 +25,11 @@ from sshpilot.platform.paths import get_config_dir, get_ssh_dir
 
 def _compose(tmp_path, monkeypatch, *, config_json=None):
     """Run the production composition against isolated headless paths."""
+    # Composition installs a process-wide list describer; undo it afterwards
+    # so later tests see the undescribed default.
+    from sshpilot.core.connections import target_summary
+
+    monkeypatch.setattr(target_summary, "_describer", None)
     ssh_dir = tmp_path / "ssh"
     config_dir = tmp_path / "config"
     monkeypatch.setenv("SSHPILOT_SSH_DIR", str(ssh_dir))
@@ -119,6 +124,10 @@ def test_production_composition_migrates_legacy_state(tmp_path, monkeypatch):
     snapshot = repository.snapshot()
     ids = {connection.id for connection in snapshot.connections}
     assert "telnet-box" in ids
+    # The daemon describes non-SSH targets for list views (target_summary),
+    # without the settings read that once quarantined this very config.json.
+    [telnet] = [c for c in snapshot.connections if c.id == "telnet-box"]
+    assert telnet.target_summary == "box"
 
     # The dedicated state file now exists; legacy values remain untouched.
     state_path = get_config_dir() / "connections.json"

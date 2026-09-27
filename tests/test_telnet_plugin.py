@@ -102,8 +102,14 @@ def test_build_spawn_missing_binary(monkeypatch):
     import sshpilot.plugins.builtin.telnet_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)
     conn = Connection({'nickname': 't', 'protocol': 'telnet', 'host': 'h'})
-    with pytest.raises(ProtocolError, match='not installed'):
+    with pytest.raises(ProtocolError, match='not installed') as excinfo:
         TelnetProtocolBackend().build_spawn(conn, _ctx())
+    # A typed failure, so the daemon sends a translatable reason instead of
+    # this English text under a generic "could not be started".
+    from sshpilot.api.models.sessions import PluginSessionFailureCode
+    failure = excinfo.value.failure
+    assert failure.code is PluginSessionFailureCode.TELNET_UNAVAILABLE
+    assert dict(failure.parameters) == {'program': 'telnet'}
 
 
 def test_build_spawn_missing_host(monkeypatch):
@@ -112,8 +118,10 @@ def test_build_spawn_missing_host(monkeypatch):
     conn = Connection({'nickname': 'incomplete', 'protocol': 'telnet'})
     conn.hostname = ''
     conn.host = ''
-    with pytest.raises(ProtocolError, match='[Nn]o host'):
+    with pytest.raises(ProtocolError, match='[Nn]o host') as excinfo:
         TelnetProtocolBackend().build_spawn(conn, _ctx())
+    from sshpilot.api.models.sessions import PluginSessionFailureCode
+    assert excinfo.value.failure.code is PluginSessionFailureCode.HOST_REQUIRED
 
 
 def test_activate_registers_backend():

@@ -405,6 +405,9 @@ def _production_core_services():
     secret_provider = DaemonConnectionSecretProvider(
         repository.get_record,
         profile_password_lookup=login_profiles.password_for_connection,
+        records=repository.list_records,
+        metadata_lookup=repository.get_connection_metadata,
+        metadata_update=repository.update_connection_metadata,
     )
     launch_provider = DaemonConnectionLaunchProvider(
         repository.get_record,
@@ -413,6 +416,11 @@ def _production_core_services():
         headless_settings=settings,
         identity_env=identity_state_service.agent_environment,
     )
+    # List views describe a non-SSH connection's target through its
+    # protocol backend; core cannot import plugins, so it is handed this.
+    from sshpilot.core.connections.target_summary import set_describer
+
+    set_describer(launch_provider.describe_target)
     connections = ConnectionApplicationService(
         repository,
         launch_provider=launch_provider,

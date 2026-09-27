@@ -52,6 +52,7 @@ from .dialog_focus import capture_toplevels, mark_new_dialog_default_visible
 from .key_manager import KeyManager
 from sshpilot.api.models.keys import KeyStoreScope
 from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
+from sshpilot.api.models.pre_command import PRE_COMMAND_METADATA_KEYS
 from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
@@ -7718,10 +7719,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to save window state: {e}")
 
-    def _apply_saved_connection_meta(self, nickname, meta):
-        """Persist the dialog's WoL/tags metadata after a successful save."""
+    def _apply_saved_connection_meta(self, nickname, meta, *, notify=True):
+        """Persist the dialog's WoL/tags metadata after a successful save.
+
+        Returns whether it was stored. Off the main loop pass ``notify=False``
+        and report a failure from the main loop instead.
+        """
         if not nickname or not isinstance(meta, dict):
-            return
+            return True
         try:
             values = {}
             if "tags" in meta:
@@ -7731,84 +7736,117 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     key: meta[key]
                     for key in (
                         "wol_mac", "wol_broadcast_ip", "wol_port",
-                        "pre_command", "pre_command_timeout", "pre_command_abort",
+                        *PRE_COMMAND_METADATA_KEYS,
                     )
                     if key in meta
                 }
             )
             if values:
                 self.client.update_connection_metadata(nickname, values)
+            return True
         except Exception:
             # The connection itself saved; only the app-side metadata failed.
             # Surface it — a silent miss here means WoL/tags quietly vanish.
             logger.warning("Connection saved, but its WoL/tags metadata could not "
                            "be persisted for '%s'", nickname, exc_info=True)
-            try:
-                if getattr(self, 'toast_overlay', None):
-                    self.toast_overlay.add_toast(Adw.Toast.new(
-                        _("Saved, but tags/Wake-on-LAN settings could not be stored.")))
-            except Exception:
-                pass
+            if notify:
+                self._notify_saved_connection_meta_failed()
+            return False
+
+    def _notify_saved_connection_meta_failed(self):
+        try:
+            if getattr(self, 'toast_overlay', None):
+                self.toast_overlay.add_toast(Adw.Toast.new(
+                    _("Saved, but tags/Wake-on-LAN settings could not be stored.")))
+        except Exception:
+            pass
 
     def _on_plugin_connection_saved(self, dialog, connection_data, complete=None,
                                     pending_meta=None):
-        """Persist a plugin-protocol connection (JSON store, no ssh_config)."""
+        """Persist a plugin-protocol connection (JSON store, no ssh_config).
+
+        The daemon calls run on the client bridge, as the SSH save does, so a
+        slow or busy daemon never freezes the window; rows are updated back on
+        the main loop.
+        """
         def _done(ok):
             if callable(complete):
                 complete(bool(ok))
 
-        if dialog.is_editing and dialog.connection is not None:
-            # A hydrated plugin editor points ``dialog.connection`` at a daemon
-            # DTO adapter; the sidebar keys its rows by the live record, so
-            # prefer that when the editor stashed it.
-            old_connection = (
-                getattr(dialog, '_plugin_source_connection', None)
-                or dialog.connection
+        editing = dialog.is_editing and dialog.connection is not None
+        # A hydrated plugin editor points ``dialog.connection`` at a daemon
+        # DTO adapter; the sidebar keys its rows by the live record, so
+        # prefer that when the editor stashed it.
+        old_connection = (
+            (getattr(dialog, '_plugin_source_connection', None) or dialog.connection)
+            if editing else None
+        )
+        nickname = connection_data.get('nickname') or (
+            old_connection.nickname if old_connection is not None else None
+        )
+        services = self.plugin_connection_services
+
+        def _persist():
+            if editing:
+                saved = services.update_connection(old_connection, connection_data)
+            else:
+                saved = services.add_connection_from_data(connection_data)
+            if not saved:
+                return False, True
+            # Meta goes in before rows re-read tags. The ID is immutable, so
+            # there is no group/metadata migration to follow.
+            return True, self._apply_saved_connection_meta(
+                nickname, pending_meta, notify=False
             )
-            original_nickname = old_connection.nickname
-            if not self.plugin_connection_services.update_connection(
-                old_connection, connection_data
-            ):
-                logger.error("Failed to update plugin connection")
+
+        def _saved(outcome):
+            ok, meta_ok = outcome
+            if not ok:
+                logger.error("Failed to %s plugin connection",
+                             "update" if editing else "save")
                 _done(False)
                 return
-            new_nickname = connection_data.get('nickname') or original_nickname
-            # Meta goes under the new nickname BEFORE the rename migration so
-            # the dialog's fields win the merge, and before rows re-read tags.
-            self._apply_saved_connection_meta(new_nickname, pending_meta)
-            if original_nickname != new_nickname:
+            if not meta_ok:
+                self._notify_saved_connection_meta_failed()
+            if editing:
                 try:
-                    self.group_manager.rename_connection(original_nickname, new_nickname)
+                    object.__setattr__(
+                        old_connection,
+                        "tags",
+                        list(self.connection_manager.get_metadata(nickname).get("tags", [])),
+                    )
                 except Exception:
                     pass
-            try:
-                object.__setattr__(
-                    old_connection,
-                    "tags",
-                    list(self.connection_manager.get_metadata(new_nickname).get("tags", [])),
-                )
-            except Exception:
-                pass
-            rows = self._rows_for_connection(old_connection)
-            if rows:
-                for row in rows:
-                    row.update_display()
+                rows = self._rows_for_connection(old_connection)
+                if rows:
+                    for row in rows:
+                        row.update_display()
+                else:
+                    self.rebuild_connection_list()
+                logger.info(f"Updated plugin connection: {old_connection.nickname}")
             else:
                 self.rebuild_connection_list()
-            logger.info(f"Updated plugin connection: {old_connection.nickname}")
+                logger.info(f"Created new plugin connection: {nickname}")
             _done(True)
-        else:
-            if self.plugin_connection_services.add_connection_from_data(
-                connection_data
-            ):
-                self._apply_saved_connection_meta(
-                    connection_data.get('nickname'), pending_meta)
-                self.rebuild_connection_list()
-                logger.info(f"Created new plugin connection: {connection_data['nickname']}")
-                _done(True)
-            else:
-                logger.error("Failed to save plugin connection")
-                _done(False)
+
+        def _failed(error):
+            logger.error("Failed to save plugin connection: %s", error)
+            _done(False)
+            self._error_dialog(_("Failed to save connection"), str(error))
+
+        bridge = getattr(self, 'client_bridge', None)
+        if bridge is None:
+            try:
+                outcome = _persist()
+            except Exception as error:
+                _failed(error)
+                return
+            _saved(outcome)
+            return
+        try:
+            bridge.submit(_persist, on_success=_saved, on_error=_failed)
+        except RuntimeError as error:
+            _failed(error)
 
     def _daemon_ready(self) -> bool:
         """Return whether typed daemon transport is currently usable.

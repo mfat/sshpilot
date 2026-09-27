@@ -97,12 +97,17 @@ class SessionFailureCode(str, Enum):
     ENDED_BEFORE_OUTPUT = "ended_before_output"
     SSH_EXITED = "ssh_exited"
     SSH_DIAGNOSTIC = "ssh_diagnostic"
+    # The protocol-neutral pair for non-SSH sessions (telnet, serial, ...),
+    # which neither authenticate through SSH Pilot nor are SSH sessions.
+    PROCESS_EXITED = "process_exited"
+    PROCESS_FAILED = "process_failed"
 
 
 _SESSION_FAILURE_PARAMETER_KEYS = {
     code: frozenset() for code in SessionFailureCode
 }
 _SESSION_FAILURE_PARAMETER_KEYS[SessionFailureCode.SSH_EXITED] = frozenset({"status"})
+_SESSION_FAILURE_PARAMETER_KEYS[SessionFailureCode.PROCESS_EXITED] = frozenset({"status"})
 
 
 @dataclass(frozen=True)
@@ -153,6 +158,12 @@ class PluginSessionFailureCode(str, Enum):
         "serial_screen_hardware_flow_and_databits_unsupported"
     )
     SERIAL_PROGRAMS_UNAVAILABLE = "serial_programs_unavailable"
+    SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED = (
+        "serial_screen_terminal_options_unsupported"
+    )
+    SERIAL_DEVICE_ACCESS_DENIED = "serial_device_access_denied"
+    RDP_CLIENT_UNAVAILABLE = "rdp_client_unavailable"
+    TELNET_UNAVAILABLE = "telnet_unavailable"
 
 
 _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS = {
@@ -164,6 +175,7 @@ _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS.update(
             {"runtime"}
         ),
         PluginSessionFailureCode.KUBECTL_UNAVAILABLE: frozenset({"program"}),
+        PluginSessionFailureCode.TELNET_UNAVAILABLE: frozenset({"program"}),
         PluginSessionFailureCode.MOSH_UNAVAILABLE: frozenset(
             {"client_program", "server_program"}
         ),
@@ -178,6 +190,15 @@ _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS.update(
             {"fallback_program", "preferred_program", "flow", "databits"}
         ),
         PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE: frozenset(
+            {"preferred_program", "fallback_program"}
+        ),
+        PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED: frozenset(
+            {"fallback_program", "preferred_program"}
+        ),
+        PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED: frozenset(
+            {"device", "group"}
+        ),
+        PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: frozenset(
             {"preferred_program", "fallback_program"}
         ),
     }
@@ -220,6 +241,9 @@ class PluginSessionFailure:
         if self.code is PluginSessionFailureCode.KUBECTL_UNAVAILABLE:
             if parameters["program"] != "kubectl":
                 raise ValueError("plugin session failure program is invalid")
+        if self.code is PluginSessionFailureCode.TELNET_UNAVAILABLE:
+            if parameters["program"] != "telnet":
+                raise ValueError("plugin session failure program is invalid")
         if self.code is PluginSessionFailureCode.MOSH_UNAVAILABLE:
             if parameters != {
                 "client_program": "mosh",
@@ -227,19 +251,26 @@ class PluginSessionFailure:
             }:
                 raise ValueError("plugin session failure Mosh programs are invalid")
         if self.code is PluginSessionFailureCode.ARGUMENTS_INVALID:
-            if parameters["field"] not in {"command", "extra_ssh_opts"}:
+            if parameters["field"] not in {"command", "extra_ssh_opts", "extra_rdp_args"}:
                 raise ValueError("plugin session failure field is invalid")
         if self.code in {
             PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED,
             PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED,
             PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED,
             PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE,
+            PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED,
         }:
             if (
                 parameters["fallback_program"] != "screen"
                 or parameters["preferred_program"] != "picocom"
             ):
                 raise ValueError("plugin session failure serial programs are invalid")
+        if self.code is PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE:
+            if parameters != {
+                "preferred_program": "sdl-freerdp3",
+                "fallback_program": "xfreerdp3",
+            }:
+                raise ValueError("plugin session failure RDP programs are invalid")
         if "flow" in parameters and parameters["flow"] != "RTS/CTS":
             raise ValueError("plugin session failure flow control is invalid")
         if "databits" in parameters and parameters["databits"] not in {"5", "6"}:

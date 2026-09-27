@@ -5,8 +5,10 @@
 # kept as a file in-tree so a build is reproducible and reviewable instead of
 # depending on a network fetch. Two rules of thumb for anything added here:
 #
-#   * it is glibc or something glibc-coupled (an older host cannot load our
-#     copy, and a mixed glibc is instant undefined behaviour); or
+#   * it is glibc or something glibc-coupled (a mixed glibc is instant
+#     undefined behaviour). The build script bundles these separately, in
+#     usr/lib/libc, where only the bundled loader looks -- AppRun uses them
+#     on hosts older than the build host and ignores them everywhere else;
 #   * it is tied to the host's hardware, display server or font setup, so the
 #     host's copy is the only one that can work (GL/EGL drivers, X11/Wayland
 #     client libraries, fontconfig and its cache format).

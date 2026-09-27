@@ -51,6 +51,7 @@ from ...api.models.connections import (
     is_sensitive_field_name,
 )
 from ...api.models.common import validate_ssh_host_alias
+from ...api.models.pre_command import PRE_COMMAND_METADATA_KEYS
 from ...api.models.secrets import (
     SecretTransferMessage,
     SecretTransferMessageCode,
@@ -71,6 +72,7 @@ from .identity_state_v2 import (
     new_uuid4,
 )
 from .service import ConnectionService
+from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
 from .ssh_config_store import SshConfigStore, _atomic_write_text
 from .state_file import (
@@ -100,6 +102,17 @@ from .identity_state_v2 import (
 # Kept as a module attribute for legacy test/integration hooks.  Production
 # writes in this repository are v2-only after migration.
 from .state_file import write_connection_state as write_connection_state
+
+#: Metadata a duplicate inherits: what describes how to reach the host. The
+#: rest is this connection's own state -- pinned, last used, a login-profile
+#: link the profile service owns, a cleared saved password -- and stays put.
+DUPLICATED_METADATA_KEYS = (
+    "tags",
+    "wol_mac",
+    "wol_broadcast_ip",
+    "wol_port",
+    *PRE_COMMAND_METADATA_KEYS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +168,22 @@ CONNECTION_STORE_SECTION_VERSION = 1
 # loaded protocol gets no portable-field backup support until it's added here;
 # its connections still round-trip with the generic fields only.
 _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
-    "serial": ("device", "baud", "flow", "databits", "parity", "stopbits"),
-    "docker": ("container", "command", "runtime", "docker_host", "user", "workdir"),
+    "serial": (
+        "device", "baud", "flow", "databits", "parity", "stopbits",
+        "send_newline", "recv_add_cr", "local_echo", "logfile",
+    ),
+    "docker": (
+        "container", "command", "runtime", "docker_context", "docker_host",
+        "user", "workdir",
+    ),
     "k8s": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
-    "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
+    "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port", "server_path"),
+    "rdp": (
+        "domain", "display_mode", "size", "scale", "multimon", "clipboard",
+        "sound", "microphone", "printer", "shared_folder", "security",
+        "cert_policy", "admin", "gateway", "gateway_username",
+        "gateway_domain", "client", "extra_rdp_args",
+    ),
 }
 
 
@@ -1075,6 +1100,7 @@ class ConnectionRepository:
                 health=ConnectionHealth.UNKNOWN,
                 groups=groups,
                 display_name=_display_name_for_record(record),
+                target_summary=describe_target(record.protocol, record.data),
             )
 
         connections = tuple(_summary(r) for r in records)
@@ -1184,6 +1210,7 @@ class ConnectionRepository:
                     health=ConnectionHealth.UNKNOWN,
                     groups=groups_for_record,
                     display_name=_display_name_for_record(record, identity),
+                    target_summary=describe_target(record.protocol, record.data),
                 )
             )
         metadata = tuple(
@@ -2156,6 +2183,17 @@ class ConnectionRepository:
                     self._persist_state_file_locked()
                 if existing.protocol == "ssh":
                     self._finish_identity_intent_locked()
+                source_metadata = self._metadata.get(connection_id) or {}
+                inherited = {
+                    key: source_metadata[key]
+                    for key in DUPLICATED_METADATA_KEYS
+                    if key in source_metadata
+                }
+                if inherited:
+                    self._metadata[created.id] = validate_safe_metadata(
+                        thaw_safe_metadata(inherited)
+                    )
+                    self._persist_state_file_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise

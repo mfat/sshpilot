@@ -25,6 +25,10 @@ class FakeConfig:
 def fresh_registry(monkeypatch, tmp_path):
     monkeypatch.setattr(registry_mod, "_registry", None)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+    # The devices these tests name may exist on the machine running them,
+    # owned by a group its user is not in; that check has tests of its own.
+    import sshpilot.plugins.builtin.serial_protocol as mod
+    monkeypatch.setattr(mod, "_access_denied_group", lambda _device: "")
 
 
 def _ctx():
@@ -48,8 +52,11 @@ def test_capabilities_empty_and_fields_declared(monkeypatch):
     assert backend.capabilities() == frozenset()
     by_key = {f.key: f for f in backend.connection_fields()}
     assert by_key['device'].required
-    assert by_key['baud'].kind == 'choice'
+    # Free entry with suggestions: rates outside any fixed list are real.
+    assert by_key['baud'].kind == 'text'
     assert by_key['baud'].default == '115200'
+    suggested = [value for value, _label in by_key['baud'].suggest({}, None)]
+    assert {'1200', '115200', '921600', '1500000'} <= set(suggested)
     assert by_key['flow'].choices == [
         ('none', 'translated:None'),
         ('hard', 'translated:Hardware (RTS/CTS)'),

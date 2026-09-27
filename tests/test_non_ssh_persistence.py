@@ -221,3 +221,78 @@ def test_secret_provider_previous_identity_cleanup():
     # Canonical host wins; the previous identity key is removed.
     assert backend.data[password_spec('10.0.0.5', 'root').keyring_account] == 'new-pw'
     assert password_spec('old.example', 'root').keyring_account not in backend.data
+
+
+def test_clearing_an_rdp_password_keeps_the_ssh_one_and_survives_reload(tmp_path):
+    """RDP and SSH to one host and user share the ``root@host`` keyring
+    entry. Clearing it on the RDP connection is recorded in the daemon's own
+    metadata, so SSH keeps its password and RDP stays cleared after reload."""
+    class FakeBackend(ss.SecretBackend):
+        def __init__(self):
+            self.data = {}
+
+        def is_available(self):
+            return True
+
+        def store(self, spec, secret):
+            self.data[spec.keyring_account] = secret
+            return True
+
+        def lookup(self, spec):
+            return self.data.get(spec.keyring_account)
+
+        def delete(self, spec):
+            return self.data.pop(spec.keyring_account, None) is not None
+
+    backend = FakeBackend()
+    manager = SecretManager()
+    manager._backends = {'libsecret': backend, 'keyring': FakeBackend()}
+
+    def provider_for(repo):
+        return DaemonConnectionSecretProvider(
+            repo.get_record,
+            secret_manager_factory=lambda: manager,
+            records=repo.list_records,
+            metadata_lookup=repo.get_connection_metadata,
+            metadata_update=repo.update_connection_metadata,
+        )
+
+    repo, _root, _state_path = _repo(tmp_path)
+    repo.create_connection(
+        {'nickname': 'alpha-rdp', 'protocol': 'rdp',
+         'hostname': 'alpha.example.com', 'username': 'root'}
+    )
+    provider = provider_for(repo)
+    assert provider.store_connection_password('alpha', 'pw') is True
+
+    assert provider.delete_connection_password('alpha-rdp') is True
+
+    assert backend.data == {'root@alpha.example.com': 'pw'}
+    fresh = provider_for(_repo(tmp_path)[0])
+    assert fresh.lookup_connection_password('alpha') == 'pw'
+    assert fresh.lookup_connection_password('alpha-rdp') is None
+
+
+def test_duplicate_inherits_how_to_reach_the_host_but_not_its_own_state(tmp_path):
+    """Duplicating dropped tags, the Wake-on-LAN address and the port knock
+    for every protocol. The copy gets those; pinned, last-used, the login
+    profile link and a cleared saved password remain the source's own."""
+    repo, _root, _state_path = _repo(tmp_path)
+    repo.create_connection(_telnet_data('lab'))
+    reach = {
+        'tags': ['lab'],
+        'wol_mac': 'aa:bb:cc:dd:ee:ff',
+        'pre_command_knock': '7000 8000',
+        'pre_command_mode': 'knock',
+    }
+    own = {'pinned': True, 'last_used': 1.5, 'use_saved_login': False}
+    copies = {}
+    for source in ('lab', 'alpha'):
+        repo.update_connection_metadata(source, {**reach, **own})
+        copies[source] = repo.duplicate_connection(source).id
+
+    fresh = _repo(tmp_path)[0]
+    for source, copy_id in copies.items():
+        metadata = dict(fresh.get_connection_metadata(copy_id))
+        metadata['tags'] = list(metadata['tags'])
+        assert metadata == reach, source

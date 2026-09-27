@@ -1,0 +1,10 @@
+{
+  "id": "rdp",
+  "name": "RDP protocol",
+  "homepage": "https://github.com/mfat/sshpilot",
+  "api_version": 1,
+  "builtin": true,
+  "permissions": [
+    "process"
+  ]
+}

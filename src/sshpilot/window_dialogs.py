@@ -835,7 +835,17 @@ class WindowConfigDialogsMixin:
         info = groups.get(group_id) if group_id else None
         if not info:
             return
-        members = [str(cid) for cid in info.get("connections", []) or [] if cid]
+        # Login profiles only apply to SSH; listing a non-SSH member would
+        # fail the preview for every row.
+        manager = getattr(self, "connection_manager", None)
+
+        def _is_ssh(cid):
+            connection = manager.get_connection_by_id(cid) if manager is not None else None
+            return (getattr(connection, "protocol", "ssh") or "ssh") == "ssh"
+
+        members = [
+            str(cid) for cid in info.get("connections", []) or [] if cid and _is_ssh(str(cid))
+        ]
         from .login_profile_dialogs import run_async, show_error_alert, show_group_profile_dialog
 
         def _open(_snapshot=None):
@@ -874,10 +884,9 @@ class WindowConfigDialogsMixin:
                 "its SSH config was edited."
             ).format(connection=drifted[0].connection_id, profile=drifted[0].profile_name)
         else:
-            message = _(
-                "{count} connections were detached from their login profile because "
-                "their SSH config was edited."
-            ).format(count=len(drifted))
+            from .gtk.login_profile_messages import format_detached_connections
+
+            message = format_detached_connections(len(drifted))
         overlay = getattr(self, "toast_overlay", None)
         if overlay is not None:
             try:

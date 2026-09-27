@@ -14,11 +14,13 @@ import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._session_failure import BuiltinProtocolError
+from .._summary import host_port
+from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
     PluginContext,
     ProtocolBackend,
-    ProtocolError,
     SpawnSpec,
     SshPilotPlugin,
 )
@@ -35,39 +37,49 @@ class TelnetProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="host", label=_("Host"), kind="text", required=True,
-                      placeholder="hostname or IP address"),
+                      placeholder=_("hostname or IP address")),
             FieldSpec(key="port", label=_("Port"), kind="int",
                       default=self.default_port),
         ]
 
+    def summary(self, data: Dict[str, Any]) -> str:
+        return host_port(data.get("host") or data.get("hostname"),
+                         data.get("port"), self.default_port)
+
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
         if not (data.get("host") or data.get("hostname")):
-            errors.append("A host is required.")
+            errors.append(_("A host is required."))
         raw_port = data.get("port", self.default_port)
         if raw_port is None:
             raw_port = self.default_port
         try:
             if not 0 < int(raw_port) < 65536:
-                errors.append("Port must be between 1 and 65535.")
+                errors.append(_("Port must be between 1 and 65535."))
         except (TypeError, ValueError):
-            errors.append("Port must be a number.")
+            errors.append(_("Port must be a number."))
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
         from .._flatpak import resolve_host_binary  # noqa: PLC0415
         telnet_argv = resolve_host_binary("telnet")
         if telnet_argv is None:
-            raise ProtocolError(
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.TELNET_UNAVAILABLE,
                 "The 'telnet' program is not installed. Install it to use "
-                "telnet connections.")
+                "telnet connections.",
+                parameters={"program": "telnet"},
+            )
 
         data = getattr(connection, "data", None) or {}
         host = (data.get("host") or data.get("hostname")
                 or getattr(connection, "hostname", "")
                 or getattr(connection, "host", ""))
         if not host:
-            raise ProtocolError("No host configured for this connection.")
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.HOST_REQUIRED,
+                "No host configured for this connection.",
+            )
         # Port comes from the connection's data dict only: the Connection
         # attribute defaults to the SSH port (22), which is wrong here.
         try:

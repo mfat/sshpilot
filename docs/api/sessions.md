@@ -17,7 +17,9 @@ Stability: **stable**.
   discriminator for the plugin variant is `kind: plugin_launch`. The generic
   session variant has no `kind`; its `code` is a strict `SessionFailureCode`,
   while `error_code` preserves the machine `ErrorCode`. Only `ssh_exited`
-  requires a parameter (`status`, a positive integer). External OpenSSH,
+  and `process_exited` require a parameter (`status`, a positive integer).
+  Non-SSH sessions never carry `ssh_exited`, `ssh_diagnostic` or
+  `auth_incomplete`: they get `process_exited` or `process_failed` instead. External OpenSSH,
   PTY, or exception diagnostics remain opaque and separate; neither variant
   carries a rendered UI sentence. GTK owns their presentation.
 * `remote_command` (optional): when set, the daemon runs `<ssh> <alias> <remote_command>`

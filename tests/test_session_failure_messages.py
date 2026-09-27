@@ -20,7 +20,11 @@ def test_session_failure_reason_is_translated_at_render_time(monkeypatch, code):
         return f"translated:{msgid}"
 
     monkeypatch.setattr(messages, "_", translate)
-    parameters = {"status": 255} if code is SessionFailureCode.SSH_EXITED else {}
+    parameters = (
+        {"status": 255}
+        if code in {SessionFailureCode.SSH_EXITED, SessionFailureCode.PROCESS_EXITED}
+        else {}
+    )
     failure = SessionFailure(code, ErrorCode.SESSION_STARTUP_FAILED, parameters)
 
     rendered = messages.format_session_failure(failure)

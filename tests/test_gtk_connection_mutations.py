@@ -2436,3 +2436,116 @@ def test_failed_profile_link_still_completes_the_save_with_a_warning():
 
     assert completed[0][0] is True
     assert "login profile" in completed[0][1]["meta_error"]
+
+
+def test_plugin_meta_keeps_the_port_knock_and_its_mode():
+    """The dialog offers the knock half to telnet/mosh/rdp. The plugin save
+    must persist every pre-connection key, not a hand-kept subset of them."""
+    from sshpilot.api.models.pre_command import PRE_COMMAND_METADATA_KEYS
+
+    calls = []
+    window = SimpleNamespace(
+        client=SimpleNamespace(
+            update_connection_metadata=lambda nickname, values: calls.append(
+                (nickname, values)
+            )
+        )
+    )
+    meta = {
+        "tags": ["lab"],
+        "wol_mac": "",
+        "pre_command": "",
+        "pre_command_knock": "7000 8000 9000",
+        "pre_command_mode": "knock",
+        "pre_command_timeout": 10,
+        "pre_command_abort": False,
+    }
+
+    MainWindow._apply_saved_connection_meta(window, "router", meta)
+
+    [(nickname, values)] = calls
+    assert nickname == "router"
+    assert values["pre_command_knock"] == "7000 8000 9000"
+    assert values["pre_command_mode"] == "knock"
+    assert set(PRE_COMMAND_METADATA_KEYS) <= set(values)
+
+
+class _DeferredBridge:
+    """Queues work the way GtkClientBridge does: nothing runs on submit."""
+
+    def __init__(self):
+        self.pending = []
+
+    def submit(self, operation, *, on_success, on_error, on_discard=None):
+        self.pending.append((operation, on_success, on_error))
+
+    def run(self):
+        operation, on_success, on_error = self.pending.pop(0)
+        try:
+            result = operation()
+        except Exception as error:
+            on_error(error)
+        else:
+            on_success(result)
+
+
+def _plugin_save_window(services):
+    calls = []
+    window = SimpleNamespace(
+        client_bridge=_DeferredBridge(),
+        plugin_connection_services=services,
+        client=SimpleNamespace(
+            update_connection_metadata=lambda nickname, values: calls.append(
+                ("meta", nickname)
+            )
+        ),
+        rebuild_connection_list=lambda: calls.append("rebuild"),
+        _error_dialog=lambda *args: calls.append("error_dialog"),
+        toast_overlay=None,
+    )
+    for name in (
+        "_apply_saved_connection_meta",
+        "_notify_saved_connection_meta_failed",
+    ):
+        setattr(window, name, getattr(MainWindow, name).__get__(window))
+    return window, calls
+
+
+def test_a_plugin_save_never_calls_the_daemon_on_the_main_loop():
+    """Creating a telnet connection is a daemon round trip. Like the SSH save,
+    it runs on the client bridge; the dialog completes from the main loop."""
+    calls = []
+    services = SimpleNamespace(
+        add_connection_from_data=lambda data: calls.append(("create", data["nickname"])) or True
+    )
+    window, ui = _plugin_save_window(services)
+    dialog = SimpleNamespace(is_editing=False, connection=None)
+    done = []
+
+    MainWindow._on_plugin_connection_saved(
+        window, dialog, {"nickname": "lab", "protocol": "telnet"},
+        done.append, {"tags": ["x"]},
+    )
+
+    assert calls == [] and ui == [] and done == []
+    window.client_bridge.run()
+    assert calls == [("create", "lab")]
+    assert ui == [("meta", "lab"), "rebuild"]
+    assert done == [True]
+
+
+def test_a_failed_plugin_save_reports_from_the_main_loop():
+    def fail(_data):
+        raise RuntimeError("daemon gone")
+
+    window, ui = _plugin_save_window(SimpleNamespace(add_connection_from_data=fail))
+    done = []
+
+    MainWindow._on_plugin_connection_saved(
+        window, SimpleNamespace(is_editing=False, connection=None),
+        {"nickname": "lab", "protocol": "telnet"}, done.append, None,
+    )
+    window.client_bridge.run()
+
+    assert done == [False]
+    assert ui == ["error_dialog"]

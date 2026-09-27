@@ -44,14 +44,13 @@ logger = logging.getLogger(__name__)
 class ConnectionDialogFieldHelpersMixin:
     def _on_wol_detect_mac_clicked(self, button):
         """Detect MAC from ARP in a background thread and update wol_mac_row."""
-        host = (self.hostname_row.get_text() or '').strip()
+        # The host as typed for whichever protocol is shown: a plugin
+        # protocol keeps it in its own field, not the hidden SSH rows.
+        host, _username, port_val = self._connection_target()
         if not host:
             self._row_set_message(self.wol_mac_row, _("Enter hostname first"), is_error=True)
             return
-        try:
-            port_val = int((self.port_row.get_text() or '22').strip() or '22')
-        except ValueError:
-            port_val = 22
+        port_val = port_val or 22
         button.set_sensitive(False)
         mac_row = self.wol_mac_row
         detect_btn = button

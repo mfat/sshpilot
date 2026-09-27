@@ -40,7 +40,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from sshpilot.core.plugins import EventBus
 
@@ -191,6 +191,45 @@ def _load_builtin(make_ctx,
         except Exception:
             logger.exception("Failed to load built-in plugin %r", pid)
     return loaded
+
+
+_builtin_backends: Optional[Dict[str, Any]] = None
+
+
+def builtin_protocol_backends() -> Dict[str, Any]:
+    """Built-in ProtocolBackend instances by protocol id, for pure queries.
+
+    Imports the built-in modules and instantiates their backend classes
+    without activating a plugin, touching the registry or reading settings --
+    so it is safe from a connection listing, where reading settings could
+    even quarantine a config file it cannot parse. ``plugins.disabled`` is
+    therefore not consulted: describing a connection is not enabling its
+    protocol. For ``summary()``; launching goes through the registry.
+    """
+    global _builtin_backends
+    if _builtin_backends is None:
+        from .api import ProtocolBackend
+
+        found: Dict[str, Any] = {}
+        try:
+            pkg_dir = Path(next(iter(importlib.import_module(BUILTIN_PACKAGE).__path__)))
+        except ImportError:
+            return {}
+        for child in sorted(pkg_dir.iterdir()):
+            if not (child.is_dir() and _read_manifest(child)):
+                continue
+            try:
+                module = importlib.import_module(f"{BUILTIN_PACKAGE}.{child.name}")
+                for value in vars(module).values():
+                    if (isinstance(value, type) and issubclass(value, ProtocolBackend)
+                            and value is not ProtocolBackend
+                            and value.__module__ == module.__name__
+                            and value.protocol_id):
+                        found[value.protocol_id] = value()
+            except Exception:
+                logger.debug("Built-in backend %r unavailable", child.name, exc_info=True)
+        _builtin_backends = found
+    return _builtin_backends
 
 
 def _declared_protocols(meta: dict) -> List[str]:

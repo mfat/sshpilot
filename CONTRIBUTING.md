@@ -254,8 +254,10 @@ sources moved under `src/`.
   records what it used in `build-env.txt` next to the DMG.
 - The AppImage is built by `Build AppImage` (`.github/workflows/build-appimage.yml`)
   on every `v*` tag, and the same script builds it locally on Ubuntu 24.04 — the
-  oldest release carrying libadwaita 1.5, and therefore the glibc floor for the
-  image. It rewrites the Meson-installed launcher and `build_config.py` to
+  oldest release carrying libadwaita 1.5. It also bundles that glibc, which
+  AppRun uses only on hosts with an older one (AppImageHub tests on 22.04), by
+  running the interpreter and WebKit helpers through the bundled loader;
+  `SSHPILOT_APPIMAGE_LIBC=host|bundled` forces the choice. It rewrites the Meson-installed launcher and `build_config.py` to
   resolve their prefix relatively, and gives every bundled library an `$ORIGIN`
   RPATH so no library or Python path leaks into the terminal's shell, `ssh` or
   anything else the app spawns. WebKitGTK is bundled with its out-of-process

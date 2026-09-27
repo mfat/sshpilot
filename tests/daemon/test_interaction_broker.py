@@ -535,6 +535,69 @@ def test_prepare_launch_brokers_interactions_without_saved_secret(
     )
 
 
+def test_prepare_launch_never_probes_a_plugin_argv_with_ssh_g(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    """``(*argv[:-1], "-G", argv[-1])`` on ``docker exec -it web sh`` runs an
+    exec against the Docker daemon, and on ``kubectl exec … -- sh`` runs
+    ``-G`` in the pod. A plugin launch still gets the broker (mosh's inner
+    ssh needs askpass), with the identity taken from the spec."""
+    import sshpilot.daemon.interaction_broker as module
+
+    probes = []
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda argv, **_kw: probes.append(argv) or SimpleNamespace(stdout=""),
+    )
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="docker",
+            hostname="",
+            username="",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/docker", "exec", "-it", "web", "sh"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+    assert probes == []
+    assert environment["SSH_ASKPASS"] == str(broker._askpass_helper_path)
+
+
+def test_prepare_launch_still_probes_an_ssh_argv(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    import sshpilot.daemon.interaction_broker as module
+
+    probes = []
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda argv, **_kw: probes.append(argv) or SimpleNamespace(stdout=""),
+    )
+    broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+    assert probes == [("/usr/bin/ssh", "-G", "example")]
+
+
 def test_prepare_launch_forwards_remote_command_to_builder_when_present(
     broker: InteractionBroker,
     monkeypatch,

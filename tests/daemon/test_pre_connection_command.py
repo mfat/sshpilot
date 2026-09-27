@@ -251,6 +251,29 @@ def test_operation_launches_run_it_once_with_their_own_kind(intent, expected):
     assert runner.calls == [(ConnectionId("demo"), "op-1", expected)]
 
 
+@pytest.mark.parametrize(
+    "protocol, runs",
+    [("ssh", True), ("telnet", True), ("docker", True), ("serial", False)],
+)
+def test_a_protocol_that_opts_out_never_runs_it(protocol, runs):
+    """``pre_connect = False`` (a local serial console) is the daemon's rule,
+    not only the editor's: a command typed before switching the dialog to
+    Serial is still in the metadata and must not run before picocom."""
+    from sshpilot.plugins.loader import ensure_builtin_protocols
+
+    ensure_builtin_protocols()
+    runner = RecordingRunner()
+    launcher = SshLauncher(
+        RecordingProvider(), RecordingBroker(), pre_command_runner=runner
+    )
+    spec = Spec()
+    spec.protocol = protocol
+
+    launcher.prepare_session(spec, TerminalLaunch())
+
+    assert bool(runner.calls) is runs
+
+
 class ProviderWithRunner(RecordingProvider):
     """A launch provider carrying the daemon's one runner.
 

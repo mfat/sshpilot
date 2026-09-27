@@ -63,6 +63,19 @@ _CASES = {
         {"preferred_program": "picocom", "fallback_program": "screen"},
         "screen",
     ),
+    PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED: (
+        {"preferred_program": "picocom", "fallback_program": "screen"},
+        "picocom",
+    ),
+    PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED: (
+        {"device": "/dev/ttyUSB0", "group": "dialout"},
+        "dialout",
+    ),
+    PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: (
+        {"preferred_program": "sdl-freerdp3", "fallback_program": "xfreerdp3"},
+        "xfreerdp3",
+    ),
+    PluginSessionFailureCode.TELNET_UNAVAILABLE: ({"program": "telnet"}, "telnet"),
 }
 
 

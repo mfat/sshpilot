@@ -233,6 +233,10 @@ class ConnectionSummary:
     health: ConnectionHealth = ConnectionHealth.UNKNOWN
     groups: Tuple[GroupReference, ...] = ()
     display_name: str = ""
+    #: A non-SSH connection's target in one line, from its protocol backend
+    #: (``web · podman``, ``/dev/ttyUSB0 @ 115200``); empty for SSH and for
+    #: a protocol the daemon cannot describe.
+    target_summary: str = ""
 
     def __post_init__(self) -> None:
         require_identifier(self.id, "connection id")
@@ -244,6 +248,10 @@ class ConnectionSummary:
         if len(display_name) > MAX_DISPLAY_NAME_LENGTH:
             raise ValueError("connection display name is too long")
         object.__setattr__(self, "display_name", display_name)
+        if type(self.target_summary) is not str or "\x00" in self.target_summary:
+            raise TypeError("connection target summary must be a string without NUL")
+        if len(self.target_summary) > MAX_DISPLAY_NAME_LENGTH:
+            raise ValueError("connection target summary is too long")
         if not 1 <= self.port <= 65535:
             raise ValueError("connection port must be between 1 and 65535")
         if not self.protocol.strip():

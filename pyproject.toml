@@ -96,6 +96,7 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 "sshpilot.plugins.builtin.docker_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.kubernetes_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.mosh_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.rdp_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.docker_manager" = ["plugin.json"]
 
 [tool.setuptools.exclude-package-data]

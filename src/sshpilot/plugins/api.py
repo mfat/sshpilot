@@ -62,6 +62,11 @@ logger = logging.getLogger(__name__)
 #      same native SSH/local paths as the one-shot command APIs; returns a
 #      StreamHandle the caller stops when done.
 # 1.14: daemon-owned remote commands, streams, settings, and session views.
+# 1.15: ProtocolBackend.pre_connect — False hides the connection editor's
+#      pre-connection page for a protocol that opens no network connection.
+# 1.16: ProtocolBackend.summary(data) — the one-line target shown under a
+#      connection's name; FieldSpec.suggest — live suggestions for a text
+#      field; PluginContext.for_editor.
 #
 # Headless contracts (Capability, SpawnSpec, FieldSpec, Events, …) live in
 # ``sshpilot.core.plugins``; this module re-exports them for plugin compatibility.
@@ -95,6 +100,12 @@ class ProtocolBackend(abc.ABC):
     #: Human-readable name for the connection dialog's protocol selector.
     display_name: str = ""
     default_port: Optional[int] = None
+    #: Whether the pre-connection step (a command such as a VPN dial-up) can
+    #: apply. False for a protocol that opens no network connection of its
+    #: own, such as a local serial console. The port-knock half of that step
+    #: and Wake-on-LAN additionally need a field keyed ``host``: that is the
+    #: machine they target.
+    pre_connect: bool = True
 
     @abc.abstractmethod
     def capabilities(self) -> frozenset:
@@ -127,6 +138,18 @@ class ProtocolBackend(abc.ABC):
     def validate(self, data: Dict[str, Any]) -> List[str]:
         """Return a list of human-readable validation errors (empty = ok)."""
         return []
+
+    def summary(self, data: Dict[str, Any]) -> str:
+        """What this connection reaches, in one line (API >= 1.16).
+
+        Shown under the connection's name in the list, and the name a
+        connection saved without one is given -- ``office-pc:3390``, ``web
+        · podman``, ``/dev/ttyUSB0 @ 115200``. *data* is the saved field
+        values plus the core ``hostname``/``username``/``port`` columns.
+        Must be cheap and pure: the daemon calls it for every listed
+        connection. Default: the host.
+        """
+        return str(data.get("host") or data.get("hostname") or "").strip()
 
 
 class BackendUnavailable(RuntimeError):
@@ -663,6 +686,16 @@ class PluginContext:
         lookup. build_spawn must work from ``connection.data`` alone."""
         return cls(plugin_id=plugin_id, app_config=app_config,
                    connection_manager=connection_manager,
+                   protocol_registry=protocol_registry, host=None)
+
+    @classmethod
+    def for_editor(cls, *, plugin_id: str, protocol_registry: Any) -> "PluginContext":
+        """Build a host-less context for FieldSpec.suggest() in the editor.
+
+        Like :meth:`for_spawn` there is no host behind it; it exists so a
+        suggestion provider can run a local tool (``run_local_command``).
+        """
+        return cls(plugin_id=plugin_id, app_config=None, connection_manager=None,
                    protocol_registry=protocol_registry, host=None)
 
     # --- registration -------------------------------------------------

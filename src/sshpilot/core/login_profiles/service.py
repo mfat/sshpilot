@@ -229,10 +229,14 @@ class LoginProfileService:
         snapshot = snapshot or self._snapshot()
         return parse_link(self._metadata_map(snapshot).get(connection_id))
 
-    def _require_ssh(self, connection_id: str):
+    def _record_or_not_found(self, connection_id: str):
         record = self._repository.get_record(connection_id)
         if record is None:
             raise CoreError(ErrorCode.CONNECTION_NOT_FOUND, "The connection does not exist")
+        return record
+
+    def _require_ssh(self, connection_id: str):
+        record = self._record_or_not_found(connection_id)
         if (record.protocol or "ssh") != "ssh":
             raise _validation(
                 "Login profiles apply to SSH connections only", REASON_NOT_SSH_CONNECTION
@@ -654,6 +658,13 @@ class LoginProfileService:
                 raise _validation("The group does not exist", REASON_GROUP_NOT_FOUND)
             if profile_id is not None and self._state.get(profile_id) is None:
                 raise _not_found()
+            # Profiles only render SSH Host blocks, so a non-SSH member of a
+            # mixed group is skipped rather than failing the whole change.
+            # Resolved before the save so a bad member cannot half-apply it.
+            members = [
+                cid for cid in link_members
+                if (self._record_or_not_found(cid).protocol or "ssh") == "ssh"
+            ]
             scope = self._scope()
             group_links = {s: dict(l) for s, l in self._state.group_links.items()}
             links = group_links.setdefault(scope, {})
@@ -664,8 +675,7 @@ class LoginProfileService:
             self._save(
                 LoginProfileState(profiles=self._state.profiles, group_links=group_links)
             )
-            for cid in link_members:
-                self._require_ssh(cid)
+            for cid in members:
                 self._set_link_locked(cid, ProfileLink(LINK_INHERIT))
             self._reconcile_locked()
             self._emit(EVENT_CHANGED, {"group_id": group_id})

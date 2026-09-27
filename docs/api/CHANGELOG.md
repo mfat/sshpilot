@@ -5,6 +5,34 @@ notes remain separate.
 
 ## Unreleased
 
+- `PluginSessionFailureCode.TELNET_UNAVAILABLE` (`telnet_unavailable`,
+  parameter `program`: `telnet`) reports a missing telnet client; a telnet
+  connection without a host now reports `host_required`. Both previously
+  surfaced as `start_failed` with an untranslated message. API
+  implementation version is 0.75; Protocol remains 1.0.
+- `SessionFailureCode` gains `PROCESS_EXITED` (`process_exited`, parameter
+  `status`) and `PROCESS_FAILED` (`process_failed`), the protocol-neutral
+  reasons for non-SSH sessions. A telnet refusal or a serial console exiting
+  non-zero no longer reports `ssh_diagnostic`, `ssh_exited` or
+  `auth_incomplete`; SSH sessions are unchanged. API implementation version
+  is 0.74; Protocol remains 1.0.
+- `ConnectionSummary.target_summary` (wire field `target_summary`, sent only
+  when non-empty) describes a non-SSH connection's target in one line —
+  `web · podman`, `/dev/ttyUSB0 @ 115200` — from its built-in protocol
+  backend's `summary()`. Empty for SSH and for third-party protocols; list
+  views fall back to the host. `PluginSessionFailureCode` gains
+  `SERIAL_DEVICE_ACCESS_DENIED` (`serial_device_access_denied`, parameters
+  `device` / `group`: the group to join) and
+  `SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED`
+  (`serial_screen_terminal_options_unsupported`, parameters
+  `fallback_program` / `preferred_program`) for line-ending, echo and log
+  options only picocom provides. API implementation version is 0.73;
+  Protocol remains 1.0.
+- `PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE` (`rdp_client_unavailable`,
+  parameters `preferred_program` / `fallback_program`) reports a missing
+  FreeRDP 3 client for the new built-in `rdp` protocol. A bad
+  `extra_rdp_args` field reuses `arguments_invalid`. API implementation
+  version is 0.72; Protocol remains 1.0.
 - Login profiles are localized in the frontend. `LoginProfileFieldChange`
   drops `label` and names its setting with the new `LoginProfileField`;
   `before`/`after` are raw values instead of English display text. Rejected

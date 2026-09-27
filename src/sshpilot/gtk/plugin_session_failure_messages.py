@@ -53,15 +53,32 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
         "({flow}) flow control or {databits} data bits. Install "
         "'{preferred_program}' to use this connection."
     ),
+    PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED: N_(
+        "Only '{fallback_program}' is available, which cannot change line "
+        "endings, echo locally or log to a file. Install '{preferred_program}' "
+        "to use this connection."
+    ),
+    PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED: N_(
+        "You do not have permission to open {device}. Add your user to the "
+        "'{group}' group and log in again."
+    ),
     PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE: N_(
         "Neither '{preferred_program}' nor '{fallback_program}' is installed. "
         "Install one to use serial connections."
+    ),
+    PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: N_(
+        "FreeRDP 3 is not installed. Install '{preferred_program}' or "
+        "'{fallback_program}' to use RDP connections."
+    ),
+    PluginSessionFailureCode.TELNET_UNAVAILABLE: N_(
+        "The '{program}' program is not installed. Install it to use telnet connections."
     ),
 }
 
 _PLUGIN_FIELD_LABELS = {
     "command": N_("Command"),
     "extra_ssh_opts": N_("Extra SSH options"),
+    "extra_rdp_args": N_("Extra FreeRDP arguments"),
 }
 
 

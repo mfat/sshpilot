@@ -75,6 +75,7 @@ PLUGIN_FACADE_SURFACE = {
     # PluginContext
     "PluginContext.daemon_client": "API/daemon owned",
     "PluginContext.for_spawn": "API/daemon owned",
+    "PluginContext.for_editor": "legitimate frontend/platform-local",
     "PluginContext.register_protocol": "API/daemon owned",
     "PluginContext.add_connection": "API/daemon owned",
     "PluginContext.update_connection": "API/daemon owned",

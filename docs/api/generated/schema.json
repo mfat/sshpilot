@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.71",
+  "api_implementation_version": "0.75",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1661,7 +1661,11 @@
       "serial_screen_hardware_flow_unsupported",
       "serial_screen_databits_unsupported",
       "serial_screen_hardware_flow_and_databits_unsupported",
-      "serial_programs_unavailable"
+      "serial_programs_unavailable",
+      "serial_screen_terminal_options_unsupported",
+      "serial_device_access_denied",
+      "rdp_client_unavailable",
+      "telnet_unavailable"
     ],
     "RememberPolicy": [
       "do_not_store",
@@ -1749,7 +1753,9 @@
       "termination_failed",
       "ended_before_output",
       "ssh_exited",
-      "ssh_diagnostic"
+      "ssh_diagnostic",
+      "process_exited",
+      "process_failed"
     ],
     "SessionState": [
       "created",
@@ -2614,6 +2620,13 @@
           "type": "str"
         },
         {
+          "default": "",
+          "name": "target_summary",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
           "default": [],
           "name": "aliases",
           "required": false,
@@ -2780,6 +2793,13 @@
         {
           "default": "",
           "name": "display_name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "target_summary",
           "required": false,
           "sensitive": false,
           "type": "str"
@@ -3239,6 +3259,13 @@
         {
           "default": "",
           "name": "display_name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "target_summary",
           "required": false,
           "sensitive": false,
           "type": "str"

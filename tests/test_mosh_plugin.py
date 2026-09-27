@@ -223,3 +223,15 @@ def test_build_spawn_invalid_ssh_options_use_stable_field_key(monkeypatch):
 def test_activate_registers_backend():
     Plugin().activate(_ctx())
     assert registry_mod.protocol_registry().get('mosh') is not None
+
+
+def test_a_password_without_a_username_is_refused():
+    """The saved password is keyed on host and username. Without one the
+    secret store drops it with a log line while the save reports success."""
+    backend = MoshProtocolBackend()
+
+    assert backend.validate({'host': 'h', 'password': 's3cret'}) == [
+        'Enter a username to use the saved password.'
+    ]
+    assert backend.validate({'host': 'h', 'username': 'u', 'password': 's3cret'}) == []
+    assert backend.validate({'host': 'h', 'password': ''}) == []

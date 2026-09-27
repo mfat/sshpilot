@@ -7,10 +7,9 @@ command: it reuses sshPilot's single SSH path — ``build_native_command`` for t
 environment (askpass + keyring autofill, agent) — then hands that to mosh via
 ``--ssh=…`` and runs ``mosh --ssh="ssh …" <host>`` inside the VTE.
 
-Key/agent auth (askpass passphrase autofill) works through the merged env. For a
-stored *password* connection, the inner ssh prompts interactively in the
-terminal during the mosh bootstrap (sshpass FIFO wiring is owned by terminal.py
-and isn't applied to the wrapping mosh process yet).
+Auth rides the merged env: askpass answers a key passphrase or the stored
+login password (the ``password`` field, kept in secure storage like every
+protocol's) during the SSH bootstrap, and prompts when nothing is stored.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from typing import Any, Dict, List
 from .._shell import command_split_diagnostic, split_command
 from .._session_failure import BuiltinProtocolError
 from ....api.models.sessions import PluginSessionFailureCode
+from .._summary import host_port, with_user
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -47,6 +47,8 @@ class MoshProtocolBackend(ProtocolBackend):
                       placeholder=_("hostname or IP address")),
             FieldSpec(key="username", label=_("Username"), kind="text",
                       placeholder=_("(from ~/.ssh/config)")),
+            # Stored in secure storage, never in the connection data.
+            FieldSpec(key="password", label=_("Password"), kind="password"),
             FieldSpec(key="port", label=_("SSH port"), kind="int", default=22),
             FieldSpec(key="keyfile", label=_("Key file"), kind="file", group="advanced"),
             FieldSpec(key="extra_ssh_opts", label=_("Extra SSH options"), kind="text",
@@ -59,7 +61,18 @@ class MoshProtocolBackend(ProtocolBackend):
                                ("experimental", _("Experimental"))]),
             FieldSpec(key="mosh_port", label=_("UDP port / range"), kind="text",
                       placeholder="60000:60010", group="advanced"),
+            # Where the host keeps mosh-server off the login PATH (Homebrew
+            # on macOS, ~/.local): the most common reason mosh cannot start.
+            FieldSpec(key="server_path", label=_("Remote mosh-server"), kind="text",
+                      placeholder="mosh-server", group="advanced"),
         ]
+
+    def summary(self, data: Dict[str, Any]) -> str:
+        return with_user(
+            data.get("username"),
+            host_port(data.get("host") or data.get("hostname"),
+                      data.get("port"), self.default_port),
+        )
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
@@ -72,6 +85,10 @@ class MoshProtocolBackend(ProtocolBackend):
                     errors.append(_("Port must be between 1 and 65535."))
             except (TypeError, ValueError):
                 errors.append(_("Port must be a number."))
+        # The saved password is keyed on host and username; without one the
+        # secret store refuses it and the password is silently gone.
+        if data.get("password") and not str(data.get("username") or "").strip():
+            errors.append(_("Enter a username to use the saved password."))
         diagnostic = command_split_diagnostic(data.get("extra_ssh_opts"))
         if diagnostic:
             errors.append(
@@ -166,6 +183,9 @@ class MoshProtocolBackend(ProtocolBackend):
         mosh_port = (data.get("mosh_port") or "").strip()
         if mosh_port:
             argv += ["--port", mosh_port]
+        server_path = (data.get("server_path") or "").strip()
+        if server_path:
+            argv.append("--server=" + server_path)
         argv += ["--ssh=" + shlex.join(ssh_prefix), host]
         return SpawnSpec(argv=argv, env=env)
 

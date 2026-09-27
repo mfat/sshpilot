@@ -274,6 +274,16 @@ Subclass and implement:
 - `connection_fields() -> list[FieldSpec]` — declarative editor fields; the
   dialog renders them and persists values into the connection's data.
 - `validate(data) -> list[str]` — human-readable errors (empty = ok).
+- `summary(data) -> str` — what the connection reaches, in one line
+  (`office-pc:3390`, `web · podman`, `/dev/ttyUSB0 @ 115200`). Shown under
+  the connection's name, and used to name a connection saved without one.
+  The daemon calls it for every listed connection, so keep it cheap and pure.
+  Default: the `host` field.
+- `pre_connect` (class attribute, default `True`) — whether the editor offers
+  the pre-connection command. Set it to `False` for a protocol that opens no
+  network connection (a local console). The port knock and Wake-on-LAN are
+  offered only when you also declare a field keyed `host`, the machine they
+  target; name your host field `host` for them to appear.
 - `build_spawn(connection, ctx) -> SpawnSpec` — return the command to run in the
   VTE terminal. **Must not block on the network.** Raise `ProtocolError` (e.g.
   when the required binary is missing).
@@ -283,15 +293,29 @@ command + args run inside the terminal; `env` is the child environment.
 
 `FieldSpec(key, label, kind=..., default=..., choices=..., placeholder=...,
 required=..., group=...)` — `kind` is one of `text|int|password|file|choice|switch`;
-`group` puts fields into a labelled section (e.g. `"advanced"`).
+`group` puts fields into a labelled section (e.g. `"advanced"`). Fields in the
+default `"general"` group appear in the editor's first section, beside the
+connection's name; a `placeholder` is shown while the empty field has focus.
+A text field may add `suggest=fn`: the editor gives it a list button, and
+calls `fn(values, ctx)` off the UI thread with the form's current values and a
+host-less `PluginContext` (use `ctx.run_local_command` to ask a local tool);
+return `[(value, label), ...]`. The field stays free text.
+
+A field keyed `password` is the connection's login password: sshPilot keeps it
+in secure storage (keyed on the connection's host and username), never in the
+saved connection data, and fills the field back in when the editor reopens.
+`build_spawn` reads it with `ctx.connection_manager.get_connection_password(connection)`.
+Any other key whose name contains `password`, `passphrase`, `secret`, `token`,
+`credential` or `private_key` is **not** saved; keep such values in `ctx.secrets`.
 
 See `builtin/telnet_protocol/__init__.py` (minimal) and
-`builtin/{ssh,serial,docker,kubernetes,mosh}_protocol/` for real backends — note
+`builtin/{ssh,serial,docker,kubernetes,mosh,rdp}_protocol/` for real backends — note
 their directory names carry a `_protocol` suffix that the manifest `id` does not
 (`docker_protocol/` declares `"id": "docker"`), which built-ins may do because
 they are imported as packages rather than found by directory name. A protocol
-runs as a **command inside the terminal** — GUI protocols (RDP/VNC) are not
-expressible today.
+runs as a **command inside the terminal**. A graphical client opens its own
+window while the tab carries its output — `rdp_protocol/` runs FreeRDP this way;
+there is no embedded remote-desktop view.
 
 **Declare your `protocol_id`s in the manifest.** Session launch is owned by the daemon,
 which runs in its own process and so has to activate your plugin itself to
@@ -485,7 +509,7 @@ logic without a display (see each plugin's `tests/`).
 ## API versioning & stability
 
 `API_VERSION = (major, minor)` — exported from `sshpilot.plugins.api` and defined
-in `src/sshpilot/core/plugins/contracts.py`. It is currently **`(1, 14)`**; the
+in `src/sshpilot/core/plugins/contracts.py`. It is currently **`(1, 16)`**; the
 per-minor changelog is the comment block at the top of
 `src/sshpilot/plugins/api.py`.
 

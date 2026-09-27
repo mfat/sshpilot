@@ -296,7 +296,13 @@ class InteractionBroker:
                 session_id=spec.session_id,
             )
         target = argv[-1]
-        effective = self._effective_ssh_config(argv, environment)
+        # A plugin protocol's argv is not an ssh command line: probing
+        # ``docker exec … -G sh`` runs an exec, and ``kubectl exec … -- -G``
+        # runs ``-G`` inside the pod. The spec already carries the identity.
+        if getattr(spec, "protocol", "ssh") == "ssh":
+            effective = self._effective_ssh_config(argv, environment)
+        else:
+            effective = {}
         hostname = effective.get("hostname", spec.hostname)
         username = effective.get("user", spec.username)
         try:

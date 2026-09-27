@@ -18,9 +18,10 @@ PLUGIN_PATHS = (
     BUILTINS / "docker_protocol" / "__init__.py",
     BUILTINS / "kubernetes_protocol" / "__init__.py",
     BUILTINS / "mosh_protocol" / "__init__.py",
+    BUILTINS / "rdp_protocol" / "__init__.py",
     BUILTINS / "serial_protocol" / "__init__.py",
 )
-SHELL_FIELD_PATHS = PLUGIN_PATHS[:3]
+SHELL_FIELD_PATHS = PLUGIN_PATHS[:4]
 RELEASE_NOTE_SOURCES = (
     ROOT / "data" / "io.github.mfat.sshpilot.metainfo.xml.in",
     ROOT / "debian" / "changelog",

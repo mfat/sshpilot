@@ -31,6 +31,7 @@ class Client:
         self.created = None
         self.updated = None
         self.secrets = {}
+        self.password_calls = []
 
     def create_connection(self, request):
         self.created = request
@@ -49,7 +50,7 @@ class Client:
 
     def update_connection(self, connection_id, request):
         self.updated = (connection_id, request)
-        return ConnectionMutationResult(connection_id, request.nickname, 1)
+        return ConnectionMutationResult(request.nickname or connection_id, request.nickname, 1)
 
     def store_plugin_secret(self, plugin_id, key, value):
         self.secrets[(plugin_id, key)] = value
@@ -60,6 +61,14 @@ class Client:
 
     def delete_plugin_secret(self, plugin_id, key):
         return self.secrets.pop((plugin_id, key), None) is not None
+
+    def store_connection_password(self, request):
+        self.password_calls.append(("store", request))
+        return True
+
+    def delete_connection_password(self, request):
+        self.password_calls.append(("delete", request))
+        return True
 
 
 def services():
@@ -227,3 +236,98 @@ def test_an_ssh_save_still_carries_its_own_configuration():
     )
 
     assert client.created.config_patch == {"x11_forwarding": True}
+
+
+# A plugin FieldSpec keyed ``password`` is a login password: it never rides
+# ``plugin_data`` (the sensitive-name filter strips it) and goes to secure
+# storage for every protocol, as it did before the daemon migration.
+
+
+def _plugin_edit(facade, **values):
+    return facade.update_connection(
+        facade.find_connection_by_nickname("demo"),
+        {"nickname": "demo", "hostname": "demo.example", "username": "alice",
+         "protocol": "rdp", **values},
+    )
+
+
+def test_a_plugin_password_is_stored_not_persisted():
+    facade, client = services()
+
+    facade.add_connection_from_data(
+        {
+            "nickname": "desk",
+            "hostname": "desk.example",
+            "username": "alice",
+            "protocol": "rdp",
+            "password": "hunter2",
+            "password_changed": True,
+        }
+    )
+
+    assert client.created.plugin_data == {}
+    [(action, request)] = client.password_calls
+    assert action == "store"
+    assert request.connection_id == "new"
+    assert request.password == "hunter2"
+
+
+def test_an_untouched_plugin_password_costs_no_secret_io():
+    facade, client = services()
+
+    assert _plugin_edit(facade, password="", password_changed=False) is True
+    assert _plugin_edit(facade, password="hunter2", password_changed=False) is True
+
+    assert client.password_calls == []
+
+
+def test_clearing_a_plugin_password_deletes_it():
+    facade, client = services()
+
+    _plugin_edit(facade, password="", password_changed=True)
+
+    [(action, request)] = client.password_calls
+    assert action == "delete"
+    assert request.connection_id == "demo"
+
+
+def test_a_moved_plugin_connection_carries_its_password():
+    """The secret is keyed on host and user, so an edit that moves either
+    must re-store the unchanged password under the new identity."""
+    facade, client = services()
+
+    facade.update_connection(
+        facade.find_connection_by_nickname("demo"),
+        {"nickname": "demo", "hostname": "moved.example", "username": "alice",
+         "protocol": "rdp", "password": "hunter2", "password_changed": False},
+    )
+
+    [(action, request)] = client.password_calls
+    assert action == "store"
+    assert request.password == "hunter2"
+    assert request.previous_hostname == "demo.example"
+    assert request.previous_username == "alice"
+
+
+def test_an_api_caller_without_a_password_never_wipes_one():
+    """``ctx.update_connection`` callers send no ``password_changed``."""
+    facade, client = services()
+
+    _plugin_edit(facade)
+    _plugin_edit(facade, password="")
+
+    assert client.password_calls == []
+
+
+def test_a_renamed_plugin_connection_stores_under_its_new_id():
+    facade, client = services()
+
+    facade.update_connection(
+        facade.find_connection_by_nickname("demo"),
+        {"nickname": "renamed", "hostname": "demo.example", "username": "alice",
+         "protocol": "rdp", "password": "hunter2", "password_changed": True},
+    )
+
+    [(action, request)] = client.password_calls
+    assert action == "store"
+    assert request.connection_id == "renamed"

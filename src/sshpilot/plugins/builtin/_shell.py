@@ -26,6 +26,7 @@ __all__ = ["command_split_diagnostic", "split_command"]
 _LEGACY_FIELD_LABELS = {
     "command": "Command",
     "extra_ssh_opts": "Extra SSH options",
+    "extra_rdp_args": "Extra FreeRDP arguments",
 }
 
 

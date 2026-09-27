@@ -55,17 +55,21 @@ CASES = {
         "fields": {
             "device": "/dev/ttyUSB0", "baud": "9600", "flow": "hard",
             "databits": "7", "parity": "even", "stopbits": "2",
+            "send_newline": "crlf", "recv_add_cr": True, "local_echo": True,
+            "logfile": "/tmp/serial.log",
         },
         "argv": [
             f"{BIN}/picocom", "-b", "9600", "-f", "h",
             "--databits", "7", "--parity", "e", "--stopbits", "2",
-            "/dev/ttyUSB0",
+            "--omap", "crcrlf", "--imap", "lfcrlf", "--echo",
+            "--logfile", "/tmp/serial.log", "/dev/ttyUSB0",
         ],
     },
     "docker": {
         "fields": {
             "container": "web", "command": "bash", "runtime": "podman",
-            "docker_host": "ssh://u@h", "user": "root", "workdir": "/srv",
+            "docker_context": "", "docker_host": "ssh://u@h", "user": "root",
+            "workdir": "/srv",
         },
         "argv": [
             f"{BIN}/podman", "-H", "ssh://u@h", "exec", "-it",
@@ -84,18 +88,40 @@ CASES = {
     },
     "mosh": {
         "fields": {
-            "host": "shell.example", "username": "alice", "port": 2222,
+            "host": "shell.example", "username": "alice", "password": "", "port": 2222,
             "keyfile": "", "extra_ssh_opts": "", "predict": "never",
-            "mosh_port": "60000:60010",
+            "mosh_port": "60000:60010", "server_path": "/opt/homebrew/bin/mosh-server",
         },
         # mosh wraps the shared SSH command builder, whose flags depend on the
         # host's ssh config, so the fixed prefix is asserted and the --ssh=
         # value is checked for the fields that came from the editor.
         "argv_prefix": [
             f"{BIN}/mosh", "--predict=never", "--port", "60000:60010",
+            "--server=/opt/homebrew/bin/mosh-server",
         ],
         "ssh_contains": ["-p", "2222", "-l", "alice"],
         "argv_last": "shell.example",
+    },
+    "rdp": {
+        "fields": {
+            "host": "win.example", "port": 3390, "username": "alice",
+            # Secure storage, not plugin_data: nothing to round-trip here.
+            "domain": "CORP", "password": "", "display_mode": "fullscreen",
+            "size": "1600x900", "scale": "150", "multimon": True,
+            "clipboard": False, "sound": True, "microphone": True, "printer": True,
+            "shared_folder": "/srv/share", "security": "nla",
+            "cert_policy": "tofu", "admin": True, "gateway": "gw.example:443",
+            "gateway_username": "gwuser", "gateway_domain": "GW",
+            # Pinned: "auto" would follow the test machine's WAYLAND_DISPLAY.
+            "client": "x11", "extra_rdp_args": "/network:auto",
+        },
+        "argv": [
+            f"{BIN}/xfreerdp3", "/v:win.example:3390", "/u:alice", "/d:CORP",
+            "/t:rdp-demo", "/f", "/size:1600x900", "/scale-desktop:150",
+            "/multimon", "-clipboard", "/sound", "/microphone", "/printer",
+            "/drive:sshpilot,/srv/share", "/sec:nla", "/cert:tofu", "+admin",
+            "/gateway:g:gw.example:443,u:gwuser,d:GW", "/network:auto",
+        ],
     },
 }
 
@@ -271,6 +297,7 @@ def test_required_fields_block_saving_and_launching(protocol, registry, tmp_path
         ("docker", "command", "Command", "docker_protocol"),
         ("k8s", "command", "Command", "kubernetes_protocol"),
         ("mosh", "extra_ssh_opts", "Extra SSH options", "mosh_protocol"),
+        ("rdp", "extra_rdp_args", "Extra FreeRDP arguments", "rdp_protocol"),
     ],
 )
 @pytest.mark.parametrize(
@@ -356,3 +383,49 @@ def _spawn_ctx(registry):
         connection_manager=None,
         protocol_registry=registry,
     )
+
+
+# What the connection list shows under each name, from the same saved values.
+SUMMARIES = {
+    "telnet": "10.0.0.5:2323",
+    "serial": "/dev/ttyUSB0 @ 9600",
+    "docker": "web · Podman · ssh://u@h",
+    "k8s": "prod/api-0 · staging",
+    "mosh": "alice@shell.example:2222",
+    "rdp": "alice@win.example:3390",
+}
+
+
+@pytest.mark.parametrize("protocol", sorted(CASES))
+def test_the_list_describes_what_each_connection_reaches(
+    protocol, registry, tmp_path, monkeypatch
+):
+    """Saved fields -> daemon list summary -> wire, as the sidebar gets it."""
+    from sshpilot.api.transport.codec import (
+        connection_summary_from_wire,
+        connection_summary_to_wire,
+    )
+    from sshpilot.core.connections import target_summary
+
+    assert set(SUMMARIES) == set(CASES)
+    repository = _repository(tmp_path)
+    provider = DaemonConnectionLaunchProvider(
+        repository.get_record, secret_provider=None, app_config=None
+    )
+    # As daemon/cli.py installs it at startup.
+    monkeypatch.setattr(target_summary, "_describer", provider.describe_target)
+    core = ConnectionApplicationService(
+        repository, client_name="seam", allow_cross_thread_commands=True
+    )
+    facade = DaemonConnectionServices(_Projection())
+    facade.attach_client(core)
+    try:
+        facade.add_connection_from_data({
+            "nickname": f"{protocol}-demo", "protocol": protocol,
+            **CASES[protocol]["fields"],
+        })
+        [listed] = [c for c in core.list_connections() if c.id == f"{protocol}-demo"]
+        received = connection_summary_from_wire(connection_summary_to_wire(listed))
+        assert received.target_summary == SUMMARIES[protocol]
+    finally:
+        facade.detach_client()
