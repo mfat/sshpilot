@@ -12,17 +12,6 @@ from typing import Any, Callable, Deque, Dict, Generic, Mapping, Optional, Tuple
 
 from ._safe_values import copy_safe_details
 from .models.common import ConnectionId, RequestId, SessionId, utc_now
-from .models.connection_store import ConnectionStoreSnapshot
-from .models.connections import ConnectionSummary
-from .models.interactions import InteractionRequest, InteractionSummary
-from .models.operations import ForwardSummary, OperationSummary, SftpServiceSummary
-from .models.broadcast import BroadcastCommandOutput
-from .models.pre_command import PreConnectionCommandNotice
-from .models.login_profiles import LoginProfilesChangedEvent
-from .models.sessions import SessionExitInfo, SessionSummary
-from .models.terminal import TerminalOutput
-from .models.daemon import DaemonStatus
-from .models.transfers import TransferSummary
 
 logger = logging.getLogger(__name__)
 
@@ -105,43 +94,73 @@ class CoreEvent(Generic[PayloadT]):
             object.__setattr__(self, "payload", safe_payload)
 
 
-_EVENT_PAYLOAD_TYPES = {
-    EventType.CONNECTION_CREATED: ConnectionSummary,
-    EventType.CONNECTION_UPDATED: ConnectionSummary,
-    EventType.CONNECTION_DELETED: ConnectionSummary,
-    EventType.CONNECTION_STORE_CHANGED: ConnectionStoreSnapshot,
-    EventType.SESSION_CREATED: SessionSummary,
-    EventType.SESSION_STATE_CHANGED: SessionSummary,
-    EventType.SESSION_OUTPUT: TerminalOutput,
-    EventType.SESSION_INTERACTION_REQUESTED: InteractionRequest,
-    EventType.SESSION_EXITED: SessionExitInfo,
-    EventType.SESSION_CLOSED: SessionSummary,
-    EventType.INTERACTION_CREATED: InteractionSummary,
-    EventType.INTERACTION_STATE_CHANGED: InteractionSummary,
-    EventType.SFTP_CREATED: SftpServiceSummary,
-    EventType.SFTP_STATE_CHANGED: SftpServiceSummary,
-    EventType.SFTP_CLOSED: SftpServiceSummary,
-    EventType.SFTP_FAILED: SftpServiceSummary,
-    EventType.TRANSFER_CREATED: TransferSummary,
-    EventType.TRANSFER_STARTED: TransferSummary,
-    EventType.TRANSFER_PROGRESS: TransferSummary,
-    EventType.TRANSFER_ITEM_COMPLETED: TransferSummary,
-    EventType.TRANSFER_COMPLETED: TransferSummary,
-    EventType.TRANSFER_CANCELLED: TransferSummary,
-    EventType.TRANSFER_FAILED: TransferSummary,
-    EventType.FORWARD_CREATED: ForwardSummary,
-    EventType.FORWARD_STARTING: ForwardSummary,
-    EventType.FORWARD_ACTIVE: ForwardSummary,
-    EventType.FORWARD_CLOSED: ForwardSummary,
-    EventType.FORWARD_FAILED: ForwardSummary,
-    EventType.OPERATION_CREATED: OperationSummary,
-    EventType.OPERATION_STATE_CHANGED: OperationSummary,
-    EventType.BROADCAST_OUTPUT: BroadcastCommandOutput,
-    EventType.DAEMON_STATE_CHANGED: DaemonStatus,
-    EventType.PRE_CONNECTION_COMMAND: PreConnectionCommandNotice,
-    EventType.LOGIN_PROFILES_CHANGED: LoginProfilesChangedEvent,
-    EventType.ERROR_OCCURRED: Mapping,
-}
+# Payload types resolve on first use: importing them here pulled every model
+# module onto the GUI's startup import path, ahead of the first frame.
+_EVENT_PAYLOAD_TYPES: Optional[Mapping["EventType", type]] = None
+_TERMINAL_OUTPUT_TYPE: Optional[type] = None
+
+
+def _event_payload_types() -> Mapping["EventType", type]:
+    global _EVENT_PAYLOAD_TYPES, _TERMINAL_OUTPUT_TYPE
+    if _EVENT_PAYLOAD_TYPES is not None:
+        return _EVENT_PAYLOAD_TYPES
+    from .models.connection_store import ConnectionStoreSnapshot
+    from .models.connections import ConnectionSummary
+    from .models.interactions import InteractionRequest, InteractionSummary
+    from .models.operations import ForwardSummary, OperationSummary, SftpServiceSummary
+    from .models.broadcast import BroadcastCommandOutput
+    from .models.pre_command import PreConnectionCommandNotice
+    from .models.login_profiles import LoginProfilesChangedEvent
+    from .models.sessions import SessionExitInfo, SessionSummary
+    from .models.terminal import TerminalOutput
+    from .models.daemon import DaemonStatus
+    from .models.transfers import TransferSummary
+
+    _TERMINAL_OUTPUT_TYPE = TerminalOutput
+    _EVENT_PAYLOAD_TYPES = MappingProxyType({
+        EventType.CONNECTION_CREATED: ConnectionSummary,
+        EventType.CONNECTION_UPDATED: ConnectionSummary,
+        EventType.CONNECTION_DELETED: ConnectionSummary,
+        EventType.CONNECTION_STORE_CHANGED: ConnectionStoreSnapshot,
+        EventType.SESSION_CREATED: SessionSummary,
+        EventType.SESSION_STATE_CHANGED: SessionSummary,
+        EventType.SESSION_OUTPUT: TerminalOutput,
+        EventType.SESSION_INTERACTION_REQUESTED: InteractionRequest,
+        EventType.SESSION_EXITED: SessionExitInfo,
+        EventType.SESSION_CLOSED: SessionSummary,
+        EventType.INTERACTION_CREATED: InteractionSummary,
+        EventType.INTERACTION_STATE_CHANGED: InteractionSummary,
+        EventType.SFTP_CREATED: SftpServiceSummary,
+        EventType.SFTP_STATE_CHANGED: SftpServiceSummary,
+        EventType.SFTP_CLOSED: SftpServiceSummary,
+        EventType.SFTP_FAILED: SftpServiceSummary,
+        EventType.TRANSFER_CREATED: TransferSummary,
+        EventType.TRANSFER_STARTED: TransferSummary,
+        EventType.TRANSFER_PROGRESS: TransferSummary,
+        EventType.TRANSFER_ITEM_COMPLETED: TransferSummary,
+        EventType.TRANSFER_COMPLETED: TransferSummary,
+        EventType.TRANSFER_CANCELLED: TransferSummary,
+        EventType.TRANSFER_FAILED: TransferSummary,
+        EventType.FORWARD_CREATED: ForwardSummary,
+        EventType.FORWARD_STARTING: ForwardSummary,
+        EventType.FORWARD_ACTIVE: ForwardSummary,
+        EventType.FORWARD_CLOSED: ForwardSummary,
+        EventType.FORWARD_FAILED: ForwardSummary,
+        EventType.OPERATION_CREATED: OperationSummary,
+        EventType.OPERATION_STATE_CHANGED: OperationSummary,
+        EventType.BROADCAST_OUTPUT: BroadcastCommandOutput,
+        EventType.DAEMON_STATE_CHANGED: DaemonStatus,
+        EventType.PRE_CONNECTION_COMMAND: PreConnectionCommandNotice,
+        EventType.LOGIN_PROFILES_CHANGED: LoginProfilesChangedEvent,
+        EventType.ERROR_OCCURRED: Mapping,
+    })
+    return _EVENT_PAYLOAD_TYPES
+
+
+def _terminal_output_type() -> type:
+    if _TERMINAL_OUTPUT_TYPE is None:
+        _event_payload_types()
+    return _TERMINAL_OUTPUT_TYPE
 
 _ERROR_EVENT_KEYS = frozenset(
     {
@@ -246,7 +265,7 @@ def _validate_dto_value(
                 field_value,
                 path=f"{path}.{model_field.name}",
                 allow_bytes=(
-                    isinstance(value, TerminalOutput)
+                    isinstance(value, _terminal_output_type())
                     and model_field.name == "data"
                 ),
             )
@@ -265,7 +284,7 @@ def validate_event_payload(event_type: EventType, payload: Any) -> Any:
             "event type must be an EventType, not "
             f"{type(event_type).__name__}"
         )
-    expected = _EVENT_PAYLOAD_TYPES[event_type]
+    expected = _event_payload_types()[event_type]
     if event_type is EventType.ERROR_OCCURRED:
         if type(payload) not in (dict, _MAPPING_PROXY_TYPE):
             raise TypeError(

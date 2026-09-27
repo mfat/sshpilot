@@ -845,11 +845,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _begin_daemon_client_selection(self) -> None:
         """Locate/start and validate the sole backend away from the GTK thread."""
-        from .api.client_factory import select_client
         app = self.get_application()
         launcher = getattr(app, '_api_daemon_launcher', None) if app else None
+
+        def _select():
+            # Imported on the worker: client_factory pulls in the daemon client,
+            # the wire codec and most API model modules, which would otherwise
+            # load on the GTK thread ahead of the first frame.
+            from .api.client_factory import select_client
+            return select_client(launcher=launcher)
+
         self._api_client_selection_request = self.client_bridge.submit(
-            lambda: select_client(launcher=launcher),
+            _select,
             on_success=self._apply_client_selection,
             on_error=self._handle_client_selection_error,
             on_discard=lambda selection: selection.client.close(),
