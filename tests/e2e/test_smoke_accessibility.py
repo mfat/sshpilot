@@ -194,7 +194,7 @@ def test_new_connection_opens_editor_and_cancel_restores_window(app):
     editor = _connection_editor(app)
 
     # Fields are named from their visible titles by GTK — nothing to fix there.
-    for field in ("Name", "Hostname / IP address", "Username", "Port"):
+    for field in ("Name (optional)", "Hostname / IP address", "Username", "Port"):
         assert app.find(role="text", name=field, root=editor), field
 
     cancel = app.node(role="button", name="Cancel", root=editor)
@@ -221,7 +221,7 @@ def test_created_connection_appears_as_a_named_row(app):
     app.activate(app.node(role="button", name="New Connection"))
     editor = _connection_editor(app)
 
-    app.set_text(app.node(role="text", name="Name", root=editor), "e2e-host")
+    app.set_text(app.node(role="text", name="Name (optional)", root=editor), "e2e-host")
     # The SSH alias is a separate required field; the editor does not derive it
     # from Name when the text arrives through EditableText rather than keys.
     app.set_text(
@@ -332,7 +332,7 @@ def test_connection_can_be_moved_into_a_group_without_a_drag(app):
     app.activate(app.node(role="button", name="New Connection"))
     editor = _connection_editor(app)
     for field, value in (
-        ("Name", "movable"),
+        ("Name (optional)", "movable"),
         ("SSH Alias (no whitespace allowed)", "movable"),
         ("Hostname / IP address", "192.0.2.30"),
         ("Username", "tester"),

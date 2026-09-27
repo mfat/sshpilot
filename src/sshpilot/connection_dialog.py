@@ -3621,7 +3621,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group.add(self.protocol_row)
 
         # Display Name (SSH Pilot-owned presentation metadata)
-        self.display_name_row = Adw.EntryRow(title=_("Name"))
+        self.display_name_row = Adw.EntryRow(title=_("Name (optional)"))
+        self.display_name_row.set_tooltip_text(
+            _("Shown in the connection list. Leave empty to use the SSH alias.")
+        )
         basic_group.add(self.display_name_row)
 
         # SSH alias / Host token
