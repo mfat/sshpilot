@@ -1985,7 +1985,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
         self._hover_actions_box.append(self._file_manager_slot)
 
-        # Dashboard button — off by default.
+        # Dashboard button — on for new installs (see core/settings/defaults).
         self.dashboard_button = icon_utils.new_button_from_icon_name("info-outline-symbolic")
         self.dashboard_button.add_css_class("flat")
         self.dashboard_button.add_css_class("file-manager-button")

@@ -1698,7 +1698,7 @@ class PreferencesWindow(Adw.NavigationPage):
         sidebar_group.add(show_file_manager_button_switch)
         self._sidebar_mode_dependent_rows.append(show_file_manager_button_switch)
 
-        # Dashboard hover button on connection rows (off by default)
+        # Dashboard hover button on connection rows (on for new installs)
         show_dashboard_button_switch = Adw.SwitchRow()
         show_dashboard_button_switch.set_title(_("Dashboard Button"))
         show_dashboard_button_switch.set_subtitle(

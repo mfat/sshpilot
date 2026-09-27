@@ -184,7 +184,7 @@ def test_dashboard_button_reveals_on_hover_when_enabled(monkeypatch):
 
 
 def test_dashboard_button_pref_off_costs_no_width(monkeypatch):
-    """Preferences ▸ Sidebar ▸ Dashboard Button defaults off. The slot is
+    """Preferences ▸ Sidebar ▸ Dashboard Button off. The slot is
     hidden rather than left on its empty page: a visible zero-width slot still
     costs the actions box its spacing. Manage Files holds the row height."""
     row, mod = _dashboard_row(monkeypatch, show_dashboard=False)
