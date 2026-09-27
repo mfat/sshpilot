@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.71",
+  "api_implementation_version": "0.72",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1661,7 +1661,8 @@
       "serial_screen_hardware_flow_unsupported",
       "serial_screen_databits_unsupported",
       "serial_screen_hardware_flow_and_databits_unsupported",
-      "serial_programs_unavailable"
+      "serial_programs_unavailable",
+      "rdp_client_unavailable"
     ],
     "RememberPolicy": [
       "do_not_store",

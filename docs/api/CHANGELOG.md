@@ -5,6 +5,11 @@ notes remain separate.
 
 ## Unreleased
 
+- `PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE` (`rdp_client_unavailable`,
+  parameters `preferred_program` / `fallback_program`) reports a missing
+  FreeRDP 3 client for the new built-in `rdp` protocol. A bad
+  `extra_rdp_args` field reuses `arguments_invalid`. API implementation
+  version is 0.72; Protocol remains 1.0.
 - Login profiles are localized in the frontend. `LoginProfileFieldChange`
   drops `label` and names its setting with the new `LoginProfileField`;
   `before`/`after` are raw values instead of English display text. Rejected

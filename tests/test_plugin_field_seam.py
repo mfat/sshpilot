@@ -97,6 +97,23 @@ CASES = {
         "ssh_contains": ["-p", "2222", "-l", "alice"],
         "argv_last": "shell.example",
     },
+    "rdp": {
+        "fields": {
+            "host": "win.example", "port": 3390, "username": "alice",
+            "domain": "CORP", "fullscreen": True, "size": "1600x900",
+            "dynamic_resolution": True, "clipboard": False, "sound": True,
+            "shared_folder": "/srv/share", "security": "nla",
+            "cert_policy": "tofu", "gateway": "gw.example:443",
+            # Pinned: "auto" would follow the test machine's WAYLAND_DISPLAY.
+            "client": "x11", "extra_rdp_args": "/network:auto",
+        },
+        "argv": [
+            f"{BIN}/xfreerdp3", "/v:win.example:3390", "/u:alice", "/d:CORP",
+            "/t:rdp-demo", "/f", "/size:1600x900", "/dynamic-resolution",
+            "-clipboard", "/sound", "/drive:sshpilot,/srv/share", "/sec:nla",
+            "/cert:tofu", "/gateway:g:gw.example:443", "/network:auto",
+        ],
+    },
 }
 
 
@@ -271,6 +288,7 @@ def test_required_fields_block_saving_and_launching(protocol, registry, tmp_path
         ("docker", "command", "Command", "docker_protocol"),
         ("k8s", "command", "Command", "kubernetes_protocol"),
         ("mosh", "extra_ssh_opts", "Extra SSH options", "mosh_protocol"),
+        ("rdp", "extra_rdp_args", "Extra FreeRDP arguments", "rdp_protocol"),
     ],
 )
 @pytest.mark.parametrize(

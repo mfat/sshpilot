@@ -63,6 +63,10 @@ _CASES = {
         {"preferred_program": "picocom", "fallback_program": "screen"},
         "screen",
     ),
+    PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: (
+        {"preferred_program": "sdl-freerdp3", "fallback_program": "xfreerdp3"},
+        "xfreerdp3",
+    ),
 }
 
 

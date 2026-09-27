@@ -4533,6 +4533,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     title = _protocol_display_name(backend)
                 elif group_key == 'advanced':
                     title = _("Advanced")
+                elif group_key == 'display':
+                    title = _("Display")
+                elif group_key == 'devices':
+                    title = _("Devices")
                 else:
                     title = group_key.replace('_', ' ').title()
                 group = Adw.PreferencesGroup(title=title)

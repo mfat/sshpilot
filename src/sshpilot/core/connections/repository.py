@@ -159,6 +159,11 @@ _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "docker": ("container", "command", "runtime", "docker_host", "user", "workdir"),
     "k8s": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
     "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
+    "rdp": (
+        "domain", "fullscreen", "size", "dynamic_resolution", "clipboard",
+        "sound", "shared_folder", "security", "cert_policy", "gateway",
+        "client", "extra_rdp_args",
+    ),
 }
 
 

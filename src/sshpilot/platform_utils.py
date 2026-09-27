@@ -337,6 +337,22 @@ def resolve_host_binary(binary: str) -> Optional[List[str]]:
     return None
 
 
+def host_binary_version(argv: List[str]) -> str:
+    """Return what ``argv --version`` prints (stdout and stderr), or ``""``.
+
+    ``argv`` is a prefix from :func:`resolve_host_binary`, so a Flatpak host
+    binary is asked through ``flatpak-spawn --host`` like any other call.
+    """
+    try:
+        result = subprocess.run(
+            [*argv, "--version"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return f"{result.stdout or ''}\n{result.stderr or ''}"
+
+
 # Env vars the Bitwarden CLI (and related host tools) must see when spawned via
 # ``flatpak-spawn --host``. That path does **not** forward the sandbox process
 # environment — without forwarding, host ``bw unlock --passwordenv BW_PASSWORD``

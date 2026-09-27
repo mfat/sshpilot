@@ -153,6 +153,7 @@ class PluginSessionFailureCode(str, Enum):
         "serial_screen_hardware_flow_and_databits_unsupported"
     )
     SERIAL_PROGRAMS_UNAVAILABLE = "serial_programs_unavailable"
+    RDP_CLIENT_UNAVAILABLE = "rdp_client_unavailable"
 
 
 _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS = {
@@ -178,6 +179,9 @@ _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS.update(
             {"fallback_program", "preferred_program", "flow", "databits"}
         ),
         PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE: frozenset(
+            {"preferred_program", "fallback_program"}
+        ),
+        PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: frozenset(
             {"preferred_program", "fallback_program"}
         ),
     }
@@ -227,7 +231,7 @@ class PluginSessionFailure:
             }:
                 raise ValueError("plugin session failure Mosh programs are invalid")
         if self.code is PluginSessionFailureCode.ARGUMENTS_INVALID:
-            if parameters["field"] not in {"command", "extra_ssh_opts"}:
+            if parameters["field"] not in {"command", "extra_ssh_opts", "extra_rdp_args"}:
                 raise ValueError("plugin session failure field is invalid")
         if self.code in {
             PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED,
@@ -240,6 +244,12 @@ class PluginSessionFailure:
                 or parameters["preferred_program"] != "picocom"
             ):
                 raise ValueError("plugin session failure serial programs are invalid")
+        if self.code is PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE:
+            if parameters != {
+                "preferred_program": "sdl-freerdp3",
+                "fallback_program": "xfreerdp3",
+            }:
+                raise ValueError("plugin session failure RDP programs are invalid")
         if "flow" in parameters and parameters["flow"] != "RTS/CTS":
             raise ValueError("plugin session failure flow control is invalid")
         if "databits" in parameters and parameters["databits"] not in {"5", "6"}:

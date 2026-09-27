@@ -57,11 +57,16 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
         "Neither '{preferred_program}' nor '{fallback_program}' is installed. "
         "Install one to use serial connections."
     ),
+    PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE: N_(
+        "FreeRDP 3 is not installed. Install '{preferred_program}' or "
+        "'{fallback_program}' to use RDP connections."
+    ),
 }
 
 _PLUGIN_FIELD_LABELS = {
     "command": N_("Command"),
     "extra_ssh_opts": N_("Extra SSH options"),
+    "extra_rdp_args": N_("Extra FreeRDP arguments"),
 }
 
 

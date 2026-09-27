@@ -7,6 +7,6 @@ Flatpak detection in one place so telnet/docker/kubernetes/serial stay tidy.
 
 from __future__ import annotations
 
-from sshpilot.platform_utils import is_flatpak, resolve_host_binary
+from sshpilot.platform_utils import host_binary_version, is_flatpak, resolve_host_binary
 
-__all__ = ["is_flatpak", "resolve_host_binary"]
+__all__ = ["host_binary_version", "is_flatpak", "resolve_host_binary"]
