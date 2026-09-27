@@ -892,11 +892,18 @@ class LoginProfilesWindow(Adw.Window):
         self.toast_overlay = Adw.ToastOverlay()
         self._stack = Gtk.Stack()
         self._empty = Adw.StatusPage(
-            icon_name="avatar-default-symbolic",
             title=_("No Login Profiles"),
             description=_("A login profile bundles a username, keys and passwords. "
                           "Assign it to connections or groups to reuse it."),
         )
+        from sshpilot.icon_utils import new_paintable_from_icon_name
+
+        # The bundled login profile icon, as on the connection dialog's buttons.
+        icon = new_paintable_from_icon_name("system-users-symbolic", 128)
+        if icon is not None:
+            self._empty.set_paintable(icon)
+        else:
+            self._empty.set_icon_name("system-users-symbolic")
         create = Gtk.Button(label=_("New Login Profile"))
         create.add_css_class("pill")
         create.add_css_class("suggested-action")
@@ -907,11 +914,16 @@ class LoginProfilesWindow(Adw.Window):
         self._group = Adw.PreferencesGroup()
         self._page.add(self._group)
         self._rows: List[Gtk.Widget] = []
+        # Blank until the first snapshot, so a non-empty list never flashes
+        # the empty page first.
+        self._stack.add_named(Gtk.Box(), "loading")
         self._stack.add_named(self._empty, "empty")
         self._stack.add_named(self._page, "list")
         self.toast_overlay.set_child(self._stack)
         toolbar.set_content(self.toast_overlay)
         self.set_content(toolbar)
+        if controller.snapshot is not None:
+            self._render(controller.snapshot)
         self.reload()
 
     def _toast(self, message: str) -> None:

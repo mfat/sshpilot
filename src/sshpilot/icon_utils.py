@@ -21,7 +21,7 @@ Resolved Gio.Icon instances are cached per icon name for the process lifetime.
 import logging
 from typing import Dict, Optional
 
-from gi.repository import Gtk, Gio
+from gi.repository import Gdk, Gtk, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +237,20 @@ def patch_gtk_image():
 def new_gicon_from_icon_name(icon_name: str) -> Gio.Icon:
     """Create a Gio.Icon from an icon name (cached; same resolver as Gtk.Image helpers)."""
     return get_gicon_for_icon_name(icon_name)
+
+def new_paintable_from_icon_name(icon_name: str, size: int) -> Optional[Gdk.Paintable]:
+    """A paintable for *icon_name* (bundled first), for widgets such as
+    Adw.StatusPage that take a paintable but resolve ``icon_name`` only
+    through the system theme. ``None`` without a display.
+    """
+    display = Gdk.Display.get_default()
+    if display is None:
+        return None
+    theme = Gtk.IconTheme.get_for_display(display)
+    return theme.lookup_by_gicon(
+        get_gicon_for_icon_name(icon_name), size, 1, Gtk.TextDirection.NONE, 0
+    )
+
 
 def new_button_from_icon_name(icon_name: str) -> Gtk.Button:
     """

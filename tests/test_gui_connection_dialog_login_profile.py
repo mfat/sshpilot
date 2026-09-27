@@ -169,3 +169,50 @@ def test_manage_opens_the_profiles_window_over_the_dialog_and_reloads_on_close(g
 
     profiles_window.close()
     assert reloads == [1]
+
+
+def test_status_page_paintable_comes_from_the_bundled_icon(gtk):
+    from sshpilot.icon_utils import new_paintable_from_icon_name
+
+    paintable = new_paintable_from_icon_name("system-users-symbolic", 128)
+    assert paintable.get_file().get_uri().endswith("/actions/system-users-symbolic.svg")
+
+
+class _FakeController:
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+
+    def refresh(self):
+        return SNAPSHOT
+
+
+def _pump_until(predicate, timeout=2.0):
+    from gi.repository import GLib
+
+    loop = GLib.MainLoop()
+
+    def _check():
+        if predicate():
+            loop.quit()
+            return False
+        return True
+
+    GLib.timeout_add(20, _check)
+    GLib.timeout_add(int(timeout * 1000), lambda: (loop.quit(), False)[1])
+    loop.run()
+    return predicate()
+
+
+def test_profiles_window_never_opens_on_the_empty_page(gtk):
+    Adw, Gtk = gtk
+    from sshpilot.login_profile_dialogs import LoginProfilesWindow
+
+    # No cached profiles yet: blank until the refresh lands, then the list.
+    window = LoginProfilesWindow(Gtk.Window(), _FakeController(None))
+    assert window._stack.get_visible_child_name() == "loading"
+    assert _pump_until(lambda: window._stack.get_visible_child_name() == "list")
+
+    # Cached profiles: the list straight away.
+    window = LoginProfilesWindow(Gtk.Window(), _FakeController(SNAPSHOT))
+    assert window._stack.get_visible_child_name() == "list"
+    _pump_until(lambda: False, timeout=0.3)  # let the background refresh land
