@@ -287,3 +287,22 @@ def test_gateway_login_is_separate_only_when_given(rdp_client):
         {"host": "win", "gateway": "gw", "gateway_username": "a,b"})
     assert any("comma" in e for e in errors)
 
+
+
+def test_details_keep_their_name_across_the_wire():
+    """The plugin editor loads its Name from ConnectionDetails; losing it on
+    the wire made the editor show the ID and save that over the user's name."""
+    from sshpilot.api.models.connections import ConnectionDetails
+    from sshpilot.api.transport.codec import (
+        connection_details_from_wire,
+        connection_details_to_wire,
+    )
+
+    details = ConnectionDetails(
+        id=ConnectionId("core-router"), nickname="core-router", host="core-router",
+        hostname="10.0.0.1", username="", port=23, protocol="telnet",
+        display_name="Core router", target_summary="10.0.0.1",
+    )
+    received = connection_details_from_wire(connection_details_to_wire(details))
+    assert received.display_name == "Core router"
+    assert received.target_summary == "10.0.0.1"

@@ -1894,6 +1894,10 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
         protocol=summary.protocol,
         health=summary.health,
         groups=summary.groups,
+        # Without these the client's details fell back to the ID as the name,
+        # and a plugin editor saved that back over the user's own name.
+        display_name=summary.display_name,
+        target_summary=summary.target_summary,
         aliases=aliases,
         authentication_method=authentication_method,
         identity_configured=_boolean(
