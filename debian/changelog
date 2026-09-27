@@ -1,3 +1,14 @@
+sshpilot (6.2.4-1) unstable; urgency=medium
+
+  * Release v6.2.4.
+  * Introducing "Login Profiles", reusable, saved idenities you can
+    assign to any connection or group
+  * New "Dashboard" button in connection rows
+  * UI improvements
+  * Updated translations
+
+ -- Mehdi <mah.fat@gmail.com>  Sun, 27 Sep 2026 12:50:16 +0000
+
 sshpilot (6.2.3-1) unstable; urgency=medium
 
   * Release v6.2.3.
