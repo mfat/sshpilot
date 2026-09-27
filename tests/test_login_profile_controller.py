@@ -2,11 +2,10 @@
 
 import pytest
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.login_profiles import (
     ConnectionProfileLink,
     GroupProfileLink,
-    LoginProfileAssignmentPreview,
-    LoginProfileFieldChange,
     LoginProfileLinkMode,
     LoginProfileSecretKind,
     LoginProfileSettings,
@@ -23,9 +22,7 @@ from sshpilot.gtk.login_profile_controller import (
     build_delete_request,
     current_choice_index,
     default_group_members_to_link,
-    format_preview,
     profile_choices,
-    profile_summary_line,
     resolve_group_profile,
     settings_from_values,
 )
@@ -65,28 +62,17 @@ def test_group_resolution_walks_parents():
 
 def test_choices_and_current_index():
     inherited = SNAPSHOT.profile(A)
-    choices = profile_choices(SNAPSHOT, inherited=inherited)
+    choices = profile_choices(
+        SNAPSHOT, inherited=inherited, custom_label="None", inherit_label="From {name}"
+    )
     assert [c.kind for c in choices] == [CHOICE_CUSTOM, CHOICE_INHERIT, CHOICE_PROFILE, CHOICE_PROFILE]
-    assert "Deploy" in choices[1].label
+    assert choices[1].label == "From Deploy"
     assert choices[1].mode is LoginProfileLinkMode.INHERIT
     assert choices[2].mode is LoginProfileLinkMode.EXPLICIT and choices[0].mode is None
     assert current_choice_index(choices, SNAPSHOT, "web1") == 2
     assert current_choice_index(choices, SNAPSHOT, "web2") == 1
     assert current_choice_index(choices, SNAPSHOT, "db1") == 0
-    assert len(profile_choices(SNAPSHOT)) == 3  # no inherit without a group profile
-
-
-def test_summary_line_and_preview_text():
-    assert profile_summary_line(SNAPSHOT.profile(A)) == "deploy · deploy"
-    assert profile_summary_line(SNAPSHOT.profile(B)) == "root · password"
-    text = format_preview((
-        LoginProfileAssignmentPreview("web1", "Deploy", (
-            LoginProfileFieldChange("username", "User", "alice", "deploy"),
-            LoginProfileFieldChange("identity_files", "IdentityFile", "", "/k/a\n/k/b"),
-        )),
-        LoginProfileAssignmentPreview("web2", "Deploy", ()),
-    ))
-    assert text == "web1:\n  User: alice → deploy\n  IdentityFile: — → /k/a, /k/b"
+    assert len(profile_choices(SNAPSHOT, custom_label="None")) == 3  # no inherit without a group profile
 
 
 def test_delete_plan_helpers():
@@ -163,8 +149,9 @@ def test_controller_create_update_and_secret_edits():
 def test_controller_follows_client_replacement_and_requires_one():
     holder = {"client": None}
     controller = LoginProfileController(lambda: holder["client"])
-    with pytest.raises(RuntimeError):
+    with pytest.raises(SshPilotError) as info:
         controller.refresh()
+    assert info.value.code is ErrorCode.DAEMON_UNAVAILABLE
     holder["client"] = _Client()
     controller.assign(["web1"], LoginProfileLinkMode.EXPLICIT, A)
     assert holder["client"].calls[0] == ("assign", ("web1",), LoginProfileLinkMode.EXPLICIT, A)
@@ -182,5 +169,5 @@ def test_secret_failure_after_create_reports_the_saved_profile():
     with pytest.raises(LoginProfileSecretError) as info:
         controller.create(LoginProfileSettings(name="New"), password="pw")
     assert info.value.summary.id == A
-    assert "could not be stored" in info.value.message
+    assert str(info.value.error) == "no secret backend"
     assert controller.snapshot is SNAPSHOT  # refreshed even on failure

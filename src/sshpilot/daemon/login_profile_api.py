@@ -22,7 +22,11 @@ from sshpilot.api.models.login_profiles import (
     DetachedConnectionInfo,
     GroupProfileLink,
     LoginProfileAssignmentPreview,
+    LOGIN_PROFILE_ERROR_KEYWORD_DETAIL,
+    LOGIN_PROFILE_ERROR_REASON_DETAIL,
     LoginProfileDetachReason,
+    LoginProfileErrorReason,
+    LoginProfileField,
     LoginProfileFieldChange,
     LoginProfileId,
     LoginProfileLinkMode,
@@ -45,10 +49,6 @@ from sshpilot.core.login_profiles.service import EVENT_DETACHED, LoginProfileSer
 
 logger = logging.getLogger(__name__)
 
-_AUTH_LABELS = {0: "Key", 1: "Password"}
-_KEY_MODE_LABELS = {0: "Automatic", 1: "Specific keys only", 2: "Specific keys and agent"}
-
-
 def map_login_profile_error(error: CoreError) -> SshPilotError:
     code = {
         CoreErrorCode.VALIDATION_ERROR: ErrorCode.VALIDATION_FAILED,
@@ -56,16 +56,27 @@ def map_login_profile_error(error: CoreError) -> SshPilotError:
         CoreErrorCode.CONNECTION_NOT_FOUND: ErrorCode.CONNECTION_NOT_FOUND,
     }.get(error.code, ErrorCode.PERSISTENCE_FAILED)
     message = str(getattr(error, "message", "") or "") or "The login profile operation failed"
-    return SshPilotError(code, message)
+    return SshPilotError(code, message, details=_error_details(error))
 
 
-def _display(field: str, value: Any) -> str:
-    if field == "auth_method":
-        return _AUTH_LABELS.get(value, str(value))
-    if field == "key_select_mode":
-        return _KEY_MODE_LABELS.get(value, str(value))
+def _error_details(error: CoreError) -> dict:
+    """The stable reason (and its parameter) the frontend translates."""
+    core_details = getattr(error, "details", None) or {}
+    try:
+        reason = LoginProfileErrorReason(core_details.get("reason"))
+    except ValueError:
+        return {}
+    details = {LOGIN_PROFILE_ERROR_REASON_DETAIL: reason.value}
+    keyword = core_details.get("keyword")
+    if reason is LoginProfileErrorReason.EXTRA_MANAGED_OPTION and isinstance(keyword, str):
+        details[LOGIN_PROFILE_ERROR_KEYWORD_DETAIL] = keyword
+    return details
+
+
+def _raw_value(value: Any) -> str:
+    """The wire form of a preview value (see ``LoginProfileFieldChange``)."""
     if isinstance(value, bool):
-        return "yes" if value else "no"
+        return "true" if value else "false"
     if isinstance(value, (list, tuple)):
         return "\n".join(str(item) for item in value)
     return "" if value is None else str(value)
@@ -251,10 +262,9 @@ class DaemonLoginProfileApi:
                     profile_name=item.profile_name,
                     changes=tuple(
                         LoginProfileFieldChange(
-                            field=change.field,
-                            label=change.label,
-                            before=_display(change.field, change.before),
-                            after=_display(change.field, change.after),
+                            field=LoginProfileField(change.field),
+                            before=_raw_value(change.before),
+                            after=_raw_value(change.after),
                         )
                         for change in item.changes
                     ),

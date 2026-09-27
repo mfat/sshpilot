@@ -48,6 +48,54 @@ class LoginProfileDetachReason(str, Enum):
     PROFILE_DELETED = "profile_deleted"
 
 
+class LoginProfileField(str, Enum):
+    """A profile-owned Host-block setting named in an assignment preview."""
+
+    USERNAME = "username"
+    AUTH_METHOD = "auth_method"
+    KEY_SELECT_MODE = "key_select_mode"
+    IDENTITY_FILES = "identity_files"
+    CERTIFICATE_FILES = "certificate_files"
+    IDENTITY_AGENT = "identity_agent"
+    ADD_KEYS_TO_AGENT = "add_keys_to_agent"
+    PKCS11_PROVIDER = "pkcs11_provider"
+    SECURITY_KEY_PROVIDER = "security_key_provider"
+    PUBKEY_AUTH_NO = "pubkey_auth_no"
+    FORWARD_AGENT = "forward_agent"
+    FORWARD_AGENT_TARGET = "forward_agent_target"
+    EXTRA = "extra"
+
+
+class LoginProfileErrorReason(str, Enum):
+    """Why a ``login_profiles.*`` request was rejected.
+
+    Carried in the error details under :data:`LOGIN_PROFILE_ERROR_REASON_DETAIL`
+    so frontends translate the reason instead of showing the daemon's English
+    message; the generic ``ErrorCode`` alone cannot tell these apart.
+    """
+
+    PROFILE_NOT_FOUND = "profile_not_found"
+    NAME_EXISTS = "name_exists"
+    NAME_EMPTY = "name_empty"
+    NAME_TOO_LONG = "name_too_long"
+    USERNAME_WHITESPACE = "username_whitespace"
+    EXTRA_FORBIDDEN_BLOCK = "extra_forbidden_block"
+    EXTRA_MANAGED_OPTION = "extra_managed_option"
+    NOT_SSH_CONNECTION = "not_ssh_connection"
+    GROUP_NOT_FOUND = "group_not_found"
+    REPLACEMENT_INVALID = "replacement_invalid"
+    BACKUP_INVALID = "backup_invalid"
+    PROFILES_UNAVAILABLE = "profiles_unavailable"
+    SECRET_STORAGE_UNAVAILABLE = "secret_storage_unavailable"
+    INVALID_VALUE = "invalid_value"
+
+
+# Error-details keys: the ``LoginProfileErrorReason`` behind a rejected
+# request and, for ``extra_managed_option``, the offending directive keyword.
+LOGIN_PROFILE_ERROR_REASON_DETAIL = "login_profile_error"
+LOGIN_PROFILE_ERROR_KEYWORD_DETAIL = "keyword"
+
+
 _AUTH_METHODS = (0, 1)
 _KEY_SELECT_MODES = (0, 1, 2)
 _SETTINGS_TEXT = (
@@ -367,16 +415,20 @@ class PreviewLoginProfileAssignmentRequest:
 
 @dataclass(frozen=True)
 class LoginProfileFieldChange:
-    """One Host-block setting an assignment would change (display strings)."""
+    """One Host-block setting an assignment would change.
 
-    field: str
-    label: str
+    ``before``/``after`` are raw values, not display text: integers in
+    decimal, booleans as ``true``/``false``, lists one item per line, and
+    ``""`` for an unset value. Frontends own the labels and value wording.
+    """
+
+    field: LoginProfileField
     before: str
     after: str
 
     def __post_init__(self) -> None:
-        for name in ("field", "label"):
-            _check_text(getattr(self, name), name)
+        if type(self.field) is not LoginProfileField:
+            raise TypeError("field must be a LoginProfileField")
         for name in ("before", "after"):
             _check_text(getattr(self, name), name, multiline=True)
 

@@ -14,9 +14,13 @@ from sshpilot.api import DaemonClient, ErrorCode, SshPilotError
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.events import EventType
 from sshpilot.api.models.login_profiles import (
+    LOGIN_PROFILE_ERROR_KEYWORD_DETAIL,
+    LOGIN_PROFILE_ERROR_REASON_DETAIL,
     AssignLoginProfileRequest,
     CreateLoginProfileRequest,
     DeleteLoginProfileRequest,
+    LoginProfileErrorReason,
+    LoginProfileField,
     LoginProfileDetachReason,
     LoginProfileLinkMode,
     LoginProfileSecretKind,
@@ -150,8 +154,10 @@ def test_full_flow_over_the_wire(env):
     (preview,) = client.preview_login_profile_assignment(
         PreviewLoginProfileAssignmentRequest(("web1",), LoginProfileLinkMode.EXPLICIT, created.id)
     )
-    labels = {c.field: (c.before, c.after) for c in preview.changes}
-    assert labels["username"] == ("alice", "deploy")
+    changes = {c.field: (c.before, c.after) for c in preview.changes}
+    assert changes[LoginProfileField.USERNAME] == ("alice", "deploy")
+    # Raw values, not English display text: the frontend words them.
+    assert changes[LoginProfileField.KEY_SELECT_MODE] == ("0", "1")
 
     assert client.assign_login_profile(
         AssignLoginProfileRequest(("web1",), LoginProfileLinkMode.EXPLICIT, created.id)
@@ -207,6 +213,17 @@ def test_validation_error_is_mapped(env):
             )
         )
     assert info.value.code is ErrorCode.VALIDATION_FAILED
+    assert info.value.details == {
+        LOGIN_PROFILE_ERROR_REASON_DETAIL: "extra_managed_option",
+        LOGIN_PROFILE_ERROR_KEYWORD_DETAIL: "user",
+    }
+
+    client.create_login_profile(CreateLoginProfileRequest(LoginProfileSettings(name="Ops")))
+    with pytest.raises(SshPilotError) as info:
+        client.create_login_profile(CreateLoginProfileRequest(LoginProfileSettings(name="ops")))
+    assert info.value.details == {
+        LOGIN_PROFILE_ERROR_REASON_DETAIL: LoginProfileErrorReason.NAME_EXISTS.value
+    }
 
 
 def test_drift_detach_publishes_event(env):

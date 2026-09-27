@@ -20,6 +20,7 @@ from ..models.login_profiles import (
     GroupProfileLink,
     LoginProfileAssignmentPreview,
     LoginProfileDetachReason,
+    LoginProfileField,
     LoginProfileFieldChange,
     LoginProfileId,
     LoginProfileLinkMode,
@@ -376,7 +377,7 @@ def login_profile_assignment_previews_to_wire(previews) -> Dict[str, Any]:
                 "connection_id": preview.connection_id,
                 "profile_name": preview.profile_name,
                 "changes": [
-                    {"field": c.field, "label": c.label, "before": c.before, "after": c.after}
+                    {"field": c.field.value, "before": c.before, "after": c.after}
                     for c in preview.changes
                 ],
             }
@@ -394,12 +395,11 @@ def login_profile_assignment_previews_from_wire(value: Any):
         changes = []
         for change in _array(entry["changes"], "changes"):
             c = _strict_fields(
-                change, required={"field", "label", "before", "after"}, context="field change"
+                change, required={"field", "before", "after"}, context="field change"
             )
             changes.append(
                 LoginProfileFieldChange(
-                    field=_text(c["field"], "field"),
-                    label=_text(c["label"], "label"),
+                    field=LoginProfileField(_text(c["field"], "field")),
                     before=_text(c["before"], "before", allow_empty=True),
                     after=_text(c["after"], "after", allow_empty=True),
                 )

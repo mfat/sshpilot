@@ -154,14 +154,30 @@ def test_create_persists_without_secrets(env, tmp_path):
     state = read_login_profiles(tmp_path / "login_profiles.json")
     assert state.get(profile.id).has_password is True
     assert service.lookup_password(profile.id) == "hunter2"
-    with pytest.raises(CoreError):
+    with pytest.raises(CoreError) as info:
         service.create_profile({"name": "deploy"})  # case-insensitive clash
+    assert info.value.details == {"reason": "name_exists"}
 
 
 def test_unknown_fields_rejected(env):
     _repo, service, *_ = env
     with pytest.raises(CoreError):
         service.create_profile({"name": "x", "password": "nope"})
+
+
+@pytest.mark.parametrize("values, reason", [
+    ({"name": "  "}, "name_empty"),
+    ({"name": "x" * 200}, "name_too_long"),
+    ({"name": "x", "username": "a b"}, "username_whitespace"),
+    ({"name": "x", "extra_ssh_config": "Match all"}, "extra_forbidden_block"),
+    ({"name": "x", "extra_ssh_config": "User root"}, "extra_managed_option"),
+    ({"name": "x", "auth_method": 9}, "invalid_value"),
+])
+def test_rejections_name_a_stable_reason(env, values, reason):
+    _repo, service, *_ = env
+    with pytest.raises(CoreError) as info:
+        service.create_profile(values)
+    assert info.value.details["reason"] == reason
 
 
 # -- explicit assignment -----------------------------------------------------

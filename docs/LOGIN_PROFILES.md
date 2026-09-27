@@ -97,7 +97,8 @@ ConnectionRepository.update_connection   login_profiles.json + secret backend
 
 ### GTK
 
-- **Controller:** `gtk/login_profile_controller.py` is GTK-free. It wraps the client, caches the snapshot, and holds the pure helpers for picker choices, delete plans and preview text.
+- **Controller:** `gtk/login_profile_controller.py` is GTK-free. It wraps the client, caches the snapshot, and holds the pure helpers for picker choices and delete plans.
+- **Display text:** `gtk/login_profile_messages.py` owns every translated string derived from daemon data: preview field labels and values, profile summary lines, and error messages keyed by `LoginProfileErrorReason`. The daemon and core send stable identifiers only.
 - **Dialogs:** `login_profile_dialogs.py` contains the window, editor, delete, assign and group dialogs.
 - **Keys and certificates:** the profile editor uses the connection dialog's own `FileListEditor` and key chooser: daemon-discovered disk keys, agent keys, browse with the Flatpak import confirmation, reordering, and per-key passphrases stored by key path. The shared discovery and chooser logic lives in `key_sources.py` (`KeySourcesMixin`), which both `ConnectionDialog` and the profile editor window inherit.
 - **Connection dialog:** `connection_dialog_login_profile.py` is the picker mixin. The chosen link is applied by `MainWindow._save_connection_via_client`:

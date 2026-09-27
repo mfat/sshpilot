@@ -24,16 +24,21 @@ from sshpilot.key_sources import KeySourcesMixin
 from sshpilot.gtk.login_profile_controller import (
     CHOICE_CUSTOM,
     CHOICE_INHERIT,
+    KeyPassphraseStorageError,
     LoginProfileController,
     LoginProfileSecretError,
     ProfileChoice,
     affected_items,
     current_choice_index,
     default_group_members_to_link,
-    format_preview,
     profile_choices,
-    profile_summary_line,
     settings_from_values,
+)
+from sshpilot.gtk.login_profile_messages import (
+    format_changes_inline,
+    format_login_profile_error,
+    format_preview,
+    profile_summary_line,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,8 +54,7 @@ _ADD_KEYS_LABELS = (_("Default"), _("Yes"), _("No"), _("Ask"), _("Confirm"))
 
 
 def error_text(error: BaseException) -> str:
-    message = getattr(error, "message", None)
-    return str(message or error) or _("The operation failed")
+    return format_login_profile_error(error)
 
 
 def run_async(
@@ -239,7 +243,7 @@ class LoginProfileEditor:
         auth.add(self.key_mode_row)
         self.pubkey_no_row = Adw.SwitchRow(
             title=_("Disable public key authentication"),
-            subtitle=_("PubkeyAuthentication no"),
+            subtitle="PubkeyAuthentication no",
         )
         self.pubkey_no_row.set_active(settings.pubkey_auth_no)
         auth.add(self.pubkey_no_row)
@@ -280,7 +284,7 @@ class LoginProfileEditor:
         page.add(self.cert_editor)
 
         agent = Adw.PreferencesGroup(title=_("Agent and hardware keys"))
-        self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent"))
+        self.identity_agent_row = Adw.EntryRow(title="IdentityAgent")
         self.identity_agent_row.set_text(settings.identity_agent)
         agent.add(self.identity_agent_row)
         self.add_keys_row = Adw.ComboRow(
@@ -392,6 +396,10 @@ class LoginProfileEditor:
         return text if text else None
 
     def _on_save_clicked(self, *_args) -> None:
+        if not self.name_row.get_text().strip():
+            self._banner.set_title(_("Enter a name for the login profile."))
+            self._banner.set_revealed(True)
+            return
         try:
             settings = settings_from_values(self.values())
         except (TypeError, ValueError) as error:
@@ -435,7 +443,7 @@ def persist_key_passphrases(parent_window, operations) -> None:
     for action, path, value in operations:
         if action == "store":
             if key_manager is None:
-                raise RuntimeError("Key passphrase storage is unavailable")
+                raise KeyPassphraseStorageError("Key passphrase storage is unavailable")
             secret = bytearray(value.encode("utf-8"))
             try:
                 ok = key_manager.store_key_passphrase(path, secret)
@@ -444,12 +452,12 @@ def persist_key_passphrases(parent_window, operations) -> None:
                 secret.clear()
         else:
             if client is None:
-                raise RuntimeError("Key passphrase storage is unavailable")
+                raise KeyPassphraseStorageError("Key passphrase storage is unavailable")
             from .api.models.connections import DeleteKeyPassphraseRequest
 
             ok = client.delete_key_passphrase(DeleteKeyPassphraseRequest(key_path=path))
         if not ok:
-            raise RuntimeError("The key passphrase could not be stored")
+            raise KeyPassphraseStorageError("The key passphrase could not be stored")
 
 
 def open_profile_editor(
@@ -702,13 +710,7 @@ def show_group_profile_dialog(
                 link = snapshot.link_for(preview.connection_id)
                 if link is not None and link.mode is LoginProfileLinkMode.EXPLICIT:
                     continue  # keeps its own profile; the note says which
-                entry[0].set_subtitle(
-                    "; ".join(
-                        f"{c.label}: {c.before.replace(chr(10), ', ') or '—'} → "
-                        f"{c.after.replace(chr(10), ', ') or '—'}"
-                        for c in preview.changes
-                    )
-                )
+                entry[0].set_subtitle(format_changes_inline(preview.changes))
 
         run_async(
             lambda: controller.preview(member_ids, LoginProfileLinkMode.EXPLICIT, profile.id),

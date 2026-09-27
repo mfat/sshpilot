@@ -13,6 +13,7 @@ from sshpilot.api.models.login_profiles import (
     GroupProfileLink,
     LoginProfileAssignmentPreview,
     LoginProfileDetachReason,
+    LoginProfileField,
     LoginProfileFieldChange,
     LoginProfileLinkMode,
     LoginProfileReassignment,
@@ -114,12 +115,30 @@ def test_request_roundtrips(value, to_wire, from_wire):
 def test_previews_roundtrip():
     previews = (
         LoginProfileAssignmentPreview(
-            "web1", "Deploy", (LoginProfileFieldChange("username", "User", "alice", "deploy"),)
+            "web1", "Deploy", (
+                LoginProfileFieldChange(LoginProfileField.USERNAME, "alice", "deploy"),
+                LoginProfileFieldChange(LoginProfileField.FORWARD_AGENT, "false", "true"),
+            )
         ),
     )
-    assert codec.login_profile_assignment_previews_from_wire(
-        codec.login_profile_assignment_previews_to_wire(previews)
-    ) == previews
+    wire = codec.login_profile_assignment_previews_to_wire(previews)
+    assert wire["previews"][0]["changes"][0] == {
+        "field": "username", "before": "alice", "after": "deploy",
+    }
+    assert codec.login_profile_assignment_previews_from_wire(wire) == previews
+
+
+def test_previews_reject_display_labels_and_unknown_fields():
+    change = {"field": "username", "before": "", "after": "deploy"}
+    entry = {"connection_id": "web1", "profile_name": "Deploy", "changes": [change]}
+    with pytest.raises(ValueError):
+        codec.login_profile_assignment_previews_from_wire(
+            {"previews": [{**entry, "changes": [{**change, "label": "User"}]}]}
+        )
+    with pytest.raises(ValueError):
+        codec.login_profile_assignment_previews_from_wire(
+            {"previews": [{**entry, "changes": [{**change, "field": "nickname"}]}]}
+        )
 
 
 def test_strict_decoding_rejects_unknown_and_missing_fields():

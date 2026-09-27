@@ -34,6 +34,7 @@ src/sshpilot/forwarding_only_ui.py
 src/sshpilot/gtk/asbru_import_messages.py
 src/sshpilot/gtk/host_info_failure_messages.py
 src/sshpilot/gtk/identity_failure_messages.py
+src/sshpilot/gtk/login_profile_messages.py
 src/sshpilot/gtk/plugin_session_failure_messages.py
 src/sshpilot/gtk/pre_command_messages.py
 src/sshpilot/gtk/scp_failure_messages.py

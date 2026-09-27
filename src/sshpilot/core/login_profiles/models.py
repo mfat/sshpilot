@@ -81,6 +81,33 @@ PROFILE_PASSWORD_ACCOUNT = "login"
 PROFILE_SUDO_ACCOUNT = "sudo"
 
 
+# Stable reasons for rejected profile values and requests (error details
+# ``reason``); the daemon forwards them as ``LoginProfileErrorReason``.
+REASON_PROFILE_NOT_FOUND = "profile_not_found"
+REASON_NAME_EXISTS = "name_exists"
+REASON_NAME_EMPTY = "name_empty"
+REASON_NAME_TOO_LONG = "name_too_long"
+REASON_USERNAME_WHITESPACE = "username_whitespace"
+REASON_EXTRA_FORBIDDEN_BLOCK = "extra_forbidden_block"
+REASON_EXTRA_MANAGED_OPTION = "extra_managed_option"
+REASON_NOT_SSH_CONNECTION = "not_ssh_connection"
+REASON_GROUP_NOT_FOUND = "group_not_found"
+REASON_REPLACEMENT_INVALID = "replacement_invalid"
+REASON_BACKUP_INVALID = "backup_invalid"
+REASON_PROFILES_UNAVAILABLE = "profiles_unavailable"
+REASON_SECRET_STORAGE_UNAVAILABLE = "secret_storage_unavailable"
+REASON_INVALID_VALUE = "invalid_value"
+
+
+class LoginProfileValueError(ValueError):
+    """A rejected profile value with a stable ``reason`` and its parameters."""
+
+    def __init__(self, message: str, reason: str, **details: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.details = dict(details)
+
+
 def _clean_text(value: Any, name: str, *, single_line: bool = True) -> str:
     if value is None:
         return ""
@@ -123,10 +150,15 @@ def _clean_extra(value: Any) -> str:
     for line in lines:
         keyword = _extra_keyword(line)
         if keyword in ("host", "match", "include"):
-            raise ValueError("extra_ssh_config must not contain Host, Match or Include lines")
+            raise LoginProfileValueError(
+                "extra_ssh_config must not contain Host, Match or Include lines",
+                REASON_EXTRA_FORBIDDEN_BLOCK,
+            )
         if keyword in MANAGED_HOST_OPTIONS:
-            raise ValueError(
-                f"{keyword} has a dedicated field and cannot be set in extra_ssh_config"
+            raise LoginProfileValueError(
+                f"{keyword} has a dedicated field and cannot be set in extra_ssh_config",
+                REASON_EXTRA_MANAGED_OPTION,
+                keyword=keyword,
             )
     return "\n".join(line for line in lines if line and not line.startswith("#"))
 
@@ -159,13 +191,19 @@ class LoginProfile:
             raise ValueError("login profile id is invalid")
         name = _clean_text(self.name, "name")
         if not name:
-            raise ValueError("login profile name must not be empty")
+            raise LoginProfileValueError(
+                "login profile name must not be empty", REASON_NAME_EMPTY
+            )
         if len(name) > _MAX_NAME:
-            raise ValueError("login profile name is too long")
+            raise LoginProfileValueError(
+                "login profile name is too long", REASON_NAME_TOO_LONG
+            )
         object.__setattr__(self, "name", name)
         username = _clean_text(self.username, "username")
         if any(ch.isspace() for ch in username):
-            raise ValueError("username must not contain whitespace")
+            raise LoginProfileValueError(
+                "username must not contain whitespace", REASON_USERNAME_WHITESPACE
+            )
         object.__setattr__(self, "username", username)
         if self.auth_method not in (AUTH_KEY, AUTH_PASSWORD):
             raise ValueError("auth_method must be 0 (key) or 1 (password)")
@@ -387,28 +425,28 @@ def auth_fingerprint(data: Mapping[str, Any], owned_keywords: Iterable[str] = ()
     return hashlib.sha256(encoded).hexdigest()[:32]
 
 
-# Human-readable labels for the assignment preview diff.
-DIFF_LABELS: Tuple[Tuple[str, str], ...] = (
-    ("username", "User"),
-    ("auth_method", "Authentication"),
-    ("key_select_mode", "Key selection"),
-    ("identity_files", "IdentityFile"),
-    ("certificate_files", "CertificateFile"),
-    ("identity_agent", "IdentityAgent"),
-    ("add_keys_to_agent", "AddKeysToAgent"),
-    ("pkcs11_provider", "PKCS11Provider"),
-    ("security_key_provider", "SecurityKeyProvider"),
-    ("pubkey_auth_no", "PubkeyAuthentication no"),
-    ("forward_agent", "ForwardAgent"),
-    ("forward_agent_target", "ForwardAgent target"),
-    ("extra", "Extra directives"),
+# Profile-owned fields compared by the assignment preview diff, in display
+# order. Frontends own the labels.
+DIFF_FIELDS: Tuple[str, ...] = (
+    "username",
+    "auth_method",
+    "key_select_mode",
+    "identity_files",
+    "certificate_files",
+    "identity_agent",
+    "add_keys_to_agent",
+    "pkcs11_provider",
+    "security_key_provider",
+    "pubkey_auth_no",
+    "forward_agent",
+    "forward_agent_target",
+    "extra",
 )
 
 
 @dataclass(frozen=True)
 class FieldChange:
     field: str
-    label: str
     before: Any
     after: Any
 
@@ -417,8 +455,8 @@ def diff_projections(
     before: Mapping[str, Any], after: Mapping[str, Any]
 ) -> Tuple[FieldChange, ...]:
     return tuple(
-        FieldChange(key, label, before.get(key), after.get(key))
-        for key, label in DIFF_LABELS
+        FieldChange(key, before.get(key), after.get(key))
+        for key in DIFF_FIELDS
         if before.get(key) != after.get(key)
     )
 

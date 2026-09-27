@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- Login profiles are localized in the frontend. `LoginProfileFieldChange`
+  drops `label` and names its setting with the new `LoginProfileField`;
+  `before`/`after` are raw values instead of English display text. Rejected
+  `login_profiles.*` requests name a `LoginProfileErrorReason` in the error
+  details under `login_profile_error` (plus `keyword` for
+  `extra_managed_option`). API implementation version is 0.71; Protocol
+  remains 1.0.
 - Login profiles: reusable authentication bundles linked to SSH connections
   explicitly or through groups, resolved by the daemon into each linked Host
   block. New capabilities `login_profiles.read` / `login_profiles.write`,

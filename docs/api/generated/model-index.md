@@ -3308,15 +3308,18 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** One Host-block setting an assignment would change (display strings).
+**Purpose:** One Host-block setting an assignment would change.
+
+``before``/``after`` are raw values, not display text: integers in
+decimal, booleans as ``true``/``false``, lists one item per line, and
+``""`` for an unset value. Frontends own the labels and value wording.
 
 **Related methods:** None
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
-| `field` | `str` | Yes | — | No |
-| `label` | `str` | Yes | — | No |
+| `field` | `LoginProfileField` | Yes | — | No |
 | `before` | `str` | Yes | — | No |
 | `after` | `str` | Yes | — | No |
 
@@ -3326,8 +3329,7 @@ Synthetic representation:
 {
   "after": {},
   "before": {},
-  "field": {},
-  "label": {}
+  "field": {}
 }
 ```
 

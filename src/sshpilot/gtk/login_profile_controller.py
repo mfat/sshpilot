@@ -2,8 +2,8 @@
 
 Wraps the daemon-backed ``SshPilotClient`` ``login_profiles.*`` methods with
 a cached :class:`LoginProfileSnapshot`, and holds the pure helpers the dialogs
-use (picker choices, group-profile resolution, delete plans, preview text) so
-they are testable without a display.
+use (picker choices, group-profile resolution, delete plans) so they are
+testable without a display. Display text lives in ``login_profile_messages``.
 
 Threading: client RPCs block; call them from a worker (the window's client
 bridge or a thread) and deliver results on the GTK thread. The lock guards
@@ -16,6 +16,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.login_profiles import (
     AssignLoginProfileRequest,
     CreateLoginProfileRequest,
@@ -81,11 +82,15 @@ def profile_choices(
     snapshot: LoginProfileSnapshot,
     *,
     inherited: Optional[LoginProfileSummary] = None,
-    custom_label: str = "Don't use a profile",
-    inherit_label: str = "Inherit from group ({name})",
+    custom_label: str,
+    inherit_label: str = "",
     include_inherit: bool = True,
 ) -> Tuple[ProfileChoice, ...]:
-    """Picker entries: custom, inherit (when a group supplies a profile), profiles."""
+    """Picker entries: custom, inherit (when a group supplies a profile), profiles.
+
+    The caller supplies the translated labels; ``inherit_label`` may use
+    ``{name}`` for the inherited profile.
+    """
     choices: List[ProfileChoice] = [ProfileChoice(CHOICE_CUSTOM, custom_label)]
     if include_inherit and inherited is not None:
         choices.append(
@@ -113,36 +118,6 @@ def current_choice_index(
         if link.mode is LoginProfileLinkMode.INHERIT and choice.kind == CHOICE_INHERIT:
             return index
     return 0
-
-
-def profile_summary_line(profile: LoginProfileSummary) -> str:
-    """Short one-line description for rows and subtitles."""
-    settings = profile.settings
-    parts = []
-    if settings.username:
-        parts.append(settings.username)
-    if settings.auth_method == 1:
-        parts.append("password")
-    elif settings.identity_files:
-        names = [path.rsplit("/", 1)[-1] for path in settings.identity_files]
-        parts.append(", ".join(names))
-    else:
-        parts.append("automatic keys")
-    return " · ".join(parts)
-
-
-def format_preview(previews: Iterable[LoginProfileAssignmentPreview]) -> str:
-    """Plain-text diff for a confirmation dialog (empty when nothing changes)."""
-    lines: List[str] = []
-    for preview in previews:
-        if not preview.changes:
-            continue
-        lines.append(f"{preview.connection_id}:")
-        for change in preview.changes:
-            before = change.before.replace("\n", ", ") or "—"
-            after = change.after.replace("\n", ", ") or "—"
-            lines.append(f"  {change.label}: {before} → {after}")
-    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -205,15 +180,19 @@ def default_group_members_to_link(
 
 
 class LoginProfileSecretError(RuntimeError):
-    """The profile was saved but a secret could not be stored or cleared."""
+    """The profile was saved but a secret could not be stored or cleared.
+
+    ``error`` is the underlying failure; ``login_profile_messages`` words it.
+    """
 
     def __init__(self, summary: LoginProfileSummary, error: BaseException) -> None:
-        super().__init__(getattr(error, "message", None) or str(error))
+        super().__init__(str(error))
         self.summary = summary
-        self.message = (
-            "The profile was saved, but a password or passphrase could not be stored: "
-            + (getattr(error, "message", None) or str(error))
-        )
+        self.error = error
+
+
+class KeyPassphraseStorageError(RuntimeError):
+    """A key passphrase from the profile editor could not be stored or deleted."""
 
 
 class LoginProfileController:
@@ -229,7 +208,9 @@ class LoginProfileController:
     def _client(self):
         client = self._client_getter()
         if client is None:
-            raise RuntimeError("the SSH Pilot daemon is not connected")
+            raise SshPilotError(
+                ErrorCode.DAEMON_UNAVAILABLE, "the SSH Pilot daemon is not connected"
+            )
         return client
 
     @property

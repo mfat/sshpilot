@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.70",
+  "api_implementation_version": "0.71",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1573,6 +1573,37 @@
       "drift",
       "profile_missing",
       "profile_deleted"
+    ],
+    "LoginProfileErrorReason": [
+      "profile_not_found",
+      "name_exists",
+      "name_empty",
+      "name_too_long",
+      "username_whitespace",
+      "extra_forbidden_block",
+      "extra_managed_option",
+      "not_ssh_connection",
+      "group_not_found",
+      "replacement_invalid",
+      "backup_invalid",
+      "profiles_unavailable",
+      "secret_storage_unavailable",
+      "invalid_value"
+    ],
+    "LoginProfileField": [
+      "username",
+      "auth_method",
+      "key_select_mode",
+      "identity_files",
+      "certificate_files",
+      "identity_agent",
+      "add_keys_to_agent",
+      "pkcs11_provider",
+      "security_key_provider",
+      "pubkey_auth_no",
+      "forward_agent",
+      "forward_agent_target",
+      "extra"
     ],
     "LoginProfileLinkMode": [
       "explicit",
@@ -6163,14 +6194,7 @@
           "name": "field",
           "required": true,
           "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "label",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
+          "type": "LoginProfileField"
         },
         {
           "default": null,

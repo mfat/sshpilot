@@ -2127,7 +2127,11 @@ link = snapshot.link_for("web1")
 - **Parameters / return:** `CreateLoginProfileRequest(settings)`; returns the
   new `LoginProfileSummary`.
 - **Errors / events:** `VALIDATION_FAILED` for invalid settings (for example a
-  managed directive in `extra_ssh_config`) or a duplicate name. Publishes
+  managed directive in `extra_ssh_config`) or a duplicate name. Every
+  `login_profiles.*` rejection names its `LoginProfileErrorReason` in the
+  error details under `login_profile_error` (and the directive under
+  `keyword` for `extra_managed_option`), so frontends translate the reason
+  instead of showing the daemon's English message. Publishes
   `login_profiles.changed`.
 
 <!-- api-method: update_login_profile -->
@@ -2165,8 +2169,11 @@ link = snapshot.link_for("web1")
 - **Status / introduced:** Implemented through `DaemonClient` when the login
   profile service is installed / Protocol v1, API 0.70
 - **Capability / purpose:** `login_profiles.read`; the Host-block settings
-  linking each connection would change, as display strings, so a frontend can
-  confirm before replacing a configured connection's values.
+  linking each connection would change, so a frontend can confirm before
+  replacing a configured connection's values. Each `LoginProfileFieldChange`
+  names a `LoginProfileField` and carries raw `before`/`after` values
+  (integers in decimal, booleans as `true`/`false`, lists one item per line,
+  `""` when unset); the frontend owns labels and value wording.
 - **Parameters / return:** `PreviewLoginProfileAssignmentRequest(connection_ids,
   mode, profile_id)`; returns a tuple of `LoginProfileAssignmentPreview`.
 - **Errors / events:** `CONNECTION_NOT_FOUND`; `VALIDATION_FAILED` for

@@ -31,6 +31,15 @@ from .models import (
     LINK_EXPLICIT,
     LINK_INHERIT,
     LINK_METADATA_KEY,
+    REASON_BACKUP_INVALID,
+    REASON_GROUP_NOT_FOUND,
+    REASON_INVALID_VALUE,
+    REASON_NAME_EXISTS,
+    REASON_NOT_SSH_CONNECTION,
+    REASON_PROFILE_NOT_FOUND,
+    REASON_PROFILES_UNAVAILABLE,
+    REASON_REPLACEMENT_INVALID,
+    REASON_SECRET_STORAGE_UNAVAILABLE,
     PROFILE_PASSWORD_ACCOUNT,
     PROFILE_SUDO_ACCOUNT,
     EDITABLE_FIELDS,
@@ -70,11 +79,21 @@ EVENT_CHANGED = "changed"
 
 
 def _not_found() -> CoreError:
-    return CoreError(ErrorCode.VALIDATION_ERROR, "The login profile does not exist")
+    return _validation("The login profile does not exist", REASON_PROFILE_NOT_FOUND)
 
 
-def _validation(message: str) -> CoreError:
-    return CoreError(ErrorCode.VALIDATION_ERROR, message)
+def _validation(message: str, reason: str = REASON_INVALID_VALUE, **details: str) -> CoreError:
+    """A rejection whose ``details["reason"]`` frontends translate."""
+    return CoreError(ErrorCode.VALIDATION_ERROR, message, {"reason": reason, **details})
+
+
+def _invalid_value(exc: Exception) -> CoreError:
+    """A rejection for a profile value the model refused."""
+    return _validation(
+        str(exc),
+        getattr(exc, "reason", REASON_INVALID_VALUE),
+        **getattr(exc, "details", {}),
+    )
 
 
 class ProfileSecretStore(Protocol):
@@ -169,6 +188,7 @@ class LoginProfileService:
             raise CoreError(
                 ErrorCode.CONNECTION_STATE_IO_ERROR,
                 "Login profiles are unavailable because their file could not be read",
+                {"reason": REASON_PROFILES_UNAVAILABLE},
             )
 
     def _save(self, state: LoginProfileState) -> None:
@@ -189,6 +209,7 @@ class LoginProfileService:
             raise CoreError(
                 ErrorCode.CONNECTION_STATE_IO_ERROR,
                 "No secret storage is configured for login profiles",
+                {"reason": REASON_SECRET_STORAGE_UNAVAILABLE},
             )
         return self._secret_store
 
@@ -213,7 +234,9 @@ class LoginProfileService:
         if record is None:
             raise CoreError(ErrorCode.CONNECTION_NOT_FOUND, "The connection does not exist")
         if (record.protocol or "ssh") != "ssh":
-            raise _validation("Login profiles apply to SSH connections only")
+            raise _validation(
+                "Login profiles apply to SSH connections only", REASON_NOT_SSH_CONNECTION
+            )
         return record
 
     # ------------------------------------------------------------------
@@ -313,7 +336,9 @@ class LoginProfileService:
         folded = str(name or "").strip().casefold()
         for profile in self._state.profiles:
             if profile.id != exclude and profile.name.casefold() == folded:
-                raise _validation("A login profile with this name already exists")
+                raise _validation(
+                    "A login profile with this name already exists", REASON_NAME_EXISTS
+                )
 
     @staticmethod
     def _settings(values: Mapping[str, Any]) -> Dict[str, Any]:
@@ -329,7 +354,7 @@ class LoginProfileService:
             try:
                 profile = LoginProfile(id=new_profile_id(), **settings)
             except (TypeError, ValueError) as exc:
-                raise _validation(str(exc)) from exc
+                raise _invalid_value(exc) from exc
             state = LoginProfileState(
                 profiles=sorted_profiles(self._state.profiles + (profile,)),
                 group_links=self._state.group_links,
@@ -361,7 +386,7 @@ class LoginProfileService:
             try:
                 updated = current.with_changes(revision=current.revision + 1, **settings)
             except (TypeError, ValueError) as exc:
-                raise _validation(str(exc)) from exc
+                raise _invalid_value(exc) from exc
             self._replace_profile(updated)
             self._reconcile_locked()
             self._emit(EVENT_CHANGED, {"profile_id": profile_id})
@@ -403,7 +428,9 @@ class LoginProfileService:
                 if target is not None and (
                     target == profile_id or self._state.get(target) is None
                 ):
-                    raise _validation("Replacement login profile is invalid")
+                    raise _validation(
+                        "Replacement login profile is invalid", REASON_REPLACEMENT_INVALID
+                    )
 
             usage = self.usage(profile_id)
             detached: List[DetachedConnection] = []
@@ -624,7 +651,7 @@ class LoginProfileService:
         with self._operation():
             snapshot = self._snapshot()
             if group_id not in {g.id for g in snapshot.groups}:
-                raise _validation("The group does not exist")
+                raise _validation("The group does not exist", REASON_GROUP_NOT_FOUND)
             if profile_id is not None and self._state.get(profile_id) is None:
                 raise _not_found()
             scope = self._scope()
@@ -753,7 +780,9 @@ class LoginProfileService:
             try:
                 incoming = LoginProfileState.from_dict(section)
             except (TypeError, ValueError) as exc:
-                raise _validation("The login profile backup is invalid") from exc
+                raise _validation(
+                    "The login profile backup is invalid", REASON_BACKUP_INVALID
+                ) from exc
             if mode == "replace":
                 self._save(incoming)
                 self._reconcile_locked()
