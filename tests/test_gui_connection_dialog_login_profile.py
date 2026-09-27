@@ -146,23 +146,6 @@ def test_both_buttons_use_the_bundled_profile_icon(gtk):
         assert gicon.get_file().get_uri().endswith("/actions/system-users-symbolic.svg")
 
 
-def test_status_card_shows_only_while_linked(gtk):
-    dialog = _dialog(gtk)
-    dialog._on_login_profile_snapshot(SNAPSHOT)
-    assert not dialog.login_profile_info_group.get_visible()
-    assert not hasattr(dialog, "login_profile_save_as_button")
-
-    _pick(dialog, "Deploy")
-    assert dialog.login_profile_info_group.get_visible()
-    assert dialog.login_profile_info_row.get_title() == (
-        "Authentication is managed by a login profile"
-    )
-    assert dialog.login_profile_manage_button.get_visible()
-
-    _pick(dialog, "Don't use a profile")
-    assert not dialog.login_profile_info_group.get_visible()
-
-
 def test_manage_opens_the_profiles_window_over_the_dialog_and_reloads_on_close(gtk):
     Adw, Gtk = gtk
     dialog = _dialog(gtk)

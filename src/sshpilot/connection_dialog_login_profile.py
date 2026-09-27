@@ -2,13 +2,11 @@
 
 While a profile is linked (explicitly or inherited from the connection's
 group) the profile decides the authentication settings: the auth rows are
-locked, the Username row is dimmed showing the profile's username, and the
-dialog shows what the profile provides. The Username row also carries a
-picker button so a profile can be chosen from the Connection page. The
-chosen link is stored as ``self._login_profile_change`` — ``(mode, profile_id)``
+locked and the Username row is dimmed showing the profile's username. The
+Username row also carries a picker button so a profile can be chosen from
+the Connection page. The chosen link is stored as ``self._login_profile_change`` — ``(mode, profile_id)``
 or ``None`` when unchanged — and the window applies it around the config save
-(see ``MainWindow._save_connection_via_client``). An existing connection also
-gets an inline preview of the Host-block settings the new link replaces.
+(see ``MainWindow._save_connection_via_client``).
 """
 
 from __future__ import annotations
@@ -41,20 +39,8 @@ class ConnectionDialogLoginProfileMixin:
 
     # -- building --------------------------------------------------------------
 
-    def _build_login_profile_group(self) -> Gtk.Box:
-        """The status card (while linked) above the Profile picker row."""
-        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.login_profile_group = section
-
-        self.login_profile_info_row = Adw.ActionRow(
-            title=_("Authentication is managed by a login profile")
-        )
-        self.login_profile_info_row.set_subtitle_lines(0)
-        self.login_profile_info_group = Adw.PreferencesGroup()
-        self.login_profile_info_group.add(self.login_profile_info_row)
-        self.login_profile_info_group.set_visible(False)
-        section.append(self.login_profile_info_group)
-
+    def _build_login_profile_group(self) -> Adw.PreferencesGroup:
+        """The Profile picker row."""
         self.login_profile_row = Adw.ComboRow(title=_("Profile"))
         self.login_profile_row.set_model(Gtk.StringList())
         self.login_profile_row.connect("notify::selected", self._on_login_profile_selected)
@@ -66,13 +52,12 @@ class ConnectionDialogLoginProfileMixin:
         self.login_profile_manage_button.add_css_class("accent")
         self.login_profile_manage_button.set_valign(Gtk.Align.CENTER)
         self.login_profile_row.add_suffix(self.login_profile_manage_button)
-        picker_group = Adw.PreferencesGroup()
-        picker_group.add(self.login_profile_row)
-        section.append(picker_group)
-
+        group = Adw.PreferencesGroup()
+        group.add(self.login_profile_row)
+        self.login_profile_group = group
         # Hidden until the daemon answers (and entirely without the capability).
-        section.set_visible(False)
-        return section
+        group.set_visible(False)
+        return group
 
     def _add_username_profile_button(self, row) -> None:
         """Suffix on the Username row that picks a login profile."""
@@ -302,51 +287,6 @@ class ConnectionDialogLoginProfileMixin:
             except Exception:
                 pass
         self._sync_username_row(profile)
-        info = self.login_profile_info_row
-        if not locked:
-            self.login_profile_info_group.set_visible(False)
-            return
-        from .gtk.login_profile_controller import profile_summary_line
-
-        info.set_subtitle(profile_summary_line(profile))
-        self.login_profile_info_group.set_visible(True)
-        self._refresh_login_profile_preview()
-
-    def _refresh_login_profile_preview(self) -> None:
-        """For an existing connection, show what the new link would replace."""
-        connection_id = self._login_profile_connection_id()
-        choice = self._current_login_profile_choice()
-        if (
-            connection_id is None
-            or choice is None
-            or self.login_profile_row.get_selected() == self._login_profile_initial_index
-        ):
-            return
-        controller = self._login_profile_controller()
-        if controller is None:
-            return
-        from .gtk.login_profile_controller import format_preview
-        from .login_profile_dialogs import run_async
-
-        selected = self.login_profile_row.get_selected()
-
-        def _show(previews):
-            if self.login_profile_row.get_selected() != selected:
-                return
-            text = format_preview(previews)
-            base = self.login_profile_info_row.get_subtitle() or ""
-            if text:
-                lines = text.splitlines()[1:]  # drop the "<connection>:" header
-                self.login_profile_info_row.set_subtitle(
-                    base + "\n" + _("On save, replaces:") + "\n"
-                    + "\n".join(line.strip() for line in lines)
-                )
-
-        run_async(
-            lambda: controller.preview([connection_id], choice.mode, choice.profile_id),
-            _show,
-            lambda error: logger.debug("Login profile preview failed: %s", error),
-        )
 
     def collect_login_profile_change(self):
         """``(mode, profile_id)`` when the link changed, else ``None``."""
