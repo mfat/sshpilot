@@ -1,3 +1,4 @@
+import logging
 import threading
 import sys
 from datetime import datetime, timedelta, timezone
@@ -1011,3 +1012,56 @@ def test_auth_gate_failure_on_a_plugin_session_names_no_authentication(runtime_p
 
     assert opened.failure is not None
     assert opened.failure.code is SessionFailureCode.PROCESS_FAILED
+
+
+def _exit_with_output(runtime, core, runner, protocol, output, exit_info):
+    core._repository.get_record("demo").protocol = protocol
+    session = runtime.open_session(
+        OpenSessionRequest(connection_id=core.list_connections()[0].id),
+        client_id=ClientId("client:a"),
+    )
+    runtime._terminal_output(session.id, output)
+    runner.handles[-1].exit(exit_info)
+    return session
+
+
+def test_failed_plugin_client_logs_its_output_tail(runtime_parts, caplog):
+    runtime, core, runner = runtime_parts
+    caplog.set_level(logging.DEBUG, logger="sshpilot.daemon.session_runtime")
+
+    _exit_with_output(
+        runtime, core, runner, "rdp",
+        b"[INFO] connecting\r\n\x1b[31m[ERROR] ERRINFO_RPC_INITIATED_DISCONNECT\x1b[0m\r\n",
+        SessionExitInfo(exit_code=131, reason="process_exit"),
+    )
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert [r.getMessage() for r in warnings] == [
+        "rdp client exited status=131 output_lines=2"
+    ]
+    tail = [r.getMessage() for r in caplog.records if "output tail" in r.getMessage()]
+    assert tail == [
+        "rdp client output tail:\n"
+        "  | [INFO] connecting\n"
+        "  | [ERROR] ERRINFO_RPC_INITIATED_DISCONNECT"
+    ]
+
+
+@pytest.mark.parametrize(
+    "protocol, exit_info",
+    [
+        ("rdp", SessionExitInfo(exit_code=0, reason="process_exit")),
+        ("rdp", SessionExitInfo(signal=9, reason="killed")),
+        ("ssh", SessionExitInfo(exit_code=255, reason="process_exit")),
+    ],
+)
+def test_plugin_output_tail_is_not_logged_for_clean_exits_or_ssh(
+    runtime_parts, caplog, protocol, exit_info
+):
+    runtime, core, runner = runtime_parts
+    caplog.set_level(logging.DEBUG, logger="sshpilot.daemon.session_runtime")
+
+    _exit_with_output(runtime, core, runner, protocol, b"some output\r\n", exit_info)
+
+    assert not [r for r in caplog.records if "client exited" in r.getMessage()]
+    assert not [r for r in caplog.records if "output tail" in r.getMessage()]
