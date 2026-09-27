@@ -108,7 +108,7 @@ def test_an_inherited_username_is_not_adopted_or_dimmed_twice(gtk):
 
     _pick(dialog, "Deploy")
     assert not _dimmed(dialog.username_row)  # the row itself is already dim
-    _pick(dialog, "Custom (no profile)")
+    _pick(dialog, "Don't use a profile")
 
     assert dialog.username_row.get_text() == "alice"
     assert adopted == []
@@ -121,7 +121,7 @@ def test_switching_profiles_then_back_restores_the_own_username(gtk):
     _pick(dialog, "Deploy")
     _pick(dialog, "Anon")
     assert dialog.username_row.get_text() == ""
-    _pick(dialog, "Custom (no profile)")
+    _pick(dialog, "Don't use a profile")
 
     assert dialog.username_row.get_text() == "alice"
     assert dialog.username_row.get_editable()
@@ -131,19 +131,32 @@ def test_switching_profiles_then_back_restores_the_own_username(gtk):
     assert dialog.collect_login_profile_change() is None
 
 
-def test_both_buttons_use_the_bundled_profile_icon(gtk):
+def test_username_button_uses_the_bundled_profile_icon(gtk):
     from gi.repository import Gio, Gtk
 
     dialog = _dialog(gtk)
-    images = [
-        dialog._username_profile_button.get_child(),
-        dialog.login_profile_manage_button.get_child().get_first_child(),
-    ]
-    for image in images:
-        assert isinstance(image, Gtk.Image)
-        gicon = image.get_gicon()
-        assert isinstance(gicon, Gio.FileIcon)
-        assert gicon.get_file().get_uri().endswith("/actions/system-users-symbolic.svg")
+    image = dialog._username_profile_button.get_child()
+    assert isinstance(image, Gtk.Image)
+    gicon = image.get_gicon()
+    assert isinstance(gicon, Gio.FileIcon)
+    assert gicon.get_file().get_uri().endswith("/actions/system-users-symbolic.svg")
+
+
+def test_status_card_shows_only_while_linked(gtk):
+    dialog = _dialog(gtk)
+    dialog._on_login_profile_snapshot(SNAPSHOT)
+    assert not dialog.login_profile_info_group.get_visible()
+    assert not hasattr(dialog, "login_profile_save_as_button")
+
+    _pick(dialog, "Deploy")
+    assert dialog.login_profile_info_group.get_visible()
+    assert dialog.login_profile_info_row.get_title() == (
+        "Authentication is managed by a login profile"
+    )
+    assert dialog.login_profile_manage_button.get_visible()
+
+    _pick(dialog, "Don't use a profile")
+    assert not dialog.login_profile_info_group.get_visible()
 
 
 def test_manage_opens_the_profiles_window_over_the_dialog_and_reloads_on_close(gtk):
@@ -161,8 +174,7 @@ def test_manage_opens_the_profiles_window_over_the_dialog_and_reloads_on_close(g
     dialog.parent_window = Parent()
     reloads = []
     dialog.start_login_profile_load = lambda: reloads.append(1)
-    label = dialog.login_profile_manage_button.get_child().get_last_child()
-    assert label.get_label() == "Manage login profiles"
+    assert dialog.login_profile_manage_button.get_label() == "Manage Profiles…"
 
     dialog.login_profile_manage_button.emit("clicked")
     dialog.login_profile_manage_button.emit("clicked")  # already open

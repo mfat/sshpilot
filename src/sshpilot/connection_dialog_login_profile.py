@@ -41,45 +41,36 @@ class ConnectionDialogLoginProfileMixin:
 
     # -- building --------------------------------------------------------------
 
-    def _build_login_profile_group(self) -> Adw.PreferencesGroup:
-        group = Adw.PreferencesGroup(
-            title=_("Login profile"),
-            description=_("A login profile supplies the username, keys and "
-                          "passwords, shared with other connections."),
+    def _build_login_profile_group(self) -> Gtk.Box:
+        """The status card (while linked) above the Profile picker row."""
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.login_profile_group = section
+
+        self.login_profile_info_row = Adw.ActionRow(
+            title=_("Authentication is managed by a login profile")
         )
-        self.login_profile_group = group
+        self.login_profile_info_row.set_subtitle_lines(0)
+        self.login_profile_info_group = Adw.PreferencesGroup()
+        self.login_profile_info_group.add(self.login_profile_info_row)
+        self.login_profile_info_group.set_visible(False)
+        section.append(self.login_profile_info_group)
+
         self.login_profile_row = Adw.ComboRow(title=_("Profile"))
         self.login_profile_row.set_model(Gtk.StringList())
         self.login_profile_row.connect("notify::selected", self._on_login_profile_selected)
-        group.add(self.login_profile_row)
-
-        self.login_profile_info_row = Adw.ActionRow()
-        self.login_profile_info_row.set_subtitle_lines(0)
-        self.login_profile_info_row.set_visible(False)
-        group.add(self.login_profile_info_row)
-
-        buttons = Gtk.Box(spacing=6)
-        self.login_profile_manage_button = Gtk.Button()
-        manage_content = Gtk.Box(spacing=6)
-        manage_content.append(_profile_icon())
-        manage_content.append(Gtk.Label(label=_("Manage login profiles")))
-        self.login_profile_manage_button.set_child(manage_content)
+        self.login_profile_manage_button = Gtk.Button(label=_("Manage Profiles…"))
         self.login_profile_manage_button.connect("clicked", self._on_login_profile_manage)
-        self.login_profile_save_as_button = Gtk.Button(label=_("Save as Profile…"))
-        self.login_profile_save_as_button.set_tooltip_text(
-            _("Create a login profile from this connection's current settings")
-        )
-        self.login_profile_save_as_button.connect("clicked", self._on_login_profile_save_as)
-        for button in (
-            self.login_profile_save_as_button,
-            self.login_profile_manage_button,
-        ):
-            button.add_css_class("flat")
-            buttons.append(button)
-        group.set_header_suffix(buttons)
+        self.login_profile_manage_button.add_css_class("flat")
+        self.login_profile_manage_button.add_css_class("accent")
+        self.login_profile_manage_button.set_valign(Gtk.Align.CENTER)
+        self.login_profile_row.add_suffix(self.login_profile_manage_button)
+        picker_group = Adw.PreferencesGroup()
+        picker_group.add(self.login_profile_row)
+        section.append(picker_group)
+
         # Hidden until the daemon answers (and entirely without the capability).
-        group.set_visible(False)
-        return group
+        section.set_visible(False)
+        return section
 
     def _add_username_profile_button(self, row) -> None:
         """Suffix on the Username row that picks a login profile."""
@@ -250,7 +241,7 @@ class ConnectionDialogLoginProfileMixin:
         choices = profile_choices(
             snapshot,
             inherited=self._login_profile_inherited,
-            custom_label=_("Custom (no profile)"),
+            custom_label=_("Don't use a profile"),
             inherit_label=_("Inherit from group ({name})"),
         )
         first_load = not self._login_profile_choices
@@ -309,18 +300,14 @@ class ConnectionDialogLoginProfileMixin:
             except Exception:
                 pass
         self._sync_username_row(profile)
-        self.login_profile_save_as_button.set_visible(not locked)
         info = self.login_profile_info_row
         if not locked:
-            info.set_visible(False)
+            self.login_profile_info_group.set_visible(False)
             return
         from .gtk.login_profile_controller import profile_summary_line
 
-        info.set_title(
-            _("Authentication is managed by “{name}”").format(name=profile.name)
-        )
         info.set_subtitle(profile_summary_line(profile))
-        info.set_visible(True)
+        self.login_profile_info_group.set_visible(True)
         self._refresh_login_profile_preview()
 
     def _refresh_login_profile_preview(self) -> None:
@@ -373,12 +360,6 @@ class ConnectionDialogLoginProfileMixin:
 
     # -- profile buttons ----------------------------------------------------------
 
-    def _after_profile_saved(self, summary) -> None:
-        controller = self._login_profile_controller()
-        snapshot = controller.snapshot if controller is not None else None
-        if snapshot is not None:
-            self._on_login_profile_snapshot(snapshot, select_profile_id=summary.id)
-
     def _on_login_profile_manage(self, *_args) -> None:
         """Open the Login Profiles window; refresh the picker when it closes."""
         parent = getattr(self, "parent_window", None)
@@ -394,55 +375,6 @@ class ConnectionDialogLoginProfileMixin:
         self._login_profiles_window = None
         self.start_login_profile_load()
         return False
-
-    def _login_profile_values_from_dialog(self) -> dict:
-        def text(name: str) -> str:
-            row = getattr(self, name, None)
-            try:
-                return row.get_text().strip() if row is not None else ""
-            except Exception:
-                return ""
-
-        def call(name: str, default: Any) -> Any:
-            method = getattr(self, name, None)
-            try:
-                return method() if callable(method) else default
-            except Exception:
-                return default
-
-        forward = call("_selected_forward_agent_fields", {}) or {}
-        nickname = text("nickname_row") or text("hostname_row")
-        return {
-            "name": _("{name} login").format(name=nickname) if nickname else _("New profile"),
-            "username": text("username_row"),
-            "auth_method": call("_selected_auth_method", 0),
-            "key_select_mode": call("_selected_key_mode", 0),
-            "identity_files": list(call("_collect_identity_files", []) or []),
-            "certificate_files": list(call("_collect_certificate_files", []) or []),
-            "identity_agent": call("_selected_identity_agent", "") or "",
-            "add_keys_to_agent": call("_selected_add_keys_to_agent", "") or "",
-            "pkcs11_provider": text("pkcs11_provider_row"),
-            "security_key_provider": text("security_key_provider_row"),
-            "pubkey_auth_no": bool(
-                getattr(getattr(self, "pubkey_auth_row", None), "get_active", lambda: False)()
-            ),
-            "forward_agent": bool(forward.get("forward_agent")),
-            "forward_agent_target": str(forward.get("forward_agent_target") or ""),
-            "extra_ssh_config": "",
-        }
-
-    def _on_login_profile_save_as(self, *_args) -> None:
-        controller = self._login_profile_controller()
-        if controller is None:
-            return
-        from .gtk.login_profile_controller import settings_from_values
-        from .login_profile_dialogs import open_profile_editor
-
-        try:
-            initial = settings_from_values(self._login_profile_values_from_dialog())
-        except (TypeError, ValueError):
-            initial = None
-        open_profile_editor(self, controller, initial=initial, on_saved=self._after_profile_saved)
 
 
 def _profile_icon() -> Gtk.Image:

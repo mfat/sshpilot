@@ -571,7 +571,9 @@ def show_assign_dialog(
             lambda error: show_error_alert(parent, _("Login profiles unavailable"), error),
         )
         return
-    choices = profile_choices(snapshot, include_inherit=False)
+    choices = profile_choices(
+        snapshot, include_inherit=False, custom_label=_("Don't use a profile")
+    )
     # "Inherit from group" is offered unconditionally here: each connection
     # resolves its own primary group's profile.
     choices = choices[:1] + (

@@ -81,7 +81,7 @@ def profile_choices(
     snapshot: LoginProfileSnapshot,
     *,
     inherited: Optional[LoginProfileSummary] = None,
-    custom_label: str = "Custom (no profile)",
+    custom_label: str = "Don't use a profile",
     inherit_label: str = "Inherit from group ({name})",
     include_inherit: bool = True,
 ) -> Tuple[ProfileChoice, ...]:
