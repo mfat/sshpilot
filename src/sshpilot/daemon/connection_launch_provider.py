@@ -753,8 +753,8 @@ class DaemonConnectionLaunchProvider:
         connection = HeadlessConnectionView(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
-                ErrorCode.SFTP_SERVICE_NOT_READY,
-                "The SFTP session could not be prepared",
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "SFTP requires an SSH connection",
                 connection_id=connection_id,
             )
         return self._prepare_ssh_launch(
@@ -790,8 +790,8 @@ class DaemonConnectionLaunchProvider:
         connection = HeadlessConnectionView(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
-                ErrorCode.FORWARD_STARTUP_FAILED,
-                "The forward could not be prepared",
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "Port forwarding requires an SSH connection",
                 connection_id=connection_id,
             )
         if forward_type == "local":
