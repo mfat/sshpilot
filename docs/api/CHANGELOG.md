@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- `SessionFailureCode` gains `PROCESS_EXITED` (`process_exited`, parameter
+  `status`) and `PROCESS_FAILED` (`process_failed`), the protocol-neutral
+  reasons for non-SSH sessions. A telnet refusal or a serial console exiting
+  non-zero no longer reports `ssh_diagnostic`, `ssh_exited` or
+  `auth_incomplete`; SSH sessions are unchanged. API implementation version
+  is 0.74; Protocol remains 1.0.
 - `ConnectionSummary.target_summary` (wire field `target_summary`, sent only
   when non-empty) describes a non-SSH connection's target in one line —
   `web · podman`, `/dev/ttyUSB0 @ 115200` — from its built-in protocol

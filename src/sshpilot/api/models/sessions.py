@@ -97,12 +97,17 @@ class SessionFailureCode(str, Enum):
     ENDED_BEFORE_OUTPUT = "ended_before_output"
     SSH_EXITED = "ssh_exited"
     SSH_DIAGNOSTIC = "ssh_diagnostic"
+    # The protocol-neutral pair for non-SSH sessions (telnet, serial, ...),
+    # which neither authenticate through SSH Pilot nor are SSH sessions.
+    PROCESS_EXITED = "process_exited"
+    PROCESS_FAILED = "process_failed"
 
 
 _SESSION_FAILURE_PARAMETER_KEYS = {
     code: frozenset() for code in SessionFailureCode
 }
 _SESSION_FAILURE_PARAMETER_KEYS[SessionFailureCode.SSH_EXITED] = frozenset({"status"})
+_SESSION_FAILURE_PARAMETER_KEYS[SessionFailureCode.PROCESS_EXITED] = frozenset({"status"})
 
 
 @dataclass(frozen=True)

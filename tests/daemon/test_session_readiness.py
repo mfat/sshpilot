@@ -928,3 +928,86 @@ def test_exit_255_from_running_with_empty_pty_still_sets_failure():
 
     runtime.shutdown()
     core.close()
+
+
+def _exit_from_starting(protocol, output, exit_code):
+    """Run a session with *protocol* that exits from STARTING."""
+    repo = make_test_repository()
+    repo.get_record("demo").protocol = protocol
+    core = ConnectionApplicationService(repo, client_name=f"exit-{protocol}")
+    runner = _EvidenceTerminalRunner()
+    runtime = SessionRuntime(core, runner=runner)
+    runtime.enable_connection_evidence_gate()
+    try:
+        prepared = _prepared(core, runtime)
+        runtime.start_session(prepared.id)
+        assert runner.started.wait(1)
+        if output:
+            runner.emit(output)
+        runner.handle.exit(SessionExitInfo(exit_code=exit_code, reason="process_exit"))
+        runner.handle._on_eof()
+        return runtime.get_session(prepared.id).failure
+    finally:
+        runtime.shutdown()
+        core.close()
+
+
+def test_a_refused_telnet_connection_is_not_an_ssh_failure():
+    """``Unable to connect to remote host:`` is telnet's own refusal. The
+    OpenSSH-shaped classifier still recognises it, but the banner must not
+    call a telnet tab "The SSH session"."""
+    failure = _exit_from_starting(
+        "telnet",
+        b"Trying 192.0.2.1...\r\n"
+        b"telnet: Unable to connect to remote host: Connection refused\r\n",
+        1,
+    )
+
+    assert failure is not None
+    assert failure.code is SessionFailureCode.PROCESS_FAILED
+    assert "connection refused" in failure.diagnostic.lower()
+
+
+def test_a_silent_non_zero_plugin_exit_is_not_incomplete_authentication():
+    failure = _exit_from_starting("serial", b"", 1)
+
+    assert failure is not None
+    assert failure.code is SessionFailureCode.PROCESS_EXITED
+    assert dict(failure.parameters) == {"status": 1}
+
+
+def test_a_silent_non_zero_ssh_exit_keeps_its_ssh_reason():
+    failure = _exit_from_starting("ssh", b"", 1)
+
+    assert failure is not None
+    assert failure.code is SessionFailureCode.AUTH_INCOMPLETE
+
+
+def test_a_plugin_session_exiting_255_while_running_is_not_an_ssh_exit():
+    repo = make_test_repository()
+    repo.get_record("demo").protocol = "mosh"
+    core = ConnectionApplicationService(repo, client_name="exit-mosh-running")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    try:
+        prepared = _prepared(core, runtime)
+        runtime.start_session(prepared.id)
+        assert runner.started.wait(1)
+        readiness.deliver(
+            prepared.id,
+            SshDiagnosticResult(
+                SshDiagnosticState.AUTHENTICATED,
+                'debug1: Authenticated to example.test using "publickey".',
+            ),
+        )
+        runner.handle.exit(SessionExitInfo(exit_code=255, reason="process_exit"))
+        runner.handle._on_eof()
+        failure = runtime.get_session(prepared.id).failure
+    finally:
+        runtime.shutdown()
+        core.close()
+
+    assert failure is not None
+    assert failure.code is SessionFailureCode.PROCESS_EXITED
+    assert dict(failure.parameters) == {"status": 255}

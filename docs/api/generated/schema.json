@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.73",
+  "api_implementation_version": "0.74",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1752,7 +1752,9 @@
       "termination_failed",
       "ended_before_output",
       "ssh_exited",
-      "ssh_diagnostic"
+      "ssh_diagnostic",
+      "process_exited",
+      "process_failed"
     ],
     "SessionState": [
       "created",

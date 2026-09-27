@@ -715,15 +715,15 @@ class SessionRuntime:
                 )
             if not authenticated:
                 cancel_code = self._startup_failure_code(session_id)
-                self._startup_failed(
+                reason, _parameters = self._protocol_failure_reason(
                     record,
-                    cancel_code,
                     (
                         SessionFailureCode.AUTH_CANCELLED
                         if cancel_code is ErrorCode.OPERATION_CANCELLED
                         else SessionFailureCode.AUTH_INCOMPLETE
                     ),
                 )
+                self._startup_failed(record, cancel_code, reason)
                 self._terminate_handle(
                     handle,
                     deadline=self._monotonic() + self._close_grace_seconds,
@@ -1055,6 +1055,39 @@ class SessionRuntime:
         if diagnostic:
             return SessionFailureCode.SSH_DIAGNOSTIC
         return SessionFailureCode.AUTH_INCOMPLETE
+
+    @staticmethod
+    def _protocol_failure_reason(
+        record: "_SessionRecord",
+        reason: SessionFailureCode,
+        exit_info: Optional[SessionExitInfo] = None,
+    ) -> Tuple[SessionFailureCode, Dict[str, int]]:
+        """Reword an SSH-shaped reason for a session that is not SSH.
+
+        The exit classifiers were written for OpenSSH: a telnet refusal reads
+        as an SSH diagnostic, and a serial console that exits non-zero before
+        any output reads as incomplete authentication, although neither is an
+        SSH session nor authenticated through SSH Pilot. The reasons that name
+        a stage no plugin session has become the neutral pair; cancellation
+        and "ended before output" already say nothing protocol-specific.
+        """
+        status = exit_info.exit_code if exit_info is not None else None
+        parameters: Dict[str, int] = (
+            {"status": status} if reason is SessionFailureCode.SSH_EXITED else {}
+        )
+        spec = record.launch_spec
+        if spec is None or spec.protocol == "ssh":
+            return reason, parameters
+        if reason is SessionFailureCode.SSH_DIAGNOSTIC:
+            return SessionFailureCode.PROCESS_FAILED, {}
+        if reason in {
+            SessionFailureCode.SSH_EXITED,
+            SessionFailureCode.AUTH_INCOMPLETE,
+        }:
+            if type(status) is int and status > 0:
+                return SessionFailureCode.PROCESS_EXITED, {"status": status}
+            return SessionFailureCode.PROCESS_FAILED, {}
+        return reason, parameters
 
     def reject_pending_start(self, session_id: SessionId) -> None:
         """Mark an unscheduled startup failed after executor saturation."""
@@ -2051,9 +2084,13 @@ class SessionRuntime:
                     reason = self._diagnostic_failure_reason(
                         failure_code, failure_reason or ""
                     )
+                reason, parameters = self._protocol_failure_reason(
+                    record, reason, exit_info
+                )
                 record.failure = SessionFailure(
                     code=reason,
                     error_code=failure_code,
+                    parameters=parameters,
                     diagnostic=failure_reason or "",
                 )
                 events.append(self._transition_locked(record, SessionState.FAILED))
@@ -2075,16 +2112,19 @@ class SessionRuntime:
                     exit_code=None,
                 )
             if failure_reason is not None or exit_info.exit_code == 255:
-                record.failure = SessionFailure(
-                    code=(
+                reason, parameters = self._protocol_failure_reason(
+                    record,
+                    (
                         SessionFailureCode.SSH_DIAGNOSTIC
                         if failure_reason
                         else SessionFailureCode.SSH_EXITED
                     ),
+                    exit_info,
+                )
+                record.failure = SessionFailure(
+                    code=reason,
                     error_code=ErrorCode.SESSION_STARTUP_FAILED,
-                    parameters=(
-                        {} if failure_reason else {"status": exit_info.exit_code}
-                    ),
+                    parameters=parameters,
                     diagnostic=failure_reason or "",
                 )
                 events.append(self._transition_locked(record, SessionState.FAILED))

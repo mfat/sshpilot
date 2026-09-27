@@ -29,6 +29,10 @@ _SESSION_FAILURE_TEMPLATES = {
         "The SSH session exited with status {status}"
     ),
     SessionFailureCode.SSH_DIAGNOSTIC: N_("The SSH session failed."),
+    SessionFailureCode.PROCESS_EXITED: N_(
+        "The session exited with status {status}"
+    ),
+    SessionFailureCode.PROCESS_FAILED: N_("The session failed."),
 }
 
 

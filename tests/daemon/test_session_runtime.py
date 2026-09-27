@@ -997,3 +997,17 @@ def test_owned_subprocess_runner_uses_one_reaper_and_leaves_no_child():
     runtime.shutdown()
     assert not runner._thread.is_alive()
     core.close()
+
+
+def test_auth_gate_failure_on_a_plugin_session_names_no_authentication(runtime_parts):
+    runtime, core, _runner = runtime_parts
+    core._repository.get_record("demo").protocol = "telnet"
+    runtime.set_auth_gate(lambda *_args, **_kwargs: False)
+
+    opened = runtime.open_session(
+        OpenSessionRequest(connection_id=core.list_connections()[0].id),
+        client_id=ClientId("client:a"),
+    )
+
+    assert opened.failure is not None
+    assert opened.failure.code is SessionFailureCode.PROCESS_FAILED
