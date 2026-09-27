@@ -271,3 +271,28 @@ def test_clearing_an_rdp_password_keeps_the_ssh_one_and_survives_reload(tmp_path
     fresh = provider_for(_repo(tmp_path)[0])
     assert fresh.lookup_connection_password('alpha') == 'pw'
     assert fresh.lookup_connection_password('alpha-rdp') is None
+
+
+def test_duplicate_inherits_how_to_reach_the_host_but_not_its_own_state(tmp_path):
+    """Duplicating dropped tags, the Wake-on-LAN address and the port knock
+    for every protocol. The copy gets those; pinned, last-used, the login
+    profile link and a cleared saved password remain the source's own."""
+    repo, _root, _state_path = _repo(tmp_path)
+    repo.create_connection(_telnet_data('lab'))
+    reach = {
+        'tags': ['lab'],
+        'wol_mac': 'aa:bb:cc:dd:ee:ff',
+        'pre_command_knock': '7000 8000',
+        'pre_command_mode': 'knock',
+    }
+    own = {'pinned': True, 'last_used': 1.5, 'use_saved_login': False}
+    copies = {}
+    for source in ('lab', 'alpha'):
+        repo.update_connection_metadata(source, {**reach, **own})
+        copies[source] = repo.duplicate_connection(source).id
+
+    fresh = _repo(tmp_path)[0]
+    for source, copy_id in copies.items():
+        metadata = dict(fresh.get_connection_metadata(copy_id))
+        metadata['tags'] = list(metadata['tags'])
+        assert metadata == reach, source

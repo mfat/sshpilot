@@ -51,6 +51,7 @@ from ...api.models.connections import (
     is_sensitive_field_name,
 )
 from ...api.models.common import validate_ssh_host_alias
+from ...api.models.pre_command import PRE_COMMAND_METADATA_KEYS
 from ...api.models.secrets import (
     SecretTransferMessage,
     SecretTransferMessageCode,
@@ -101,6 +102,17 @@ from .identity_state_v2 import (
 # Kept as a module attribute for legacy test/integration hooks.  Production
 # writes in this repository are v2-only after migration.
 from .state_file import write_connection_state as write_connection_state
+
+#: Metadata a duplicate inherits: what describes how to reach the host. The
+#: rest is this connection's own state -- pinned, last used, a login-profile
+#: link the profile service owns, a cleared saved password -- and stays put.
+DUPLICATED_METADATA_KEYS = (
+    "tags",
+    "wol_mac",
+    "wol_broadcast_ip",
+    "wol_port",
+    *PRE_COMMAND_METADATA_KEYS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2171,6 +2183,17 @@ class ConnectionRepository:
                     self._persist_state_file_locked()
                 if existing.protocol == "ssh":
                     self._finish_identity_intent_locked()
+                source_metadata = self._metadata.get(connection_id) or {}
+                inherited = {
+                    key: source_metadata[key]
+                    for key in DUPLICATED_METADATA_KEYS
+                    if key in source_metadata
+                }
+                if inherited:
+                    self._metadata[created.id] = validate_safe_metadata(
+                        thaw_safe_metadata(inherited)
+                    )
+                    self._persist_state_file_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
