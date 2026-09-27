@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.74",
+  "api_implementation_version": "0.75",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1664,7 +1664,8 @@
       "serial_programs_unavailable",
       "serial_screen_terminal_options_unsupported",
       "serial_device_access_denied",
-      "rdp_client_unavailable"
+      "rdp_client_unavailable",
+      "telnet_unavailable"
     ],
     "RememberPolicy": [
       "do_not_store",

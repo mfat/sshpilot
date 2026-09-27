@@ -14,12 +14,13 @@ import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._session_failure import BuiltinProtocolError
 from .._summary import host_port
+from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
     PluginContext,
     ProtocolBackend,
-    ProtocolError,
     SpawnSpec,
     SshPilotPlugin,
 )
@@ -63,16 +64,22 @@ class TelnetProtocolBackend(ProtocolBackend):
         from .._flatpak import resolve_host_binary  # noqa: PLC0415
         telnet_argv = resolve_host_binary("telnet")
         if telnet_argv is None:
-            raise ProtocolError(
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.TELNET_UNAVAILABLE,
                 "The 'telnet' program is not installed. Install it to use "
-                "telnet connections.")
+                "telnet connections.",
+                parameters={"program": "telnet"},
+            )
 
         data = getattr(connection, "data", None) or {}
         host = (data.get("host") or data.get("hostname")
                 or getattr(connection, "hostname", "")
                 or getattr(connection, "host", ""))
         if not host:
-            raise ProtocolError("No host configured for this connection.")
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.HOST_REQUIRED,
+                "No host configured for this connection.",
+            )
         # Port comes from the connection's data dict only: the Connection
         # attribute defaults to the SSH port (22), which is wrong here.
         try:

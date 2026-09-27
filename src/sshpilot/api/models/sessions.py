@@ -163,6 +163,7 @@ class PluginSessionFailureCode(str, Enum):
     )
     SERIAL_DEVICE_ACCESS_DENIED = "serial_device_access_denied"
     RDP_CLIENT_UNAVAILABLE = "rdp_client_unavailable"
+    TELNET_UNAVAILABLE = "telnet_unavailable"
 
 
 _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS = {
@@ -174,6 +175,7 @@ _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS.update(
             {"runtime"}
         ),
         PluginSessionFailureCode.KUBECTL_UNAVAILABLE: frozenset({"program"}),
+        PluginSessionFailureCode.TELNET_UNAVAILABLE: frozenset({"program"}),
         PluginSessionFailureCode.MOSH_UNAVAILABLE: frozenset(
             {"client_program", "server_program"}
         ),
@@ -238,6 +240,9 @@ class PluginSessionFailure:
                 raise ValueError("plugin session failure runtime is invalid")
         if self.code is PluginSessionFailureCode.KUBECTL_UNAVAILABLE:
             if parameters["program"] != "kubectl":
+                raise ValueError("plugin session failure program is invalid")
+        if self.code is PluginSessionFailureCode.TELNET_UNAVAILABLE:
+            if parameters["program"] != "telnet":
                 raise ValueError("plugin session failure program is invalid")
         if self.code is PluginSessionFailureCode.MOSH_UNAVAILABLE:
             if parameters != {

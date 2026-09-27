@@ -75,6 +75,7 @@ _CASES = {
         {"preferred_program": "sdl-freerdp3", "fallback_program": "xfreerdp3"},
         "xfreerdp3",
     ),
+    PluginSessionFailureCode.TELNET_UNAVAILABLE: ({"program": "telnet"}, "telnet"),
 }
 
 

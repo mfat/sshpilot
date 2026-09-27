@@ -70,6 +70,9 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
         "FreeRDP 3 is not installed. Install '{preferred_program}' or "
         "'{fallback_program}' to use RDP connections."
     ),
+    PluginSessionFailureCode.TELNET_UNAVAILABLE: N_(
+        "The '{program}' program is not installed. Install it to use telnet connections."
+    ),
 }
 
 _PLUGIN_FIELD_LABELS = {

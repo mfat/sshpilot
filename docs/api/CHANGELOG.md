@@ -5,6 +5,11 @@ notes remain separate.
 
 ## Unreleased
 
+- `PluginSessionFailureCode.TELNET_UNAVAILABLE` (`telnet_unavailable`,
+  parameter `program`: `telnet`) reports a missing telnet client; a telnet
+  connection without a host now reports `host_required`. Both previously
+  surfaced as `start_failed` with an untranslated message. API
+  implementation version is 0.75; Protocol remains 1.0.
 - `SessionFailureCode` gains `PROCESS_EXITED` (`process_exited`, parameter
   `status`) and `PROCESS_FAILED` (`process_failed`), the protocol-neutral
   reasons for non-SSH sessions. A telnet refusal or a serial console exiting
