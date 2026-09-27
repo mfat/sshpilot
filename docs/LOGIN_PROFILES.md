@@ -20,7 +20,7 @@ In code and UI the feature is called *login profile*. "Identity" already means t
   - While a profile is linked, the authentication rows and agent forwarding are locked, and **Username** is greyed out and shows the profile's username. Going back to *Don't use a profile* restores the username you had.
   - For an existing connection, the editor lists the settings the profile will replace before you save.
   - While a profile is linked, a card above the picker says authentication is managed by a login profile.
-  - **Manage Profiles…** opens the Login Profiles window to create, edit or delete profiles; the picker picks up the changes when you close it.
+  - The **Manage Profiles…** button (people icon) opens the Login Profiles window to create, edit or delete profiles; the picker picks up the changes when you close it.
 - **Several connections:** select them in the sidebar → right-click → **Assign Login Profile…**. A confirmation lists what changes before anything is written.
 - **Groups:** right-click a group → **Set Login Profile…**.
   - Connections in the group, and in nested groups without their own profile, inherit the profile.

@@ -131,15 +131,19 @@ def test_switching_profiles_then_back_restores_the_own_username(gtk):
     assert dialog.collect_login_profile_change() is None
 
 
-def test_username_button_uses_the_bundled_profile_icon(gtk):
+def test_both_buttons_use_the_bundled_profile_icon(gtk):
     from gi.repository import Gio, Gtk
 
     dialog = _dialog(gtk)
-    image = dialog._username_profile_button.get_child()
-    assert isinstance(image, Gtk.Image)
-    gicon = image.get_gicon()
-    assert isinstance(gicon, Gio.FileIcon)
-    assert gicon.get_file().get_uri().endswith("/actions/system-users-symbolic.svg")
+    images = [
+        dialog._username_profile_button.get_child(),
+        dialog.login_profile_manage_button.get_child(),
+    ]
+    for image in images:
+        assert isinstance(image, Gtk.Image)
+        gicon = image.get_gicon()
+        assert isinstance(gicon, Gio.FileIcon)
+        assert gicon.get_file().get_uri().endswith("/actions/system-users-symbolic.svg")
 
 
 def test_status_card_shows_only_while_linked(gtk):
@@ -174,7 +178,7 @@ def test_manage_opens_the_profiles_window_over_the_dialog_and_reloads_on_close(g
     dialog.parent_window = Parent()
     reloads = []
     dialog.start_login_profile_load = lambda: reloads.append(1)
-    assert dialog.login_profile_manage_button.get_label() == "Manage Profiles…"
+    assert dialog.login_profile_manage_button.get_tooltip_text() == "Manage Profiles…"
 
     dialog.login_profile_manage_button.emit("clicked")
     dialog.login_profile_manage_button.emit("clicked")  # already open
