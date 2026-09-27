@@ -1,8 +1,6 @@
 """Typed frontend-independent sshPilot client contract."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 from .capabilities import Capabilities
 from .events import CoreEventCallback, Subscription
@@ -13,179 +11,178 @@ from .terminal_events import (
     TerminalOutputCallback,
     TerminalSubscription,
 )
-if TYPE_CHECKING:
-    from .models.connections import (
-        AsbruImportPreview,
-        AsbruImportRequest,
-        AsbruImportResult,
-        ConnectionDetails,
-        ConnectionEditorDetails,
-        EffectiveConfigComparison,
-        UnsavedHostCheckRequest,
-        UnsavedHostCheckResult,
-        ConnectionMutationResult,
-        ConnectionSummary,
-        CreateConnectionRequest,
-        DeleteConnectionPasswordRequest,
-        DeleteConnectionRequest,
-        DeleteConnectionResult,
-        StoreConnectionPasswordRequest,
-        SetSessionConnectionPasswordRequest,
-        DeleteKeyPassphraseRequest,
-        SaveSshConfigTextRequest,
-        SplitConnectionRequest,
-        SshConfigText,
-        StoreKeyPassphraseRequest,
-        UpdateConnectionRequest,
-    )
-    from .models.connection_store import (
-        AddTagToConnectionsRequest,
-        ConnectionStoreSnapshot,
-        SetGroupColorRequest,
-        PlaceGroupRequest,
-        CopyConnectionToGroupRequest,
-        MoveConnectionsRequest,
-        RemoveConnectionFromGroupRequest,
-        ReorderConnectionRequest,
-        RenameTagRequest,
-    )
-    from .models.identity import (
-        AgentKeyList,
-        AgentKeyMutationRequest,
-        AuthorizedKeyList,
-        DeployKeyRequest,
-        FetchPublicKeysRequest,
-        IdentityProviderRegistry,
-        IdentityState,
-        ImportedPublicKeyList,
-        ListAuthorizedKeysRequest,
-        ListProviderAgentKeysRequest,
-        RemoveAuthorizedKeyRequest,
-        UpdateIdentityConfigurationRequest,
-        UpdateIdentitySelectionRequest,
-    )
-    from .models.pre_command import PreCommandTestResult
-    from .models.interactions import (
-        InteractionClaim,
-        InteractionDecisionRequest,
-        InteractionId,
-        InteractionSummary,
-    )
-    from .models.keys import (
-        DeleteKeyRequest,
-        DeleteKeyResult,
-        GenerateKeyRequest,
-        GenerateKeyResult,
-        KeyList,
-        ListKeysRequest,
-        PublicKeyResult,
-        ReadPublicKeyRequest,
-        VerifyKeyPassphraseRequest,
-        VerifyKeyPassphraseResult,
-    )
-    from .models.secrets import (
-        BitwardenStatus,
-        RbwStatus,
-        SecretBackendRegistry,
-        SecretBackendState,
-        SecretConfiguration,
-        SecretOperationResult,
-        SecretTransferPreview,
-        SecretTransferResult,
-        SecretUnlockResult,
-        UpdateSecretConfigurationRequest,
-    )
-    from .models.known_hosts import (
-        KnownHostsMutationResult,
-        KnownHostsSnapshot,
-        RemoveKnownHostEntriesRequest,
-    )
-    from .models.sessions import (
-        AttachSessionRequest,
-        AttachSessionResult,
-        CloseSessionRequest,
-        DetachSessionRequest,
-        OpenSessionRequest,
-        SessionSummary,
-    )
-    from .models.terminal import (
-        BroadcastTerminalInputRequest,
-        ClaimTerminalInputRequest,
-        ExternalTerminalLaunchSpec,
-        ReleaseTerminalInputRequest,
-        ReplayRequest,
-        ReplayResult,
-        ResizeTerminalRequest,
-        TerminalInput,
-    )
-    from .models.common import (
-        ConnectionId,
-        ForwardId,
-        SessionId,
-        SftpServiceId,
-        TransferId,
-    )
-    from .models.operations import (
-        AttachSftpRequest,
-        ClaimForwardRequest,
-        CloseForwardRequest,
-        CloseSftpRequest,
-        ForwardSummary,
-        ListDirectoryRequest,
-        ListDirectoryResult,
-        OpenForwardRequest,
-        OpenSftpRequest,
-        OperationId,
-        OperationSummary,
-        RemoteFileEntry,
-        SftpChmodRequest,
-        SftpCopyRequest,
-        SftpDirectorySizeRequest,
-        SftpFilesystemUsage,
-        SftpPathRequest,
-        SftpRemoveResult,
-        SftpReadFileRequest,
-        SftpReadFileResult,
-        SftpRenameRequest,
-        SftpReplaceFileRequest,
-        SftpReplaceFileResult,
-        SftpServiceSummary,
-        SftpSymlinkRequest,
-    )
-    from .models.transfers import (
-        CancelTransferRequest,
-        StartScpTransferRequest,
-        StartTransferRequest,
-        TransferSummary,
-    )
-    from .models.daemon import (
-        DaemonDiagnostics,
-        DaemonStatus,
-        DaemonStopResult,
-        SetDaemonLogLevelRequest,
-        RestartDaemonRequest,
-        StopDaemonRequest,
-        OperationModeResult,
-        SetOperationModeRequest,
-    )
-    from .models.host_info import HostInfoRequest, HostInfoSummary
-    from .models.settings import (
-        GlobalSshOverrides,
-        UpdateGlobalSshOverridesRequest,
-    )
-    from .models.login_profiles import (
-        AssignLoginProfileRequest,
-        CreateLoginProfileRequest,
-        DeleteLoginProfileRequest,
-        DeleteLoginProfileResult,
-        LoginProfileAssignmentPreview,
-        LoginProfileSnapshot,
-        LoginProfileSummary,
-        PreviewLoginProfileAssignmentRequest,
-        SetGroupLoginProfileRequest,
-        SetLoginProfileSecretRequest,
-        UpdateLoginProfileRequest,
-    )
+from .models.connections import (
+    AsbruImportPreview,
+    AsbruImportRequest,
+    AsbruImportResult,
+    ConnectionDetails,
+    ConnectionEditorDetails,
+    EffectiveConfigComparison,
+    UnsavedHostCheckRequest,
+    UnsavedHostCheckResult,
+    ConnectionMutationResult,
+    ConnectionSummary,
+    CreateConnectionRequest,
+    DeleteConnectionPasswordRequest,
+    DeleteConnectionRequest,
+    DeleteConnectionResult,
+    StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
+    DeleteKeyPassphraseRequest,
+    SaveSshConfigTextRequest,
+    SplitConnectionRequest,
+    SshConfigText,
+    StoreKeyPassphraseRequest,
+    UpdateConnectionRequest,
+)
+from .models.connection_store import (
+    AddTagToConnectionsRequest,
+    ConnectionStoreSnapshot,
+    SetGroupColorRequest,
+    PlaceGroupRequest,
+    CopyConnectionToGroupRequest,
+    MoveConnectionsRequest,
+    RemoveConnectionFromGroupRequest,
+    ReorderConnectionRequest,
+    RenameTagRequest,
+)
+from .models.identity import (
+    AgentKeyList,
+    AgentKeyMutationRequest,
+    AuthorizedKeyList,
+    DeployKeyRequest,
+    FetchPublicKeysRequest,
+    IdentityProviderRegistry,
+    IdentityState,
+    ImportedPublicKeyList,
+    ListAuthorizedKeysRequest,
+    ListProviderAgentKeysRequest,
+    RemoveAuthorizedKeyRequest,
+    UpdateIdentityConfigurationRequest,
+    UpdateIdentitySelectionRequest,
+)
+from .models.pre_command import PreCommandTestResult
+from .models.interactions import (
+    InteractionClaim,
+    InteractionDecisionRequest,
+    InteractionId,
+    InteractionSummary,
+)
+from .models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
+    GenerateKeyRequest,
+    GenerateKeyResult,
+    KeyList,
+    ListKeysRequest,
+    PublicKeyResult,
+    ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
+)
+from .models.secrets import (
+    BitwardenStatus,
+    RbwStatus,
+    SecretBackendRegistry,
+    SecretBackendState,
+    SecretConfiguration,
+    SecretOperationResult,
+    SecretTransferPreview,
+    SecretTransferResult,
+    SecretUnlockResult,
+    UpdateSecretConfigurationRequest,
+)
+from .models.known_hosts import (
+    KnownHostsMutationResult,
+    KnownHostsSnapshot,
+    RemoveKnownHostEntriesRequest,
+)
+from .models.sessions import (
+    AttachSessionRequest,
+    AttachSessionResult,
+    CloseSessionRequest,
+    DetachSessionRequest,
+    OpenSessionRequest,
+    SessionSummary,
+)
+from .models.terminal import (
+    BroadcastTerminalInputRequest,
+    ClaimTerminalInputRequest,
+    ExternalTerminalLaunchSpec,
+    ReleaseTerminalInputRequest,
+    ReplayRequest,
+    ReplayResult,
+    ResizeTerminalRequest,
+    TerminalInput,
+)
+from .models.common import (
+    ConnectionId,
+    ForwardId,
+    SessionId,
+    SftpServiceId,
+    TransferId,
+)
+from .models.operations import (
+    AttachSftpRequest,
+    ClaimForwardRequest,
+    CloseForwardRequest,
+    CloseSftpRequest,
+    ForwardSummary,
+    ListDirectoryRequest,
+    ListDirectoryResult,
+    OpenForwardRequest,
+    OpenSftpRequest,
+    OperationId,
+    OperationSummary,
+    RemoteFileEntry,
+    SftpChmodRequest,
+    SftpCopyRequest,
+    SftpDirectorySizeRequest,
+    SftpFilesystemUsage,
+    SftpPathRequest,
+    SftpRemoveResult,
+    SftpReadFileRequest,
+    SftpReadFileResult,
+    SftpRenameRequest,
+    SftpReplaceFileRequest,
+    SftpReplaceFileResult,
+    SftpServiceSummary,
+    SftpSymlinkRequest,
+)
+from .models.transfers import (
+    CancelTransferRequest,
+    StartScpTransferRequest,
+    StartTransferRequest,
+    TransferSummary,
+)
+from .models.daemon import (
+    DaemonDiagnostics,
+    DaemonStatus,
+    DaemonStopResult,
+    SetDaemonLogLevelRequest,
+    RestartDaemonRequest,
+    StopDaemonRequest,
+    OperationModeResult,
+    SetOperationModeRequest,
+)
+from .models.host_info import HostInfoRequest, HostInfoSummary
+from .models.settings import (
+    GlobalSshOverrides,
+    UpdateGlobalSshOverridesRequest,
+)
+from .models.login_profiles import (
+    AssignLoginProfileRequest,
+    CreateLoginProfileRequest,
+    DeleteLoginProfileRequest,
+    DeleteLoginProfileResult,
+    LoginProfileAssignmentPreview,
+    LoginProfileSnapshot,
+    LoginProfileSummary,
+    PreviewLoginProfileAssignmentRequest,
+    SetGroupLoginProfileRequest,
+    SetLoginProfileSecretRequest,
+    UpdateLoginProfileRequest,
+)
 
 
 class SshPilotClient(Protocol):

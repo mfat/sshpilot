@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import dataclasses
 import enum
 import inspect
@@ -497,52 +496,10 @@ def _models_in_annotation(annotation: Any, model_map: Mapping[str, type]) -> set
     return found
 
 
-@lru_cache(maxsize=None)
-def _type_checking_names(module_name: str) -> Mapping[str, Any]:
-    """Return the names a module imports only under ``if TYPE_CHECKING:``.
-
-    The client contract keeps its model imports there so the GUI does not load
-    every model module at startup; its annotations are postponed strings that
-    only resolve against these names.
-    """
-
-    module = sys.modules[module_name]
-    tree = ast.parse(inspect.getsource(module))
-    namespace: Dict[str, Any] = {
-        "__name__": module_name,
-        "__package__": module.__package__,
-    }
-    for node in tree.body:
-        if (
-            isinstance(node, ast.If)
-            and isinstance(node.test, ast.Name)
-            and node.test.id == "TYPE_CHECKING"
-        ):
-            block = ast.Module(body=node.body, type_ignores=[])
-            exec(compile(block, module.__file__, "exec"), namespace)
-    return {
-        name: value
-        for name, value in namespace.items()
-        if not name.startswith("__")
-    }
-
-
-def _def_time_annotations(method: Any) -> Mapping[str, Any]:
-    """Evaluate postponed annotations once, as a def-time annotation would be."""
-
-    namespace = dict(getattr(method, "__globals__", {}))
-    namespace.update(_type_checking_names(method.__module__))
-    return {
-        name: eval(annotation, namespace) if isinstance(annotation, str) else annotation
-        for name, annotation in getattr(method, "__annotations__", {}).items()
-    }
-
-
 def _method_annotations(method: Any) -> Mapping[str, Any]:
     """Resolve a client method's type hints without hiding model drift."""
 
     globalns = dict(getattr(method, "__globals__", {}))
-    globalns.update(_type_checking_names(method.__module__))
     globalns["CoreEvent"] = CoreEvent
     try:
         return get_type_hints(method, globalns=globalns)
@@ -635,12 +592,11 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
     for name in client_methods():
         method = getattr(SshPilotClient, name)
         signature = inspect.signature(method)
-        # Read annotations without rendering them through inspect.Signature.
-        # client.py postpones them, so each is a source string; evaluating it
-        # once gives the object a def-time annotation held (a quoted annotation
-        # stays a string, nested forward references stay unresolved), which
-        # keeps the spelling stable. _type_name normalizes evaluated ones.
-        annotations = _def_time_annotations(method)
+        # Read annotations without evaluating or rendering them through
+        # inspect.Signature. Their source spelling is stable across supported
+        # interpreters, including Python 3.9 where inspect.get_annotations is
+        # unavailable; _type_name normalizes evaluated annotations as well.
+        annotations = getattr(method, "__annotations__", {})
         result[name] = {
             "parameters": [
                 {
