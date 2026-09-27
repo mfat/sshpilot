@@ -915,7 +915,7 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
 #: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
 #: floor GTK never lays the label out below (~80px at 10 characters); natural
 #: width is capped by ``max-width-chars``. These labels still ellipsize.
-FULL_LABEL_MIN_CHARS = 6
+FULL_LABEL_MIN_CHARS = 8
 FULL_LABEL_MAX_CHARS = 25
 
 #: Page names of a row hover-action slot (group split-view / connection
