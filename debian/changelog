@@ -1,3 +1,11 @@
+sshpilot (6.2.5-1) unstable; urgency=medium
+
+  * Release v6.2.5.
+  * Added RDP support (requries freerdp3)
+  * Improved UX for non-SSH protocol plugins
+
+ -- Mehdi <mah.fat@gmail.com>  Sun, 27 Sep 2026 22:22:59 +0000
+
 sshpilot (6.2.4-1) unstable; urgency=medium
 
   * Release v6.2.4.
