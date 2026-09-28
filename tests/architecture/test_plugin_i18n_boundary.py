@@ -95,10 +95,33 @@ def test_frontend_gettext_owners_are_in_potfiles():
         assert str(path.relative_to(ROOT)) in potfiles
     assert "src/sshpilot/connection_dialog.py" in potfiles
     assert "src/sshpilot/gtk/plugin_session_failure_messages.py" in potfiles
+    assert "src/sshpilot/gtk/protocol_suggestion_messages.py" in potfiles
     assert "src/sshpilot/plugins/builtin/_shell.py" not in potfiles
     assert "src/sshpilot/plugins/builtin/_session_failure.py" not in potfiles
     assert "src/sshpilot/daemon/connection_launch_provider.py" not in potfiles
     assert "src/sshpilot/daemon/session_runtime.py" not in potfiles
+
+
+def test_suggestion_failure_reason_boundary_is_internal_and_locale_neutral():
+    helper = (BUILTINS / "_summary.py").read_text()
+    model = (SOURCE / "plugins" / "_command_failure.py").read_text()
+    presenter = (SOURCE / "gtk" / "protocol_suggestion_messages.py").read_text()
+    dialog = (SOURCE / "connection_dialog.py").read_text()
+    for source in (helper, model):
+        assert "gettext" not in source
+        assert "N_(" not in source
+        assert "Command timed out" not in source
+        assert 'f"{argv[0]} failed"' not in source
+    assert "ctx._run_local_command(" in helper
+    assert "format_protocol_suggestion_error(error)" in dialog
+    assert "N_(" in presenter
+    assert "error.reason" in presenter
+    # Known reasons are never inferred from rendered English diagnostics.
+    tree = ast.parse(presenter)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            assert not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                           for value in (node.left, *node.comparators))
 
 
 def test_plugin_session_failure_gettext_stays_in_frontend_presenter():

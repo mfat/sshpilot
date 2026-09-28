@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.2.5}
+Version:        %{?version}%{!?version:6.2.6}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -148,6 +148,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sun Sep 27 2026 mFat <newmfat@gmail.com> - 6.2.6-1
+- Added RDP support (requries freerdp3)
+- Improved UX for non-SSH protocol plugins
+
 * Sun Sep 27 2026 mFat <newmfat@gmail.com> - 6.2.5-1
 - Added RDP support (requries freerdp3)
 - Improved UX for non-SSH protocol plugins
