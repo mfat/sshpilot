@@ -24,6 +24,7 @@ makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gtk4' 'gettext'
 # Built-in protocol plugins shell out to these; all degrade gracefully if absent.
 optdepends=('inetutils: Telnet protocol support'
             'mosh: Mosh protocol support'
+            'freerdp: RDP protocol support (FreeRDP 3)'
             'kubectl: Kubernetes protocol support'
             'docker: Docker/Podman protocol support'
             'picocom: Serial console protocol support'

@@ -61,6 +61,9 @@ Requires:       webkitgtk6.0
 Recommends:     python3-pykeepass
 # For the built-in telnet protocol plugin (degrades gracefully if absent)
 Recommends:     telnet
+# For the built-in RDP protocol plugin: FreeRDP 3 (sdl-freerdp/xfreerdp);
+# degrades gracefully if absent
+Recommends:     freerdp
 # Deliberately absent: python3-certifi is only consulted by builds with no
 # system CA store (the macOS bundle); update_checker.py falls back to the stdlib
 # default context, which is the correct one here. python3-flask and
