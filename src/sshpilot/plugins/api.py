@@ -910,21 +910,43 @@ class PluginContext:
         on the host via ``flatpak-spawn --host``. This is a local execution API;
         remote commands must continue to use :meth:`run_command`.
         """
+        from ._command_failure import LocalCommandFailure, LocalCommandFailureReason
+
+        # Preserve the public plugin contract, including its legacy stderr.
+        # Built-in suggestions use the private path so these sentences never
+        # become their display diagnostics.
+        try:
+            return self._run_local_command(command, timeout=timeout, input=input)
+        except LocalCommandFailure as failure:
+            messages = {
+                LocalCommandFailureReason.EMPTY_COMMAND: "Command is empty",
+                LocalCommandFailureReason.HOST_EXECUTOR_UNAVAILABLE:
+                    "flatpak-spawn is unavailable; cannot run host command",
+                LocalCommandFailureReason.TIMED_OUT: "Command timed out",
+            }
+            return CommandResult(-1, "", messages.get(failure.reason, failure.diagnostic))
+
+    def _run_local_command(self, command: str, *, timeout: float = 30,
+                           input: Optional[str] = None) -> "CommandResult":
+        """Internal execution path: local failures have structured reasons."""
         import os
         import shutil
         import subprocess
         from ..platform_utils import is_flatpak
+        from ._command_failure import LocalCommandFailure, LocalCommandFailureReason
 
         if not command or not str(command).strip():
             logger.debug("run_local_command: empty command")
-            return CommandResult(-1, "", "Command is empty")
+            raise LocalCommandFailure(LocalCommandFailureReason.EMPTY_COMMAND)
         shell = shutil.which("sh") or "/bin/sh"
         argv = [shell, "-lc", str(command)]
         if is_flatpak():
             spawn = shutil.which("flatpak-spawn")
             if spawn is None:
-                return CommandResult(
-                    -1, "", "flatpak-spawn is unavailable; cannot run host command")
+                raise LocalCommandFailure(
+                    LocalCommandFailureReason.HOST_EXECUTOR_UNAVAILABLE,
+                    program="flatpak-spawn",
+                )
             argv = [spawn, "--host", "sh", "-lc", str(command)]
         logger.debug(
             "run_local_command timeout=%s stdin=%s: %s",
@@ -945,13 +967,15 @@ class PluginContext:
                     (result.stderr or result.stdout or "").strip(),
                 )
             return CommandResult(result.returncode, result.stdout, result.stderr)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             logger.debug("run_local_command timed out after %ss: %s",
                          timeout, command)
-            return CommandResult(-1, "", "Command timed out")
+            raise LocalCommandFailure(LocalCommandFailureReason.TIMED_OUT) from exc
         except Exception as exc:  # noqa: BLE001 — surface as a failed result
             logger.debug("run_local_command failed: %s", exc, exc_info=True)
-            return CommandResult(-1, "", str(exc))
+            raise LocalCommandFailure(
+                LocalCommandFailureReason.START_FAILED, diagnostic=str(exc),
+            ) from exc
 
     # --- streaming commands (API >= 1.13) --------------------------------
     def run_command_stream(

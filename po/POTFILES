@@ -36,6 +36,7 @@ src/sshpilot/gtk/host_info_failure_messages.py
 src/sshpilot/gtk/identity_failure_messages.py
 src/sshpilot/gtk/login_profile_messages.py
 src/sshpilot/gtk/plugin_session_failure_messages.py
+src/sshpilot/gtk/protocol_suggestion_messages.py
 src/sshpilot/gtk/pre_command_messages.py
 src/sshpilot/gtk/scp_failure_messages.py
 src/sshpilot/gtk/session_failure_messages.py
