@@ -25,6 +25,7 @@ from sshpilot.api.transport.codec import (
 from sshpilot.connection_display import format_connection_host_display
 from sshpilot.core.connections import target_summary
 from sshpilot.plugins.api import CommandResult
+from sshpilot.plugins._command_failure import LocalCommandFailure, LocalCommandFailureReason
 from sshpilot.plugins.builtin import _flatpak
 from sshpilot.plugins.builtin._session_failure import BuiltinProtocolError
 from sshpilot.plugins.builtin.docker_protocol import DockerProtocolBackend
@@ -45,7 +46,7 @@ class _Ctx:
         self.answers = answers
         self.commands = []
 
-    def run_local_command(self, command, timeout=30, input=None):
+    def _run_local_command(self, command, timeout=30, input=None):
         self.commands.append(command)
         for needle, result in self.answers.items():
             if needle in command:
@@ -218,8 +219,44 @@ def test_container_suggestions_put_running_ones_first():
 
 def test_a_failing_tool_reports_its_own_message():
     ctx = _Ctx({"context ls": CommandResult(1, "", "Cannot connect to the Docker daemon\nmore")})
-    with pytest.raises(RuntimeError, match="Cannot connect to the Docker daemon"):
+    with pytest.raises(LocalCommandFailure) as caught:
         docker_mod._contexts({"runtime": "docker"}, ctx)
+    assert caught.value.reason is LocalCommandFailureReason.EXITED
+    assert caught.value.diagnostic == "Cannot connect to the Docker daemon\nmore"
+
+
+@pytest.mark.parametrize("backend,key,values,program", [
+    (DockerProtocolBackend(), "container", {}, "docker"),
+    (DockerProtocolBackend(), "docker_context", {}, "docker"),
+    (DockerProtocolBackend(), "container", {"runtime": "podman"}, "podman"),
+    (DockerProtocolBackend(), "docker_context", {"runtime": "podman"}, "podman"),
+    (KubernetesProtocolBackend(), "pod", {}, "kubectl"),
+    (KubernetesProtocolBackend(), "namespace", {}, "kubectl"),
+    (KubernetesProtocolBackend(), "kube_context", {}, "kubectl"),
+    (KubernetesProtocolBackend(), "container", {"pod": "deploy/web"}, "kubectl"),
+])
+def test_every_command_suggestion_has_a_structured_silent_failure(backend, key, values, program):
+    spec = next(field for field in backend.connection_fields() if field.key == key)
+    ctx = _Ctx({"": CommandResult(7, "", "")})
+    with pytest.raises(LocalCommandFailure) as caught:
+        spec.suggest(values, ctx)
+    assert caught.value.reason is LocalCommandFailureReason.EXITED
+    assert caught.value.program == program
+    assert caught.value.status == 7
+    assert caught.value.diagnostic == ""
+    assert str(caught.value) == "exited"
+
+
+@pytest.mark.parametrize("backend,keys", [
+    (DockerProtocolBackend(), {"container", "docker_context"}),
+    (KubernetesProtocolBackend(), {"pod", "container", "namespace", "kube_context"}),
+    (SerialProtocolBackend(), {"device", "baud"}),
+    (MoshProtocolBackend(), set()),
+    (TelnetProtocolBackend(), set()),
+    (RdpProtocolBackend(), set()),
+])
+def test_builtin_suggestion_inventory(backend, keys):
+    assert {spec.key for spec in backend.connection_fields() if spec.suggest} == keys
 
 
 # --- kubernetes -------------------------------------------------------------

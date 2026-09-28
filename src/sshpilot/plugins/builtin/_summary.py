@@ -5,6 +5,8 @@ from __future__ import annotations
 import shlex
 from typing import Any, List, Optional, Sequence
 
+from .._command_failure import LocalCommandFailure, LocalCommandFailureReason
+
 
 def host_port(host: Any, port: Any, default: Optional[int]) -> str:
     """``host``, or ``host:port`` when the port is not the protocol's own."""
@@ -30,11 +32,15 @@ def with_user(user: Any, target: str) -> str:
 def run_lines(ctx: Any, argv: Sequence[str], timeout: float = 8) -> List[str]:
     """Run a local tool for suggestions; its non-empty output lines.
 
-    Raises with the tool's own first error line, which the editor shows in
-    place of the list -- "no context named x" is the answer the user needs.
+    Failures carry a stable reason and the tool's output separately. The
+    connection editor owns wording; external diagnostics stay opaque.
     """
-    result = ctx.run_local_command(shlex.join(argv), timeout=timeout)
+    result = ctx._run_local_command(shlex.join(argv), timeout=timeout)
     if result.exit_code != 0:
-        message = (result.stderr or result.stdout or "").strip().splitlines()
-        raise RuntimeError(message[0] if message else f"{argv[0]} failed")
+        raise LocalCommandFailure(
+            LocalCommandFailureReason.EXITED,
+            program=argv[0],
+            status=result.exit_code,
+            diagnostic=result.stderr or result.stdout or "",
+        )
     return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
