@@ -14647,3 +14647,12 @@ msgid "{count} file · {size}"
 msgid_plural "{count} files · {size}"
 msgstr[0] "{count} fichier · {size}"
 msgstr[1] "{count} fichiers · {size}"
+
+#: src/sshpilot/file_manager/pane.py:3291
+#, python-brace-format
+msgid "Could not open {name}"
+msgstr "Impossible d’ouvrir {name}"
+
+#: src/sshpilot/file_manager/pane.py:3301
+msgid "Download the file to this computer or open it in the editor?"
+msgstr "Télécharger le fichier sur cet ordinateur ou l’ouvrir dans l’éditeur ?"

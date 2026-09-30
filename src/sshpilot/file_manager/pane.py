@@ -30,6 +30,7 @@ from .portal_docs import (
     _portal_grant_root,
     _pretty_path_for_display,
     _save_doc,
+    open_with_default_app,
 )
 from .properties_dialog import PropertiesDialog
 from .common import FileEntry
@@ -898,7 +899,7 @@ class FilePane(Gtk.Box):
         elif where == "down":
             # Nautilus's Alt+Down opens the selected folder.
             selected = self._get_selected_indices()
-            if len(selected) == 1:
+            if len(selected) == 1 and self._entries[selected[0]].is_dir:
                 self._navigate_to_entry(selected[0])
         return True
 
@@ -3277,12 +3278,47 @@ class FilePane(Gtk.Box):
         except IndexError:
             return
 
-        if not getattr(entry, "is_dir", False):
-            return
-
         base_path = self._current_path or ""
         target_path = os.path.join(base_path, entry.name)
-        self.emit("path-changed", target_path)
+        if getattr(entry, "is_dir", False):
+            self.emit("path-changed", target_path)
+        elif self._is_remote:
+            self._offer_remote_file_actions(position, entry)
+        else:
+            name = safe_display_text(entry.name)
+            open_with_default_app(
+                target_path,
+                parent=self.get_root(),
+                on_error=lambda _exc: self.show_toast(
+                    _("Could not open {name}").format(name=name)
+                ),
+            )
+
+    def _offer_remote_file_actions(self, position: int, entry: FileEntry) -> None:
+        """Ask whether to download or edit a remote file that was activated."""
+        dialog = Adw.AlertDialog.new(
+            safe_display_text(entry.name),
+            _("Download the file to this computer or open it in the editor?"),
+        )
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("edit", _("Edit"))
+        dialog.add_response("download", _("Download"))
+        dialog.set_response_appearance("download", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("download")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response: str) -> None:
+            if response not in ("download", "edit"):
+                return
+            # Both actions work on the selection; make it the activated file.
+            self._selection_model.select_item(position, True)
+            if response == "download":
+                self._on_menu_download()
+            else:
+                self._on_menu_edit()
+
+        dialog.connect("response", _on_response)
+        dialog.present(self)
 
     def _on_list_activate(self, _list_view, position: int) -> None:
         self._navigate_to_entry(position)
@@ -3311,10 +3347,7 @@ class FilePane(Gtk.Box):
         self._apply_entry_filter(preserve_selection=preserve_selection)
 
     def _on_grid_activate(self, _grid_view: Gtk.GridView, position: int) -> None:
-        if position is not None and 0 <= position < len(self._entries):
-            entry = self._entries[position]
-            if entry.is_dir:
-                self.emit("path-changed", os.path.join(self._current_path, entry.name))
+        self._navigate_to_entry(position)
 
     def _entries_for_drag_at_position(self, position: int) -> List[FileEntry]:
         """Return entries included in a drag starting at *position*."""

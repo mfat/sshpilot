@@ -498,3 +498,105 @@ def test_open_in_file_manager_launches_directories(monkeypatch, tmp_path):
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {"D": {"display": "x"}})
     monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: None)
     assert portal_docs.restore_granted_folder() is None
+
+
+class _FakeLocalFile(_FakeGFile):
+    def get_uri(self):
+        return "file://" + self._path
+
+
+def _stub_gfile(monkeypatch):
+    monkeypatch.setattr(
+        portal_docs.Gio,
+        "File",
+        types.SimpleNamespace(new_for_path=_FakeLocalFile),
+        raising=False,
+    )
+
+
+def test_open_with_default_app_launches_the_file(monkeypatch, tmp_path):
+    _stub_gfile(monkeypatch)
+    target = tmp_path / "report.txt"
+    target.write_text("ok", encoding="utf-8")
+    calls = []
+
+    class _Launcher:
+        def launch(self, transient_for, *_args):
+            calls.append(("launch", transient_for))
+
+    launched = []
+    monkeypatch.setattr(
+        portal_docs,
+        "_new_file_launcher",
+        lambda gfile: launched.append(gfile.get_path()) or _Launcher(),
+    )
+    transient = object()
+    assert portal_docs.open_with_default_app(str(target), parent=transient) is True
+    assert launched == [str(target)]
+    assert calls == [("launch", transient)]
+
+
+def test_open_with_default_app_falls_back_to_default_uri(monkeypatch, tmp_path):
+    _stub_gfile(monkeypatch)
+    target = tmp_path / "report.txt"
+    target.write_text("ok", encoding="utf-8")
+    uris = []
+    monkeypatch.setattr(portal_docs, "_new_file_launcher", lambda _gfile: None)
+    monkeypatch.setattr(
+        portal_docs.Gio.AppInfo,
+        "launch_default_for_uri",
+        lambda uri, _ctx: uris.append(uri),
+        raising=False,
+    )
+    assert portal_docs.open_with_default_app(str(target)) is True
+    assert uris == [target.as_uri()]
+
+
+class _FakeGLibError(Exception):
+    def __init__(self, code):
+        super().__init__(f"code {code}")
+        self.code = code
+
+    def matches(self, _domain, code):
+        return self.code == code
+
+
+def _launcher_failing_with(exc):
+    class _Launcher:
+        def launch(self, _transient_for, _cancellable, callback, data):
+            callback(self, "result", data)
+
+        def launch_finish(self, _result):
+            raise exc
+
+    return _Launcher()
+
+
+def _stub_launch_errors(monkeypatch, exc):
+    _stub_gfile(monkeypatch)
+    monkeypatch.setattr(portal_docs.GLib, "Error", _FakeGLibError, raising=False)
+    monkeypatch.setattr(portal_docs.Gio, "io_error_quark", lambda: "gio-error", raising=False)
+    monkeypatch.setattr(
+        portal_docs.Gio,
+        "IOErrorEnum",
+        types.SimpleNamespace(CANCELLED="cancelled"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        portal_docs, "_new_file_launcher", lambda _gfile: _launcher_failing_with(exc)
+    )
+
+
+def test_open_with_default_app_reports_launch_failures(monkeypatch, tmp_path):
+    failure = _FakeGLibError("failed")
+    _stub_launch_errors(monkeypatch, failure)
+    errors = []
+    portal_docs.open_with_default_app(str(tmp_path / "a.qqq"), on_error=errors.append)
+    assert errors == [failure]
+
+
+def test_open_with_default_app_ignores_cancelled_chooser(monkeypatch, tmp_path):
+    _stub_launch_errors(monkeypatch, _FakeGLibError("cancelled"))
+    errors = []
+    portal_docs.open_with_default_app(str(tmp_path / "a.qqq"), on_error=errors.append)
+    assert errors == []
