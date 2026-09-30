@@ -310,6 +310,63 @@ def _natural_name_key(name: str) -> Tuple:
     return chunks, name
 
 
+_TEXT_MIMETYPES = {
+    "application/json",
+    "application/javascript",
+    "application/xml",
+    "application/x-sh",
+    "application/x-python",
+    "application/x-perl",
+    "application/sql",
+    "application/toml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/x-httpd-php",
+    "application/x-tex",
+    "application/x-latex",
+}
+
+_TEXT_EXTENSIONS = {
+    ".txt", ".md", ".rst", ".log", ".csv", ".tsv",
+    ".py", ".pyw", ".pyx", ".pyi",
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".html", ".htm", ".xhtml", ".xml", ".svg", ".css", ".scss", ".sass",
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".sh", ".bash", ".zsh", ".fish", ".ps1",
+    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
+    ".java", ".kt", ".scala", ".go", ".rs", ".rb", ".pl", ".pm",
+    ".php", ".php3", ".php4", ".php5", ".phtml",
+    ".sql", ".lua", ".vim", ".vimrc",
+    ".dockerfile", ".makefile", ".cmake",
+    ".properties", ".env", ".gitignore", ".gitattributes",
+    ".pem", ".crt", ".csr", ".key", ".pub",
+    ".service", ".desktop", ".patch", ".diff", ".tf", ".hcl",
+}
+
+_TEXT_NAME_PATTERNS = ("readme", "license", "changelog", "authors", "contributors", "makefile")
+
+
+def _is_editable_as_text(name: str) -> bool:
+    """Whether the text editor should be offered for a file called *name*.
+
+    Known text and config files qualify, and so does any file whose type
+    cannot be told from its name; files of a known non-text type (images,
+    media, archives, documents, binaries) do not.
+    """
+    lowered = name.lower()
+    _stem, ext = os.path.splitext(lowered)
+    if ext in _TEXT_EXTENSIONS or any(p in lowered for p in _TEXT_NAME_PATTERNS):
+        return True
+    mimetype, _encoding = mimetypes.guess_type(name)
+    if mimetype is None:
+        return True
+    return (
+        mimetype.startswith("text/")
+        or mimetype in _TEXT_MIMETYPES
+        or mimetype.endswith(("+xml", "+json"))
+    )
+
+
 def _type_sort_key(name: str) -> str:
     """The file type Nautilus sorts by: its content type's description."""
     try:
@@ -2210,7 +2267,11 @@ class FilePane(Gtk.Box):
         # Add Edit for any single file (both local and remote)
         if has_selection:
             selected_entries = self.get_selected_entries()
-            if len(selected_entries) == 1 and not selected_entries[0].is_dir:
+            if (
+                len(selected_entries) == 1
+                and not selected_entries[0].is_dir
+                and _is_editable_as_text(selected_entries[0].name)
+            ):
                 _add_menu_item(_("Edit"), "text-editor-symbolic", "edit")
         
         # Add clipboard operations if items are selected
@@ -2359,8 +2420,12 @@ class FilePane(Gtk.Box):
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
         _set_enabled("paste", can_paste)
-        # Edit is enabled for single file selection (any file type)
-        can_edit = single_selection and not selected_entries[0].is_dir if single_selection else False
+        # Edit is enabled for a single text or unknown-type file
+        can_edit = (
+            single_selection
+            and not selected_entries[0].is_dir
+            and _is_editable_as_text(selected_entries[0].name)
+        )
         
         _set_enabled("edit", can_edit)
         _set_enabled("rename", single_selection)
@@ -2734,55 +2799,6 @@ class FilePane(Gtk.Box):
             "location": safe_display_text(location),
         }
 
-    def _is_text_file(self, entry: FileEntry) -> bool:
-        """Check if a file is likely a text file based on name/extension."""
-        if entry.is_dir:
-            return False
-        
-        # Check mimetype
-        mimetype, _unused = mimetypes.guess_type(entry.name)
-        if mimetype:
-            if mimetype.startswith('text/'):
-                return True
-            # Also allow common code file types
-            text_mimes = [
-                'application/json',
-                'application/javascript',
-                'application/xml',
-                'application/x-sh',
-                'application/x-python',
-            ]
-            if mimetype in text_mimes:
-                return True
-        
-        # Check by extension
-        _, ext = os.path.splitext(entry.name.lower())
-        text_extensions = {
-            '.txt', '.md', '.rst', '.log',
-            '.py', '.pyw', '.pyx', '.pyi',
-            '.js', '.jsx', '.ts', '.tsx',
-            '.html', '.htm', '.xhtml', '.xml', '.css', '.scss', '.sass',
-            '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
-            '.sh', '.bash', '.zsh', '.fish', '.ps1',
-            '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',
-            '.java', '.kt', '.scala', '.go', '.rs', '.rb', '.pl', '.pm',
-            '.php', '.php3', '.php4', '.php5', '.phtml',
-            '.sql', '.lua', '.vim', '.vimrc',
-            '.dockerfile', '.makefile', '.cmake',
-            '.properties', '.env', '.gitignore', '.gitattributes',
-        }
-        if ext in text_extensions:
-            return True
-        
-        # Check if filename suggests a text file
-        text_patterns = ['readme', 'license', 'changelog', 'authors', 'contributors', 'makefile']
-        name_lower = entry.name.lower()
-        for pattern in text_patterns:
-            if pattern in name_lower:
-                return True
-        
-        return False
-    
     def _on_menu_edit(self) -> None:
         """Handle Edit menu action - open file in editor."""
         entry = self.get_selected_entry()
@@ -3296,12 +3312,15 @@ class FilePane(Gtk.Box):
 
     def _offer_remote_file_actions(self, position: int, entry: FileEntry) -> None:
         """Ask whether to download or edit a remote file that was activated."""
-        dialog = Adw.AlertDialog.new(
-            safe_display_text(entry.name),
-            _("Download the file to this computer or open it in the editor?"),
-        )
+        editable = _is_editable_as_text(entry.name)
+        if editable:
+            body = _("Download the file to this computer or open it in the editor?")
+        else:
+            body = _("Download the file to this computer?")
+        dialog = Adw.AlertDialog.new(safe_display_text(entry.name), body)
         dialog.add_response("cancel", _("Cancel"))
-        dialog.add_response("edit", _("Edit as Text"))
+        if editable:
+            dialog.add_response("edit", _("Edit as Text"))
         dialog.add_response("download", _("Download"))
         dialog.set_response_appearance("download", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("download")

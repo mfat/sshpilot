@@ -15599,3 +15599,7 @@ msgstr "Скачать файл на этот компьютер или откр
 #: src/sshpilot/file_manager/pane.py:3304
 msgid "Edit as Text"
 msgstr "Изменить как текст"
+
+#: src/sshpilot/file_manager/pane.py:3319
+msgid "Download the file to this computer?"
+msgstr "Скачать файл на этот компьютер?"

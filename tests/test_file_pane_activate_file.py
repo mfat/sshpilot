@@ -10,7 +10,7 @@ def _make_pane(module, *, remote):
     pane._current_path = "/home/user"
     pane._entries = [
         SimpleNamespace(name="docs", is_dir=True),
-        SimpleNamespace(name="report.pdf", is_dir=False),
+        SimpleNamespace(name="report.txt", is_dir=False),
     ]
     pane.emitted = []
     pane.emit = lambda *args: pane.emitted.append(args)
@@ -40,7 +40,7 @@ def test_local_file_opens_in_default_app(load_file_manager_window, monkeypatch):
     pane._on_list_activate(None, 1)
     pane._on_grid_activate(None, 1)
 
-    assert opened == [("/home/user/report.pdf", "window")] * 2
+    assert opened == [("/home/user/report.txt", "window")] * 2
     assert pane.emitted == []
 
 
@@ -123,7 +123,7 @@ def test_remote_file_offers_download_and_edit(load_file_manager_window, monkeypa
     pane._on_list_activate(None, 1)
 
     (dialog,) = _FakeAlertDialog.instances
-    assert dialog.heading == "report.pdf"
+    assert dialog.heading == "report.txt"
     assert dialog.responses == ["cancel", "edit", "download"]
     assert dialog.presented_on is pane
     assert opened == []
@@ -160,4 +160,33 @@ def test_failed_open_shows_toast(load_file_manager_window, monkeypatch):
 
     pane._on_list_activate(None, 1)
 
-    assert toasts == ["Could not open report.pdf"]
+    assert toasts == ["Could not open report.txt"]
+
+
+def test_edit_is_offered_for_text_and_unknown_types_only(load_file_manager_window):
+    module = load_file_manager_window()
+    pane_module = __import__(module.FilePane.__module__, fromlist=["_"])
+    editable = pane_module._is_editable_as_text
+
+    for name in (
+        "notes.txt", "sshd_config", "nginx.conf", "app.yaml", "main.py",
+        "Makefile", ".bashrc", "id_ed25519.pub", "drawing.svg", "data.bin2",
+        "script.ts", "README", "server.log",
+    ):
+        assert editable(name), name
+    for name in (
+        "photo.png", "photo.JPG", "song.mp3", "movie.mp4", "backup.zip",
+        "backup.tar.gz", "manual.pdf", "report.docx", "font.ttf",
+    ):
+        assert not editable(name), name
+
+
+def test_remote_non_text_file_offers_download_only(load_file_manager_window, monkeypatch):
+    pane, _opened = _remote_pane_with_dialog(load_file_manager_window, monkeypatch)
+    pane._entries[1] = SimpleNamespace(name="photo.png", is_dir=False)
+
+    pane._on_list_activate(None, 1)
+
+    (dialog,) = _FakeAlertDialog.instances
+    assert dialog.responses == ["cancel", "download"]
+    assert dialog.body == "Download the file to this computer?"

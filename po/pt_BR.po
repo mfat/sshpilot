@@ -15697,3 +15697,7 @@ msgstr "Baixar o arquivo para este computador ou abri-lo no editor?"
 #: src/sshpilot/file_manager/pane.py:3304
 msgid "Edit as Text"
 msgstr "Editar como texto"
+
+#: src/sshpilot/file_manager/pane.py:3319
+msgid "Download the file to this computer?"
+msgstr "Baixar o arquivo para este computador?"
