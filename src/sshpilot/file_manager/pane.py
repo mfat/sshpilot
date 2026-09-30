@@ -2252,11 +2252,15 @@ class FilePane(Gtk.Box):
             row.connect('activated', _on_activated)
             listbox.append(row)
         
-        # Open leads the menu for a single folder, as in Nautilus.
+        # Open leads the menu for a single folder, as in Nautilus, and for a
+        # single local file, which opens in the default application.
         if has_selection:
             selected_entries = self.get_selected_entries()
-            if len(selected_entries) == 1 and selected_entries[0].is_dir:
-                _add_menu_item(_("Open"), "folder-open-symbolic", "open")
+            if len(selected_entries) == 1:
+                if selected_entries[0].is_dir:
+                    _add_menu_item(_("Open"), "folder-open-symbolic", "open")
+                elif not self._is_remote:
+                    _add_menu_item(_("Open"), "document-open-symbolic", "open")
 
         # Add Download/Upload based on pane type and selection
         if self._is_remote and has_selection:

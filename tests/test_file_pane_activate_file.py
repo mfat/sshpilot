@@ -190,3 +190,70 @@ def test_remote_non_text_file_offers_download_only(load_file_manager_window, mon
     (dialog,) = _FakeAlertDialog.instances
     assert dialog.responses == ["cancel", "download"]
     assert dialog.body == "Download the file to this computer?"
+
+
+class _FakeListBox:
+    def __init__(self):
+        self.rows = []
+
+    def get_first_child(self):
+        return self.rows[0] if self.rows else None
+
+    def remove(self, row):
+        self.rows.remove(row)
+
+    def append(self, row):
+        self.rows.append(row)
+
+
+class _FakeActionRow:
+    def __init__(self, title):
+        self.title = title
+
+    def add_prefix(self, _icon):
+        pass
+
+    def set_activatable(self, _value):
+        pass
+
+    def connect(self, *_args):
+        pass
+
+
+def _context_menu_titles(load_file_manager_window, monkeypatch, *, remote, position):
+    module = load_file_manager_window()
+    pane_module = __import__(module.FilePane.__module__, fromlist=["_"])
+    import sshpilot.icon_utils as icon_utils
+
+    monkeypatch.setattr(pane_module.Gtk, "ListBox", _FakeListBox, raising=False)
+    monkeypatch.setattr(pane_module.Adw, "ActionRow", _FakeActionRow, raising=False)
+    monkeypatch.setattr(icon_utils, "new_image_from_icon_name", lambda _name: None)
+    pane = _make_pane(module, remote=remote)
+    listbox = _FakeListBox()
+    widget = SimpleNamespace(grab_focus=lambda: None)
+    pane._menu_popover = SimpleNamespace(
+        get_child=lambda: listbox,
+        get_parent=lambda: widget,
+        set_pointing_to=lambda _rect: None,
+        popup=lambda: None,
+    )
+    pane._update_menu_state = lambda: None
+    pane.get_selected_entries = lambda: [pane._entries[position]]
+    pane._menu_for_background = False
+    pane._show_context_menu(widget, 0, 0)
+    return [row.title for row in listbox.rows]
+
+
+def test_local_file_menu_starts_with_open(load_file_manager_window, monkeypatch):
+    titles = _context_menu_titles(load_file_manager_window, monkeypatch, remote=False, position=1)
+    assert titles[0] == "Open"
+
+
+def test_folder_menu_starts_with_open(load_file_manager_window, monkeypatch):
+    titles = _context_menu_titles(load_file_manager_window, monkeypatch, remote=True, position=0)
+    assert titles[0] == "Open"
+
+
+def test_remote_file_menu_has_no_open(load_file_manager_window, monkeypatch):
+    titles = _context_menu_titles(load_file_manager_window, monkeypatch, remote=True, position=1)
+    assert "Open" not in titles
