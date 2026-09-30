@@ -208,10 +208,11 @@ class FileManagerWindow(Adw.Window):
         
         # Toast overlay lives in the template.
         self._toast_overlay = self.toast_overlay
-        # Newest dialog of either kind (connection messages, shutdown).
+        # Batch-transfer dialogs, one per upload/download selection; several
+        # can run at once. _progress_dialog is the newest of them.
+        self._transfer_dialogs: List[SFTPProgressDialog] = []
         self._progress_dialog: Optional[SFTPProgressDialog] = None
-        # The dialog the multi-future path (copy/move/delete) aggregates into;
-        # batch transfers keep their own dialog in _start_transfer_batch.
+        # The dialog the multi-future path (copy/move/delete) aggregates into.
         self._aggregate_dialog: Optional[SFTPProgressDialog] = None
         self._connection_error_reported = False
 
@@ -751,10 +752,19 @@ class FileManagerWindow(Adw.Window):
 
 
 
+    def _open_transfer_dialogs(self) -> List[SFTPProgressDialog]:
+        """The tracked batch-transfer dialogs (created on first use)."""
+        dialogs = self.__dict__.get("_transfer_dialogs")
+        if not isinstance(dialogs, list):
+            dialogs = []
+            self._transfer_dialogs = dialogs
+        return dialogs
+
     def _clear_progress_toast(self) -> None:
-        """Close the progress dialogs safely."""
-        for attr in ("_progress_dialog", "_aggregate_dialog"):
-            dialog = getattr(self, attr, None)
+        """Close every progress dialog safely."""
+        dialogs = list(self._open_transfer_dialogs())
+        dialogs.append(getattr(self, "_aggregate_dialog", None))
+        for dialog in dialogs:
             if dialog is None:
                 continue
             try:
@@ -762,8 +772,9 @@ class FileManagerWindow(Adw.Window):
             except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
-            finally:
-                setattr(self, attr, None)
+        self._transfer_dialogs = []
+        self._progress_dialog = None
+        self._aggregate_dialog = None
 
 
     def _show_progress(self, fraction: float, message: str) -> None:
@@ -2990,10 +3001,13 @@ class FileManagerWindow(Adw.Window):
 
     def _on_progress_dialog_closed(self, dialog) -> None:
         """Drop our reference when the user dismisses the progress dialog."""
-        if getattr(self, "_progress_dialog", None) is dialog:
-            self._progress_dialog = None
         if getattr(self, "_aggregate_dialog", None) is dialog:
             self._aggregate_dialog = None
+        transfer_dialogs = self._open_transfer_dialogs()
+        if dialog in transfer_dialogs:
+            transfer_dialogs.remove(dialog)
+        if getattr(self, "_progress_dialog", None) is dialog:
+            self._progress_dialog = transfer_dialogs[-1] if transfer_dialogs else None
 
     @staticmethod
     def _format_transfer_size(num_bytes: float) -> str:
@@ -3170,17 +3184,22 @@ class FileManagerWindow(Adw.Window):
             return name, source, destination
 
         # A running dialog belongs to its own transfer; leave it up and stack
-        # this one. A finished or dismissed one is replaced.
-        previous = self._progress_dialog
-        if previous is not None and not previous.is_reusable():
+        # this one. Finished or dismissed batch dialogs are replaced.
+        transfer_dialogs = self._open_transfer_dialogs()
+        for previous in list(transfer_dialogs):
+            if previous.is_reusable():
+                continue
             try:
                 previous.close()
             except (AttributeError, RuntimeError):
                 pass
+            if previous in transfer_dialogs:
+                transfer_dialogs.remove(previous)
         name, source, destination = _names(0)
         dialog = self._present_progress_dialog(
             operation_type, total_files=len(items), filename=name
         )
+        transfer_dialogs.append(dialog)
         self._progress_dialog = dialog
         dialog.set_paths(source, destination)
         dialog.set_future(future)
@@ -3308,10 +3327,9 @@ class FileManagerWindow(Adw.Window):
                 self._aggregate_dialog = self._present_progress_dialog(
                     operation_type, total_files=total_files, filename=filename
                 )
-                self._progress_dialog = self._aggregate_dialog
             elif not self._aggregate_dialog.get_visible():
                 # Same batch, dialog object reused but not visible — re-present.
-                dialog_parent = self._aggregate_dialog_parent()
+                dialog_parent = self._progress_dialog_parent()
                 try:
                     if _HAS_ALERT_DIALOG:
                         self._aggregate_dialog.present(dialog_parent)
