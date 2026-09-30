@@ -150,7 +150,6 @@ def test_context_menu_includes_properties(load_file_manager_window, monkeypatch)
     pane = FilePane.__new__(FilePane)
     pane._is_remote = True
     pane._menu_actions = {}
-    pane._menu_action_callbacks = {}
 
     class _ActionGroup:
         def __init__(self):
@@ -160,10 +159,9 @@ def test_context_menu_includes_properties(load_file_manager_window, monkeypatch)
             self.actions.append(action)
 
     pane._menu_action_group = _ActionGroup()
-    # The context menu is now a Gtk.Popover whose rows are built dynamically in
-    # _show_context_menu; the selectable operations are registered as Gio actions
-    # in _menu_actions. Verify the Properties action exists alongside the core ops.
-    pane._create_menu_model()
+    # The context menu is rebuilt on every right-click; its operations are
+    # Gio actions in _menu_actions. Properties exists alongside the core ops.
+    pane._create_menu_actions()
 
     assert "properties" in pane._menu_actions
     for expected in ("download", "upload", "edit", "copy", "cut", "paste", "rename", "delete"):
@@ -190,7 +188,6 @@ def test_multi_selection_keeps_properties_and_hides_rename(load_file_manager_win
     pane = FilePane.__new__(FilePane)
     pane._is_remote = True
     pane._menu_actions = {}
-    pane._menu_action_callbacks = {}
 
     class _ActionGroup:
         def __init__(self):
@@ -200,7 +197,7 @@ def test_multi_selection_keeps_properties_and_hides_rename(load_file_manager_win
             self.actions.append(action)
 
     pane._menu_action_group = _ActionGroup()
-    pane._create_menu_model()
+    pane._create_menu_actions()
     pane._action_buttons = {}
     pane._entries = [
         FileEntry("a.txt", False, 1, 0.0, None),

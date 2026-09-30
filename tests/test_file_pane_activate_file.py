@@ -192,68 +192,119 @@ def test_remote_non_text_file_offers_download_only(load_file_manager_window, mon
     assert dialog.body == "Download the file to this computer?"
 
 
-class _FakeListBox:
+class _FakeMenu:
     def __init__(self):
-        self.rows = []
+        self.items = []
+        self.sections = []
 
-    def get_first_child(self):
-        return self.rows[0] if self.rows else None
+    def append_item(self, item):
+        self.items.append(item)
 
-    def remove(self, row):
-        self.rows.remove(row)
+    def get_n_items(self):
+        return len(self.items)
 
-    def append(self, row):
-        self.rows.append(row)
+    def append_section(self, _label, section):
+        self.sections.append([item.label for item in section.items])
 
 
-class _FakeActionRow:
-    def __init__(self, title):
-        self.title = title
+class _FakeMenuItem:
+    def __init__(self, label, action):
+        self.label = label
+        self.action = action
+        self.attributes = {}
 
-    def add_prefix(self, _icon):
+    @classmethod
+    def new(cls, label, action):
+        return cls(label, action)
+
+    def set_attribute_value(self, key, value):
+        self.attributes[key] = value
+
+
+class _FakePopoverMenu:
+    last = None
+
+    def __init__(self, model):
+        self.model = model
+        self.parent = None
+        self.pointing_to = None
+        self.popped_up = False
+        _FakePopoverMenu.last = self
+
+    @classmethod
+    def new_from_model(cls, model):
+        return cls(model)
+
+    def set_has_arrow(self, _value):
         pass
 
-    def set_activatable(self, _value):
+    def set_halign(self, _value):
         pass
 
     def connect(self, *_args):
         pass
 
+    def set_parent(self, parent):
+        self.parent = parent
 
-def _context_menu_titles(load_file_manager_window, monkeypatch, *, remote, position):
+    def set_pointing_to(self, rect):
+        self.pointing_to = rect
+
+    def popup(self):
+        self.popped_up = True
+
+    def popdown(self):
+        pass
+
+
+def _context_menu_sections(load_file_manager_window, monkeypatch, *, remote, position):
     module = load_file_manager_window()
     pane_module = __import__(module.FilePane.__module__, fromlist=["_"])
-    import sshpilot.icon_utils as icon_utils
-
-    monkeypatch.setattr(pane_module.Gtk, "ListBox", _FakeListBox, raising=False)
-    monkeypatch.setattr(pane_module.Adw, "ActionRow", _FakeActionRow, raising=False)
-    monkeypatch.setattr(icon_utils, "new_image_from_icon_name", lambda _name: None)
-    pane = _make_pane(module, remote=remote)
-    listbox = _FakeListBox()
-    widget = SimpleNamespace(grab_focus=lambda: None)
-    pane._menu_popover = SimpleNamespace(
-        get_child=lambda: listbox,
-        get_parent=lambda: widget,
-        set_pointing_to=lambda _rect: None,
-        popup=lambda: None,
+    monkeypatch.setattr(pane_module.Gio, "Menu", _FakeMenu, raising=False)
+    monkeypatch.setattr(pane_module.Gio, "MenuItem", _FakeMenuItem, raising=False)
+    monkeypatch.setattr(
+        pane_module.GLib, "Variant", SimpleNamespace(new_string=lambda v: v), raising=False
     )
+    monkeypatch.setattr(pane_module.Gtk, "PopoverMenu", _FakePopoverMenu, raising=False)
+    monkeypatch.setattr(pane_module.Gtk, "Align", SimpleNamespace(START="start"), raising=False)
+    monkeypatch.setattr(
+        pane_module.Gdk, "Rectangle", lambda: SimpleNamespace(), raising=False
+    )
+    pane = _make_pane(module, remote=remote)
+    pane._menu_popover = None
     pane._update_menu_state = lambda: None
     pane.get_selected_entries = lambda: [pane._entries[position]]
     pane._menu_for_background = False
-    pane._show_context_menu(widget, 0, 0)
-    return [row.title for row in listbox.rows]
+    widget = SimpleNamespace(
+        grab_focus=lambda: None,
+        translate_coordinates=lambda _target, x, y: (x + 10, y + 20),
+    )
+    pane._show_context_menu(widget, 5, 7)
+    popover = _FakePopoverMenu.last
+    # Parented to the pane, not the view, pointing at the translated click.
+    assert popover.parent is pane
+    assert (popover.pointing_to.x, popover.pointing_to.y) == (15, 27)
+    assert popover.popped_up
+    assert pane._menu_popover is popover
+    return popover.model.sections
 
 
 def test_local_file_menu_starts_with_open(load_file_manager_window, monkeypatch):
-    titles = _context_menu_titles(load_file_manager_window, monkeypatch, remote=False, position=1)
-    assert titles[0] == "Open"
+    sections = _context_menu_sections(load_file_manager_window, monkeypatch, remote=False, position=1)
+    assert sections == [
+        ["Open", "Edit", "Upload…"],
+        ["Cut", "Copy"],
+        ["Rename…", "Delete"],
+        ["Copy Location"],
+        ["Properties…"],
+    ]
 
 
 def test_folder_menu_starts_with_open(load_file_manager_window, monkeypatch):
-    titles = _context_menu_titles(load_file_manager_window, monkeypatch, remote=True, position=0)
-    assert titles[0] == "Open"
+    sections = _context_menu_sections(load_file_manager_window, monkeypatch, remote=True, position=0)
+    assert sections[0] == ["Open", "Download"]
 
 
 def test_remote_file_menu_has_no_open(load_file_manager_window, monkeypatch):
-    titles = _context_menu_titles(load_file_manager_window, monkeypatch, remote=True, position=1)
-    assert "Open" not in titles
+    sections = _context_menu_sections(load_file_manager_window, monkeypatch, remote=True, position=1)
+    assert sections[0] == ["Edit", "Download"]
