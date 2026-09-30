@@ -552,15 +552,23 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         """Increment completed file counter"""
         GLib.idle_add(self._increment_file_count_ui)
     
+    def set_files_completed(self, done: int) -> None:
+        """Set the finished-file counter (main thread)."""
+        self.files_completed = max(0, int(done))
+        self._update_file_counter()
+
     def _increment_file_count_ui(self):
         """Update file counter (must be called from main thread)"""
         self.files_completed += 1
+        self._update_file_counter()
+        return False
+
+    def _update_file_counter(self) -> None:
         self.counter_label.set_text(
             ngettext("{done} of {total} file", "{done} of {total} files", self.total_files).format(
                 done=self.files_completed, total=self.total_files
             )
         )
-        return False
     
     def set_future(self, future):
         """Set the current operation future for cancellation"""
@@ -742,6 +750,12 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             else:
                 self._set_dialog_heading(_("Transfer Failed"))
                 self._set_status_text(_("Transfer failed"))
+                # The render tick stops here, so show how far it got: a batch
+                # with one failed item still handled every byte.
+                if self._latest_fraction is not None:
+                    fraction = max(0.0, min(1.0, float(self._latest_fraction)))
+                    self.progress_bar.set_fraction(fraction)
+                    self.progress_bar.set_text(f"{int(fraction * 100)}%")
                 if error_message:
                     self.file_label.set_text(_("Error: {message}").format(message=error_message))
                 else:

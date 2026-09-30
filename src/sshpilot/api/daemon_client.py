@@ -161,6 +161,7 @@ from .models.terminal import (
 from .models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
+    StartTransferBatchRequest,
     StartTransferRequest,
     TransferSummary,
 )
@@ -262,6 +263,7 @@ from .transport.codec import (
     sftp_service_summary_from_wire,
     sftp_symlink_request_to_wire,
     scp_transfer_request_to_wire,
+    start_transfer_batch_request_to_wire,
     operation_summary_from_wire,
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
@@ -472,6 +474,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_transfer": Capability.TRANSFERS_READ,
     "start_transfer": Capability.TRANSFERS_WRITE,
     "start_scp_transfer": Capability.TRANSFERS_SCP,
+    "start_transfer_batch": Capability.TRANSFERS_BATCH,
     "cancel_transfer": Capability.TRANSFERS_WRITE,
     "list_forwards": Capability.FORWARDS_READ,
     "get_forward": Capability.FORWARDS_READ,
@@ -1736,6 +1739,21 @@ class DaemonClient:
             return transfer_summary_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid SCP transfer summary")
+
+    def start_transfer_batch(self, request: StartTransferBatchRequest) -> TransferSummary:
+        self._require_capability(Capability.TRANSFERS_BATCH)
+        result = self._request(
+            "transfers.batch.start",
+            start_transfer_batch_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            summary = transfer_summary_from_wire(result)
+        except (TypeError, ValueError):
+            summary = None
+        if summary is None or summary.items_total is None:
+            self._fail_protocol("The daemon returned an invalid batch transfer summary")
+        return summary
 
     def cancel_transfer(self, request: CancelTransferRequest) -> None:
         self._require_capability(Capability.TRANSFERS_WRITE)

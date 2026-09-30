@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- `start_transfer_batch` (wire `transfers.batch.start`, capability
+  `transfers.batch`) runs several upload or download items as one transfer:
+  one queue slot, one byte total, one terminal state. New models
+  `StartTransferBatchRequest`, `TransferItem` and `TransferItemFailure`;
+  `TransferSummary` gains `items_total`, `items_done` and `item_failures`,
+  sent on the wire only for batch transfers. A failed item does not stop the
+  batch; the batch ends `failed` when any item did. `transfer.item_completed`,
+  declared since 0.10, is now emitted once per batch item or pipelined window.
+  API implementation version is 0.76; Protocol remains 1.0.
 - `PluginSessionFailureCode.TELNET_UNAVAILABLE` (`telnet_unavailable`,
   parameter `program`: `telnet`) reports a missing telnet client; a telnet
   connection without a host now reports `host_required`. Both previously

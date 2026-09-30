@@ -5803,6 +5803,36 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: StartTransferBatchRequest -->
+## `StartTransferBatchRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Transfer several items as one transfer: one byte total, one terminal state.
+
+**Related methods:** `start_transfer_batch`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `sftp_service_id` | `SftpServiceId` | Yes | — | No |
+| `direction` | `TransferDirection` | Yes | — | No |
+| `items` | `Tuple[TransferItem, ...]` | Yes | — | No |
+| `conflict_policy` | `TransferConflictPolicy` | No | `overwrite` | No |
+
+Synthetic representation:
+
+```json
+{
+  "conflict_policy": "overwrite",
+  "connection_id": "production",
+  "direction": {},
+  "items": {},
+  "sftp_service_id": {}
+}
+```
+
 <!-- api-model: StartTransferRequest -->
 ## `StartTransferRequest`
 
@@ -6075,6 +6105,56 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: TransferItem -->
+## `TransferItem`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One entry of a batch transfer: a file, or a directory tree when *recursive*.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `local_path` | `str` | Yes | — | No |
+| `remote_path` | `str` | Yes | — | No |
+| `recursive` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "local_path": {},
+  "recursive": false,
+  "remote_path": {}
+}
+```
+
+<!-- api-model: TransferItemFailure -->
+## `TransferItemFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Why one item of a batch transfer failed; *index* is into the request's items.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `index` | `int` | Yes | — | No |
+| `failure` | `SftpFailure` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "failure": {},
+  "index": {}
+}
+```
+
 <!-- api-model: TransferSummary -->
 ## `TransferSummary`
 
@@ -6082,7 +6162,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `TransferSummary` record.
 
-**Related methods:** `get_transfer`, `list_transfers`, `start_scp_transfer`, `start_transfer`
+**Related methods:** `get_transfer`, `list_transfers`, `start_scp_transfer`, `start_transfer`, `start_transfer_batch`
 **Related events:** `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`
 
 | Field | Type | Required | Default | Sensitive |
@@ -6104,6 +6184,9 @@ Synthetic representation:
 | `failure` | `Optional[Union[ServiceFailure, SftpFailure, ScpFailure]]` | No | `null` | No |
 | `bytes_transferred` | `Optional[int]` | No | `null` | No |
 | `total_bytes` | `Optional[int]` | No | `null` | No |
+| `items_total` | `Optional[int]` | No | `null` | No |
+| `items_done` | `int` | No | `0` | No |
+| `item_failures` | `Tuple[TransferItemFailure, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -6120,6 +6203,9 @@ Synthetic representation:
   "direction": {},
   "failure": null,
   "id": "production",
+  "item_failures": [],
+  "items_done": 0,
+  "items_total": null,
   "owner_client_id": null,
   "sftp_service_id": {},
   "source_display": {},

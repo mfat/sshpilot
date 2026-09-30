@@ -96,7 +96,7 @@ local `error.occurred` continuity notification where delivery remains possible.
 | `transfer.created` | Daemon implemented | `transfers.events` | Transfer record allocation | `TransferSummary` |
 | `transfer.started` | Daemon implemented | `transfers.events` | Transfer begins moving bytes | `TransferSummary` |
 | `transfer.progress` | Daemon implemented | `transfers.events` | Bounded progress update | `TransferSummary` |
-| `transfer.item_completed` | Daemon implemented | `transfers.events` | One recursive item finished | `TransferSummary` |
+| `transfer.item_completed` | Daemon implemented | `transfers.events` | One batch item (or pipelined window) finished | `TransferSummary` |
 | `transfer.completed` | Daemon implemented | `transfers.events` | Transfer finished successfully | `TransferSummary` |
 | `transfer.cancelled` | Daemon implemented | `transfers.events` | Transfer cancelled | `TransferSummary` |
 | `transfer.failed` | Daemon implemented | `transfers.events` | Transfer failed | `TransferSummary` |
@@ -322,8 +322,10 @@ local `error.occurred` continuity notification where delivery remains possible.
 ## `transfer.item_completed`
 
 - **Status / introduced:** Daemon implemented / v1, API 0.10.
-- **Capability / trigger:** `transfers.events`; one recursive item finished.
-- **Payload / IDs:** `TransferSummary`.
+- **Capability / trigger:** `transfers.events`; one item of a batch transfer
+  finished, successfully or not, or a pipelined window of small files did.
+  Emitted since API 0.76; earlier daemons declared it but never sent it.
+- **Payload / IDs:** `TransferSummary` with `items_done` and `item_failures`.
 
 <!-- api-event: transfer.completed -->
 ## `transfer.completed`

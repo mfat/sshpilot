@@ -54,6 +54,20 @@ class TransferLocalMode(str, Enum):
 
 
 @dataclass(frozen=True)
+class TransferItemFailure:
+    """Why one item of a batch transfer failed; *index* is into the request's items."""
+
+    index: int
+    failure: SftpFailure
+
+    def __post_init__(self) -> None:
+        if type(self.index) is not int or self.index < 0:
+            raise ValueError("transfer item index must be a non-negative int")
+        if type(self.failure) is not SftpFailure:
+            raise TypeError("transfer item failure must be an SftpFailure")
+
+
+@dataclass(frozen=True)
 class TransferSummary:
     id: TransferId
     connection_id: ConnectionId
@@ -73,6 +87,12 @@ class TransferSummary:
     # Legacy field retained for older schema readers.
     bytes_transferred: Optional[int] = None
     total_bytes: Optional[int] = None
+    # Batch transfers only (``items_total`` is None for a single transfer).
+    # Items run in index order; ``items_done`` counts finished ones, failed
+    # or not, and ``item_failures`` names the failed ones.
+    items_total: Optional[int] = None
+    items_done: int = 0
+    item_failures: Tuple[TransferItemFailure, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.id, "transfer id")
@@ -120,6 +140,25 @@ class TransferSummary:
                 "transfer failure must be ServiceFailure, SftpFailure, ScpFailure, "
                 "or None"
             )
+        if self.items_total is None:
+            if self.items_done or self.item_failures:
+                raise ValueError("batch item progress requires items_total")
+        else:
+            if type(self.items_total) is not int or self.items_total < 1:
+                raise ValueError("items_total must be a positive int")
+            if (
+                type(self.items_done) is not int
+                or not 0 <= self.items_done <= self.items_total
+            ):
+                raise ValueError("items_done must be between 0 and items_total")
+            if type(self.item_failures) is not tuple or any(
+                type(item) is not TransferItemFailure
+                or item.index >= self.items_total
+                for item in self.item_failures
+            ):
+                raise ValueError("item_failures must name items of this batch")
+            if self.backend is not TransferBackend.SFTP:
+                raise ValueError("batch transfers use the SFTP backend")
         if self.failure is not None:
             expected_failure_type = (
                 SftpFailure
@@ -160,6 +199,58 @@ class StartTransferRequest:
             raise TypeError("local_mode must be a TransferLocalMode")
         if self.local_mode is not TransferLocalMode.DAEMON_PATH:
             raise ValueError("binary streaming mode is not implemented in Phase 10")
+
+
+@dataclass(frozen=True)
+class TransferItem:
+    """One entry of a batch transfer: a file, or a directory tree when *recursive*."""
+
+    local_path: str
+    remote_path: str
+    recursive: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.local_path) is not str or not self.local_path or "\x00" in self.local_path:
+            raise ValueError("local_path must be a non-empty NUL-free string")
+        if type(self.remote_path) is not str or not self.remote_path or "\x00" in self.remote_path:
+            raise ValueError("remote_path must be a non-empty NUL-free string")
+        if type(self.recursive) is not bool:
+            raise TypeError("recursive must be a boolean")
+
+
+@dataclass(frozen=True)
+class StartTransferBatchRequest:
+    """Transfer several items as one transfer: one byte total, one terminal state."""
+
+    connection_id: ConnectionId
+    sftp_service_id: SftpServiceId
+    direction: TransferDirection
+    items: Tuple[TransferItem, ...]
+    conflict_policy: TransferConflictPolicy = TransferConflictPolicy.OVERWRITE
+
+    MAX_ITEMS = 10_000
+    MAX_ENCODED_PATH_BYTES = 16 * 1024 * 1024
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        require_identifier(self.sftp_service_id, "SFTP service id")
+        if not isinstance(self.direction, TransferDirection):
+            raise TypeError("transfer direction must be a TransferDirection")
+        if type(self.items) is not tuple or not self.items:
+            raise ValueError("batch items must be a non-empty tuple")
+        if len(self.items) > self.MAX_ITEMS:
+            raise ValueError("batch item count exceeds the limit")
+        if any(type(item) is not TransferItem for item in self.items):
+            raise TypeError("batch items must be TransferItem values")
+        encoded = sum(
+            len(item.local_path.encode("utf-8", "surrogateescape"))
+            + len(item.remote_path.encode("utf-8", "surrogateescape"))
+            for item in self.items
+        )
+        if encoded > self.MAX_ENCODED_PATH_BYTES:
+            raise ValueError("batch paths exceed the encoded size limit")
+        if not isinstance(self.conflict_policy, TransferConflictPolicy):
+            raise TypeError("conflict_policy must be a TransferConflictPolicy")
 
 
 @dataclass(frozen=True)

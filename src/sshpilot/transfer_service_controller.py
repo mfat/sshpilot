@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from .api.capabilities import Capability
 from .api.errors import ErrorCode, SshPilotError
@@ -25,7 +25,9 @@ from .api.events import EventType
 from .api.models.common import TransferId
 from .api.models.transfers import (
     CancelTransferRequest,
+    StartTransferBatchRequest,
     StartTransferRequest,
+    TransferDirection,
     TransferState,
     TransferSummary,
 )
@@ -104,25 +106,72 @@ class TransferServiceController:
         on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
         """Start a daemon transfer; progress/completion arrive via events."""
+        self._start(
+            request.direction,
+            lambda: self._client.start_transfer(request),
+            required=(),
+            on_started=on_started,
+            on_progress=on_progress,
+            on_done=on_done,
+            on_error=on_error,
+        )
+
+    def start_transfer_batch(
+        self,
+        request: StartTransferBatchRequest,
+        *,
+        on_started: Optional[Callable[[TransferSummary], None]] = None,
+        on_progress: Optional[Callable[[TransferSummary], None]] = None,
+        on_done: Optional[Callable[[TransferSummary], None]] = None,
+        on_error: Optional[Callable[[BaseException], None]] = None,
+    ) -> None:
+        """Start several items as one daemon transfer.
+
+        ``on_progress`` also receives ``transfer.item_completed`` summaries;
+        ``on_done`` fires once for the whole batch.
+        """
+        self._start(
+            request.direction,
+            lambda: self._client.start_transfer_batch(request),
+            required=(Capability.TRANSFERS_BATCH,),
+            on_started=on_started,
+            on_progress=on_progress,
+            on_done=on_done,
+            on_error=on_error,
+        )
+
+    def _start(
+        self,
+        direction: TransferDirection,
+        start: Callable[[], TransferSummary],
+        *,
+        required: Tuple[Capability, ...],
+        on_started: Optional[Callable[[TransferSummary], None]],
+        on_progress: Optional[Callable[[TransferSummary], None]],
+        on_done: Optional[Callable[[TransferSummary], None]],
+        on_error: Optional[Callable[[BaseException], None]],
+    ) -> None:
         if self._closed:
             if on_error:
                 on_error(RuntimeError("Transfer controller is closed"))
             return
         directional_capability = (
             Capability.TRANSFERS_UPLOAD
-            if request.direction.value == "upload"
+            if direction is TransferDirection.UPLOAD
             else Capability.TRANSFERS_DOWNLOAD
         )
-        if directional_capability not in self._client.get_capabilities().supported:
-            if on_error:
-                on_error(
-                    SshPilotError(
-                        ErrorCode.UNSUPPORTED_CAPABILITY,
-                        f"The daemon does not support {request.direction.value} transfers",
-                        details={"capability": directional_capability.value},
+        supported = self._client.get_capabilities().supported
+        for capability in (directional_capability, *required):
+            if capability not in supported:
+                if on_error:
+                    on_error(
+                        SshPilotError(
+                            ErrorCode.UNSUPPORTED_CAPABILITY,
+                            f"The daemon does not support {capability.value}",
+                            details={"capability": capability.value},
+                        )
                     )
-                )
-            return
+                return
 
         def _on_success(summary: TransferSummary) -> None:
             if self._closed:
@@ -141,7 +190,7 @@ class TransferServiceController:
         self._ensure_subscription()
         try:
             self._bridge.submit(
-                lambda: self._client.start_transfer(request),
+                start,
                 on_success=_on_success,
                 on_error=on_error or (lambda _exc: None),
             )

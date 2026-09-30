@@ -71,6 +71,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "get_transfer": Capability.TRANSFERS_READ,
     "start_transfer": Capability.TRANSFERS_WRITE,
     "start_scp_transfer": Capability.TRANSFERS_SCP,
+    "start_transfer_batch": Capability.TRANSFERS_BATCH,
     "cancel_transfer": Capability.TRANSFERS_WRITE,
     "list_forwards": Capability.FORWARDS_READ,
     "get_forward": Capability.FORWARDS_READ,

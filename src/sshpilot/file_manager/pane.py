@@ -3654,7 +3654,6 @@ class FilePane(Gtk.Box):
                 self.show_toast(_("Upload failed: Invalid window context"))
                 return
 
-            manager = window._manager
 
             dest_parent = self._current_path
             if target_folder is not None:
@@ -3665,36 +3664,26 @@ class FilePane(Gtk.Box):
                 destination_path = posixpath.join(dest_parent, entry.name)
                 files_to_transfer.append((source_path, destination_path))
 
-            total_files = len(files_to_transfer)
 
             def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
-                for local_path_str, dest_path in resolved_files:
-                    path_obj = pathlib.Path(local_path_str)
-                    entry_name = path_obj.name
-
-                    if path_obj.is_dir():
-                        future = manager.upload_directory(path_obj, dest_path)
-                    else:
-                        future = manager.upload(path_obj, dest_path)
-
-                    expected = None
-                    if path_obj.is_file():
-                        try:
-                            expected = int(path_obj.stat().st_size)
-                        except OSError:
-                            expected = None
-                    window._show_progress_dialog(
-                        "upload", entry_name, future,
-                        total_files=total_files,
-                        source_path=str(path_obj),
-                        destination_path=dest_path,
-                        expected_bytes=expected,
-                    )
-                    window._attach_refresh(
-                        future,
+                if not resolved_files:
+                    return
+                items = [
+                    (local_path_str, dest_path, pathlib.Path(local_path_str).is_dir())
+                    for local_path_str, dest_path in resolved_files
+                ]
+                try:
+                    window._start_transfer_batch(
+                        "upload",
+                        items,
                         refresh_remote=self,
-                        highlight_name=None if target_folder is not None else entry_name,
+                        highlight_name=(
+                            None if target_folder is not None
+                            else pathlib.Path(items[-1][0]).name
+                        ),
                     )
+                except Exception as e:
+                    self.show_toast(_("Upload failed: {error}").format(error=e))
 
             window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
 
@@ -3724,7 +3713,6 @@ class FilePane(Gtk.Box):
                 self.show_toast(_("Download failed: Invalid window context"))
                 return
 
-            manager = window._manager
 
             files_to_transfer: List[Tuple[str, str]] = []
             entry_by_name: Dict[str, FileEntry] = {}
@@ -3733,34 +3721,26 @@ class FilePane(Gtk.Box):
                 files_to_transfer.append((source_path, str(destination_path)))
                 entry_by_name[entry.name] = entry
 
-            total_files = len(files_to_transfer)
 
             def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
+                if not resolved_files:
+                    return
+                items = []
                 for source, target_path_str in resolved_files:
-                    target_path = pathlib.Path(target_path_str)
-                    entry_name = target_path.name
-                    entry = entry_by_name.get(entry_name)
-
-                    if entry is not None and entry.is_dir:
-                        future = manager.download_directory(source, target_path)
-                    else:
-                        future = manager.download(source, target_path)
-
-                    expected = None
-                    if entry is not None and not entry.is_dir and entry.size and entry.size > 0:
-                        expected = int(entry.size)
-                    window._show_progress_dialog(
-                        "download", entry_name, future,
-                        total_files=total_files,
-                        source_path=source,
-                        destination_path=str(target_path),
-                        expected_bytes=expected,
-                    )
-                    window._attach_refresh(
-                        future,
+                    entry = entry_by_name.get(posixpath.basename(source.rstrip("/")))
+                    items.append((target_path_str, source, bool(entry is not None and entry.is_dir)))
+                try:
+                    window._start_transfer_batch(
+                        "download",
+                        items,
                         refresh_local_path=str(self._current_path),
-                        highlight_name=None if target_folder is not None else entry_name,
+                        highlight_name=(
+                            None if target_folder is not None
+                            else pathlib.Path(items[-1][0]).name
+                        ),
                     )
+                except Exception as e:
+                    self.show_toast(_("Download failed: {error}").format(error=e))
 
             window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 

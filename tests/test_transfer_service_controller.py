@@ -54,6 +54,7 @@ class _FakeClient:
             Capability.TRANSFERS_WRITE,
             Capability.TRANSFERS_UPLOAD,
             Capability.TRANSFERS_DOWNLOAD,
+            Capability.TRANSFERS_BATCH,
         }))
 
     def subscribe_events(self, listener):
@@ -152,3 +153,47 @@ def test_progress_before_start_reply_is_replayed():
 
     assert [s.state for s in progress] == [TransferState.RUNNING]
     assert [s.state for s in done] == [TransferState.COMPLETED]
+
+
+def _batch_request():
+    from sshpilot.api.models.transfers import StartTransferBatchRequest, TransferItem
+
+    return StartTransferBatchRequest(
+        connection_id=ConnectionId("conn"),
+        sftp_service_id=SftpServiceId("sftp-1"),
+        direction=TransferDirection.UPLOAD,
+        items=(TransferItem("/local/a", "/remote/a"), TransferItem("/local/b", "/remote/b")),
+    )
+
+
+def test_batch_start_shares_the_early_completion_path():
+    client, bridge = _FakeClient(), _QueuedBridge()
+    client.start_transfer_batch = lambda _request: (
+        client.calls.append("start_batch") or _summary(TransferState.RUNNING)
+    )
+    controller = TransferServiceController(client, bridge)
+    done = []
+    controller.start_transfer_batch(_batch_request(), on_done=done.append)
+    start = bridge.pending.pop(0)
+    client.emit(TransferState.COMPLETED, EventType.TRANSFER_COMPLETED)
+    bridge.drain()
+    operation, on_success, _ = start
+    on_success(operation())
+
+    assert client.calls == ["subscribe", "start_batch"]
+    assert [s.state for s in done] == [TransferState.COMPLETED]
+
+
+def test_batch_start_requires_the_batch_capability():
+    client, bridge = _FakeClient(), _QueuedBridge()
+    client.get_capabilities = lambda: SimpleNamespace(supported=frozenset({
+        Capability.TRANSFERS_READ,
+        Capability.TRANSFERS_WRITE,
+        Capability.TRANSFERS_UPLOAD,
+    }))
+    controller = TransferServiceController(client, bridge)
+    errors = []
+    controller.start_transfer_batch(_batch_request(), on_error=errors.append)
+
+    assert bridge.pending == []
+    assert errors and errors[0].details == {"capability": "transfers.batch"}

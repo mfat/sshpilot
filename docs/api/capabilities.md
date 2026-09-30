@@ -82,6 +82,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: transfers.upload -->
 <!-- api-daemon-runtime-capability: transfers.download -->
 <!-- api-daemon-runtime-capability: transfers.scp -->
+<!-- api-daemon-runtime-capability: transfers.batch -->
 <!-- api-daemon-runtime-capability: forwards.read -->
 <!-- api-daemon-runtime-capability: forwards.write -->
 <!-- api-daemon-runtime-capability: forwards.events -->
@@ -129,6 +130,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `transfers.upload` | Upload direction for `start_transfer` | Daemon: Implemented when transfer runtime present | `start_transfer` with `upload` | Transfer lifecycle events | Daemon path local mode | v1 / API 0.10 |
 | `transfers.download` | Download direction for `start_transfer` | Daemon: Implemented when transfer runtime present | `start_transfer` with `download` | Transfer lifecycle events | Daemon path local mode | v1 / API 0.10 |
 | `transfers.scp` | Native OpenSSH SCP upload/download | Daemon: Implemented when native SCP backend is installed | `start_scp_transfer`; wire `transfers.scp.start` | Transfer lifecycle events | Native `scp`, canonical SSH launch, interaction broker | v1 / API 0.13 |
+| `transfers.batch` | Several files/trees as one transfer | Daemon: Implemented when transfer runtime present | `start_transfer_batch`; wire `transfers.batch.start` | Transfer lifecycle events, `transfer.item_completed` per item | Daemon `TransferRuntime` and ready SFTP service | v1 / API 0.76 |
 | `port_forwarding` | Legacy broad forward identifier | Deprecated and never advertised | None | None | Replaced by narrow `forwards.*` capabilities | v1 |
 | `forwards.read` | List and inspect runtime forwards | Daemon: Implemented when forward runtime present | `list_forwards`, `get_forward` | None required | Daemon `ForwardRuntime` | v1 / API 0.10 |
 | `forwards.write` | Open and close runtime forwards | Daemon: Implemented when forward runtime present | `open_forward`, `close_forward` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
@@ -377,6 +379,13 @@ Advertises that `start_transfer` accepts the download direction. Requires
 Advertises daemon-owned native OpenSSH SCP upload/download through
 `start_scp_transfer`. It is present only when the daemon has a usable SCP launch
 backend; clients must not fall back to GTK-owned subprocesses.
+
+<!-- api-capability: transfers.batch -->
+## `transfers.batch`
+
+Advertises `start_transfer_batch`: many upload or download items run as one
+transfer record with one byte total and one terminal state. Direction still
+requires `transfers.upload` or `transfers.download`.
 
 <!-- api-capability: port_forwarding -->
 ## `port_forwarding`

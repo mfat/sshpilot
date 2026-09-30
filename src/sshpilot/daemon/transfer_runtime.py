@@ -17,14 +17,15 @@ transfers wait in ``_pending_run`` up to the combined in-flight capacity.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import stat
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -44,10 +45,13 @@ from sshpilot.api.models.operations import (
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
+    StartTransferBatchRequest,
     StartTransferRequest,
     TransferBackend,
     TransferConflictPolicy,
     TransferDirection,
+    TransferItem,
+    TransferItemFailure,
     TransferState,
     TransferSummary,
 )
@@ -284,6 +288,25 @@ class _TransferRecord:
     # Per-SFTP-service concurrent-transfer cap (Dropbear → 1). SCP uses the
     # global pool only and leaves this at the runtime default.
     service_concurrency_limit: int = DEFAULT_MAX_CONCURRENT_TRANSFERS
+    # Batch transfers: every item runs in this one record, in index order.
+    items: Tuple[TransferItem, ...] = ()
+    items_done: int = 0
+    item_failures: List[TransferItemFailure] = field(default_factory=list)
+
+
+@dataclass
+class _BatchItemPlan:
+    """What the batch scan learned about one item before any bytes move."""
+
+    index: int
+    item: TransferItem
+    size: int = 0
+    failure: Optional[SftpFailure] = None
+    # Recursive upload: (directories, files); recursive download: files.
+    directories: List[tuple] = field(default_factory=list)
+    files: List[tuple] = field(default_factory=list)
+    # Download of a single file: its STAT attributes.
+    attr: Any = None
 
 
 class TransferRuntime:
@@ -414,7 +437,81 @@ class TransferRuntime:
                 ErrorCode.INVALID_REQUEST,
                 "A start transfer request is required",
             )
-        # Shared core policy — recursive unsupported, paths validated, queue limits.
+        self._validate_transfer_paths(
+            request.direction,
+            local_path=request.local_path,
+            remote_path=request.remote_path,
+            conflict_policy=request.conflict_policy,
+            recursive=request.recursive,
+        )
+        local_display = os.path.basename(request.local_path.rstrip("/\\")) or "file"
+        if request.direction is TransferDirection.UPLOAD:
+            source_display, destination_display = local_display, request.remote_path
+        else:
+            source_display, destination_display = request.remote_path, local_display
+        return self._admit_sftp_transfer(
+            client_id=client_id,
+            sftp_service_id=request.sftp_service_id,
+            direction=request.direction,
+            remote_path=request.remote_path,
+            local_path=request.local_path,
+            conflict_policy=request.conflict_policy,
+            source_display=source_display,
+            destination_display=destination_display,
+            recursive=bool(request.recursive),
+        )
+
+    def prepare_start_transfer_batch(
+        self,
+        request: StartTransferBatchRequest,
+        *,
+        client_id: ClientId,
+    ) -> TransferSummary:
+        """Admit a batch as one transfer: one queue slot, one terminal state."""
+        if type(request) is not StartTransferBatchRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A start transfer batch request is required",
+            )
+        for item in request.items:
+            self._validate_transfer_paths(
+                request.direction,
+                local_path=item.local_path,
+                remote_path=item.remote_path,
+                conflict_policy=request.conflict_policy,
+                recursive=item.recursive,
+            )
+        first = request.items[0]
+        local_name = os.path.basename(first.local_path.rstrip("/\\")) or "file"
+        if request.direction is TransferDirection.UPLOAD:
+            source_display = local_name
+            destination_display = remote_path_dirname(first.remote_path) or first.remote_path
+        else:
+            source_display = first.remote_path
+            destination_display = os.path.dirname(first.local_path) or local_name
+        return self._admit_sftp_transfer(
+            client_id=client_id,
+            sftp_service_id=request.sftp_service_id,
+            direction=request.direction,
+            remote_path=first.remote_path,
+            local_path=first.local_path,
+            conflict_policy=request.conflict_policy,
+            source_display=source_display,
+            destination_display=destination_display,
+            recursive=False,
+            items=request.items,
+        )
+
+    @staticmethod
+    def _validate_transfer_paths(
+        direction: TransferDirection,
+        *,
+        local_path: str,
+        remote_path: str,
+        conflict_policy: TransferConflictPolicy,
+        recursive: bool,
+    ) -> None:
+        """Shared core policy: paths validated before a record is admitted."""
         try:
             from sshpilot.core.transfers import (
                 OverwritePolicy,
@@ -423,31 +520,27 @@ class TransferRuntime:
                 TransferRequest,
             )
 
-            if request.direction is TransferDirection.UPLOAD:
+            overwrite = {
+                TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+                TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+                TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+                TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+            }.get(conflict_policy, OverwritePolicy.FAIL)
+            if direction is TransferDirection.UPLOAD:
                 core_req = TransferRequest(
                     direction=CoreDirection.UPLOAD,
-                    source=PathRef(request.local_path, is_remote=False),
-                    destination=PathRef(request.remote_path, is_remote=True),
-                    overwrite={
-                        TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
-                        TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
-                        TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
-                        TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
-                    }.get(request.conflict_policy, OverwritePolicy.FAIL),
-                    recursive=bool(request.recursive),
+                    source=PathRef(local_path, is_remote=False),
+                    destination=PathRef(remote_path, is_remote=True),
+                    overwrite=overwrite,
+                    recursive=bool(recursive),
                 )
             else:
                 core_req = TransferRequest(
                     direction=CoreDirection.DOWNLOAD,
-                    source=PathRef(request.remote_path, is_remote=True),
-                    destination=PathRef(request.local_path, is_remote=False),
-                    overwrite={
-                        TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
-                        TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
-                        TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
-                        TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
-                    }.get(request.conflict_policy, OverwritePolicy.FAIL),
-                    recursive=bool(request.recursive),
+                    source=PathRef(remote_path, is_remote=True),
+                    destination=PathRef(local_path, is_remote=False),
+                    overwrite=overwrite,
+                    recursive=bool(recursive),
                 )
             core_req.validate(check_local_filesystem=False)
         except Exception as exc:
@@ -459,12 +552,27 @@ class TransferRuntime:
                     str(exc),
                 ) from exc
             raise
+
+    def _admit_sftp_transfer(
+        self,
+        *,
+        client_id: ClientId,
+        sftp_service_id: SftpServiceId,
+        direction: TransferDirection,
+        remote_path: str,
+        local_path: str,
+        conflict_policy: TransferConflictPolicy,
+        source_display: str,
+        destination_display: str,
+        recursive: bool,
+        items: Tuple[TransferItem, ...] = (),
+    ) -> TransferSummary:
         _client, connection_id = self._sftp_runtime.acquire_active_client(
-            request.sftp_service_id, client_id
+            sftp_service_id, client_id
         )
         service_limit = transfer_concurrency_for_remote_software(
             self._sftp_runtime.remote_ssh_software(
-                request.sftp_service_id, client_id
+                sftp_service_id, client_id
             ),
             default=self._effective_max_concurrent_transfers(),
             dropbear=min(
@@ -474,26 +582,22 @@ class TransferRuntime:
         )
         transfer_id = self._id_factory()
         now = self._clock()
-        local_display = os.path.basename(request.local_path.rstrip("/\\")) or "file"
-        if request.direction is TransferDirection.UPLOAD:
-            source_display, destination_display = local_display, request.remote_path
-        else:
-            source_display, destination_display = request.remote_path, local_display
         record = _TransferRecord(
             transfer_id=transfer_id,
             connection_id=connection_id,
-            sftp_service_id=request.sftp_service_id,
-            direction=request.direction,
-            remote_path=request.remote_path,
-            local_path=request.local_path,
-            conflict_policy=request.conflict_policy,
+            sftp_service_id=sftp_service_id,
+            direction=direction,
+            remote_path=remote_path,
+            local_path=local_path,
+            conflict_policy=conflict_policy,
             source_display=source_display,
             destination_display=destination_display,
             state=TransferState.QUEUED,
             created_at=now,
             owner_client_id=client_id,
-            recursive=bool(request.recursive),
+            recursive=recursive,
             service_concurrency_limit=service_limit,
+            items=tuple(items),
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -658,6 +762,8 @@ class TransferRuntime:
         try:
             if record.backend is TransferBackend.NATIVE_SCP:
                 self._run_scp(record)
+            elif record.items:
+                self._run_batch(record, client)
             elif record.recursive:
                 if record.direction is TransferDirection.UPLOAD:
                     self._run_recursive_upload(record, client)
@@ -787,6 +893,288 @@ class TransferRuntime:
         with self._lock:
             record.bytes_completed = copied
 
+    # -- batch transfers ----------------------------------------------------
+
+    def _run_batch(self, record: _TransferRecord, client) -> None:
+        """Run every item of a batch in this one transfer.
+
+        Like Nautilus's copy job: scan all items first so the byte total is
+        known, then copy in index order. A failing item is recorded and the
+        batch carries on; its scanned bytes still count as handled so progress
+        reaches 100%. The batch fails at the end if any item failed. Losing the
+        SFTP connection (or any service-level error) aborts the whole batch.
+        """
+        plans = self._scan_batch(record, client)
+        with self._lock:
+            record.bytes_total = sum(plan.size for plan in plans)
+        completed = 0
+        index = 0
+        while index < len(plans):
+            self._check_cancel(record)
+            group = self._pipelined_group(record, client, plans, index)
+            if group:
+                completed = self._run_batch_group(record, client, group, completed)
+                index += len(group)
+                continue
+            completed = self._run_batch_item(record, client, plans[index], completed)
+            index += 1
+        with self._lock:
+            record.bytes_completed = completed
+            failures = list(record.item_failures)
+        if failures:
+            raise _SftpTransferError(failures[0].failure)
+
+    def _scan_batch(self, record: _TransferRecord, client) -> List[_BatchItemPlan]:
+        plans = [
+            _BatchItemPlan(index=index, item=item)
+            for index, item in enumerate(record.items)
+        ]
+        remote_files: List[_BatchItemPlan] = []
+        for plan in plans:
+            self._check_cancel(record)
+            item = plan.item
+            try:
+                if record.direction is TransferDirection.UPLOAD:
+                    if item.recursive:
+                        directories, files, total = self._scan_upload_tree(
+                            record, item.local_path, item.remote_path
+                        )
+                        plan.directories, plan.files, plan.size = directories, files, total
+                    elif not os.path.isfile(item.local_path):
+                        raise _sftp_transfer_error(
+                            SftpFailureCode.LOCAL_SOURCE_FILE_NOT_FOUND,
+                            ErrorCode.TRANSFER_IO_FAILED,
+                        )
+                    else:
+                        plan.size = os.path.getsize(item.local_path)
+                elif item.recursive:
+                    plan.files, plan.size = self._scan_download_tree(
+                        record, client, item.remote_path, item.local_path
+                    )
+                else:
+                    remote_files.append(plan)
+            except _TransferCancelled:
+                raise
+            except Exception as exc:
+                plan.failure = self._batch_item_failure(exc)
+        if remote_files:
+            self._stat_batch_downloads(record, client, remote_files)
+        return plans
+
+    def _stat_batch_downloads(
+        self, record: _TransferRecord, client, plans: List[_BatchItemPlan]
+    ) -> None:
+        paths = [plan.item.remote_path for plan in plans]
+        stat_many = getattr(client, "stat_many", None)
+        attrs: List[Any] = []
+        if callable(stat_many):
+            try:
+                attrs = list(stat_many(paths, missing_on_error=True))
+            except sftp_proto.SFTPError as exc:
+                if exc.code in (sftp_proto.FX_CONNECTION_LOST, sftp_proto.FX_NO_CONNECTION):
+                    raise
+                attrs = []
+        if len(attrs) != len(paths):
+            attrs = []
+            for path in paths:
+                self._check_cancel(record)
+                try:
+                    attrs.append(client.stat(path))
+                except sftp_proto.SFTPError as exc:
+                    if exc.code in (sftp_proto.FX_CONNECTION_LOST, sftp_proto.FX_NO_CONNECTION):
+                        raise
+                    attrs.append(exc)
+        for plan, attr in zip(plans, attrs):
+            if isinstance(attr, Exception):
+                plan.failure = self._batch_item_failure(attr)
+            elif attr is None:
+                plan.failure = SftpFailure(
+                    code=SftpFailureCode.PATH_NOT_FOUND,
+                    error_code=ErrorCode.REMOTE_PATH_NOT_FOUND,
+                )
+            else:
+                plan.attr = attr
+                plan.size = int(attr.st_size or 0)
+
+    def _pipelined_group(
+        self,
+        record: _TransferRecord,
+        client,
+        plans: List[_BatchItemPlan],
+        start: int,
+    ) -> List[_BatchItemPlan]:
+        """The run of small plain-file items from *start* that can share
+        pipelined round trips (empty when the item there cannot).
+
+        Only under OVERWRITE: a failed window is re-run item by item, which
+        must not trip over files the window already landed.
+        """
+        if record.conflict_policy is not TransferConflictPolicy.OVERWRITE:
+            return []
+        if record.direction is TransferDirection.UPLOAD:
+            if not (
+                callable(getattr(client, "atomic_upload_many", None))
+                and callable(getattr(client, "stat_many", None))
+            ):
+                return []
+            limit = int(getattr(client, "max_write_length", 0) or DEFAULT_CHUNK_SIZE)
+        else:
+            if not callable(getattr(client, "read_small_files", None)):
+                return []
+            limit = client.small_read_limit()
+        group: List[_BatchItemPlan] = []
+        for plan in plans[start:]:
+            if plan.item.recursive or plan.failure is not None or not 0 <= plan.size <= limit:
+                break
+            group.append(plan)
+        return group if len(group) > 1 else []
+
+    def _run_batch_group(
+        self,
+        record: _TransferRecord,
+        client,
+        group: List[_BatchItemPlan],
+        base: int,
+    ) -> int:
+        try:
+            if record.direction is TransferDirection.UPLOAD:
+                self._upload_small_files_pipelined(
+                    record,
+                    client,
+                    [(p.item.local_path, p.item.remote_path, p.size) for p in group],
+                    base,
+                )
+            else:
+                self._download_small_files_pipelined(
+                    record,
+                    client,
+                    [(p.item.remote_path, p.item.local_path, p.size, p.attr) for p in group],
+                    base,
+                )
+        except _TransferCancelled:
+            raise
+        except Exception as exc:
+            # Raises for batch-fatal errors; otherwise find the failing items
+            # by re-running the window one item at a time.
+            self._batch_item_failure(exc)
+            self._cleanup_local_temp(record)
+            completed = base
+            for plan in group:
+                completed = self._run_batch_item(record, client, plan, completed)
+            return completed
+        completed = base + sum(plan.size for plan in group)
+        self._finish_batch_items(record, group, completed)
+        return completed
+
+    def _run_batch_item(
+        self,
+        record: _TransferRecord,
+        client,
+        plan: _BatchItemPlan,
+        base: int,
+    ) -> int:
+        if plan.failure is None:
+            try:
+                self._transfer_batch_item(record, client, plan, base)
+            except _TransferCancelled:
+                raise
+            except _TransferSkipped:
+                pass
+            except Exception as exc:
+                plan.failure = self._batch_item_failure(exc)
+                self._cleanup_local_temp(record)
+                self._cleanup_remote_temp(record)
+        completed = base + plan.size
+        self._finish_batch_items(record, [plan], completed)
+        return completed
+
+    def _transfer_batch_item(
+        self,
+        record: _TransferRecord,
+        client,
+        plan: _BatchItemPlan,
+        base: int,
+    ) -> None:
+        item = plan.item
+        if record.direction is TransferDirection.UPLOAD:
+            if item.recursive:
+                self._upload_tree(record, client, plan.directories, plan.files, base)
+                return
+            destination, existing_mode = self._resolve_remote_destination(
+                record, client, item.remote_path
+            )
+            self._copy_local_to_remote(
+                record,
+                client,
+                item.local_path,
+                destination,
+                base=base,
+                existing_mode=existing_mode,
+            )
+            return
+        if item.recursive:
+            self._download_tree(record, client, plan.files, base)
+            return
+        destination = self._resolve_local_destination(record, item.local_path)
+        self._copy_remote_to_local(
+            record, client, item.remote_path, destination, base=base, attr=plan.attr
+        )
+
+    def _finish_batch_items(
+        self, record: _TransferRecord, plans: List[_BatchItemPlan], completed: int
+    ) -> None:
+        with self._lock:
+            for plan in plans:
+                if plan.failure is not None:
+                    record.item_failures.append(
+                        TransferItemFailure(index=plan.index, failure=plan.failure)
+                    )
+            record.items_done += len(plans)
+            record.bytes_completed = completed
+            record.last_progress_monotonic = self._monotonic()
+            record.last_progress_bytes = completed
+            event = self._event_locked(record, EventType.TRANSFER_ITEM_COMPLETED)
+        self._publish((event,))
+
+    @staticmethod
+    def _batch_item_failure(exc: BaseException) -> SftpFailure:
+        """Map an item's error to its failure, or re-raise one that ends the batch."""
+        if isinstance(exc, _SftpTransferError):
+            return exc.failure
+        if isinstance(exc, sftp_proto.SFTPError):
+            if exc.code in (sftp_proto.FX_CONNECTION_LOST, sftp_proto.FX_NO_CONNECTION):
+                raise exc
+            if exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                return SftpFailure(
+                    code=SftpFailureCode.PATH_NOT_FOUND,
+                    error_code=ErrorCode.REMOTE_PATH_NOT_FOUND,
+                )
+            if exc.code == sftp_proto.FX_PERMISSION_DENIED:
+                return SftpFailure(
+                    code=SftpFailureCode.PERMISSION_DENIED,
+                    error_code=ErrorCode.REMOTE_PERMISSION_DENIED,
+                )
+            return SftpFailure(
+                code=SftpFailureCode.TRANSFER_FAILED,
+                error_code=ErrorCode.TRANSFER_IO_FAILED,
+                diagnostic=str(exc)[:500],
+            )
+        if isinstance(exc, OSError):
+            if exc.errno == errno.ENOENT:
+                code = SftpFailureCode.PATH_NOT_FOUND
+            elif exc.errno in (errno.EACCES, errno.EPERM):
+                code = SftpFailureCode.PERMISSION_DENIED
+            else:
+                code = SftpFailureCode.TRANSFER_FAILED
+            return SftpFailure(
+                code=code,
+                error_code=ErrorCode.TRANSFER_IO_FAILED,
+                diagnostic=str(exc)[:500],
+            )
+        # SshPilotError (service gone, cancelled operation) and anything
+        # unexpected: the worker fails the whole batch as it would a transfer.
+        raise exc
+
     # -- recursive transfers ------------------------------------------------
 
     def _run_recursive_upload(self, record: _TransferRecord, client) -> None:
@@ -798,7 +1186,19 @@ class TransferRuntime:
         transferred by content, so a link can never pull an unrelated tree or a
         cycle into the upload.
         """
-        local_root = record.local_path
+        directories, files, total = self._scan_upload_tree(
+            record, record.local_path, record.remote_path
+        )
+        with self._lock:
+            record.bytes_total = total
+        completed = self._upload_tree(record, client, directories, files, 0)
+        with self._lock:
+            record.bytes_completed = completed
+
+    def _scan_upload_tree(
+        self, record: _TransferRecord, local_root: str, remote_root: str
+    ) -> Tuple[List[tuple], List[tuple], int]:
+        """Walk a local tree: ``(directories, files, total_bytes)`` to upload."""
         try:
             local_info = os.lstat(local_root)
         except OSError:
@@ -816,7 +1216,6 @@ class TransferRuntime:
                 SftpFailureCode.LOCAL_SOURCE_NOT_DIRECTORY,
                 ErrorCode.TRANSFER_IO_FAILED,
             )
-        remote_root = record.remote_path
         self._check_cancel(record)
 
         directories: List[tuple] = []
@@ -837,12 +1236,20 @@ class TransferRuntime:
                     pass
                 total += size
                 files.append((local_abs, remote_path, size))
-        with self._lock:
-            record.bytes_total = total
+        return directories, files, total
 
+    def _upload_tree(
+        self,
+        record: _TransferRecord,
+        client,
+        directories: List[tuple],
+        files: List[tuple],
+        base: int,
+    ) -> int:
+        """Create *directories* then upload *files*; returns ``base`` + bytes handled."""
         self._ensure_remote_dirs(record, client, directories)
 
-        completed = 0
+        completed = base
         # Small files are RTT-bound when uploaded one-by-one (≈6 serial
         # round trips each). When the client can pipeline control-plane
         # requests, batch them so a window of files shares those RTTs.
@@ -886,8 +1293,7 @@ class TransferRuntime:
             )
             completed += copied
             self._report_progress(record, completed)
-        with self._lock:
-            record.bytes_completed = completed
+        return completed
 
     def _upload_small_files_pipelined(
         self,
@@ -1020,8 +1426,19 @@ class TransferRuntime:
         treated as a file (dereferenced by the read), so the walk cannot follow
         a cycle or escape the requested tree.
         """
-        remote_root = record.remote_path
-        local_root = record.local_path
+        files, total = self._scan_download_tree(
+            record, client, record.remote_path, record.local_path
+        )
+        with self._lock:
+            record.bytes_total = total
+        completed = self._download_tree(record, client, files, 0)
+        with self._lock:
+            record.bytes_completed = completed
+
+    def _scan_download_tree(
+        self, record: _TransferRecord, client, remote_root: str, local_root: str
+    ) -> Tuple[List[tuple], int]:
+        """List a remote tree, creating its local directories: ``(files, total_bytes)``."""
         try:
             source_attr = client.lstat(remote_root)
         except Exception as exc:
@@ -1080,9 +1497,12 @@ class TransferRuntime:
             for (remote_dir, local_dir), listing in zip(pending, listings):
                 _collect(remote_dir, local_dir, listing)
             pending = next_level
-        with self._lock:
-            record.bytes_total = total
+        return files, total
 
+    def _download_tree(
+        self, record: _TransferRecord, client, files: List[tuple], base: int
+    ) -> int:
+        """Download scanned *files*; returns ``base`` + bytes handled."""
         # Small regular files are RTT-bound one by one (OPEN / READ / READ-EOF
         # / CLOSE each), so read them in pipelined windows. Symlinks keep the
         # serial path: their listing attrs describe the link, not the target.
@@ -1097,7 +1517,7 @@ class TransferRuntime:
             else:
                 large.append(entry)
 
-        completed = 0
+        completed = base
         if small:
             completed = self._download_small_files_pipelined(record, client, small, completed)
         for remote_abs, local_abs, size, attr in large:
@@ -1119,8 +1539,7 @@ class TransferRuntime:
             )
             completed += copied
             self._report_progress(record, completed)
-        with self._lock:
-            record.bytes_completed = completed
+        return completed
 
     @staticmethod
     def _join_remote(base: str, *parts: str) -> str:
@@ -1838,6 +2257,9 @@ class TransferRuntime:
             completed_at=record.completed_at,
             owner_client_id=record.owner_client_id,
             failure=record.failure,
+            items_total=len(record.items) if record.items else None,
+            items_done=record.items_done,
+            item_failures=tuple(record.item_failures),
         )
 
     def _evict_completed_locked(self) -> None:

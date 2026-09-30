@@ -62,6 +62,7 @@ from .file_manager import (
 )
 from .file_manager.format_utils import filename_extension_offset
 from .api.errors import SshPilotError
+from .api.models.transfers import TransferDirection
 from .file_manager.transfer_progress import (
     aggregate_batch_bytes,
     progress_key_for_future,
@@ -2121,48 +2122,26 @@ class FileManagerWindow(Adw.Window):
                 pane.show_toast(_("Upload failed: {error}").format(error=e))
                 return
             
-            total_files = len(resolved_files)
-            logger.info(
-                "Starting upload of %d file%s",
-                total_files, "" if total_files == 1 else "s",
-            )
-            
-            for local_path_str, destination in resolved_files:
+            items = [
+                (local_path_str, destination, pathlib.Path(local_path_str).is_dir())
+                for local_path_str, destination in resolved_files
+            ]
+            try:
+                future = self._start_transfer_batch(
+                    "upload",
+                    items,
+                    refresh_remote=target_pane,
+                    highlight_name=pathlib.Path(items[-1][0]).name,
+                )
+            except Exception as e:
+                logger.error("_proceed_with_upload: could not start upload: %s", e, exc_info=True)
+                pane.show_toast(_("Upload failed: {error}").format(error=e))
+                return
+            for index, (local_path_str, _remote, _recursive) in enumerate(items):
                 path_obj = pathlib.Path(local_path_str)
-
-                try:
-                    logger.debug(f"_proceed_with_upload: Starting upload of {path_obj.name}")
-                    if path_obj.is_dir():
-                        future = self._manager.upload_directory(path_obj, destination)
-                    else:
-                        future = self._manager.upload(path_obj, destination)
-
-                    # Show progress dialog for upload (pass total_files for multi-file support)
-                    expected = None
-                    if path_obj.is_file():
-                        try:
-                            expected = int(path_obj.stat().st_size)
-                        except OSError:
-                            expected = None
-                    self._show_progress_dialog(
-                        "upload", path_obj.name, future,
-                        total_files=total_files,
-                        source_path=str(path_obj),
-                        destination_path=destination,
-                        expected_bytes=expected,
-                    )
-                    self._attach_refresh(
-                        future,
-                        refresh_remote=target_pane,
-                        highlight_name=path_obj.name,
-                    )
-                    if move_sources_set and path_obj.resolve() in move_sources_set:
-                        cleanup_dir = move_source_dir or str(path_obj.parent)
-                        self._schedule_local_move_cleanup(future, path_obj, cleanup_dir)
-                except Exception as e:
-                    error_msg = str(e)
-                    logger.error(f"_proceed_with_upload: Error uploading {path_obj.name}: {error_msg}", exc_info=True)
-                    pane.show_toast(_("Error uploading {name}: {error}").format(name=path_obj.name, error=error_msg))
+                if move_sources_set and path_obj.resolve() in move_sources_set:
+                    cleanup_dir = move_source_dir or str(path_obj.parent)
+                    self._schedule_local_move_cleanup(future, path_obj, cleanup_dir, index=index)
 
         self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
 
@@ -2213,50 +2192,32 @@ class FileManagerWindow(Adw.Window):
         
         # Check for conflicts and handle accordingly
         def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
-            total_files = len(resolved_files)
-            for idx, (source, target_path_str) in enumerate(resolved_files):
-                target_path = pathlib.Path(target_path_str)
-                entry_name = os.path.basename(target_path_str)
-
-                # Find the original entry to check if it's a directory
-                entry_is_dir = False
-                for entry in entries:
-                    if entry.name == entry_name:
-                        entry_is_dir = entry.is_dir
-                        break
-                
-                try:
-                    if entry_is_dir:
-                        future = self._manager.download_directory(source, target_path)
-                    else:
-                        future = self._manager.download(source, target_path)
-                    # Pass total_files so dialog can be reused for multiple files
-                    expected = None
-                    for entry in entries:
-                        if entry.name == entry_name and not entry.is_dir:
-                            if entry.size and entry.size > 0:
-                                expected = int(entry.size)
-                            break
-                    self._show_progress_dialog(
-                        "download", entry_name, future,
-                        total_files=total_files,
-                        source_path=source,
-                        destination_path=str(target_path),
-                        expected_bytes=expected,
-                    )
-                    self._attach_refresh(
+            if not resolved_files:
+                return
+            dir_names = {entry.name for entry in entries if entry.is_dir}
+            items = [
+                (target_path_str, source, os.path.basename(source.rstrip("/")) in dir_names)
+                for source, target_path_str in resolved_files
+            ]
+            try:
+                future = self._start_transfer_batch(
+                    "download",
+                    items,
+                    refresh_local_path=str(destination_base),
+                    highlight_name=os.path.basename(items[-1][0]),
+                )
+            except Exception as e:
+                logger.error("_proceed_with_download: could not start download: %s", e, exc_info=True)
+                pane.show_toast(_("Download failed: {error}").format(error=e))
+                return
+            for index, (_local, source, _recursive) in enumerate(items):
+                if move_remote_set and source in move_remote_set:
+                    self._schedule_remote_move_cleanup(
                         future,
-                        refresh_local_path=str(destination_base),
-                        highlight_name=entry_name,
+                        source,
+                        move_remote_pane or pane,
+                        index=index,
                     )
-                    if move_remote_set and source in move_remote_set:
-                        self._schedule_remote_move_cleanup(
-                            future,
-                            source,
-                            move_remote_pane or pane,
-                        )
-                except Exception as e:
-                    pane.show_toast(_("Error downloading {name}: {error}").format(name=entry_name, error=e))
 
         self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
@@ -2958,16 +2919,28 @@ class FileManagerWindow(Adw.Window):
             logger.debug("Failed to open new file in editor: %s", e)
 
 
+    @staticmethod
+    def _transfer_item_succeeded(completed: Future, index: Optional[int]) -> bool:
+        """Whether *completed* (or item *index* of a batch transfer) succeeded."""
+        try:
+            result = completed.result()
+        except Exception:
+            return False
+        succeeded = getattr(result, "succeeded", None)
+        if index is not None and callable(succeeded):
+            return bool(succeeded(index))
+        return True
+
     def _schedule_local_move_cleanup(
         self,
         future: Future,
         source_path: pathlib.Path,
         source_dir: str,
+        *,
+        index: Optional[int] = None,
     ) -> None:
         def _cleanup(completed: Future, path: pathlib.Path = source_path, base_dir: str = source_dir) -> None:
-            try:
-                completed.result()
-            except Exception:
+            if not self._transfer_item_succeeded(completed, index):
                 return
             try:
                 if path.is_dir():
@@ -2987,11 +2960,11 @@ class FileManagerWindow(Adw.Window):
         future: Future,
         source_path: str,
         pane: FilePane,
+        *,
+        index: Optional[int] = None,
     ) -> None:
         def _cleanup(completed: Future, path: str = source_path, target_pane: FilePane = pane) -> None:
-            try:
-                completed.result()
-            except Exception:
+            if not self._transfer_item_succeeded(completed, index):
                 return
             # Move sources may be files or trees; recursive handles both. The
             # download dialog is still up for the rest of the batch, so keep
@@ -3125,6 +3098,155 @@ class FileManagerWindow(Adw.Window):
         self._focus_next_active_batch_transfer(exclude_key=key)
         self._publish_batch_transfer_progress()
 
+    def _progress_dialog_parent(self) -> Gtk.Widget:
+        if self._embedded_parent is not None:
+            return self._embedded_parent
+        try:
+            transient = self.get_transient_for()
+            if transient is not None:
+                return transient
+        except Exception:
+            pass
+        return self
+
+    def _present_progress_dialog(
+        self, operation_type: str, *, total_files: int, filename: Optional[str]
+    ) -> SFTPProgressDialog:
+        """Create and show a fresh progress dialog."""
+        logger.debug("Creating progress dialog")
+        dialog_parent = self._progress_dialog_parent()
+        dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
+        dialog.connect("closed", self._on_progress_dialog_closed)
+        dialog.set_operation_details(total_files=total_files, filename=filename)
+        # AlertDialog.present takes a parent widget; MessageDialog
+        # already had it set via set_transient_for in the dialog ctor.
+        if _HAS_ALERT_DIALOG:
+            dialog.present(dialog_parent)
+        else:
+            dialog.present()
+        return dialog
+
+    def _start_transfer_batch(
+        self,
+        operation_type: str,
+        items: List[Tuple[str, str, bool]],
+        *,
+        refresh_remote: Optional[FilePane] = None,
+        refresh_local_path: Optional[str] = None,
+        highlight_name: Optional[str] = None,
+    ) -> Future:
+        """Upload or download ``(local, remote, recursive)`` items as one daemon transfer.
+
+        The dialog follows that one transfer: bar and speed from its byte
+        counts, the file counter from finished items, completion when the
+        transfer ends. The returned future resolves with a
+        ``TransferBatchResult`` (see ``_schedule_*_move_cleanup``).
+        """
+        upload = operation_type == "upload"
+        direction = TransferDirection.UPLOAD if upload else TransferDirection.DOWNLOAD
+        logger.info("Starting %s of %d item(s) as one transfer", operation_type, len(items))
+        future = self._manager.transfer_batch(direction, items)
+
+        def _names(index: int) -> Tuple[str, str, str]:
+            local, remote, _recursive = items[index]
+            source, destination = (local, remote) if upload else (remote, local)
+            name = os.path.basename(source.rstrip("/")) or source
+            return name, source, destination
+
+        # A running dialog belongs to its own transfer; leave it up and stack
+        # this one. A finished or dismissed one is replaced.
+        previous = self._progress_dialog
+        if previous is not None and not previous.is_reusable():
+            try:
+                previous.close()
+            except (AttributeError, RuntimeError):
+                pass
+        name, source, destination = _names(0)
+        dialog = self._present_progress_dialog(
+            operation_type, total_files=len(items), filename=name
+        )
+        self._progress_dialog = dialog
+        dialog.set_paths(source, destination)
+        dialog.set_future(future)
+
+        manager = self._manager
+        key = progress_key_for_future(future)
+        state = {"focused": 0}
+
+        def _on_bytes(_manager, done, total, progress_key="") -> None:
+            if progress_key != key or dialog.is_cancelled:
+                return
+            done_n, total_n = int(done or 0), int(total or 0)
+            dialog.on_bytes(done_n, total_n)
+            if total_n > 0:
+                message = _("Transferred {done} of {total}").format(
+                    done=self._format_transfer_size(done_n),
+                    total=self._format_transfer_size(total_n),
+                )
+                dialog.update_progress(min(1.0, done_n / total_n), message)
+            else:
+                message = _("Transferred {size}").format(
+                    size=self._format_transfer_size(done_n),
+                )
+                dialog.update_progress(0.0, message)
+
+        def _on_items(_manager, done, total, progress_key="") -> None:
+            if progress_key != key or dialog.is_cancelled:
+                return
+            done_n = int(done or 0)
+            dialog.set_files_completed(done_n)
+            if done_n < len(items) and done_n != state["focused"]:
+                state["focused"] = done_n
+                name, source, destination = _names(done_n)
+                dialog.set_operation_details(total_files=len(items), filename=name)
+                dialog.set_paths(source, destination)
+
+        handler_ids = [
+            manager.connect("progress-bytes", _on_bytes),
+            manager.connect("progress-items", _on_items),
+        ]
+
+        def _finish(completed: Future) -> bool:
+            for handler_id in handler_ids:
+                try:
+                    manager.disconnect(handler_id)
+                except (TypeError, RuntimeError, AttributeError):
+                    pass
+            if dialog.is_cancelled:
+                return False
+            try:
+                result = completed.result()
+            except (TransferCancelledException, CancelledError):
+                return False
+            except Exception as exc:
+                dialog.show_completion(success=False, error_message=str(exc))
+                return False
+            dialog.set_files_completed(result.items_done)
+            failures = result.failures
+            if not failures:
+                dialog.show_completion(success=True)
+            elif len(items) == 1:
+                dialog.show_completion(success=False, error_message=failures[0])
+            else:
+                dialog.show_completion(
+                    success=False,
+                    error_message=ngettext(
+                        "{count} of {total} file failed",
+                        "{count} of {total} files failed",
+                        len(failures),
+                    ).format(count=len(failures), total=len(items)),
+                )
+            return False
+
+        future.add_done_callback(lambda completed: GLib.idle_add(_finish, completed))
+        self._attach_refresh(
+            future,
+            refresh_remote=refresh_remote,
+            refresh_local_path=refresh_local_path,
+            highlight_name=highlight_name,
+        )
+        return future
+
     def _show_progress_dialog(
         self,
         operation_type: str,
@@ -3162,41 +3284,12 @@ class FileManagerWindow(Adw.Window):
                     self._progress_dialog = None
 
             if not reuse_dialog:
-                # Create new progress dialog
-                logger.debug("Creating progress dialog")
-                dialog_parent = self
-                if self._embedded_parent is not None:
-                    dialog_parent = self._embedded_parent
-                else:
-                    try:
-                        transient = self.get_transient_for()
-                        if transient is not None:
-                            dialog_parent = transient
-                    except Exception:
-                        pass
-
-                self._progress_dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
-                self._progress_dialog.connect("closed", self._on_progress_dialog_closed)
-                self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
-                # AlertDialog.present takes a parent widget; MessageDialog
-                # already had it set via set_transient_for in the dialog ctor.
-                if _HAS_ALERT_DIALOG:
-                    self._progress_dialog.present(dialog_parent)
-                else:
-                    self._progress_dialog.present()
-                logger.debug("Progress dialog created and shown successfully")
+                self._progress_dialog = self._present_progress_dialog(
+                    operation_type, total_files=total_files, filename=filename
+                )
             elif not self._progress_dialog.get_visible():
                 # Same batch, dialog object reused but not visible — re-present.
-                dialog_parent = self
-                if self._embedded_parent is not None:
-                    dialog_parent = self._embedded_parent
-                else:
-                    try:
-                        transient = self.get_transient_for()
-                        if transient is not None:
-                            dialog_parent = transient
-                    except Exception:
-                        pass
+                dialog_parent = self._progress_dialog_parent()
                 try:
                     if _HAS_ALERT_DIALOG:
                         self._progress_dialog.present(dialog_parent)

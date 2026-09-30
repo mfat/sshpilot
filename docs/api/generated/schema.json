@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.75",
+  "api_implementation_version": "0.76",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -575,6 +575,10 @@
     },
     "start_transfer": {
       "capability": "transfers.write",
+      "status": "daemon-only"
+    },
+    "start_transfer_batch": {
+      "capability": "transfers.batch",
       "status": "daemon-only"
     },
     "stop_daemon": {
@@ -1173,6 +1177,9 @@
     "terminal.resize": {
       "capability": "terminal.resize"
     },
+    "transfers.batch.start": {
+      "capability": "transfers.batch"
+    },
     "transfers.cancel": {
       "capability": "transfers.write"
     },
@@ -1269,6 +1276,7 @@
       "transfers.upload",
       "transfers.download",
       "transfers.scp",
+      "transfers.batch",
       "port_forwarding",
       "forwards.read",
       "forwards.write",
@@ -9247,6 +9255,46 @@
       ],
       "status": "Implemented"
     },
+    "StartTransferBatchRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "sftp_service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "items",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[TransferItem, ...]"
+        },
+        {
+          "default": "overwrite",
+          "name": "conflict_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferConflictPolicy"
+        }
+      ],
+      "status": "Implemented"
+    },
     "StartTransferRequest": {
       "fields": [
         {
@@ -9549,6 +9597,51 @@
       ],
       "status": "Schema only"
     },
+    "TransferItem": {
+      "fields": [
+        {
+          "default": null,
+          "name": "local_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "remote_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "TransferItemFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "index",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFailure"
+        }
+      ],
+      "status": "Implemented"
+    },
     "TransferSummary": {
       "fields": [
         {
@@ -9669,6 +9762,27 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "items_total",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": 0,
+          "name": "items_done",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "item_failures",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[TransferItemFailure, ...]"
         }
       ],
       "status": "Implemented"

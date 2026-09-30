@@ -74,6 +74,7 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.TRANSFERS_EVENTS,
             Capability.TRANSFERS_UPLOAD,
             Capability.TRANSFERS_DOWNLOAD,
+            Capability.TRANSFERS_BATCH,
             Capability.FORWARDS_READ,
             Capability.FORWARDS_WRITE,
             Capability.FORWARDS_EVENTS,

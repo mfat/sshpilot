@@ -169,6 +169,9 @@ exact nonce. The retained legacy `InteractionResponse.value` is excluded from
 | `SftpSymlinkRequest` | Symlink creation request | Daemon implemented |
 | `TransferSummary` | Progress and state for one upload/download | Daemon implemented |
 | `StartTransferRequest` | Start a daemon-path transfer | Daemon implemented |
+| `StartTransferBatchRequest` | Start several items as one transfer | Daemon implemented |
+| `TransferItem` | One file or tree of a batch transfer | Daemon implemented |
+| `TransferItemFailure` | Why one batch item failed | Daemon implemented |
 | `CancelTransferRequest` | Cancel one transfer | Daemon implemented |
 | `ForwardSummary` | Runtime forward endpoint and lifecycle snapshot | Daemon implemented |
 | `OpenForwardRequest` | Open a local/remote/dynamic forward | Daemon implemented |

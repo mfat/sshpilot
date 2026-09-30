@@ -4,8 +4,8 @@ Stability: **stable**.
 
 ## Methods
 
-`start_transfer`, `get_transfer`, `list_transfers`, `cancel_transfer` —
-see [methods.md](methods.md).
+`start_transfer`, `start_transfer_batch`, `get_transfer`, `list_transfers`,
+`cancel_transfer` — see [methods.md](methods.md).
 
 ## State machine
 
@@ -15,6 +15,12 @@ see [methods.md](methods.md).
 
 * `start_transfer` uses an existing READY SFTP service; its generic conflict
   policies and atomic temporary-file behavior apply only to SFTP transfers.
+* `start_transfer_batch` runs a file-manager selection as one transfer: one
+  queue slot, one byte total from an up-front scan, one terminal state. Items
+  run in index order and a failed item does not stop the rest; the summary's
+  `item_failures` names them and the batch ends `failed` if any did. Small
+  files share pipelined round trips (OVERWRITE only; a failed window is re-run
+  item by item to find the culprit).
 * Native `start_scp_transfer` uses daemon-owned system `scp`, reports indeterminate
   progress when byte totals are unavailable, and is overwrite-only. `fail`,
   `skip`, and `rename` conflict policies are rejected for native SCP.

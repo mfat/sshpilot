@@ -132,6 +132,7 @@ direct core service compositions are test-only and are not client choices.
 | `get_transfer` | Daemon only | `transfers.read` |
 | `start_transfer` | Daemon only | `transfers.write` |
 | `start_scp_transfer` | Daemon only | `transfers.scp` |
+| `start_transfer_batch` | Daemon only | `transfers.batch` |
 | `cancel_transfer` | Daemon only | `transfers.write` |
 | `list_forwards` | Daemon only | `forwards.read` |
 | `get_forward` | Daemon only | `forwards.read` |
@@ -227,6 +228,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: start_scp_transfer status=daemon-only capability=transfers.scp -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
+<!-- api-method-contract: start_transfer_batch status=daemon-only capability=transfers.batch -->
 <!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: set_session_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
@@ -419,6 +421,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `transfers.get` | `transfers.read` | Implemented |
 | `transfers.start` | `transfers.write` | Implemented |
 | `transfers.scp.start` | `transfers.scp` | Implemented |
+| `transfers.batch.start` | `transfers.batch` | Implemented |
 | `transfers.cancel` | `transfers.write` | Implemented |
 | `forwards.list` | `forwards.read` | Implemented |
 | `forwards.get` | `forwards.read` | Implemented |
@@ -547,6 +550,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: transfers.cancel capability=transfers.write -->
 <!-- api-daemon-method: transfers.get capability=transfers.read -->
 <!-- api-daemon-method: transfers.list capability=transfers.read -->
+<!-- api-daemon-method: transfers.batch.start capability=transfers.batch -->
 <!-- api-daemon-method: transfers.scp.start capability=transfers.scp -->
 <!-- api-daemon-method: transfers.start capability=transfers.write -->
 <!-- api-daemon-method: ssh_overrides.get capability=ssh_overrides.read -->
@@ -1363,6 +1367,36 @@ summary = client.start_scp_transfer(request)
 
 Starts a daemon-path upload or download against a ready SFTP service. Direction
 also requires `transfers.upload` or `transfers.download`.
+
+<!-- api-method: start_transfer_batch -->
+## `start_transfer_batch`
+
+- **Status / introduced:** Daemon only / Protocol v1, API 0.76
+- **Capability / purpose:** `transfers.batch`; run several upload or download
+  items (files, or trees with `recursive`) as one transfer.
+- **Parameters / return:** `StartTransferBatchRequest` (at most 10,000
+  `TransferItem`s); returns a `TransferSummary` whose `items_total`,
+  `items_done` and `item_failures` are set.
+- **Errors:** `unsupported_capability`, `invalid_request`, `server_busy`, or
+  transport errors. Item failures do not raise; they are reported in the
+  summary.
+- **Behavior:** the daemon scans every item first so `bytes_total` covers the
+  whole batch, then copies in index order. A failing item is recorded as a
+  `TransferItemFailure` and the rest still run; its bytes count as handled.
+  The batch ends `completed` when no item failed, otherwise `failed` with
+  `failure` set to the first item's failure. `transfer.item_completed` is
+  published after each item (or each pipelined window of small files). Losing
+  the SFTP service ends the whole batch. Cancelling leaves `items_done`
+  counting the items that finished.
+
+```python
+summary = client.start_transfer_batch(StartTransferBatchRequest(
+    connection_id=cid, sftp_service_id=sid,
+    direction=TransferDirection.UPLOAD,
+    items=(TransferItem("/tmp/a.txt", "a.txt"),
+           TransferItem("/tmp/photos", "photos", recursive=True)),
+))
+```
 
 <!-- api-method: cancel_transfer -->
 ## `cancel_transfer`

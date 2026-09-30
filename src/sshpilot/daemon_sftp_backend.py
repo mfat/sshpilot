@@ -27,7 +27,8 @@ import threading
 import weakref
 from concurrent.futures import Future
 from gettext import gettext as _
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from gi.repository import GObject
 
@@ -36,9 +37,11 @@ from .api.capabilities import Capability
 from .api.models.common import SessionId, SftpServiceId
 from .api.models.operations import RemoteFileType, SFTP_REMOVE_CHUNK_SIZE, SftpRemoveResult
 from .api.models.transfers import (
+    StartTransferBatchRequest,
     StartTransferRequest,
     TransferConflictPolicy,
     TransferDirection,
+    TransferItem,
     TransferState,
     TransferSummary,
 )
@@ -80,7 +83,30 @@ def _localized_direct_error(error: BaseException) -> BaseException:
 
 def daemon_file_manager_capabilities_missing(client) -> frozenset:
     """Union of SFTP + transfer capabilities the file manager backend needs."""
-    return daemon_sftp_capabilities_missing(client) | daemon_transfer_capabilities_missing(client)
+    missing = daemon_sftp_capabilities_missing(client) | daemon_transfer_capabilities_missing(client)
+    try:
+        supported = client.get_capabilities().supported
+    except Exception:
+        supported = frozenset()
+    if Capability.TRANSFERS_BATCH not in supported:
+        missing |= frozenset({Capability.TRANSFERS_BATCH})
+    return missing
+
+
+@dataclass(frozen=True)
+class TransferBatchResult:
+    """How a batch transfer ended when it ran to the end.
+
+    Items ran in index order; ``failures`` maps a failed item's index to a
+    localized reason. Every other index below ``items_done`` succeeded.
+    """
+
+    items_total: int
+    items_done: int
+    failures: Dict[int, str] = field(default_factory=dict)
+
+    def succeeded(self, index: int) -> bool:
+        return index < self.items_done and index not in self.failures
 
 
 # Which live backends are using each daemon SFTP service, so the last one out
@@ -153,6 +179,8 @@ class DaemonSftpManager(GObject.GObject):
         # (bytes_done, bytes_total, progress_key) — key attributes concurrent
         # transfers so the file manager can aggregate a multi-file batch.
         "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object, object)),
+        # (items_done, items_total, progress_key) for a batch transfer.
+        "progress-items": (GObject.SignalFlags.RUN_FIRST, None, (object, object, object)),
         "operation-error": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "directory-loaded": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
         "directory-counts": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
@@ -1156,6 +1184,93 @@ class DaemonSftpManager(GObject.GObject):
         operation_id = self._next_operation_id("download")
         return self._cancellable(future, operation_id, lambda: state["transfer_id"])
 
+    def transfer_batch(
+        self,
+        direction: TransferDirection,
+        items: Sequence[Tuple[str, str, bool]],
+    ) -> Future:
+        """Run ``(local_path, remote_path, recursive)`` items as one daemon transfer.
+
+        Resolves with a :class:`TransferBatchResult` when the batch ran to the
+        end (some items may have failed), raises ``TransferCancelledException``
+        when cancelled, and ``OSError`` when the batch itself failed.
+        """
+        future: Future = Future()
+        progress_key = f"fut-{id(future)}"
+        try:
+            service_id = self._require_ready_service_id()
+            request = StartTransferBatchRequest(
+                connection_id=self._connection_id,
+                sftp_service_id=service_id,
+                direction=direction,
+                items=tuple(
+                    TransferItem(
+                        local_path=str(local),
+                        remote_path=self._expand(remote),
+                        recursive=bool(recursive),
+                    )
+                    for local, remote, recursive in items
+                ),
+                conflict_policy=TransferConflictPolicy.OVERWRITE,
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            future.set_exception(exc if isinstance(exc, OSError) else OSError(str(exc)))
+            return future
+
+        state: Dict[str, Any] = {"transfer_id": None, "items_done": -1}
+
+        def _on_started(summary: TransferSummary) -> None:
+            state["transfer_id"] = summary.id
+
+        def _on_progress(summary: TransferSummary) -> None:
+            state["transfer_id"] = summary.id
+            self._emit_transfer_progress(
+                0, summary, summary.bytes_total or 0, progress_key=progress_key
+            )
+            if summary.items_total is not None and summary.items_done != state["items_done"]:
+                state["items_done"] = summary.items_done
+                self.emit("progress-items", summary.items_done, summary.items_total, progress_key)
+
+        def _on_done(summary: TransferSummary) -> None:
+            _on_progress(summary)
+            if summary.state is TransferState.CANCELLED:
+                self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
+                return
+            if summary.state is TransferState.COMPLETED or summary.item_failures:
+                self._safe_set(
+                    future,
+                    result=TransferBatchResult(
+                        items_total=summary.items_total or len(request.items),
+                        items_done=summary.items_done,
+                        failures={
+                            item.index: format_sftp_failure(item.failure)
+                            for item in summary.item_failures
+                        },
+                    ),
+                )
+                return
+            self._finish_transfer(future, summary)
+
+        def _on_error(exc) -> None:
+            self._safe_set(future, exc=exc)
+
+        self.emit(
+            "progress",
+            0.0,
+            _("Starting upload…")
+            if direction is TransferDirection.UPLOAD
+            else _("Starting download…"),
+        )
+        self._transfers.start_transfer_batch(
+            request,
+            on_started=_on_started,
+            on_progress=_on_progress,
+            on_done=_on_done,
+            on_error=_on_error,
+        )
+        operation_id = self._next_operation_id(direction.value)
+        return self._cancellable(future, operation_id, lambda: state["transfer_id"])
+
     def _finish_transfer(self, future: Future, summary: TransferSummary) -> None:
         if summary.state is TransferState.COMPLETED:
             self._safe_set(future, result=summary.bytes_completed)
@@ -1177,95 +1292,3 @@ class DaemonSftpManager(GObject.GObject):
                 destination.unlink()
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("Partial download cleanup failed: %s", exc)
-
-    def download_directory(self, source: str, destination: pathlib.Path) -> Future:
-        """Download a remote directory tree through a single daemon transfer."""
-        future: Future = Future()
-        progress_key = f"fut-{id(future)}"
-        target = self._expand(source)
-        try:
-            service_id = self._require_ready_service_id()
-        except OSError as exc:
-            future.set_exception(exc)
-            return future
-
-        state: Dict[str, Any] = {"transfer_id": None}
-
-        def _on_progress(summary: TransferSummary) -> None:
-            state["transfer_id"] = summary.id
-            self._emit_transfer_progress(
-                0,
-                summary,
-                summary.bytes_total or 0,
-                progress_key=progress_key,
-            )
-
-        def _on_done(summary: TransferSummary) -> None:
-            self._finish_transfer(future, summary)
-
-        def _on_error(exc) -> None:
-            self._safe_set(future, exc=exc)
-
-        self.emit("progress", 0.0, _("Starting download…"))
-        self._transfers.start_transfer(
-            StartTransferRequest(
-                connection_id=self._connection_id,
-                sftp_service_id=service_id,
-                direction=TransferDirection.DOWNLOAD,
-                remote_path=target,
-                local_path=str(destination),
-                conflict_policy=TransferConflictPolicy.OVERWRITE,
-                recursive=True,
-            ),
-            on_progress=_on_progress,
-            on_done=_on_done,
-            on_error=_on_error,
-        )
-        operation_id = self._next_operation_id("download_dir")
-        return self._cancellable(future, operation_id, lambda: state["transfer_id"])
-
-    def upload_directory(self, source: pathlib.Path, destination: str) -> Future:
-        """Upload a local directory tree through a single daemon transfer."""
-        future: Future = Future()
-        progress_key = f"fut-{id(future)}"
-        remote_root = self._expand(destination)
-        try:
-            service_id = self._require_ready_service_id()
-        except OSError as exc:
-            future.set_exception(exc)
-            return future
-
-        state: Dict[str, Any] = {"transfer_id": None}
-
-        def _on_progress(summary: TransferSummary) -> None:
-            state["transfer_id"] = summary.id
-            self._emit_transfer_progress(
-                0,
-                summary,
-                summary.bytes_total or 0,
-                progress_key=progress_key,
-            )
-
-        def _on_done(summary: TransferSummary) -> None:
-            self._finish_transfer(future, summary)
-
-        def _on_error(exc) -> None:
-            self._safe_set(future, exc=exc)
-
-        self.emit("progress", 0.0, _("Starting upload…"))
-        self._transfers.start_transfer(
-            StartTransferRequest(
-                connection_id=self._connection_id,
-                sftp_service_id=service_id,
-                direction=TransferDirection.UPLOAD,
-                remote_path=remote_root,
-                local_path=str(source),
-                conflict_policy=TransferConflictPolicy.OVERWRITE,
-                recursive=True,
-            ),
-            on_progress=_on_progress,
-            on_done=_on_done,
-            on_error=_on_error,
-        )
-        operation_id = self._next_operation_id("upload_dir")
-        return self._cancellable(future, operation_id, lambda: state["transfer_id"])

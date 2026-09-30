@@ -143,6 +143,7 @@ from sshpilot.api.transport.codec import (
     sftp_service_summary_to_wire,
     sftp_symlink_request_from_wire,
     scp_transfer_request_from_wire,
+    start_transfer_batch_request_from_wire,
     start_transfer_request_from_wire,
     store_connection_password_request_from_wire,
     store_key_passphrase_request_from_wire,
@@ -299,6 +300,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "transfers.get": Capability.TRANSFERS_READ,
     "transfers.start": Capability.TRANSFERS_WRITE,
     "transfers.scp.start": Capability.TRANSFERS_SCP,
+    "transfers.batch.start": Capability.TRANSFERS_BATCH,
     "transfers.cancel": Capability.TRANSFERS_WRITE,
     "forwards.list": Capability.FORWARDS_READ,
     "forwards.get": Capability.FORWARDS_READ,
@@ -415,6 +417,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "sftp.replace_file",
         "sftp.create_file",
         "transfers.start",
+        "transfers.batch.start",
         "forwards.open",
         "known_hosts.remove",
         "keys.generate",
@@ -539,6 +542,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.symlink",
         "transfers.start",
         "transfers.scp.start",
+        "transfers.batch.start",
         "transfers.cancel",
         "forwards.open",
         "forwards.close",
@@ -838,6 +842,7 @@ class RequestDispatcher:
             "transfers.get": self._handle_get_transfer,
             "transfers.start": self._handle_start_transfer,
             "transfers.scp.start": self._handle_start_scp_transfer,
+            "transfers.batch.start": self._handle_start_transfer_batch,
             "transfers.cancel": self._handle_cancel_transfer,
             "forwards.list": self._handle_list_forwards,
             "forwards.get": self._handle_get_forward,
@@ -2769,6 +2774,30 @@ class RequestDispatcher:
             on_cancel=lambda: runtime.reject_pending_start(prepared.id),
         )
 
+    def _handle_start_transfer_batch(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_transfer_runtime()
+        transfer_request = start_transfer_batch_request_from_wire(request.params)
+        prepared = runtime.prepare_start_transfer_batch(
+            transfer_request,
+            client_id=client_id,
+        )
+        prepared_wire = transfer_summary_to_wire(prepared)
+        return DeferredResult(
+            operation=lambda: runtime.run_transfer(prepared.id),
+            command_key=prepared.id,
+            connection_id=prepared.connection_id,
+            on_rejected=lambda: runtime.reject_pending_start(prepared.id),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: runtime.fail_pending_start(prepared.id, error),
+            on_cancel=lambda: runtime.reject_pending_start(prepared.id),
+        )
+
     def _handle_start_scp_transfer(
         self,
         request: RequestEnvelope,
@@ -3514,6 +3543,7 @@ class RequestDispatcher:
                     Capability.TRANSFERS_EVENTS,
                     Capability.TRANSFERS_UPLOAD,
                     Capability.TRANSFERS_DOWNLOAD,
+                    Capability.TRANSFERS_BATCH,
                 }
             )
         if scp:

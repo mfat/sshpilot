@@ -97,6 +97,7 @@ def test_successful_protocol_v1_handshake(raw_peer):
             Capability.TRANSFERS_EVENTS.value,
             Capability.TRANSFERS_UPLOAD.value,
             Capability.TRANSFERS_DOWNLOAD.value,
+            Capability.TRANSFERS_BATCH.value,
             Capability.FORWARDS_READ.value,
             Capability.FORWARDS_WRITE.value,
             Capability.FORWARDS_EVENTS.value,
