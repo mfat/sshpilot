@@ -139,11 +139,13 @@ from .models.operations import (
     SftpCopyRequest,
     SftpDirectorySizeRequest,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
     SftpServiceSummary,
@@ -152,6 +154,7 @@ from .models.operations import (
 from .models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
+    StartTransferBatchRequest,
     StartTransferRequest,
     TransferSummary,
 )
@@ -518,6 +521,9 @@ class SshPilotClient(Protocol):
     def sftp_filesystem_usage(self, request: SftpPathRequest) -> SftpFilesystemUsage:
         ...
 
+    def sftp_resolve_ids(self, request: SftpResolveIdsRequest) -> SftpIdNames:
+        ...
+
     def sftp_readlink(self, request: SftpPathRequest) -> str:
         ...
 
@@ -560,6 +566,9 @@ class SshPilotClient(Protocol):
         ...
 
     def start_scp_transfer(self, request: StartScpTransferRequest) -> TransferSummary:
+        ...
+
+    def start_transfer_batch(self, request: StartTransferBatchRequest) -> TransferSummary:
         ...
 
     def cancel_transfer(self, request: CancelTransferRequest) -> None:

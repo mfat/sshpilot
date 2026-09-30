@@ -82,6 +82,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: transfers.upload -->
 <!-- api-daemon-runtime-capability: transfers.download -->
 <!-- api-daemon-runtime-capability: transfers.scp -->
+<!-- api-daemon-runtime-capability: transfers.batch -->
 <!-- api-daemon-runtime-capability: forwards.read -->
 <!-- api-daemon-runtime-capability: forwards.write -->
 <!-- api-daemon-runtime-capability: forwards.events -->
@@ -120,7 +121,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `sftp.read` | List SFTP services and remote directories | Daemon: Implemented when SFTP runtime present | `list_sftp_services`, `get_sftp_service`, `sftp_list_directory` | None required | Daemon `SftpRuntime` | v1 / API 0.10 |
 | `sftp.write` | Open, attach, detach, and close SFTP services | Daemon: Implemented when SFTP runtime present | `open_sftp`, `attach_sftp`, `detach_sftp`, `close_sftp` | SFTP lifecycle events | Daemon `SftpRuntime` | v1 / API 0.10 |
 | `sftp.events` | Observe SFTP service lifecycle | Daemon: Implemented | `subscribe_events` | `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed` | Bounded daemon event stream | v1 / API 0.10 |
-| `sftp.metadata` | Stat, lstat, realpath, readlink, and filesystem usage | Daemon: Implemented when SFTP runtime present | `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink`, `sftp_filesystem_usage` | None | Ready SFTP service | v1 / API 0.10 |
+| `sftp.metadata` | Stat, lstat, realpath, readlink, filesystem usage, and owner names | Daemon: Implemented when SFTP runtime present | `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink`, `sftp_filesystem_usage`, `sftp_resolve_ids` | None | Ready SFTP service | v1 / API 0.10 |
 | `sftp.mutate` | mkdir, rmdir, remove, rename, chmod, symlink | Daemon: Implemented when SFTP runtime present | `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`, `sftp_rename`, `sftp_chmod`, `sftp_symlink` | None | Ready SFTP service | v1 / API 0.10 |
 | `sftp.privileged_file` | Read and replace remote files with elevated (sudo) access | Daemon: Implemented when the privileged file runner is wired | `sftp_read_file`, `sftp_replace_file` with `access=Sudo` | Interaction lifecycle events for the protected sudo-password prompt | Daemon `PrivilegedFileService` over canonical SSH launch | v1 / API 0.18 |
 | `transfers.read` | List and inspect transfer records | Daemon: Implemented when transfer runtime present | `list_transfers`, `get_transfer` | None required | Daemon `TransferRuntime` | v1 / API 0.10 |
@@ -129,6 +130,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `transfers.upload` | Upload direction for `start_transfer` | Daemon: Implemented when transfer runtime present | `start_transfer` with `upload` | Transfer lifecycle events | Daemon path local mode | v1 / API 0.10 |
 | `transfers.download` | Download direction for `start_transfer` | Daemon: Implemented when transfer runtime present | `start_transfer` with `download` | Transfer lifecycle events | Daemon path local mode | v1 / API 0.10 |
 | `transfers.scp` | Native OpenSSH SCP upload/download | Daemon: Implemented when native SCP backend is installed | `start_scp_transfer`; wire `transfers.scp.start` | Transfer lifecycle events | Native `scp`, canonical SSH launch, interaction broker | v1 / API 0.13 |
+| `transfers.batch` | Several files/trees as one transfer | Daemon: Implemented when transfer runtime present | `start_transfer_batch`; wire `transfers.batch.start` | Transfer lifecycle events, `transfer.item_completed` per item | Daemon `TransferRuntime` and ready SFTP service | v1 / API 0.76 |
 | `port_forwarding` | Legacy broad forward identifier | Deprecated and never advertised | None | None | Replaced by narrow `forwards.*` capabilities | v1 |
 | `forwards.read` | List and inspect runtime forwards | Daemon: Implemented when forward runtime present | `list_forwards`, `get_forward` | None required | Daemon `ForwardRuntime` | v1 / API 0.10 |
 | `forwards.write` | Open and close runtime forwards | Daemon: Implemented when forward runtime present | `open_forward`, `close_forward` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
@@ -378,6 +380,13 @@ Advertises daemon-owned native OpenSSH SCP upload/download through
 `start_scp_transfer`. It is present only when the daemon has a usable SCP launch
 backend; clients must not fall back to GTK-owned subprocesses.
 
+<!-- api-capability: transfers.batch -->
+## `transfers.batch`
+
+Advertises `start_transfer_batch`: many upload or download items run as one
+transfer record with one byte total and one terminal state. Direction still
+requires `transfers.upload` or `transfers.download`.
+
 <!-- api-capability: port_forwarding -->
 ## `port_forwarding`
 
@@ -561,7 +570,8 @@ Implemented whenever the daemon's shared `OperationRuntime` is available --
 independently of the identity service. Returns a typed `OperationSummary` for
 any operation the requesting client owns (`operations.get`). Backs key
 deployment/authorized-key removal (identity) as well as SFTP's
-`sftp.directory_size` and recursive `sftp.copy`/`sftp.remove`, so an
+`sftp.directory_size`, recursive `sftp.copy`/`sftp.remove` and single-file
+`sftp.copy` with `as_operation`, so an
 SFTP-capable daemon with no identity service installed can still poll its own
 tree operations.
 

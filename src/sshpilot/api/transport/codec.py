@@ -204,12 +204,14 @@ from ..models.operations import (
     SftpFileAccess,
     SftpFileTarget,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpRemoveFailure,
     SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
     SftpServiceState,
@@ -219,6 +221,9 @@ from ..models.operations import (
 from ..models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
+    StartTransferBatchRequest,
+    TransferItem,
+    TransferItemFailure,
     StartTransferRequest,
     TransferBackend,
     TransferConflictPolicy,
@@ -4931,6 +4936,66 @@ def sftp_filesystem_usage_from_wire(value: Any) -> SftpFilesystemUsage:
     )
 
 
+def _id_list_from_wire(value: Any, context: str) -> Tuple[int, ...]:
+    if type(value) is not list:
+        raise ValueError(f"{context} must be a JSON array")
+    return tuple(_integer(item, context) for item in value)
+
+
+def _optional_name_list_from_wire(value: Any, context: str) -> Tuple[Optional[str], ...]:
+    if type(value) is not list:
+        raise ValueError(f"{context} must be a JSON array")
+    return tuple(None if item is None else _text(item, context) for item in value)
+
+
+def sftp_resolve_ids_request_to_wire(request: SftpResolveIdsRequest) -> Dict[str, Any]:
+    if type(request) is not SftpResolveIdsRequest:
+        raise TypeError("SFTP resolve ids request is required")
+    return {
+        "service_id": request.service_id,
+        "uids": list(request.uids),
+        "gids": list(request.gids),
+    }
+
+
+def sftp_resolve_ids_request_from_wire(value: Any) -> SftpResolveIdsRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "uids", "gids"},
+        context="SFTP resolve ids request",
+    )
+    return SftpResolveIdsRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        uids=_id_list_from_wire(data["uids"], "SFTP uid"),
+        gids=_id_list_from_wire(data["gids"], "SFTP gid"),
+    )
+
+
+def sftp_id_names_to_wire(names: SftpIdNames) -> Dict[str, Any]:
+    if type(names) is not SftpIdNames:
+        raise TypeError("SFTP id names are required")
+    return {
+        "uids": list(names.uids),
+        "gids": list(names.gids),
+        "user_names": list(names.user_names),
+        "group_names": list(names.group_names),
+    }
+
+
+def sftp_id_names_from_wire(value: Any) -> SftpIdNames:
+    data = _strict_fields(
+        value,
+        required={"uids", "gids", "user_names", "group_names"},
+        context="SFTP id names",
+    )
+    return SftpIdNames(
+        uids=_id_list_from_wire(data["uids"], "SFTP uid"),
+        gids=_id_list_from_wire(data["gids"], "SFTP gid"),
+        user_names=_optional_name_list_from_wire(data["user_names"], "SFTP user name"),
+        group_names=_optional_name_list_from_wire(data["group_names"], "SFTP group name"),
+    )
+
+
 def sftp_rename_request_to_wire(request: SftpRenameRequest) -> Dict[str, Any]:
     if type(request) is not SftpRenameRequest:
         raise TypeError("SFTP rename request is required")
@@ -4961,20 +5026,24 @@ def sftp_rename_request_from_wire(value: Any) -> SftpRenameRequest:
 def sftp_copy_request_to_wire(request: SftpCopyRequest) -> Dict[str, Any]:
     if type(request) is not SftpCopyRequest:
         raise TypeError("SFTP copy request is required")
-    return {
+    wire = {
         "service_id": request.service_id,
         "source_path": request.source_path,
         "destination_path": request.destination_path,
         "recursive": request.recursive,
         "move": request.move,
     }
+    # Sent only when set, so a plain copy stays readable by older daemons.
+    if request.as_operation:
+        wire["as_operation"] = True
+    return wire
 
 
 def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
     data = _strict_fields(
         value,
         required={"service_id", "source_path", "destination_path"},
-        optional={"recursive", "move"},
+        optional={"recursive", "move", "as_operation"},
         context="SFTP copy request",
     )
     return SftpCopyRequest(
@@ -4983,6 +5052,7 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
         destination_path=_text(data["destination_path"], "SFTP copy destination path"),
         recursive=_boolean(data.get("recursive", False), "SFTP copy recursive"),
         move=_boolean(data.get("move", False), "SFTP copy move"),
+        as_operation=_boolean(data.get("as_operation", False), "SFTP copy as operation"),
     )
 
 
@@ -5031,7 +5101,7 @@ def sftp_symlink_request_from_wire(value: Any) -> SftpSymlinkRequest:
 def transfer_summary_to_wire(summary: TransferSummary) -> Dict[str, Any]:
     if type(summary) is not TransferSummary:
         raise TypeError("transfer summary is required")
-    return {
+    wire = {
         "id": summary.id,
         "connection_id": summary.connection_id,
         "sftp_service_id": summary.sftp_service_id,
@@ -5050,6 +5120,36 @@ def transfer_summary_to_wire(summary: TransferSummary) -> Dict[str, Any]:
         "owner_client_id": summary.owner_client_id,
         "failure": _summary_failure_to_wire(summary.failure),
     }
+    # Batch fields are sent only for batch transfers so single-transfer
+    # summaries stay readable by older strict decoders.
+    if summary.items_total is not None:
+        wire["items_total"] = summary.items_total
+        wire["items_done"] = summary.items_done
+        wire["item_failures"] = [
+            {"index": item.index, "failure": _sftp_failure_to_wire(item.failure)}
+            for item in summary.item_failures
+        ]
+    return wire
+
+
+def _transfer_item_failures_from_wire(value: Any) -> Tuple[TransferItemFailure, ...]:
+    if type(value) is not list:
+        raise ValueError("transfer item failures must be a list")
+    failures = []
+    for entry in value:
+        data = _strict_fields(
+            entry, required={"index", "failure"}, context="transfer item failure"
+        )
+        failure = _sftp_failure_from_wire(data["failure"])
+        if failure is None:
+            raise ValueError("transfer item failure requires a failure")
+        failures.append(
+            TransferItemFailure(
+                index=_integer(data["index"], "transfer item index"),
+                failure=failure,
+            )
+        )
+    return tuple(failures)
 
 
 def transfer_summary_from_wire(value: Any) -> TransferSummary:
@@ -5070,7 +5170,13 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
             "owner_client_id",
             "failure",
         },
-        optional={"sftp_service_id", "backend"},
+        optional={
+            "sftp_service_id",
+            "backend",
+            "items_total",
+            "items_done",
+            "item_failures",
+        },
         context="transfer summary",
     )
     try:
@@ -5108,6 +5214,13 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         completed_at=_optional_datetime_from_wire(data["completed_at"], "transfer completion time"),
         owner_client_id=_optional_client_id(data["owner_client_id"], "transfer owner client id"),
         failure=_summary_failure_from_wire(data["failure"]),
+        items_total=(
+            _integer(data["items_total"], "transfer item total")
+            if data.get("items_total") is not None
+            else None
+        ),
+        items_done=_integer(data.get("items_done", 0), "transfer items done"),
+        item_failures=_transfer_item_failures_from_wire(data.get("item_failures", [])),
     )
 
 
@@ -5171,6 +5284,78 @@ def start_transfer_request_from_wire(value: Any) -> StartTransferRequest:
         conflict_policy=conflict_policy,
         recursive=_boolean(recursive, "transfer recursive flag"),
         local_mode=local_mode,
+    )
+
+
+def start_transfer_batch_request_to_wire(
+    request: StartTransferBatchRequest,
+) -> Dict[str, Any]:
+    if type(request) is not StartTransferBatchRequest:
+        raise TypeError("start transfer batch request is required")
+    return {
+        "connection_id": request.connection_id,
+        "sftp_service_id": request.sftp_service_id,
+        "direction": request.direction.value,
+        "items": [
+            {
+                "local_path": item.local_path,
+                "remote_path": item.remote_path,
+                "recursive": item.recursive,
+            }
+            for item in request.items
+        ],
+        "conflict_policy": request.conflict_policy.value,
+    }
+
+
+def start_transfer_batch_request_from_wire(value: Any) -> StartTransferBatchRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "sftp_service_id", "direction", "items"},
+        optional={"conflict_policy"},
+        context="start transfer batch request",
+    )
+    try:
+        direction = TransferDirection(_identifier(data["direction"], "transfer direction"))
+    except (TypeError, ValueError):
+        raise ValueError("start transfer batch request contains an unknown direction") from None
+    conflict_policy = data.get("conflict_policy")
+    try:
+        conflict_policy = (
+            TransferConflictPolicy(conflict_policy)
+            if conflict_policy is not None
+            else TransferConflictPolicy.OVERWRITE
+        )
+    except ValueError:
+        raise ValueError(
+            "start transfer batch request contains an unknown conflict policy"
+        ) from None
+    raw_items = data["items"]
+    if type(raw_items) is not list:
+        raise ValueError("start transfer batch items must be a list")
+    if len(raw_items) > StartTransferBatchRequest.MAX_ITEMS:
+        raise ValueError("batch item count exceeds the limit")
+    items = []
+    for entry in raw_items:
+        item = _strict_fields(
+            entry,
+            required={"local_path", "remote_path"},
+            optional={"recursive"},
+            context="transfer batch item",
+        )
+        items.append(
+            TransferItem(
+                local_path=_text(item["local_path"], "transfer item local path"),
+                remote_path=_text(item["remote_path"], "transfer item remote path"),
+                recursive=_boolean(item.get("recursive", False), "transfer item recursive flag"),
+            )
+        )
+    return StartTransferBatchRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+        sftp_service_id=_sftp_service_id(data["sftp_service_id"], "transfer SFTP service id"),
+        direction=direction,
+        items=tuple(items),
+        conflict_policy=conflict_policy,
     )
 
 

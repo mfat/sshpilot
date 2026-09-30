@@ -4947,10 +4947,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         The provider may ask a local tool (``docker ps``, ``kubectl get``),
         so it runs on a worker thread against a snapshot of the form, and the
-        popover says so while it waits. A failure shows the tool's own
-        message -- "no context named x" is what the user needs to read.
+        popover says so while it waits. Known built-in failures are worded
+        by the frontend, with the tool's own diagnostic kept separately.
         """
         from .plugins.api import PluginContext
+        from .gtk.protocol_suggestion_messages import format_protocol_suggestion_error
 
         popover = Gtk.Popover()
         popover.set_parent(button)
@@ -4984,17 +4985,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         def _work():
             try:
                 items = [(str(v), str(label)) for v, label in (spec.suggest(values, ctx) or [])]
-                error = ''
+                error = None
             except Exception as exc:
                 logger.debug("Suggestions for %r failed", spec.key, exc_info=True)
-                items, error = [], str(exc) or type(exc).__name__
+                items, error = [], exc
             GLib.idle_add(_show, items, error)
 
         def _show(items, error):
             if state['closed']:
                 return False
-            if error:
-                status.set_text(_("Could not list suggestions: {error}").format(error=error))
+            if error is not None:
+                status.set_text(format_protocol_suggestion_error(error))
                 return False
             if not items:
                 status.set_text(_("Nothing found"))

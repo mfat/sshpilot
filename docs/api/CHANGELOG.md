@@ -5,6 +5,34 @@ notes remain separate.
 
 ## Unreleased
 
+- `sftp_resolve_ids` (`sftp.resolve_ids`, capability `sftp.metadata`) takes
+  the new `SftpResolveIdsRequest` (up to 1024 uids and gids) and returns the
+  new `SftpIdNames`: the server's user and group names for those ids, in
+  request order, `null` where the server has none. It uses OpenSSH's
+  `users-groups-by-id@openssh.com` (OpenSSH 9.1+); a server without the
+  extension fails with `remote_unsupported_operation`. The file manager's
+  properties dialog shows remote owners by name instead of numeric ids. New
+  method and models, so the API implementation version is 0.78; Protocol
+  remains 1.0.
+- `SftpCopyRequest.as_operation` (wire field `as_operation`, sent only when
+  true) runs a single-file `sftp.copy` as a cancellable operation that
+  returns an `OperationSummary`, like a recursive copy. The plain request
+  waits for the whole copy, so a large file outlasted the client's 5 s
+  request timeout and the client tore down its daemon connection while the
+  copy carried on. The operation reports byte progress, can be cancelled
+  between blocks, removes a partial destination, and reports as
+  `sftp_copy_tree` so older clients can still decode it. Without the flag the
+  reply shape is unchanged. API implementation version is 0.77; Protocol
+  remains 1.0.
+- `start_transfer_batch` (wire `transfers.batch.start`, capability
+  `transfers.batch`) runs several upload or download items as one transfer:
+  one queue slot, one byte total, one terminal state. New models
+  `StartTransferBatchRequest`, `TransferItem` and `TransferItemFailure`;
+  `TransferSummary` gains `items_total`, `items_done` and `item_failures`,
+  sent on the wire only for batch transfers. A failed item does not stop the
+  batch; the batch ends `failed` when any item did. `transfer.item_completed`,
+  declared since 0.10, is now emitted once per batch item or pipelined window.
+  API implementation version is 0.76; Protocol remains 1.0.
 - `PluginSessionFailureCode.TELNET_UNAVAILABLE` (`telnet_unavailable`,
   parameter `program`: `telnet`) reports a missing telnet client; a telnet
   connection without a host now reports `host_required`. Both previously

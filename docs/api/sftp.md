@@ -28,6 +28,14 @@ mapping and formats parameters only after translation; the daemon never
 translates messages. Raw SSH/SFTP server text, numeric status details, stderr,
 and library/OS diagnostics are never presentation codes or msgids.
 
+`sftp_copy` of a single file is a plain request by default: the reply comes
+when the copy has finished, so a large file can outlast the client's request
+timeout. Set `SftpCopyRequest.as_operation` to run it as a cancellable
+`OperationSummary` operation instead, as recursive copies always are; it then
+reports byte progress and can be cancelled between blocks (not during a
+server-side `copy-data`). A cancelled or failed single-file copy leaves no
+partial destination. Both report as `sftp_copy_tree`.
+
 The generic `ServiceFailure` contract was not changed by the SFTP migration.
 Native SCP has its own strict `ScpFailure` contract; unrelated service
 summaries retain `ServiceFailure`.

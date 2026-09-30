@@ -134,6 +134,8 @@ from sshpilot.api.transport.codec import (
     sftp_directory_size_request_from_wire,
     sftp_path_request_from_wire,
     sftp_filesystem_usage_to_wire,
+    sftp_id_names_to_wire,
+    sftp_resolve_ids_request_from_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
     sftp_remove_result_to_wire,
@@ -143,6 +145,7 @@ from sshpilot.api.transport.codec import (
     sftp_service_summary_to_wire,
     sftp_symlink_request_from_wire,
     scp_transfer_request_from_wire,
+    start_transfer_batch_request_from_wire,
     start_transfer_request_from_wire,
     store_connection_password_request_from_wire,
     store_key_passphrase_request_from_wire,
@@ -284,6 +287,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.lstat": Capability.SFTP_METADATA,
     "sftp.realpath": Capability.SFTP_METADATA,
     "sftp.filesystem_usage": Capability.SFTP_METADATA,
+    "sftp.resolve_ids": Capability.SFTP_METADATA,
     "sftp.readlink": Capability.SFTP_METADATA,
     "sftp.read_file": Capability.SFTP_READ,
     "sftp.replace_file": Capability.SFTP_MUTATE,
@@ -299,6 +303,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "transfers.get": Capability.TRANSFERS_READ,
     "transfers.start": Capability.TRANSFERS_WRITE,
     "transfers.scp.start": Capability.TRANSFERS_SCP,
+    "transfers.batch.start": Capability.TRANSFERS_BATCH,
     "transfers.cancel": Capability.TRANSFERS_WRITE,
     "forwards.list": Capability.FORWARDS_READ,
     "forwards.get": Capability.FORWARDS_READ,
@@ -415,6 +420,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "sftp.replace_file",
         "sftp.create_file",
         "transfers.start",
+        "transfers.batch.start",
         "forwards.open",
         "known_hosts.remove",
         "keys.generate",
@@ -526,6 +532,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.lstat",
         "sftp.realpath",
         "sftp.filesystem_usage",
+        "sftp.resolve_ids",
         "sftp.readlink",
         "sftp.read_file",
         "sftp.replace_file",
@@ -539,6 +546,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.symlink",
         "transfers.start",
         "transfers.scp.start",
+        "transfers.batch.start",
         "transfers.cancel",
         "forwards.open",
         "forwards.close",
@@ -823,6 +831,7 @@ class RequestDispatcher:
             "sftp.lstat": self._handle_sftp_lstat,
             "sftp.realpath": self._handle_sftp_realpath,
             "sftp.filesystem_usage": self._handle_sftp_filesystem_usage,
+            "sftp.resolve_ids": self._handle_sftp_resolve_ids,
             "sftp.readlink": self._handle_sftp_readlink,
             "sftp.read_file": self._handle_sftp_read_file,
             "sftp.replace_file": self._handle_sftp_replace_file,
@@ -838,6 +847,7 @@ class RequestDispatcher:
             "transfers.get": self._handle_get_transfer,
             "transfers.start": self._handle_start_transfer,
             "transfers.scp.start": self._handle_start_scp_transfer,
+            "transfers.batch.start": self._handle_start_transfer_batch,
             "transfers.cancel": self._handle_cancel_transfer,
             "forwards.list": self._handle_list_forwards,
             "forwards.get": self._handle_get_forward,
@@ -2522,6 +2532,22 @@ class RequestDispatcher:
             on_rejected=lambda: None,
         )
 
+    def _handle_sftp_resolve_ids(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        ids_request = sftp_resolve_ids_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: sftp_id_names_to_wire(
+                runtime.resolve_ids(ids_request, client_id=client_id)
+            ),
+            command_key=ids_request.service_id,
+            on_rejected=lambda: None,
+        )
+
     def _handle_sftp_readlink(
         self,
         request: RequestEnvelope,
@@ -2612,7 +2638,7 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_sftp_runtime()
         copy_request = sftp_copy_request_from_wire(request.params)
-        if copy_request.recursive:
+        if copy_request.runs_as_operation:
             return DeferredResult(
                 operation=lambda: operation_summary_to_wire(
                     runtime.start_copy(copy_request, client_id=client_id)
@@ -2757,6 +2783,30 @@ class RequestDispatcher:
         runtime = self._required_transfer_runtime()
         transfer_request = start_transfer_request_from_wire(request.params)
         prepared = runtime.prepare_start_transfer(transfer_request, client_id=client_id)
+        prepared_wire = transfer_summary_to_wire(prepared)
+        return DeferredResult(
+            operation=lambda: runtime.run_transfer(prepared.id),
+            command_key=prepared.id,
+            connection_id=prepared.connection_id,
+            on_rejected=lambda: runtime.reject_pending_start(prepared.id),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: runtime.fail_pending_start(prepared.id, error),
+            on_cancel=lambda: runtime.reject_pending_start(prepared.id),
+        )
+
+    def _handle_start_transfer_batch(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_transfer_runtime()
+        transfer_request = start_transfer_batch_request_from_wire(request.params)
+        prepared = runtime.prepare_start_transfer_batch(
+            transfer_request,
+            client_id=client_id,
+        )
         prepared_wire = transfer_summary_to_wire(prepared)
         return DeferredResult(
             operation=lambda: runtime.run_transfer(prepared.id),
@@ -3514,6 +3564,7 @@ class RequestDispatcher:
                     Capability.TRANSFERS_EVENTS,
                     Capability.TRANSFERS_UPLOAD,
                     Capability.TRANSFERS_DOWNLOAD,
+                    Capability.TRANSFERS_BATCH,
                 }
             )
         if scp:

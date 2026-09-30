@@ -120,6 +120,7 @@ direct core service compositions are test-only and are not client choices.
 | `sftp_lstat` | Daemon only | `sftp.metadata` |
 | `sftp_realpath` | Daemon only | `sftp.metadata` |
 | `sftp_filesystem_usage` | Daemon only | `sftp.metadata` |
+| `sftp_resolve_ids` | Daemon only | `sftp.metadata` |
 | `sftp_readlink` | Daemon only | `sftp.metadata` |
 | `sftp_mkdir` | Daemon only | `sftp.mutate` |
 | `sftp_create_file` | Daemon only | `sftp.mutate` |
@@ -132,6 +133,7 @@ direct core service compositions are test-only and are not client choices.
 | `get_transfer` | Daemon only | `transfers.read` |
 | `start_transfer` | Daemon only | `transfers.write` |
 | `start_scp_transfer` | Daemon only | `transfers.scp` |
+| `start_transfer_batch` | Daemon only | `transfers.batch` |
 | `cancel_transfer` | Daemon only | `transfers.write` |
 | `list_forwards` | Daemon only | `forwards.read` |
 | `get_forward` | Daemon only | `forwards.read` |
@@ -218,6 +220,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: sftp_readlink status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_realpath status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_filesystem_usage status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_resolve_ids status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_remove status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_rename status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_replace_file status=daemon-only capability=sftp.mutate -->
@@ -227,6 +230,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: start_scp_transfer status=daemon-only capability=transfers.scp -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
+<!-- api-method-contract: start_transfer_batch status=daemon-only capability=transfers.batch -->
 <!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: set_session_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
@@ -406,6 +410,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sftp.lstat` | `sftp.metadata` | Implemented |
 | `sftp.realpath` | `sftp.metadata` | Implemented |
 | `sftp.filesystem_usage` | `sftp.metadata` | Implemented |
+| `sftp.resolve_ids` | `sftp.metadata` | Implemented |
 | `sftp.readlink` | `sftp.metadata` | Implemented |
 | `sftp.mkdir` | `sftp.mutate` | Implemented |
 | `sftp.create_file` | `sftp.mutate` | Implemented |
@@ -419,6 +424,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `transfers.get` | `transfers.read` | Implemented |
 | `transfers.start` | `transfers.write` | Implemented |
 | `transfers.scp.start` | `transfers.scp` | Implemented |
+| `transfers.batch.start` | `transfers.batch` | Implemented |
 | `transfers.cancel` | `transfers.write` | Implemented |
 | `forwards.list` | `forwards.read` | Implemented |
 | `forwards.get` | `forwards.read` | Implemented |
@@ -534,6 +540,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sftp.readlink capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.realpath capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.filesystem_usage capability=sftp.metadata -->
+<!-- api-daemon-method: sftp.resolve_ids capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.remove capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.rename capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.replace_file capability=sftp.mutate -->
@@ -547,6 +554,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: transfers.cancel capability=transfers.write -->
 <!-- api-daemon-method: transfers.get capability=transfers.read -->
 <!-- api-daemon-method: transfers.list capability=transfers.read -->
+<!-- api-daemon-method: transfers.batch.start capability=transfers.batch -->
 <!-- api-daemon-method: transfers.scp.start capability=transfers.scp -->
 <!-- api-daemon-method: transfers.start capability=transfers.write -->
 <!-- api-daemon-method: ssh_overrides.get capability=ssh_overrides.read -->
@@ -1282,6 +1290,16 @@ total, free, and available (writable without root) bytes, from OpenSSH's
 `statvfs@openssh.com` extension. A server without the extension fails with
 `remote_unsupported_operation`.
 
+<!-- api-method: sftp_resolve_ids -->
+## `sftp_resolve_ids`
+
+Returns `SftpIdNames` for the uids and gids in an `SftpResolveIdsRequest`:
+the SFTP server's user and group names, in request order, `null` where the
+server has no name for an id. Names come from the remote machine, so they
+are right even when its ids differ from the client's. Uses OpenSSH's
+`users-groups-by-id@openssh.com` extension; a server without it fails with
+`remote_unsupported_operation`.
+
 <!-- api-method: sftp_readlink -->
 ## `sftp_readlink`
 
@@ -1363,6 +1381,36 @@ summary = client.start_scp_transfer(request)
 
 Starts a daemon-path upload or download against a ready SFTP service. Direction
 also requires `transfers.upload` or `transfers.download`.
+
+<!-- api-method: start_transfer_batch -->
+## `start_transfer_batch`
+
+- **Status / introduced:** Daemon only / Protocol v1, API 0.76
+- **Capability / purpose:** `transfers.batch`; run several upload or download
+  items (files, or trees with `recursive`) as one transfer.
+- **Parameters / return:** `StartTransferBatchRequest` (at most 10,000
+  `TransferItem`s); returns a `TransferSummary` whose `items_total`,
+  `items_done` and `item_failures` are set.
+- **Errors:** `unsupported_capability`, `invalid_request`, `server_busy`, or
+  transport errors. Item failures do not raise; they are reported in the
+  summary.
+- **Behavior:** the daemon scans every item first so `bytes_total` covers the
+  whole batch, then copies in index order. A failing item is recorded as a
+  `TransferItemFailure` and the rest still run; its bytes count as handled.
+  The batch ends `completed` when no item failed, otherwise `failed` with
+  `failure` set to the first item's failure. `transfer.item_completed` is
+  published after each item (or each pipelined window of small files). Losing
+  the SFTP service ends the whole batch. Cancelling leaves `items_done`
+  counting the items that finished.
+
+```python
+summary = client.start_transfer_batch(StartTransferBatchRequest(
+    connection_id=cid, sftp_service_id=sid,
+    direction=TransferDirection.UPLOAD,
+    items=(TransferItem("/tmp/a.txt", "a.txt"),
+           TransferItem("/tmp/photos", "photos", recursive=True)),
+))
+```
 
 <!-- api-method: cancel_transfer -->
 ## `cancel_transfer`

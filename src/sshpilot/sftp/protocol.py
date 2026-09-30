@@ -325,6 +325,31 @@ def parse_statvfs(payload: bytes) -> SFTPStatVFS:
     return SFTPStatVFS(*(reader.uint64() for _ in SFTPStatVFS._fields))
 
 
+def pack_id_list(ids: List[int]) -> bytes:
+    """A ``users-groups-by-id@openssh.com`` id list: uint32s inside one string."""
+    return pack_string(b"".join(pack_uint32(i) for i in ids))
+
+
+def _name_list(blob: bytes) -> List[str]:
+    reader = _Reader(blob)
+    names: List[str] = []
+    while reader._pos < len(blob):
+        names.append(reader.text())
+    return names
+
+
+def parse_id_names(payload: bytes) -> Tuple[List[str], List[str]]:
+    """Parse a ``users-groups-by-id@openssh.com`` EXTENDED_REPLY payload.
+
+    Names come back in request order; an id the server cannot name is ``""``.
+    """
+    reader = _Reader(payload)
+    reader.uint32()  # request id
+    users = _name_list(reader.string())
+    groups = _name_list(reader.string())
+    return users, groups
+
+
 def parse_attrs(payload: bytes) -> Tuple[int, SFTPAttributes]:
     reader = _Reader(payload)
     request_id = reader.uint32()

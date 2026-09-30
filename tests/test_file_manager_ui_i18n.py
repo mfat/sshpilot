@@ -218,16 +218,19 @@ def test_progress_counts_use_ngettext_before_format(monkeypatch):
     dialog.current_file = ""
     selected = []
 
+    dialog._completion_shown = True
+
     def translate_count(singular, plural, count):
         selected.append((singular, plural, count))
-        return "{total} total; {done} done"
+        return "{total} total; at {index}"
 
     monkeypatch.setattr(progress_module, "ngettext", translate_count)
     dialog.set_operation_details(2)
     dialog._increment_file_count_ui()
     assert selected[0][2] == 2
     assert selected[1][2] == 2
-    dialog.counter_label.set_text.assert_called_with("2 total; 1 done")
+    dialog.counter_label.set_text.assert_called_with("2 total; at 2")
+    dialog.counter_label.set_visible.assert_called_with(True)
 
 
 def test_completion_summary_uses_real_singular_and_plural(monkeypatch):
@@ -256,21 +259,26 @@ def test_completion_summary_uses_real_singular_and_plural(monkeypatch):
         dialog.progress_bar = MagicMock()
         dialog.speed_label = MagicMock()
         dialog.time_label = MagicMock()
+        dialog.progress_row = MagicMock()
+        dialog.card = MagicMock()
+        dialog.source_row = MagicMock()
+        dialog.dest_row = MagicMock()
         dialog.operation_type = "upload"
         dialog.current_file = ""
         return dialog
 
     singular = dialog_for(1, 0)
     singular._show_completion_ui(True, None)
-    singular.file_label.set_text.assert_called_with("translated:Successfully transferred 1 file")
+    singular.status_label.set_text.assert_called_with("translated:Successfully transferred 1 file")
+    singular.progress_row.set_visible.assert_called_with(False)
 
     plural = dialog_for(2, 2048)
     plural._show_completion_ui(True, None)
-    plural.status_label.set_text.assert_called_with(
-        "translated:Successfully transferred 2 files (2.0 KB)"
-    )
+    plural.status_label.set_text.assert_called_with("translated:{count} files · {size}".format(
+        count=2, size="2.0 KB"
+    ))
     assert ("Successfully transferred {count} file", "Successfully transferred {count} files", 1) in selected
-    assert ("Successfully transferred {count} file ({size})", "Successfully transferred {count} files ({size})", 2) in selected
+    assert ("{count} file · {size}", "{count} files · {size}", 2) in selected
 
 
 def test_backend_diagnostic_stays_opaque_on_directory_error(monkeypatch):
@@ -541,6 +549,12 @@ def test_delete_progress_dialog_localizes_headings_status_and_counts(monkeypatch
     dialog.progress_bar = MagicMock()
     dialog.speed_label = MagicMock()
     dialog.time_label = MagicMock()
+    dialog.percent_label = MagicMock()
+    dialog.progress_row = MagicMock()
+    dialog.card = MagicMock()
+    dialog.source_row = MagicMock()
+    dialog.dest_row = MagicMock()
+    dialog._latest_fraction = 0.5
     dialog.operation_type = "delete"
     dialog.current_file = ""
 
@@ -548,20 +562,19 @@ def test_delete_progress_dialog_localizes_headings_status_and_counts(monkeypatch
     dialog._show_completion_ui(True, None)
     dialog._set_dialog_heading.assert_called_with("translated:Delete Complete")
     dialog.status_label.set_text.assert_called_with("translated:Successfully deleted 2 items")
-    dialog.time_label.set_text.assert_called_with("translated:Finished")
     dialog._enter_completion_actions.assert_called_with(show_locate=False)
 
-    # Failure with message:
+    # Failure with message: the error goes to the body, progress stays.
     dialog._completion_shown = False
     dialog._show_completion_ui(False, "permission denied")
     dialog._set_dialog_heading.assert_called_with("translated:Delete Failed")
-    dialog.status_label.set_text.assert_called_with("translated:Delete failed")
-    dialog.file_label.set_text.assert_called_with("translated:Error: permission denied")
+    dialog.status_label.set_text.assert_called_with("translated:Error: permission denied")
+    dialog.percent_label.set_text.assert_called_with("50%")
 
     # Failure without message:
     dialog._completion_shown = False
     dialog._show_completion_ui(False, None)
-    dialog.file_label.set_text.assert_called_with("translated:An error occurred while deleting")
+    dialog.status_label.set_text.assert_called_with("translated:An error occurred while deleting")
 
 
 def test_batch_delete_error_localizes_sftp_and_daemon_errors(monkeypatch):
@@ -574,7 +587,7 @@ def test_batch_delete_error_localizes_sftp_and_daemon_errors(monkeypatch):
     dialog.total_files = 1
     dialog.is_cancelled = False
     dialog._closed = False
-    window._progress_dialog = dialog
+    window._aggregate_dialog = dialog
     monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
     monkeypatch.setattr(
         window_module,

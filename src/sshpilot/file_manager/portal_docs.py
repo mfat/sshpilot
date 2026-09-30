@@ -669,6 +669,49 @@ def open_in_file_manager(path: str, *, parent=None) -> bool:
         return False
 
 
+def open_with_default_app(path: str, *, parent=None, on_error=None) -> bool:
+    """Open the local file ``path`` in the desktop's default handler.
+
+    Uses ``Gtk.FileLauncher`` so the OpenURI portal handles it under
+    Flatpak; falls back to ``Gio.AppInfo.launch_default_for_uri``.
+    ``on_error(exc)`` runs if the launch fails, including asynchronously.
+    """
+    if not path:
+        return False
+    local_file = Gio.File.new_for_path(os.path.expanduser(str(path)))
+    launcher = _new_file_launcher(local_file)
+    if launcher is not None:
+        try:
+            launcher.launch(parent, None, _on_default_app_launched, (path, on_error))
+            return True
+        except Exception as exc:
+            logger.debug("FileLauncher failed for %s: %s", path, exc)
+
+    try:
+        Gio.AppInfo.launch_default_for_uri(local_file.get_uri(), None)
+        return True
+    except Exception as exc:
+        _report_default_app_error(path, exc, on_error)
+        return False
+
+
+def _on_default_app_launched(launcher, result, data) -> None:
+    path, on_error = data
+    try:
+        launcher.launch_finish(result)
+    except Exception as exc:
+        _report_default_app_error(path, exc, on_error)
+
+
+def _report_default_app_error(path, exc, on_error) -> None:
+    if isinstance(exc, GLib.Error) and exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
+        # The user dismissed the portal's app chooser.
+        return
+    logger.warning("Could not open %s with the default application: %s", path, exc)
+    if on_error is not None:
+        on_error(exc)
+
+
 def _new_file_launcher(gfile):
     """Build a ``Gtk.FileLauncher`` when GTK is available."""
     try:

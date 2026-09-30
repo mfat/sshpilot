@@ -30,6 +30,15 @@ class _Controller:
         self.service_id = SERVICE_ID
         self.create_calls = []
         self.remove_calls = []
+        self.chmod_calls = []
+
+    def chmod(self, path, mode, *, on_success, on_error):
+        self.chmod_calls.append((path, mode))
+        on_success(None)
+
+    def resolve_ids(self, uids, gids, *, on_success, on_error):
+        self.resolve_calls = getattr(self, "resolve_calls", []) + [(uids, gids)]
+        on_success(SimpleNamespace(uids=uids, gids=gids))
 
     def create_file(self, path, *, on_success, on_error):
         self.create_calls.append(path)
@@ -120,6 +129,45 @@ def test_remove_delegates_file_delete_without_recursion():
 
     assert future.result() is None
     assert controller.remove_calls == [("/home/user/notes.txt", False)]
+
+
+def test_chmod_delegates_mode_change_to_daemon():
+    controller = _Controller()
+    manager = _manager(controller)
+    manager._home = "/home/user"
+
+    future = manager.chmod("~/run.sh", 0o755)
+
+    assert future.result() is None
+    assert controller.chmod_calls == [("/home/user/run.sh", 0o755)]
+
+
+def test_resolve_ids_passes_id_tuples_to_daemon():
+    controller = _Controller()
+    manager = _manager(controller)
+
+    names = manager.resolve_ids([0, 1000], [0]).result()
+
+    assert controller.resolve_calls == [((0, 1000), (0,))]
+    assert (names.uids, names.gids) == ((0, 1000), (0,))
+
+
+def test_chmod_error_is_localized(monkeypatch):
+    controller = _Controller()
+    manager = _manager(controller)
+    error = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "denied")
+    controller.chmod = lambda path, mode, *, on_success, on_error: on_error(error)
+    monkeypatch.setattr(
+        "sshpilot.daemon_sftp_backend.format_direct_sftp_error",
+        lambda exc: "Localized denial",
+    )
+
+    future = manager.chmod("/srv/data", 0o700)
+
+    with pytest.raises(SshPilotError) as raised:
+        future.result()
+    assert raised.value.code is ErrorCode.REMOTE_PERMISSION_DENIED
+    assert str(raised.value) == "Localized denial"
 
 
 def test_direct_future_error_is_localized_without_losing_error_code(monkeypatch):

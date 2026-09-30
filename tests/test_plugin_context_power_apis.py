@@ -93,6 +93,36 @@ def test_run_local_command_uses_flatpak_host(monkeypatch):
         "/usr/bin/flatpak-spawn", "--host", "sh", "-lc", "docker ps"]
 
 
+@pytest.mark.parametrize("failure,expected", [
+    ("empty", "Command is empty"),
+    ("timeout", "Command timed out"),
+    ("host_executor", "flatpak-spawn is unavailable; cannot run host command"),
+    ("start", "external OS diagnostic"),
+])
+def test_local_command_public_failure_contract_is_unchanged(monkeypatch, failure, expected):
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak",
+                        lambda: failure == "host_executor")
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    def fail(*args, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("docker", 8)
+        raise OSError("external OS diagnostic")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    result = _ctx().run_local_command("" if failure == "empty" else "docker ps")
+    assert type(result) is CommandResult
+    assert (result.exit_code, result.stdout, result.stderr) == (-1, "", expected)
+
+
+def test_local_command_public_nonzero_result_remains_raw(monkeypatch):
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs:
+                        types.SimpleNamespace(returncode=127, stdout="", stderr="shell output\n"))
+    result = _ctx().run_local_command("missing-tool")
+    assert (result.exit_code, result.stdout, result.stderr) == (127, "", "shell output\n")
+
+
 def test_open_local_command_terminal_delegates_to_host():
     calls = []
     host = types.SimpleNamespace(

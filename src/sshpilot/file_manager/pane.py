@@ -30,6 +30,7 @@ from .portal_docs import (
     _portal_grant_root,
     _pretty_path_for_display,
     _save_doc,
+    open_with_default_app,
 )
 from .properties_dialog import PropertiesDialog
 from .common import FileEntry
@@ -309,6 +310,63 @@ def _natural_name_key(name: str) -> Tuple:
     return chunks, name
 
 
+_TEXT_MIMETYPES = {
+    "application/json",
+    "application/javascript",
+    "application/xml",
+    "application/x-sh",
+    "application/x-python",
+    "application/x-perl",
+    "application/sql",
+    "application/toml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/x-httpd-php",
+    "application/x-tex",
+    "application/x-latex",
+}
+
+_TEXT_EXTENSIONS = {
+    ".txt", ".md", ".rst", ".log", ".csv", ".tsv",
+    ".py", ".pyw", ".pyx", ".pyi",
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".html", ".htm", ".xhtml", ".xml", ".svg", ".css", ".scss", ".sass",
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".sh", ".bash", ".zsh", ".fish", ".ps1",
+    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
+    ".java", ".kt", ".scala", ".go", ".rs", ".rb", ".pl", ".pm",
+    ".php", ".php3", ".php4", ".php5", ".phtml",
+    ".sql", ".lua", ".vim", ".vimrc",
+    ".dockerfile", ".makefile", ".cmake",
+    ".properties", ".env", ".gitignore", ".gitattributes",
+    ".pem", ".crt", ".csr", ".key", ".pub",
+    ".service", ".desktop", ".patch", ".diff", ".tf", ".hcl",
+}
+
+_TEXT_NAME_PATTERNS = ("readme", "license", "changelog", "authors", "contributors", "makefile")
+
+
+def _is_editable_as_text(name: str) -> bool:
+    """Whether the text editor should be offered for a file called *name*.
+
+    Known text and config files qualify, and so does any file whose type
+    cannot be told from its name; files of a known non-text type (images,
+    media, archives, documents, binaries) do not.
+    """
+    lowered = name.lower()
+    _stem, ext = os.path.splitext(lowered)
+    if ext in _TEXT_EXTENSIONS or any(p in lowered for p in _TEXT_NAME_PATTERNS):
+        return True
+    mimetype, _encoding = mimetypes.guess_type(name)
+    if mimetype is None:
+        return True
+    return (
+        mimetype.startswith("text/")
+        or mimetype in _TEXT_MIMETYPES
+        or mimetype.endswith(("+xml", "+json"))
+    )
+
+
 def _type_sort_key(name: str) -> str:
     """The file type Nautilus sorts by: its content type's description."""
     try:
@@ -447,6 +505,11 @@ class FilePane(Gtk.Box):
 
         self._stack.add_named(list_scrolled, "list")
         self._stack.add_named(grid_scrolled, "grid")
+        # A view keeps building and binding cells for every listing even on a
+        # hidden stack page, so only the active one holds the model.
+        self._active_view_name = "list"
+        self._grid_view.set_model(None)
+        self._stack.connect("notify::visible-child-name", self._on_stack_page_changed)
 
         # Error state shown when a directory fails to load, so it can't be
         # mistaken for an empty directory.
@@ -700,14 +763,14 @@ class FilePane(Gtk.Box):
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
         self._menu_actions: Dict[str, Gio.SimpleAction] = {}
-        self._menu_action_callbacks: Dict[str, Callable[[], None]] = {}  # Store callbacks for direct access
         self._menu_action_group = Gio.SimpleActionGroup()
         self.insert_action_group("pane", self._menu_action_group)
-        self._menu_popover: Gtk.Popover = self._create_menu_model()
+        self._create_menu_actions()
+        # The open context menu, rebuilt on every right-click.
+        self._menu_popover: Optional[Gtk.PopoverMenu] = None
         # True while the context menu was opened on the view background: like
         # Nautilus, it then offers folder actions but leaves the selection alone.
         self._menu_for_background: bool = False
-        self._menu_popover.connect("closed", self._on_menu_popover_closed)
         self._add_context_controller(list_view)
         self._add_context_controller(grid_view)
 
@@ -893,7 +956,7 @@ class FilePane(Gtk.Box):
         elif where == "down":
             # Nautilus's Alt+Down opens the selected folder.
             selected = self._get_selected_indices()
-            if len(selected) == 1:
+            if len(selected) == 1 and self._entries[selected[0]].is_dir:
                 self._navigate_to_entry(selected[0])
         return True
 
@@ -969,6 +1032,20 @@ class FilePane(Gtk.Box):
         background = not self._get_selected_indices()
         self._show_context_menu(view, x, y, background=background)
         return True
+
+    def _on_stack_page_changed(self, stack: Gtk.Stack, _pspec) -> None:
+        # The error and connecting pages leave the last file view attached,
+        # so returning from them does not rebuild its rows.
+        name = stack.get_visible_child_name()
+        if name not in ("list", "grid") or name == self._active_view_name:
+            return
+        self._active_view_name = name
+        if name == "grid":
+            self._list_view.set_model(None)
+            self._grid_view.set_model(self._selection_model)
+        else:
+            self._grid_view.set_model(None)
+            self._list_view.set_model(self._selection_model)
 
     def _on_view_toggle(self, toolbar, view_name: str) -> None:
         self._stack.set_visible_child_name(view_name)
@@ -1364,7 +1441,7 @@ class FilePane(Gtk.Box):
         scroll position and selection are preserved. Ignored if the user has
         navigated away.
         """
-        if not counts or path != self._current_path or not self._is_remote:
+        if not counts or path != self._current_path:
             return
         for entry in self._cached_entries:
             if entry.is_dir and entry.name in counts:
@@ -1937,13 +2014,10 @@ class FilePane(Gtk.Box):
         asc_action.set_state(GLib.Variant.new_boolean(not self._sort_descending))
         desc_action.set_state(GLib.Variant.new_boolean(self._sort_descending))
 
-    def _create_menu_model(self) -> Gtk.Popover:
-        # Create menu actions first
+    def _create_menu_actions(self) -> None:
         def _add_action(name: str, callback: Callable[[], None]) -> None:
             if name not in self._menu_actions:
                 action = Gio.SimpleAction.new(name, None)
-                # Store callback for direct access
-                self._menu_action_callbacks[name] = callback
 
                 def _on_activate(_action: Gio.SimpleAction, _param: Optional[GLib.Variant]) -> None:
                     try:
@@ -1971,17 +2045,6 @@ class FilePane(Gtk.Box):
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
         _add_action("new_file", lambda: self.emit("request-operation", "newfile", None))
         _add_action("properties", self._on_menu_properties)
-
-        # Create popover with listbox (same style as connection list)
-        popover = Gtk.Popover.new()
-        popover.set_has_arrow(True)
-        
-        # Create listbox for menu items (same margins as connection list)
-        listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
-        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        popover.set_child(listbox)
-        
-        return popover
 
 
     def _on_list_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, cell) -> None:
@@ -2110,12 +2173,82 @@ class FilePane(Gtk.Box):
 
 
 
+    def _build_context_menu(self, selected_entries: List[FileEntry]) -> Gio.Menu:
+        """The context menu model, laid out like Nautilus's.
+
+        Labels only, grouped into sections; items activate the "pane."
+        actions, and the accel attribute only displays the pane's own
+        shortcut next to the item.
+        """
+        menu = Gio.Menu()
+
+        def _section(*items: Optional[Gio.MenuItem]) -> None:
+            section = Gio.Menu()
+            for item in items:
+                if item is not None:
+                    section.append_item(item)
+            if section.get_n_items():
+                menu.append_section(None, section)
+
+        def _item(label: str, action_name: str, accel: Optional[str] = None) -> Gio.MenuItem:
+            item = Gio.MenuItem.new(label, f"pane.{action_name}")
+            if accel:
+                item.set_attribute_value("accel", GLib.Variant.new_string(accel))
+            return item
+
+        single = selected_entries[0] if len(selected_entries) == 1 else None
+        paste = (
+            _item(_("Paste"), "paste", "<Primary>v")
+            if getattr(self, "_can_paste", False) else None
+        )
+
+        if not selected_entries:
+            _section(
+                _item(_("New Folder"), "new_folder", "<Shift><Primary>n"),
+                _item(_("New File"), "new_file"),
+            )
+            _section(
+                paste,
+                _item(_("Select All"), "select_all", "<Primary>a")
+                if getattr(self, "_entries", None) else None,
+            )
+        else:
+            # Open leads the menu for a single folder, as in Nautilus, and
+            # for a single local file, which opens in the default application.
+            _section(
+                _item(_("Open"), "open")
+                if single is not None and (single.is_dir or not self._is_remote) else None,
+                _item(_("Edit"), "edit")
+                if single is not None and not single.is_dir
+                and _is_editable_as_text(single.name) else None,
+                _item(_("Download"), "download") if self._is_remote
+                else _item(_("Upload…"), "upload"),
+            )
+            _section(
+                _item(_("Cut"), "cut", "<Primary>x"),
+                _item(_("Copy"), "copy", "<Primary>c"),
+                paste,
+            )
+            # Rename is single-item only (no batch rename yet); Nautilus
+            # hides it when the rename action is disabled for the selection.
+            _section(
+                _item(_("Rename…"), "rename", "F2") if single is not None else None,
+                _item(_("Delete"), "delete", "<Primary>BackSpace" if is_macos() else "Delete"),
+            )
+
+        _section(_item(_("Copy Location"), "copy_location"))
+        _section(_item(_("Properties…"), "properties", "<Primary>i"))
+        return menu
+
     def _show_context_menu(
         self, widget: Gtk.Widget, x: float, y: float, *, background: bool = False
     ) -> None:
         if getattr(self, '_suppress_next_context_menu', False):
             self._suppress_next_context_menu = False
             return
+        # Close the previous menu first, so this one owns the menu state.
+        if self._menu_popover is not None:
+            self._menu_popover.popdown()
         # Item gestures select the clicked item first; a background menu acts
         # on the current folder and leaves the selection untouched.
         self._menu_for_background = background
@@ -2125,120 +2258,59 @@ class FilePane(Gtk.Box):
         except Exception:
             pass
         
-        # Get the listbox from the popover
-        listbox = self._menu_popover.get_child()
-        if not isinstance(listbox, Gtk.ListBox):
-            return
-        
-        # Clear existing items
-        while listbox.get_first_child() is not None:
-            listbox.remove(listbox.get_first_child())
-        
         # Check if items are selected
         try:
             if background or not hasattr(self, '_entries') or not self._entries:
-                has_selection = False
+                selected_entries: List[FileEntry] = []
             else:
                 selected_entries = self.get_selected_entries()
-                has_selection = len(selected_entries) > 0
         except AttributeError:
-            has_selection = False
-        
-        # Build menu items using Adw.ActionRow (same style as connection list)
-        def _add_menu_item(title: str, icon_name: str, action_name: str) -> None:
-            row = Adw.ActionRow(title=title)
-            # Use our helper function to prefer bundled icons
-            from sshpilot import icon_utils
-            icon = icon_utils.new_image_from_icon_name(icon_name)
-            row.add_prefix(icon)
-            row.set_activatable(True)
-            def _on_activated(*_):
-                try:
-                    logger.debug(f"_show_context_menu: Menu item '{title}' (action '{action_name}') activated")
-                    # Get the callback and call it directly
-                    callback = self._menu_action_callbacks.get(action_name)
-                    if callback:
-                        logger.debug(f"_show_context_menu: Found callback for '{action_name}', calling directly")
-                        callback()
-                        logger.debug(f"_show_context_menu: Callback for '{action_name}' completed")
-                    else:
-                        logger.error(f"_show_context_menu: Callback for '{action_name}' not found. Available callbacks: {list(self._menu_action_callbacks.keys())}")
-                        # Fallback: try to activate the action
-                        action = self._menu_actions.get(action_name)
-                        if action:
-                            logger.debug(f"_show_context_menu: Falling back to action.activate() for '{action_name}'")
-                            action.activate(None)
-                except Exception as e:
-                    logger.error(f"_show_context_menu: Failed to execute action '{action_name}': {e}", exc_info=True)
-                finally:
-                    self._menu_popover.popdown()
-            row.connect('activated', _on_activated)
-            listbox.append(row)
-        
-        # Open leads the menu for a single folder, as in Nautilus.
-        if has_selection:
-            selected_entries = self.get_selected_entries()
-            if len(selected_entries) == 1 and selected_entries[0].is_dir:
-                _add_menu_item(_("Open"), "folder-open-symbolic", "open")
-
-        # Add Download/Upload based on pane type and selection
-        if self._is_remote and has_selection:
-            _add_menu_item(_("Download"), "document-save-symbolic", "download")
-        elif not self._is_remote and has_selection:
-            _add_menu_item(_("Upload…"), "document-send-symbolic", "upload")
-        
-        # Add Edit for any single file (both local and remote)
-        if has_selection:
-            selected_entries = self.get_selected_entries()
-            if len(selected_entries) == 1 and not selected_entries[0].is_dir:
-                _add_menu_item(_("Edit"), "text-editor-symbolic", "edit")
-        
-        # Add clipboard operations if items are selected
-        if has_selection:
-            _add_menu_item(_("Copy"), "edit-copy-symbolic", "copy")
-            _add_menu_item(_("Cut"), "edit-cut-symbolic", "cut")
-        
-        # Add Paste if clipboard has items
-        if getattr(self, "_can_paste", False):
-            _add_menu_item(_("Paste"), "edit-paste-symbolic", "paste")
-        
-        # Add management operations if items are selected.
-        # Rename is single-item only (no batch rename yet); Nautilus hides it
-        # when the rename action is disabled for the selection.
-        if has_selection:
-            selected_entries = self.get_selected_entries()
-            if len(selected_entries) == 1:
-                _add_menu_item(_("Rename…"), "document-edit-symbolic", "rename")
-            _add_menu_item(_("Delete"), "user-trash-symbolic", "delete")
-        
-        # Add New Folder / New File only if no items are selected (before Properties)
-        if not has_selection:
-            _add_menu_item(_("New Folder"), "folder-new-symbolic", "new_folder")
-            _add_menu_item(_("New File"), "document-new-symbolic", "new_file")
-            if getattr(self, "_entries", None):
-                _add_menu_item(_("Select All"), "object-select-symbolic", "select_all")
-
-        _add_menu_item(_("Copy Location"), "edit-copy-symbolic", "copy_location")
-        
-        # Always add Properties (at the end)
-        _add_menu_item(_("Properties…"), "document-properties-symbolic", "properties")
-        
-        # Create a rectangle for the popover positioning
+            selected_entries = []
+        # As Nautilus does, a fresh popover per menu avoids showing the old
+        # model while the new one loads; it opens to the right of the
+        # pointer, without an arrow, and autohides on a click elsewhere.
+        popover = Gtk.PopoverMenu.new_from_model(
+            self._build_context_menu(selected_entries)
+        )
+        popover.set_has_arrow(False)
+        popover.set_halign(Gtk.Align.START)
+        popover.connect("closed", self._on_menu_popover_closed)
+        # Parent to the pane, not the list or grid, as Nautilus parents its
+        # menu to the files view: inside the view's scrolled window GTK
+        # caps the menu's height and the last items scroll out of sight.
+        popover.set_parent(self)
+        translated = widget.translate_coordinates(self, x, y)
+        if translated is not None and translated[0] is not None:
+            x, y = translated
         rect = Gdk.Rectangle()
         rect.x = int(x)
         rect.y = int(y)
         rect.width = 1
         rect.height = 1
-        
-        # Set parent and show popover
-        if self._menu_popover.get_parent() != widget:
-            self._menu_popover.set_parent(widget)
-        
-        self._menu_popover.set_pointing_to(rect)
-        self._menu_popover.popup()
+        popover.set_pointing_to(rect)
+        self._menu_popover = popover
+        popover.popup()
 
-    def _on_menu_popover_closed(self, _popover: Gtk.Popover) -> None:
-        self._menu_for_background = False
+    def _on_menu_popover_closed(self, popover: Gtk.PopoverMenu) -> None:
+        # "closed" fires before the clicked item's action runs, so the
+        # cleanup waits until idle: the action still needs the background
+        # flag, and an unparented popover no longer finds the "pane." actions.
+        if self._menu_popover is popover:
+            self._menu_popover = None
+            # Nautilus hands focus back to the view when its menu closes.
+            view = self._visible_view()
+            if view is not None:
+                view.grab_focus()
+
+        def _cleanup() -> bool:
+            # A newer menu may have opened meanwhile; it owns the flag.
+            if self._menu_popover is None:
+                self._menu_for_background = False
+            if popover.get_parent() is not None:
+                popover.unparent()
+            return False
+
+        GLib.idle_add(_cleanup)
 
     # CSS node names of the widgets GtkListView/GtkColumnView/GtkGridView wrap
     # each item (or header) in; anything else inside the view is background.
@@ -2339,8 +2411,12 @@ class FilePane(Gtk.Box):
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
         _set_enabled("paste", can_paste)
-        # Edit is enabled for single file selection (any file type)
-        can_edit = single_selection and not selected_entries[0].is_dir if single_selection else False
+        # Edit is enabled for a single text or unknown-type file
+        can_edit = (
+            single_selection
+            and not selected_entries[0].is_dir
+            and _is_editable_as_text(selected_entries[0].name)
+        )
         
         _set_enabled("edit", can_edit)
         _set_enabled("rename", single_selection)
@@ -2714,55 +2790,6 @@ class FilePane(Gtk.Box):
             "location": safe_display_text(location),
         }
 
-    def _is_text_file(self, entry: FileEntry) -> bool:
-        """Check if a file is likely a text file based on name/extension."""
-        if entry.is_dir:
-            return False
-        
-        # Check mimetype
-        mimetype, _unused = mimetypes.guess_type(entry.name)
-        if mimetype:
-            if mimetype.startswith('text/'):
-                return True
-            # Also allow common code file types
-            text_mimes = [
-                'application/json',
-                'application/javascript',
-                'application/xml',
-                'application/x-sh',
-                'application/x-python',
-            ]
-            if mimetype in text_mimes:
-                return True
-        
-        # Check by extension
-        _, ext = os.path.splitext(entry.name.lower())
-        text_extensions = {
-            '.txt', '.md', '.rst', '.log',
-            '.py', '.pyw', '.pyx', '.pyi',
-            '.js', '.jsx', '.ts', '.tsx',
-            '.html', '.htm', '.xhtml', '.xml', '.css', '.scss', '.sass',
-            '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
-            '.sh', '.bash', '.zsh', '.fish', '.ps1',
-            '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',
-            '.java', '.kt', '.scala', '.go', '.rs', '.rb', '.pl', '.pm',
-            '.php', '.php3', '.php4', '.php5', '.phtml',
-            '.sql', '.lua', '.vim', '.vimrc',
-            '.dockerfile', '.makefile', '.cmake',
-            '.properties', '.env', '.gitignore', '.gitattributes',
-        }
-        if ext in text_extensions:
-            return True
-        
-        # Check if filename suggests a text file
-        text_patterns = ['readme', 'license', 'changelog', 'authors', 'contributors', 'makefile']
-        name_lower = entry.name.lower()
-        for pattern in text_patterns:
-            if pattern in name_lower:
-                return True
-        
-        return False
-    
     def _on_menu_edit(self) -> None:
         """Handle Edit menu action - open file in editor."""
         entry = self.get_selected_entry()
@@ -3258,12 +3285,50 @@ class FilePane(Gtk.Box):
         except IndexError:
             return
 
-        if not getattr(entry, "is_dir", False):
-            return
-
         base_path = self._current_path or ""
         target_path = os.path.join(base_path, entry.name)
-        self.emit("path-changed", target_path)
+        if getattr(entry, "is_dir", False):
+            self.emit("path-changed", target_path)
+        elif self._is_remote:
+            self._offer_remote_file_actions(position, entry)
+        else:
+            name = safe_display_text(entry.name)
+            open_with_default_app(
+                target_path,
+                parent=self.get_root(),
+                on_error=lambda _exc: self.show_toast(
+                    _("Could not open {name}").format(name=name)
+                ),
+            )
+
+    def _offer_remote_file_actions(self, position: int, entry: FileEntry) -> None:
+        """Ask whether to download or edit a remote file that was activated."""
+        editable = _is_editable_as_text(entry.name)
+        if editable:
+            body = _("Download the file to this computer or open it in the editor?")
+        else:
+            body = _("Download the file to this computer?")
+        dialog = Adw.AlertDialog.new(safe_display_text(entry.name), body)
+        dialog.add_response("cancel", _("Cancel"))
+        if editable:
+            dialog.add_response("edit", _("Edit as Text"))
+        dialog.add_response("download", _("Download"))
+        dialog.set_response_appearance("download", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("download")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response: str) -> None:
+            if response not in ("download", "edit"):
+                return
+            # Both actions work on the selection; make it the activated file.
+            self._selection_model.select_item(position, True)
+            if response == "download":
+                self._on_menu_download()
+            else:
+                self._on_menu_edit()
+
+        dialog.connect("response", _on_response)
+        dialog.present(self)
 
     def _on_list_activate(self, _list_view, position: int) -> None:
         self._navigate_to_entry(position)
@@ -3292,10 +3357,7 @@ class FilePane(Gtk.Box):
         self._apply_entry_filter(preserve_selection=preserve_selection)
 
     def _on_grid_activate(self, _grid_view: Gtk.GridView, position: int) -> None:
-        if position is not None and 0 <= position < len(self._entries):
-            entry = self._entries[position]
-            if entry.is_dir:
-                self.emit("path-changed", os.path.join(self._current_path, entry.name))
+        self._navigate_to_entry(position)
 
     def _entries_for_drag_at_position(self, position: int) -> List[FileEntry]:
         """Return entries included in a drag starting at *position*."""
@@ -3635,7 +3697,6 @@ class FilePane(Gtk.Box):
                 self.show_toast(_("Upload failed: Invalid window context"))
                 return
 
-            manager = window._manager
 
             dest_parent = self._current_path
             if target_folder is not None:
@@ -3646,36 +3707,26 @@ class FilePane(Gtk.Box):
                 destination_path = posixpath.join(dest_parent, entry.name)
                 files_to_transfer.append((source_path, destination_path))
 
-            total_files = len(files_to_transfer)
 
             def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
-                for local_path_str, dest_path in resolved_files:
-                    path_obj = pathlib.Path(local_path_str)
-                    entry_name = path_obj.name
-
-                    if path_obj.is_dir():
-                        future = manager.upload_directory(path_obj, dest_path)
-                    else:
-                        future = manager.upload(path_obj, dest_path)
-
-                    expected = None
-                    if path_obj.is_file():
-                        try:
-                            expected = int(path_obj.stat().st_size)
-                        except OSError:
-                            expected = None
-                    window._show_progress_dialog(
-                        "upload", entry_name, future,
-                        total_files=total_files,
-                        source_path=str(path_obj),
-                        destination_path=dest_path,
-                        expected_bytes=expected,
-                    )
-                    window._attach_refresh(
-                        future,
+                if not resolved_files:
+                    return
+                items = [
+                    (local_path_str, dest_path, pathlib.Path(local_path_str).is_dir())
+                    for local_path_str, dest_path in resolved_files
+                ]
+                try:
+                    window._start_transfer_batch(
+                        "upload",
+                        items,
                         refresh_remote=self,
-                        highlight_name=None if target_folder is not None else entry_name,
+                        highlight_name=(
+                            None if target_folder is not None
+                            else pathlib.Path(items[-1][0]).name
+                        ),
                     )
+                except Exception as e:
+                    self.show_toast(_("Upload failed: {error}").format(error=e))
 
             window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
 
@@ -3705,7 +3756,6 @@ class FilePane(Gtk.Box):
                 self.show_toast(_("Download failed: Invalid window context"))
                 return
 
-            manager = window._manager
 
             files_to_transfer: List[Tuple[str, str]] = []
             entry_by_name: Dict[str, FileEntry] = {}
@@ -3714,34 +3764,26 @@ class FilePane(Gtk.Box):
                 files_to_transfer.append((source_path, str(destination_path)))
                 entry_by_name[entry.name] = entry
 
-            total_files = len(files_to_transfer)
 
             def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
+                if not resolved_files:
+                    return
+                items = []
                 for source, target_path_str in resolved_files:
-                    target_path = pathlib.Path(target_path_str)
-                    entry_name = target_path.name
-                    entry = entry_by_name.get(entry_name)
-
-                    if entry is not None and entry.is_dir:
-                        future = manager.download_directory(source, target_path)
-                    else:
-                        future = manager.download(source, target_path)
-
-                    expected = None
-                    if entry is not None and not entry.is_dir and entry.size and entry.size > 0:
-                        expected = int(entry.size)
-                    window._show_progress_dialog(
-                        "download", entry_name, future,
-                        total_files=total_files,
-                        source_path=source,
-                        destination_path=str(target_path),
-                        expected_bytes=expected,
-                    )
-                    window._attach_refresh(
-                        future,
+                    entry = entry_by_name.get(posixpath.basename(source.rstrip("/")))
+                    items.append((target_path_str, source, bool(entry is not None and entry.is_dir)))
+                try:
+                    window._start_transfer_batch(
+                        "download",
+                        items,
                         refresh_local_path=str(self._current_path),
-                        highlight_name=None if target_folder is not None else entry_name,
+                        highlight_name=(
+                            None if target_folder is not None
+                            else pathlib.Path(items[-1][0]).name
+                        ),
                     )
+                except Exception as e:
+                    self.show_toast(_("Download failed: {error}").format(error=e))
 
             window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 

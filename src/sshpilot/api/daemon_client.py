@@ -130,10 +130,12 @@ from .models.operations import (
     SftpDirectorySizeRequest,
     SftpFileAccess,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
     SftpServiceSummary,
@@ -161,6 +163,7 @@ from .models.terminal import (
 from .models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
+    StartTransferBatchRequest,
     StartTransferRequest,
     TransferSummary,
 )
@@ -252,6 +255,8 @@ from .transport.codec import (
     sftp_create_file_result_from_wire,
     sftp_directory_size_request_to_wire,
     sftp_filesystem_usage_from_wire,
+    sftp_id_names_from_wire,
+    sftp_resolve_ids_request_to_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
     sftp_remove_result_from_wire,
@@ -262,6 +267,7 @@ from .transport.codec import (
     sftp_service_summary_from_wire,
     sftp_symlink_request_to_wire,
     scp_transfer_request_to_wire,
+    start_transfer_batch_request_to_wire,
     operation_summary_from_wire,
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
@@ -457,6 +463,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_lstat": Capability.SFTP_METADATA,
     "sftp_realpath": Capability.SFTP_METADATA,
     "sftp_filesystem_usage": Capability.SFTP_METADATA,
+    "sftp_resolve_ids": Capability.SFTP_METADATA,
     "sftp_readlink": Capability.SFTP_METADATA,
     "sftp_read_file": Capability.SFTP_READ,
     "sftp_replace_file": Capability.SFTP_MUTATE,
@@ -472,6 +479,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_transfer": Capability.TRANSFERS_READ,
     "start_transfer": Capability.TRANSFERS_WRITE,
     "start_scp_transfer": Capability.TRANSFERS_SCP,
+    "start_transfer_batch": Capability.TRANSFERS_BATCH,
     "cancel_transfer": Capability.TRANSFERS_WRITE,
     "list_forwards": Capability.FORWARDS_READ,
     "get_forward": Capability.FORWARDS_READ,
@@ -1592,6 +1600,17 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid filesystem usage result")
 
+    def sftp_resolve_ids(self, request: SftpResolveIdsRequest) -> SftpIdNames:
+        self._require_capability(Capability.SFTP_METADATA)
+        result = self._request("sftp.resolve_ids", sftp_resolve_ids_request_to_wire(request))
+        try:
+            names = sftp_id_names_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid id names")
+        if names.uids != request.uids or names.gids != request.gids:
+            self._fail_protocol("The daemon returned names for other ids")
+        return names
+
     def sftp_readlink(self, request: SftpPathRequest) -> str:
         self._require_capability(Capability.SFTP_METADATA)
         result = self._request("sftp.readlink", sftp_path_request_to_wire(request))
@@ -1639,10 +1658,12 @@ class DaemonClient:
 
     def sftp_copy(self, request: SftpCopyRequest) -> Any:
         self._require_capability(Capability.SFTP_MUTATE)
-        if request.recursive:
-            self._require_write_compatibility("recursive copy")
+        if request.runs_as_operation:
+            self._require_write_compatibility(
+                "recursive copy" if request.recursive else "copy"
+            )
         result = self._request("sftp.copy", sftp_copy_request_to_wire(request))
-        if request.recursive:
+        if request.runs_as_operation:
             try:
                 return operation_summary_from_wire(result)
             except (TypeError, ValueError):
@@ -1736,6 +1757,21 @@ class DaemonClient:
             return transfer_summary_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid SCP transfer summary")
+
+    def start_transfer_batch(self, request: StartTransferBatchRequest) -> TransferSummary:
+        self._require_capability(Capability.TRANSFERS_BATCH)
+        result = self._request(
+            "transfers.batch.start",
+            start_transfer_batch_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            summary = transfer_summary_from_wire(result)
+        except (TypeError, ValueError):
+            summary = None
+        if summary is None or summary.items_total is None:
+            self._fail_protocol("The daemon returned an invalid batch transfer summary")
+        return summary
 
     def cancel_transfer(self, request: CancelTransferRequest) -> None:
         self._require_capability(Capability.TRANSFERS_WRITE)
