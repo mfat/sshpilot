@@ -15459,3 +15459,74 @@ msgstr "رونوشت کلید به سرور"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "پس از ارسال دستور، قطعات فرمان را ببندید"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "the server"
+msgstr "سرور"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From {host} to this computer"
+msgstr "از {host} به این رایانه"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From this computer to {host}"
+msgstr "از این رایانه به {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "On {host}"
+msgstr "روی {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From this computer"
+msgstr "از این رایانه"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From {host}"
+msgstr "از {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "To this computer"
+msgstr "به این رایانه"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "To {host}"
+msgstr "به {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "{done} of {total}"
+msgstr "{done} از {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Downloading {count} File"
+msgid_plural "Downloading {count} Files"
+msgstr[0] "در حال دانلود {count} فایل"
+msgstr[1] "در حال دانلود {count} فایل"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Uploading {count} File"
+msgid_plural "Uploading {count} Files"
+msgstr[0] "در حال بارگذاری {count} فایل"
+msgstr[1] "در حال بارگذاری {count} فایل"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "File {index} of {total}"
+msgid_plural "File {index} of {total}"
+msgstr[0] "فایل {index} از {total}"
+msgstr[1] "فایل {index} از {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Item {index} of {total}"
+msgid_plural "Item {index} of {total}"
+msgstr[0] "مورد {index} از {total}"
+msgstr[1] "مورد {index} از {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "{count} file · {size}"
+msgid_plural "{count} files · {size}"
+msgstr[0] "{count} فایل · {size}"
+msgstr[1] "{count} فایل · {size}"

@@ -14576,3 +14576,74 @@ msgstr "Correction d’un bogue de déchiffrement des sauvegardes lors de la res
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:856
 msgid "Backup and Restore"
 msgstr "Sauvegarde et restauration"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "the server"
+msgstr "le serveur"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From {host} to this computer"
+msgstr "De {host} vers cet ordinateur"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From this computer to {host}"
+msgstr "De cet ordinateur vers {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "On {host}"
+msgstr "Sur {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From this computer"
+msgstr "Depuis cet ordinateur"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From {host}"
+msgstr "Depuis {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "To this computer"
+msgstr "Vers cet ordinateur"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "To {host}"
+msgstr "Vers {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "{done} of {total}"
+msgstr "{done} sur {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Downloading {count} File"
+msgid_plural "Downloading {count} Files"
+msgstr[0] "Téléchargement de {count} fichier"
+msgstr[1] "Téléchargement de {count} fichiers"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Uploading {count} File"
+msgid_plural "Uploading {count} Files"
+msgstr[0] "Envoi de {count} fichier"
+msgstr[1] "Envoi de {count} fichiers"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "File {index} of {total}"
+msgid_plural "File {index} of {total}"
+msgstr[0] "Fichier {index} sur {total}"
+msgstr[1] "Fichier {index} sur {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Item {index} of {total}"
+msgid_plural "Item {index} of {total}"
+msgstr[0] "Élément {index} sur {total}"
+msgstr[1] "Élément {index} sur {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "{count} file · {size}"
+msgid_plural "{count} files · {size}"
+msgstr[0] "{count} fichier · {size}"
+msgstr[1] "{count} fichiers · {size}"

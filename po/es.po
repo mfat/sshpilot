@@ -15485,3 +15485,74 @@ msgstr "Copiar clave al servidor"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Cerrar fragmentos de comando después de enviar un comando"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "the server"
+msgstr "el servidor"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From {host} to this computer"
+msgstr "De {host} a este equipo"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From this computer to {host}"
+msgstr "De este equipo a {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "On {host}"
+msgstr "En {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From this computer"
+msgstr "Desde este equipo"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "From {host}"
+msgstr "Desde {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "To this computer"
+msgstr "A este equipo"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "To {host}"
+msgstr "A {host}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+msgid "{done} of {total}"
+msgstr "{done} de {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Downloading {count} File"
+msgid_plural "Downloading {count} Files"
+msgstr[0] "Descargando {count} archivo"
+msgstr[1] "Descargando {count} archivos"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Uploading {count} File"
+msgid_plural "Uploading {count} Files"
+msgstr[0] "Subiendo {count} archivo"
+msgstr[1] "Subiendo {count} archivos"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "File {index} of {total}"
+msgid_plural "File {index} of {total}"
+msgstr[0] "Archivo {index} de {total}"
+msgstr[1] "Archivo {index} de {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "Item {index} of {total}"
+msgid_plural "Item {index} of {total}"
+msgstr[0] "Elemento {index} de {total}"
+msgstr[1] "Elemento {index} de {total}"
+
+#: src/sshpilot/file_manager/progress_dialog.py
+#, python-brace-format
+msgid "{count} file · {size}"
+msgid_plural "{count} files · {size}"
+msgstr[0] "{count} archivo · {size}"
+msgstr[1] "{count} archivos · {size}"

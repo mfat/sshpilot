@@ -3145,7 +3145,10 @@ class FileManagerWindow(Adw.Window):
         """Create and show a fresh progress dialog."""
         logger.debug("Creating progress dialog")
         dialog_parent = self._progress_dialog_parent()
-        dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
+        host_label = (str(self._nickname).strip() if self._nickname else '') or self._host
+        dialog = SFTPProgressDialog(
+            parent=dialog_parent, operation_type=operation_type, host_label=host_label
+        )
         dialog.connect("closed", self._on_progress_dialog_closed)
         dialog.set_operation_details(total_files=total_files, filename=filename)
         # AlertDialog.present takes a parent widget; MessageDialog
