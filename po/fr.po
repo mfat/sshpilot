@@ -12543,10 +12543,10 @@ msgstr "Impossible de retirer {name} : {error}"
 
 #: src/sshpilot/file_manager_window.py:3314
 #, python-brace-format
-msgid "{count} of {total} file failed"
-msgid_plural "{count} of {total} files failed"
-msgstr[0] "Échec pour {count} fichier sur {total}"
-msgstr[1] "Échec pour {count} fichiers sur {total}"
+msgid "{count} of {total} file could not be transferred"
+msgid_plural "{count} of {total} files could not be transferred"
+msgstr[0] "Impossible de transférer {count} sur {total} fichier"
+msgstr[1] "Impossible de transférer {count} sur {total} fichiers"
 
 #: src/sshpilot/file_manager_integration.py:345
 #, python-brace-format

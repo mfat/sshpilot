@@ -4400,10 +4400,10 @@ msgstr "حذف {name} ناموفق بود: {error}"
 
 #: src/sshpilot/file_manager_window.py:3360
 #, python-brace-format
-msgid "{count} of {total} file failed"
-msgid_plural "{count} of {total} files failed"
-msgstr[0] "{count} از {total} فایل با شکست مواجه شد"
-msgstr[1] "{count} از {total} فایل با شکست مواجه شدند"
+msgid "{count} of {total} file could not be transferred"
+msgid_plural "{count} of {total} files could not be transferred"
+msgstr[0] "انتقال {count} از {total} فایل ناموفق بود"
+msgstr[1] "انتقال {count} از {total} فایل ناموفق بود"
 
 #: src/sshpilot/file_manager_integration.py:345
 #, python-brace-format

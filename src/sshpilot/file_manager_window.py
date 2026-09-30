@@ -3230,10 +3230,11 @@ class FileManagerWindow(Adw.Window):
             else:
                 dialog.show_completion(
                     success=False,
+                    # The noun counts the whole selection ("1 of 25 files").
                     error_message=ngettext(
-                        "{count} of {total} file failed",
-                        "{count} of {total} files failed",
-                        len(failures),
+                        "{count} of {total} file could not be transferred",
+                        "{count} of {total} files could not be transferred",
+                        len(items),
                     ).format(count=len(failures), total=len(items)),
                 )
             return False
@@ -3477,11 +3478,12 @@ class FileManagerWindow(Adw.Window):
                                                 self._progress_dialog.show_completion(success=False, error_message=error_summary)
                                             else:
                                                 # Some succeeded, some failed
+                                                total = self._progress_dialog.total_files
                                                 error_msg = ngettext(
-                                                    "{count} of {total} file failed",
-                                                    "{count} of {total} files failed",
-                                                    failed_count,
-                                                ).format(count=failed_count, total=self._progress_dialog.total_files)
+                                                    "{count} of {total} file could not be transferred",
+                                                    "{count} of {total} files could not be transferred",
+                                                    total,
+                                                ).format(count=failed_count, total=total)
                                                 self._progress_dialog.show_completion(success=False, error_message=error_msg)
                                         else:
                                             # All files succeeded (shouldn't happen if we're here, but handle it)

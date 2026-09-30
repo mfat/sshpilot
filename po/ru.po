@@ -4426,11 +4426,11 @@ msgstr "Не удалось удалить {name}: {error}"
 
 #: src/sshpilot/file_manager_window.py:3360
 #, python-brace-format
-msgid "{count} of {total} file failed"
-msgid_plural "{count} of {total} files failed"
-msgstr[0] "{count} из {total} файла с ошибкой"
-msgstr[1] "{count} из {total} файлов с ошибкой"
-msgstr[2] "{count} из {total} файлов с ошибкой"
+msgid "{count} of {total} file could not be transferred"
+msgid_plural "{count} of {total} files could not be transferred"
+msgstr[0] "Не удалось передать {count} из {total} файла"
+msgstr[1] "Не удалось передать {count} из {total} файлов"
+msgstr[2] "Не удалось передать {count} из {total} файлов"
 
 #: src/sshpilot/file_manager_integration.py:345
 #, python-brace-format

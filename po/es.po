@@ -4373,10 +4373,10 @@ msgstr "No se pudo quitar {name}: {error}"
 
 #: src/sshpilot/file_manager_window.py:3360
 #, python-brace-format
-msgid "{count} of {total} file failed"
-msgid_plural "{count} of {total} files failed"
-msgstr[0] "Falló {count} de {total} archivo"
-msgstr[1] "Fallaron {count} de {total} archivos"
+msgid "{count} of {total} file could not be transferred"
+msgid_plural "{count} of {total} files could not be transferred"
+msgstr[0] "No se pudo transferir {count} de {total} archivo"
+msgstr[1] "No se pudo transferir {count} de {total} archivos"
 
 #: src/sshpilot/file_manager_integration.py:345
 #, python-brace-format

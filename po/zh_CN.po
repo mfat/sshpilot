@@ -4291,9 +4291,9 @@ msgstr "移除 {name} 失败：{error}"
 
 #: src/sshpilot/file_manager_window.py:3360
 #, python-brace-format
-msgid "{count} of {total} file failed"
-msgid_plural "{count} of {total} files failed"
-msgstr[0] "{total} 个文件中有 {count} 个失败"
+msgid "{count} of {total} file could not be transferred"
+msgid_plural "{count} of {total} files could not be transferred"
+msgstr[0] "{total} 个文件中有 {count} 个无法传输"
 
 #: src/sshpilot/file_manager_integration.py:345
 #, python-brace-format

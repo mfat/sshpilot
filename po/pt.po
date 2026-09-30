@@ -4421,10 +4421,10 @@ msgstr "Falha ao remover {name}: {error}"
 
 #: src/sshpilot/file_manager_window.py:3360
 #, python-brace-format
-msgid "{count} of {total} file failed"
-msgid_plural "{count} of {total} files failed"
-msgstr[0] "{count} de {total} ficheiro falhou"
-msgstr[1] "{count} de {total} ficheiros falharam"
+msgid "{count} of {total} file could not be transferred"
+msgid_plural "{count} of {total} files could not be transferred"
+msgstr[0] "Não foi possível transferir {count} de {total} ficheiro"
+msgstr[1] "Não foi possível transferir {count} de {total} ficheiros"
 
 #: src/sshpilot/file_manager_integration.py:345
 #, python-brace-format
