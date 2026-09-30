@@ -3301,7 +3301,7 @@ class FilePane(Gtk.Box):
             _("Download the file to this computer or open it in the editor?"),
         )
         dialog.add_response("cancel", _("Cancel"))
-        dialog.add_response("edit", _("Edit"))
+        dialog.add_response("edit", _("Edit as Text"))
         dialog.add_response("download", _("Download"))
         dialog.set_response_appearance("download", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("download")

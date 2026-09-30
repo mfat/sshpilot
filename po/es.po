@@ -15565,3 +15565,7 @@ msgstr "No se pudo abrir {name}"
 #: src/sshpilot/file_manager/pane.py:3301
 msgid "Download the file to this computer or open it in the editor?"
 msgstr "¿Descargar el archivo a este equipo o abrirlo en el editor?"
+
+#: src/sshpilot/file_manager/pane.py:3304
+msgid "Edit as Text"
+msgstr "Editar como texto"
