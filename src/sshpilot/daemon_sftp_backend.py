@@ -1073,10 +1073,15 @@ class DaemonSftpManager(GObject.GObject):
         grand_total: int,
         *,
         progress_key: str = "",
+        keyed_only: bool = False,
     ) -> None:
         done = base + summary.bytes_completed
         key = progress_key or str(getattr(summary, "id", "") or "")
         self.emit("progress-bytes", done, grand_total, key)
+        if keyed_only:
+            # Batch transfers: the unkeyed "progress" signal would reach any
+            # other dialog's handlers (copy/move/delete) as their own.
+            return
         if grand_total > 0:
             self.emit(
                 "progress",
@@ -1230,7 +1235,11 @@ class DaemonSftpManager(GObject.GObject):
         def _on_progress(summary: TransferSummary) -> None:
             state["transfer_id"] = summary.id
             self._emit_transfer_progress(
-                0, summary, summary.bytes_total or 0, progress_key=progress_key
+                0,
+                summary,
+                summary.bytes_total or 0,
+                progress_key=progress_key,
+                keyed_only=True,
             )
             if summary.items_total is not None and summary.items_done != state["items_done"]:
                 state["items_done"] = summary.items_done
@@ -1265,13 +1274,6 @@ class DaemonSftpManager(GObject.GObject):
         def _on_error(exc) -> None:
             self._safe_set(future, exc=exc)
 
-        self.emit(
-            "progress",
-            0.0,
-            _("Starting upload…")
-            if direction is TransferDirection.UPLOAD
-            else _("Starting download…"),
-        )
         self._transfers.start_transfer_batch(
             request,
             on_started=_on_started,

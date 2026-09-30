@@ -80,6 +80,8 @@ def test_progress_emits_bytes_and_item_counts_under_one_key(batch):
     key = f"fut-{id(future)}"
     assert ("progress-bytes", 10, 30, key) in emitted
     assert ("progress-items", 1, 3, key) in emitted
+    # The unkeyed signal would reach a copy/move/delete dialog as its own.
+    assert not [e for e in emitted if e[0] == "progress"]
 
 
 def test_partial_failure_resolves_with_which_items_failed(batch):

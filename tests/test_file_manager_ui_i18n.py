@@ -574,7 +574,7 @@ def test_batch_delete_error_localizes_sftp_and_daemon_errors(monkeypatch):
     dialog.total_files = 1
     dialog.is_cancelled = False
     dialog._closed = False
-    window._progress_dialog = dialog
+    window._aggregate_dialog = dialog
     monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
     monkeypatch.setattr(
         window_module,

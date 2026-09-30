@@ -76,7 +76,7 @@ def test_focus_batch_transfer_updates_name_and_paths(load_file_manager_window):
     window = window_module.FileManagerWindow.__new__(window_module.FileManagerWindow)
     dialog = MagicMock()
     dialog.total_files = 3
-    window._progress_dialog = dialog
+    window._aggregate_dialog = dialog
     window._reset_batch_progress_state()
     window._batch_file_meta["a"] = ("one.txt", "/local/one.txt", "/remote/one.txt")
     window._batch_file_meta["b"] = ("two.txt", "/local/two.txt", "/remote/two.txt")
@@ -101,7 +101,7 @@ def test_focus_next_active_skips_settled_key(load_file_manager_window):
     window = window_module.FileManagerWindow.__new__(window_module.FileManagerWindow)
     dialog = MagicMock()
     dialog.total_files = 2
-    window._progress_dialog = dialog
+    window._aggregate_dialog = dialog
     window._reset_batch_progress_state()
     window._batch_expected = {"a": 10, "b": 20}
     window._batch_file_meta = {

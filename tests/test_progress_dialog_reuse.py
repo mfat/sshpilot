@@ -46,7 +46,7 @@ def test_complete_delete_progress_reports_partial_failures(load_file_manager_win
     window_module = load_file_manager_window()
     window = window_module.FileManagerWindow.__new__(window_module.FileManagerWindow)
     dialog = _bare_dialog(operation_type="delete", total_files=3)
-    window._progress_dialog = dialog
+    window._aggregate_dialog = dialog
     future = Future()
     future.set_result(([("/a", OSError("denied"))], 2))
     window._complete_delete_progress(future)
@@ -64,7 +64,7 @@ def test_complete_delete_progress_skips_when_dialog_already_cancelled(
     window_module = load_file_manager_window()
     window = window_module.FileManagerWindow.__new__(window_module.FileManagerWindow)
     dialog = _bare_dialog(operation_type="delete", total_files=2, is_cancelled=True)
-    window._progress_dialog = dialog
+    window._aggregate_dialog = dialog
     future = Future()
     future.set_result(([], 1))
     window._complete_delete_progress(future)

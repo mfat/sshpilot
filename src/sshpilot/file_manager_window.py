@@ -208,7 +208,11 @@ class FileManagerWindow(Adw.Window):
         
         # Toast overlay lives in the template.
         self._toast_overlay = self.toast_overlay
+        # Newest dialog of either kind (connection messages, shutdown).
         self._progress_dialog: Optional[SFTPProgressDialog] = None
+        # The dialog the multi-future path (copy/move/delete) aggregates into;
+        # batch transfers keep their own dialog in _start_transfer_batch.
+        self._aggregate_dialog: Optional[SFTPProgressDialog] = None
         self._connection_error_reported = False
 
         # Apply custom styling to toasts
@@ -748,22 +752,30 @@ class FileManagerWindow(Adw.Window):
 
 
     def _clear_progress_toast(self) -> None:
-        """Clear the progress dialog safely."""
-        if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
+        """Close the progress dialogs safely."""
+        for attr in ("_progress_dialog", "_aggregate_dialog"):
+            dialog = getattr(self, attr, None)
+            if dialog is None:
+                continue
             try:
-                self._progress_dialog.close()
+                dialog.close()
             except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
             finally:
-                self._progress_dialog = None
+                setattr(self, attr, None)
 
 
     def _show_progress(self, fraction: float, message: str) -> None:
-        """Update progress dialog if active."""
-        if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
+        """Update the copy/move/delete dialog if active.
+
+        Unkeyed progress never goes to a batch-transfer dialog: that one
+        follows its own transfer's keyed signals only.
+        """
+        dialog = getattr(self, "_aggregate_dialog", None)
+        if dialog is not None:
             try:
-                self._progress_dialog.update_progress(fraction, message)
+                dialog.update_progress(fraction, message)
             except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
@@ -2373,7 +2385,7 @@ class FileManagerWindow(Adw.Window):
         ``remove_many`` resolves with ``(failures, completed)`` even on cancel,
         so a bare ``exception()`` check would always report success.
         """
-        dialog = self._progress_dialog
+        dialog = self._aggregate_dialog
         if dialog is None or dialog.is_cancelled or getattr(dialog, "_closed", False):
             return
         try:
@@ -2980,6 +2992,8 @@ class FileManagerWindow(Adw.Window):
         """Drop our reference when the user dismisses the progress dialog."""
         if getattr(self, "_progress_dialog", None) is dialog:
             self._progress_dialog = None
+        if getattr(self, "_aggregate_dialog", None) is dialog:
+            self._aggregate_dialog = None
 
     @staticmethod
     def _format_transfer_size(num_bytes: float) -> str:
@@ -3001,7 +3015,7 @@ class FileManagerWindow(Adw.Window):
 
     def _focus_batch_transfer(self, key: str, *, force: bool = False) -> None:
         """Point the dialog's name / From / To labels at one batch member."""
-        dialog = self._progress_dialog
+        dialog = self._aggregate_dialog
         meta = getattr(self, "_batch_file_meta", {}).get(key)
         if dialog is None or meta is None:
             return
@@ -3038,7 +3052,7 @@ class FileManagerWindow(Adw.Window):
 
     def _publish_batch_transfer_progress(self) -> None:
         """Push aggregated batch bytes + an honest status string into the dialog."""
-        dialog = self._progress_dialog
+        dialog = self._aggregate_dialog
         if dialog is None or dialog.is_cancelled:
             return
         batch = aggregate_batch_bytes(
@@ -3274,42 +3288,43 @@ class FileManagerWindow(Adw.Window):
             # present() and nothing appears on screen.
             reuse_dialog = False
             if (
-                hasattr(self, "_progress_dialog")
-                and self._progress_dialog
-                and self._progress_dialog.is_reusable()
-                and self._progress_dialog.operation_type == operation_type
+                hasattr(self, "_aggregate_dialog")
+                and self._aggregate_dialog
+                and self._aggregate_dialog.is_reusable()
+                and self._aggregate_dialog.operation_type == operation_type
             ):
                 reuse_dialog = True
                 logger.debug("Reusing existing progress dialog for %s", operation_type)
             else:
                 # Dismiss any stale or different-operation dialog.
-                if hasattr(self, "_progress_dialog") and self._progress_dialog:
+                if hasattr(self, "_aggregate_dialog") and self._aggregate_dialog:
                     try:
-                        self._progress_dialog.close()
+                        self._aggregate_dialog.close()
                     except (AttributeError, RuntimeError):
                         pass
-                    self._progress_dialog = None
+                    self._aggregate_dialog = None
 
             if not reuse_dialog:
-                self._progress_dialog = self._present_progress_dialog(
+                self._aggregate_dialog = self._present_progress_dialog(
                     operation_type, total_files=total_files, filename=filename
                 )
-            elif not self._progress_dialog.get_visible():
+                self._progress_dialog = self._aggregate_dialog
+            elif not self._aggregate_dialog.get_visible():
                 # Same batch, dialog object reused but not visible — re-present.
-                dialog_parent = self._progress_dialog_parent()
+                dialog_parent = self._aggregate_dialog_parent()
                 try:
                     if _HAS_ALERT_DIALOG:
-                        self._progress_dialog.present(dialog_parent)
+                        self._aggregate_dialog.present(dialog_parent)
                     else:
-                        self._progress_dialog.present()
+                        self._aggregate_dialog.present()
                 except Exception as exc:
                     logger.debug("Failed to re-present progress dialog: %s", exc)
 
             # Keep the file counter in sync. Name / From / To are owned by
             # ``_focus_batch_transfer`` so a multi-file start loop does not
             # leave the dialog stuck on the last registered path.
-            self._progress_dialog.set_operation_details(total_files=total_files)
-            self._progress_dialog.set_future(future)
+            self._aggregate_dialog.set_operation_details(total_files=total_files)
+            self._aggregate_dialog.set_future(future)
 
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
@@ -3329,8 +3344,8 @@ class FileManagerWindow(Adw.Window):
             # the progress-bytes aggregator; this handler only covers deletes
             # and single-file transfers (and starting messages).
             def _on_progress(manager, progress: float, message: str) -> None:
-                if not (self._progress_dialog and
-                        not self._progress_dialog.is_cancelled and
+                if not (self._aggregate_dialog and
+                        not self._aggregate_dialog.is_cancelled and
                         getattr(self, '_active_futures', None)):
                     return
                 active_count = sum(
@@ -3342,9 +3357,9 @@ class FileManagerWindow(Adw.Window):
                 try:
                     # Mass/recursive delete emits an overall 0..1 fraction on a
                     # single future — do not re-apply multi-file math.
-                    if self._progress_dialog.operation_type == "delete":
-                        self._progress_dialog.update_progress(progress, message)
-                    elif self._progress_dialog.total_files > 1:
+                    if self._aggregate_dialog.operation_type == "delete":
+                        self._aggregate_dialog.update_progress(progress, message)
+                    elif self._aggregate_dialog.total_files > 1:
                         # Concurrent transfers each emit their own fraction and
                         # "Transferred X of Y" for that file alone. Ignore those
                         # for the bar/status — batch aggregation owns them.
@@ -3354,15 +3369,15 @@ class FileManagerWindow(Adw.Window):
                             self, "_batch_settled_bytes", None
                         ):
                             return
-                        self._progress_dialog.update_progress(0.0, message)
+                        self._aggregate_dialog.update_progress(0.0, message)
                     else:
-                        self._progress_dialog.update_progress(progress, message)
+                        self._aggregate_dialog.update_progress(progress, message)
                 except (AttributeError, RuntimeError, GLib.Error):
                     # Dialog may have been destroyed mid-emit.
                     pass
 
             def _on_progress_bytes(manager, transferred, total, progress_key="") -> None:
-                if not (self._progress_dialog and not self._progress_dialog.is_cancelled):
+                if not (self._aggregate_dialog and not self._aggregate_dialog.is_cancelled):
                     return
                 key = str(progress_key or "")
                 if not key:
@@ -3446,14 +3461,14 @@ class FileManagerWindow(Adw.Window):
                         self._progress_bytes_handler_id = None
 
                 # Update dialog to show completion
-                if self._progress_dialog:
+                if self._aggregate_dialog:
                     try:
                         # Check if the future was cancelled first
                         if future_result.cancelled():
                             # Operation was cancelled, don't show completion
                             # The dialog will be closed by the cancel handler
                             pass
-                        elif self._progress_dialog.operation_type == "delete":
+                        elif self._aggregate_dialog.operation_type == "delete":
                             self._complete_delete_progress(future_result)
                         else:
                             # Check for exceptions
@@ -3465,8 +3480,8 @@ class FileManagerWindow(Adw.Window):
                                     # Get filename for this future
                                     filename = self._future_to_filename.get(future_result, "unknown file")
                                     # Track failed file
-                                    if hasattr(self._progress_dialog, '_failed_files'):
-                                        self._progress_dialog._failed_files.append((filename, error_msg))
+                                    if hasattr(self._aggregate_dialog, '_failed_files'):
+                                        self._aggregate_dialog._failed_files.append((filename, error_msg))
                                     logger.error(f"Upload failed for {filename}: {error_msg}")
 
                                     # For multi-file operations, don't show completion until all files are done
@@ -3475,36 +3490,36 @@ class FileManagerWindow(Adw.Window):
                                     if active_count == 0:
                                         # All files are done (some may have failed)
                                         # Show completion with summary
-                                        if hasattr(self._progress_dialog, '_failed_files') and self._progress_dialog._failed_files:
+                                        if hasattr(self._aggregate_dialog, '_failed_files') and self._aggregate_dialog._failed_files:
                                             # Some files failed
-                                            failed_count = len(self._progress_dialog._failed_files)
-                                            if failed_count == self._progress_dialog.total_files:
+                                            failed_count = len(self._aggregate_dialog._failed_files)
+                                            if failed_count == self._aggregate_dialog.total_files:
                                                 # All files failed
-                                                error_summary = self._progress_dialog._failed_files[0][1] if self._progress_dialog._failed_files else _("Unknown error")
-                                                self._progress_dialog.show_completion(success=False, error_message=error_summary)
+                                                error_summary = self._aggregate_dialog._failed_files[0][1] if self._aggregate_dialog._failed_files else _("Unknown error")
+                                                self._aggregate_dialog.show_completion(success=False, error_message=error_summary)
                                             else:
                                                 # Some succeeded, some failed
-                                                total = self._progress_dialog.total_files
+                                                total = self._aggregate_dialog.total_files
                                                 error_msg = ngettext(
                                                     "{count} of {total} file could not be transferred",
                                                     "{count} of {total} files could not be transferred",
                                                     total,
                                                 ).format(count=failed_count, total=total)
-                                                self._progress_dialog.show_completion(success=False, error_message=error_msg)
+                                                self._aggregate_dialog.show_completion(success=False, error_message=error_msg)
                                         else:
                                             # All files succeeded (shouldn't happen if we're here, but handle it)
-                                            self._progress_dialog.show_completion(success=True)
+                                            self._aggregate_dialog.show_completion(success=True)
                                 else:
                                     # File completed successfully
                                     self._settle_batch_transfer(future_result, success=True)
-                                    self._progress_dialog.increment_file_count()
+                                    self._aggregate_dialog.increment_file_count()
 
                                     # Only show completion dialog when ALL files are done
                                     active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                                      if f and not f.done())
                                     if active_count == 0:
                                         # All files completed successfully
-                                        self._progress_dialog.show_completion(success=True)
+                                        self._aggregate_dialog.show_completion(success=True)
                             except CancelledError:
                                 # Future was cancelled, ignore
                                 pass
