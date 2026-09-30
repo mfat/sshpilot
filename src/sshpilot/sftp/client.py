@@ -1084,6 +1084,32 @@ class OpenSSHSFTPClient:
             raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected EXTENDED_REPLY")
         return proto.parse_statvfs(body)
 
+    def supports_users_groups_by_id(self) -> bool:
+        return "users-groups-by-id@openssh.com" in self.extensions
+
+    def users_groups_by_id(
+        self, uids: List[int], gids: List[int]
+    ) -> Tuple[List[str], List[str]]:
+        """Server-side user and group names for ids (OpenSSH extension).
+
+        Returns the names in request order, ``""`` where the server has none.
+        """
+        payload = (
+            proto.pack_string("users-groups-by-id@openssh.com")
+            + proto.pack_id_list(uids)
+            + proto.pack_id_list(gids)
+        )
+        ptype, body = self._request(proto.FXP_EXTENDED, payload)
+        if ptype == proto.FXP_STATUS:
+            _, code, message = proto.parse_status(body)
+            raise proto.SFTPError(code, message)
+        if ptype != proto.FXP_EXTENDED_REPLY:
+            raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected EXTENDED_REPLY")
+        users, groups = proto.parse_id_names(body)
+        if len(users) != len(uids) or len(groups) != len(gids):
+            raise proto.SFTPError(proto.FX_BAD_MESSAGE, "id name count mismatch")
+        return users, groups
+
     def fsetstat(self, handle: bytes, attr: proto.SFTPAttributes) -> None:
         """Set attributes (mode, times, …) on an open handle."""
         self._expect_ok(

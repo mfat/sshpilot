@@ -676,6 +676,63 @@ class SftpFilesystemUsage:
                 raise ValueError(f"SFTP filesystem usage {name} must be a non-negative integer")
 
 
+# Upper bound on ids per sftp.resolve_ids call, so one request stays one packet.
+_MAX_SFTP_RESOLVE_IDS = 1024
+
+
+def _require_id_tuple(values: Tuple[int, ...], label: str) -> None:
+    if type(values) is not tuple:
+        raise ValueError(f"{label} must be a tuple")
+    if len(values) > _MAX_SFTP_RESOLVE_IDS:
+        raise ValueError(f"{label} must hold at most {_MAX_SFTP_RESOLVE_IDS} ids")
+    for value in values:
+        if type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
+            raise ValueError(f"{label} must hold 32-bit unsigned integers")
+
+
+@dataclass(frozen=True)
+class SftpResolveIdsRequest:
+    """Ask the SFTP server for the names of remote user and group ids."""
+
+    service_id: SftpServiceId
+    uids: Tuple[int, ...] = ()
+    gids: Tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_identifier(self.service_id, "SFTP service id")
+        _require_id_tuple(self.uids, "uids")
+        _require_id_tuple(self.gids, "gids")
+        if not self.uids and not self.gids:
+            raise ValueError("At least one uid or gid is required")
+
+
+@dataclass(frozen=True)
+class SftpIdNames:
+    """Server-side names for remote ids, in request order.
+
+    ``user_names[i]`` names ``uids[i]`` and ``group_names[i]`` names
+    ``gids[i]``; ``None`` where the server has no name for the id.
+    """
+
+    uids: Tuple[int, ...]
+    gids: Tuple[int, ...]
+    user_names: Tuple[Optional[str], ...]
+    group_names: Tuple[Optional[str], ...]
+
+    def __post_init__(self) -> None:
+        _require_id_tuple(self.uids, "uids")
+        _require_id_tuple(self.gids, "gids")
+        for ids, names, label in (
+            (self.uids, self.user_names, "user_names"),
+            (self.gids, self.group_names, "group_names"),
+        ):
+            if type(names) is not tuple or len(names) != len(ids):
+                raise ValueError(f"{label} must be a tuple matching its ids")
+            for name in names:
+                if name is not None and (type(name) is not str or not name or "\x00" in name):
+                    raise ValueError(f"{label} must hold non-empty names or None")
+
+
 @dataclass(frozen=True)
 class SftpRenameRequest:
     service_id: SftpServiceId

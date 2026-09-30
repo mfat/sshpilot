@@ -134,6 +134,8 @@ from sshpilot.api.transport.codec import (
     sftp_directory_size_request_from_wire,
     sftp_path_request_from_wire,
     sftp_filesystem_usage_to_wire,
+    sftp_id_names_to_wire,
+    sftp_resolve_ids_request_from_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
     sftp_remove_result_to_wire,
@@ -285,6 +287,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.lstat": Capability.SFTP_METADATA,
     "sftp.realpath": Capability.SFTP_METADATA,
     "sftp.filesystem_usage": Capability.SFTP_METADATA,
+    "sftp.resolve_ids": Capability.SFTP_METADATA,
     "sftp.readlink": Capability.SFTP_METADATA,
     "sftp.read_file": Capability.SFTP_READ,
     "sftp.replace_file": Capability.SFTP_MUTATE,
@@ -529,6 +532,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.lstat",
         "sftp.realpath",
         "sftp.filesystem_usage",
+        "sftp.resolve_ids",
         "sftp.readlink",
         "sftp.read_file",
         "sftp.replace_file",
@@ -827,6 +831,7 @@ class RequestDispatcher:
             "sftp.lstat": self._handle_sftp_lstat,
             "sftp.realpath": self._handle_sftp_realpath,
             "sftp.filesystem_usage": self._handle_sftp_filesystem_usage,
+            "sftp.resolve_ids": self._handle_sftp_resolve_ids,
             "sftp.readlink": self._handle_sftp_readlink,
             "sftp.read_file": self._handle_sftp_read_file,
             "sftp.replace_file": self._handle_sftp_replace_file,
@@ -2524,6 +2529,22 @@ class RequestDispatcher:
                 runtime.filesystem_usage(path_request, client_id=client_id)
             ),
             command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_resolve_ids(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        ids_request = sftp_resolve_ids_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: sftp_id_names_to_wire(
+                runtime.resolve_ids(ids_request, client_id=client_id)
+            ),
+            command_key=ids_request.service_id,
             on_rejected=lambda: None,
         )
 

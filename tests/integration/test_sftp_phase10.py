@@ -15,6 +15,7 @@ from sshpilot.api.models.operations import (
     SftpChmodRequest,
     SftpPathRequest,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpServiceState,
     SftpSymlinkRequest,
 )
@@ -129,6 +130,9 @@ def test_sftp_filesystem_ops_and_unusual_names(stack):
     usage = client.sftp_filesystem_usage(SftpPathRequest(service_id=sid, path=renamed))
     assert usage.path.endswith("renamed")
     assert 0 < usage.available_bytes <= usage.free_bytes <= usage.total_bytes
+    names = client.sftp_resolve_ids(SftpResolveIdsRequest(service_id=sid, uids=(0,), gids=(0,)))
+    assert names.user_names == ("root",)
+    assert names.group_names[0]
 
     client.sftp_rmdir(SftpPathRequest(service_id=sid, path=renamed))
     client.sftp_remove(SftpPathRequest(service_id=sid, path=link))

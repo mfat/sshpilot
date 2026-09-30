@@ -16,6 +16,7 @@ from sshpilot.api.models.operations import (
     SFTP_REMOVE_CHUNK_SIZE,
     SftpDirectorySizeResult,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpRemoveFailure,
     SftpRemoveResult,
 )
@@ -1185,6 +1186,28 @@ def test_filesystem_usage_asks_the_daemon_for_the_path(controller, mock_client, 
     assert request.service_id == SftpServiceId("svc-1")
     assert request.path == "/srv"
     assert seen == [usage]
+
+
+def test_resolve_ids_asks_the_daemon_for_the_ids(controller, mock_client, mock_bridge):
+    _mark_ready(controller)
+    names = SftpIdNames(uids=(0,), gids=(0,), user_names=("root",), group_names=(None,))
+    mock_client.sftp_resolve_ids.return_value = names
+    mock_bridge.submit.side_effect = (
+        lambda factory, on_success=None, on_error=None: on_success(factory())
+    )
+
+    seen = []
+    controller.resolve_ids(
+        (0,),
+        (0,),
+        on_success=seen.append,
+        on_error=lambda e: pytest.fail(f"unexpected error: {e}"),
+    )
+
+    request = mock_client.sftp_resolve_ids.call_args[0][0]
+    assert request.service_id == SftpServiceId("svc-1")
+    assert (request.uids, request.gids) == ((0,), (0,))
+    assert seen == [names]
 
 
 def test_file_remove_uses_non_recursive_sync_path():

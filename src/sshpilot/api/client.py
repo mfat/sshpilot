@@ -139,11 +139,13 @@ from .models.operations import (
     SftpCopyRequest,
     SftpDirectorySizeRequest,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
     SftpServiceSummary,
@@ -517,6 +519,9 @@ class SshPilotClient(Protocol):
         ...
 
     def sftp_filesystem_usage(self, request: SftpPathRequest) -> SftpFilesystemUsage:
+        ...
+
+    def sftp_resolve_ids(self, request: SftpResolveIdsRequest) -> SftpIdNames:
         ...
 
     def sftp_readlink(self, request: SftpPathRequest) -> str:

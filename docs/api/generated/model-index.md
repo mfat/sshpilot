@@ -5365,6 +5365,37 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpIdNames -->
+## `SftpIdNames`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Server-side names for remote ids, in request order.
+
+``user_names[i]`` names ``uids[i]`` and ``group_names[i]`` names
+``gids[i]``; ``None`` where the server has no name for the id.
+
+**Related methods:** `sftp_resolve_ids`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `uids` | `Tuple[int, ...]` | Yes | — | No |
+| `gids` | `Tuple[int, ...]` | Yes | — | No |
+| `user_names` | `Tuple[Optional[str], ...]` | Yes | — | No |
+| `group_names` | `Tuple[Optional[str], ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "gids": {},
+  "group_names": {},
+  "uids": {},
+  "user_names": {}
+}
+```
+
 <!-- api-model: SftpPathRequest -->
 ## `SftpPathRequest`
 
@@ -5594,6 +5625,32 @@ Synthetic representation:
   "revision": {},
   "size": {},
   "target": {}
+}
+```
+
+<!-- api-model: SftpResolveIdsRequest -->
+## `SftpResolveIdsRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Ask the SFTP server for the names of remote user and group ids.
+
+**Related methods:** `sftp_resolve_ids`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `uids` | `Tuple[int, ...]` | No | `[]` | No |
+| `gids` | `Tuple[int, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "gids": [],
+  "service_id": {},
+  "uids": []
 }
 ```
 

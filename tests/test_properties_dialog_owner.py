@@ -84,3 +84,77 @@ def test_remote_free_space_is_left_out_when_the_server_cannot_say(monkeypatch):
 
     assert dialog._free_space_label.text is None
     assert dialog._free_space_label.visible is False
+
+
+def test_format_remote_owner_prefers_server_names():
+    text = PropertiesDialog._format_remote_owner(0, 50, {0: "root"}, {})
+    assert text == "root : 50"
+
+
+class _Row:
+    def __init__(self):
+        self.subtitle = None
+
+    def set_subtitle(self, text):
+        self.subtitle = text
+
+
+def test_remote_owner_names_replace_the_numbers(monkeypatch):
+    from concurrent.futures import Future
+
+    from sshpilot.api.models.operations import SftpIdNames
+    from sshpilot.file_manager import properties_dialog
+
+    monkeypatch.setattr(properties_dialog.GLib, "idle_add", lambda fn: fn(), raising=False)
+    asked = []
+
+    class Manager:
+        def resolve_ids(self, uids, gids):
+            asked.append((uids, gids))
+            future = Future()
+            future.set_result(
+                SftpIdNames(
+                    uids=tuple(uids),
+                    gids=tuple(gids),
+                    user_names=("root",),
+                    group_names=(None,),
+                )
+            )
+            return future
+
+    dialog = _remote_dialog(Manager())
+    dialog._uids, dialog._gids = [0], [4321]
+    dialog._remote_user_names, dialog._remote_group_names = {}, {}
+    dialog._owner_row = _Row()
+    group_row = _Row()
+    dialog._owner_name_rows = {"group": group_row}
+
+    dialog._start_remote_name_lookup()
+
+    assert asked == [([0], [4321])]
+    assert dialog._owner_row.subtitle == "root : 4321"
+    assert group_row.subtitle == "4321"
+
+
+def test_remote_owner_stays_numeric_when_the_server_cannot_name(monkeypatch):
+    from concurrent.futures import Future
+
+    from sshpilot.file_manager import properties_dialog
+
+    monkeypatch.setattr(properties_dialog.GLib, "idle_add", lambda fn: fn(), raising=False)
+
+    class Manager:
+        def resolve_ids(self, uids, gids):
+            future = Future()
+            future.set_exception(OSError("unsupported"))
+            return future
+
+    dialog = _remote_dialog(Manager())
+    dialog._uids, dialog._gids = [0], [0]
+    dialog._remote_user_names, dialog._remote_group_names = {}, {}
+    dialog._owner_row = _Row()
+    dialog._owner_name_rows = {}
+
+    dialog._start_remote_name_lookup()
+
+    assert dialog._owner_row.subtitle is None

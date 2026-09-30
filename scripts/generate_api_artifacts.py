@@ -290,6 +290,8 @@ RELATED_METHODS = {
         "sftp_remove",
     ),
     "SftpFilesystemUsage": ("sftp_filesystem_usage",),
+    "SftpResolveIdsRequest": ("sftp_resolve_ids",),
+    "SftpIdNames": ("sftp_resolve_ids",),
     "SftpRenameRequest": ("sftp_rename",),
     "SftpChmodRequest": ("sftp_chmod",),
     "SftpSymlinkRequest": ("sftp_symlink",),

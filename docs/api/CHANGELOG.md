@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- `sftp_resolve_ids` (`sftp.resolve_ids`, capability `sftp.metadata`) takes
+  the new `SftpResolveIdsRequest` (up to 1024 uids and gids) and returns the
+  new `SftpIdNames`: the server's user and group names for those ids, in
+  request order, `null` where the server has none. It uses OpenSSH's
+  `users-groups-by-id@openssh.com` (OpenSSH 9.1+); a server without the
+  extension fails with `remote_unsupported_operation`. The file manager's
+  properties dialog shows remote owners by name instead of numeric ids. New
+  method and models, so the API implementation version is 0.78; Protocol
+  remains 1.0.
 - `SftpCopyRequest.as_operation` (wire field `as_operation`, sent only when
   true) runs a single-file `sftp.copy` as a cancellable operation that
   returns an `OperationSummary`, like a recursive copy. The plain request

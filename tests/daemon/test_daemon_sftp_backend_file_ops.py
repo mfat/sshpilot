@@ -36,6 +36,10 @@ class _Controller:
         self.chmod_calls.append((path, mode))
         on_success(None)
 
+    def resolve_ids(self, uids, gids, *, on_success, on_error):
+        self.resolve_calls = getattr(self, "resolve_calls", []) + [(uids, gids)]
+        on_success(SimpleNamespace(uids=uids, gids=gids))
+
     def create_file(self, path, *, on_success, on_error):
         self.create_calls.append(path)
         on_success(SimpleNamespace(path=path))
@@ -136,6 +140,16 @@ def test_chmod_delegates_mode_change_to_daemon():
 
     assert future.result() is None
     assert controller.chmod_calls == [("/home/user/run.sh", 0o755)]
+
+
+def test_resolve_ids_passes_id_tuples_to_daemon():
+    controller = _Controller()
+    manager = _manager(controller)
+
+    names = manager.resolve_ids([0, 1000], [0]).result()
+
+    assert controller.resolve_calls == [((0, 1000), (0,))]
+    assert (names.uids, names.gids) == ((0, 1000), (0,))
 
 
 def test_chmod_error_is_localized(monkeypatch):

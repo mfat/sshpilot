@@ -742,6 +742,23 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
+    def resolve_ids(self, uids, gids) -> Future:
+        """Future resolving to the server's
+        :class:`~sshpilot.api.models.operations.SftpIdNames` for remote ids."""
+        future: Future = Future()
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+        self._sftp_controller.resolve_ids(
+            tuple(uids),
+            tuple(gids),
+            on_success=lambda names: self._safe_set(future, result=names),
+            on_error=lambda exc: self._safe_set(future, exc=_localized_direct_error(exc)),
+        )
+        return future
+
     def rename(self, source: str, target: str) -> Future:
         future: Future = Future()
         source = self._expand(source)

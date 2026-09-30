@@ -148,6 +148,10 @@ class PropertiesDialog(Adw.Window):
         self._file_types: list[Optional[Any]] = [None] * len(entries)
         self._uids: list[Optional[int]] = [None] * len(entries)
         self._gids: list[Optional[int]] = [None] * len(entries)
+        # Remote id -> name, as the server reports them (users-groups-by-id).
+        self._remote_user_names: dict[int, str] = {}
+        self._remote_group_names: dict[int, str] = {}
+        self._owner_name_rows: dict[str, Adw.ActionRow] = {}
         self._access_rows: list[tuple[Adw.ComboRow, perms.PermissionClass, bool, list[int]]] = []
         self._permissions_page: Optional[Adw.NavigationPage] = None
         self._syncing_permission_widgets = False
@@ -499,11 +503,75 @@ class PropertiesDialog(Adw.Window):
         return f"{user} : {group}"
 
     @staticmethod
-    def _format_remote_owner(uid, gid) -> str:
-        """Format remote uid/gid numerically until a daemon name-resolution op exists."""
+    def _format_remote_owner(uid, gid, user_names=None, group_names=None) -> str:
+        """Format remote uid/gid with the server's names, else numerically.
+
+        Names come from the server, never the local machine: uid 1000 there
+        need not be the local user 1000.
+        """
         if uid is None or gid is None:
             return "—"
-        return f"{int(uid)} : {int(gid)}"
+        user = (user_names or {}).get(int(uid), str(int(uid)))
+        group = (group_names or {}).get(int(gid), str(int(gid)))
+        return f"{user} : {group}"
+
+    def _owner_text(self, uid, gid) -> str:
+        if uid is None or gid is None:
+            return "—"
+        if self._is_remote_file():
+            return self._format_remote_owner(
+                uid, gid, self._remote_user_names, self._remote_group_names
+            )
+        return self._format_owner(uid, gid)
+
+    def _refresh_owner_text(self) -> None:
+        """Show the current owner/group, e.g. once remote names arrive."""
+        owners = [
+            self._owner_text(uid, gid) if uid is not None and gid is not None else None
+            for uid, gid in zip(self._uids, self._gids)
+        ]
+        if hasattr(self, "_owner_row"):
+            self._owner_row.set_subtitle(_common_value(owners) or "—")
+        user, group = self._common_owner_parts()
+        for key, value in (("user", user), ("group", group)):
+            row = self._owner_name_rows.get(key)
+            if row is not None:
+                row.set_subtitle(safe_display_text(value))
+
+    def _start_remote_name_lookup(self) -> None:
+        """Ask the server to name the owner ids; numbers stay if it cannot."""
+        if self._sftp_manager is None or not hasattr(self._sftp_manager, "resolve_ids"):
+            return
+        uids = sorted({uid for uid in self._uids if uid is not None})
+        gids = sorted({gid for gid in self._gids if gid is not None})
+        if not uids and not gids:
+            return
+        try:
+            future = self._sftp_manager.resolve_ids(uids, gids)
+        except Exception as exc:
+            logger.debug("Remote owner name lookup failed: %s", exc)
+            return
+
+        def _done(fut) -> None:
+            try:
+                names = fut.result()
+            except Exception as exc:
+                logger.debug("Remote owner names unavailable: %s", exc)
+                return
+
+            def _apply():
+                for uid, name in zip(names.uids, names.user_names):
+                    if name:
+                        self._remote_user_names[uid] = name
+                for gid, name in zip(names.gids, names.group_names):
+                    if name:
+                        self._remote_group_names[gid] = name
+                self._refresh_owner_text()
+                return GLib.SOURCE_REMOVE
+
+            GLib.idle_add(_apply)
+
+        future.add_done_callback(_done)
 
     def _create_created_row(self) -> Gtk.Widget:
         """Create the created date row (if available)."""
@@ -657,18 +725,12 @@ class PropertiesDialog(Adw.Window):
     def _common_owner_parts(self) -> tuple[str, str]:
         users: list[Optional[str]] = []
         groups: list[Optional[str]] = []
-        remote = self._is_remote_file()
         for uid, gid in zip(self._uids, self._gids):
             if uid is None or gid is None:
                 users.append(None)
                 groups.append(None)
                 continue
-            text = (
-                self._format_remote_owner(uid, gid)
-                if remote
-                else self._format_owner(uid, gid)
-            )
-            user, _sep, group = text.partition(" : ")
+            user, _sep, group = self._owner_text(uid, gid).partition(" : ")
             users.append(user)
             groups.append(group)
         return _common_value(users) or "—", _common_value(groups) or "—"
@@ -690,17 +752,18 @@ class PropertiesDialog(Adw.Window):
         box.append(page)
 
         sections = (
-            (perms.PermissionClass.OWNER, None, _("Owner"), user),
-            (perms.PermissionClass.GROUP, None, _("Group"), group),
-            (perms.PermissionClass.OTHERS, _("Other Users"), None, None),
+            (perms.PermissionClass.OWNER, None, _("Owner"), user, "user"),
+            (perms.PermissionClass.GROUP, None, _("Group"), group, "group"),
+            (perms.PermissionClass.OTHERS, _("Other Users"), None, None, None),
         )
-        for who, group_title, name_title, name in sections:
+        for who, group_title, name_title, name, name_key in sections:
             pref_group = Adw.PreferencesGroup()
             if group_title:
                 pref_group.set_title(group_title)
             if name_title:
                 name_row = Adw.ActionRow(title=name_title, subtitle=safe_display_text(name))
                 name_row.add_css_class("property")
+                self._owner_name_rows[name_key] = name_row
                 pref_group.add(name_row)
             if has_folders and has_files:
                 pref_group.add(self._create_access_row(who, True, _("Folder Access")))
@@ -892,6 +955,7 @@ class PropertiesDialog(Adw.Window):
                 if modified_text is not None and hasattr(self, "_modified_row"):
                     self._modified_row.set_subtitle(modified_text)
                 self._on_modes_known()
+                self._start_remote_name_lookup()
                 return GLib.SOURCE_REMOVE
 
             GLib.idle_add(_apply)

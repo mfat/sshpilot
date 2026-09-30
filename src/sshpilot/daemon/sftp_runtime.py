@@ -77,7 +77,9 @@ from sshpilot.api.models.operations import (
     SftpFileAccess,
     SftpFileTarget,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
+    SftpResolveIdsRequest,
     SftpRemoveFailure,
     SftpRemoveResult,
     SFTP_REMOVE_CHUNK_SIZE,
@@ -1948,6 +1950,37 @@ class SftpServiceRuntime:
             total_bytes=vfs.f_blocks * vfs.f_frsize,
             free_bytes=vfs.f_bfree * vfs.f_frsize,
             available_bytes=vfs.f_bavail * vfs.f_frsize,
+        )
+
+    def resolve_ids(
+        self, request: SftpResolveIdsRequest, *, client_id: ClientId
+    ) -> SftpIdNames:
+        """Server-side names for remote uids and gids, via
+        ``users-groups-by-id@openssh.com``."""
+        if type(request) is not SftpResolveIdsRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "A SFTP resolve ids request is required"
+            )
+        record = self._ready_record_for_read(request.service_id, client_id)
+        client = record.handle.client
+        supported = getattr(client, "supports_users_groups_by_id", None)
+        if not (callable(supported) and supported()):
+            raise SshPilotError(
+                ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
+                "The SFTP server does not resolve user and group ids",
+                connection_id=record.connection_id,
+            )
+        try:
+            users, groups = client.users_groups_by_id(
+                list(request.uids), list(request.gids)
+            )
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+        return SftpIdNames(
+            uids=request.uids,
+            gids=request.gids,
+            user_names=tuple(name or None for name in users),
+            group_names=tuple(name or None for name in groups),
         )
 
     def readlink(self, request: SftpPathRequest, *, client_id: ClientId) -> str:

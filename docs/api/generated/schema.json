@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.77",
+  "api_implementation_version": "0.78",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -543,6 +543,10 @@
     },
     "sftp_replace_file": {
       "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_resolve_ids": {
+      "capability": "sftp.metadata",
       "status": "daemon-only"
     },
     "sftp_rmdir": {
@@ -1137,6 +1141,9 @@
     },
     "sftp.replace_file": {
       "capability": "sftp.mutate"
+    },
+    "sftp.resolve_ids": {
+      "capability": "sftp.metadata"
     },
     "sftp.rmdir": {
       "capability": "sftp.mutate"
@@ -8688,6 +8695,39 @@
       ],
       "status": "Implemented"
     },
+    "SftpIdNames": {
+      "fields": [
+        {
+          "default": null,
+          "name": "uids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[int, ...]"
+        },
+        {
+          "default": null,
+          "name": "gids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[int, ...]"
+        },
+        {
+          "default": null,
+          "name": "user_names",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[Optional[str], ...]"
+        },
+        {
+          "default": null,
+          "name": "group_names",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[Optional[str], ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "SftpPathRequest": {
       "fields": [
         {
@@ -8962,6 +9002,32 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpResolveIdsRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": [],
+          "name": "uids",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[int, ...]"
+        },
+        {
+          "default": [],
+          "name": "gids",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[int, ...]"
         }
       ],
       "status": "Implemented"

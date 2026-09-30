@@ -204,12 +204,14 @@ from ..models.operations import (
     SftpFileAccess,
     SftpFileTarget,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpRemoveFailure,
     SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
     SftpServiceState,
@@ -4931,6 +4933,66 @@ def sftp_filesystem_usage_from_wire(value: Any) -> SftpFilesystemUsage:
         total_bytes=_integer(data["total_bytes"], "SFTP filesystem total bytes"),
         free_bytes=_integer(data["free_bytes"], "SFTP filesystem free bytes"),
         available_bytes=_integer(data["available_bytes"], "SFTP filesystem available bytes"),
+    )
+
+
+def _id_list_from_wire(value: Any, context: str) -> Tuple[int, ...]:
+    if type(value) is not list:
+        raise ValueError(f"{context} must be a JSON array")
+    return tuple(_integer(item, context) for item in value)
+
+
+def _optional_name_list_from_wire(value: Any, context: str) -> Tuple[Optional[str], ...]:
+    if type(value) is not list:
+        raise ValueError(f"{context} must be a JSON array")
+    return tuple(None if item is None else _text(item, context) for item in value)
+
+
+def sftp_resolve_ids_request_to_wire(request: SftpResolveIdsRequest) -> Dict[str, Any]:
+    if type(request) is not SftpResolveIdsRequest:
+        raise TypeError("SFTP resolve ids request is required")
+    return {
+        "service_id": request.service_id,
+        "uids": list(request.uids),
+        "gids": list(request.gids),
+    }
+
+
+def sftp_resolve_ids_request_from_wire(value: Any) -> SftpResolveIdsRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "uids", "gids"},
+        context="SFTP resolve ids request",
+    )
+    return SftpResolveIdsRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        uids=_id_list_from_wire(data["uids"], "SFTP uid"),
+        gids=_id_list_from_wire(data["gids"], "SFTP gid"),
+    )
+
+
+def sftp_id_names_to_wire(names: SftpIdNames) -> Dict[str, Any]:
+    if type(names) is not SftpIdNames:
+        raise TypeError("SFTP id names are required")
+    return {
+        "uids": list(names.uids),
+        "gids": list(names.gids),
+        "user_names": list(names.user_names),
+        "group_names": list(names.group_names),
+    }
+
+
+def sftp_id_names_from_wire(value: Any) -> SftpIdNames:
+    data = _strict_fields(
+        value,
+        required={"uids", "gids", "user_names", "group_names"},
+        context="SFTP id names",
+    )
+    return SftpIdNames(
+        uids=_id_list_from_wire(data["uids"], "SFTP uid"),
+        gids=_id_list_from_wire(data["gids"], "SFTP gid"),
+        user_names=_optional_name_list_from_wire(data["user_names"], "SFTP user name"),
+        group_names=_optional_name_list_from_wire(data["group_names"], "SFTP group name"),
     )
 
 

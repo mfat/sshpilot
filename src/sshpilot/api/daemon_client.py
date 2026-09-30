@@ -130,10 +130,12 @@ from .models.operations import (
     SftpDirectorySizeRequest,
     SftpFileAccess,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
     SftpServiceSummary,
@@ -253,6 +255,8 @@ from .transport.codec import (
     sftp_create_file_result_from_wire,
     sftp_directory_size_request_to_wire,
     sftp_filesystem_usage_from_wire,
+    sftp_id_names_from_wire,
+    sftp_resolve_ids_request_to_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
     sftp_remove_result_from_wire,
@@ -459,6 +463,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_lstat": Capability.SFTP_METADATA,
     "sftp_realpath": Capability.SFTP_METADATA,
     "sftp_filesystem_usage": Capability.SFTP_METADATA,
+    "sftp_resolve_ids": Capability.SFTP_METADATA,
     "sftp_readlink": Capability.SFTP_METADATA,
     "sftp_read_file": Capability.SFTP_READ,
     "sftp_replace_file": Capability.SFTP_MUTATE,
@@ -1594,6 +1599,17 @@ class DaemonClient:
             return sftp_filesystem_usage_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid filesystem usage result")
+
+    def sftp_resolve_ids(self, request: SftpResolveIdsRequest) -> SftpIdNames:
+        self._require_capability(Capability.SFTP_METADATA)
+        result = self._request("sftp.resolve_ids", sftp_resolve_ids_request_to_wire(request))
+        try:
+            names = sftp_id_names_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid id names")
+        if names.uids != request.uids or names.gids != request.gids:
+            self._fail_protocol("The daemon returned names for other ids")
+        return names
 
     def sftp_readlink(self, request: SftpPathRequest) -> str:
         self._require_capability(Capability.SFTP_METADATA)

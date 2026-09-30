@@ -57,6 +57,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_lstat": Capability.SFTP_METADATA,
     "sftp_realpath": Capability.SFTP_METADATA,
     "sftp_filesystem_usage": Capability.SFTP_METADATA,
+    "sftp_resolve_ids": Capability.SFTP_METADATA,
     "sftp_readlink": Capability.SFTP_METADATA,
     "sftp_read_file": Capability.SFTP_READ,
     "sftp_replace_file": Capability.SFTP_MUTATE,

@@ -38,12 +38,14 @@ from .api.models.operations import (
     SftpDirectorySizeResult,
     SftpFileTarget,
     SftpFilesystemUsage,
+    SftpIdNames,
     SftpPathRequest,
     SftpRemoveResult,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpReplaceFileRequest,
     SftpRenameRequest,
+    SftpResolveIdsRequest,
     SftpServiceState,
     SftpServiceSummary,
     SftpSymlinkRequest,
@@ -370,6 +372,25 @@ class DaemonSftpServiceController:
         def _op():
             return self._client.sftp_filesystem_usage(
                 SftpPathRequest(service_id=service_id, path=path)
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def resolve_ids(
+        self,
+        uids: tuple[int, ...],
+        gids: tuple[int, ...],
+        *,
+        on_success: Callable[[SftpIdNames], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_resolve_ids(
+                SftpResolveIdsRequest(service_id=service_id, uids=uids, gids=gids)
             )
 
         self._submit(_op, on_success=on_success, on_error=on_error)
