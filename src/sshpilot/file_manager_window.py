@@ -23,6 +23,7 @@ import os
 import pathlib
 import posixpath
 import shutil
+import threading
 import types
 import weakref
 from concurrent.futures import Future, CancelledError
@@ -1065,7 +1066,8 @@ class FileManagerWindow(Adw.Window):
         if sender is not None and sender is not manager:
             return
         for pane in (self._left_pane, self._right_pane):
-            if pane is None:
+            # Local folders are counted by _start_local_count_pass.
+            if pane is None or not getattr(pane, "_is_remote", False):
                 continue
             try:
                 if getattr(pane, "_current_path", None) == path:
@@ -1093,24 +1095,12 @@ class FileManagerWindow(Adw.Window):
                     try:
                         stat = dirent.stat(follow_symlinks=False)
                         is_dir = dirent.is_dir(follow_symlinks=False)
-                        item_count = None
-                        
-                        # Count items in directory
-                        if is_dir:
-                            try:
-                                with os.scandir(dirent.path) as dir_it:
-                                    item_count = len(list(dir_it))
-                            except Exception:
-                                # If we can't read the directory, set count to None
-                                item_count = None
-                        
                         entries.append(
                             FileEntry(
                                 name=dirent.name,
                                 is_dir=is_dir,
                                 size=getattr(stat, "st_size", 0) or 0,
                                 modified=getattr(stat, "st_mtime", 0.0) or 0.0,
-                                item_count=item_count,
                             )
                         )
                     except Exception:
@@ -1120,6 +1110,7 @@ class FileManagerWindow(Adw.Window):
             # Show results in the left pane
             self._left_pane.show_entries(path, entries)
             self._apply_pending_highlight(self._left_pane)
+            self._start_local_count_pass(path, entries)
             
             # Show success toast if this was a refresh
             if self._left_pane in self._refreshing_panes:
@@ -1134,6 +1125,43 @@ class FileManagerWindow(Adw.Window):
             self._left_pane.show_toast(_("Failed to load directory: {error}").format(error=exc))
             # Clear refresh flag on error
             self._refreshing_panes.discard(self._left_pane)
+
+    def _start_local_count_pass(self, path: str, entries: List[FileEntry]) -> None:
+        """Count each folder's items off the main thread, like the remote pane.
+
+        Opening every subfolder while listing made a folder-heavy directory
+        slow to show; the counts now fill in the Size column as they arrive.
+        A newer listing supersedes the pass.
+        """
+        generation = getattr(self, "_local_count_generation", 0) + 1
+        self._local_count_generation = generation
+        folders = [entry.name for entry in entries if entry.is_dir]
+        if not folders:
+            return
+        pane = self._left_pane
+
+        def _deliver(counts: Dict[str, int]) -> bool:
+            if generation == self._local_count_generation:
+                pane.update_item_counts(path, counts)
+            return False
+
+        def _count() -> None:
+            batch: Dict[str, int] = {}
+            for name in folders:
+                if generation != self._local_count_generation:
+                    return
+                try:
+                    with os.scandir(os.path.join(path, name)) as dir_it:
+                        batch[name] = sum(1 for _entry in dir_it)
+                except OSError:
+                    continue
+                if len(batch) >= 64:
+                    GLib.idle_add(_deliver, batch)
+                    batch = {}
+            if batch:
+                GLib.idle_add(_deliver, batch)
+
+        threading.Thread(target=_count, name="local-item-counts", daemon=True).start()
 
     def _on_path_changed(self, pane: FilePane, path: str, user_data=None) -> None:
         # Detect if this is a refresh (same path as current)

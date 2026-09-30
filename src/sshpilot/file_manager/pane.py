@@ -447,6 +447,11 @@ class FilePane(Gtk.Box):
 
         self._stack.add_named(list_scrolled, "list")
         self._stack.add_named(grid_scrolled, "grid")
+        # A view keeps building and binding cells for every listing even on a
+        # hidden stack page, so only the active one holds the model.
+        self._active_view_name = "list"
+        self._grid_view.set_model(None)
+        self._stack.connect("notify::visible-child-name", self._on_stack_page_changed)
 
         # Error state shown when a directory fails to load, so it can't be
         # mistaken for an empty directory.
@@ -970,6 +975,20 @@ class FilePane(Gtk.Box):
         self._show_context_menu(view, x, y, background=background)
         return True
 
+    def _on_stack_page_changed(self, stack: Gtk.Stack, _pspec) -> None:
+        # The error and connecting pages leave the last file view attached,
+        # so returning from them does not rebuild its rows.
+        name = stack.get_visible_child_name()
+        if name not in ("list", "grid") or name == self._active_view_name:
+            return
+        self._active_view_name = name
+        if name == "grid":
+            self._list_view.set_model(None)
+            self._grid_view.set_model(self._selection_model)
+        else:
+            self._grid_view.set_model(None)
+            self._list_view.set_model(self._selection_model)
+
     def _on_view_toggle(self, toolbar, view_name: str) -> None:
         self._stack.set_visible_child_name(view_name)
         # Update the split button icon to reflect current view
@@ -1364,7 +1383,7 @@ class FilePane(Gtk.Box):
         scroll position and selection are preserved. Ignored if the user has
         navigated away.
         """
-        if not counts or path != self._current_path or not self._is_remote:
+        if not counts or path != self._current_path:
             return
         for entry in self._cached_entries:
             if entry.is_dir and entry.name in counts:
