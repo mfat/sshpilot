@@ -2324,8 +2324,10 @@ class FileManagerWindow(Adw.Window):
             operation_succeeded = False
             apply_highlight = True
             try:
-                completed.result()
+                result = completed.result()
                 operation_succeeded = True
+                # A cancelled batch still refreshes; what it was writing last isn't there.
+                apply_highlight = not getattr(result, "cancelled", False)
                 logger.debug("_attach_refresh: operation completed successfully")
             except TransferCancelledException:
                 # Transfer was cancelled mid-stream. The partial file (if any)
@@ -3221,9 +3223,13 @@ class FileManagerWindow(Adw.Window):
             except Exception as exc:
                 dialog.show_completion(success=False, error_message=str(exc))
                 return False
+            if result.cancelled:
+                return False
             dialog.set_files_completed(result.items_done)
             failures = result.failures
-            if not failures:
+            if result.error is not None:
+                dialog.show_completion(success=False, error_message=result.error)
+            elif not failures:
                 dialog.show_completion(success=True)
             elif len(items) == 1:
                 dialog.show_completion(success=False, error_message=failures[0])

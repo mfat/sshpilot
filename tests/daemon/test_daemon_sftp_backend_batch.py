@@ -15,7 +15,6 @@ from sshpilot.api.models.transfers import (
     TransferSummary,
 )
 from sshpilot.daemon_sftp_backend import TransferBatchResult
-from sshpilot.file_manager.exceptions import TransferCancelledException
 from tests.daemon.test_daemon_sftp_backend_file_ops import SERVICE_ID, _manager
 
 _FAILURE = SftpFailure(SftpFailureCode.PATH_NOT_FOUND, ErrorCode.REMOTE_PATH_NOT_FOUND)
@@ -108,20 +107,40 @@ def test_completed_batch_has_no_failures(batch):
     assert result.failures == {} and all(result.succeeded(i) for i in range(3))
 
 
-def test_cancelled_batch_raises_cancelled(batch):
+def test_cancelled_batch_keeps_the_items_that_landed(batch):
     manager, future, _emitted = batch
-    manager._transfers.callbacks["on_done"](_summary(TransferState.CANCELLED, done=1))
-    with pytest.raises(TransferCancelledException):
-        future.result(timeout=1)
+    manager._transfers.callbacks["on_done"](_summary(TransferState.CANCELLED, done=2))
+    result = future.result(timeout=1)
+    assert result.cancelled and result.error is None
+    assert [result.succeeded(i) for i in range(3)] == [True, True, False]
 
 
-def test_batch_level_failure_raises(batch):
+def test_batch_stopped_short_reports_the_batch_error_not_item_failures(batch):
     manager, future, _emitted = batch
-    summary = _summary(TransferState.FAILED, done=1)
-    summary = TransferSummary(**{**summary.__dict__, "failure": _FAILURE})
+    lost = SftpFailure(SftpFailureCode.CONNECTION_LOST, ErrorCode.SFTP_PROTOCOL_LOST)
+    summary = _summary(
+        TransferState.FAILED,
+        done=2,
+        failures=[TransferItemFailure(index=0, failure=_FAILURE)],
+    )
+    summary = TransferSummary(**{**summary.__dict__, "failure": lost})
     manager._transfers.callbacks["on_done"](summary)
-    with pytest.raises(OSError):
-        future.result(timeout=1)
+    result = future.result(timeout=1)
+    assert result.error and result.error != result.failures[0]
+    assert [result.succeeded(i) for i in range(3)] == [False, True, False]
+
+
+def test_batch_that_ran_to_the_end_has_no_batch_error(batch):
+    manager, future, _emitted = batch
+    manager._transfers.callbacks["on_done"](
+        _summary(
+            TransferState.FAILED,
+            done=3,
+            failures=[TransferItemFailure(index=2, failure=_FAILURE)],
+        )
+    )
+    result = future.result(timeout=1)
+    assert result.error is None and list(result.failures) == [2]
 
 
 def test_move_cleanup_only_removes_sources_of_items_that_landed():
@@ -136,5 +155,14 @@ def test_move_cleanup_only_removes_sources_of_items_that_landed():
     assert [succeeded(future, i) for i in range(3)] == [False, True, False]
 
     failed = Future()
-    failed.set_exception(OSError("connection lost"))
+    failed.set_exception(OSError("could not start"))
     assert succeeded(failed, 0) is False
+
+    # Cancelled or cut off after two items: those two sources may go.
+    for ended in (
+        TransferBatchResult(items_total=3, items_done=2, cancelled=True),
+        TransferBatchResult(items_total=3, items_done=2, error="Connection lost"),
+    ):
+        stopped = Future()
+        stopped.set_result(ended)
+        assert [succeeded(stopped, i) for i in range(3)] == [True, True, False]

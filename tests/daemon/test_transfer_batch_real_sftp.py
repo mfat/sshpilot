@@ -64,6 +64,7 @@ def batch():
 
     run.runtime = runtime
     run.service_id = service_id
+    run.process = process
     try:
         yield run
     finally:
@@ -210,3 +211,27 @@ def test_batch_takes_one_queue_slot(batch, tmp_path):
     )
     assert summary.state is TransferState.COMPLETED
     assert len(list(dst.iterdir())) == 40
+
+
+def test_losing_the_server_mid_batch_stops_short_with_what_landed(batch, tmp_path):
+    src = _tree(tmp_path / "src", {f"f{i}": 2_000_000 for i in range(5)})
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    killed = []
+
+    def _kill_after_first(event):
+        if event.type is EventType.TRANSFER_ITEM_COMPLETED and not killed:
+            killed.append(True)
+            batch.process.kill()
+
+    batch.runtime.subscribe_events(_kill_after_first)
+    summary, _events = batch(
+        TransferDirection.UPLOAD, _items(src, dst, [f"f{i}" for i in range(5)])
+    )
+
+    assert summary.state is TransferState.FAILED
+    # Stopped short: the frontend reads that as a batch-level failure.
+    assert 1 <= summary.items_done < summary.items_total
+    assert summary.failure is not None
+    assert summary.item_failures == ()
+    assert (dst / "f0").read_bytes() == (src / "f0").read_bytes()

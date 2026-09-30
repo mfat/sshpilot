@@ -95,15 +95,20 @@ def daemon_file_manager_capabilities_missing(client) -> frozenset:
 
 @dataclass(frozen=True)
 class TransferBatchResult:
-    """How a batch transfer ended when it ran to the end.
+    """How a batch transfer ended, including a cancelled or aborted one.
 
     Items ran in index order; ``failures`` maps a failed item's index to a
-    localized reason. Every other index below ``items_done`` succeeded.
+    localized reason. Every other index below ``items_done`` succeeded, even
+    when the batch was then ``cancelled`` or stopped with a batch-level
+    ``error`` (e.g. the connection was lost) — so a move can still remove
+    the sources that landed.
     """
 
     items_total: int
     items_done: int
     failures: Dict[int, str] = field(default_factory=dict)
+    cancelled: bool = False
+    error: Optional[str] = None
 
     def succeeded(self, index: int) -> bool:
         return index < self.items_done and index not in self.failures
@@ -1191,9 +1196,9 @@ class DaemonSftpManager(GObject.GObject):
     ) -> Future:
         """Run ``(local_path, remote_path, recursive)`` items as one daemon transfer.
 
-        Resolves with a :class:`TransferBatchResult` when the batch ran to the
-        end (some items may have failed), raises ``TransferCancelledException``
-        when cancelled, and ``OSError`` when the batch itself failed.
+        Resolves with a :class:`TransferBatchResult` whenever the daemon
+        reports an end state (completed, failed, cancelled); raises ``OSError``
+        only when the batch could not be started.
         """
         future: Future = Future()
         progress_key = f"fut-{id(future)}"
@@ -1233,23 +1238,29 @@ class DaemonSftpManager(GObject.GObject):
 
         def _on_done(summary: TransferSummary) -> None:
             _on_progress(summary)
-            if summary.state is TransferState.CANCELLED:
-                self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
-                return
-            if summary.state is TransferState.COMPLETED or summary.item_failures:
-                self._safe_set(
-                    future,
-                    result=TransferBatchResult(
-                        items_total=summary.items_total or len(request.items),
-                        items_done=summary.items_done,
-                        failures={
-                            item.index: format_sftp_failure(item.failure)
-                            for item in summary.item_failures
-                        },
-                    ),
+            items_total = summary.items_total or len(request.items)
+            error = None
+            # A batch that ran to its last item fails only for its item
+            # failures; one that stopped short failed as a whole.
+            if summary.state is TransferState.FAILED and summary.items_done < items_total:
+                error = (
+                    format_sftp_failure(summary.failure)
+                    if summary.failure is not None
+                    else _("Transfer failed")
                 )
-                return
-            self._finish_transfer(future, summary)
+            self._safe_set(
+                future,
+                result=TransferBatchResult(
+                    items_total=items_total,
+                    items_done=summary.items_done,
+                    failures={
+                        item.index: format_sftp_failure(item.failure)
+                        for item in summary.item_failures
+                    },
+                    cancelled=summary.state is TransferState.CANCELLED,
+                    error=error,
+                ),
+            )
 
         def _on_error(exc) -> None:
             self._safe_set(future, exc=exc)
