@@ -15,6 +15,7 @@ wire models to the daemon.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
@@ -44,6 +45,10 @@ _TRANSFER_EVENT_TYPES = frozenset(
         EventType.TRANSFER_FAILED,
     }
 )
+# Events that arrive before the start reply registers their transfer are held
+# (latest per id) so a transfer that finishes in that window still completes.
+# Bounded because events for transfers this controller never started land here too.
+_UNCLAIMED_EVENT_LIMIT = 256
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,7 @@ class TransferServiceController:
         self._client = client
         self._bridge = bridge
         self._watchers: Dict[TransferId, _TransferWatch] = {}
+        self._unclaimed: "OrderedDict[TransferId, TransferSummary]" = OrderedDict()
         self._event_subscription = None
         self._closed = False
 
@@ -122,12 +128,17 @@ class TransferServiceController:
             if self._closed:
                 return
             self._watchers[summary.id] = _TransferWatch(on_progress, on_done)
-            self._ensure_subscription()
             if on_started is not None:
                 on_started(summary)
+            early = self._unclaimed.pop(summary.id, None)
             if summary.state in _TERMINAL_TRANSFER_STATES:
                 self._deliver(summary)
+            elif early is not None:
+                self._deliver(early)
 
+        # Subscribe before starting: a small transfer can finish before the
+        # start reply comes back, and its terminal event must not be missed.
+        self._ensure_subscription()
         try:
             self._bridge.submit(
                 lambda: self._client.start_transfer(request),
@@ -173,6 +184,7 @@ class TransferServiceController:
             return
         self._closed = True
         self._watchers.clear()
+        self._unclaimed.clear()
         self._unsubscribe_events()
 
     # -- events ------------------------------------------------------
@@ -187,12 +199,11 @@ class TransferServiceController:
             if self._closed or event.type not in _TRANSFER_EVENT_TYPES:
                 return
             summary = event.payload
-            if summary.id not in self._watchers:
-                return
+            # Watchers are only touched on the main thread; filter there.
             try:
                 self._bridge.submit(
                     lambda: summary,
-                    on_success=self._deliver,
+                    on_success=self._on_transfer_event,
                     on_error=lambda _e: None,
                 )
             except RuntimeError:
@@ -214,6 +225,21 @@ class TransferServiceController:
                 unsubscribe()
             except Exception:
                 logger.debug("Transfer event unsubscription failed", exc_info=True)
+
+    def _on_transfer_event(self, summary: TransferSummary) -> None:
+        if self._closed:
+            return
+        if summary.id in self._watchers:
+            self._deliver(summary)
+            return
+        # Start reply not handled yet, or a transfer started elsewhere.
+        held = self._unclaimed.get(summary.id)
+        if held is not None and held.state in _TERMINAL_TRANSFER_STATES:
+            return
+        self._unclaimed[summary.id] = summary
+        self._unclaimed.move_to_end(summary.id)
+        while len(self._unclaimed) > _UNCLAIMED_EVENT_LIMIT:
+            self._unclaimed.popitem(last=False)
 
     def _deliver(self, summary: TransferSummary) -> None:
         watch = self._watchers.get(summary.id)
