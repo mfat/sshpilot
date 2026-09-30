@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
+from . import permissions as perms
 from .format_utils import (
     _human_size,
     _human_time,
@@ -116,6 +117,7 @@ class PropertiesDialog(Adw.Window):
 
     __gtype_name__ = "SshPilotPropertiesDialog"
 
+    navigation_view = Gtk.Template.Child()
     content_box = Gtk.Template.Child()
 
     def __init__(
@@ -140,6 +142,15 @@ class PropertiesDialog(Adw.Window):
         self._current_path = current_path
         self._parent_window = parent
         self._sftp_manager = sftp_manager
+        # Per-entry permission state, filled by the local or remote stat.
+        self._modes: list[Optional[int]] = [None] * len(entries)
+        self._initial_modes: list[Optional[int]] = [None] * len(entries)
+        self._file_types: list[Optional[Any]] = [None] * len(entries)
+        self._uids: list[Optional[int]] = [None] * len(entries)
+        self._gids: list[Optional[int]] = [None] * len(entries)
+        self._access_rows: list[tuple[Adw.ComboRow, perms.PermissionClass, bool, list[int]]] = []
+        self._permissions_page: Optional[Adw.NavigationPage] = None
+        self._syncing_permission_widgets = False
         self.set_transient_for(parent)
         install_esc_to_close(self)
 
@@ -165,22 +176,46 @@ class PropertiesDialog(Adw.Window):
         # Static shell (toolbar view + "Properties" header) is in the template;
         # the property rows are appended into the template content box.
         content = self.content_box
+        if not self._is_remote_file():
+            self._load_local_stats()
 
         # Header with icon, name, size/contents, and free space (folders only)
         content.append(self._create_header_block())
 
-        # Parent folder row
-        content.append(self._create_parent_folder_row())
+        # Rows are grouped in boxed lists like Nautilus's preference groups.
+        # An Adw row needs a ListBox parent: it emits "activated" and owns the
+        # focus a row grabs (a bare row asserts in gtk_list_box_row_grab_focus).
+        content.append(self._row_list(self._create_parent_folder_row()))
+        content.append(
+            self._row_list(self._create_modified_row(), self._create_created_row())
+        )
+        content.append(self._row_list(self._create_owner_row()))
+        # Permissions row (opens "Set Custom Permissions") and exec switch
+        content.append(
+            self._row_list(self._create_permissions_row(), self._create_execution_row())
+        )
+        if not self._is_remote_file():
+            self._on_modes_known()
 
-        # Modified and Created rows
-        content.append(self._create_modified_row())
-        content.append(self._create_created_row())
+    @staticmethod
+    def _row_list(*rows: Gtk.Widget) -> Gtk.ListBox:
+        box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        box.add_css_class("boxed-list")
+        for row in rows:
+            # _create_created_row returns a bare placeholder when there is no date.
+            if isinstance(row, Gtk.ListBoxRow):
+                box.append(row)
+        return box
 
-        # Owner / group row
-        content.append(self._create_owner_row())
-
-        # Permissions row
-        content.append(self._create_permissions_row())
+    def _load_local_stats(self) -> None:
+        for index, entry in enumerate(self._entries):
+            try:
+                st = os.stat(self._local_path(entry))
+            except OSError:
+                continue
+            self._modes[index] = st.st_mode
+            self._uids[index] = st.st_uid
+            self._gids[index] = st.st_gid
 
     @property
     def _all_folders(self) -> bool:
@@ -398,7 +433,7 @@ class PropertiesDialog(Adw.Window):
         row = Adw.ActionRow(
             title=_("Parent Folder"), subtitle=safe_display_text(parent_path)
         )
-        row.add_css_class("card")
+        row.set_activatable(False)
 
         # Add folder open button for local files
         if not self._is_remote_file():
@@ -422,7 +457,7 @@ class PropertiesDialog(Adw.Window):
         else:
             modified_time = _human_time(self._entry.modified) if self._entry.modified else "—"
         row = Adw.ActionRow(title=_("Modified"), subtitle=modified_time)
-        row.add_css_class("card")
+        row.set_activatable(False)
         # Stored so the async remote stat can refresh it with the precise mtime.
         self._modified_row = row
         return row
@@ -431,18 +466,15 @@ class PropertiesDialog(Adw.Window):
         """Create the owner/group row."""
         owner_text = "—"
         if not self._is_remote_file():
-            owners = []
-            for entry in self._entries:
-                try:
-                    st = os.stat(self._local_path(entry))
-                    owners.append(self._format_owner(st.st_uid, st.st_gid))
-                except Exception:
-                    owners.append(None)
+            owners = [
+                self._format_owner(uid, gid) if uid is not None else None
+                for uid, gid in zip(self._uids, self._gids)
+            ]
             owner_text = _common_value(owners) or "—"
         elif self._sftp_manager is not None:
             owner_text = _("Loading…")  # filled by the async remote stat
         row = Adw.ActionRow(title=_("Owner"), subtitle=owner_text)
-        row.add_css_class("card")
+        row.set_activatable(False)
         self._owner_row = row
         return row
 
@@ -496,7 +528,7 @@ class PropertiesDialog(Adw.Window):
             return Gtk.Box()  # Empty box widget
 
         row = Adw.ActionRow(title=_("Created"), subtitle=created_time)
-        row.add_css_class("card")
+        row.set_activatable(False)
         return row
 
     def _create_permissions_row(self) -> Gtk.Widget:
@@ -505,18 +537,7 @@ class PropertiesDialog(Adw.Window):
 
         # Get actual permissions for local files
         if not self._is_remote_file():
-            perms = []
-            for entry in self._entries:
-                try:
-                    path = self._local_path(entry)
-                    if os.path.exists(path):
-                        mode = os.stat(path).st_mode
-                        perms.append(f"{_mode_to_str(mode)} ({_mode_to_octal(mode)})")
-                    else:
-                        perms.append(None)
-                except Exception:
-                    perms.append(None)
-            perms_text = _common_value(perms) or "—"
+            perms_text = self._mode_summary_text() or "—"
         else:
             # For remote files, fetch typed daemon metadata (mode, uid/gid,
             # mtime) asynchronously; the manager owns all remote I/O.
@@ -534,11 +555,281 @@ class PropertiesDialog(Adw.Window):
                     perms_text = _("Read and Write")
 
         row = Adw.ActionRow(title=_("Permissions"), subtitle=perms_text)
-        row.add_css_class("card")
+        row.set_activatable(False)  # until every selected mode is known
+        from sshpilot import icon_utils
+
+        self._permissions_arrow = icon_utils.new_image_from_icon_name("go-next-symbolic")
+        self._permissions_arrow.set_visible(False)
+        row.add_suffix(self._permissions_arrow)
+        row.connect("activated", self._on_permissions_row_activated)
         # Store reference to row for async updates
         self._permissions_row = row
 
         return row
+
+    def _create_execution_row(self) -> Gtk.Widget:
+        """Nautilus "Executable as Program" switch, single regular files only."""
+        row = Adw.SwitchRow(title=_("Executable as Program"))
+        row.set_visible(False)
+        row.connect("notify::active", self._on_execution_toggled)
+        self._execution_row = row
+        return row
+
+    def _should_show_execution_switch(self) -> bool:
+        if self._is_multi or self._entry.is_dir:
+            return False
+        content_type, uncertain = Gio.content_type_guess(self._entry.name, None)
+        return (
+            uncertain
+            or content_type == "application/octet-stream"
+            or Gio.content_type_can_be_executable(content_type)
+        )
+
+    def _mode_summary_text(self) -> Optional[str]:
+        texts = [
+            f"{_mode_to_str(mode, file_type)} ({_mode_to_octal(mode)})"
+            if mode is not None
+            else None
+            for mode, file_type in zip(self._modes, self._file_types)
+        ]
+        return _common_value(texts)
+
+    @property
+    def _permissions_known(self) -> bool:
+        return all(mode is not None for mode in self._modes)
+
+    def _can_set_permissions(self) -> bool:
+        """Locally only the owner (or root) may chmod; remote servers decide."""
+        if self._is_remote_file():
+            return True
+        euid = os.geteuid() if hasattr(os, "geteuid") else None
+        if euid is None or euid == 0:
+            return True
+        return all(uid == euid for uid in self._uids)
+
+    def _on_modes_known(self) -> None:
+        """Enable editing once every selected entry's mode is known."""
+        if not self._permissions_known:
+            return
+        self._initial_modes = list(self._modes)
+        self._permissions_row.set_activatable(True)
+        self._permissions_arrow.set_visible(True)
+        self._execution_row.set_visible(self._should_show_execution_switch())
+        self._sync_permission_widgets()
+
+    def _permission_items(self) -> list[tuple[bool, int]]:
+        return [
+            (entry.is_dir, mode)
+            for entry, mode in zip(self._entries, self._modes)
+            if mode is not None
+        ]
+
+    def _sync_permission_widgets(self) -> None:
+        """Show the current modes in the summary, switch and access combos."""
+        summary = perms.summarize(self._permission_items())
+        text = self._mode_summary_text()
+        if text is not None:
+            self._update_permissions_row(text)
+        can_set = self._can_set_permissions()
+        self._syncing_permission_widgets = True
+        try:
+            self._execution_row.set_active(summary.file_exec == perms.EXEC)
+            self._execution_row.set_sensitive(can_set)
+            for row, who, is_folder, values in self._access_rows:
+                current = (summary.folder if is_folder else summary.file).get(who, 0)
+                if current not in values:
+                    # Nautilus lists an odd or mixed value as an extra choice.
+                    values.append(current)
+                    row.get_model().append(perms.permission_label(current, is_folder))
+                row.set_selected(values.index(current))
+                row.set_sensitive(can_set)
+        finally:
+            self._syncing_permission_widgets = False
+
+    def _on_permissions_row_activated(self, _row) -> None:
+        if not self._permissions_known:
+            return
+        if self._permissions_page is None:
+            self._permissions_page = self._build_permissions_page()
+            self._sync_permission_widgets()
+        self.navigation_view.push(self._permissions_page)
+
+    def _common_owner_parts(self) -> tuple[str, str]:
+        users: list[Optional[str]] = []
+        groups: list[Optional[str]] = []
+        remote = self._is_remote_file()
+        for uid, gid in zip(self._uids, self._gids):
+            if uid is None or gid is None:
+                users.append(None)
+                groups.append(None)
+                continue
+            text = (
+                self._format_remote_owner(uid, gid)
+                if remote
+                else self._format_owner(uid, gid)
+            )
+            user, _sep, group = text.partition(" : ")
+            users.append(user)
+            groups.append(group)
+        return _common_value(users) or "—", _common_value(groups) or "—"
+
+    def _build_permissions_page(self) -> Adw.NavigationPage:
+        """Nautilus "Set Custom Permissions" page."""
+        items = self._permission_items()
+        has_folders = any(is_dir for is_dir, _mode in items)
+        has_files = any(not is_dir for is_dir, _mode in items)
+        user, group = self._common_owner_parts()
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        banner = Adw.Banner(title=_("Only the owner can edit these permissions"))
+        banner.set_revealed(not self._can_set_permissions())
+        box.append(banner)
+
+        page = Adw.PreferencesPage()
+        page.set_vexpand(True)
+        box.append(page)
+
+        sections = (
+            (perms.PermissionClass.OWNER, None, _("Owner"), user),
+            (perms.PermissionClass.GROUP, None, _("Group"), group),
+            (perms.PermissionClass.OTHERS, _("Other Users"), None, None),
+        )
+        for who, group_title, name_title, name in sections:
+            pref_group = Adw.PreferencesGroup()
+            if group_title:
+                pref_group.set_title(group_title)
+            if name_title:
+                name_row = Adw.ActionRow(title=name_title, subtitle=safe_display_text(name))
+                name_row.add_css_class("property")
+                pref_group.add(name_row)
+            if has_folders and has_files:
+                pref_group.add(self._create_access_row(who, True, _("Folder Access")))
+                pref_group.add(self._create_access_row(who, False, _("File Access")))
+            else:
+                pref_group.add(self._create_access_row(who, has_folders, _("Access")))
+            page.add(pref_group)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(Adw.HeaderBar())
+        toolbar.set_content(box)
+        return Adw.NavigationPage(
+            title=_("Set Custom Permissions"), tag="permissions", child=toolbar
+        )
+
+    def _create_access_row(
+        self, who: perms.PermissionClass, is_folder: bool, title: str
+    ) -> Adw.ComboRow:
+        values = perms.permission_choices(who, is_folder)
+        model = Gtk.StringList.new(
+            [perms.permission_label(value, is_folder) for value in values]
+        )
+        row = Adw.ComboRow(title=title, model=model)
+        self._access_rows.append((row, who, is_folder, values))
+        row.connect("notify::selected", self._on_access_selected, who, is_folder, values)
+        return row
+
+    def _on_access_selected(self, row, _pspec, who, is_folder, values) -> None:
+        if self._syncing_permission_widgets:
+            return
+        position = row.get_selected()
+        if position == Gtk.INVALID_LIST_POSITION or position >= len(values):
+            return
+        value = values[position]
+        mask = perms.class_mask(who, is_folder)
+        new_modes = {}
+        for index, entry in enumerate(self._entries):
+            mode = self._modes[index]
+            if mode is None or entry.is_dir != is_folder:
+                continue
+            if value & perms.INCONSISTENT:
+                # The mixed "---" choice puts back what each item started with.
+                source = self._initial_modes[index]
+                bits = source if source is not None else mode
+            else:
+                bits = perms.permission_to_mode(who, value)
+            new_modes[index] = perms.apply_bits(mode, bits, mask)
+        self._change_modes(new_modes)
+
+    def _on_execution_toggled(self, row, _pspec) -> None:
+        if self._syncing_permission_widgets:
+            return
+        executable = row.get_active()
+        new_modes = {
+            index: perms.set_executable(mode, executable)
+            for index, (entry, mode) in enumerate(zip(self._entries, self._modes))
+            if mode is not None and not entry.is_dir
+        }
+        self._change_modes(new_modes)
+
+    def _change_modes(self, new_modes: dict[int, int]) -> None:
+        """chmod each changed entry; failures revert and are reported once."""
+        changes = {
+            index: mode
+            for index, mode in new_modes.items()
+            if self._modes[index] is not None
+            and (self._modes[index] & 0o7777) != mode
+        }
+        if not changes:
+            return
+        previous = {index: self._modes[index] for index in changes}
+        for index, mode in changes.items():
+            # Keep the file-type bits so the summary still shows "d" / "l".
+            self._modes[index] = (previous[index] & ~0o7777) | mode
+
+        failures: list[tuple[int, BaseException]] = []
+        pending = len(changes)
+
+        def _finished_one() -> None:
+            nonlocal pending
+            pending -= 1
+            if pending:
+                return
+            for index, _exc in failures:
+                self._modes[index] = previous[index]
+            self._sync_permission_widgets()
+            if failures:
+                index, exc = failures[0]
+                self._report_permission_error(self._entries[index], exc)
+
+        remote = self._is_remote_file()
+        for index, mode in changes.items():
+            entry = self._entries[index]
+            if not remote:
+                try:
+                    os.chmod(self._local_path(entry), mode)
+                except OSError as exc:
+                    failures.append((index, exc))
+                _finished_one()
+                continue
+            try:
+                future = self._sftp_manager.chmod(self._remote_path(entry), mode)
+            except Exception as exc:
+                failures.append((index, exc))
+                _finished_one()
+                continue
+
+            def _done(fut, slot=index) -> None:
+                exc = fut.exception()
+
+                def _apply():
+                    if exc is not None:
+                        failures.append((slot, exc))
+                    _finished_one()
+                    return GLib.SOURCE_REMOVE
+
+                GLib.idle_add(_apply)
+
+            future.add_done_callback(_done)
+
+    def _report_permission_error(self, entry: "FileEntry", exc: BaseException) -> None:
+        logger.debug("Changing permissions of %s failed: %s", entry.name, exc)
+        detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+        text = _("Could not change the permissions of “{name}”: {error}").format(
+            name=entry.name, error=detail
+        )
+        from .pane import present_error_alert
+
+        present_error_alert(self, text)
 
     def _start_remote_metadata_fetch(self) -> None:
         """Stat every selected remote entry, then show common values."""
@@ -552,13 +843,13 @@ class PropertiesDialog(Adw.Window):
                 return
 
             owners: list[Optional[str]] = []
-            perms: list[Optional[str]] = []
+            mode_texts: list[Optional[str]] = []
             modified: list[Optional[str]] = []
             for index, entry in enumerate(self._entries):
                 remote = results[index]
                 if remote is None:
                     owners.append(None)
-                    perms.append(None)
+                    mode_texts.append(None)
                     modified.append(None)
                     continue
                 if remote.uid is not None and remote.gid is not None:
@@ -566,18 +857,18 @@ class PropertiesDialog(Adw.Window):
                 else:
                     owners.append(None)
                 if remote.mode:
-                    perms.append(
+                    mode_texts.append(
                         f"{_mode_to_str(remote.mode, remote.file_type)} ({_mode_to_octal(remote.mode)})"
                     )
                 else:
-                    perms.append(None)
+                    mode_texts.append(None)
                 if remote.modified_at is not None:
                     modified.append(_human_time(remote.modified_at.timestamp()))
                 else:
                     modified.append(None)
 
             owner_text = _common_value(owners) or "—"
-            perm_text = _common_value(perms)
+            perm_text = _common_value(mode_texts)
             if perm_text is None:
                 if self._is_multi:
                     perm_text = "—"
@@ -588,11 +879,19 @@ class PropertiesDialog(Adw.Window):
             modified_text = _common_value(modified)
 
             def _apply():
+                for index, remote in enumerate(results):
+                    if remote is None:
+                        continue
+                    self._uids[index] = remote.uid
+                    self._gids[index] = remote.gid
+                    self._file_types[index] = remote.file_type
+                    self._modes[index] = remote.mode or None
                 self._update_permissions_row(perm_text)
                 if hasattr(self, "_owner_row"):
                     self._owner_row.set_subtitle(owner_text)
                 if modified_text is not None and hasattr(self, "_modified_row"):
                     self._modified_row.set_subtitle(modified_text)
+                self._on_modes_known()
                 return GLib.SOURCE_REMOVE
 
             GLib.idle_add(_apply)

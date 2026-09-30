@@ -8,21 +8,29 @@ template $SshPilotPropertiesDialog: Adw.Window {
   resizable: true;
   modal: true;
 
-  content: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar {
-      title-widget: Gtk.Label {
-        label: _("Properties");
+  content: Adw.NavigationView navigation_view {
+    Adw.NavigationPage {
+      title: _("Properties");
+      tag: "properties";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+          propagate-natural-height: true;
+
+          child: Gtk.Box content_box {
+            orientation: vertical;
+            spacing: 16;
+            margin-top: 16;
+            margin-bottom: 16;
+            margin-start: 16;
+            margin-end: 16;
+          };
+        };
       };
     }
-
-    content: Gtk.Box content_box {
-      orientation: vertical;
-      spacing: 16;
-      margin-top: 16;
-      margin-bottom: 16;
-      margin-start: 16;
-      margin-end: 16;
-    };
   };
 }

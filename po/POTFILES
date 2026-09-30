@@ -27,6 +27,7 @@ src/sshpilot/file_manager/format_utils.py
 src/sshpilot/file_manager/pane.py
 src/sshpilot/file_manager/pane_controls.py
 src/sshpilot/file_manager/progress_dialog.py
+src/sshpilot/file_manager/permissions.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
 src/sshpilot/file_manager_integration.py

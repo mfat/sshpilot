@@ -761,6 +761,24 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
+    def chmod(self, path: str, mode: int) -> Future:
+        future: Future = Future()
+        target = self._expand(path)
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+        self._sftp_controller.chmod(
+            target,
+            mode,
+            on_success=lambda r: self._safe_set(future, result=r),
+            on_error=lambda e: self._safe_set(
+                future, exc=_localized_direct_error(e)
+            ),
+        )
+        return future
+
     def touch(self, path: str) -> Future:
         future: Future = Future()
         target = self._expand(path)
