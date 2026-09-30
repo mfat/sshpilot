@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.76",
+  "api_implementation_version": "0.77",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -8485,6 +8485,13 @@
         {
           "default": false,
           "name": "move",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "as_operation",
           "required": false,
           "sensitive": false,
           "type": "bool"

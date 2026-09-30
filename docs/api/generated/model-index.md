@@ -5159,11 +5159,13 @@ Synthetic representation:
 | `destination_path` | `str` | Yes | — | No |
 | `recursive` | `bool` | No | `false` | No |
 | `move` | `bool` | No | `false` | No |
+| `as_operation` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "as_operation": false,
   "destination_path": {},
   "move": false,
   "recursive": false,

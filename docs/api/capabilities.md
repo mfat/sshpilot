@@ -570,7 +570,8 @@ Implemented whenever the daemon's shared `OperationRuntime` is available --
 independently of the identity service. Returns a typed `OperationSummary` for
 any operation the requesting client owns (`operations.get`). Backs key
 deployment/authorized-key removal (identity) as well as SFTP's
-`sftp.directory_size` and recursive `sftp.copy`/`sftp.remove`, so an
+`sftp.directory_size`, recursive `sftp.copy`/`sftp.remove` and single-file
+`sftp.copy` with `as_operation`, so an
 SFTP-capable daemon with no identity service installed can still poll its own
 tree operations.
 

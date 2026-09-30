@@ -2617,7 +2617,7 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_sftp_runtime()
         copy_request = sftp_copy_request_from_wire(request.params)
-        if copy_request.recursive:
+        if copy_request.runs_as_operation:
             return DeferredResult(
                 operation=lambda: operation_summary_to_wire(
                     runtime.start_copy(copy_request, client_id=client_id)

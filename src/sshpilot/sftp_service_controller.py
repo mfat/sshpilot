@@ -496,27 +496,34 @@ class DaemonSftpServiceController:
         *,
         recursive: bool = False,
         move: bool = False,
+        as_operation: bool = False,
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
         on_operation_started: Optional[Callable[[OperationId], None]] = None,
         on_progress: Optional[Callable[[OperationSummary], None]] = None,
     ) -> None:
+        """Copy or move a remote path.
+
+        Recursive copies always run as daemon operations; ``as_operation``
+        does the same for a single file, so a large copy reports progress and
+        can be cancelled instead of outlasting the request timeout.
+        """
         service_id = self._ready_service_id_or_error(on_error)
         if service_id is None:
             return
+        request = SftpCopyRequest(
+            service_id=service_id,
+            source_path=source_path,
+            destination_path=destination_path,
+            recursive=recursive,
+            move=move,
+            as_operation=as_operation,
+        )
 
         def _op():
-            return self._client.sftp_copy(
-                SftpCopyRequest(
-                    service_id=service_id,
-                    source_path=source_path,
-                    destination_path=destination_path,
-                    recursive=recursive,
-                    move=move,
-                )
-            )
+            return self._client.sftp_copy(request)
 
-        if recursive:
+        if request.runs_as_operation:
             def _on_started(summary) -> None:
                 if on_operation_started is not None:
                     on_operation_started(summary.operation_id)

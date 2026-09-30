@@ -1642,10 +1642,12 @@ class DaemonClient:
 
     def sftp_copy(self, request: SftpCopyRequest) -> Any:
         self._require_capability(Capability.SFTP_MUTATE)
-        if request.recursive:
-            self._require_write_compatibility("recursive copy")
+        if request.runs_as_operation:
+            self._require_write_compatibility(
+                "recursive copy" if request.recursive else "copy"
+            )
         result = self._request("sftp.copy", sftp_copy_request_to_wire(request))
-        if request.recursive:
+        if request.runs_as_operation:
             try:
                 return operation_summary_from_wire(result)
             except (TypeError, ValueError):

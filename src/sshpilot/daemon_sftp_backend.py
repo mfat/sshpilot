@@ -805,21 +805,21 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
-        on_operation_started = None
-        on_progress = None
-        if recursive:
-            future, on_operation_started = self._operation_cancellable(future)
-            progress_message = _("Moving…") if move else _("Copying…")
+        # Every copy runs as a daemon operation: a large single file used to
+        # hold one request open past the client's timeout, which tore down
+        # the daemon connection while the copy carried on regardless.
+        future, on_operation_started = self._operation_cancellable(future)
+        progress_message = _("Moving…") if move else _("Copying…")
 
-            def on_progress(summary) -> None:
-                self.emit("progress", summary.progress or 0.0, progress_message)
+        def on_progress(summary) -> None:
+            self.emit("progress", summary.progress or 0.0, progress_message)
 
         def _on_error(exc) -> None:
             resolved = self._resolve_operation_exception(exc)
-            # Recursive copies are operations the controller already
-            # translates, except a rejection before the operation starts
-            # (e.g. copying a folder into itself), which names its reason.
-            if not recursive or has_structured_sftp_failure(resolved):
+            # Operation failures arrive translated by the controller, except a
+            # rejection before the operation starts (e.g. copying a folder
+            # into itself), which names its reason.
+            if has_structured_sftp_failure(resolved):
                 resolved = _localized_direct_error(resolved)
             self._safe_set(future, exc=resolved)
 
@@ -828,6 +828,7 @@ class DaemonSftpManager(GObject.GObject):
             destination,
             recursive=recursive,
             move=move,
+            as_operation=True,
             on_success=lambda _result: self._safe_set(future, result=None),
             on_error=_on_error,
             on_operation_started=on_operation_started,

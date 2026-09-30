@@ -463,3 +463,85 @@ def test_directory_size_operation_rejects_root_symlink():
     assert done.state is OperationState.FAILED
     assert done.failure.code is SftpFailureCode.DIRECTORY_SIZE_REQUIRES_REAL_DIRECTORY
     assert done.failure.error_code is ErrorCode.VALIDATION_FAILED
+
+
+def _single_file_client(size):
+    import os as _os
+
+    fs = _FsClient()
+    fs.add_dir("/", {"big"})
+    fs.add_file("/big", _os.urandom(size))
+    return fs
+
+
+def test_single_file_copy_runs_as_operation_with_byte_progress():
+    """A large single file must not hold one request open for the whole copy
+    (the client's timeout would tear down the daemon connection); as an
+    operation it reports progress between blocks."""
+    fs = _single_file_client(5 * 1024 * 1024)
+    runtime, ops, summary = _make_runtime(fs)
+    events = []
+    ops.subscribe_events(events.append)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/big", "/copy", as_operation=True),
+        client_id=OWNER,
+    )
+    assert started.kind is OperationKind.SFTP_COPY_TREE
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.SUCCEEDED
+    assert fs.files["/copy"] == fs.files["/big"]
+    fractions = {
+        round(e.payload.progress, 2)
+        for e in events
+        if getattr(e.payload, "operation_id", None) == started.operation_id
+        and e.payload.progress is not None
+        and 0 < e.payload.progress < 1
+    }
+    assert len(fractions) >= 3, fractions
+
+
+def test_cancelling_a_single_file_copy_leaves_no_partial_file():
+    fs = _single_file_client(5 * 1024 * 1024)
+    runtime, ops, summary = _make_runtime(fs)
+    started = {}
+    reads = []
+    original_open = fs.open
+
+    def _open(path, mode):
+        handle = original_open(path, mode)
+        if mode == "rb":
+            original_read = handle.read
+
+            def _read(size=None):
+                reads.append(size)
+                if len(reads) == 2:
+                    ops.cancel_operation(started["id"])
+                return original_read(size)
+
+            handle.read = _read
+        return handle
+
+    fs.open = _open
+    summary_started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/big", "/copy", as_operation=True),
+        client_id=OWNER,
+    )
+    started["id"] = summary_started.operation_id
+    done = _await_terminal(ops, summary_started.operation_id)
+    assert done.state is OperationState.CANCELLED
+    assert "/copy" not in fs.files
+    assert len(reads) < 5  # stopped between blocks, not after the whole file
+
+
+def test_single_file_move_as_operation_removes_the_source():
+    fs = _single_file_client(1024)
+    content = fs.files["/big"]
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/big", "/moved", move=True, as_operation=True),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.SUCCEEDED
+    assert fs.files["/moved"] == content
+    assert "/big" not in fs.files

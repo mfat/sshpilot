@@ -2020,19 +2020,41 @@ class SftpServiceRuntime:
             if progress is not None:
                 progress(_coarse_progress(copied, pending_files))
 
-        def _copy_file(source_path: str, destination_path: str) -> None:
+        def _copy_file(
+            source_path: str, destination_path: str, size: Optional[int] = None
+        ) -> None:
+            """Copy one file; *size* (a single-file copy) turns on byte progress."""
             nonlocal copied, pending_files
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            with client.open(source_path, "rb") as source_file, client.open(
-                destination_path, "wb"
-            ) as destination_file:
-                if not _server_side_copy(client, source_file, destination_file):
-                    while True:
-                        chunk = source_file.read(_COPY_BLOCK)
-                        if not chunk:
-                            break
-                        destination_file.write(chunk)
+            try:
+                with client.open(source_path, "rb") as source_file, client.open(
+                    destination_path, "wb"
+                ) as destination_file:
+                    if not _server_side_copy(client, source_file, destination_file):
+                        done = 0
+                        reported = 0.0
+                        while True:
+                            if cancel is not None and cancel():
+                                raise OperationCancelled()
+                            chunk = source_file.read(_COPY_BLOCK)
+                            if not chunk:
+                                break
+                            destination_file.write(chunk)
+                            done += len(chunk)
+                            if progress is not None and size:
+                                fraction = min(done / size, 0.99)
+                                if fraction - reported >= 0.01:
+                                    reported = fraction
+                                    progress(fraction)
+            except BaseException:
+                # The destination did not exist before (checked above, or its
+                # directory was just created): never leave a partial file.
+                try:
+                    client.remove(destination_path)
+                except Exception:
+                    pass
+                raise
             copied += 1
             _report_copy_progress()
 
@@ -2100,7 +2122,7 @@ class SftpServiceRuntime:
                         SftpFailureCode.RECURSIVE_COPY_REQUIRES_DIRECTORY_SOURCE,
                         details={"service_id": record.service_id},
                     )
-                _copy_file(source, destination)
+                _copy_file(source, destination, size=source_attr.st_size)
             if progress is not None:
                 progress(1.0)
             if request.move:
@@ -2123,11 +2145,15 @@ class SftpServiceRuntime:
         *,
         client_id: ClientId,
     ) -> OperationSummary:
-        """Start a daemon operation that recursively copies (or moves) a tree.
+        """Start a daemon operation that copies (or moves) a tree or one file.
 
-        The recursive walk runs on the shared operation worker with progress
-        reporting and cooperative cancellation instead of blocking the SFTP
-        command stream.
+        The copy runs on the shared operation worker with progress reporting
+        and cooperative cancellation instead of blocking the SFTP command
+        stream — and instead of holding a request open longer than the
+        client's request timeout. A single file reports byte progress and can
+        be cancelled between blocks (not during a server-side ``copy-data``).
+        Single files report as ``SFTP_COPY_TREE`` too: a new kind would break
+        older clients decoding operation events.
         """
         if type(request) is not SftpCopyRequest:
             raise SshPilotError(

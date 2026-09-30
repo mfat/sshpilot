@@ -356,12 +356,14 @@ def test_recursive_copy_progress_uses_structured_operation_not_wire_message(
         *,
         recursive,
         move,
+        as_operation=False,
         on_success=None,
         on_error=None,
         on_operation_started=None,
         on_progress=None,
     ):
         assert recursive is True
+        assert as_operation is True
         assert move is expected_move
         on_progress(SimpleNamespace(progress=0.25, message="wire message one"))
         on_progress(SimpleNamespace(progress=0.75, message="wire message two /private"))
@@ -595,12 +597,14 @@ def test_recursive_move_future_cancel_calls_operations_cancel():
         *,
         recursive,
         move,
+        as_operation=False,
         on_success=None,
         on_error=None,
         on_operation_started=None,
         on_progress=None,
     ):
         assert recursive is True
+        assert as_operation is True
         assert move is True
         on_operation_started(OperationId("operation-move-1"))
 
@@ -630,7 +634,7 @@ def test_recursive_copy_translates_copy_into_itself_rejection(monkeypatch):
         },
     )
 
-    def _copy(source, destination, *, recursive, move, on_success=None,
+    def _copy(source, destination, *, recursive, move, as_operation=False, on_success=None,
               on_error=None, on_operation_started=None, on_progress=None):
         on_error(rejection)
 
@@ -651,7 +655,7 @@ def test_recursive_copy_keeps_already_translated_operation_errors():
     manager = _bound_manager(controller)
     translated = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "Zugriff verweigert\n\nEACCES")
 
-    def _copy(source, destination, *, recursive, move, on_success=None,
+    def _copy(source, destination, *, recursive, move, as_operation=False, on_success=None,
               on_error=None, on_operation_started=None, on_progress=None):
         on_error(translated)
 

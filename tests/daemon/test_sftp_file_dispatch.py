@@ -414,3 +414,42 @@ def test_replace_file_rejected_while_draining():
             _state(),
         )
     assert excinfo.value.code is ErrorCode.DAEMON_SHUTTING_DOWN
+
+
+def _copy_envelope(**extra):
+    params = {
+        "service_id": "sftp-1",
+        "source_path": "/big.iso",
+        "destination_path": "/copy.iso",
+    }
+    params.update(extra)
+    return _envelope("sftp.copy", params)
+
+
+def test_single_file_copy_as_operation_starts_an_operation():
+    dispatcher, runtime = _dispatcher()
+    result = dispatcher.dispatch(_copy_envelope(as_operation=True), _state())
+    wire = result.operation()
+    assert wire["kind"] == OperationKind.SFTP_COPY_TREE.value
+    (request,) = runtime.copy_calls
+    assert request.recursive is False and request.as_operation is True
+
+
+def test_plain_single_file_copy_keeps_the_synchronous_reply():
+    dispatcher, runtime = _dispatcher()
+    result = dispatcher.dispatch(_copy_envelope(), _state())
+    assert result.operation() is None
+    (request,) = runtime.copy_calls
+    assert request.as_operation is False
+
+
+def test_copy_request_sends_as_operation_only_when_set():
+    from sshpilot.api.transport.codec import (
+        sftp_copy_request_from_wire,
+        sftp_copy_request_to_wire,
+    )
+
+    plain = SftpCopyRequest("sftp-1", "/a", "/b")
+    assert "as_operation" not in sftp_copy_request_to_wire(plain)
+    flagged = SftpCopyRequest("sftp-1", "/a", "/b", as_operation=True)
+    assert sftp_copy_request_from_wire(sftp_copy_request_to_wire(flagged)) == flagged

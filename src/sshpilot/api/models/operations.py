@@ -702,6 +702,10 @@ class SftpCopyRequest:
     destination_path: str
     recursive: bool = False
     move: bool = False
+    # Run a single-file copy as a cancellable daemon operation (the reply is
+    # an OperationSummary), as recursive copies always do. The plain request
+    # waits for the whole copy, which a large file can outlast.
+    as_operation: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.service_id, "SFTP service id")
@@ -711,8 +715,16 @@ class SftpCopyRequest:
             raise ValueError("SFTP copy paths must not contain NUL")
         if self.source_path == self.destination_path:
             raise ValueError("SFTP copy source and destination must differ")
-        if type(self.recursive) is not bool or type(self.move) is not bool:
+        if (
+            type(self.recursive) is not bool
+            or type(self.move) is not bool
+            or type(self.as_operation) is not bool
+        ):
             raise TypeError("SFTP copy flags must be booleans")
+
+    @property
+    def runs_as_operation(self) -> bool:
+        return self.recursive or self.as_operation
 
 
 @dataclass(frozen=True)

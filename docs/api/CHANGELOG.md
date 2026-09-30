@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `SftpCopyRequest.as_operation` (wire field `as_operation`, sent only when
+  true) runs a single-file `sftp.copy` as a cancellable operation that
+  returns an `OperationSummary`, like a recursive copy. The plain request
+  waits for the whole copy, so a large file outlasted the client's 5 s
+  request timeout and the client tore down its daemon connection while the
+  copy carried on. The operation reports byte progress, can be cancelled
+  between blocks, removes a partial destination, and reports as
+  `sftp_copy_tree` so older clients can still decode it. Without the flag the
+  reply shape is unchanged. API implementation version is 0.77; Protocol
+  remains 1.0.
 - `start_transfer_batch` (wire `transfers.batch.start`, capability
   `transfers.batch`) runs several upload or download items as one transfer:
   one queue slot, one byte total, one terminal state. New models

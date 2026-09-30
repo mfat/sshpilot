@@ -4964,20 +4964,24 @@ def sftp_rename_request_from_wire(value: Any) -> SftpRenameRequest:
 def sftp_copy_request_to_wire(request: SftpCopyRequest) -> Dict[str, Any]:
     if type(request) is not SftpCopyRequest:
         raise TypeError("SFTP copy request is required")
-    return {
+    wire = {
         "service_id": request.service_id,
         "source_path": request.source_path,
         "destination_path": request.destination_path,
         "recursive": request.recursive,
         "move": request.move,
     }
+    # Sent only when set, so a plain copy stays readable by older daemons.
+    if request.as_operation:
+        wire["as_operation"] = True
+    return wire
 
 
 def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
     data = _strict_fields(
         value,
         required={"service_id", "source_path", "destination_path"},
-        optional={"recursive", "move"},
+        optional={"recursive", "move", "as_operation"},
         context="SFTP copy request",
     )
     return SftpCopyRequest(
@@ -4986,6 +4990,7 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
         destination_path=_text(data["destination_path"], "SFTP copy destination path"),
         recursive=_boolean(data.get("recursive", False), "SFTP copy recursive"),
         move=_boolean(data.get("move", False), "SFTP copy move"),
+        as_operation=_boolean(data.get("as_operation", False), "SFTP copy as operation"),
     )
 
 
