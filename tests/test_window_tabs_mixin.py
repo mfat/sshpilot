@@ -10,6 +10,8 @@ covered separately by tests/test_fm_tab_teardown.py.
 import sys
 import types
 
+import pytest
+
 
 def _window_module():
     if 'cairo' not in sys.modules:
@@ -345,3 +347,196 @@ def test_tab_bar_double_click_close_button_does_not_open_local():
 
     Stub()._on_tab_bar_pressed(None, 2, 40, 5)
     assert calls == []
+
+
+@pytest.mark.parametrize("path, quoted", [
+    ("/srv/my files", "'/srv/my files'"),
+    ("/srv/it's", "'/srv/it'\"'\"'s'"),
+    ("~", "~"),
+    ("~/a b", "~/'a b'"),
+])
+def test_open_in_terminal_quotes_the_remote_path(path, quoted):
+    from sshpilot.file_manager_integration import quote_remote_path
+
+    assert quote_remote_path(path) == quoted
+
+
+class _Node:
+    def __init__(self, parent=None):
+        self._parent = parent
+
+    def get_parent(self):
+        return self._parent
+
+
+class _Terminal(_Node):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.fed = []
+
+    def feed_child_data_when_shell_ready(self, data):
+        self.fed.append(data)
+
+
+def _open_in_terminal_fixture(monkeypatch, *, under_terminal=False, panels=None,
+                              fm_config=None):
+    from sshpilot import file_manager_integration, window_tabs
+
+    class Embed(_Node):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.panels = dict(panels or {})
+            self._controller = types.SimpleNamespace(
+                _connection="conn",
+                _left_pane=types.SimpleNamespace(_current_path="/home/me/src"),
+                _right_pane=types.SimpleNamespace(_current_path="/srv/app"),
+            )
+
+        def get_terminal_panel(self, side="remote"):
+            return self.panels.get(side)
+
+        def has_terminal_panel(self):
+            return bool(self.panels)
+
+        def set_terminal_panel(self, terminal, teardown=None, side="remote"):
+            self.panels[side] = terminal
+
+    monkeypatch.setattr(window_tabs, 'TerminalWidget', _Terminal)
+    monkeypatch.setattr(file_manager_integration, 'FileManagerTabEmbed', Embed)
+    host = _Terminal() if under_terminal else None
+    embed = Embed(_Node(host))
+    content = _Node(_Node(embed))
+    created = []
+
+    def _create(conn):
+        created.append(("remote", conn))
+        return _Terminal()
+
+    def _create_local(cwd=None):
+        created.append(("local", cwd))
+        return _Terminal()
+
+    win = window_tabs.WindowTabsMixin()
+    win.terminal_manager = types.SimpleNamespace(
+        create_terminal_for_pane=_create,
+        create_local_terminal_for_pane=_create_local,
+    )
+    config = dict(fm_config or {})
+    win.config = types.SimpleNamespace(get_file_manager_config=lambda: config)
+    win._tab_menu_target = lambda: (None, embed)
+    win._file_manager_embed_for_child = lambda child: child
+    return win, content, embed, host, created
+
+
+def test_open_in_terminal_shows_the_terminal_pane(monkeypatch):
+    win, content, embed, _host, created = _open_in_terminal_fixture(monkeypatch)
+    assert win.open_file_manager_terminal_at(content, "/srv/my dir")
+    assert created == [("remote", "conn")]
+    assert embed.panels["remote"].fed == [b"cd '/srv/my dir'\n"]
+
+
+def test_open_in_terminal_reuses_the_open_terminal_pane(monkeypatch):
+    panel = _Terminal()
+    win, content, _embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch, panels={"remote": panel},
+    )
+    assert win.open_file_manager_terminal_at(content, "/srv")
+    assert created == []
+    assert panel.fed == [b"cd /srv\n"]
+
+
+def test_open_in_terminal_from_a_files_panel_uses_its_terminal(monkeypatch):
+    win, content, embed, host, created = _open_in_terminal_fixture(
+        monkeypatch, under_terminal=True,
+    )
+    assert win.open_file_manager_terminal_at(content, "/srv")
+    assert created == [] and embed.panels == {}
+    assert host.fed == [b"cd /srv\n"]
+
+
+def test_open_in_terminal_starts_a_local_shell_in_the_folder(monkeypatch):
+    win, content, embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch, panels={"remote": _Terminal()},
+    )
+    assert win.open_file_manager_terminal_at(content, "/home/me/src", "local")
+    # A new shell starts there (spawn cwd), so nothing is typed into it.
+    assert created == [("local", "/home/me/src")]
+    assert embed.panels["local"].fed == []
+    assert embed.panels["remote"].fed == []
+
+
+def test_open_in_terminal_cds_a_running_local_shell(monkeypatch):
+    local = _Terminal()
+    win, content, _embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch, panels={"local": local},
+    )
+    assert win.open_file_manager_terminal_at(content, "/tmp", "local")
+    assert created == [] and local.fed == [b"cd /tmp\n"]
+
+
+@pytest.mark.parametrize("setting, sides", [
+    ("remote", ["remote"]),
+    ("local", ["local"]),
+    ("both", ["local", "remote"]),
+    ("bogus", ["remote"]),
+])
+def test_show_terminal_pane_opens_the_configured_terminals(monkeypatch, setting, sides):
+    win, _content, embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch, fm_config={"terminal_panes": setting},
+    )
+    win._on_tabmenu_show_terminal_panel(None)
+    assert sorted(embed.panels) == sides
+    # Not following navigation: shells start at home, nothing is typed.
+    assert all(cwd is None for kind, cwd in created if kind == "local")
+    assert all(t.fed == [] for t in embed.panels.values())
+
+
+def test_show_terminal_pane_starts_in_the_pane_folders_when_following(monkeypatch):
+    win, _content, embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch,
+        fm_config={"terminal_panes": "both", "terminal_follows_navigation": True},
+    )
+    win._on_tabmenu_show_terminal_panel(None)
+    assert ("local", "/home/me/src") in created
+    assert embed.panels["remote"].fed == [b" cd /srv/app\n"]
+
+
+def test_navigation_sync_is_off_by_default(monkeypatch):
+    remote = _Terminal()
+    win, content, _embed, _host, _created = _open_in_terminal_fixture(
+        monkeypatch, panels={"remote": remote},
+    )
+    win.sync_file_manager_terminal(content, "/srv", "remote")
+    assert remote.fed == []
+
+
+def test_navigation_sync_cds_the_terminal_under_the_pane(monkeypatch):
+    remote, local = _Terminal(), _Terminal()
+    win, content, _embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch, panels={"remote": remote, "local": local},
+        fm_config={"terminal_follows_navigation": True},
+    )
+    win.sync_file_manager_terminal(content, "/srv/a b", "remote")
+    win.sync_file_manager_terminal(content, "/tmp", "local")
+    assert remote.fed == [b" cd '/srv/a b'\n"]
+    assert local.fed == [b" cd /tmp\n"]
+    assert created == []
+
+
+def test_navigation_sync_never_opens_a_terminal(monkeypatch):
+    win, content, embed, _host, created = _open_in_terminal_fixture(
+        monkeypatch, fm_config={"terminal_follows_navigation": True},
+    )
+    win.sync_file_manager_terminal(content, "/srv", "remote")
+    assert created == [] and embed.panels == {}
+
+
+def test_navigation_sync_moves_an_unspawned_local_shell(monkeypatch):
+    local = _Terminal()
+    local._local_shell_spawned = False
+    win, content, _embed, _host, _created = _open_in_terminal_fixture(
+        monkeypatch, panels={"local": local},
+        fm_config={"terminal_follows_navigation": True},
+    )
+    win.sync_file_manager_terminal(content, "/tmp", "local")
+    assert local.fed == [] and local._local_shell_cwd == "/tmp"

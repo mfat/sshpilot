@@ -758,7 +758,9 @@ class TerminalWidget(Gtk.Box):
             self.clear_file_panel()
 
         paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        paned.set_wide_handle(True)
+        # A wide handle draws two hairlines in libadwaita; the thin one keeps
+        # its larger invisible grab area, so dragging is unaffected.
+        paned.set_wide_handle(False)
         paned.set_hexpand(True)
         paned.set_vexpand(True)
         paned.set_shrink_start_child(False)
@@ -3589,6 +3591,14 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
 
+    def _local_shell_start_dir(self) -> str:
+        """Where the local shell starts: ``_local_shell_cwd`` when it is set
+        (a terminal pane opened on a file-manager folder), else home."""
+        cwd = getattr(self, '_local_shell_cwd', None)
+        if cwd and os.path.isdir(cwd):
+            return cwd
+        return os.path.expanduser('~') or '/'
+
     def _local_shell_geometry_widget(self):
         return getattr(self, 'terminal_widget', None) or self
 
@@ -4068,8 +4078,7 @@ class TerminalWidget(Gtk.Box):
             True if successful, False otherwise
         """
         try:
-            # Working directory
-            cwd = os.path.expanduser('~')
+            cwd = self._local_shell_start_dir()
 
             # Check if verbose mode is enabled
             verbose = logger.getEffectiveLevel() <= logging.DEBUG
@@ -4253,7 +4262,7 @@ class TerminalWidget(Gtk.Box):
         self.backend.spawn_async(
             argv=command,
             env=env_dict if env_dict else None,
-            cwd=os.path.expanduser('~') or '/',
+            cwd=self._local_shell_start_dir(),
             flags=0,
             child_setup=None,
             callback=self._on_spawn_complete,

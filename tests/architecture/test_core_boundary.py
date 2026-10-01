@@ -108,6 +108,9 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- pure platform default for VTE wheel scroll -----------------
         ("terminal.py", "settings.defaults", "DEFAULT_WHEEL_SCROLL_LINES"),
         ("preferences.py", "settings.defaults", "DEFAULT_WHEEL_SCROLL_LINES"),
+        # -- pure enum of file_manager.terminal_panes values ---------------
+        ("config.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
+        ("preferences.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
         # -- counter differencing for the host-info dialog (pure arithmetic) --
         # The daemon is stateless across probes, so the difference between two
         # readings has to be taken by whoever holds both. No I/O, no clock.

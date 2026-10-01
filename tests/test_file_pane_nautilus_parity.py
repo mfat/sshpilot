@@ -264,3 +264,78 @@ def test_legacy_single_zoom_setting_migrates_per_view():
     config, _ = ensure_config_defaults({"file_manager": {"grid_icon_level": 9}})
     assert config["file_manager"]["grid_icon_level"] == 4
     assert config["file_manager"]["list_icon_level"] == 1
+
+
+def test_open_in_terminal_is_offered_when_the_window_has_terminal_panes(load_file_manager_window):
+    module = load_file_manager_window()
+    pane = _make_pane(module)
+    window = types.SimpleNamespace(can_open_terminal=lambda: True)
+    pane._get_file_manager_window = lambda: window
+    assert pane._can_open_terminal()
+    pane._is_remote = False
+    assert pane._can_open_terminal()
+
+    window.can_open_terminal = lambda: False
+    assert not pane._can_open_terminal()
+
+
+def test_open_in_terminal_requests_the_current_folder(load_file_manager_window):
+    module = load_file_manager_window()
+    pane = _make_pane(module)
+    emitted = []
+    pane.emit = lambda *args: emitted.append(args)
+    pane._on_menu_open_terminal()
+    assert emitted == [("request-operation", "open-terminal", {"path": "/srv"})]
+
+
+def _embedded_window(module, parent):
+    window = module.FileManagerWindow.__new__(module.FileManagerWindow)
+    window._embedded_parent = parent
+    window._connection = object()
+    window._toolbar_view = object()
+    window._left_pane = types.SimpleNamespace(show_toast=lambda _msg: None)
+    window._right_pane = types.SimpleNamespace(show_toast=lambda _msg: None)
+    return window
+
+
+def test_open_in_terminal_asks_the_main_window_for_the_pane_terminal(load_file_manager_window):
+    module = load_file_manager_window()
+    calls = []
+
+    def _open(content, path, side):
+        calls.append((content, path, side))
+        return True
+
+    window = _embedded_window(
+        module, types.SimpleNamespace(open_file_manager_terminal_at=_open),
+    )
+    assert window.can_open_terminal()
+    window._op_open_terminal(window._right_pane, {"path": "/srv/my dir"})
+    window._op_open_terminal(window._left_pane, {"path": "/home/me"})
+    assert calls == [
+        (window._toolbar_view, "/srv/my dir", "remote"),
+        (window._toolbar_view, "/home/me", "local"),
+    ]
+
+
+def test_directory_shown_is_handed_to_the_terminal_sync(load_file_manager_window):
+    module = load_file_manager_window()
+    calls = []
+    window = _embedded_window(
+        module,
+        types.SimpleNamespace(sync_file_manager_terminal=lambda *a: calls.append(a)),
+    )
+    window._on_directory_shown(window._left_pane, "/home/me/src")
+    window._on_directory_shown(window._right_pane, "/srv")
+    assert calls == [
+        (window._toolbar_view, "/home/me/src", "local"),
+        (window._toolbar_view, "/srv", "remote"),
+    ]
+
+
+def test_open_in_terminal_unavailable_in_a_standalone_window(load_file_manager_window):
+    module = load_file_manager_window()
+    window = module.FileManagerWindow.__new__(module.FileManagerWindow)
+    window._embedded_parent = None
+    window._connection = object()
+    assert not window.can_open_terminal()

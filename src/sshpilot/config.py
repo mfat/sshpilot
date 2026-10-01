@@ -21,11 +21,13 @@ from sshpilot.core.settings import (
     get_default_config as _get_default_config_core,
     ssh_config_from_settings as _ssh_config_from_settings_core,
 )
+from sshpilot.core.settings.defaults import TERMINAL_PANE_CHOICES
 
 logger = logging.getLogger(__name__)
 
 # Increment this whenever the configuration format changes
 CONFIG_VERSION = _CORE_CONFIG_VERSION
+
 
 class Config(GObject.Object):
     """Configuration manager for sshPilot"""
@@ -827,7 +829,15 @@ class Config(GObject.Object):
                 return default_value
             return max(0, min(max_level, coerced))
 
+        def _get_terminal_panes() -> str:
+            value = self.get_setting(
+                'file_manager.terminal_panes', defaults.get('terminal_panes', 'remote')
+            )
+            return value if value in TERMINAL_PANE_CHOICES else 'remote'
+
         return {
+            'terminal_panes': _get_terminal_panes(),
+            'terminal_follows_navigation': _get_bool('terminal_follows_navigation'),
             'open_externally': _get_bool('open_externally'),
             'max_concurrent_transfers': _get_concurrent_transfers(),
             'list_icon_level': _get_icon_level('list_icon_level', 2),

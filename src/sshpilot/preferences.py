@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from gettext import gettext as _, ngettext
 
 from .platform_utils import is_macos
-from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
+from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CHOICES
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
@@ -2864,6 +2864,39 @@ class PreferencesWindow(Adw.NavigationPage):
         file_manager_group.add(self.max_concurrent_transfers_row)
 
         file_management_page.add(file_manager_group)
+
+        terminal_panes_group = Adw.PreferencesGroup(title=_("Terminal Panes"))
+        terminal_panes_group.set_description(
+            _("Terminals shown below a file manager tab, each under its file pane")
+        )
+        self.terminal_panes_row = Adw.ComboRow()
+        self.terminal_panes_row.set_title(_("Visible Terminals"))
+        panes_model = Gtk.StringList()
+        # Order matches TERMINAL_PANE_CHOICES.
+        for label in (_("Remote"), _("Local"), _("Local and Remote")):
+            panes_model.append(label)
+        self.terminal_panes_row.set_model(panes_model)
+        self.terminal_panes_row.set_selected(
+            TERMINAL_PANE_CHOICES.index(file_manager_config.get('terminal_panes', 'remote'))
+            if file_manager_config.get('terminal_panes') in TERMINAL_PANE_CHOICES else 0
+        )
+        self.terminal_panes_row.connect('notify::selected', self.on_terminal_panes_changed)
+        terminal_panes_group.add(self.terminal_panes_row)
+
+        self.terminal_follows_navigation_row = Adw.SwitchRow()
+        self.terminal_follows_navigation_row.set_title(_("Follow Folder Navigation"))
+        self.terminal_follows_navigation_row.set_subtitle(
+            _("Change the terminal's folder when you open a folder in the file pane above it")
+        )
+        self.terminal_follows_navigation_row.set_active(
+            bool(file_manager_config.get('terminal_follows_navigation', False))
+        )
+        self.terminal_follows_navigation_row.connect(
+            'notify::active', self.on_terminal_follows_navigation_changed
+        )
+        terminal_panes_group.add(self.terminal_follows_navigation_row)
+
+        file_management_page.add(terminal_panes_group)
         return file_management_page
 
     def _build_updates_preferences_page(self):
@@ -6909,6 +6942,26 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('file_manager.open_externally', active)
         except Exception as exc:
             logger.error("Failed to update external file manager preference: %s", exc)
+
+    def on_terminal_panes_changed(self, row, *args):
+        """Persist which terminals Show Terminal Pane opens."""
+        try:
+            index = int(row.get_selected())
+            if 0 <= index < len(TERMINAL_PANE_CHOICES):
+                self.config.set_setting(
+                    'file_manager.terminal_panes', TERMINAL_PANE_CHOICES[index]
+                )
+        except Exception as exc:
+            logger.error("Failed to update terminal panes preference: %s", exc)
+
+    def on_terminal_follows_navigation_changed(self, switch, *args):
+        """Persist whether terminal panes follow file-pane navigation."""
+        try:
+            self.config.set_setting(
+                'file_manager.terminal_follows_navigation', bool(switch.get_active())
+            )
+        except Exception as exc:
+            logger.error("Failed to update terminal navigation preference: %s", exc)
 
     def on_max_concurrent_transfers_changed(self, row, *args):
         """Persist the concurrent-transfer cap as soon as it changes."""

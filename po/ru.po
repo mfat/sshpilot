@@ -16313,3 +16313,35 @@ msgstr "Скопировать ключ на сервер"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Закрывать фрагменты команд после отправки команды"
+
+#: src/sshpilot/file_manager/pane.py
+msgid "Open in Terminal"
+msgstr "Открыть в терминале"
+
+#: src/sshpilot/file_manager_window.py
+msgid "Terminal is not available"
+msgstr "Терминал недоступен"
+
+#: src/sshpilot/preferences.py
+msgid "Terminal Panes"
+msgstr "Панели терминала"
+
+#: src/sshpilot/preferences.py
+msgid "Terminals shown below a file manager tab, each under its file pane"
+msgstr "Терминалы под вкладкой файлового менеджера, каждый под своей файловой панелью"
+
+#: src/sshpilot/preferences.py
+msgid "Visible Terminals"
+msgstr "Видимые терминалы"
+
+#: src/sshpilot/preferences.py
+msgid "Local and Remote"
+msgstr "Локальный и удалённый"
+
+#: src/sshpilot/preferences.py
+msgid "Follow Folder Navigation"
+msgstr "Следовать за навигацией по папкам"
+
+#: src/sshpilot/preferences.py
+msgid "Change the terminal's folder when you open a folder in the file pane above it"
+msgstr "Менять папку терминала при открытии папки в файловой панели над ним"

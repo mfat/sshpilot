@@ -15581,3 +15581,35 @@ msgstr "复制密钥到服务器"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "发送命令后关闭命令片段"
+
+#: src/sshpilot/file_manager/pane.py
+msgid "Open in Terminal"
+msgstr "在终端中打开"
+
+#: src/sshpilot/file_manager_window.py
+msgid "Terminal is not available"
+msgstr "终端不可用"
+
+#: src/sshpilot/preferences.py
+msgid "Terminal Panes"
+msgstr "终端面板"
+
+#: src/sshpilot/preferences.py
+msgid "Terminals shown below a file manager tab, each under its file pane"
+msgstr "显示在文件管理器标签页下方的终端，各自位于其文件面板之下"
+
+#: src/sshpilot/preferences.py
+msgid "Visible Terminals"
+msgstr "可见终端"
+
+#: src/sshpilot/preferences.py
+msgid "Local and Remote"
+msgstr "本地和远程"
+
+#: src/sshpilot/preferences.py
+msgid "Follow Folder Navigation"
+msgstr "跟随文件夹导航"
+
+#: src/sshpilot/preferences.py
+msgid "Change the terminal's folder when you open a folder in the file pane above it"
+msgstr "在上方文件面板中打开文件夹时，切换终端的文件夹"

@@ -83,6 +83,7 @@ def pane_module(load_file_manager_window, monkeypatch):
 
 def _make_pane(module, names=("a", "b", "c", "d"), selected=()):
     pane = module.FilePane.__new__(module.FilePane)
+    pane.emit = lambda *_args: None
     pane._entries = [module.FileEntry(name, False, 0, 0.0, None) for name in names]
     pane._selection_model = FakeSelectionModel(selected)
     pane._selection_anchor = None

@@ -16037,3 +16037,35 @@ msgstr "رونوشت کلید به سرور"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "پس از ارسال دستور، قطعات فرمان را ببندید"
+
+#: src/sshpilot/file_manager/pane.py
+msgid "Open in Terminal"
+msgstr "باز کردن در ترمینال"
+
+#: src/sshpilot/file_manager_window.py
+msgid "Terminal is not available"
+msgstr "ترمینال در دسترس نیست"
+
+#: src/sshpilot/preferences.py
+msgid "Terminal Panes"
+msgstr "پنل‌های ترمینال"
+
+#: src/sshpilot/preferences.py
+msgid "Terminals shown below a file manager tab, each under its file pane"
+msgstr "ترمینال‌هایی که زیر زبانه‌ی مدیر فایل، هر کدام زیر پنل فایل خود نمایش داده می‌شوند"
+
+#: src/sshpilot/preferences.py
+msgid "Visible Terminals"
+msgstr "ترمینال‌های قابل مشاهده"
+
+#: src/sshpilot/preferences.py
+msgid "Local and Remote"
+msgstr "محلی و راه دور"
+
+#: src/sshpilot/preferences.py
+msgid "Follow Folder Navigation"
+msgstr "دنبال کردن پیمایش پوشه‌ها"
+
+#: src/sshpilot/preferences.py
+msgid "Change the terminal's folder when you open a folder in the file pane above it"
+msgstr "با باز کردن پوشه در پنل فایل بالا، پوشه‌ی ترمینال هم تغییر کند"

@@ -16270,3 +16270,35 @@ msgstr "Copiar clave al servidor"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Cerrar fragmentos de comando después de enviar un comando"
+
+#: src/sshpilot/file_manager/pane.py
+msgid "Open in Terminal"
+msgstr "Abrir en terminal"
+
+#: src/sshpilot/file_manager_window.py
+msgid "Terminal is not available"
+msgstr "El terminal no está disponible"
+
+#: src/sshpilot/preferences.py
+msgid "Terminal Panes"
+msgstr "Paneles de terminal"
+
+#: src/sshpilot/preferences.py
+msgid "Terminals shown below a file manager tab, each under its file pane"
+msgstr "Terminales mostrados bajo una pestaña del gestor de archivos, cada uno bajo su panel de archivos"
+
+#: src/sshpilot/preferences.py
+msgid "Visible Terminals"
+msgstr "Terminales visibles"
+
+#: src/sshpilot/preferences.py
+msgid "Local and Remote"
+msgstr "Local y remoto"
+
+#: src/sshpilot/preferences.py
+msgid "Follow Folder Navigation"
+msgstr "Seguir la navegación de carpetas"
+
+#: src/sshpilot/preferences.py
+msgid "Change the terminal's folder when you open a folder in the file pane above it"
+msgstr "Cambiar la carpeta del terminal al abrir una carpeta en el panel de archivos de arriba"

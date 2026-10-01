@@ -221,18 +221,24 @@ def test_on_tab_detached_clears_terminal_panel_before_embed_teardown():
 # ── FileManagerTabEmbed.clear_terminal_panel (duck-typed, no GTK build) ─────
 
 def _fake_embed_with_panel(order):
+    from sshpilot.file_manager_integration import FileManagerTabEmbed
+
     paned = types.SimpleNamespace(
         set_end_child=lambda c: order.append(('end_child', c)),
         set_start_child=lambda c: order.append(('start_child', c)),
     )
     fake = types.SimpleNamespace(
-        _terminal_panel=object(),
+        _terminal_panels={'remote': object()},
+        _terminal_teardowns={'remote': lambda: order.append('teardown')},
         _terminal_panel_paned=paned,
-        _terminal_panel_teardown=lambda: order.append('teardown'),
+        _terminal_split=None,
+        _terminal_split_binding=None,
         _content=object(),
         remove=lambda w: order.append(('remove', w)),
         append=lambda w: order.append(('append', w)),
     )
+    for name in ('_layout_terminal_panels', '_release_terminal_split'):
+        setattr(fake, name, types.MethodType(getattr(FileManagerTabEmbed, name), fake))
     return fake, paned
 
 
@@ -247,7 +253,7 @@ def test_clear_terminal_panel_runs_teardown_before_detach():
     assert order[0] == 'teardown'
     assert ('remove', paned) in order
     assert order[-1] == ('append', fake._content)
-    assert fake._terminal_panel is None
+    assert fake._terminal_panels == {}
     assert fake._terminal_panel_paned is None
 
     # Idempotent: a second call is a no-op.

@@ -410,6 +410,8 @@ class FilePane(Gtk.Box):
 
     __gsignals__ = {
         "path-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # A different folder finished loading (not a reload of this one).
+        "directory-shown": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "request-operation": (
             GObject.SignalFlags.RUN_FIRST,
             None,
@@ -2045,6 +2047,7 @@ class FilePane(Gtk.Box):
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
         _add_action("new_file", lambda: self.emit("request-operation", "newfile", None))
         _add_action("properties", self._on_menu_properties)
+        _add_action("open_terminal", self._on_menu_open_terminal)
 
 
     def _on_list_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, cell) -> None:
@@ -2206,6 +2209,10 @@ class FilePane(Gtk.Box):
             _section(
                 _item(_("New Folder"), "new_folder", "<Shift><Primary>n"),
                 _item(_("New File"), "new_file"),
+            )
+            _section(
+                _item(_("Open in Terminal"), "open_terminal")
+                if self._can_open_terminal() else None,
             )
             _section(
                 paste,
@@ -2509,6 +2516,17 @@ class FilePane(Gtk.Box):
             logger.debug("Failed to copy location: %s", exc)
             return
         self.show_toast(_("Location copied"))
+
+    def _can_open_terminal(self) -> bool:
+        window = self._get_file_manager_window()
+        can_open = getattr(window, "can_open_terminal", None)
+        return bool(callable(can_open) and can_open())
+
+    def _on_menu_open_terminal(self) -> None:
+        self.emit(
+            "request-operation", "open-terminal",
+            {"path": self._current_path or "/"},
+        )
 
     def _on_menu_select_all(self) -> None:
         self._selection_model.select_all()
@@ -3154,6 +3172,7 @@ class FilePane(Gtk.Box):
             child = _child_toward(path, previous_path)
             if child:
                 self.highlight_entry(child)
+            self.emit("directory-shown", path)
 
         logger.debug(f"FilePane.show_entries: {pane_type} pane update completed")
 

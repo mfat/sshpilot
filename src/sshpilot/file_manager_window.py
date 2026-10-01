@@ -408,6 +408,7 @@ class FileManagerWindow(Adw.Window):
         for pane in (self._left_pane, self._right_pane):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
+            pane.connect("directory-shown", self._on_directory_shown, pane)
             pane.set_can_paste(False)
 
         # Connect close-request and destroy handlers to clean up resources
@@ -1517,12 +1518,48 @@ class FileManagerWindow(Adw.Window):
             self._op_upload(pane, payload, user_data)
         elif action == "download" and isinstance(payload, dict):
             self._op_download(pane, payload, user_data)
+        elif action == "open-terminal" and isinstance(payload, dict):
+            self._op_open_terminal(pane, payload)
         else:
             logger.debug(
                 "unknown file-manager action %r (payload_type=%s)",
                 action,
                 type(payload).__name__,
             )
+
+    def can_open_terminal(self) -> bool:
+        """Open in Terminal needs the main window this file manager is a tab
+        (or a files panel) of; a standalone window has no terminal pane."""
+        return self._connection is not None and callable(
+            getattr(self._embedded_parent, "open_file_manager_terminal_at", None)
+        )
+
+    def _terminal_side(self, pane) -> str:
+        return "local" if pane is self._left_pane else "remote"
+
+    def _op_open_terminal(self, pane, payload) -> None:
+        """Open (or reuse) the pane's terminal and cd it into the folder."""
+        opened = False
+        if self.can_open_terminal():
+            try:
+                opened = self._embedded_parent.open_file_manager_terminal_at(
+                    self._toolbar_view, payload.get("path") or "/",
+                    self._terminal_side(pane),
+                )
+            except Exception as exc:
+                logger.error("Open in terminal failed: %s", exc)
+        if not opened:
+            pane.show_toast(_("Terminal is not available"))
+
+    def _on_directory_shown(self, pane, path: str, user_data=None) -> None:
+        """Follow Folder Navigation: hand the new folder to the terminal."""
+        sync = getattr(self._embedded_parent, "sync_file_manager_terminal", None)
+        if not callable(sync) or not path:
+            return
+        try:
+            sync(self._toolbar_view, path, self._terminal_side(pane))
+        except Exception as exc:
+            logger.debug("Terminal sync failed: %s", exc)
 
     def _op_copy_cut(self, pane, action, payload) -> None:
         entries = list(payload.get("entries") or [])
