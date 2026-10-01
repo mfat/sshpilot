@@ -14,6 +14,6 @@
   <rect x="24.5" y="30" width="20" height="11" rx="2.5" fill="#ffffff" stroke="#deddda" stroke-width="1"></rect><circle cx="29" cy="35.5" r="2" fill="#e01b24"></circle><rect x="33" y="33.5" width="9" height="1.5" rx=".75" fill="#c0bfbc"></rect><rect x="33" y="36" width="6" height="1.5" rx=".75" fill="#c0bfbc"></rect>
   <rect x="24.5" y="44" width="20" height="11" rx="2.5" fill="#5e5c64" stroke="#5e5c64" stroke-width="1"></rect><circle cx="29" cy="49.5" r="2" fill="#ffa348"></circle><rect x="33" y="47.5" width="7" height="1.5" rx=".75" fill="#c0bfbc"></rect><rect x="33" y="50" width="9" height="1.5" rx=".75" fill="#c0bfbc"></rect>
   <rect x="24.5" y="58" width="20" height="11" rx="2.5" fill="#ffffff" stroke="#deddda" stroke-width="1"></rect><circle cx="29" cy="63.5" r="2" fill="#2ec27e"></circle><rect x="33" y="61.5" width="5" height="1.5" rx=".75" fill="#c0bfbc"></rect><rect x="33" y="64" width="8" height="1.5" rx=".75" fill="#c0bfbc"></rect>
-  <path d="M56 40 l9 7 l-9 7" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
-  <rect x="69" y="51" width="13" height="5" rx="1.25" fill="#ffa348"></rect>
+  <path d="M57.7 51.2 l14.4 11.2 l-14.4 11.2" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></path>
+  <rect x="78.5" y="68.8" width="20.8" height="8" rx="2" fill="#ffa348"></rect>
 </svg>
