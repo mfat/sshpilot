@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.2.7}
+Version:        %{?version}%{!?version:6.2.8}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -148,6 +148,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Oct 01 2026 mFat <newmfat@gmail.com> - 6.2.8-1
+- New "Open in Terminal" option in file manager
+- Open local and remote terminal panes in file manager with optional synchronized browsing
+
 * Wed Sep 30 2026 mFat <newmfat@gmail.com> - 6.2.7-1
 - SFTP file manager improvements
 

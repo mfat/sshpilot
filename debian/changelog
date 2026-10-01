@@ -1,3 +1,12 @@
+sshpilot (6.2.8-1) unstable; urgency=medium
+
+  * Release v6.2.8.
+  * New "Open in Terminal" option in file manager
+  * Open local and remote terminal panes in file manager with optional
+    synchronized browsing
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 01 Oct 2026 11:40:48 +0000
+
 sshpilot (6.2.7-1) unstable; urgency=medium
 
   * Release v6.2.7.
