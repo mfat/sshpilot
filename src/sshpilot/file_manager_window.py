@@ -318,6 +318,19 @@ class FileManagerWindow(Adw.Window):
         self.connect("notify::default-width", self._on_window_resize)
         # Also connect to the panes widget size changes
         panes.connect("notify::width-request", self._on_panes_size_changed)
+        # Double-clicking the divider evens the two panes out. This hooks the
+        # paned's own drag gesture: it claims presses on the handle (so a
+        # GestureClick there never sees n_press == 2), it only goes active
+        # inside the handle's grab area, which is wider than the painted line,
+        # and the second press has to deny it or any pointer jitter drags the
+        # divider straight back under the pointer.
+        self._separator_last_press_time = 0
+        controllers = panes.observe_controllers()
+        for index in range(controllers.get_n_items()):
+            controller = controllers.get_item(index)
+            if type(controller) is Gtk.GestureDrag:
+                controller.connect("drag-begin", self._on_panes_separator_drag_begin)
+                break
 
 
         self._left_pane = FilePane("Local")
@@ -2316,6 +2329,30 @@ class FileManagerWindow(Adw.Window):
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
         self._update_split_position()
+
+    def _on_panes_separator_drag_begin(
+        self, gesture: Gtk.GestureDrag, _x: float, _y: float
+    ) -> None:
+        """Reset the split to equal halves when the divider is double-clicked."""
+        if not gesture.is_active():
+            # The paned denied the press: it is not on the handle.
+            self._separator_last_press_time = 0
+            return
+
+        now = gesture.get_current_event_time()
+        settings = Gtk.Settings.get_default()
+        double_click_time = settings.props.gtk_double_click_time if settings else 400
+        last = self._separator_last_press_time
+        if not (last and 0 <= now - last <= double_click_time):
+            self._separator_last_press_time = now
+            return
+
+        self._separator_last_press_time = 0
+        gesture.set_state(Gtk.EventSequenceState.DENIED)
+        panes = gesture.get_widget()
+        width = panes.get_width()
+        if width > 0:
+            panes.set_position(width // 2)
 
     def _on_content_size_allocate(self, _widget: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
         """Adjust split position based on the actual allocated width of the content."""
