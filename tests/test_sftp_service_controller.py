@@ -60,6 +60,59 @@ def _mark_ready(controller, service_id="svc-1"):
         controller._service_id = SftpServiceId(service_id)
 
 
+def test_chmod_bridge_submission_failure_is_structured_and_localized(controller, mock_bridge, monkeypatch):
+    from sshpilot import daemon_sftp_backend
+    from sshpilot.gtk import sftp_error_messages
+
+    _mark_ready(controller)
+    mock_bridge.submit.side_effect = RuntimeError("GTK client bridge is closed")
+    monkeypatch.setattr(sftp_error_messages, "_", lambda msgid: "Échec de la commande SFTP")
+    manager = _bound_manager(controller)
+    future = DaemonSftpManager.chmod(manager, "/a", 0o600)
+
+    error = future.exception()
+    assert isinstance(error, SshPilotError)
+    assert error.code is ErrorCode.INTERNAL_ERROR
+    assert str(error) == "Échec de la commande SFTP"
+    assert daemon_sftp_backend.format_direct_sftp_error(error) == str(error)
+
+
+@pytest.mark.parametrize("code", [ErrorCode.TRANSPORT_CLOSED, ErrorCode.SFTP_SERVICE_NOT_FOUND])
+def test_copy_start_rpc_failure_is_localized_before_operation_adapter(controller, mock_bridge, monkeypatch, code):
+    from sshpilot.gtk import sftp_error_messages
+
+    _mark_ready(controller)
+    monkeypatch.setattr(sftp_error_messages, "_", lambda _msgid: "Erreur SFTP traduite")
+    manager = _bound_manager(controller)
+    future = DaemonSftpManager.copy_remote(manager, "/a", "/b")
+    callback = mock_bridge.submit.call_args.kwargs["on_error"]
+    callback(SshPilotError(code, "unstable error message", retryable=True, request_id="request-1"))
+
+    error = future.exception()
+    assert error.code is code and error.retryable
+    assert error.request_id == "request-1"
+    assert str(error) == "Erreur SFTP traduite"
+
+
+def test_copy_service_close_is_localized_before_future_callback(controller, mock_bridge, monkeypatch):
+    from sshpilot.gtk import sftp_error_messages
+
+    _mark_ready(controller)
+    monkeypatch.setattr(sftp_error_messages, "_", lambda _msgid: "Le service SFTP n’est pas prêt")
+    manager = _bound_manager(controller)
+    future = DaemonSftpManager.copy_remote(manager, "/a", "/b")
+    callback = mock_bridge.submit.call_args.kwargs["on_success"]
+    callback(OperationSummary(
+        operation_id=OperationId("op-copy"), kind=OperationKind.SFTP_COPY_TREE,
+        state=OperationState.RUNNING, message="Copying", created_at=utc_now(),
+        owner_client_id=ClientId("client-1"),
+    ))
+    controller._stop_operation_poller()
+
+    assert future.exception().code is ErrorCode.SFTP_SERVICE_NOT_READY
+    assert str(future.exception()) == "Le service SFTP n’est pas prêt"
+
+
 def test_list_directory_not_ready_calls_on_error(controller, mock_bridge):
     """Callback APIs must not raise when the service is gone (e.g. mid-shutdown)."""
     errors = []

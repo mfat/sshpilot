@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.events import EventType
 from sshpilot.api.models.common import ConnectionId, SftpServiceId, TransferId
@@ -197,3 +199,69 @@ def test_batch_start_requires_the_batch_capability():
 
     assert bridge.pending == []
     assert errors and errors[0].details == {"capability": "transfers.batch"}
+
+
+@pytest.mark.parametrize("direction,missing", [
+    (TransferDirection.UPLOAD, Capability.TRANSFERS_UPLOAD),
+    (TransferDirection.DOWNLOAD, Capability.TRANSFERS_DOWNLOAD),
+    (TransferDirection.UPLOAD, Capability.TRANSFERS_BATCH),
+])
+@pytest.mark.parametrize("batch", [False, True])
+def test_start_missing_capabilities_are_structured(direction, missing, batch):
+    from dataclasses import replace
+
+    from sshpilot.api.errors import ErrorCode
+
+    client, bridge = _FakeClient(), _QueuedBridge()
+    supported = client.get_capabilities().supported - {missing}
+    client.get_capabilities = lambda: SimpleNamespace(supported=supported)
+    controller = TransferServiceController(client, bridge)
+    errors = []
+    if batch:
+        request = replace(_batch_request(), direction=direction)
+        controller.start_transfer_batch(request, on_error=errors.append)
+    else:
+        request = StartTransferRequest(
+            connection_id=ConnectionId("conn"), sftp_service_id=SftpServiceId("sftp-1"),
+            direction=direction, local_path="/local/a", remote_path="/remote/a",
+        )
+        controller.start_transfer(request, on_error=errors.append)
+    if not batch and missing is Capability.TRANSFERS_BATCH:
+        assert errors == [] and bridge.pending
+    else:
+        assert len(errors) == 1 and not bridge.pending
+        assert errors[0].code is ErrorCode.UNSUPPORTED_CAPABILITY
+        assert errors[0].details == {"capability": missing.value}
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_closed_controller_start_is_structured(batch):
+    from sshpilot.api.errors import ErrorCode
+
+    client, bridge = _FakeClient(), _QueuedBridge()
+    controller = TransferServiceController(client, bridge)
+    controller.close()
+    errors = []
+    if batch:
+        controller.start_transfer_batch(_batch_request(), on_error=errors.append)
+    else:
+        request = StartTransferRequest(
+            connection_id=ConnectionId("conn"), sftp_service_id=SftpServiceId("sftp-1"),
+            direction=TransferDirection.UPLOAD, local_path="/local/a", remote_path="/remote/a",
+        )
+        controller.start_transfer(request, on_error=errors.append)
+    assert len(errors) == 1 and errors[0].code is ErrorCode.INVALID_REQUEST
+    assert bridge.pending == []
+
+
+def test_bridge_submission_failure_is_structured():
+    from sshpilot.api.errors import ErrorCode
+
+    class ClosedBridge:
+        def submit(self, *_args, **_kwargs):
+            raise RuntimeError("GTK client bridge is closed")
+
+    errors = []
+    controller = TransferServiceController(_FakeClient(), ClosedBridge())
+    controller.start_transfer_batch(_batch_request(), on_error=errors.append)
+    assert len(errors) == 1 and errors[0].code is ErrorCode.INTERNAL_ERROR

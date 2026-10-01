@@ -48,6 +48,7 @@ from .api.models.transfers import (
 from .file_manager.common import FileEntry
 from .file_manager.exceptions import TransferCancelledException
 from .gtk.sftp_error_messages import format_direct_sftp_error, has_structured_sftp_failure
+from .gtk.sftp_error_messages import localize_direct_sftp_error as _localized_direct_error
 from .gtk.sftp_failure_messages import format_sftp_failure
 from .sftp_service_controller import (
     DaemonSftpServiceController,
@@ -60,25 +61,6 @@ from .transfer_service_controller import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _localized_direct_error(error: BaseException) -> BaseException:
-    """Clone a direct RPC error with its frontend-rendered display message."""
-
-    if not isinstance(error, SshPilotError):
-        return error
-    message = format_direct_sftp_error(error)
-    if message == str(error):
-        return error
-    return SshPilotError(
-        error.code,
-        message,
-        details=error.details,
-        retryable=error.retryable,
-        request_id=error.request_id,
-        connection_id=error.connection_id,
-        session_id=error.session_id,
-    )
 
 
 def daemon_file_manager_capabilities_missing(client) -> frozenset:
@@ -442,7 +424,7 @@ class DaemonSftpManager(GObject.GObject):
                 service_id,
                 self._connection_id,
             )
-            raise OSError("SFTP connection is not available")
+            raise OSError(_("The SFTP service is not ready"))
         return service_id
 
     def make_file_editor_service(self, path: str) -> Any:
@@ -1259,8 +1241,14 @@ class DaemonSftpManager(GObject.GObject):
                 ),
                 conflict_policy=TransferConflictPolicy.OVERWRITE,
             )
-        except (OSError, ValueError, TypeError) as exc:
-            future.set_exception(exc if isinstance(exc, OSError) else OSError(str(exc)))
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+        except (ValueError, TypeError):
+            logger.debug("Invalid transfer batch request", exc_info=True)
+            future.set_exception(
+                SshPilotError(ErrorCode.INVALID_REQUEST, "Invalid transfer batch request")
+            )
             return future
 
         state: Dict[str, Any] = {"transfer_id": None, "items_done": -1}

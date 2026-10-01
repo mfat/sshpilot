@@ -16069,3 +16069,39 @@ msgstr "Copier la clé sur le serveur"
 #, python-brace-format
 #~ msgid "Error downloading {name}: {error}"
 #~ msgstr "Erreur lors du téléchargement de {name} : {error}"
+
+#: src/sshpilot/file_manager/pane.py
+msgid "Open in Terminal"
+msgstr "Ouvrir dans un terminal"
+
+#: src/sshpilot/file_manager_window.py
+msgid "Terminal is not available"
+msgstr "Le terminal n’est pas disponible"
+
+#: src/sshpilot/preferences.py
+msgid "Terminal Panes"
+msgstr "Panneaux de terminal"
+
+#: src/sshpilot/preferences.py
+msgid "Terminals shown below a file manager tab, each under its file pane"
+msgstr "Terminaux affichés sous un onglet du gestionnaire de fichiers, chacun sous son panneau de fichiers"
+
+#: src/sshpilot/preferences.py
+msgid "Visible Terminals"
+msgstr "Terminaux visibles"
+
+#: src/sshpilot/preferences.py
+msgid "Local and Remote"
+msgstr "Local et distant"
+
+#: src/sshpilot/preferences.py
+msgid "Follow Folder Navigation"
+msgstr "Suivre la navigation dans les dossiers"
+
+#: src/sshpilot/preferences.py
+msgid "Change the terminal's folder when you open a folder in the file pane above it"
+msgstr "Changer le dossier du terminal quand vous ouvrez un dossier dans le panneau de fichiers au-dessus"
+
+#: src/sshpilot/preferences.py
+msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
+msgstr "Ouverts avec chaque nouvel onglet du gestionnaire de fichiers ; le bouton de terminal sous un panneau affiche ou masque le sien"

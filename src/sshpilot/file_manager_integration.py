@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import shlex
 from gettext import gettext as _
 from typing import Any, Optional, Tuple
 
@@ -17,6 +18,15 @@ from gi.repository import GLib, Gtk
 from .platform_utils import is_flatpak, is_macos
 
 logger = logging.getLogger(__name__)
+
+
+def quote_remote_path(path: str) -> str:
+    """Quote a remote path for the shell, leaving a leading ~ to expand."""
+    if path == "~":
+        return "~"
+    if path.startswith("~/"):
+        return "~/" + shlex.quote(path[2:])
+    return shlex.quote(path)
 
 
 # --- "should hide/show X" capability helpers -------------------------------
@@ -114,43 +124,133 @@ if isinstance(getattr(Gtk, 'Box', None), type):
             self.append(content)
             self.connect('destroy', self._on_destroy)
 
-            # Terminal panel (a TerminalWidget shown below the file manager);
-            # mirror of TerminalWidget's files panel — see set_terminal_panel().
-            self._terminal_panel = None
+            # Terminal panels (TerminalWidgets shown below the file manager),
+            # one per side: "local" under the Local pane, "remote" under the
+            # Remote one; mirror of TerminalWidget's files panel.
+            self._terminal_panels: dict = {}
+            self._terminal_teardowns: dict = {}
             self._terminal_panel_paned = None
-            self._terminal_panel_teardown = None
+            self._terminal_split = None
+            self._terminal_split_binding = None
 
-        # ── terminal panel (terminal below the file manager) ────────────────
+        # ── terminal panels (terminals below the file manager) ──────────────
 
         def has_terminal_panel(self) -> bool:
-            return self._terminal_panel is not None
+            return bool(self._terminal_panels)
 
-        def set_terminal_panel(self, terminal, teardown=None) -> None:
-            """Show *terminal* below the file manager in a vertical Gtk.Paned.
+        def get_terminal_panel(self, side: str = "remote"):
+            return self._terminal_panels.get(side)
+
+        def set_terminal_panel(self, terminal, teardown=None, side: str = "remote") -> None:
+            """Show *terminal* below the file manager, on *side*.
 
             The page child stays this embed, so tab bookkeeping and the
             embed-subtree teardown search are unaffected. *teardown* is invoked
             from clear_terminal_panel() so the caller can disconnect the
             terminal and drop it from the window tracking dicts.
             """
-            if self._terminal_panel is not None:
-                self.clear_terminal_panel()
+            if side in self._terminal_panels:
+                self.clear_terminal_panel(side)
+            self._terminal_panels[side] = terminal
+            self._terminal_teardowns[side] = teardown
+            self._layout_terminal_panels()
 
-            paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-            paned.set_wide_handle(True)
+        def clear_terminal_panel(self, side: Optional[str] = None) -> None:
+            """Remove the terminal on *side* (all of them when None)."""
+            sides = [side] if side is not None else list(self._terminal_panels)
+            for name in sides:
+                if self._terminal_panels.pop(name, None) is None:
+                    continue
+                teardown = self._terminal_teardowns.pop(name, None)
+                # Disconnect the terminal while the tree is still intact.
+                if teardown is not None:
+                    try:
+                        teardown()
+                    except Exception:
+                        logger.debug("Terminal panel teardown failed", exc_info=True)
+            self._layout_terminal_panels()
+
+        @staticmethod
+        def _new_paned(orientation) -> Gtk.Paned:
+            paned = Gtk.Paned(orientation=orientation)
+            # A wide handle draws two hairlines in libadwaita; the thin one keeps
+            # its larger invisible grab area, so dragging is unaffected.
+            paned.set_wide_handle(False)
             paned.set_hexpand(True)
             paned.set_vexpand(True)
             paned.set_shrink_start_child(False)
             paned.set_shrink_end_child(False)
-            self.remove(self._content)
-            paned.set_start_child(self._content)
-            paned.set_end_child(terminal)
-            self.append(paned)
+            return paned
 
-            self._terminal_panel = terminal
-            self._terminal_panel_paned = paned
-            self._terminal_panel_teardown = teardown
+        def _release_terminal_split(self) -> None:
+            split = self._terminal_split
+            self._terminal_split = None
+            if self._terminal_split_binding is not None:
+                self._terminal_split_binding.unbind()
+                self._terminal_split_binding = None
+            if split is not None:
+                # set_*_child(None) instead of unparent(): unparenting a Paned
+                # child can silently fail in GTK4 (see split_view._release_paned).
+                split.set_start_child(None)
+                split.set_end_child(None)
 
+        def _layout_terminal_panels(self) -> None:
+            """Lay the terminals out below the manager: one fills the width,
+            two sit side by side under their file panes (local left)."""
+            notify = getattr(self._controller, "on_terminal_panels_changed", None)
+            if callable(notify):
+                try:
+                    notify(frozenset(self._terminal_panels))
+                except Exception:
+                    logger.debug("Terminal panel notify failed", exc_info=True)
+            terminals = [
+                self._terminal_panels[name] for name in ("local", "remote")
+                if name in self._terminal_panels
+            ]
+            paned = self._terminal_panel_paned
+            try:
+                if paned is not None:
+                    paned.set_end_child(None)
+                self._release_terminal_split()
+
+                if not terminals:
+                    if paned is not None:
+                        self._terminal_panel_paned = None
+                        paned.set_start_child(None)
+                        self.remove(paned)
+                        self.append(self._content)
+                    return
+
+                if paned is None:
+                    paned = self._new_paned(Gtk.Orientation.VERTICAL)
+                    self.remove(self._content)
+                    paned.set_start_child(self._content)
+                    self.append(paned)
+                    self._terminal_panel_paned = paned
+                    self._place_terminal_divider(paned)
+
+                if len(terminals) == 1:
+                    paned.set_end_child(terminals[0])
+                    return
+                split = self._new_paned(Gtk.Orientation.HORIZONTAL)
+                split.set_start_child(terminals[0])
+                split.set_end_child(terminals[1])
+                # Keep each terminal under its file pane as either divider moves.
+                file_panes = getattr(self._controller, "_panes", None)
+                if isinstance(file_panes, Gtk.Paned):
+                    from gi.repository import GObject
+
+                    self._terminal_split_binding = file_panes.bind_property(
+                        "position", split, "position",
+                        GObject.BindingFlags.BIDIRECTIONAL
+                        | GObject.BindingFlags.SYNC_CREATE,
+                    )
+                self._terminal_split = split
+                paned.set_end_child(split)
+            except Exception:
+                logger.debug("Terminal panel layout failed", exc_info=True)
+
+        def _place_terminal_divider(self, paned: Gtk.Paned) -> None:
             def _apply_position() -> bool:
                 if self._terminal_panel_paned is not paned:
                     return False  # panel was cleared before allocation
@@ -162,31 +262,6 @@ if isinstance(getattr(Gtk, 'Box', None), type):
 
             if _apply_position():
                 GLib.idle_add(_apply_position)
-
-        def clear_terminal_panel(self) -> None:
-            """Remove the terminal panel and restore the manager-only layout."""
-            paned = self._terminal_panel_paned
-            teardown = self._terminal_panel_teardown
-            self._terminal_panel = None
-            self._terminal_panel_paned = None
-            self._terminal_panel_teardown = None
-            if paned is None:
-                return
-            # Disconnect the terminal while the tree is still intact.
-            if teardown is not None:
-                try:
-                    teardown()
-                except Exception:
-                    logger.debug("Terminal panel teardown failed", exc_info=True)
-            try:
-                # set_*_child(None) instead of unparent(): unparenting a Paned
-                # child can silently fail in GTK4 (see split_view._release_paned).
-                paned.set_end_child(None)
-                paned.set_start_child(None)
-                self.remove(paned)
-                self.append(self._content)
-            except Exception:
-                logger.debug("Terminal panel layout restore failed", exc_info=True)
 
         def _on_destroy(self, *_args) -> None:
             controller = getattr(self, '_controller', None)
@@ -223,12 +298,15 @@ else:  # pragma: no cover - fallback for test doubles
             self._controller = controller
             self._content = content
             self._destroy_handlers: list[Any] = []
-            self._terminal_panel = None
+            self._terminal_panels: dict = {}
 
         def has_terminal_panel(self) -> bool:
             return False
 
-        def clear_terminal_panel(self) -> None:
+        def get_terminal_panel(self, side: str = "remote"):
+            return None
+
+        def clear_terminal_panel(self, side: Optional[str] = None) -> None:
             return None
 
         # Compatibility shims used by window code

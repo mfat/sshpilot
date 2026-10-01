@@ -68,6 +68,7 @@ from .file_manager.transfer_progress import (
     progress_key_for_future,
 )
 from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.transfer_error_messages import format_transfer_start_error
 
 import logging
 
@@ -317,6 +318,19 @@ class FileManagerWindow(Adw.Window):
         self.connect("notify::default-width", self._on_window_resize)
         # Also connect to the panes widget size changes
         panes.connect("notify::width-request", self._on_panes_size_changed)
+        # Double-clicking the divider evens the two panes out. This hooks the
+        # paned's own drag gesture: it claims presses on the handle (so a
+        # GestureClick there never sees n_press == 2), it only goes active
+        # inside the handle's grab area, which is wider than the painted line,
+        # and the second press has to deny it or any pointer jitter drags the
+        # divider straight back under the pointer.
+        self._separator_last_press_time = 0
+        controllers = panes.observe_controllers()
+        for index in range(controllers.get_n_items()):
+            controller = controllers.get_item(index)
+            if type(controller) is Gtk.GestureDrag:
+                controller.connect("drag-begin", self._on_panes_separator_drag_begin)
+                break
 
 
         self._left_pane = FilePane("Local")
@@ -408,6 +422,7 @@ class FileManagerWindow(Adw.Window):
         for pane in (self._left_pane, self._right_pane):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
+            pane.connect("directory-shown", self._on_directory_shown, pane)
             pane.set_can_paste(False)
 
         # Connect close-request and destroy handlers to clean up resources
@@ -714,6 +729,10 @@ class FileManagerWindow(Adw.Window):
                 except Exception:
                     pass
 
+        # Embedded in a tab, each pane can show a terminal below it.
+        can_toggle = callable(getattr(parent, "toggle_file_manager_terminal", None))
+        for pane in (self._left_pane, self._right_pane):
+            pane.set_terminal_toggle_visible(can_toggle)
         return content
 
     def enable_embedding_mode(self) -> None:
@@ -1517,12 +1536,73 @@ class FileManagerWindow(Adw.Window):
             self._op_upload(pane, payload, user_data)
         elif action == "download" and isinstance(payload, dict):
             self._op_download(pane, payload, user_data)
+        elif action == "open-terminal" and isinstance(payload, dict):
+            self._op_open_terminal(pane, payload)
+        elif action == "toggle-terminal" and isinstance(payload, dict):
+            self._op_toggle_terminal(pane, payload)
         else:
             logger.debug(
                 "unknown file-manager action %r (payload_type=%s)",
                 action,
                 type(payload).__name__,
             )
+
+    def can_open_terminal(self) -> bool:
+        """Open in Terminal needs the main window this file manager is a tab
+        (or a files panel) of; a standalone window has no terminal pane."""
+        return self._connection is not None and callable(
+            getattr(self._embedded_parent, "open_file_manager_terminal_at", None)
+        )
+
+    def _terminal_side(self, pane) -> str:
+        return "local" if pane is self._left_pane else "remote"
+
+    def _op_open_terminal(self, pane, payload) -> None:
+        """Open (or reuse) the pane's terminal and cd it into the folder."""
+        opened = False
+        if self.can_open_terminal():
+            try:
+                opened = self._embedded_parent.open_file_manager_terminal_at(
+                    self._toolbar_view, payload.get("path") or "/",
+                    self._terminal_side(pane),
+                )
+            except Exception as exc:
+                logger.error("Open in terminal failed: %s", exc)
+        if not opened:
+            pane.show_toast(_("Terminal is not available"))
+
+    def _op_toggle_terminal(self, pane, payload) -> None:
+        """The pane's terminal button: show or hide the terminal below it."""
+        toggle = getattr(self._embedded_parent, "toggle_file_manager_terminal", None)
+        active = bool(payload.get("active"))
+        done = False
+        if callable(toggle):
+            try:
+                done = toggle(
+                    self._toolbar_view, self._terminal_side(pane), active,
+                    payload.get("path") or "/",
+                )
+            except Exception as exc:
+                logger.error("Toggle terminal failed: %s", exc)
+        if not done:
+            pane.set_terminal_toggle_active(not active)
+            if active:
+                pane.show_toast(_("Terminal is not available"))
+
+    def on_terminal_panels_changed(self, sides) -> None:
+        """The embed opened or closed a terminal: sync the pane buttons."""
+        for pane in (self._left_pane, self._right_pane):
+            pane.set_terminal_toggle_active(self._terminal_side(pane) in sides)
+
+    def _on_directory_shown(self, pane, path: str, user_data=None) -> None:
+        """Follow Folder Navigation: hand the new folder to the terminal."""
+        sync = getattr(self._embedded_parent, "sync_file_manager_terminal", None)
+        if not callable(sync) or not path:
+            return
+        try:
+            sync(self._toolbar_view, path, self._terminal_side(pane))
+        except Exception as exc:
+            logger.debug("Terminal sync failed: %s", exc)
 
     def _op_copy_cut(self, pane, action, payload) -> None:
         entries = list(payload.get("entries") or [])
@@ -2249,6 +2329,30 @@ class FileManagerWindow(Adw.Window):
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
         self._update_split_position()
+
+    def _on_panes_separator_drag_begin(
+        self, gesture: Gtk.GestureDrag, _x: float, _y: float
+    ) -> None:
+        """Reset the split to equal halves when the divider is double-clicked."""
+        if not gesture.is_active():
+            # The paned denied the press: it is not on the handle.
+            self._separator_last_press_time = 0
+            return
+
+        now = gesture.get_current_event_time()
+        settings = Gtk.Settings.get_default()
+        double_click_time = settings.props.gtk_double_click_time if settings else 400
+        last = self._separator_last_press_time
+        if not (last and 0 <= now - last <= double_click_time):
+            self._separator_last_press_time = now
+            return
+
+        self._separator_last_press_time = 0
+        gesture.set_state(Gtk.EventSequenceState.DENIED)
+        panes = gesture.get_widget()
+        width = panes.get_width()
+        if width > 0:
+            panes.set_position(width // 2)
 
     def _on_content_size_allocate(self, _widget: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
         """Adjust split position based on the actual allocated width of the content."""
@@ -3257,7 +3361,7 @@ class FileManagerWindow(Adw.Window):
             except (TransferCancelledException, CancelledError):
                 return False
             except Exception as exc:
-                dialog.show_completion(success=False, error_message=str(exc))
+                dialog.show_completion(success=False, error_message=format_transfer_start_error(exc))
                 return False
             if result.cancelled:
                 return False

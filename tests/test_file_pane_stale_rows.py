@@ -88,6 +88,7 @@ def _entry(module, name, is_dir=False):
 def _make_pane(module):
     FilePane = module.FilePane
     pane = FilePane.__new__(FilePane)
+    pane.emit = lambda *_args: None
     pane._cached_entries = []
     pane._raw_entries = []
     pane._entries = []

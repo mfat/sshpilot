@@ -16,6 +16,9 @@ CONFIG_VERSION = 3
 # Konsole and Alacritty.
 DEFAULT_WHEEL_SCROLL_LINES = 1 if sys.platform == 'darwin' else 3
 
+# file_manager.terminal_panes values: which terminals sit below a file manager.
+TERMINAL_PANE_CHOICES = ('none', 'remote', 'local', 'both')
+
 
 def get_default_config() -> Dict[str, Any]:
     """Return the canonical default configuration tree."""
@@ -182,6 +185,12 @@ def get_default_config() -> Dict[str, Any]:
             # [0, 2] (default 1 = 32px), grid in [0, 4] (default 2 = 96px).
             'list_icon_level': 1,
             'grid_icon_level': 2,
+            # Terminals a new file-manager tab opens below its panes: 'none',
+            # 'remote', 'local' or 'both' (local under the Local pane, remote
+            # under the Remote one). Each pane's terminal button toggles its own.
+            'terminal_panes': 'none',
+            # cd the terminal panes into the folder each file pane browses to.
+            'terminal_follows_navigation': False,
         },
         'security': {
             'store_passwords': True,

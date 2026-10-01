@@ -670,7 +670,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._source_view.set_tab_width(4)
             self._source_view.set_insert_spaces_instead_of_tabs(False)
             self._source_view.set_monospace(True)
-            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
+            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
 
             language_manager = _get_language_manager()
             language = None
@@ -705,7 +705,7 @@ class RemoteFileEditorWindow(Adw.Window):
         """Initialize a basic Gtk.TextView editor as a fallback."""
         self._source_view = Gtk.TextView()
         self._source_view.set_monospace(True)
-        self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self._source_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         self._buffer = Gtk.TextBuffer()
         self._source_view.set_buffer(self._buffer)
         self._search_settings = None
