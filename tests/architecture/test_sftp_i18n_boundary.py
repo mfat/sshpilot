@@ -62,8 +62,16 @@ def test_sftp_presenter_is_the_gettext_extraction_owner():
     assert "src/sshpilot/gtk/sftp_failure_messages.py" in potfiles
     assert "src/sshpilot/gtk/scp_failure_messages.py" in potfiles
     assert "src/sshpilot/gtk/identity_failure_messages.py" in potfiles
+    assert "src/sshpilot/gtk/transfer_error_messages.py" in potfiles
     assert "src/sshpilot/daemon/sftp_runtime.py" not in potfiles
     assert "src/sshpilot/daemon/transfer_runtime.py" not in potfiles
+
+
+def test_transfer_controller_remains_locale_neutral():
+    tree = _tree(SOURCE / "transfer_service_controller.py")
+    imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert "gettext" not in imports
+    assert not any(module and "gtk" in module for module in imports)
 
 
 def test_sftp_presenter_does_not_depend_on_service_failure_models():

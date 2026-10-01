@@ -68,6 +68,7 @@ from .file_manager.transfer_progress import (
     progress_key_for_future,
 )
 from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.transfer_error_messages import format_transfer_start_error
 
 import logging
 
@@ -3323,7 +3324,7 @@ class FileManagerWindow(Adw.Window):
             except (TransferCancelledException, CancelledError):
                 return False
             except Exception as exc:
-                dialog.show_completion(success=False, error_message=str(exc))
+                dialog.show_completion(success=False, error_message=format_transfer_start_error(exc))
                 return False
             if result.cancelled:
                 return False

@@ -158,8 +158,8 @@ def test_chmod_error_is_localized(monkeypatch):
     error = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "denied")
     controller.chmod = lambda path, mode, *, on_success, on_error: on_error(error)
     monkeypatch.setattr(
-        "sshpilot.daemon_sftp_backend.format_direct_sftp_error",
-        lambda exc: "Localized denial",
+        "sshpilot.gtk.sftp_error_messages._",
+        lambda msgid: "Localized denial",
     )
 
     future = manager.chmod("/srv/data", 0o700)
@@ -186,18 +186,22 @@ def test_direct_future_error_is_localized_without_losing_error_code(monkeypatch)
     assert localized.details == error.details
 
 
-def test_service_failure_error_is_unchanged_by_direct_adapter(monkeypatch):
+def test_direct_not_ready_error_is_localized_without_parsing_message(monkeypatch):
     monkeypatch.setattr(
         sftp_error_messages,
         "_",
-        lambda _msgid: pytest.fail("ServiceFailure must not be translated here"),
+        lambda msgid: "Le service SFTP n’est pas prêt" if msgid == "The SFTP service is not ready" else msgid,
     )
     error = SshPilotError(
         ErrorCode.SFTP_SERVICE_NOT_READY,
         "The SFTP session could not be established",
     )
 
-    assert _localized_direct_error(error) is error
+    localized = _localized_direct_error(error)
+    assert localized is not error
+    assert localized.code is ErrorCode.SFTP_SERVICE_NOT_READY
+    assert localized.details == error.details
+    assert str(localized) == "Le service SFTP n’est pas prêt"
 
 
 def test_list_error_signal_contains_frontend_translation(monkeypatch):

@@ -43,6 +43,7 @@ src/sshpilot/gtk/scp_failure_messages.py
 src/sshpilot/gtk/session_failure_messages.py
 src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/sftp_error_messages.py
+src/sshpilot/gtk/transfer_error_messages.py
 src/sshpilot/gtk/sftp_failure_messages.py
 src/sshpilot/gtk/secret_status_messages.py
 src/sshpilot/gtk/secret_transfer_messages.py
