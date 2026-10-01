@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.2.8" date="2026-10-01">
+      <description>
+        <p>New &quot;Open in Terminal&quot; option in file manager</p>
+        <p>Open local and remote terminal panes in file manager with optional synchronized browsing</p>
+      </description>
+    </release>
     <release version="6.2.7" date="2026-09-30">
       <description>
         <p>SFTP file manager improvements</p>
