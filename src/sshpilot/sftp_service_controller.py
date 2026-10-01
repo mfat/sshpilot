@@ -52,6 +52,7 @@ from .api.models.operations import (
     is_terminal_operation_state,
 )
 from .api.transport.codec import sftp_directory_size_result_from_wire
+from .gtk.sftp_error_messages import localize_direct_sftp_error
 from .gtk.sftp_failure_messages import format_sftp_failure
 
 logger = logging.getLogger(__name__)
@@ -1051,7 +1052,7 @@ class DaemonSftpServiceController:
         try:
             return self._require_ready_service_id()
         except SshPilotError as exc:
-            on_error(exc)
+            on_error(localize_direct_sftp_error(exc))
             return None
 
     def _submit(
@@ -1061,10 +1062,14 @@ class DaemonSftpServiceController:
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
+        def _on_error(error: BaseException) -> None:
+            on_error(localize_direct_sftp_error(error))
+
         try:
-            self._bridge.submit(factory, on_success=on_success, on_error=on_error)
-        except RuntimeError as exc:
-            on_error(exc)
+            self._bridge.submit(factory, on_success=on_success, on_error=_on_error)
+        except RuntimeError:
+            logger.debug("SFTP request submission failed", exc_info=True)
+            _on_error(SshPilotError(ErrorCode.INTERNAL_ERROR, "SFTP request submission failed"))
 
     def _watch_operation(
         self,
@@ -1167,10 +1172,10 @@ class DaemonSftpServiceController:
         for _operation_id, (_on_terminal, on_error, _on_progress) in pending.items():
             try:
                 on_error(
-                    SshPilotError(
+                    localize_direct_sftp_error(SshPilotError(
                         ErrorCode.SFTP_SERVICE_NOT_READY,
                         "The SFTP service closed before the operation finished",
-                    )
+                    ))
                 )
             except Exception:
                 logger.debug("SFTP operation watcher teardown error", exc_info=True)

@@ -16,6 +16,15 @@ from sshpilot.gtk import sftp_error_messages as messages
         ),
         (ErrorCode.SFTP_COMMAND_FAILED, "The SFTP command failed"),
         (ErrorCode.SFTP_PROTOCOL_ERROR, "The SFTP command failed"),
+        (ErrorCode.SFTP_SERVICE_NOT_FOUND, "The SFTP service was not found"),
+        (ErrorCode.SFTP_SERVICE_NOT_READY, "The SFTP service is not ready"),
+        (ErrorCode.SERVICE_OWNER_REQUIRED, "Only the originating client may mutate this SFTP service"),
+        (ErrorCode.INVALID_REQUEST, "The SFTP command failed"),
+        (ErrorCode.INTERNAL_ERROR, "The SFTP command failed"),
+        (ErrorCode.PROTOCOL_ERROR, "The SFTP command failed"),
+        (ErrorCode.TRANSPORT_CLOSED, "The daemon connection was closed."),
+        (ErrorCode.TRANSPORT_TIMEOUT, "The daemon request timed out."),
+        (ErrorCode.DAEMON_SHUTTING_DOWN, "The daemon is shutting down"),
     ),
 )
 def test_direct_sftp_error_code_selects_frontend_msgid(monkeypatch, code, msgid):
@@ -68,20 +77,27 @@ def test_generic_server_status_is_not_displayed_as_diagnostic(monkeypatch):
     assert messages.format_direct_sftp_error(error) == "Échec SFTP"
 
 
-def test_service_failure_family_is_not_presented_by_direct_formatter(monkeypatch):
+def test_direct_not_ready_code_ignores_unstable_message(monkeypatch):
     monkeypatch.setattr(
         messages,
         "_",
-        lambda _value: pytest.fail("ServiceFailure text must stay out of this pass"),
+        lambda value: "Le service SFTP n’est pas prêt" if value == "The SFTP service is not ready" else value,
     )
     error = SshPilotError(
         ErrorCode.SFTP_SERVICE_NOT_READY,
         "The SFTP session could not be established",
     )
 
-    assert messages.format_direct_sftp_error(error) == (
-        "The SFTP session could not be established"
-    )
+    assert messages.format_direct_sftp_error(error) == "Le service SFTP n’est pas prêt"
+
+
+@pytest.mark.parametrize("capability", ["sftp.file_ops", "sftp.read"])
+def test_sftp_capability_failure_translates_from_details(monkeypatch, capability):
+    calls = []
+    monkeypatch.setattr(messages, "_", lambda value: calls.append(value) or "Capacité indisponible : {capability}")
+    error = SshPilotError(ErrorCode.UNSUPPORTED_CAPABILITY, "ignored", details={"capability": capability})
+    assert messages.format_direct_sftp_error(error) == f"Capacité indisponible : {capability}"
+    assert calls == ["The daemon does not support {capability}"]
 
 
 def test_specific_diagnostic_metadata_is_strict():

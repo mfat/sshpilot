@@ -153,7 +153,7 @@ class TransferServiceController:
     ) -> None:
         if self._closed:
             if on_error:
-                on_error(RuntimeError("Transfer controller is closed"))
+                on_error(SshPilotError(ErrorCode.INVALID_REQUEST, "Transfer controller is closed"))
             return
         directional_capability = (
             Capability.TRANSFERS_UPLOAD
@@ -194,9 +194,10 @@ class TransferServiceController:
                 on_success=_on_success,
                 on_error=on_error or (lambda _exc: None),
             )
-        except RuntimeError as exc:
+        except RuntimeError:
+            logger.debug("Transfer request submission failed", exc_info=True)
             if on_error:
-                on_error(exc)
+                on_error(SshPilotError(ErrorCode.INTERNAL_ERROR, "Transfer request submission failed"))
 
     def cancel_transfer(
         self,
