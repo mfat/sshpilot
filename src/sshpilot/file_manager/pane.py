@@ -719,6 +719,20 @@ class FilePane(Gtk.Box):
         action_bar.pack_start(download_button)
         if request_access_button:
             action_bar.pack_start(request_access_button)
+        # Shows or hides the terminal below this pane; hidden until the file
+        # manager is embedded in a tab that can host terminal panes.
+        terminal_button = Gtk.ToggleButton()
+        terminal_button.set_child(icon_utils.new_image_from_icon_name("utilities-terminal-symbolic"))
+        terminal_button.set_tooltip_text(_("Show Terminal"))
+        terminal_button.set_valign(Gtk.Align.CENTER)
+        terminal_button.add_css_class("flat")
+        terminal_button.set_visible(False)
+        self._terminal_toggle_handler = terminal_button.connect(
+            "toggled", self._on_terminal_toggled
+        )
+        self._terminal_button = terminal_button
+
+        action_bar.pack_end(terminal_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
         action_bar.pack_end(edit_button)
@@ -2516,6 +2530,31 @@ class FilePane(Gtk.Box):
             logger.debug("Failed to copy location: %s", exc)
             return
         self.show_toast(_("Location copied"))
+
+    def set_terminal_toggle_visible(self, visible: bool) -> None:
+        button = getattr(self, "_terminal_button", None)
+        if button is not None:
+            button.set_visible(visible)
+
+    def set_terminal_toggle_active(self, active: bool) -> None:
+        """Reflect whether this pane's terminal is open, without toggling it."""
+        button = getattr(self, "_terminal_button", None)
+        if button is None:
+            return
+        button.set_tooltip_text(_("Hide Terminal") if active else _("Show Terminal"))
+        if button.get_active() == active:
+            return
+        button.handler_block(self._terminal_toggle_handler)
+        try:
+            button.set_active(active)
+        finally:
+            button.handler_unblock(self._terminal_toggle_handler)
+
+    def _on_terminal_toggled(self, button: Gtk.ToggleButton) -> None:
+        self.emit(
+            "request-operation", "toggle-terminal",
+            {"active": button.get_active(), "path": self._current_path or "/"},
+        )
 
     def _can_open_terminal(self) -> bool:
         window = self._get_file_manager_window()

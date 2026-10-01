@@ -197,6 +197,12 @@ if isinstance(getattr(Gtk, 'Box', None), type):
         def _layout_terminal_panels(self) -> None:
             """Lay the terminals out below the manager: one fills the width,
             two sit side by side under their file panes (local left)."""
+            notify = getattr(self._controller, "on_terminal_panels_changed", None)
+            if callable(notify):
+                try:
+                    notify(frozenset(self._terminal_panels))
+                except Exception:
+                    logger.debug("Terminal panel notify failed", exc_info=True)
             terminals = [
                 self._terminal_panels[name] for name in ("local", "remote")
                 if name in self._terminal_panels

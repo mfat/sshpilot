@@ -830,10 +830,9 @@ class Config(GObject.Object):
             return max(0, min(max_level, coerced))
 
         def _get_terminal_panes() -> str:
-            value = self.get_setting(
-                'file_manager.terminal_panes', defaults.get('terminal_panes', 'remote')
-            )
-            return value if value in TERMINAL_PANE_CHOICES else 'remote'
+            default = defaults.get('terminal_panes', 'none')
+            value = self.get_setting('file_manager.terminal_panes', default)
+            return value if value in TERMINAL_PANE_CHOICES else default
 
         return {
             'terminal_panes': _get_terminal_panes(),

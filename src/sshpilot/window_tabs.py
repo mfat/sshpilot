@@ -627,34 +627,40 @@ class WindowTabsMixin:
             logger.error("Hide files below terminal failed: %s", exc)
 
     def _on_tabmenu_show_terminal_panel(self, action, param=None):
-        """Embed terminals below the tab's file manager (Settings → File
-        Management picks local, remote or both)."""
+        """Embed terminals below the tab's file manager: the ones Settings →
+        File Management opens with a new tab, else the remote one."""
         try:
             page, child = self._tab_menu_target()
             embed = self._file_manager_embed_for_child(child)
             if embed is None or embed.has_terminal_panel():
                 return
-            controller = getattr(embed, '_controller', None)
-            follow = self._file_manager_config().get('terminal_follows_navigation')
-            panes = self._file_manager_config().get('terminal_panes')
-            sides = {'local': ('local',), 'both': ('local', 'remote')}.get(
-                panes, ('remote',)
-            )
-            for side in sides:
-                path = None
-                if follow and controller is not None:
-                    file_pane = getattr(
-                        controller, '_left_pane' if side == 'local' else '_right_pane', None
-                    )
-                    path = getattr(file_pane, '_current_path', None)
-                terminal, created = self._show_file_manager_terminal_panel(
-                    embed, side, local_cwd=path,
-                )
-                # Following navigation, the remote shell starts in the folder too.
-                if created and side == 'remote' and path:
-                    terminal.feed_child_data_when_shell_ready(_cd_command(path, quiet=True))
+            self.open_configured_file_manager_terminals(embed, fallback=('remote',))
         except Exception as exc:
             logger.error("Show terminal below file manager failed: %s", exc)
+
+    def open_configured_file_manager_terminals(self, embed, fallback=()) -> None:
+        """Open the terminals Settings → File Management shows below a file
+        manager tab (*fallback* when that is None). Following navigation,
+        each starts in its pane's folder."""
+        config = self._file_manager_config()
+        sides = {
+            'remote': ('remote',), 'local': ('local',), 'both': ('local', 'remote'),
+        }.get(config.get('terminal_panes'), tuple(fallback))
+        follow = config.get('terminal_follows_navigation')
+        controller = getattr(embed, '_controller', None)
+        for side in sides:
+            path = None
+            if follow and controller is not None:
+                file_pane = getattr(
+                    controller, '_left_pane' if side == 'local' else '_right_pane', None
+                )
+                path = getattr(file_pane, '_current_path', None)
+            terminal, created = self._show_file_manager_terminal_panel(
+                embed, side, local_cwd=path,
+            )
+            # Following navigation, the remote shell starts in the folder too.
+            if created and side == 'remote' and path:
+                terminal.feed_child_data_when_shell_ready(_cd_command(path, quiet=True))
 
     def _file_manager_config(self) -> dict:
         config = getattr(self, 'config', None)
@@ -722,6 +728,25 @@ class WindowTabsMixin:
             return False
         if not (created and side == 'local'):
             terminal.feed_child_data_when_shell_ready(_cd_command(path))
+        return True
+
+    def toggle_file_manager_terminal(self, content, side: str, active: bool, path: str) -> bool:
+        """The terminal button under a file pane: show the *side* terminal
+        in the pane's folder *path*, or close it. Unlike Open in Terminal this
+        always uses the pane below, even for a files panel under a terminal."""
+        embed, _host = self._file_manager_embed_and_host(content)
+        if embed is None:
+            return False
+        if not active:
+            embed.clear_terminal_panel(side)
+            return True
+        terminal, created = self._show_file_manager_terminal_panel(
+            embed, side, local_cwd=path,
+        )
+        if terminal is None:
+            return False
+        if created and side == 'remote' and path:
+            terminal.feed_child_data_when_shell_ready(_cd_command(path, quiet=True))
         return True
 
     def sync_file_manager_terminal(self, content, path: str, side: str) -> None:

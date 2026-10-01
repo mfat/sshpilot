@@ -16302,3 +16302,7 @@ msgstr "Seguir la navegación de carpetas"
 #: src/sshpilot/preferences.py
 msgid "Change the terminal's folder when you open a folder in the file pane above it"
 msgstr "Cambiar la carpeta del terminal al abrir una carpeta en el panel de archivos de arriba"
+
+#: src/sshpilot/preferences.py
+msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
+msgstr "Se abren con cada nueva pestaña del gestor de archivos; el botón de terminal bajo un panel activa o desactiva el suyo"

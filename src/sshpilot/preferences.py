@@ -2871,14 +2871,18 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         self.terminal_panes_row = Adw.ComboRow()
         self.terminal_panes_row.set_title(_("Visible Terminals"))
+        self.terminal_panes_row.set_subtitle(
+            _("Opened with each new file manager tab; the terminal button below a pane toggles its own")
+        )
         panes_model = Gtk.StringList()
         # Order matches TERMINAL_PANE_CHOICES.
-        for label in (_("Remote"), _("Local"), _("Local and Remote")):
+        for label in (_("None"), _("Remote"), _("Local"), _("Local and Remote")):
             panes_model.append(label)
         self.terminal_panes_row.set_model(panes_model)
+        current_panes = file_manager_config.get('terminal_panes')
         self.terminal_panes_row.set_selected(
-            TERMINAL_PANE_CHOICES.index(file_manager_config.get('terminal_panes', 'remote'))
-            if file_manager_config.get('terminal_panes') in TERMINAL_PANE_CHOICES else 0
+            TERMINAL_PANE_CHOICES.index(current_panes)
+            if current_panes in TERMINAL_PANE_CHOICES else 0
         )
         self.terminal_panes_row.connect('notify::selected', self.on_terminal_panes_changed)
         terminal_panes_group.add(self.terminal_panes_row)
@@ -6944,7 +6948,7 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Failed to update external file manager preference: %s", exc)
 
     def on_terminal_panes_changed(self, row, *args):
-        """Persist which terminals Show Terminal Pane opens."""
+        """Persist which terminals a new file manager tab opens."""
         try:
             index = int(row.get_selected())
             if 0 <= index < len(TERMINAL_PANE_CHOICES):

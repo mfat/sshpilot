@@ -478,7 +478,7 @@ def test_open_in_terminal_cds_a_running_local_shell(monkeypatch):
     ("remote", ["remote"]),
     ("local", ["local"]),
     ("both", ["local", "remote"]),
-    ("bogus", ["remote"]),
+    ("none", ["remote"]),
 ])
 def test_show_terminal_pane_opens_the_configured_terminals(monkeypatch, setting, sides):
     win, _content, embed, _host, created = _open_in_terminal_fixture(
@@ -540,3 +540,44 @@ def test_navigation_sync_moves_an_unspawned_local_shell(monkeypatch):
     )
     win.sync_file_manager_terminal(content, "/tmp", "local")
     assert local.fed == [] and local._local_shell_cwd == "/tmp"
+
+
+def test_terminal_button_opens_the_pane_terminal_in_its_folder(monkeypatch):
+    win, content, embed, _host, created = _open_in_terminal_fixture(monkeypatch)
+    assert win.toggle_file_manager_terminal(content, "remote", True, "/srv/app")
+    assert win.toggle_file_manager_terminal(content, "local", True, "/home/me")
+    assert created == [("remote", "conn"), ("local", "/home/me")]
+    assert embed.panels["remote"].fed == [b" cd /srv/app\n"]
+    assert embed.panels["local"].fed == []
+
+
+def test_terminal_button_closes_only_its_side(monkeypatch):
+    win, content, embed, _host, _created = _open_in_terminal_fixture(
+        monkeypatch, panels={"remote": _Terminal(), "local": _Terminal()},
+    )
+    cleared = []
+    embed.clear_terminal_panel = lambda side=None: cleared.append(side)
+    assert win.toggle_file_manager_terminal(content, "local", False, "/home/me")
+    assert cleared == ["local"]
+
+
+def test_terminal_button_under_a_terminal_opens_a_pane_not_the_host(monkeypatch):
+    win, content, embed, host, created = _open_in_terminal_fixture(
+        monkeypatch, under_terminal=True,
+    )
+    assert win.toggle_file_manager_terminal(content, "remote", True, "/srv")
+    assert created == [("remote", "conn")] and host.fed == []
+
+
+@pytest.mark.parametrize("setting, sides", [
+    ("none", []),
+    ("remote", ["remote"]),
+    ("local", ["local"]),
+    ("both", ["local", "remote"]),
+])
+def test_new_file_manager_tab_opens_the_configured_terminals(monkeypatch, setting, sides):
+    win, _content, embed, _host, _created = _open_in_terminal_fixture(
+        monkeypatch, fm_config={"terminal_panes": setting},
+    )
+    win.open_configured_file_manager_terminals(embed)
+    assert sorted(embed.panels) == sides

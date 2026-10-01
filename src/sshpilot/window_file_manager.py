@@ -461,4 +461,10 @@ class WindowFileManagerMixin:
 
         self.show_tab_view()
         self.tab_view.set_selected_page(page)
+        open_terminals = getattr(self, 'open_configured_file_manager_terminals', None)
+        if callable(open_terminals) and hasattr(widget, 'set_terminal_panel'):
+            try:
+                open_terminals(widget)
+            except Exception as exc:
+                logger.error("Opening file manager terminals failed: %s", exc)
         return page

@@ -233,6 +233,7 @@ def _fake_embed_with_panel(order):
         _terminal_panel_paned=paned,
         _terminal_split=None,
         _terminal_split_binding=None,
+        _controller=None,
         _content=object(),
         remove=lambda w: order.append(('remove', w)),
         append=lambda w: order.append(('append', w)),

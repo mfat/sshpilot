@@ -16298,3 +16298,7 @@ msgstr "Seguir a navegação de pastas"
 #: src/sshpilot/preferences.py
 msgid "Change the terminal's folder when you open a folder in the file pane above it"
 msgstr "Mudar a pasta do terminal quando abre uma pasta no painel de ficheiros acima"
+
+#: src/sshpilot/preferences.py
+msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
+msgstr "Abertos com cada novo separador do gestor de ficheiros; o botão de terminal sob um painel mostra ou oculta o seu"

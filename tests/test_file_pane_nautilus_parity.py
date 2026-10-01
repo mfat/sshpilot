@@ -339,3 +339,44 @@ def test_open_in_terminal_unavailable_in_a_standalone_window(load_file_manager_w
     window._embedded_parent = None
     window._connection = object()
     assert not window.can_open_terminal()
+
+
+def test_terminal_buttons_follow_the_open_terminals(load_file_manager_window):
+    module = load_file_manager_window()
+    states = {}
+    window = _embedded_window(module, None)
+    window._left_pane.set_terminal_toggle_active = lambda on: states.__setitem__("local", on)
+    window._right_pane.set_terminal_toggle_active = lambda on: states.__setitem__("remote", on)
+    window.on_terminal_panels_changed(frozenset({"remote"}))
+    assert states == {"local": False, "remote": True}
+
+
+def test_terminal_button_reverts_when_the_terminal_cannot_open(load_file_manager_window):
+    module = load_file_manager_window()
+    window = _embedded_window(
+        module,
+        types.SimpleNamespace(toggle_file_manager_terminal=lambda *a: False),
+    )
+    reverted, toasts = [], []
+    pane = window._right_pane
+    pane.set_terminal_toggle_active = reverted.append
+    pane.show_toast = toasts.append
+    window._op_toggle_terminal(pane, {"active": True, "path": "/srv"})
+    assert reverted == [False] and len(toasts) == 1
+
+
+def test_terminal_button_hands_side_state_and_folder_over(load_file_manager_window):
+    module = load_file_manager_window()
+    calls = []
+    window = _embedded_window(
+        module,
+        types.SimpleNamespace(
+            toggle_file_manager_terminal=lambda *a: calls.append(a) or True,
+        ),
+    )
+    window._op_toggle_terminal(window._left_pane, {"active": True, "path": "/home/me"})
+    window._op_toggle_terminal(window._right_pane, {"active": False, "path": "/srv"})
+    assert calls == [
+        (window._toolbar_view, "local", True, "/home/me"),
+        (window._toolbar_view, "remote", False, "/srv"),
+    ]

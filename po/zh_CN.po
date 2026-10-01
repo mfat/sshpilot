@@ -15613,3 +15613,7 @@ msgstr "跟随文件夹导航"
 #: src/sshpilot/preferences.py
 msgid "Change the terminal's folder when you open a folder in the file pane above it"
 msgstr "在上方文件面板中打开文件夹时，切换终端的文件夹"
+
+#: src/sshpilot/preferences.py
+msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
+msgstr "随每个新的文件管理器标签页打开；面板下方的终端按钮可切换该面板自己的终端"

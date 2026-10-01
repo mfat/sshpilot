@@ -715,6 +715,10 @@ class FileManagerWindow(Adw.Window):
                 except Exception:
                     pass
 
+        # Embedded in a tab, each pane can show a terminal below it.
+        can_toggle = callable(getattr(parent, "toggle_file_manager_terminal", None))
+        for pane in (self._left_pane, self._right_pane):
+            pane.set_terminal_toggle_visible(can_toggle)
         return content
 
     def enable_embedding_mode(self) -> None:
@@ -1520,6 +1524,8 @@ class FileManagerWindow(Adw.Window):
             self._op_download(pane, payload, user_data)
         elif action == "open-terminal" and isinstance(payload, dict):
             self._op_open_terminal(pane, payload)
+        elif action == "toggle-terminal" and isinstance(payload, dict):
+            self._op_toggle_terminal(pane, payload)
         else:
             logger.debug(
                 "unknown file-manager action %r (payload_type=%s)",
@@ -1550,6 +1556,29 @@ class FileManagerWindow(Adw.Window):
                 logger.error("Open in terminal failed: %s", exc)
         if not opened:
             pane.show_toast(_("Terminal is not available"))
+
+    def _op_toggle_terminal(self, pane, payload) -> None:
+        """The pane's terminal button: show or hide the terminal below it."""
+        toggle = getattr(self._embedded_parent, "toggle_file_manager_terminal", None)
+        active = bool(payload.get("active"))
+        done = False
+        if callable(toggle):
+            try:
+                done = toggle(
+                    self._toolbar_view, self._terminal_side(pane), active,
+                    payload.get("path") or "/",
+                )
+            except Exception as exc:
+                logger.error("Toggle terminal failed: %s", exc)
+        if not done:
+            pane.set_terminal_toggle_active(not active)
+            if active:
+                pane.show_toast(_("Terminal is not available"))
+
+    def on_terminal_panels_changed(self, sides) -> None:
+        """The embed opened or closed a terminal: sync the pane buttons."""
+        for pane in (self._left_pane, self._right_pane):
+            pane.set_terminal_toggle_active(self._terminal_side(pane) in sides)
 
     def _on_directory_shown(self, pane, path: str, user_data=None) -> None:
         """Follow Folder Navigation: hand the new folder to the terminal."""
