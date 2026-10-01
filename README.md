@@ -4,22 +4,27 @@
 [![License: GPL v3](https://img.shields.io/github/license/mfat/sshpilot)](LICENSE)
 
 <p align="center">
-<img src="screenshots/main-window.png" alt="Sidebar, terminal, and SFTP panes" width="90%" /><br/>
-<sub>Sidebar, terminal, and SFTP panes in one window</sub>
+<img src="screenshots/main.webp" alt="Connection sidebar and terminal" width="90%" /><br/>
+<sub>Connections sidebar with a terminal session</sub>
 </p>
 
 <p align="center">
-<img src="screenshots/fm.png" alt="Dual-pane SFTP file manager" width="90%" /><br/>
+<img src="screenshots/dashboard.webp" alt="Server dashboard with CPU, memory, and disk usage" width="90%" /><br/>
+<sub>Server dashboard with live resource usage and system details</sub>
+</p>
+
+<p align="center">
+<img src="screenshots/file-manager.webp" alt="Dual-pane SFTP file manager" width="90%" /><br/>
 <sub>Dual-pane SFTP file manager</sub>
 </p>
 
 <p align="center">
-<img src="screenshots/splitview.png" alt="Split view with multiple terminals" width="90%" /><br/>
+<img src="screenshots/split.webp" alt="Split view with multiple terminals" width="90%" /><br/>
 <sub>Split view with multiple terminals</sub>
 </p>
 
 <p align="center">
-<img src="screenshots/ssh-copy-id.png" alt="Copy key to server dialog" width="90%" /><br/>
+<img src="screenshots/ssh-copy-id.webp" alt="Copy key to server dialog" width="90%" /><br/>
 <sub>Key transfer to a server (ssh-copy-id)</sub>
 </p>
 

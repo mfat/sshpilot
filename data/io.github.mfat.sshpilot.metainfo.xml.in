@@ -863,27 +863,27 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/main-window.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/main.webp</image>
       <caption>Main Window</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/main-nofm.png</image>
-      <caption>Terminal</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/dashboard.webp</image>
+      <caption>Dashboard</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/fm.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/file-manager.webp</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/splitview.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/split.webp</image>
       <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/ssh-copy-id.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/ssh-copy-id.webp</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/backup.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/backup.webp</image>
       <caption>Backup and Restore</caption>
     </screenshot>
   </screenshots>
