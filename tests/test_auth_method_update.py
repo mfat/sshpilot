@@ -51,3 +51,31 @@ def test_key_auth_keeps_password_fallback_when_password_present():
     }
     entry = format_ssh_config_entry(data)
     assert 'PreferredAuthentications publickey,keyboard-interactive,password' in entry
+
+
+def test_password_auth_drops_stale_preference_without_password_methods():
+    # Left behind by a key-auth save that stripped the password methods.
+    data = {
+        'nickname': 'host1',
+        'hostname': 'example.com',
+        'username': 'user',
+        'auth_method': 1,
+        'pubkey_auth_no': True,
+        'preferred_authentications': ['gssapi-with-mic', 'hostbased', 'publickey'],
+    }
+    entry = format_ssh_config_entry(data)
+    assert 'PreferredAuthentications keyboard-interactive,password' in entry
+    assert 'gssapi-with-mic' not in entry
+    assert 'PubkeyAuthentication no' in entry
+
+
+def test_password_auth_keeps_custom_preference_with_password_method():
+    data = {
+        'nickname': 'host1',
+        'hostname': 'example.com',
+        'username': 'user',
+        'auth_method': 1,
+        'preferred_authentications': 'password,keyboard-interactive',
+    }
+    entry = format_ssh_config_entry(data)
+    assert 'PreferredAuthentications password,keyboard-interactive' in entry

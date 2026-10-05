@@ -207,11 +207,20 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # Password-based authentication. Include keyboard-interactive so
         # PAM/2FA hosts (which often disable the raw "password" method)
         # still negotiate; order prefers kbd-int first.
+        # A preserved list with no login-password method (e.g. the
+        # ``gssapi-with-mic,hostbased,publickey`` left behind by a key-auth
+        # save) is stale: ssh would never try the password, and with
+        # ``PubkeyAuthentication no`` it gives up without prompting.
         pref_raw = data.get('preferred_authentications')
         if isinstance(pref_raw, (list, tuple)):
-            custom_pref = ",".join(str(p).strip() for p in pref_raw if str(p).strip())
+            pref_list = [str(p).strip() for p in pref_raw if str(p).strip()]
+        elif isinstance(pref_raw, str):
+            pref_list = [p.strip() for p in pref_raw.split(',') if p.strip()]
         else:
-            custom_pref = (pref_raw or '').strip()
+            pref_list = []
+        if not any(m.lower() in ('password', 'keyboard-interactive') for m in pref_list):
+            pref_list = []
+        custom_pref = ",".join(pref_list)
         if custom_pref:
             lines.append(f"    PreferredAuthentications {custom_pref}")
         else:
