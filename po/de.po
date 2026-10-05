@@ -16426,7 +16426,7 @@ msgstr "Den Ordner des Terminals wechseln, wenn Sie im Dateibereich darüber ein
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Werden mit jedem neuen Dateiverwaltungs-Tab geöffnet; die Terminal-Schaltfläche unter einem Bereich schaltet dessen eigenes um"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:879
 msgid "Start Page"
 msgstr "Startseite"
 

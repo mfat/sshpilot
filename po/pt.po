@@ -16303,7 +16303,7 @@ msgstr "Mudar a pasta do terminal quando abre uma pasta no painel de ficheiros a
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Abertos com cada novo separador do gestor de ficheiros; o botão de terminal sob um painel mostra ou oculta o seu"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:879
 msgid "Start Page"
 msgstr "Página inicial"
 

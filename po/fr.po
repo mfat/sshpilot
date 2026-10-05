@@ -16106,7 +16106,7 @@ msgstr "Changer le dossier du terminal quand vous ouvrez un dossier dans le pann
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Ouverts avec chaque nouvel onglet du gestionnaire de fichiers ; le bouton de terminal sous un panneau affiche ou masque le sien"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:879
 msgid "Start Page"
 msgstr "Page d'accueil"
 

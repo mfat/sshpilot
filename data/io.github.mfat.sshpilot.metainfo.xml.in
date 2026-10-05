@@ -875,12 +875,12 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/main.png</image>
-      <caption>Main Window</caption>
-    </screenshot>
-    <screenshot>
       <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/start-page.png</image>
       <caption>Start Page</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/main.png</image>
+      <caption>Main Window</caption>
     </screenshot>
     <screenshot>
       <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/mixed.png</image>
