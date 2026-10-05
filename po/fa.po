@@ -16073,3 +16073,11 @@ msgstr "با باز کردن پوشه در پنل فایل بالا، پوشه�
 #: src/sshpilot/preferences.py
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "با هر زبانه‌ی جدید مدیر فایل باز می‌شوند؛ دکمه‌ی ترمینال زیر هر پنل، ترمینال همان پنل را روشن یا خاموش می‌کند"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+msgid "Start Page"
+msgstr "صفحهٔ شروع"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
+msgid "Terminal and File Manager in One Tab"
+msgstr "ترمینال و مدیر فایل در یک زبانه"

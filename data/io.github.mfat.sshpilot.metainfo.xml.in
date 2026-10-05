@@ -875,27 +875,35 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/main.webp</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/main.png</image>
       <caption>Main Window</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/dashboard.webp</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/start-page.png</image>
+      <caption>Start Page</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/mixed.png</image>
+      <caption>Terminal and File Manager in One Tab</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/dashboard.png</image>
       <caption>Dashboard</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/file-manager.webp</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/file-manager.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/split.webp</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/split.png</image>
       <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/ssh-copy-id.webp</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/ssh-copy-id.png</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/12106ced085fb249cf86fb060679a54cf82c7299/screenshots/backup.webp</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/8d60d3e0630b8bdd16ac48e20d5effbf0598b0a9/screenshots/backup.png</image>
       <caption>Backup and Restore</caption>
     </screenshot>
   </screenshots>

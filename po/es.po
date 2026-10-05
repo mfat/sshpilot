@@ -16306,3 +16306,11 @@ msgstr "Cambiar la carpeta del terminal al abrir una carpeta en el panel de arch
 #: src/sshpilot/preferences.py
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Se abren con cada nueva pestaña del gestor de archivos; el botón de terminal bajo un panel activa o desactiva el suyo"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+msgid "Start Page"
+msgstr "Página de inicio"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
+msgid "Terminal and File Manager in One Tab"
+msgstr "Terminal y gestor de archivos en una pestaña"

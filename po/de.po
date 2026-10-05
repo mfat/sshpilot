@@ -16425,3 +16425,11 @@ msgstr "Den Ordner des Terminals wechseln, wenn Sie im Dateibereich darüber ein
 #: src/sshpilot/preferences.py
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Werden mit jedem neuen Dateiverwaltungs-Tab geöffnet; die Terminal-Schaltfläche unter einem Bereich schaltet dessen eigenes um"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+msgid "Start Page"
+msgstr "Startseite"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
+msgid "Terminal and File Manager in One Tab"
+msgstr "Terminal und Dateimanager in einem Tab"

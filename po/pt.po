@@ -16302,3 +16302,11 @@ msgstr "Mudar a pasta do terminal quando abre uma pasta no painel de ficheiros a
 #: src/sshpilot/preferences.py
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Abertos com cada novo separador do gestor de ficheiros; o botão de terminal sob um painel mostra ou oculta o seu"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+msgid "Start Page"
+msgstr "Página inicial"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
+msgid "Terminal and File Manager in One Tab"
+msgstr "Terminal e gestor de ficheiros num só separador"

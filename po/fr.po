@@ -16105,3 +16105,11 @@ msgstr "Changer le dossier du terminal quand vous ouvrez un dossier dans le pann
 #: src/sshpilot/preferences.py
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Ouverts avec chaque nouvel onglet du gestionnaire de fichiers ; le bouton de terminal sous un panneau affiche ou masque le sien"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+msgid "Start Page"
+msgstr "Page d'accueil"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
+msgid "Terminal and File Manager in One Tab"
+msgstr "Terminal et gestionnaire de fichiers dans un même onglet"

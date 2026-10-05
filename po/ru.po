@@ -16349,3 +16349,11 @@ msgstr "Менять папку терминала при открытии па�
 #: src/sshpilot/preferences.py
 msgid "Opened with each new file manager tab; the terminal button below a pane toggles its own"
 msgstr "Открываются с каждой новой вкладкой файлового менеджера; кнопка терминала под панелью включает и выключает её терминал"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
+msgid "Start Page"
+msgstr "Начальная страница"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
+msgid "Terminal and File Manager in One Tab"
+msgstr "Терминал и файловый менеджер в одной вкладке"
