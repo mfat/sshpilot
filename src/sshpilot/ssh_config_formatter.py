@@ -49,6 +49,16 @@ def _authored_directives(data: Dict[str, Any]) -> frozenset:
     )
 
 
+def _preferred_auth_list(data: Dict[str, Any]) -> List[str]:
+    """``preferred_authentications`` as a list, from a list or a comma string."""
+    pref_raw = data.get('preferred_authentications')
+    if isinstance(pref_raw, (list, tuple)):
+        return [str(p).strip() for p in pref_raw if str(p).strip()]
+    if isinstance(pref_raw, str):
+        return [p.strip() for p in pref_raw.split(',') if p.strip()]
+    return []
+
+
 def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     """Format connection data as SSH config entry"""
     def _quote_token(token: str) -> str:
@@ -183,13 +193,7 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # asking for a password after the switch to key-based auth, so login
         # password methods are stripped here in key mode unless the payload
         # still carries an explicit password fallback.
-        pref_raw = data.get('preferred_authentications')
-        if isinstance(pref_raw, (list, tuple)):
-            pref_list = [str(p).strip() for p in pref_raw if str(p).strip()]
-        elif isinstance(pref_raw, str):
-            pref_list = [p.strip() for p in pref_raw.split(',') if p.strip()]
-        else:
-            pref_list = []
+        pref_list = _preferred_auth_list(data)
         if pref_list:
             if not data.get('password'):
                 pref_list = [
@@ -207,11 +211,20 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # Password-based authentication. Include keyboard-interactive so
         # PAM/2FA hosts (which often disable the raw "password" method)
         # still negotiate; order prefers kbd-int first.
-        pref_raw = data.get('preferred_authentications')
-        if isinstance(pref_raw, (list, tuple)):
-            custom_pref = ",".join(str(p).strip() for p in pref_raw if str(p).strip())
-        else:
-            custom_pref = (pref_raw or '').strip()
+        # A preserved list is kept only if the loader would read it back as
+        # password auth: ``password`` present, ``publickey`` absent or after
+        # it. Anything else is stale — the ``gssapi-with-mic,hostbased,
+        # publickey`` left by a key-auth save never tries the password (and
+        # with ``PubkeyAuthentication no`` fails without prompting), and the
+        # key+password combined list reloads as key auth, reverting the switch.
+        pref_list = _preferred_auth_list(data)
+        lowered = [m.lower() for m in pref_list]
+        if 'password' not in lowered or (
+            'publickey' in lowered
+            and lowered.index('publickey') < lowered.index('password')
+        ):
+            pref_list = []
+        custom_pref = ",".join(pref_list)
         if custom_pref:
             lines.append(f"    PreferredAuthentications {custom_pref}")
         else:
