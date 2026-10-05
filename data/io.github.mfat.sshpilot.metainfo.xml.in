@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.2.9" date="2026-10-05">
+      <description>
+        <p>Bug fixes</p>
+        <p>New logo</p>
+      </description>
+    </release>
     <release version="6.2.8" date="2026-10-01">
       <description>
         <p>New &quot;Open in Terminal&quot; option in file manager</p>
