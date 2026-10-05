@@ -4,9 +4,10 @@
       <stop offset="0" stop-color="#9a9996"></stop>
       <stop offset="1" stop-color="#5e5c64"></stop>
     </linearGradient>
-    <clipPath id="w"><rect x="22" y="22" width="84" height="84" rx="6"></rect></clipPath>
+    <clipPath id="w"><rect x="22" y="22" width="84" height="84" rx="7.3"></rect></clipPath>
   </defs>
   <rect x="12" y="12" width="104" height="104" rx="14" fill="url(#face)"></rect>
+  <g transform="translate(64 64) scale(1.095238) translate(-64 -64)">
   <g clip-path="url(#w)">
     <rect x="22" y="22" width="84" height="84" fill="#241f31"></rect>
     <rect x="22" y="22" width="25" height="84" fill="#f6f5f4"></rect>
@@ -16,4 +17,5 @@
   <g transform="translate(0 -4)"><rect x="24.5" y="58" width="20" height="11" rx="2.5" fill="#ffffff" stroke="#deddda" stroke-width="1"></rect><circle cx="29" cy="63.5" r="2" fill="#2ec27e"></circle><rect x="33" y="61.5" width="5" height="1.5" rx=".75" fill="#c0bfbc"></rect><rect x="33" y="64" width="8" height="1.5" rx=".75" fill="#c0bfbc"></rect></g>
   <g transform="translate(0 2)"><path d="M57.7 51.2 l14.4 11.2 l-14.4 11.2" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></path></g>
   <g transform="translate(0 2)"><rect x="78.5" y="68.8" width="20.8" height="8" rx="2" fill="#ffa348"></rect></g>
+  </g>
 </svg>
