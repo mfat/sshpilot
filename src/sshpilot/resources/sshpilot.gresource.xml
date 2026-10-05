@@ -3,6 +3,7 @@
   <gresource prefix="/io/github/mfat/sshpilot">
     <file>style.css</file>
     <file>sshpilot.svg</file>
+    <file>sshpilot-flat.svg</file>
     <file>file-manager-choice.png</file>
     <file>keychain.png</file>
   </gresource>
