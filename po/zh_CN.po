@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 13:05+0330\n"
+"POT-Creation-Date: 2026-10-09 13:18+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -207,7 +207,7 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6715
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6708
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -2451,7 +2451,7 @@ msgstr "设备"
 #: src/sshpilot/split_view.py:428 src/sshpilot/split_view.py:449
 #: src/sshpilot/split_view.py:451 src/sshpilot/split_view.py:611
 #: src/sshpilot/split_view.py:1169 src/sshpilot/terminal.py:832
-#: src/sshpilot/terminal.py:3589 src/sshpilot/terminal_manager.py:969
+#: src/sshpilot/terminal.py:3594 src/sshpilot/terminal_manager.py:969
 #: src/sshpilot/terminal_manager.py:1011 src/sshpilot/terminal_manager.py:1539
 #: src/sshpilot/window_tabs.py:1399 src/sshpilot/window_tabs.py:1488
 msgid "Terminal"
@@ -3374,7 +3374,7 @@ msgstr "上传"
 
 #: src/sshpilot/file_manager/pane.py:658 src/sshpilot/file_manager/pane.py:2250
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
-#: src/sshpilot/terminal.py:1157 src/sshpilot/terminal.py:3523
+#: src/sshpilot/terminal.py:1157 src/sshpilot/terminal.py:3528
 #: src/sshpilot/window_dialogs.py:3543
 msgid "Copy"
 msgstr "复制"
@@ -10602,19 +10602,14 @@ msgstr "xterm.js（不可用）"
 msgid "Requires WebKitGTK 6.0"
 msgstr "需要 WebKitGTK 6.0"
 
-#: src/sshpilot/preferences.py:6708
+#: src/sshpilot/preferences.py:6706
 #, python-brace-format
-msgid "New tabs will use {backend}"
-msgstr "新标签页将使用 {backend}"
-
-#: src/sshpilot/preferences.py:6710
-msgid "The open tab keeps its current backend until you reopen it."
-msgid_plural "Open tabs keep their current backend until you reopen them."
-msgstr[0] "打开的标签页会保留当前后端，直到重新打开。"
+msgid "Only new tabs will use {backend}"
+msgstr "仅新标签页将使用 {backend}"
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7250 src/sshpilot/preferences.py:7269
+#: src/sshpilot/preferences.py:7243 src/sshpilot/preferences.py:7262
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "自定义"
@@ -11735,7 +11730,7 @@ msgstr "断开连接前确认"
 
 #. A local shell's exit status is never an ssh error.
 #: src/sshpilot/terminal.py:554 src/sshpilot/terminal.py:2535
-#: src/sshpilot/terminal.py:5811
+#: src/sshpilot/terminal.py:5816
 msgid "Session ended."
 msgstr "会话已结束。"
 
@@ -11821,7 +11816,7 @@ msgstr "远程终端会话应如何处理？"
 msgid "Detach"
 msgstr "详细信息"
 
-#: src/sshpilot/terminal.py:2531 src/sshpilot/terminal.py:5808
+#: src/sshpilot/terminal.py:2531 src/sshpilot/terminal.py:5813
 #, python-brace-format
 msgid "SSH exited with status {code}"
 msgstr "SSH 退出，状态码 {code}"
@@ -11831,101 +11826,101 @@ msgstr "SSH 退出，状态码 {code}"
 msgid "Session terminated by signal {sig}"
 msgstr "会话被信号 {sig} 终止"
 
-#: src/sshpilot/terminal.py:3243 src/sshpilot/terminal.py:5973
-#: src/sshpilot/terminal.py:5993
+#: src/sshpilot/terminal.py:3248 src/sshpilot/terminal.py:5978
+#: src/sshpilot/terminal.py:5998
 msgid "Copied to clipboard"
 msgstr "已复制到剪贴板"
 
-#: src/sshpilot/terminal.py:3264
+#: src/sshpilot/terminal.py:3269
 msgid "Save Terminal Output"
 msgstr "保存终端输出"
 
-#: src/sshpilot/terminal.py:3492
+#: src/sshpilot/terminal.py:3497
 #, python-brace-format
 msgid "Remote program copied {count} character to the clipboard"
 msgid_plural "Remote program copied {count} characters to the clipboard"
 msgstr[0] "远程程序已将 {count} 个字符复制到剪贴板"
 
-#: src/sshpilot/terminal.py:3519
+#: src/sshpilot/terminal.py:3524
 #, python-brace-format
 msgid "Remote program wants to copy {count} character to the clipboard"
 msgid_plural "Remote program wants to copy {count} characters to the clipboard"
 msgstr[0] "远程程序想要将 {count} 个字符复制到剪贴板"
 
-#: src/sshpilot/terminal.py:3572
+#: src/sshpilot/terminal.py:3577
 #, python-brace-format
 msgid "Encoding '{requested}' is not supported. Using {fallback} instead."
 msgstr "不支持编码“{requested}”。改用 {fallback}。"
 
-#: src/sshpilot/terminal.py:4374
+#: src/sshpilot/terminal.py:4379
 msgid "Open Link"
 msgstr "打开链接"
 
-#: src/sshpilot/terminal.py:4375
+#: src/sshpilot/terminal.py:4380
 msgid "Copy Link"
 msgstr "复制链接"
 
-#: src/sshpilot/terminal.py:4378
+#: src/sshpilot/terminal.py:4383
 msgid "Copy\t⌘C"
 msgstr "复制\t⌘C"
 
-#: src/sshpilot/terminal.py:4381 src/sshpilot/terminal.py:4398
+#: src/sshpilot/terminal.py:4386 src/sshpilot/terminal.py:4403
 msgid "Copy as HTML"
 msgstr "复制为 HTML"
 
-#: src/sshpilot/terminal.py:4382
+#: src/sshpilot/terminal.py:4387
 msgid "Paste\t⌘V"
 msgstr "粘贴\t⌘V"
 
-#: src/sshpilot/terminal.py:4383
+#: src/sshpilot/terminal.py:4388
 msgid "Select All\t⌘A"
 msgstr "全选\t⌘A"
 
-#: src/sshpilot/terminal.py:4385
+#: src/sshpilot/terminal.py:4390
 msgid "Zoom In\t⌘="
 msgstr "放大\t⌘="
 
-#: src/sshpilot/terminal.py:4386
+#: src/sshpilot/terminal.py:4391
 msgid "Zoom Out\t⌘-"
 msgstr "缩小\t⌘-"
 
-#: src/sshpilot/terminal.py:4387
+#: src/sshpilot/terminal.py:4392
 msgid "Reset Zoom\t⌘0"
 msgstr "重置缩放\t⌘0"
 
-#: src/sshpilot/terminal.py:4390
+#: src/sshpilot/terminal.py:4395
 msgid "Search\t⌘F"
 msgstr "搜索\t⌘F"
 
-#: src/sshpilot/terminal.py:4391 src/sshpilot/terminal.py:4409
+#: src/sshpilot/terminal.py:4396 src/sshpilot/terminal.py:4414
 msgid "Save Output…"
 msgstr "保存输出…"
 
-#: src/sshpilot/terminal.py:4395
+#: src/sshpilot/terminal.py:4400
 msgid "Copy\tCtrl+Shift+C"
 msgstr "复制\tCtrl+Shift+C"
 
-#: src/sshpilot/terminal.py:4400
+#: src/sshpilot/terminal.py:4405
 msgid "Paste\tCtrl+Shift+V"
 msgstr "粘贴\tCtrl+Shift+V"
 
-#: src/sshpilot/terminal.py:4401
+#: src/sshpilot/terminal.py:4406
 msgid "Select All\tCtrl+Shift+A"
 msgstr "全选\tCtrl+Shift+A"
 
-#: src/sshpilot/terminal.py:4403
+#: src/sshpilot/terminal.py:4408
 msgid "Zoom In\tCtrl++"
 msgstr "放大\tCtrl++"
 
-#: src/sshpilot/terminal.py:4404
+#: src/sshpilot/terminal.py:4409
 msgid "Zoom Out\tCtrl+-"
 msgstr "缩小\tCtrl+-"
 
-#: src/sshpilot/terminal.py:4405
+#: src/sshpilot/terminal.py:4410
 msgid "Reset Zoom\tCtrl+0"
 msgstr "重置缩放\tCtrl+0"
 
-#: src/sshpilot/terminal.py:4408
+#: src/sshpilot/terminal.py:4413
 msgid "Search\tCtrl+Shift+F"
 msgstr "搜索\tCtrl+Shift+F"
 
@@ -15406,6 +15401,10 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#~ msgid "The open tab keeps its current backend until you reopen it."
+#~ msgid_plural "Open tabs keep their current backend until you reopen them."
+#~ msgstr[0] "打开的标签页会保留当前后端，直到重新打开。"
 
 #, python-brace-format
 #~ msgid ""

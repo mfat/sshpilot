@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 13:05+0330\n"
+"POT-Creation-Date: 2026-10-09 13:18+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -208,7 +208,7 @@ msgstr "No se pudo abrir la ventana Copiar clave.{error}"
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6715
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6708
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -2521,7 +2521,7 @@ msgstr "Dispositivo"
 #: src/sshpilot/split_view.py:428 src/sshpilot/split_view.py:449
 #: src/sshpilot/split_view.py:451 src/sshpilot/split_view.py:611
 #: src/sshpilot/split_view.py:1169 src/sshpilot/terminal.py:832
-#: src/sshpilot/terminal.py:3589 src/sshpilot/terminal_manager.py:969
+#: src/sshpilot/terminal.py:3594 src/sshpilot/terminal_manager.py:969
 #: src/sshpilot/terminal_manager.py:1011 src/sshpilot/terminal_manager.py:1539
 #: src/sshpilot/window_tabs.py:1399 src/sshpilot/window_tabs.py:1488
 msgid "Terminal"
@@ -3465,7 +3465,7 @@ msgstr "Subir"
 
 #: src/sshpilot/file_manager/pane.py:658 src/sshpilot/file_manager/pane.py:2250
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
-#: src/sshpilot/terminal.py:1157 src/sshpilot/terminal.py:3523
+#: src/sshpilot/terminal.py:1157 src/sshpilot/terminal.py:3528
 #: src/sshpilot/window_dialogs.py:3543
 msgid "Copy"
 msgstr "Copiar"
@@ -10957,20 +10957,14 @@ msgstr "xterm.js (no disponible)"
 msgid "Requires WebKitGTK 6.0"
 msgstr "Requiere WebKitGTK 6.0"
 
-#: src/sshpilot/preferences.py:6708
+#: src/sshpilot/preferences.py:6706
 #, python-brace-format
-msgid "New tabs will use {backend}"
-msgstr "Las pestañas nuevas usarán {backend}"
-
-#: src/sshpilot/preferences.py:6710
-msgid "The open tab keeps its current backend until you reopen it."
-msgid_plural "Open tabs keep their current backend until you reopen them."
-msgstr[0] "La pestaña abierta mantiene su motor actual hasta que la vuelva a abrir."
-msgstr[1] "Las pestañas abiertas mantienen su motor actual hasta que las vuelva a abrir."
+msgid "Only new tabs will use {backend}"
+msgstr "Solo las pestañas nuevas usarán {backend}"
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7250 src/sshpilot/preferences.py:7269
+#: src/sshpilot/preferences.py:7243 src/sshpilot/preferences.py:7262
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "Personalizado"
@@ -12128,7 +12122,7 @@ msgstr "Confirmar antes de desconectar"
 
 #. A local shell's exit status is never an ssh error.
 #: src/sshpilot/terminal.py:554 src/sshpilot/terminal.py:2535
-#: src/sshpilot/terminal.py:5811
+#: src/sshpilot/terminal.py:5816
 msgid "Session ended."
 msgstr "Sesión finalizada."
 
@@ -12215,7 +12209,7 @@ msgstr "¿Qué debe ocurrir con la sesión de terminal remota?"
 msgid "Detach"
 msgstr "Detalles"
 
-#: src/sshpilot/terminal.py:2531 src/sshpilot/terminal.py:5808
+#: src/sshpilot/terminal.py:2531 src/sshpilot/terminal.py:5813
 #, python-brace-format
 msgid "SSH exited with status {code}"
 msgstr "SSH salió con estado{code}"
@@ -12225,105 +12219,105 @@ msgstr "SSH salió con estado{code}"
 msgid "Session terminated by signal {sig}"
 msgstr "Sesión terminada por señal{sig}"
 
-#: src/sshpilot/terminal.py:3243 src/sshpilot/terminal.py:5973
-#: src/sshpilot/terminal.py:5993
+#: src/sshpilot/terminal.py:3248 src/sshpilot/terminal.py:5978
+#: src/sshpilot/terminal.py:5998
 msgid "Copied to clipboard"
 msgstr "Copiado al portapapeles"
 
-#: src/sshpilot/terminal.py:3264
+#: src/sshpilot/terminal.py:3269
 msgid "Save Terminal Output"
 msgstr "Guardar salida del terminal"
 
-#: src/sshpilot/terminal.py:3492
+#: src/sshpilot/terminal.py:3497
 #, python-brace-format
 msgid "Remote program copied {count} character to the clipboard"
 msgid_plural "Remote program copied {count} characters to the clipboard"
 msgstr[0] "Un programa remoto copió {count} carácter al portapapeles"
 msgstr[1] "Un programa remoto copió {count} caracteres al portapapeles"
 
-#: src/sshpilot/terminal.py:3519
+#: src/sshpilot/terminal.py:3524
 #, python-brace-format
 msgid "Remote program wants to copy {count} character to the clipboard"
 msgid_plural "Remote program wants to copy {count} characters to the clipboard"
 msgstr[0] "Un programa remoto desea copiar {count} carácter al portapapeles"
 msgstr[1] "Un programa remoto desea copiar {count} caracteres al portapapeles"
 
-#: src/sshpilot/terminal.py:3572
+#: src/sshpilot/terminal.py:3577
 #, python-brace-format
 msgid "Encoding '{requested}' is not supported. Using {fallback} instead."
 msgstr ""
 "La codificación «{requested}» no es compatible. Usando {fallback} en su "
 "lugar."
 
-#: src/sshpilot/terminal.py:4374
+#: src/sshpilot/terminal.py:4379
 msgid "Open Link"
 msgstr "Abrir enlace"
 
-#: src/sshpilot/terminal.py:4375
+#: src/sshpilot/terminal.py:4380
 msgid "Copy Link"
 msgstr "Copiar enlace"
 
-#: src/sshpilot/terminal.py:4378
+#: src/sshpilot/terminal.py:4383
 msgid "Copy\t⌘C"
 msgstr "Copiar ⌘C"
 
-#: src/sshpilot/terminal.py:4381 src/sshpilot/terminal.py:4398
+#: src/sshpilot/terminal.py:4386 src/sshpilot/terminal.py:4403
 msgid "Copy as HTML"
 msgstr "Copiar como HTML"
 
-#: src/sshpilot/terminal.py:4382
+#: src/sshpilot/terminal.py:4387
 msgid "Paste\t⌘V"
 msgstr "Pegar ⌘V"
 
-#: src/sshpilot/terminal.py:4383
+#: src/sshpilot/terminal.py:4388
 msgid "Select All\t⌘A"
 msgstr "Seleccionar todo ⌘A"
 
-#: src/sshpilot/terminal.py:4385
+#: src/sshpilot/terminal.py:4390
 msgid "Zoom In\t⌘="
 msgstr "Acercar ⌘="
 
-#: src/sshpilot/terminal.py:4386
+#: src/sshpilot/terminal.py:4391
 msgid "Zoom Out\t⌘-"
 msgstr "Alejar ⌘-"
 
-#: src/sshpilot/terminal.py:4387
+#: src/sshpilot/terminal.py:4392
 msgid "Reset Zoom\t⌘0"
 msgstr "Restablecer zoom ⌘0"
 
-#: src/sshpilot/terminal.py:4390
+#: src/sshpilot/terminal.py:4395
 msgid "Search\t⌘F"
 msgstr "Buscar ⌘F"
 
-#: src/sshpilot/terminal.py:4391 src/sshpilot/terminal.py:4409
+#: src/sshpilot/terminal.py:4396 src/sshpilot/terminal.py:4414
 msgid "Save Output…"
 msgstr "Guardar salida…"
 
-#: src/sshpilot/terminal.py:4395
+#: src/sshpilot/terminal.py:4400
 msgid "Copy\tCtrl+Shift+C"
 msgstr "Copiar Ctrl+Mayús+C"
 
-#: src/sshpilot/terminal.py:4400
+#: src/sshpilot/terminal.py:4405
 msgid "Paste\tCtrl+Shift+V"
 msgstr "Pegar Ctrl+Mayús+V"
 
-#: src/sshpilot/terminal.py:4401
+#: src/sshpilot/terminal.py:4406
 msgid "Select All\tCtrl+Shift+A"
 msgstr "Seleccionar todo Ctrl+Mayús+A"
 
-#: src/sshpilot/terminal.py:4403
+#: src/sshpilot/terminal.py:4408
 msgid "Zoom In\tCtrl++"
 msgstr "Acercar Ctrl++"
 
-#: src/sshpilot/terminal.py:4404
+#: src/sshpilot/terminal.py:4409
 msgid "Zoom Out\tCtrl+-"
 msgstr "Alejar Ctrl+-"
 
-#: src/sshpilot/terminal.py:4405
+#: src/sshpilot/terminal.py:4410
 msgid "Reset Zoom\tCtrl+0"
 msgstr "Restablecer zoom Ctrl+0"
 
-#: src/sshpilot/terminal.py:4408
+#: src/sshpilot/terminal.py:4413
 msgid "Search\tCtrl+Shift+F"
 msgstr "Buscar Ctrl+Mayús+F"
 
@@ -16069,6 +16063,14 @@ msgstr "paso a través"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copiar clave al servidor"
+
+#~ msgid "The open tab keeps its current backend until you reopen it."
+#~ msgid_plural "Open tabs keep their current backend until you reopen them."
+#~ msgstr[0] ""
+#~ "La pestaña abierta mantiene su motor actual hasta que la vuelva a abrir."
+#~ msgstr[1] ""
+#~ "Las pestañas abiertas mantienen su motor actual hasta que las vuelva a "
+#~ "abrir."
 
 #, python-brace-format
 #~ msgid ""

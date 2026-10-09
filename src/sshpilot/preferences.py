@@ -6699,18 +6699,11 @@ class PreferencesWindow(Adw.NavigationPage):
         return terminals
 
     def _show_backend_change_info(self, backend_id, open_terminals, index):
-        """Switch, then say that open tabs keep the backend they started with."""
+        """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
         backend_name = 'xterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
-        # The same terminal can be listed by more than one window registry.
-        count = len({id(terminal) for _connection, terminal in open_terminals})
         dialog = Adw.AlertDialog(
-            heading=_("New tabs will use {backend}").format(backend=backend_name),
-            body=ngettext(
-                "The open tab keeps its current backend until you reopen it.",
-                "Open tabs keep their current backend until you reopen them.",
-                count,
-            ),
+            heading=_("Only new tabs will use {backend}").format(backend=backend_name),
         )
         dialog.add_response("ok", _("OK"))
         dialog.present(self)
