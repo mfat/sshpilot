@@ -41,7 +41,7 @@ from .groups import GroupManager
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .shortcut_utils import get_primary_modifier_label
-from .tag_groups import compute_tag_groups
+from .tag_groups import compute_tag_groups, effective_tags
 
 # Feature detection for libadwaita versions across distros
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
@@ -4921,8 +4921,9 @@ def _build_sidebar_header(window, sidebar_box):
             tag_map = {}
             for conn in window.connection_manager.get_connections():
                 try:
-                    tag_map[conn.nickname] = list(
-                        window.connection_manager.get_metadata(conn.nickname).get("tags", [])
+                    tag_map[conn.nickname] = effective_tags(
+                        window.connection_manager.get_metadata(conn.nickname).get("tags", []),
+                        getattr(conn, "protocol", None),
                     )
                 except Exception:
                     pass

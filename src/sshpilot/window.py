@@ -110,6 +110,7 @@ from .window_dialogs import (
 )
 from . import shutdown
 from .search_utils import connection_matches
+from .tag_groups import effective_tags
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
     DoubleShiftDetector,
@@ -4142,10 +4143,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 object.__setattr__(
                     conn,
                     "tags",
-                    list(self.connection_manager.get_metadata(conn.nickname).get("tags", [])),
+                    effective_tags(
+                        self.connection_manager.get_metadata(conn.nickname).get("tags", []),
+                        getattr(conn, "protocol", None),
+                    ),
                 )
             except Exception:
-                object.__setattr__(conn, 'tags', [])
+                object.__setattr__(
+                    conn, 'tags', effective_tags([], getattr(conn, 'protocol', None))
+                )
         self._attach_sidebar_forwarding_rules(connections)
         self._refresh_sidebar_forwarding_rules(connections)
         connections_dict = {conn.nickname: conn for conn in connections}
@@ -7989,7 +7995,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     object.__setattr__(
                         old_connection,
                         "tags",
-                        list(self.connection_manager.get_metadata(nickname).get("tags", [])),
+                        effective_tags(
+                            self.connection_manager.get_metadata(nickname).get("tags", []),
+                            getattr(old_connection, "protocol", None),
+                        ),
                     )
                 except Exception:
                     pass

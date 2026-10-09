@@ -24,6 +24,7 @@ from sshpilot.tag_groups import (  # noqa: E402
     add_tag_to_list,
     complete_tag_text,
     compute_tag_groups,
+    effective_tags,
     is_tag_group_id,
     make_tag_group_info,
     migrate_expanded_state,
@@ -352,3 +353,18 @@ class TestMakeUntaggedGroupInfo:
         # A user tag named "untagged" must map to a different id/key.
         assert tag_group_id("untagged") != ("tag::" + UNTAGGED_KEY)
         assert "untagged" != UNTAGGED_KEY
+
+
+def test_effective_tags_appends_protocol():
+    assert effective_tags(['prod'], 'mosh') == ['prod', 'mosh']
+    assert effective_tags([], 'ssh') == ['ssh']
+    assert effective_tags(None, 'rdp') == ['rdp']
+
+
+def test_effective_tags_does_not_duplicate_stored_protocol_tag():
+    assert effective_tags(['SSH', 'web'], 'ssh') == ['SSH', 'web']
+
+
+def test_effective_tags_without_protocol_keeps_stored():
+    assert effective_tags([' a ', ''], None) == ['a']
+    assert effective_tags(['a'], '') == ['a']
