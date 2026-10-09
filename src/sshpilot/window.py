@@ -60,11 +60,15 @@ from .connection_display import (
     format_connection_host_display,
 )
 from .connection_sort import (
-    CONNECTION_SORT_CYCLE,
+    CONNECTION_SORT_MENU,
     CONNECTION_SORT_PRESETS,
     DEFAULT_CONNECTION_SORT,
     MANUAL_CONNECTION_SORT,
+    CONNECTION_SORT_SETTING,
     apply_connection_sort as apply_sort_to_manager,
+    layout_request_from_projection,
+    layout_request_from_snapshot,
+    load_connection_sort,
 )
 # Port forwarding UI is now integrated into connection_dialog.py
 # ConnectionDialog is imported lazily at its use site (show_connection_dialog) so
@@ -106,6 +110,7 @@ from .window_dialogs import (
 )
 from . import shutdown
 from .search_utils import connection_matches
+from .tag_groups import effective_tags
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
     DoubleShiftDetector,
@@ -446,11 +451,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Active tag filter (casefolded tag key), or None for all connections
         self._tag_filter = None
 
-        # Sorting is a UI-only overlay on the daemon projection, and the next
-        # projection reset drops it. Persisting the preset across restarts made
-        # the button advertise a sort that was never applied, so the window
-        # always opens on the daemon's own (manual) order.
-        self._connection_sort_last = DEFAULT_CONNECTION_SORT
+        # Sorting is a display choice layered on the daemon's (manual) order:
+        # every list rebuild re-applies it, so a daemon refresh never drops it.
+        self._connection_sort_last = load_connection_sort(self.config)
         self.sort_button = None
 
         # Set up window
@@ -1124,6 +1127,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         if key == 'terminal.theme':
             self._sync_terminal_theme_selector(str(value))
+            return
+
+        if key == 'terminal.custom_themes':
+            chooser = getattr(self, '_terminal_theme_chooser', None)
+            if chooser is not None:
+                chooser.set_themes(
+                    getattr(self.config, 'terminal_themes', {}) or {},
+                    str(self.config.get_setting('terminal.theme', 'default')),
+                    self.config.custom_theme_keys(),
+                )
+            self._sync_terminal_theme_selector()
             return
 
     def _schedule_startup_tasks(self):
@@ -3156,9 +3170,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if theme_key not in themes:
             theme_key = 'default'
         self.config.set_setting('terminal.theme', theme_key)
+        self._popdown_terminal_theme_menu()
+
+    def _popdown_terminal_theme_menu(self) -> None:
         popover = getattr(self._terminal_theme_menu_button, 'get_popover', lambda: None)()
         if popover is not None:
             popover.popdown()
+
+    def _on_new_terminal_theme(self) -> None:
+        from .terminal_theme_editor import edit_custom_theme
+        self._popdown_terminal_theme_menu()
+        edit_custom_theme(self, self.config)
+
+    def _on_edit_terminal_theme(self, theme_key: str) -> None:
+        from .terminal_theme_editor import edit_custom_theme
+        self._popdown_terminal_theme_menu()
+        edit_custom_theme(self, self.config, theme_key)
+
+    def _on_delete_terminal_theme(self, theme_key: str) -> None:
+        from .terminal_theme_editor import confirm_delete_custom_theme
+        self._popdown_terminal_theme_menu()
+        confirm_delete_custom_theme(self, self.config, theme_key)
 
     def _ensure_terminal_theme_chooser(self):
         chooser = getattr(self, '_terminal_theme_chooser', None)
@@ -3172,6 +3204,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     getattr(self.config, 'terminal_themes', {}) or {},
                     selected_theme,
                     self._on_terminal_theme_selected,
+                    custom_keys=self.config.custom_theme_keys(),
+                    on_new=self._on_new_terminal_theme,
+                    on_edit=self._on_edit_terminal_theme,
+                    on_delete=self._on_delete_terminal_theme,
                 )
                 terminal_theme_popover = Gtk.Popover()
                 terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
@@ -3201,11 +3237,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _build_sort_button(self):
-        from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("view-list-symbolic")
+        """A menu of the sort choices; the current one carries a radio mark."""
+        button = Gtk.MenuButton()
         button.add_css_class('flat')
         button.set_can_focus(False)
-        button.connect("clicked", self._on_sort_button_clicked)
+        menu = Gio.Menu()
+        for preset_id in CONNECTION_SORT_MENU:
+            item = Gio.MenuItem.new(CONNECTION_SORT_PRESETS[preset_id].title, None)
+            item.set_action_and_target_value(
+                'win.sort-connections', GLib.Variant('s', preset_id)
+            )
+            menu.append_item(item)
+        button.set_menu_model(menu)
         self.sort_button = button
         self._update_sort_button()
         return button
@@ -3232,48 +3275,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         button.connect("clicked", lambda *_: self.show_preferences())
         return button
 
-    def _next_sort_preset_id(self, current_id: str) -> str:
-        """Step the button through manual -> A-Z -> Z-A -> manual."""
-        try:
-            index = CONNECTION_SORT_CYCLE.index(current_id)
-        except ValueError:
-            return CONNECTION_SORT_CYCLE[0]
-        return CONNECTION_SORT_CYCLE[(index + 1) % len(CONNECTION_SORT_CYCLE)]
-
     def _update_sort_button(self):
+        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
+        preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
+        # The action state drives the radio mark in the button's menu.
+        action = getattr(self, 'sort_connections_action', None)
+        if action is not None and action.get_state().get_string() != preset_id:
+            action.set_state(GLib.Variant('s', preset_id))
         if not self.sort_button:
             return
 
         from sshpilot import icon_utils
-        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
-        preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
         icon_utils.set_button_icon(self.sort_button, preset.icon_name)
-
-        next_preset_id = self._next_sort_preset_id(preset_id)
-        next_preset = CONNECTION_SORT_PRESETS.get(next_preset_id)
-        if next_preset:
-            # "Sort Manual order" reads badly, so the preset titles carry the
-            # wording and the template only supplies the current/next framing.
-            tooltip = _("{current} — click for {next}").format(
-                current=preset.title, next=next_preset.title
-            )
-        else:
-            tooltip = preset.title
-
-        # The tooltip names the *next* preset and changes on every click, so
-        # it is no basis for an accessible name; keep the name fixed and put
-        # the current preset in the description.
         label_icon_button(
             self.sort_button,
             _("Sort Connections"),
-            tooltip=tooltip,
             description=preset.title,
         )
-
-    def _on_sort_button_clicked(self, *_args):
-        current = self._connection_sort_last or DEFAULT_CONNECTION_SORT
-        next_preset = self._next_sort_preset_id(current)
-        self.apply_connection_sort_preset(next_preset)
 
     def apply_connection_sort_preset(self, preset_id: str):
         preset = CONNECTION_SORT_PRESETS.get(preset_id)
@@ -3281,36 +3299,138 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             preset_id = DEFAULT_CONNECTION_SORT
             preset = CONNECTION_SORT_PRESETS[preset_id]
 
-        if preset.manual:
-            # Manual order lives in the daemon, so "unsorting" means dropping
-            # the local overlay and re-reading the authoritative projection.
-            self.group_manager.bind_connections(self.connection_manager.connections)
-            self.rebuild_connection_list()
-        else:
-            changed = apply_sort_to_manager(
-                self.group_manager,
-                self.connection_manager.get_connections(),
-                preset_id,
-            )
-            if changed:
-                self.rebuild_connection_list()
-
-        self._connection_sort_last = preset_id
-        self._update_sort_button()
+        self._set_connection_sort(preset_id)
+        # Start from the daemon's own order; the rebuild sorts it when the
+        # preset asks for that.
+        self.group_manager.bind_connections(self.connection_manager.connections)
+        self.rebuild_connection_list()
         self._notify_sort_result(preset)
 
-    def _reset_sort_to_manual(self):
-        """Drop the sort overlay after the daemon replaced the projection.
-
-        ``GroupManager._refresh()`` restores the daemon ordering on every
-        projection reset, which silently discards whatever the sort button
-        applied. Without this the button keeps advertising a sort that is no
-        longer on screen, and its next click cycles on from a stale state.
-        """
-        if self._connection_sort_last == MANUAL_CONNECTION_SORT:
-            return
-        self._connection_sort_last = MANUAL_CONNECTION_SORT
+    def _set_connection_sort(self, preset_id: str) -> None:
+        """Record and persist the sort choice without touching the list."""
+        self._connection_sort_last = preset_id
+        try:
+            self.config.set_setting(CONNECTION_SORT_SETTING, preset_id)
+        except Exception:
+            logger.debug("Failed to save the connection sort", exc_info=True)
         self._update_sort_button()
+
+    def _apply_connection_sort_to_projection(self) -> None:
+        """Sort the group projection in place when a sort is selected."""
+        preset_id = getattr(self, "_connection_sort_last", MANUAL_CONNECTION_SORT)
+        preset = CONNECTION_SORT_PRESETS.get(preset_id)
+        if preset is None or preset.manual:
+            return
+        apply_sort_to_manager(
+            self.group_manager,
+            self.connection_manager.get_connections(),
+            preset_id,
+        )
+
+    def begin_saving_sorted_view(self, expected_generation=None):
+        """Prepare to save the sorted view as the manual order.
+
+        A drag in a sorted view is placed against the order on screen, not
+        the manual order stored in the daemon, so the drop must apply on top
+        of the sorted order saved as the new manual order. Returns ``None``
+        in manual mode, otherwise ``(layout_request, undo_request,
+        sorted_preset_id)``, and switches to manual order right away: the
+        projection already holds the sorted order, which is what is about to
+        be saved, so the next rebuild must not sort it again.
+        """
+        preset = CONNECTION_SORT_PRESETS.get(self._connection_sort_last)
+        if preset is None or preset.manual:
+            return None
+        snapshot = getattr(self.connection_manager, "snapshot", lambda: None)()
+        if snapshot is None:
+            return None
+        # Check the save against the projection the drag was computed from,
+        # so a stale drag still fails before anything changes.
+        if expected_generation is None:
+            expected_generation = getattr(snapshot, "generation", None)
+        layout = layout_request_from_projection(
+            self.group_manager, expected_generation=expected_generation
+        )
+        undo = layout_request_from_snapshot(snapshot)
+        sorted_preset_id = self._connection_sort_last
+        self._set_connection_sort(MANUAL_CONNECTION_SORT)
+        return layout, undo, sorted_preset_id
+
+    def sorted_view_save_failed(self, sorted_preset_id: str) -> None:
+        """The sorted view was not saved: go back to showing it sorted."""
+        self._set_connection_sort(sorted_preset_id)
+        self.group_manager.bind_connections(self.connection_manager.connections)
+        self.rebuild_connection_list()
+
+    def offer_sorted_view_undo(self, undo_request, sorted_preset_id: str) -> None:
+        """Tell the user the sorted view became the manual order; offer Undo.
+
+        Called once the store has been refreshed after the drop, so the
+        snapshot now holds the arrangement Undo is allowed to replace.
+        """
+        toast_overlay = getattr(self, "toast_overlay", None)
+        if not toast_overlay:
+            return
+        snapshot = getattr(self.connection_manager, "snapshot", lambda: None)()
+        if snapshot is None:
+            return
+        saved_arrangement = layout_request_from_snapshot(snapshot)
+        toast = Adw.Toast.new(_("Sorted order saved as your manual order"))
+        toast.set_button_label(_("Undo"))
+        toast.set_timeout(8)
+        toast.connect(
+            "button-clicked",
+            lambda *_args: self._undo_sorted_view_save(
+                undo_request, sorted_preset_id, saved_arrangement
+            ),
+        )
+        toast_overlay.add_toast(toast)
+
+    def _refuse_sorted_view_undo(self) -> None:
+        toast_overlay = getattr(self, "toast_overlay", None)
+        if toast_overlay:
+            toast_overlay.add_toast(Adw.Toast.new(
+                _("Could not undo: the connection list has changed since")
+            ))
+
+    def _undo_sorted_view_save(
+        self, undo_request, sorted_preset_id: str, saved_arrangement
+    ) -> None:
+        controller = getattr(self.group_manager, "controller", None)
+        client = getattr(self, "client", None)
+        if controller is None or client is None:
+            return
+        # Undo replaces the whole arrangement, so it may only replace the one
+        # the drag produced. Compare arrangements rather than the generation:
+        # metadata writes (last_used on every connect, tags) bump the
+        # generation without moving anything.
+        snapshot = getattr(self.connection_manager, "snapshot", lambda: None)()
+        if snapshot is None or layout_request_from_snapshot(snapshot) != saved_arrangement:
+            logger.info("Not undoing the saved sorted order: the arrangement changed since")
+            self._refuse_sorted_view_undo()
+            return
+        # Show the sort again straight away, so the refresh that follows the
+        # restore does not flash the restored manual order first.
+        self._set_connection_sort(sorted_preset_id)
+
+        def _failed(error):
+            logger.warning(
+                "Undoing the saved sorted order failed: %s",
+                getattr(getattr(error, "code", None), "value", type(error).__name__),
+            )
+            self._set_connection_sort(MANUAL_CONNECTION_SORT)
+            self.group_manager.bind_connections(self.connection_manager.connections)
+            self.rebuild_connection_list()
+            self._refuse_sorted_view_undo()
+
+        try:
+            controller.run(
+                lambda: client.set_connection_layout(undo_request),
+                on_success=lambda _generation: None,
+                on_error=_failed,
+            )
+        except Exception as error:
+            _failed(error)
 
     def _notify_sort_result(self, preset):
         toast_overlay = getattr(self, "toast_overlay", None)
@@ -3973,6 +4093,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
         reset_connection_list_drag_session(self)
+        self._apply_connection_sort_to_projection()
 
         # Save current scroll position
         scroll_position = None
@@ -4022,10 +4143,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 object.__setattr__(
                     conn,
                     "tags",
-                    list(self.connection_manager.get_metadata(conn.nickname).get("tags", [])),
+                    effective_tags(
+                        self.connection_manager.get_metadata(conn.nickname).get("tags", []),
+                        getattr(conn, "protocol", None),
+                    ),
                 )
             except Exception:
-                object.__setattr__(conn, 'tags', [])
+                object.__setattr__(
+                    conn, 'tags', effective_tags([], getattr(conn, 'protocol', None))
+                )
         self._attach_sidebar_forwarding_rules(connections)
         self._refresh_sidebar_forwarding_rules(connections)
         connections_dict = {conn.nickname: conn for conn in connections}
@@ -5445,11 +5571,70 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def open_cli_connect_resolved(self, resolved, sftp=False):
         """Open an already-resolved CLI target: file manager if *sftp*, else a tab."""
-        if sftp:
-            self._open_manage_files_for_connection(resolved.connection)
+        from .cli_connect import transient_remote_command
+
+        if resolved.existing:
+            if sftp:
+                self._open_manage_files_for_connection(resolved.connection)
+            else:
+                self.terminal_manager.connect_to_host(
+                    resolved.connection, force_new=True)
             return True
-        self.terminal_manager.connect_to_host(
-            resolved.connection, force_new=True)
+        # An unsaved destination: the daemon opens connections by id only.
+        return self.open_transient_connection(
+            resolved.connection,
+            remote_command=transient_remote_command(resolved.connection),
+            sftp=sftp,
+        )
+
+    def open_transient_connection(self, connection, *, remote_command=None,
+                                  sftp=False):
+        """Open a target that is not saved: ``ssh user@host``, ``mosh host``...
+
+        The daemon registers it without writing anything, then it opens like a
+        saved connection. ``connection`` keeps its nickname for the tab title
+        and the save prompt; the daemon id travels separately.
+        """
+        from .cli_connect import transient_request_data
+
+        bridge = getattr(self, 'client_bridge', None)
+        if getattr(self, 'client', None) is None or bridge is None:
+            self._show_daemon_unavailable_dialog()
+            return False
+        data = transient_request_data(getattr(connection, 'data', None) or {})
+
+        def _register():
+            return self.plugin_connection_services.open_transient_from_data(data)
+
+        def _registered(details):
+            try:
+                object.__setattr__(
+                    connection, 'transient_connection_id', str(details.id)
+                )
+            except Exception:
+                connection.transient_connection_id = str(details.id)
+            self._return_to_tab_view_if_welcome()
+            if sftp:
+                self._open_manage_files_for_connection(connection)
+                return
+            self.terminal_manager.connect_to_host(
+                connection, force_new=True, remote_command=remote_command,
+            )
+
+        def _failed(error):
+            logger.warning("Could not register unsaved target: %s", error)
+            self._error_dialog(
+                _("Could not open the connection"),
+                _("SSH Pilot could not prepare this destination. "
+                  "Check the address and try again."),
+                detail=getattr(error, "message", None) or str(error),
+            )
+
+        try:
+            bridge.submit(_register, on_success=_registered, on_error=_failed)
+        except RuntimeError as error:
+            _failed(error)
+            return False
         return True
 
     def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
@@ -6449,9 +6634,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_projection_reset(self, manager, _connection=None):
         """Rebuild presentation state after an authoritative store refresh."""
         self.group_manager.bind_connections(manager.connections)
-        # bind_connections() just restored the daemon ordering, so any sort the
-        # button was advertising is gone from the list as well.
-        self._reset_sort_to_manual()
         self.rebuild_connection_list()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge
@@ -7813,7 +7995,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     object.__setattr__(
                         old_connection,
                         "tags",
-                        list(self.connection_manager.get_metadata(nickname).get("tags", [])),
+                        effective_tags(
+                            self.connection_manager.get_metadata(nickname).get("tags", []),
+                            getattr(old_connection, "protocol", None),
+                        ),
                     )
                 except Exception:
                     pass

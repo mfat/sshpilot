@@ -1332,12 +1332,20 @@ class TerminalManager:
             data = getattr(connection, "data", None) or {}
             from .cli_connect import CLI_CONNECT_FLAG
 
-            if not data.get(CLI_CONNECT_FLAG):
+            # ``ssh user@host`` carries the CLI flag; "mosh host", "serial
+            # /dev/ttyUSB0" and the other unsaved targets from the search box
+            # carry only the id the daemon registered them under.
+            transient = getattr(connection, "transient_connection_id", None)
+            if not data.get(CLI_CONNECT_FLAG) and not isinstance(transient, str):
                 return
 
             from .api.connection_identity import connection_id_for
             from .api.models.connections import UnsavedHostCheckRequest
-            from .unsaved_host import SavePromptDismissals, connection_destination
+            from .unsaved_host import (
+                SavePromptDismissals,
+                connection_destination,
+                connection_target,
+            )
 
             window = self.window
             app = window.get_application() if hasattr(window, "get_application") else None
@@ -1347,11 +1355,15 @@ class TerminalManager:
                 if app is not None:
                     app.save_prompt_dismissals = dismissals
 
+            if dismissals.is_connection_dismissed(connection):
+                return
             hostname, username = connection_destination(connection)
-            if dismissals.is_dismissed(hostname, username):
-                return
-            if (getattr(connection, "protocol", "ssh") or "ssh") != "ssh":
-                return
+            protocol = str(getattr(connection, "protocol", "ssh") or "ssh")
+            target = ()
+            if protocol != "ssh":
+                target = connection_target(
+                    connection, self._required_protocol_fields(protocol)
+                )
 
             bridge = getattr(window, "client_bridge", None)
             client = getattr(window, "client", None)
@@ -1362,7 +1374,7 @@ class TerminalManager:
             # compatibility, but that is not a durable daemon identity.  Do
             # not let a hostname-shaped nickname short-circuit the
             # authoritative host/user comparison.
-            if data.get(CLI_CONNECT_FLAG):
+            if data.get(CLI_CONNECT_FLAG) or isinstance(transient, str):
                 stored_id = None
             else:
                 try:
@@ -1376,11 +1388,16 @@ class TerminalManager:
                 connection_id=stored_id,
                 port=(
                     int(getattr(connection, "port", 22) or 22)
-                    if bool(data.get("port_explicit"))
+                    if bool(data.get("port_explicit")) or protocol != "ssh"
                     else None
                 ),
-                protocol=str(getattr(connection, "protocol", "ssh") or "ssh"),
-                proxy_jump=tuple(getattr(connection, "proxy_jump", ()) or ()),
+                protocol=protocol,
+                proxy_jump=(
+                    tuple(getattr(connection, "proxy_jump", ()) or ())
+                    if protocol == "ssh"
+                    else ()
+                ),
+                target=target,
             )
 
             def _after_check(result):
@@ -1421,6 +1438,22 @@ class TerminalManager:
             )
         except Exception:
             logger.debug("Save-connection offer skipped", exc_info=True)
+
+    @staticmethod
+    def _required_protocol_fields(protocol):
+        """The required fields of ``protocol``'s editor, for the save check."""
+        try:
+            from .plugins.registry import protocol_registry
+
+            backend = protocol_registry().get(protocol)
+            fields = backend.connection_fields() if backend is not None else []
+        except Exception:
+            logger.debug("No fields for protocol %s", protocol, exc_info=True)
+            return []
+        return [
+            field.key for field in fields
+            if field.required and field.kind != "password"
+        ]
 
     def on_terminal_disconnected(self, terminal):
         # The just-disconnected terminal has already flipped its own
@@ -1682,7 +1715,6 @@ class TerminalManager:
             daemon_readiness_user_message,
         )
 
-        window = self.window
         connection = getattr(terminal, "connection", None)
         if connection is None:
             logger.error("Cannot reconnect terminal without a connection")
@@ -1723,6 +1755,45 @@ class TerminalManager:
         terminal._set_disconnected_banner_visible(False)
         terminal._set_connecting_overlay_visible(True)
 
+        if isinstance(getattr(connection, "transient_connection_id", None), str):
+            # An unsaved target lives in the daemon's memory only: a daemon
+            # restart, or the limit on unsaved targets, may have dropped it.
+            # Register it again and reconnect on the new id.
+            return self._reregister_then_start(terminal, connection)
+        return self._start_reconnected_session(terminal, connection)
+
+    def _reregister_then_start(self, terminal, connection) -> bool:
+        from .cli_connect import transient_request_data
+
+        window = self.window
+        data = transient_request_data(getattr(connection, "data", None) or {})
+
+        def _registered(details):
+            object.__setattr__(
+                connection, "transient_connection_id", str(details.id)
+            )
+            self._start_reconnected_session(terminal, connection)
+
+        def _failed(error):
+            logger.warning("Could not register unsaved target again: %s", error)
+            terminal._set_connecting_overlay_visible(False)
+            terminal._on_connection_failed(
+                getattr(error, "message", None) or str(error)
+            )
+
+        try:
+            window.client_bridge.submit(
+                lambda: window.plugin_connection_services.open_transient_from_data(data),
+                on_success=_registered,
+                on_error=_failed,
+            )
+        except RuntimeError as error:
+            _failed(error)
+            return False
+        return True
+
+    def _start_reconnected_session(self, terminal, connection) -> bool:
+        window = self.window
         try:
             # The save flow re-keys every terminal from the pre-save snapshot
             # to the authoritative post-save ConnectionSummary, so the id

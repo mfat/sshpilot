@@ -215,9 +215,10 @@ class PTYAgent:
         try:
             # Prepare environment
             env = os.environ.copy()
-            # Set TERM to a proper value only if missing or set to "dumb"
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
+            # The shell runs in sshPilot's emulator, whatever terminal launched
+            # the app: an inherited tmux/screen TERM makes shells send escapes
+            # the emulator prints as text (issue #1311).
+            env['TERM'] = 'xterm-256color'
             env['SHELL'] = shell
             
             # Ensure essential environment variables are set from passwd database

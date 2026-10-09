@@ -42,6 +42,7 @@ from .models.connection_store import (
     PlaceGroupRequest,
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
+    SetConnectionLayoutRequest,
     RemoveConnectionFromGroupRequest,
     ReorderConnectionRequest,
     RenameTagRequest,
@@ -277,6 +278,12 @@ class SshPilotClient(Protocol):
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
         ...
 
+    def open_transient_connection(
+        self, request: CreateConnectionRequest
+    ) -> ConnectionDetails:
+        """Register an unsaved target; open sessions on the returned id."""
+        ...
+
     def preview_asbru_import(self, source: str) -> AsbruImportPreview:
         ...
 
@@ -360,6 +367,10 @@ class SshPilotClient(Protocol):
         ...
 
     def move_connections(self, request: MoveConnectionsRequest) -> bool:
+        ...
+
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int:
+        """Replace the whole arrangement; returns the store generation after it."""
         ...
 
     def rename_tag(self, request: RenameTagRequest) -> int:

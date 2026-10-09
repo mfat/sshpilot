@@ -181,10 +181,17 @@ def sanitize_local_shell_env(env):
     banner sshPilot never asked for. The shell sshPilot spawns is its own, so
     it is re-identified as ``sshPilot`` instead.
 
-    The input dict is never mutated. Non-macOS hosts are returned as an
-    unchanged copy, so no unrelated Linux behavior changes.
+    ``TERM`` is always ``xterm-256color``: an inherited value describes the
+    launching terminal, not VTE or xterm.js. Started from tmux or screen, the
+    shell would see ``tmux-256color`` and send tmux-only escapes the embedded
+    emulator prints as text — oh-my-zsh's title update shows up as
+    ``echohello`` (issue #1311).
+
+    The input dict is never mutated. Apart from ``TERM``, non-macOS hosts get
+    an unchanged copy.
     """
     sanitized = dict(env)
+    sanitized["TERM"] = "xterm-256color"
     if not is_macos():
         return sanitized
     sanitized.pop("TERM_PROGRAM_VERSION", None)
@@ -3135,10 +3142,15 @@ class TerminalWidget(Gtk.Box):
         """Configure the active terminal through the backend contract."""
         if self.backend is None:
             raise RuntimeError("No terminal backend available for configuration")
-        font_desc = Pango.FontDescription()
-        font_desc.set_family("Monospace")
-        font_desc.set_size(12 * Pango.SCALE)
-        self.backend.set_font(font_desc)
+        # The configured font, not a fixed one: VTE re-reads it in apply_theme(),
+        # but xterm.js keeps whatever is set here, so every new xterm.js tab
+        # would otherwise come up in plain Monospace 12.
+        font_string = "Monospace 12"
+        try:
+            font_string = self.config.get_setting("terminal.font", font_string) or font_string
+        except Exception:
+            pass
+        self.backend.set_font(Pango.FontDescription.from_string(font_string))
         encoding = "UTF-8"
         cursor_shape = None
         cursor_blink = None
@@ -3845,9 +3857,6 @@ class TerminalWidget(Gtk.Box):
         env = sanitize_local_shell_env(
             get_identity_manager().apply_selected_to_env(os.environ.copy())
         )
-        # Set TERM to a proper value only if missing or set to "dumb"
-        if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-            env['TERM'] = 'xterm-256color'
         return env
 
     def _spawn_agent_shell_with_pty_handoff(
@@ -4212,9 +4221,6 @@ class TerminalWidget(Gtk.Box):
 
         # Ensure we have a proper environment
         env['SHELL'] = shell
-        # Set TERM to a proper value only if missing or set to "dumb"
-        if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-            env['TERM'] = 'xterm-256color'
 
         # Ensure essential environment variables are set from passwd database
         # This ensures shells like zsh can properly load user configuration

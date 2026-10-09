@@ -309,6 +309,54 @@ class PlaceGroupRequest:
 
 
 @dataclass(frozen=True)
+class GroupLayout:
+    """One group's place in a :class:`SetConnectionLayoutRequest`."""
+
+    group_id: GroupId
+    parent_id: Optional[GroupId]
+    connection_ids: Tuple[ConnectionId, ...]
+
+    def __post_init__(self) -> None:
+        require_identifier(self.group_id, "group id")
+        if self.parent_id is not None:
+            require_identifier(self.parent_id, "group parent id")
+        if type(self.connection_ids) is not tuple:
+            raise TypeError("group layout connection ids must be a tuple")
+        for connection_id in self.connection_ids:
+            require_identifier(connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class SetConnectionLayoutRequest:
+    """Replace the whole sidebar arrangement in one commit.
+
+    Lists every ungrouped connection in order, and every group with its
+    parent and its connections in order; a group's sibling order is its
+    position among the groups sharing its parent. It may rearrange existing
+    connections and groups but never add or remove one.
+    """
+
+    root_connection_ids: Tuple[ConnectionId, ...]
+    groups: Tuple[GroupLayout, ...]
+    expected_generation: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if type(self.root_connection_ids) is not tuple:
+            raise TypeError("root connection ids must be a tuple")
+        for connection_id in self.root_connection_ids:
+            require_identifier(connection_id, "connection id")
+        if type(self.groups) is not tuple or any(
+            type(group) is not GroupLayout for group in self.groups
+        ):
+            raise TypeError("groups must be a tuple of GroupLayout")
+        if self.expected_generation is not None and (
+            type(self.expected_generation) is not int
+            or self.expected_generation < 0
+        ):
+            raise ValueError("expected generation must be a non-negative integer")
+
+
+@dataclass(frozen=True)
 class CopyConnectionToGroupRequest:
     """Copy a connection into a group, preserving existing memberships."""
 

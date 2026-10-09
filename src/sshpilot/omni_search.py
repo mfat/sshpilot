@@ -27,6 +27,9 @@ except Exception:  # pragma: no cover - only where gi cairo is absent
 
 from .accessibility import set_accessible_name
 from .cli_connect import validate_cli_tokens
+from .i18n import N_
+from .plugins.api import Capability
+from .plugins.registry import capabilities_for, protocol_registry
 from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 
 _ = gettext.gettext
@@ -54,44 +57,171 @@ _ATTENTION_RADIUS = 8.0
 # a frame before the window is actually usable. Only affects the initial
 # mapped/startup presentation; normal Start transitions begin immediately.
 _ATTENTION_DEBUT_DELAY_MS = 350
+# intent -> (title, icon, capability the host's protocol must have)
 _TRANSFER_INTENTS = {
-    "sftp": ("sftp", _("SFTP File Manager"), "folder-remote-symbolic"),
-    "scp": ("scp", _("Transfer Files with SCP"), "folder-remote-symbolic"),
+    "sftp": (
+        "sftp", N_("SFTP File Manager"), "folder-remote-symbolic",
+        Capability.FILE_TRANSFER,
+    ),
+    "scp": (
+        "scp", N_("Transfer Files with SCP"), "folder-remote-symbolic",
+        Capability.FILE_TRANSFER,
+    ),
     "ssh-copy-id": (
-        "ssh-copy-id",
-        _("Copy Key to Server"),
-        "dialog-password-symbolic",
+        "ssh-copy-id", N_("Copy Key to Server"), "dialog-password-symbolic",
+        Capability.KEY_DEPLOYMENT,
     ),
 }
 
-# Keep the source strings as well as their translations searchable.
-_ACTION_ALIASES = {
-    "app.new-connection": (
-        "add server", "add connection", "create host", "create server",
-        "new host", "new machine",
+# Words that ask for a host's Dashboard, before or after the host name.
+_DASHBOARD_WORDS = ("dashboard", "stats", "monitor", "status", "sysinfo")
+
+# Extra words for plugin protocols, on top of their id and display name.
+_PROTOCOL_WORDS = {
+    "rdp": ("remote desktop", "windows"),
+    "k8s": ("kubernetes", "kube", "kubectl", "pod", "pods"),
+    "docker": ("podman", "container", "containers"),
+}
+
+# Words that read as a command, so "<word> <target>" also offers to connect
+# to an unsaved target: the protocol id, its display name and these. Loose
+# search words ("windows", "pods") only list saved connections. The preset
+# fills fields the word implies.
+_COMMAND_WORDS = {"podman": ("docker", {"runtime": "podman"})}
+
+# Search keywords per action: other words people use for the same thing.
+# One semicolon-separated msgid per action so translators can add their own
+# words; the English list stays searchable in every language.
+_ACTION_KEYWORDS = {
+    "app.new-connection": N_(
+        "add server;add connection;add host;create host;create server;"
+        "new host;new server;new machine"
     ),
-    "app.local-terminal": (
-        "shell", "terminal", "local shell", "command line",
+    "win.create-group": N_("folder;new folder;category;organize"),
+    "app.local-terminal": N_(
+        "shell;terminal;local shell;command line;console;bash"
     ),
-    "app.preferences": (
-        "settings", "options", "configure app", "configuration",
+    "win.new-split-view": N_(
+        "split;split screen;side by side;tile;tiling;panes;grid"
     ),
-    "app.edit-ssh-config": (
-        "edit ssh config", "ssh configuration", "configure hosts", "ssh config",
+    "app.new-key": N_(
+        "ssh-copy-id;copy key;install key;deploy public key;ssh key;"
+        "generate key;keygen;new key"
     ),
-    "win.edit-known-hosts": (
-        "known hosts", "host keys", "fingerprints", "server fingerprints",
+    "app.broadcast-command": N_(
+        "broadcast;send to all;run on all servers;all hosts;multi exec;"
+        "multiple servers;cluster"
     ),
-    "win.manage-local-authorized-keys": (
-        "authorized keys", "public keys", "access keys", "authorized_keys",
+    "win.open-file-manager": N_(
+        "sftp;browse files;remote files;upload;download;file transfer;"
+        "file browser"
     ),
-    "win.open-file-manager": (
-        "sftp", "browse files", "remote files", "upload", "download",
+    "app.edit-ssh-config": N_(
+        "edit ssh config;ssh configuration;configure hosts;ssh config;"
+        "config file"
     ),
-    "app.new-key": (
-        "ssh-copy-id", "copy key", "install key", "deploy public key",
+    "win.edit-known-hosts": N_(
+        "known hosts;host keys;fingerprints;server fingerprints"
+    ),
+    "win.manage-login-profiles": N_(
+        "identities;identity;credentials;accounts;users;usernames;logins;"
+        "saved logins"
+    ),
+    "win.manage-local-authorized-keys": N_(
+        "authorized keys;public keys;access keys;authorized_keys"
+    ),
+    "win.save-session": N_("save layout;save workspace;save tabs"),
+    "win.open-session": N_(
+        "load session;restore session;load layout;load workspace;"
+        "restore tabs"
+    ),
+    "win.manage-sessions": N_("sessions;workspaces;layouts"),
+    "win.export-config": N_("backup;export;export settings;save settings"),
+    "win.import-config": N_("restore;import;import settings;load settings"),
+    "win.toggle-fullscreen": N_("fullscreen;full screen;maximize"),
+    "win.toggle_sidebar": N_(
+        "hide sidebar;show sidebar;sidebar;connection list;side panel"
+    ),
+    "win.toggle-command-blocks": N_(
+        "snippets;command snippets;saved commands;macros;command library"
+    ),
+    "app.preferences": N_(
+        "settings;preferences;prefs;options;configure app;configuration"
+    ),
+    "app.shortcuts": N_(
+        "shortcuts;hotkeys;keybindings;key bindings;keyboard shortcuts"
+    ),
+    "app.help": N_("help;docs;manual;guide;user guide;documentation"),
+    "win.check-for-updates": N_("update;upgrade;new version;latest version"),
+    "win.view-logs": N_("logs;log file;debug log"),
+    "win.report-problem": N_("bug;crash;issue;report bug;feedback"),
+    "win.export-diagnostics": N_("diagnostics;debug info;support bundle"),
+    "app.about": N_("about;version;credits;license"),
+    "app.quit": N_("quit;exit;close app"),
+}
+
+# Keywords for an action invoked with a specific target, e.g. the app style.
+_TARGET_KEYWORDS = {
+    ("win.set-app-theme", "dark"): N_(
+        "dark mode;dark theme;night mode;dark style"
+    ),
+    ("win.set-app-theme", "light"): N_(
+        "light mode;light theme;day mode;light style"
+    ),
+    ("win.set-app-theme", "default"): N_(
+        "system theme;follow system;automatic theme;auto theme"
     ),
 }
+
+# Searchable actions that are not in the main menu:
+# (action, title, target, icon).
+_EXTRA_COMMANDS = (
+    ("win.toggle_sidebar", N_("Toggle Sidebar"), None,
+     "sidebar-show-symbolic"),
+    ("win.toggle-command-blocks", N_("Command Snippets"), None,
+     "camera-flash-symbolic"),
+    ("win.set-app-theme", N_("Dark Style"), "dark",
+     "weather-clear-night-symbolic"),
+    ("win.set-app-theme", N_("Light Style"), "light",
+     "weather-clear-symbolic"),
+    ("win.set-app-theme", N_("Follow System"), "default",
+     "emblem-system-symbolic"),
+)
+
+# Settings pages: (page id, title as registered by Preferences, keywords).
+# The page id is derived from the English title (PreferencesWindow._page_id).
+_SETTINGS_PAGES = (
+    ("interface", N_("Interface"), N_(
+        "appearance;language;tabs;sidebar settings;start page;interface"
+    )),
+    ("terminal", N_("Terminal"), N_(
+        "font;font size;color scheme;colour scheme;terminal theme;colors;"
+        "cursor;scrollback;bell;terminal settings"
+    )),
+    ("file-management", N_("File Management"), N_(
+        "file manager settings;transfers;hidden files;file management"
+    )),
+    ("ssh-options", N_("SSH Options"), N_(
+        "ssh settings;keepalive;compression;timeout;ssh options"
+    )),
+    ("security-&-credentials", N_("Security & Credentials"), N_(
+        "security;passwords;keyring;password storage;secrets;credentials"
+    )),
+    ("plugins", N_("Plugins"), N_("plugins;extensions;add-ons;addons")),
+    ("advanced", N_("Advanced"), N_("advanced settings;advanced")),
+)
+
+# The View submenu's switches only hide or show header-bar buttons. Searching
+# "split" or "snippets" must reach the feature, not hide its button.
+_HIDDEN_ACTION_PREFIXES = ("win.headerbar-",)
+
+
+def _keywords(source: Optional[str]) -> Tuple[str, ...]:
+    """English and translated keywords from a semicolon-separated msgid."""
+    if not source:
+        return ()
+    words = [*source.split(";"), *_(source).split(";")]
+    return tuple(dict.fromkeys(word.strip() for word in words if word.strip()))
 
 
 # --- attention tracer geometry (pure maths, unit-testable) ------------------
@@ -222,30 +352,64 @@ def _walk_menu(model, out: List[Tuple[str, str, Any]]) -> None:
             _walk_menu(links.get_value(), out)
 
 
+def _target_string(target) -> Optional[str]:
+    try:
+        return target.get_string() if target is not None else None
+    except Exception:
+        return None
+
+
+def _has_action(window, detailed_action: str) -> bool:
+    """Whether ``app.x``/``win.x`` is registered where activation will look."""
+    scope, _sep, name = detailed_action.partition(".")
+    try:
+        owner = window if scope == "win" else window.get_application()
+        return owner is not None and owner.lookup_action(name) is not None
+    except Exception:
+        return False
+
+
 def collect_commands(window) -> List[CommandSpec]:
-    """Return the current main-menu actions, including plugin contributions."""
+    """Return the current main-menu actions, including plugin contributions,
+    plus the searchable actions that have no menu entry."""
     pairs: List[Tuple[str, str, Any]] = []
     try:
         _walk_menu(window.create_menu(), pairs)
     except Exception:
         return []
 
+    for action, title, target, _icon in _EXTRA_COMMANDS:
+        if _has_action(window, action):
+            variant = GLib.Variant("s", target) if target is not None else None
+            pairs.append((_(title), action, variant))
+
+    icons = {
+        (action, target): icon
+        for action, _title, target, icon in _EXTRA_COMMANDS
+    }
     commands: List[CommandSpec] = []
     seen = set()
     for label, action, target in pairs:
+        if action.startswith(_HIDDEN_ACTION_PREFIXES):
+            continue
         target_key = target.print_(False) if hasattr(target, "print_") else str(target)
         key = (action, target_key)
         if key in seen:
             continue
         seen.add(key)
-        source_aliases = _ACTION_ALIASES.get(action, ())
-        translated = tuple(_(alias) for alias in source_aliases)
-        aliases = tuple(dict.fromkeys((*source_aliases, *translated)))
+        target_value = _target_string(target)
+        if target_value is not None:
+            aliases = _keywords(_TARGET_KEYWORDS.get((action, target_value)))
+        else:
+            aliases = _keywords(_ACTION_KEYWORDS.get(action))
         commands.append(CommandSpec(
             title=label.replace("_", ""),
             action=action,
             target=target,
             aliases=aliases,
+            icon_name=icons.get(
+                (action, target_value), CommandSpec.icon_name
+            ),
         ))
     return commands
 
@@ -340,60 +504,269 @@ def _looks_like_ssh(query: str, tokens: Sequence[str]) -> bool:
     ))
 
 
-def _transfer_result(intent, connection, score: int) -> OmniResult:
-    title = str(
+def _connection_title(connection) -> str:
+    return str(
         getattr(connection, "display_name", "")
         or getattr(connection, "nickname", "")
     )
+
+
+def _transfer_result(intent, connection, score: int) -> OmniResult:
     return OmniResult(
-        "transfer", title, intent[1], intent[2], score,
-        (intent[0], connection),
+        "transfer", _connection_title(connection), _(intent[1]), intent[2],
+        score, (intent[0], connection),
     )
+
+
+def _supports(connection, capability) -> bool:
+    try:
+        return capability in capabilities_for(connection)
+    except Exception:
+        return False
+
+
+def _hosts_for(
+    window, query: str, connections: Sequence[Any]
+) -> List[Tuple[int, Any]]:
+    """(score, connection) for ``query``; recent/pinned when it is empty."""
+    if not query:
+        ordered = _recent_and_pinned(window, connections) or sorted(
+            connections, key=lambda c: _connection_title(c).casefold()
+        )
+        return [(1390 - index, c) for index, c in enumerate(ordered[:5])]
+    matches = []
+    for connection in connections:
+        score = _match_score(query, _connection_phrases(connection))
+        if score:
+            matches.append((900 + score // 2, connection))
+    matches.sort(key=lambda item: -item[0])
+    return matches[:5]
+
+
+def _transfer_results(window, tokens, connections) -> List[OmniResult]:
+    intent = _TRANSFER_INTENTS.get(tokens[0].casefold())
+    if intent is None:
+        return []
+    capable = [c for c in connections if _supports(c, intent[3])]
+    chooser = OmniResult(
+        "transfer", _(intent[1]), _("Choose a connection"), intent[2], 1400,
+        (intent[0], None),
+    )
+    if len(tokens) > 2:
+        return [chooser]
+    if len(tokens) == 1:
+        # Bare tool: offer the chooser plus recent/pinned hosts to run it on.
+        hosts = [
+            (score, c)
+            for score, c in _hosts_for(window, "", connections)
+            if _supports(c, intent[3])
+        ]
+        return [chooser, *(
+            _transfer_result(intent, c, score) for score, c in hosts
+        )]
+    # "sftp <partial>": fuzzy-match hosts, exact alias first.
+    hosts = _hosts_for(window, tokens[1], capable)
+    if not hosts:
+        return [chooser]
+    return [_transfer_result(intent, c, score) for score, c in hosts]
+
+
+def _dashboard_results(window, tokens, connections) -> List[OmniResult]:
+    """"dashboard web", "web dashboard" or a bare "dashboard"."""
+    words = {*_DASHBOARD_WORDS, _("Dashboard").casefold()}
+    if tokens[0].casefold() in words:
+        rest = tokens[1:]
+    elif len(tokens) > 1 and tokens[-1].casefold() in words:
+        rest = tokens[:-1]
+    else:
+        return []
+    capable = [
+        c for c in connections if _supports(c, Capability.REMOTE_COMMAND)
+    ]
+    return [
+        OmniResult(
+            "dashboard", _connection_title(c), _("Dashboard"),
+            "info-outline-symbolic", score + 10, c,
+        )
+        for score, c in _hosts_for(window, " ".join(rest), capable)
+    ]
+
+
+def _protocol_words() -> List[Tuple[str, Any, bool]]:
+    """(word, backend, is_command) for every registered non-SSH protocol,
+    longest word first so "remote desktop" wins over a shorter prefix."""
+    triples = []
+    try:
+        backends = protocol_registry().all()
+    except Exception:
+        backends = []
+    for backend in backends:
+        pid = str(getattr(backend, "protocol_id", "") or "")
+        if not pid or pid == "ssh":
+            continue
+        name = str(getattr(backend, "display_name", "") or "")
+        commands = {pid, name, *name.split("/")}
+        commands.update(w for w, (p, _preset) in _COMMAND_WORDS.items() if p == pid)
+        commands = {w.strip().casefold() for w in commands if w.strip()}
+        words = commands | {w.casefold() for w in _PROTOCOL_WORDS.get(pid, ())}
+        triples.extend((w, backend, w in commands) for w in words)
+    triples.sort(key=lambda item: -len(item[0]))
+    return triples
+
+
+def _protocol_match(query: str):
+    folded = query.casefold()
+    for word, backend, is_command in _protocol_words():
+        if folded == word or folded.startswith(word + " "):
+            return word, backend, is_command, query[len(word):].strip()
+    return None
+
+
+def _nickname_for(value: str, fallback: str) -> str:
+    nickname = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-.")
+    return nickname or fallback
+
+
+def _adhoc_data(backend, word: str, rest: str):
+    """Connection data for "<protocol> <target> [more]", or (None, error).
+
+    The first word fills the protocol's first required field; for a ``host``
+    field it may be ``user@host:port``. Further words fill the next fields in
+    the editor's order (telnet's port, serial's baud rate, a container's
+    command), skipping the username and secrets. Unset fields take their
+    defaults, as a connection saved from the editor would.
+    """
+    tokens, error = _parse_tokens(rest)
+    if not tokens:
+        return None, error
+    try:
+        fields = [f for f in backend.connection_fields() if f.kind != "password"]
+    except Exception:
+        fields = []
+    if not fields:
+        return None, None
+    first = next((f for f in fields if f.required), fields[0])
+    keys = {f.key for f in fields}
+    pid = str(backend.protocol_id)
+    data: dict = {}
+    data.update(_COMMAND_WORDS.get(word, ("", {}))[1])
+    target = tokens[0]
+    if first.key == "host":
+        user, _sep, host = target.rpartition("@")
+        port = None
+        match = re.fullmatch(r"\[([^\]]+)\](?::(\d+))?|([^:]+):(\d+)", host)
+        if match:
+            host = match.group(1) or match.group(3)
+            port = match.group(2) or match.group(4)
+        data["host"] = host
+        if user:
+            data["username"] = user
+        if port and "port" in keys:
+            data["port"] = port
+    else:
+        data[first.key] = target
+    remaining = [
+        f for f in fields
+        if f is not first and f.key not in data and f.key != "username"
+    ]
+    for value, field_spec in zip(tokens[1:], remaining):
+        data[field_spec.key] = value
+    for field_spec in fields:
+        if field_spec.key not in data and field_spec.default is not None:
+            data[field_spec.key] = field_spec.default
+    if "port" in data:
+        try:
+            data["port"] = int(data["port"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        errors = list(backend.validate(dict(data)) or [])
+    except Exception:
+        errors = []
+    if errors:
+        return None, str(errors[0])
+    host = str(data.get("host") or "")
+    data.update(
+        protocol=pid,
+        nickname=_nickname_for(host or target, pid),
+        hostname=host,
+    )
+    if not isinstance(data.get("port"), int):
+        data["port"] = int(getattr(backend, "default_port", None) or 22)
+    return data, None
+
+
+def _adhoc_result(backend, word: str, rest: str, query: str):
+    name = str(getattr(backend, "display_name", "") or backend.protocol_id)
+    title = _("Connect using {protocol}").format(protocol=name)
+    data, error = _adhoc_data(backend, word, rest)
+    if data is None:
+        if not error:
+            return None
+        return OmniResult(
+            "validation", title, error, "dialog-warning-symbolic", 1300,
+            enabled=False,
+        )
+    return OmniResult(
+        "adhoc", title, query, "utilities-terminal-symbolic", 1300, data,
+    )
+
+
+def _protocol_results(
+    window, query: str, connections
+) -> Optional[List[OmniResult]]:
+    """"rdp", "mosh web", "telnet 10.0.0.1 2323": saved connections of that
+    protocol, plus connecting to the typed target when it is not saved.
+    None when the query does not start with a protocol word."""
+    match = _protocol_match(query)
+    if match is None:
+        return None
+    word, backend, is_command, rest = match
+    pid = str(backend.protocol_id)
+    same = [
+        c for c in connections
+        if str(getattr(c, "protocol", "ssh") or "ssh") == pid
+    ]
+    hosts = _hosts_for(window, rest, same)
+    if not hosts and not rest:
+        hosts = [(1390 - i, c) for i, c in enumerate(same[:5])]
+    results = [_connection_result(c, score + 10) for score, c in hosts]
+    if rest and is_command:
+        adhoc = _adhoc_result(backend, word, rest, query)
+        if adhoc is not None:
+            results.append(adhoc)
+    return results
 
 
 def _intent_results(
     window, query: str, connections: Sequence[Any]
 ) -> List[OmniResult]:
+    """Transfer and dashboard intents; protocol intents are separate because
+    search_omni also needs to know whether one matched."""
     tokens, _error = _parse_tokens(query)
     if not tokens:
         return []
-    intent = _TRANSFER_INTENTS.get(tokens[0].casefold())
-    if intent is None:
-        return []
-
-    chooser = OmniResult(
-        "transfer", intent[1], _("Choose a connection"), intent[2], 1400,
-        (intent[0], None),
+    return (
+        _transfer_results(window, tokens, connections)
+        or _dashboard_results(window, tokens, connections)
     )
 
-    if len(tokens) == 1:
-        # Bare tool: offer the chooser plus recent/pinned hosts to run it on.
-        results = [chooser]
-        for index, connection in enumerate(
-            _recent_and_pinned(window, connections)[:5]
-        ):
-            results.append(_transfer_result(intent, connection, 1390 - index))
-        return results
 
-    if len(tokens) == 2:
-        # "sftp <partial>": fuzzy-match hosts, exact alias first.
-        matches = []
-        for connection in connections:
-            score = _match_score(tokens[1], _connection_phrases(connection))
-            if score:
-                matches.append((score, connection))
-        matches.sort(key=lambda item: -item[0])
-        if not matches:
-            return [chooser]
-        return [
-            _transfer_result(intent, connection, 900 + score // 2)
-            for score, connection in matches[:5]
-        ]
+def _bare_word_destination(tokens: Sequence[str], connections) -> bool:
+    """"ssh key" or "ssh config": one plain word that is no saved host.
 
-    return [chooser]
+    It may still be a Host alias in ~/.ssh/config, so the row stays, but a
+    command whose keywords match the whole query should rank above it.
+    """
+    if len(tokens) != 2 or tokens[0].casefold() != "ssh":
+        return False
+    dest = tokens[1]
+    if dest.startswith("-") or re.search(r"[@.:]", dest):
+        return False
+    return _find_saved_alias(connections, dest) is None
 
 
-def _ssh_result(query: str) -> Optional[OmniResult]:
+def _ssh_result(query: str, connections=()) -> Optional[OmniResult]:
     tokens, parse_error = _parse_tokens(query)
     if tokens is None:
         if query.strip().casefold().startswith("ssh"):
@@ -411,9 +784,10 @@ def _ssh_result(query: str) -> Optional[OmniResult]:
             "dialog-warning-symbolic", 1300, enabled=False,
         )
     display = shlex.join(tokens)
+    score = 600 if _bare_word_destination(tokens, connections) else 1350
     return OmniResult(
         "ssh", _("Connect using SSH"), display,
-        "utilities-terminal-symbolic", 1350, tuple(tokens),
+        "utilities-terminal-symbolic", score, tuple(tokens),
     )
 
 
@@ -529,9 +903,14 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
         return suggestions[:limit]
 
     results: List[OmniResult] = []
-    results.extend(_intent_results(window, query, connections))
+    intents = _intent_results(window, query, connections)
+    results.extend(intents)
+    # Computed once per keystroke: it asks the protocol plugin for its fields
+    # and runs its validation.
+    protocol_hosts = None if intents else _protocol_results(window, query, connections)
+    results.extend(protocol_hosts or ())
 
-    ssh = _ssh_result(query)
+    ssh = _ssh_result(query, connections)
     if ssh is not None:
         results.append(ssh)
         results.extend(_ssh_host_suggestions(window, query, connections))
@@ -549,6 +928,25 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
                 score, command,
             ))
 
+    for page_id, title, keywords in _SETTINGS_PAGES:
+        # Slightly below a command with the same match, so "settings" still
+        # opens Settings rather than one of its pages.
+        score = _match_score(query, (_(title), *_keywords(keywords)))
+        if score:
+            results.append(OmniResult(
+                "settings", _(title), _("Settings"),
+                "emblem-system-symbolic", score - 5, page_id,
+            ))
+
+    if protocol_hosts is not None and not protocol_hosts:
+        # "rdp" with no RDP connections saved yet: offer to add one.
+        for command in commands:
+            if command.action == "app.new-connection":
+                results.append(OmniResult(
+                    "command", command.title, _("Command"),
+                    command.icon_name, 1300, command,
+                ))
+
     results.sort(key=lambda result: (-result.score, result.title.casefold()))
     deduped: List[OmniResult] = []
     seen = set()
@@ -556,8 +954,8 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
         if result.kind == "command":
             spec = result.payload
             key = ("command", spec.action, str(spec.target))
-        elif result.kind == "connection":
-            key = ("connection", getattr(result.payload, "nickname", result.title))
+        elif result.kind in ("connection", "dashboard"):
+            key = (result.kind, getattr(result.payload, "nickname", result.title))
         else:
             key = (result.kind, result.title)
         if key in seen:
@@ -1117,6 +1515,15 @@ class OmniSearchController:
             Gtk.Widget.activate_action(self.window, spec.action, spec.target)
         elif result.kind == "ssh":
             self.window.open_cli_connect(list(result.payload))
+        elif result.kind == "adhoc":
+            from .connection_model import Connection
+
+            self.window.open_transient_connection(Connection(dict(result.payload)))
         elif result.kind == "transfer":
             intent, connection = result.payload
             self.window.open_omni_transfer_intent(intent, connection)
+        elif result.kind == "dashboard":
+            self.window._return_to_tab_view_if_welcome()
+            self.window._open_dashboard_for_connection(result.payload)
+        elif result.kind == "settings":
+            self.window.show_preferences(result.payload)

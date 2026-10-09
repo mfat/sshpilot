@@ -189,3 +189,76 @@ def test_attention_never_fires_when_start_already_selected(gui):
     gui.pump(100)
 
     assert not omni.attention_active
+
+
+def _top(win, query):
+    from sshpilot.omni_search import search_omni
+
+    return search_omni(win, query)[0]
+
+
+@pytest.mark.parametrize("query, action", [
+    ("identities", "win.manage-login-profiles"),
+    ("identity", "win.manage-login-profiles"),
+    ("prefs", "app.preferences"),
+    ("settings", "app.preferences"),
+    ("send to all", "app.broadcast-command"),
+    ("split", "win.new-split-view"),
+    ("snippets", "win.toggle-command-blocks"),
+    ("hide sidebar", "win.toggle_sidebar"),
+    ("dark mode", "win.set-app-theme"),
+    ("keygen", "app.new-key"),
+    ("ssh key", "app.new-key"),
+    ("ssh config", "app.edit-ssh-config"),
+    ("hotkeys", "app.shortcuts"),
+    ("upgrade", "win.check-for-updates"),
+    ("fullscreen", "win.toggle-fullscreen"),
+    ("help", "app.help"),
+    ("exit", "app.quit"),
+])
+def test_everyday_wording_reaches_the_feature(gui, query, action):
+    result = _top(gui.window, query)
+    assert result.kind == "command", result
+    assert result.payload.action == action
+
+
+def test_headerbar_button_switches_are_not_commands(gui):
+    from sshpilot.omni_search import collect_commands
+
+    actions = [c.action for c in collect_commands(gui.window)]
+    assert not [a for a in actions if a.startswith("win.headerbar-")]
+    assert "win.toggle_sidebar" in actions
+
+
+def test_dark_mode_targets_the_dark_style(gui):
+    assert _top(gui.window, "dark mode").payload.target.get_string() == "dark"
+
+
+@pytest.mark.parametrize("query, page", [
+    ("font", "terminal"),
+    ("color scheme", "terminal"),
+    ("keyring", "security-&-credentials"),
+])
+def test_settings_wording_opens_the_settings_page(gui, query, page):
+    result = _top(gui.window, query)
+    assert (result.kind, result.payload) == ("settings", page)
+
+    gui.window._omni_search.activate_result(result)
+    gui.pump(300)
+    prefs = gui.window._preferences_window
+    assert gui.window.nav_view.get_visible_page() is prefs
+    assert prefs.content_stack.get_visible_child_name() == page
+
+
+def test_dashboard_result_opens_the_host_dashboard(gui, monkeypatch):
+    from sshpilot.omni_search import OmniResult
+
+    opened = []
+    host = object()
+    monkeypatch.setattr(
+        gui.window, "_open_dashboard_for_connection", opened.append,
+    )
+    gui.window._omni_search.activate_result(OmniResult(
+        "dashboard", "web", "Dashboard", "info-outline-symbolic", 1400, host,
+    ))
+    assert opened == [host]

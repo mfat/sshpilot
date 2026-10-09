@@ -77,15 +77,22 @@ def test_shell_validation_and_daemon_helpers_stay_on_separate_paths():
 
 
 def test_localized_plugin_methods_are_frontend_only():
-    expected_caller = SOURCE / "connection_dialog.py"
+    # The connection editor, and the search box when it turns
+    # "telnet host 2323" into an unsaved target; the save prompt reads the
+    # fields that name that target for the daemon. All GTK, all in POTFILES.
+    editors = {SOURCE / "connection_dialog.py", SOURCE / "omni_search.py"}
+    expected_callers = {
+        "backend.validate(": editors,
+        "backend.connection_fields(": editors | {SOURCE / "terminal_manager.py"},
+    }
 
-    for call in ("backend.validate(", "backend.connection_fields("):
+    for call, expected in expected_callers.items():
         callers = {
             path
             for path in SOURCE.rglob("*.py")
             if call in path.read_text(encoding="utf-8")
         }
-        assert callers == {expected_caller}
+        assert callers == expected
 
 
 def test_frontend_gettext_owners_are_in_potfiles():

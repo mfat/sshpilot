@@ -677,6 +677,11 @@ class DaemonServer:
                     self._session_runtime._readiness_manager = (
                         self._readiness_manager
                     )
+            set_in_use = getattr(
+                self._connection_service, "set_transient_in_use", None
+            )
+            if callable(set_in_use):
+                set_in_use(self._connection_ids_with_live_sessions)
             self._interaction_broker = (
                 self._interaction_broker_factory(self._session_runtime)
                 if self._interaction_broker_factory is not None
@@ -998,6 +1003,18 @@ class DaemonServer:
             self._connection_service,
             self._interaction_broker,
             readiness_manager=self._readiness_manager,
+        )
+
+    def _connection_ids_with_live_sessions(self) -> frozenset:
+        """Connection ids a session that has not ended still uses."""
+        runtime = self._session_runtime
+        if runtime is None:
+            return frozenset()
+        ended = {SessionState.EXITED, SessionState.FAILED, SessionState.CLOSED}
+        return frozenset(
+            str(summary.connection_id)
+            for summary in runtime.list_sessions()
+            if summary.state not in ended
         )
 
     def _prepare_session_launch(self, spec: Any, launch_builder: Any = None) -> tuple:

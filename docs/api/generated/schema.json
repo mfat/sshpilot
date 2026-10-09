@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.78",
+  "api_implementation_version": "0.81",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -369,6 +369,10 @@
       "capability": "sftp.write",
       "status": "daemon-only"
     },
+    "open_transient_connection": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
     "prepare_external_terminal_launch": {
       "capability": "terminal.external_launch",
       "status": "implemented"
@@ -471,6 +475,10 @@
     },
     "send_terminal_input": {
       "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "set_connection_layout": {
+      "capability": "connections.groups",
       "status": "daemon-only"
     },
     "set_daemon_log_level": {
@@ -740,6 +748,9 @@
     "connections.move": {
       "capability": "connections.groups"
     },
+    "connections.open_transient": {
+      "capability": "sessions.write"
+    },
     "connections.prepare_external_terminal_launch": {
       "capability": "terminal.external_launch"
     },
@@ -757,6 +768,9 @@
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
+    },
+    "connections.set_layout": {
+      "capability": "connections.groups"
     },
     "connections.set_session_password": {
       "capability": "connections.secrets.write"
@@ -4860,6 +4874,32 @@
       ],
       "status": "Implemented"
     },
+    "GroupLayout": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "parent_id",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "GroupProfileLink": {
       "fields": [
         {
@@ -8319,6 +8359,32 @@
       ],
       "status": "Implemented"
     },
+    "SetConnectionLayoutRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "root_connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "groups",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[GroupLayout, ...]"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "SetDaemonLogLevelRequest": {
       "fields": [
         {
@@ -9903,6 +9969,13 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "target",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[tuple[str, str], ...]"
         }
       ],
       "status": "Implemented"

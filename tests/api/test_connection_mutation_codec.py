@@ -147,3 +147,28 @@ def test_mutation_codec_rejects_malformed_or_secret_bearing_payloads(
 ):
     with pytest.raises((TypeError, ValueError)):
         decoder(payload)
+
+
+def test_unsaved_host_check_target_round_trips_and_stays_off_the_wire_when_empty():
+    from sshpilot.api.models.connections import UnsavedHostCheckRequest
+    from sshpilot.api.transport.codec import (
+        unsaved_host_check_request_from_wire,
+        unsaved_host_check_request_to_wire,
+    )
+
+    serial = UnsavedHostCheckRequest(
+        hostname="dev-ttyUSB0",
+        protocol="serial",
+        target=(("device", "/dev/ttyUSB0"),),
+    )
+    wire = unsaved_host_check_request_to_wire(serial)
+    assert wire["target"] == {"device": "/dev/ttyUSB0"}
+    assert unsaved_host_check_request_from_wire(wire) == serial
+    # A daemon that predates ``target`` still accepts every SSH check.
+    assert "target" not in unsaved_host_check_request_to_wire(
+        UnsavedHostCheckRequest(hostname="web")
+    )
+    with pytest.raises(ValueError):
+        unsaved_host_check_request_from_wire({**wire, "target": ["device"]})
+    with pytest.raises(ValueError):
+        UnsavedHostCheckRequest(hostname="x", target=(("", "value"),))

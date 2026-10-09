@@ -5,6 +5,39 @@ notes remain separate.
 
 ## Unreleased
 
+- `UnsavedHostCheckRequest` gains `target`, `(field, value)` pairs naming a
+  target that has no host (serial's `device`, a container, a pod); it is sent
+  as a JSON object and only when non-empty. `check_unsaved_host` now answers
+  for every protocol: a mosh, telnet or RDP destination is saved when a
+  connection of that protocol has the same host, and the same user and port
+  when they are given; a hostless one when a connection of that protocol has
+  the same `target` values. A saved SSH connection no longer stands in for
+  another protocol. The save prompt uses it to offer saving any unsaved
+  target opened from the search box. New field, so the API implementation
+  version is 0.81; Protocol remains 1.0.
+- `open_transient_connection` (`connections.open_transient`, capability
+  `sessions.write`, plus `connections.write` and, with a `config_patch`,
+  `connections.config.write`, as `create_connection` needs) takes a
+  `CreateConnectionRequest` and returns the
+  `ConnectionDetails` of a connection the daemon can open but never stores:
+  `open_session` accepts its id until the daemon exits. Nothing is written to
+  the SSH config or `connections.json`, and the connection is not listed. An
+  SSH target launches through a private config holding its Host block followed
+  by `Include` of the user's SSH config, so the user's `Host` patterns still
+  apply. This is what opens `ssh user@host`, `mosh user@host` or
+  `telnet host 2323` typed into the search box or passed on the command line
+  without saving them first. New method, so the API implementation version is
+  0.80; Protocol remains 1.0.
+- `set_connection_layout` (`connections.set_layout`, capability
+  `connections.groups`) takes the new `SetConnectionLayoutRequest` (ungrouped
+  connection order plus a `GroupLayout` per group: parent, connections in
+  order, sibling position by list order) and replaces the whole arrangement
+  in one commit, returning the store generation. It must place exactly the
+  existing connections and groups, otherwise it fails with
+  `stale_connection_state`. Dragging in a sorted sidebar saves the sorted
+  view as the manual order with it, and its Undo restores the previous
+  arrangement. New method and models, so the API implementation version is
+  0.79; Protocol remains 1.0.
 - `sftp_resolve_ids` (`sftp.resolve_ids`, capability `sftp.metadata`) takes
   the new `SftpResolveIdsRequest` (up to 1024 uids and gids) and returns the
   new `SftpIdNames`: the server's user and group names for those ids, in

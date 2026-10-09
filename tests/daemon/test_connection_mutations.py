@@ -438,6 +438,60 @@ def test_daemon_groups_place_stale_generation_rejected(daemon_factory, tmp_path)
     client.close()
 
 
+def test_daemon_set_connection_layout_round_trip(daemon_factory, tmp_path):
+    """``connections.set_layout`` end to end: client DTO -> codec ->
+    dispatcher -> application service -> real repository. It returns the new
+    generation, and a layout naming the wrong set of connections is refused
+    as stale without changing anything."""
+    from sshpilot.api.models.connection_store import (
+        GroupId,
+        GroupLayout,
+        SetConnectionLayoutRequest,
+    )
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(tmp_path / "ssh_config"),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    server, _manager = daemon_factory(manager=repo)
+    client = DaemonClient(socket_path=server.socket_path)
+    for name in ("zulu", "alpha", "mike"):
+        client.create_connection(
+            CreateConnectionRequest(nickname=name, hostname=f"{name}.test")
+        )
+    group_id = client.create_group("Web")
+    before = client.get_connection_store_snapshot()
+
+    generation = client.set_connection_layout(
+        SetConnectionLayoutRequest(
+            root_connection_ids=("alpha", "zulu"),
+            groups=(
+                GroupLayout(
+                    group_id=GroupId(group_id), parent_id=None, connection_ids=("mike",)
+                ),
+            ),
+            expected_generation=before.generation,
+        )
+    )
+
+    after = client.get_connection_store_snapshot()
+    assert generation == after.generation > before.generation
+    assert after.root_connection_ids == ("alpha", "zulu")
+    assert next(g for g in after.groups if g.id == group_id).connection_ids == ("mike",)
+
+    with pytest.raises(SshPilotError) as caught:
+        client.set_connection_layout(
+            SetConnectionLayoutRequest(root_connection_ids=("alpha",), groups=())
+        )
+    assert caught.value.code is ErrorCode.STALE_EDITOR
+    assert client.get_connection_store_snapshot().generation == after.generation
+    client.close()
+
+
 def test_daemon_move_and_copy_connection_between_groups(daemon_factory, tmp_path):
     """End-to-end proof for the RPCs the sidebar's "Move to Group" and "Copy
     to Group" actions use (``connections.assign_to_group``,

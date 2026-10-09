@@ -25,6 +25,7 @@ import logging
 import os
 import stat
 import threading
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -37,6 +38,7 @@ from ...api.models.connection_store import (
     AddTagToConnectionsRequest,
     GroupSummary,
     MoveConnectionsRequest,
+    SetConnectionLayoutRequest,
     thaw_safe_metadata,
     validate_safe_metadata,
 )
@@ -75,6 +77,7 @@ from .service import ConnectionService
 from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
 from .ssh_config_store import SshConfigStore, _atomic_write_text
+from .transient import TransientConnections, is_transient_connection_id
 from .state_file import (
     ConnectionStateFileKind,
     ConnectionFileState,
@@ -310,6 +313,8 @@ class ConnectionRepositoryProtocol(Protocol):
 
     def move_connections(self, request: MoveConnectionsRequest) -> None: ...
 
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int: ...
+
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]
     ) -> ConnectionRecord: ...
@@ -396,6 +401,10 @@ class ConnectionRepository:
         self._generation = 0
         self._migrated_legacy = False
         self._legacy_migration_result = LegacyMigrationResult()
+        self._transient = TransientConnections(
+            lambda: self._ssh_store.root_path, isolated=self._isolated
+        )
+        weakref.finalize(self, self._transient.close)
         self._initial_load()
 
     # ------------------------------------------------------------------
@@ -413,7 +422,50 @@ class ConnectionRepository:
     def get_record(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:
             record = self._service.get(self._resolve_internal_id_locked(connection_id))
+            if record is None and is_transient_connection_id(connection_id):
+                return copy.deepcopy(self._transient.get(connection_id))
             return record
+
+    def open_transient_connection(
+        self, data: Mapping[str, Any], *, in_use: Tuple[str, ...] = ()
+    ) -> ConnectionRecord:
+        """Register an unsaved target the daemon can open but never stores.
+
+        Reads the SSH configuration (an SSH target includes it), so it runs on
+        the configuration lane like the other connection commands.
+        """
+        with self._lock:
+            return copy.deepcopy(self._transient.create(data, in_use=in_use))
+
+    def transient_summary(self, record: ConnectionRecord) -> ConnectionSummary:
+        """The public summary of a transient record (it has no snapshot row)."""
+        try:
+            port = int(record.port)
+        except (TypeError, ValueError):
+            port = 22
+        target = describe_target(record.protocol, record.data)
+        display_name = (
+            str(record.data.get("display_name") or "").strip()
+            or target
+            or record.hostname
+        )
+        return ConnectionSummary(
+            id=ConnectionId(record.id),
+            nickname=record.nickname,
+            host=record.host or str(record.data.get("host") or record.hostname),
+            hostname=record.hostname,
+            username=record.username,
+            port=port if 1 <= port <= 65535 else 22,
+            protocol=record.protocol or "ssh",
+            health=ConnectionHealth.UNKNOWN,
+            groups=(),
+            display_name=display_name,
+            target_summary=target,
+        )
+
+    def discard_transient_connection(self, connection_id: str) -> bool:
+        with self._lock:
+            return self._transient.discard(connection_id)
 
     def get_editor_record(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:
@@ -2437,6 +2489,35 @@ class ConnectionRepository:
                 raise
             self._commit(before)
             return result
+
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int:
+        """Replace the whole arrangement in one commit; return the new generation."""
+        with self._mutation_scope():
+            before = self._begin()
+            expected = request.expected_generation
+            if expected is not None and expected != before.generation:
+                raise CoreError(
+                    ErrorCode.STALE_CONNECTION_STATE,
+                    "The connection store changed before the layout was saved",
+                )
+            resolve = self._resolve_internal_id_locked
+            root = tuple(resolve(str(cid)) for cid in request.root_connection_ids)
+            groups = tuple(
+                (
+                    str(group.group_id),
+                    str(group.parent_id) if group.parent_id is not None else None,
+                    tuple(resolve(str(cid)) for cid in group.connection_ids),
+                )
+                for group in request.groups
+            )
+            try:
+                self._service.set_layout(root, groups)
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return self._generation
 
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]

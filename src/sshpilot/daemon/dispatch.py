@@ -89,6 +89,7 @@ from sshpilot.api.transport.codec import (
     place_group_request_from_wire,
     copy_connection_to_group_request_from_wire,
     move_connections_request_from_wire,
+    set_connection_layout_request_from_wire,
     add_tag_to_connections_request_from_wire,
     remove_connection_from_group_request_from_wire,
     reorder_connection_request_from_wire,
@@ -241,6 +242,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.metadata.add_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.assign_to_group": Capability.CONNECTIONS_GROUPS,
     "connections.move": Capability.CONNECTIONS_GROUPS,
+    "connections.set_layout": Capability.CONNECTIONS_GROUPS,
     "connections.create_group": Capability.CONNECTIONS_GROUPS,
     "connections.delete_group": Capability.CONNECTIONS_GROUPS,
     "connections.rename_group": Capability.CONNECTIONS_GROUPS,
@@ -267,6 +269,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sessions.list": Capability.SESSIONS_READ,
     "sessions.get": Capability.SESSIONS_READ,
     "sessions.open": Capability.SESSIONS_WRITE,
+    "connections.open_transient": Capability.SESSIONS_WRITE,
     "sessions.attach": Capability.SESSIONS_WRITE,
     "sessions.detach": Capability.SESSIONS_WRITE,
     "sessions.close": Capability.SESSIONS_WRITE,
@@ -400,6 +403,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "groups.rename",
         "groups.set_color",
         "groups.place",
+        "connections.set_layout",
         "groups.copy_connection",
         "groups.remove_connection",
         "groups.reorder_connection",
@@ -407,6 +411,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "connections.metadata.rename_tag",
         "connections.update_metadata",
         "sessions.open",
+        "connections.open_transient",
         "sessions.attach",
         "sftp.open",
         "sftp.attach",
@@ -517,12 +522,14 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "groups.rename",
         "groups.set_color",
         "groups.place",
+        "connections.set_layout",
         "groups.copy_connection",
         "groups.remove_connection",
         "groups.reorder_connection",
         "connections.metadata.update",
         "connections.metadata.rename_tag",
         "sessions.open",
+        "connections.open_transient",
         "sessions.close",
         "sftp.open",
         "sftp.close",
@@ -790,6 +797,7 @@ class RequestDispatcher:
             "connections.metadata.add_tag": self._handle_add_tag_to_connections,
             "connections.assign_to_group": self._handle_assign_to_group,
             "connections.move": self._handle_move_connections,
+            "connections.set_layout": self._handle_set_connection_layout,
             "connections.create_group": self._handle_create_group,
             "connections.delete_group": self._handle_delete_group,
             "connections.rename_group": self._handle_rename_group,
@@ -811,6 +819,7 @@ class RequestDispatcher:
             "sessions.list": self._handle_list_sessions,
             "sessions.get": self._handle_get_session,
             "sessions.open": self._handle_open_session,
+            "connections.open_transient": self._handle_open_transient_connection,
             "sessions.attach": self._handle_attach_session,
             "sessions.detach": self._handle_detach_session,
             "sessions.close": self._handle_close_session,
@@ -1217,6 +1226,25 @@ class RequestDispatcher:
                 ErrorCode.CAPABILITY_NOT_SUPPORTED,
                 f"Capability {capability.value} is required for this operation",
             )
+
+    def _handle_open_transient_connection(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = create_connection_request_from_wire(request.params)
+        # Registering a target is as expressive as saving one: same
+        # capabilities as connections.create, on top of sessions.write.
+        self._require_capability(state, Capability.CONNECTIONS_WRITE)
+        if typed_request.config_patch:
+            self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
+        return DeferredResult(
+            operation=lambda: connection_details_to_wire(
+                self._connections.open_transient_connection(typed_request)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
 
     def _handle_create_connection(
         self,
@@ -1949,6 +1977,18 @@ class RequestDispatcher:
         typed_request = move_connections_request_from_wire(request.params)
         return DeferredResult(
             operation=lambda: self._connections.move_connections_rpc(typed_request),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_set_connection_layout(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = set_connection_layout_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.set_connection_layout_rpc(typed_request),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )

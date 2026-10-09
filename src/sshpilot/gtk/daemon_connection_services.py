@@ -95,20 +95,33 @@ class DaemonConnectionServices:
             if key in EDITABLE_CONFIG_FIELDS and key not in _CORE_FIELDS
         }
 
-    def add_connection_from_data(self, data):
-        client = self._require_client()
+    @classmethod
+    def create_request_from_data(cls, data):
         values = dict(data)
         protocol = str(values.get("protocol", "ssh") or "ssh")
-        request = CreateConnectionRequest(
+        return CreateConnectionRequest(
             nickname=str(values.get("nickname", "") or ""),
             hostname=str(values.get("hostname", values.get("host", "")) or ""),
             username=str(values.get("username", "") or ""),
             port=int(values.get("port", 22) or 22),
             protocol=protocol,
             display_name=str(values.get("display_name", "") or ""),
-            config_patch=self._config_patch(values, protocol),
-            plugin_data=self._plugin_data(protocol, values),
+            config_patch=cls._config_patch(values, protocol),
+            plugin_data=cls._plugin_data(protocol, values),
         )
+
+    def open_transient_from_data(self, data):
+        """Register an unsaved target with the daemon; returns its details.
+
+        Blocking RPC: call it through the client bridge, not on the GTK thread.
+        """
+        client = self._require_client()
+        return client.open_transient_connection(self.create_request_from_data(data))
+
+    def add_connection_from_data(self, data):
+        client = self._require_client()
+        values = dict(data)
+        request = self.create_request_from_data(values)
         result = client.create_connection(request)
         self._sync_password(client, result.connection_id, values)
         return client.get_connection(result.connection_id)

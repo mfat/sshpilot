@@ -556,7 +556,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # palette card layout shared with the terminal headerbar.
         themes = getattr(self.config, 'terminal_themes', {}) or {}
         current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-        if current_scheme_key not in SCHEME_KEYS or current_scheme_key not in themes:
+        if not self._is_selectable_scheme(current_scheme_key):
             current_scheme_key = SCHEME_KEYS[0]
             self.config.set_setting('terminal.theme', current_scheme_key)
 
@@ -564,6 +564,10 @@ class PreferencesWindow(Adw.NavigationPage):
             themes,
             current_scheme_key,
             self._on_terminal_theme_selected,
+            custom_keys=self.config.custom_theme_keys(),
+            on_new=self._on_new_terminal_theme,
+            on_edit=self._on_edit_terminal_theme,
+            on_delete=self._on_delete_terminal_theme,
         )
         palette_group = Adw.PreferencesGroup(title=_("Color Scheme"))
         palette_container = Adw.Bin()
@@ -5643,7 +5647,11 @@ class PreferencesWindow(Adw.NavigationPage):
             self._group_terminal_color_sync = False
 
     def _on_config_setting_changed(self, _config, key, value):
-        if key == 'ui.group_color_display':
+        if key == 'terminal.theme':
+            self._sync_terminal_theme_chooser()
+        elif key == 'terminal.custom_themes':
+            self._sync_terminal_theme_chooser(rebuild=True)
+        elif key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
             self._trigger_sidebar_refresh()
         elif key == 'ui.group_row_display':
@@ -6575,8 +6583,8 @@ class PreferencesWindow(Adw.NavigationPage):
         choices = [
             {
                 'id': 'vte',
-                'label': 'VTE (default)',
-                'description': 'Native VTE-based terminal',
+                'label': _('VTE (default)'),
+                'description': _('Native GTK terminal'),
                 'available': True,
                 'error': None,
             }
@@ -6588,8 +6596,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 choices.append(
                     {
                         'id': 'pyxterm',
-                        'label': 'PyXterm.js',
-                        'description': 'Embedded xterm.js terminal (in-process, no server)',
+                        'label': 'xterm.js',
+                        'description': _('Web-based terminal running in WebKitGTK'),
                         'available': True,
                         'error': None,
                     }
@@ -6598,8 +6606,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 choices.append(
                     {
                         'id': 'pyxterm',
-                        'label': 'PyXterm.js (unavailable)',
-                        'description': 'Requires WebKit 6.0',
+                        'label': _('xterm.js (unavailable)'),
+                        'description': _('Requires WebKitGTK 6.0'),
                         'available': False,
                         'error': pyxterm_error,
                     }
@@ -6662,7 +6670,10 @@ class PreferencesWindow(Adw.NavigationPage):
                     if (connection, terminal) not in terminals:
                         terminals.append((connection, terminal))
 
-        # Check tab_view for any terminal pages
+        # Check tab_view for any terminal pages. Other pages (the Start page,
+        # file manager, Host Info) are not terminals; terminals inside split
+        # views are already listed by the registries above.
+        from .terminal import TerminalWidget
         tab_view = getattr(self.parent_window, 'tab_view', None)
         if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
             try:
@@ -6671,7 +6682,9 @@ class PreferencesWindow(Adw.NavigationPage):
                     if page is None:
                         continue
                     terminal = page.get_child()
-                    if terminal and terminal not in [t for _unused, t in terminals]:
+                    if not isinstance(terminal, TerminalWidget):
+                        continue
+                    if terminal not in [t for _unused, t in terminals]:
                         # Try to find the connection for this terminal
                         terminal_to_connection = getattr(self.parent_window, 'terminal_to_connection', {})
                         connection = terminal_to_connection.get(terminal)
@@ -6686,35 +6699,15 @@ class PreferencesWindow(Adw.NavigationPage):
         return terminals
 
     def _show_backend_change_info(self, backend_id, open_terminals, index):
-        """Show an info dialog explaining that backend change only applies to new terminals"""
-        backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
-        num_terminals = len(open_terminals)
-
-        secondary_text = ngettext(
-            "The terminal backend has been changed to {backend}.\n\n"
-            "This change will only apply to new terminal tabs.\n"
-            "Existing {count} terminal tab will continue using its current backend.\n\n"
-            "To use the new backend for the existing terminal, close and reopen that tab.",
-            "The terminal backend has been changed to {backend}.\n\n"
-            "This change will only apply to new terminal tabs.\n"
-            "Existing {count} terminal tabs will continue using their current backend.\n\n"
-            "To use the new backend for existing terminals, close and reopen those tabs.",
-            num_terminals,
-        ).format(backend=backend_name, count=num_terminals)
-
-        dialog = Gtk.MessageDialog(
-            transient_for=self.get_root(),
-            modal=True,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text=_("Terminal Backend Change"),
-            secondary_text=secondary_text,
+        """Switch, then say that only new tabs use the new backend."""
+        self._apply_backend_change(index, backend_id)
+        backend_name = 'xterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
+        dialog = Adw.AlertDialog(
+            heading=_("Terminal backend switched to {backend}").format(backend=backend_name),
+            body=_("Only new terminal tabs will use the selected backend."),
         )
-        def _on_info_response(d, response_id):
-            d.destroy()
-            self._apply_backend_change(index, backend_id)
-        dialog.connect("response", _on_info_response)
-        dialog.present()
+        dialog.add_response("ok", _("OK"))
+        dialog.present(self)
 
     def _apply_backend_change(self, index, backend_id):
         """Apply the backend change (only affects new terminals, not existing ones)"""
@@ -6743,10 +6736,43 @@ class PreferencesWindow(Adw.NavigationPage):
         # Only new terminals will use the new backend setting
         logger.info(f"Terminal backend changed to {backend_id} (will apply to new terminals only)")
 
+    def _is_selectable_scheme(self, scheme_key):
+        """A built-in scheme offered in the picker, or a custom one."""
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        if scheme_key not in themes:
+            return False
+        return scheme_key in SCHEME_KEYS or self.config.is_custom_theme(scheme_key)
+
+    def _on_new_terminal_theme(self):
+        from .terminal_theme_editor import edit_custom_theme
+        edit_custom_theme(self, self.config)
+
+    def _on_edit_terminal_theme(self, scheme_key):
+        from .terminal_theme_editor import edit_custom_theme
+        edit_custom_theme(self, self.config, scheme_key)
+
+    def _on_delete_terminal_theme(self, scheme_key):
+        from .terminal_theme_editor import confirm_delete_custom_theme
+        confirm_delete_custom_theme(self, self.config, scheme_key)
+
+    def _sync_terminal_theme_chooser(self, rebuild=False):
+        """Mirror the theme catalog and selection after a config change."""
+        chooser = getattr(self, 'terminal_theme_chooser', None)
+        if chooser is None:
+            return
+        selected = str(self.config.get_setting('terminal.theme', 'default'))
+        if rebuild:
+            chooser.set_themes(
+                getattr(self.config, 'terminal_themes', {}) or {},
+                selected,
+                self.config.custom_theme_keys(),
+            )
+        else:
+            chooser.set_selected(selected)
+
     def _on_terminal_theme_selected(self, scheme_key):
         """Persist a palette selection and apply it to active terminals."""
-        themes = getattr(self.config, 'terminal_themes', {}) or {}
-        if scheme_key not in SCHEME_KEYS or scheme_key not in themes:
+        if not self._is_selectable_scheme(scheme_key):
             scheme_key = SCHEME_KEYS[0]
 
         logger.info("Terminal color scheme changed to: %s", scheme_key)

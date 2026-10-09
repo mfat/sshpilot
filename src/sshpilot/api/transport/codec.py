@@ -80,11 +80,13 @@ from ..models.connection_store import (
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
     GroupId,
+    GroupLayout,
     GroupSummary,
     PlaceGroupRequest,
     RemoveConnectionFromGroupRequest,
     RenameTagRequest,
     ReorderConnectionRequest,
+    SetConnectionLayoutRequest,
     SetGroupColorRequest,
     thaw_safe_metadata,
     validate_safe_metadata,
@@ -1454,6 +1456,75 @@ def reorder_connection_request_from_wire(
     )
 
 
+def set_connection_layout_request_to_wire(
+    request: SetConnectionLayoutRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetConnectionLayoutRequest:
+        raise TypeError("set connection layout request is required")
+    groups = []
+    for group in request.groups:
+        entry: Dict[str, Any] = {
+            "group_id": group.group_id,
+            "connection_ids": list(group.connection_ids),
+        }
+        if group.parent_id is not None:
+            entry["parent_id"] = group.parent_id
+        groups.append(entry)
+    payload: Dict[str, Any] = {
+        "root_connection_ids": list(request.root_connection_ids),
+        "groups": groups,
+    }
+    if request.expected_generation is not None:
+        payload["expected_generation"] = request.expected_generation
+    return payload
+
+
+def _identifier_array(value: Any, context: str) -> Tuple[str, ...]:
+    if type(value) is not list:
+        raise ValueError(f"{context} must be an array")
+    return tuple(ConnectionId(_identifier(item, context)) for item in value)
+
+
+def set_connection_layout_request_from_wire(value: Any) -> SetConnectionLayoutRequest:
+    data = _strict_fields(
+        value,
+        required={"root_connection_ids", "groups"},
+        optional={"expected_generation"},
+        context="set connection layout request",
+    )
+    raw_groups = data["groups"]
+    if type(raw_groups) is not list:
+        raise ValueError("layout groups must be an array")
+    groups = []
+    for raw in raw_groups:
+        item = _strict_fields(
+            raw,
+            required={"group_id", "connection_ids"},
+            optional={"parent_id"},
+            context="group layout",
+        )
+        parent_id = item.get("parent_id")
+        groups.append(
+            GroupLayout(
+                group_id=GroupId(_identifier(item["group_id"], "group id")),
+                parent_id=(
+                    GroupId(_identifier(parent_id, "group parent id"))
+                    if parent_id is not None
+                    else None
+                ),
+                connection_ids=_identifier_array(item["connection_ids"], "connection id"),
+            )
+        )
+    generation = data.get("expected_generation")
+    if generation is not None:
+        generation = _integer(generation, "expected generation")
+    return SetConnectionLayoutRequest(
+        root_connection_ids=_identifier_array(data["root_connection_ids"], "connection id"),
+        groups=tuple(groups),
+        expected_generation=generation,
+    )
+
+
 def move_connections_request_to_wire(
     request: MoveConnectionsRequest,
 ) -> Dict[str, Any]:
@@ -2099,6 +2170,8 @@ def unsaved_host_check_request_to_wire(
     }
     if value.connection_id is not None:
         result["connection_id"] = value.connection_id
+    if value.target:
+        result["target"] = {key: text for key, text in value.target}
     return result
 
 
@@ -2106,9 +2179,12 @@ def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
     data = _strict_fields(
         value,
         required={"hostname", "username"},
-        optional={"connection_id", "port", "protocol", "proxy_jump"},
+        optional={"connection_id", "port", "protocol", "proxy_jump", "target"},
         context="unsaved host check request",
     )
+    target = data.get("target", {})
+    if not isinstance(target, dict):
+        raise ValueError("unsaved host check target must be a JSON object")
     return UnsavedHostCheckRequest(
         hostname=data["hostname"],
         username=data["username"],
@@ -2116,6 +2192,7 @@ def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
         port=data.get("port"),
         protocol=data.get("protocol", "ssh"),
         proxy_jump=tuple(data.get("proxy_jump", ())),
+        target=tuple(sorted(target.items())),
     )
 
 

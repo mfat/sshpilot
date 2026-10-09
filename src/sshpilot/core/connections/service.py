@@ -631,6 +631,77 @@ class ConnectionService:
             )
         )
 
+    def set_layout(
+        self,
+        root_connection_ids: Sequence[str],
+        groups: Sequence[tuple],
+    ) -> None:
+        """Replace the whole arrangement: group tree, membership and order.
+
+        ``groups`` holds ``(group_id, parent_id, connection_ids)`` for every
+        existing group; a group's sibling order is its position among the
+        entries that share its parent. The layout must place exactly the
+        existing connections and groups, so it can rearrange but never add or
+        drop anything. A layout taken before a connection or group was
+        created or deleted is refused as stale.
+        """
+        root = [str(cid) for cid in root_connection_ids]
+        entries = [
+            (
+                str(group_id),
+                str(parent_id) if parent_id is not None else None,
+                [str(cid) for cid in connection_ids],
+            )
+            for group_id, parent_id, connection_ids in groups
+        ]
+        with self._lock:
+            group_ids = [entry[0] for entry in entries]
+            if len(set(group_ids)) != len(group_ids):
+                raise _validation_error("layout lists a group twice")
+            placed = set(root)
+            for _gid, _parent, members in entries:
+                placed.update(members)
+            if set(group_ids) != set(self._groups) or placed != set(self._connections):
+                raise CoreError(
+                    ErrorCode.STALE_CONNECTION_STATE,
+                    "The connections or groups changed since the layout was taken",
+                )
+            if len(set(root)) != len(root):
+                raise _validation_error("layout lists a root connection twice")
+            grouped = set()
+            parents = {}
+            for gid, parent, members in entries:
+                if len(set(members)) != len(members):
+                    raise _validation_error(f"layout lists a connection twice in {gid!r}")
+                if parent is not None and parent not in self._groups:
+                    raise _validation_error(f"Unknown parent group {parent!r}")
+                grouped.update(members)
+                parents[gid] = parent
+            if grouped & set(root):
+                raise _validation_error("a root connection cannot also be in a group")
+            for gid in parents:
+                seen = {gid}
+                current = parents[gid]
+                while current is not None:
+                    if current in seen:
+                        raise _validation_error("Group layout would create a parent cycle")
+                    seen.add(current)
+                    current = parents.get(current)
+
+            sibling_index: Dict[Optional[str], int] = {}
+            for gid, parent, members in entries:
+                group = self._groups[gid]
+                group.parent_id = parent
+                group.order = sibling_index.get(parent, 0)
+                sibling_index[parent] = group.order + 1
+                group.connection_ids = list(members)
+            self._root_order = list(root)
+            for cid in self._connections:
+                groups_of = self._group_ids_of(cid)
+                self._connections[cid].group_id = groups_of[0] if groups_of else None
+        self._persist()
+        self._emit(MutationEvent(MutationKind.REORDERED, detail={"layout": True}))
+
     # --- groups ------------------------------------------------------------
 
     def create_group(

@@ -24,7 +24,7 @@ import getpass
 import ipaddress
 import re
 import threading
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
@@ -73,6 +73,7 @@ from .connections.repository import (
     ConnectionRepositoryProtocol,
     RepositoryChange,
 )
+from .connections.transient import is_transient_connection_id
 from .errors import CoreError
 
 from sshpilot import __version__ as sshpilot_version
@@ -744,6 +745,17 @@ class ConnectionApplicationService:
             logger.exception("Failed to move connections via daemon RPC")
             raise self._persistence_error() from error
 
+    def set_connection_layout_rpc(self, request: Any) -> int:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        try:
+            return self._repository.set_connection_layout(request)
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Failed to set the connection layout via daemon RPC")
+            raise self._persistence_error() from error
+
     def assign_connection_to_group(
         self, connection_id: ConnectionId, group_id: str
     ) -> bool:
@@ -1081,7 +1093,8 @@ class ConnectionApplicationService:
         normalized destination token (hostname, authored host alias, or
         connection alias) and explicit username match a saved record. This
         rule intentionally does not rerun OpenSSH in GTK or infer identity
-        from presentation-store paths.
+        from presentation-store paths. A destination of another protocol is
+        saved when a connection of that protocol names the same target.
         """
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_READ)
@@ -1114,12 +1127,52 @@ class ConnectionApplicationService:
                 ):
                     saved = True
                     break
+        elif not saved:
+            protocol = request.protocol.strip().casefold()
+            saved = any(
+                (record.protocol or "ssh").strip().casefold() == protocol
+                and self._saved_target_matches(record, request)
+                for record in self._repository.list_records()
+            )
         return UnsavedHostCheckResult(
             saved=saved,
             hostname=hostname.casefold(),
             username=username,
             generation=max(0, int(snapshot.generation)),
         )
+
+    @classmethod
+    def _saved_target_matches(
+        cls, record: ConnectionRecord, request: UnsavedHostCheckRequest
+    ) -> bool:
+        """Whether a saved non-SSH connection names the requested target.
+
+        No OpenSSH resolution applies: a mosh, telnet or RDP target is its
+        host, user and port as saved; a serial, container or pod target is the
+        protocol's own fields the frontend named in ``request.target``. An
+        omitted user or port matches whatever the saved connection has.
+        """
+        if request.target:
+            columns = {
+                "host": record.hostname,
+                "hostname": record.hostname,
+                "username": record.username,
+                "port": record.port,
+            }
+            data = record.data or {}
+            for key, value in request.target:
+                saved_value = data.get(key, columns.get(key))
+                if str(saved_value if saved_value is not None else "").strip() != value.strip():
+                    return False
+            return True
+        if cls._normalize_host(record.hostname or "") != cls._normalize_host(
+            request.hostname
+        ):
+            return False
+        username = request.username.strip()
+        if username and username != str(record.username or "").strip():
+            return False
+        return request.port is None or request.port == record.port
 
     def _active_config_file(self) -> Optional[str]:
         root = getattr(self._repository, "root_config_path", None)
@@ -1294,6 +1347,66 @@ class ConnectionApplicationService:
             generation=record.generation,
             display_name=self._record_to_summary(record).display_name,
         )
+
+    def set_transient_in_use(self, lookup: Callable[[], Any]) -> None:
+        """Daemon-internal: ids of transient connections live sessions use,
+        which the oldest-first limit must not drop."""
+        self._transient_ids_in_use = lookup
+
+    def _transient_ids_in_use(self) -> Any:
+        return ()
+
+    def open_transient_connection(
+        self, request: CreateConnectionRequest
+    ) -> ConnectionDetails:
+        """Register an unsaved target that sessions can open by the returned id.
+
+        Takes the same request as :meth:`create_connection` and validates it
+        the same way, but nothing is written: the record lives in the daemon
+        until it exits and never appears in listings.
+        """
+        self._assert_command_thread()
+        # As expressive as create_connection (a config patch can carry
+        # ProxyCommand/LocalCommand, plugin data a container command), so it
+        # needs the same capabilities; the dispatcher adds sessions.write.
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
+        if type(request) is not CreateConnectionRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A create connection request is required",
+            )
+        if request.protocol == "ssh" and request.plugin_data:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "SSH connections cannot contain plugin data",
+                details={"field": "plugin_data"},
+            )
+        if request.protocol != "ssh" and request.config_patch:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "Plugin connections cannot contain SSH configuration",
+                details={"field": "config_patch"},
+            )
+        data = self._build_create_data(request)
+        # Asked before any repository lock is taken: the session runtime has
+        # its own lock and calls back into this service.
+        try:
+            in_use = tuple(self._transient_ids_in_use())
+        except Exception:
+            logger.debug("Transient in-use lookup failed", exc_info=True)
+            in_use = ()
+        try:
+            record = self._repository.open_transient_connection(data, in_use=in_use)
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Transient connection preparation failed")
+            raise self._persistence_error() from error
+        return self._record_to_details(record)
 
     def preview_asbru_import(self, source: str) -> AsbruImportPreview:
         """Dry-run an Ásbrú export against the current connection store."""
@@ -1960,6 +2073,8 @@ class ConnectionApplicationService:
         result matches the authoritative store. No fallback path: a missing
         record or failed snapshot raises rather than silently guessing groups.
         """
+        if is_transient_connection_id(record.id):
+            return self._repository.transient_summary(record)
         snapshot = self._repository.snapshot()
         for summary in snapshot.connections:
             if summary.id == record.id:

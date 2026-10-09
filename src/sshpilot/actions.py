@@ -596,6 +596,9 @@ class WindowActions:
 
         if not preset_id:
             return
+        # Picking the choice already marked in the menu changes nothing.
+        if preset_id == getattr(self, '_connection_sort_last', None):
+            return
 
         if hasattr(self, 'apply_connection_sort_preset'):
             self.apply_connection_sort_preset(preset_id)
@@ -813,12 +816,15 @@ class WindowActions:
             from .sidebar import _submit_group_dnd_place, _sidebar_projection_generation
 
             index = len(self.group_manager.get_ordered_siblings(None))
+            # Not a placement the user picked on screen: a sorted view just
+            # shows the group in its sorted place, so nothing is saved.
             _submit_group_dnd_place(
                 self,
                 group_id,
                 None,
                 index,
                 expected_generation=_sidebar_projection_generation(self),
+                save_sorted_view=False,
             )
         except Exception as e:
             logger.error(f"Failed to move group to top level: {e}")
@@ -1564,7 +1570,15 @@ def register_window_actions(window):
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)
         window.add_action(window.open_in_system_terminal_action)
 
-    window.sort_connections_action = Gio.SimpleAction.new('sort-connections', GLib.VariantType.new('s'))
+    # Stateful so the sort menu marks the current choice.
+    from .connection_sort import DEFAULT_CONNECTION_SORT
+    window.sort_connections_action = Gio.SimpleAction.new_stateful(
+        'sort-connections',
+        GLib.VariantType.new('s'),
+        GLib.Variant(
+            's', getattr(window, '_connection_sort_last', None) or DEFAULT_CONNECTION_SORT
+        ),
+    )
     window.sort_connections_action.connect('activate', window.on_sort_connections_action)
     window.add_action(window.sort_connections_action)
 

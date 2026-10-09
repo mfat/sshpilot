@@ -202,6 +202,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: reveal_key_passphrase status=daemon-only capability=connections.secrets.reveal -->
 <!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: open_transient_connection status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: replay_terminal status=daemon-only capability=terminal.replay -->
 <!-- api-method-contract: release_interaction status=daemon-only capability=interactions.respond -->
@@ -245,6 +246,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: add_tag_to_connections status=implemented capability=connections.metadata.write -->
 <!-- api-method-contract: assign_connection_to_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: move_connections status=daemon-only capability=connections.groups -->
+<!-- api-method-contract: set_connection_layout status=daemon-only capability=connections.groups -->
 <!-- api-method-contract: create_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
@@ -352,6 +354,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.metadata.add_tag capability=connections.metadata.write -->
 | `connections.assign_to_group` | `connections.groups` | Implemented |
 | `connections.move` | `connections.groups` | Implemented; atomic multi-connection placement |
+| `connections.set_layout` | `connections.groups` | Implemented; replaces the whole arrangement in one commit |
 | `connections.create_group` | `connections.groups` | Implemented |
 | `connections.delete_group` | `connections.groups` | Implemented |
 | `connections.rename_group` | `connections.groups` | Implemented |
@@ -387,6 +390,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sessions.list` | `sessions.read` | Implemented |
 | `sessions.get` | `sessions.read` | Implemented |
 | `sessions.open` | `sessions.write` | Implemented |
+| `connections.open_transient` | `sessions.write` | Implemented; registers an unsaved target for `sessions.open` |
 | `sessions.attach` | `sessions.write` | Implemented |
 | `sessions.detach` | `sessions.write` | Implemented |
 | `sessions.close` | `sessions.write` | Implemented |
@@ -491,6 +495,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
 <!-- api-daemon-method: connections.assign_to_group capability=connections.groups -->
 <!-- api-daemon-method: connections.move capability=connections.groups -->
+<!-- api-daemon-method: connections.set_layout capability=connections.groups -->
 <!-- api-daemon-method: connections.create_group capability=connections.groups -->
 <!-- api-daemon-method: connections.delete_group capability=connections.groups -->
 <!-- api-daemon-method: connections.rename_group capability=connections.groups -->
@@ -523,6 +528,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sessions.get capability=sessions.read -->
 <!-- api-daemon-method: sessions.list capability=sessions.read -->
 <!-- api-daemon-method: sessions.open capability=sessions.write -->
+<!-- api-daemon-method: connections.open_transient capability=sessions.write -->
 <!-- api-daemon-method: sftp.attach capability=sftp.write -->
 <!-- api-daemon-method: sftp.chmod capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.close capability=sftp.write -->
@@ -919,6 +925,22 @@ mutation.
 
 ```python
 client.move_connections(request)
+```
+
+<!-- api-method: set_connection_layout -->
+## `set_connection_layout`
+
+Daemon-only. Replaces the whole arrangement in one commit: the order of the
+ungrouped connections, and for every group its parent, its sibling position
+and its connections in order. The `SetConnectionLayoutRequest` must place
+exactly the existing connections and groups; one taken before a connection
+or group was created or deleted fails with `stale_connection_state`, as does
+a mismatched optional `expected_generation`. Returns the store generation
+after the change. The sidebar uses it to save a sorted view as the manual
+order, and to undo that.
+
+```python
+generation = client.set_connection_layout(request)
 ```
 
 <!-- api-method: assign_connection_to_group -->
@@ -1552,6 +1574,29 @@ Requests bounded closure of one runtime forward.
 - **Errors:** `session_not_found`, `invalid_request`, and transport errors.
 - **Security:** No process handle, command, environment, PTY path, or secret is
   exposed.
+
+<!-- api-method: open_transient_connection -->
+## `open_transient_connection`
+
+Daemon-only. Registers a target that is not a saved connection and returns
+its `ConnectionDetails`; pass the returned `id` to `open_session`. It takes
+the same `CreateConnectionRequest` as `create_connection`, validates it the
+same way and needs the same capabilities (`connections.write`, plus
+`connections.config.write` with a `config_patch`) on top of
+`sessions.write`, because a target can carry the same commands. It writes
+nothing: the connection is never listed and lives
+until the daemon exits (the oldest are dropped beyond 64). An SSH target
+launches through a private config that holds its Host block and then
+includes the user's SSH config, so `Host` patterns there still apply.
+
+```python
+details = client.open_transient_connection(
+    CreateConnectionRequest(nickname="lab", hostname="10.0.0.5",
+                            port=2323, protocol="telnet",
+                            plugin_data={"host": "10.0.0.5", "port": 2323})
+)
+client.open_session(OpenSessionRequest(connection_id=details.id))
+```
 
 <!-- api-method: open_session -->
 ## `open_session`

@@ -47,6 +47,20 @@ def complete_tag_text(text: str, cursor: int, known_tags: Sequence[str]) -> Opti
     return None
 
 
+def effective_tags(stored: Sequence[str], protocol) -> List[str]:
+    """Stored tags plus the connection's protocol id as an automatic tag.
+
+    The protocol tag is derived, never stored, so it follows protocol changes
+    and stays out of the tag editor. A stored tag that already names the
+    protocol (any casing) is kept as is instead of being duplicated.
+    """
+    result = [str(t).strip() for t in (stored or []) if str(t).strip()]
+    proto = str(protocol or "").strip()
+    if proto and not any(t.casefold() == proto.casefold() for t in result):
+        result.append(proto)
+    return result
+
+
 def tag_group_id(tag: str) -> str:
     """Synthetic, stable id for a tag group (never a real GroupManager id)."""
     return TAG_GROUP_ID_PREFIX + str(tag).casefold()

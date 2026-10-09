@@ -683,7 +683,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Full v1 connection response without secret values or sensitive paths.
 
-**Related methods:** `create_connection`, `get_connection`, `update_connection`
+**Related methods:** `create_connection`, `get_connection`, `open_transient_connection`, `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1306,7 +1306,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `CreateConnectionRequest` record.
 
-**Related methods:** `create_connection`
+**Related methods:** `create_connection`, `open_transient_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2247,6 +2247,32 @@ Synthetic representation:
 {
   "key": "example",
   "plugin_id": "example.plugin"
+}
+```
+
+<!-- api-model: GroupLayout -->
+## `GroupLayout`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One group's place in a :class:`SetConnectionLayoutRequest`.
+
+**Related methods:** `set_connection_layout`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `GroupId` | Yes | — | No |
+| `parent_id` | `Optional[GroupId]` | Yes | — | No |
+| `connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": {},
+  "group_id": {},
+  "parent_id": {}
 }
 ```
 
@@ -4966,6 +4992,37 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SetConnectionLayoutRequest -->
+## `SetConnectionLayoutRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Replace the whole sidebar arrangement in one commit.
+
+Lists every ungrouped connection in order, and every group with its
+parent and its connections in order; a group's sibling order is its
+position among the groups sharing its parent. It may rearrange existing
+connections and groups but never add or remove one.
+
+**Related methods:** `set_connection_layout`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `root_connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+| `groups` | `Tuple[GroupLayout, ...]` | Yes | — | No |
+| `expected_generation` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "expected_generation": null,
+  "groups": {},
+  "root_connection_ids": {}
+}
+```
+
 <!-- api-model: SetDaemonLogLevelRequest -->
 ## `SetDaemonLogLevelRequest`
 
@@ -6292,6 +6349,7 @@ Synthetic representation:
 | `port` | `int | None` | No | `null` | No |
 | `protocol` | `str` | No | `ssh` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `target` | `tuple[tuple[str, str], ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -6302,6 +6360,7 @@ Synthetic representation:
   "port": null,
   "protocol": "ssh",
   "proxy_jump": [],
+  "target": [],
   "username": ""
 }
 ```

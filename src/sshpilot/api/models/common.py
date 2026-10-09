@@ -30,6 +30,29 @@ def require_identifier(value: str, field_name: str) -> str:
     return value
 
 
+def has_control_characters(value: str, *, allow_newlines: bool = False) -> bool:
+    """True when *value* holds a C0 control character or DEL (tab is allowed).
+
+    A line break in a value that lands on one ssh_config line starts a new
+    directive -- ``HostName x\\n  ProxyCommand ...`` runs a local command --
+    so single-line fields must never carry one.
+    """
+    for char in value:
+        code = ord(char)
+        if char == "\t" or (allow_newlines and char == "\n"):
+            continue
+        if code < 0x20 or code == 0x7F:
+            return True
+    return False
+
+
+def validate_single_line(value: str, field_name: str) -> str:
+    """Reject line breaks and other control characters in a one-line field."""
+    if isinstance(value, str) and has_control_characters(value):
+        raise ValueError(f"{field_name} must not contain line breaks or control characters")
+    return value
+
+
 def validate_ssh_host_alias(value: str, field_name: str = "connection nickname") -> str:
     """Validate an SSH ``Host`` token at every authoritative boundary."""
     if not isinstance(value, str) or not value.strip():
@@ -39,6 +62,7 @@ def validate_ssh_host_alias(value: str, field_name: str = "connection nickname")
         raise ValueError(f"{field_name} must not begin with '-' because OpenSSH may parse it as an option")
     if "\x00" in normalized:
         raise ValueError(f"{field_name} must not contain NUL")
+    validate_single_line(normalized, field_name)
     return normalized
 
 

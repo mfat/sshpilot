@@ -197,3 +197,41 @@ def test_search_results_include_matching_groups(monkeypatch):
     assert len(direct_rows) == 1
     assert direct_rows[0].indentation == 0
 
+
+
+def test_tag_filter_matches_automatic_protocol_tag(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cairo", types.SimpleNamespace())
+    window_module = importlib.import_module("sshpilot.window")
+    window_module = importlib.reload(window_module)
+
+    monkeypatch.setattr(window_module, "GroupRow", StubGroupRow)
+    monkeypatch.setattr(window_module, "ConnectionRow", StubConnectionRow)
+
+    ssh_conn = Connection({"nickname": "web", "host": "web-01"})
+    mosh_conn = Connection({"nickname": "edge", "host": "edge-01", "protocol": "mosh"})
+
+    class MetaConnectionManager(DummyConnectionManager):
+        def get_metadata(self, nickname):
+            return {"tags": ["prod"]} if nickname == "edge" else {}
+
+    test_window = window_module.MainWindow.__new__(window_module.MainWindow)
+    test_window.connection_list = DummyListBox()
+    test_window.connection_rows = {}
+    test_window.connection_scrolled = None
+    test_window.connection_manager = MetaConnectionManager([ssh_conn, mosh_conn])
+    test_window.group_manager = DummyGroupManager({})
+    test_window.config = DummyConfig()
+    test_window.search_entry = DummySearchEntry("")
+    test_window._hide_hosts = False
+    test_window._tag_filter = "mosh"
+
+    test_window.rebuild_connection_list()
+
+    shown = [
+        row.connection.nickname
+        for row in test_window.connection_list.children
+        if isinstance(row, StubConnectionRow)
+    ]
+    assert shown == ["edge"]
+    assert mosh_conn.tags == ["prod", "mosh"]
+    assert ssh_conn.tags == ["ssh"]
