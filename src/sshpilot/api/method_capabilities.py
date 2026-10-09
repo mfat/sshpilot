@@ -40,6 +40,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
     "get_plugin_secret": Capability.CONNECTIONS_SECRETS_REVEAL,
     "move_connections": Capability.CONNECTIONS_GROUPS,
+    "set_connection_layout": Capability.CONNECTIONS_GROUPS,
     "sftp_copy": Capability.SFTP_MUTATE,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "broadcast_terminal_input": Capability.TERMINAL_INPUT,

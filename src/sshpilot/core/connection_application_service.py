@@ -744,6 +744,17 @@ class ConnectionApplicationService:
             logger.exception("Failed to move connections via daemon RPC")
             raise self._persistence_error() from error
 
+    def set_connection_layout_rpc(self, request: Any) -> int:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        try:
+            return self._repository.set_connection_layout(request)
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Failed to set the connection layout via daemon RPC")
+            raise self._persistence_error() from error
+
     def assign_connection_to_group(
         self, connection_id: ConnectionId, group_id: str
     ) -> bool:

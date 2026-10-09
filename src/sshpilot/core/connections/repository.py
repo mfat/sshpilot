@@ -37,6 +37,7 @@ from ...api.models.connection_store import (
     AddTagToConnectionsRequest,
     GroupSummary,
     MoveConnectionsRequest,
+    SetConnectionLayoutRequest,
     thaw_safe_metadata,
     validate_safe_metadata,
 )
@@ -309,6 +310,8 @@ class ConnectionRepositoryProtocol(Protocol):
     ) -> "GroupRecord": ...
 
     def move_connections(self, request: MoveConnectionsRequest) -> None: ...
+
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int: ...
 
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]
@@ -2437,6 +2440,35 @@ class ConnectionRepository:
                 raise
             self._commit(before)
             return result
+
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int:
+        """Replace the whole arrangement in one commit; return the new generation."""
+        with self._mutation_scope():
+            before = self._begin()
+            expected = request.expected_generation
+            if expected is not None and expected != before.generation:
+                raise CoreError(
+                    ErrorCode.STALE_CONNECTION_STATE,
+                    "The connection store changed before the layout was saved",
+                )
+            resolve = self._resolve_internal_id_locked
+            root = tuple(resolve(str(cid)) for cid in request.root_connection_ids)
+            groups = tuple(
+                (
+                    str(group.group_id),
+                    str(group.parent_id) if group.parent_id is not None else None,
+                    tuple(resolve(str(cid)) for cid in group.connection_ids),
+                )
+                for group in request.groups
+            )
+            try:
+                self._service.set_layout(root, groups)
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return self._generation
 
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]

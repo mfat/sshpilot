@@ -75,6 +75,7 @@ from .models.connection_store import (
     PlaceGroupRequest,
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
+    SetConnectionLayoutRequest,
     RemoveConnectionFromGroupRequest,
     ReorderConnectionRequest,
     RenameTagRequest,
@@ -282,6 +283,7 @@ from .transport.codec import (
     place_group_request_to_wire,
     copy_connection_to_group_request_to_wire,
     move_connections_request_to_wire,
+    set_connection_layout_request_to_wire,
     remove_connection_from_group_request_to_wire,
     reorder_connection_request_to_wire,
     rename_tag_request_to_wire,
@@ -418,6 +420,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "remove_connection_from_group": Capability.CONNECTIONS_GROUPS,
     "reorder_connection": Capability.CONNECTIONS_GROUPS,
     "move_connections": Capability.CONNECTIONS_GROUPS,
+    "set_connection_layout": Capability.CONNECTIONS_GROUPS,
     "rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "add_tag_to_connections": Capability.CONNECTIONS_METADATA_WRITE,
     "get_session": Capability.SESSIONS_READ,
@@ -1262,6 +1265,18 @@ class DaemonClient:
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "connections.set_layout",
+            set_connection_layout_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not int or isinstance(result, bool) or result < 0:
+            self._fail_protocol("The daemon returned an invalid layout generation")
         return result
 
     def rename_tag(self, request: RenameTagRequest) -> int:

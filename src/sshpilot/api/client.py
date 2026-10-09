@@ -42,6 +42,7 @@ from .models.connection_store import (
     PlaceGroupRequest,
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
+    SetConnectionLayoutRequest,
     RemoveConnectionFromGroupRequest,
     ReorderConnectionRequest,
     RenameTagRequest,
@@ -360,6 +361,10 @@ class SshPilotClient(Protocol):
         ...
 
     def move_connections(self, request: MoveConnectionsRequest) -> bool:
+        ...
+
+    def set_connection_layout(self, request: SetConnectionLayoutRequest) -> int:
+        """Replace the whole arrangement; returns the store generation after it."""
         ...
 
     def rename_tag(self, request: RenameTagRequest) -> int:

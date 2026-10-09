@@ -291,6 +291,8 @@ RELATED_METHODS = {
     ),
     "SftpFilesystemUsage": ("sftp_filesystem_usage",),
     "SftpResolveIdsRequest": ("sftp_resolve_ids",),
+    "SetConnectionLayoutRequest": ("set_connection_layout",),
+    "GroupLayout": ("set_connection_layout",),
     "SftpIdNames": ("sftp_resolve_ids",),
     "SftpRenameRequest": ("sftp_rename",),
     "SftpChmodRequest": ("sftp_chmod",),

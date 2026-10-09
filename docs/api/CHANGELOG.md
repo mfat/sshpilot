@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `set_connection_layout` (`connections.set_layout`, capability
+  `connections.groups`) takes the new `SetConnectionLayoutRequest` (ungrouped
+  connection order plus a `GroupLayout` per group: parent, connections in
+  order, sibling position by list order) and replaces the whole arrangement
+  in one commit, returning the store generation. It must place exactly the
+  existing connections and groups, otherwise it fails with
+  `stale_connection_state`. Dragging in a sorted sidebar saves the sorted
+  view as the manual order with it, and its Undo restores the previous
+  arrangement. New method and models, so the API implementation version is
+  0.79; Protocol remains 1.0.
 - `sftp_resolve_ids` (`sftp.resolve_ids`, capability `sftp.metadata`) takes
   the new `SftpResolveIdsRequest` (up to 1024 uids and gids) and returns the
   new `SftpIdNames`: the server's user and group names for those ids, in

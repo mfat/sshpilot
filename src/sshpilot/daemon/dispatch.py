@@ -89,6 +89,7 @@ from sshpilot.api.transport.codec import (
     place_group_request_from_wire,
     copy_connection_to_group_request_from_wire,
     move_connections_request_from_wire,
+    set_connection_layout_request_from_wire,
     add_tag_to_connections_request_from_wire,
     remove_connection_from_group_request_from_wire,
     reorder_connection_request_from_wire,
@@ -241,6 +242,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.metadata.add_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.assign_to_group": Capability.CONNECTIONS_GROUPS,
     "connections.move": Capability.CONNECTIONS_GROUPS,
+    "connections.set_layout": Capability.CONNECTIONS_GROUPS,
     "connections.create_group": Capability.CONNECTIONS_GROUPS,
     "connections.delete_group": Capability.CONNECTIONS_GROUPS,
     "connections.rename_group": Capability.CONNECTIONS_GROUPS,
@@ -400,6 +402,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "groups.rename",
         "groups.set_color",
         "groups.place",
+        "connections.set_layout",
         "groups.copy_connection",
         "groups.remove_connection",
         "groups.reorder_connection",
@@ -517,6 +520,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "groups.rename",
         "groups.set_color",
         "groups.place",
+        "connections.set_layout",
         "groups.copy_connection",
         "groups.remove_connection",
         "groups.reorder_connection",
@@ -790,6 +794,7 @@ class RequestDispatcher:
             "connections.metadata.add_tag": self._handle_add_tag_to_connections,
             "connections.assign_to_group": self._handle_assign_to_group,
             "connections.move": self._handle_move_connections,
+            "connections.set_layout": self._handle_set_connection_layout,
             "connections.create_group": self._handle_create_group,
             "connections.delete_group": self._handle_delete_group,
             "connections.rename_group": self._handle_rename_group,
@@ -1949,6 +1954,18 @@ class RequestDispatcher:
         typed_request = move_connections_request_from_wire(request.params)
         return DeferredResult(
             operation=lambda: self._connections.move_connections_rpc(typed_request),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_set_connection_layout(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = set_connection_layout_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.set_connection_layout_rpc(typed_request),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )

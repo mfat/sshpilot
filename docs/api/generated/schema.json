@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.78",
+  "api_implementation_version": "0.79",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -473,6 +473,10 @@
       "capability": "terminal.input",
       "status": "daemon-only"
     },
+    "set_connection_layout": {
+      "capability": "connections.groups",
+      "status": "daemon-only"
+    },
     "set_daemon_log_level": {
       "capability": "daemon.control",
       "status": "daemon-only"
@@ -757,6 +761,9 @@
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
+    },
+    "connections.set_layout": {
+      "capability": "connections.groups"
     },
     "connections.set_session_password": {
       "capability": "connections.secrets.write"
@@ -4860,6 +4867,32 @@
       ],
       "status": "Implemented"
     },
+    "GroupLayout": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "parent_id",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "GroupProfileLink": {
       "fields": [
         {
@@ -8315,6 +8348,32 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetConnectionLayoutRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "root_connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "groups",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[GroupLayout, ...]"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
       "status": "Implemented"

@@ -80,11 +80,13 @@ from ..models.connection_store import (
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
     GroupId,
+    GroupLayout,
     GroupSummary,
     PlaceGroupRequest,
     RemoveConnectionFromGroupRequest,
     RenameTagRequest,
     ReorderConnectionRequest,
+    SetConnectionLayoutRequest,
     SetGroupColorRequest,
     thaw_safe_metadata,
     validate_safe_metadata,
@@ -1451,6 +1453,75 @@ def reorder_connection_request_from_wire(
             GroupId(_identifier(group_id, "reorder group id")) if group_id is not None else None
         ),
         position=_identifier(data["position"], "reorder position"),
+    )
+
+
+def set_connection_layout_request_to_wire(
+    request: SetConnectionLayoutRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetConnectionLayoutRequest:
+        raise TypeError("set connection layout request is required")
+    groups = []
+    for group in request.groups:
+        entry: Dict[str, Any] = {
+            "group_id": group.group_id,
+            "connection_ids": list(group.connection_ids),
+        }
+        if group.parent_id is not None:
+            entry["parent_id"] = group.parent_id
+        groups.append(entry)
+    payload: Dict[str, Any] = {
+        "root_connection_ids": list(request.root_connection_ids),
+        "groups": groups,
+    }
+    if request.expected_generation is not None:
+        payload["expected_generation"] = request.expected_generation
+    return payload
+
+
+def _identifier_array(value: Any, context: str) -> Tuple[str, ...]:
+    if type(value) is not list:
+        raise ValueError(f"{context} must be an array")
+    return tuple(ConnectionId(_identifier(item, context)) for item in value)
+
+
+def set_connection_layout_request_from_wire(value: Any) -> SetConnectionLayoutRequest:
+    data = _strict_fields(
+        value,
+        required={"root_connection_ids", "groups"},
+        optional={"expected_generation"},
+        context="set connection layout request",
+    )
+    raw_groups = data["groups"]
+    if type(raw_groups) is not list:
+        raise ValueError("layout groups must be an array")
+    groups = []
+    for raw in raw_groups:
+        item = _strict_fields(
+            raw,
+            required={"group_id", "connection_ids"},
+            optional={"parent_id"},
+            context="group layout",
+        )
+        parent_id = item.get("parent_id")
+        groups.append(
+            GroupLayout(
+                group_id=GroupId(_identifier(item["group_id"], "group id")),
+                parent_id=(
+                    GroupId(_identifier(parent_id, "group parent id"))
+                    if parent_id is not None
+                    else None
+                ),
+                connection_ids=_identifier_array(item["connection_ids"], "connection id"),
+            )
+        )
+    generation = data.get("expected_generation")
+    if generation is not None:
+        generation = _integer(generation, "expected generation")
+    return SetConnectionLayoutRequest(
+        root_connection_ids=_identifier_array(data["root_connection_ids"], "connection id"),
+        groups=tuple(groups),
+        expected_generation=generation,
     )
 
 
