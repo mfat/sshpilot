@@ -1128,6 +1128,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._sync_terminal_theme_selector(str(value))
             return
 
+        if key == 'terminal.custom_themes':
+            chooser = getattr(self, '_terminal_theme_chooser', None)
+            if chooser is not None:
+                chooser.set_themes(
+                    getattr(self.config, 'terminal_themes', {}) or {},
+                    str(self.config.get_setting('terminal.theme', 'default')),
+                    self.config.custom_theme_keys(),
+                )
+            self._sync_terminal_theme_selector()
+            return
+
     def _schedule_startup_tasks(self):
         """Schedule one-time startup behaviors such as focus and welcome state."""
         if getattr(self, '_startup_tasks_scheduled', False):
@@ -3158,9 +3169,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if theme_key not in themes:
             theme_key = 'default'
         self.config.set_setting('terminal.theme', theme_key)
+        self._popdown_terminal_theme_menu()
+
+    def _popdown_terminal_theme_menu(self) -> None:
         popover = getattr(self._terminal_theme_menu_button, 'get_popover', lambda: None)()
         if popover is not None:
             popover.popdown()
+
+    def _on_new_terminal_theme(self) -> None:
+        from .terminal_theme_editor import edit_custom_theme
+        self._popdown_terminal_theme_menu()
+        edit_custom_theme(self, self.config)
+
+    def _on_edit_terminal_theme(self, theme_key: str) -> None:
+        from .terminal_theme_editor import edit_custom_theme
+        self._popdown_terminal_theme_menu()
+        edit_custom_theme(self, self.config, theme_key)
+
+    def _on_delete_terminal_theme(self, theme_key: str) -> None:
+        from .terminal_theme_editor import confirm_delete_custom_theme
+        self._popdown_terminal_theme_menu()
+        confirm_delete_custom_theme(self, self.config, theme_key)
 
     def _ensure_terminal_theme_chooser(self):
         chooser = getattr(self, '_terminal_theme_chooser', None)
@@ -3174,6 +3203,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     getattr(self.config, 'terminal_themes', {}) or {},
                     selected_theme,
                     self._on_terminal_theme_selected,
+                    custom_keys=self.config.custom_theme_keys(),
+                    on_new=self._on_new_terminal_theme,
+                    on_edit=self._on_edit_terminal_theme,
+                    on_delete=self._on_delete_terminal_theme,
                 )
                 terminal_theme_popover = Gtk.Popover()
                 terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)

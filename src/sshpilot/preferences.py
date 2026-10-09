@@ -556,7 +556,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # palette card layout shared with the terminal headerbar.
         themes = getattr(self.config, 'terminal_themes', {}) or {}
         current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-        if current_scheme_key not in SCHEME_KEYS or current_scheme_key not in themes:
+        if not self._is_selectable_scheme(current_scheme_key):
             current_scheme_key = SCHEME_KEYS[0]
             self.config.set_setting('terminal.theme', current_scheme_key)
 
@@ -564,6 +564,10 @@ class PreferencesWindow(Adw.NavigationPage):
             themes,
             current_scheme_key,
             self._on_terminal_theme_selected,
+            custom_keys=self.config.custom_theme_keys(),
+            on_new=self._on_new_terminal_theme,
+            on_edit=self._on_edit_terminal_theme,
+            on_delete=self._on_delete_terminal_theme,
         )
         palette_group = Adw.PreferencesGroup(title=_("Color Scheme"))
         palette_container = Adw.Bin()
@@ -5643,7 +5647,11 @@ class PreferencesWindow(Adw.NavigationPage):
             self._group_terminal_color_sync = False
 
     def _on_config_setting_changed(self, _config, key, value):
-        if key == 'ui.group_color_display':
+        if key == 'terminal.theme':
+            self._sync_terminal_theme_chooser()
+        elif key == 'terminal.custom_themes':
+            self._sync_terminal_theme_chooser(rebuild=True)
+        elif key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
             self._trigger_sidebar_refresh()
         elif key == 'ui.group_row_display':
@@ -6743,10 +6751,43 @@ class PreferencesWindow(Adw.NavigationPage):
         # Only new terminals will use the new backend setting
         logger.info(f"Terminal backend changed to {backend_id} (will apply to new terminals only)")
 
+    def _is_selectable_scheme(self, scheme_key):
+        """A built-in scheme offered in the picker, or a custom one."""
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        if scheme_key not in themes:
+            return False
+        return scheme_key in SCHEME_KEYS or self.config.is_custom_theme(scheme_key)
+
+    def _on_new_terminal_theme(self):
+        from .terminal_theme_editor import edit_custom_theme
+        edit_custom_theme(self, self.config)
+
+    def _on_edit_terminal_theme(self, scheme_key):
+        from .terminal_theme_editor import edit_custom_theme
+        edit_custom_theme(self, self.config, scheme_key)
+
+    def _on_delete_terminal_theme(self, scheme_key):
+        from .terminal_theme_editor import confirm_delete_custom_theme
+        confirm_delete_custom_theme(self, self.config, scheme_key)
+
+    def _sync_terminal_theme_chooser(self, rebuild=False):
+        """Mirror the theme catalog and selection after a config change."""
+        chooser = getattr(self, 'terminal_theme_chooser', None)
+        if chooser is None:
+            return
+        selected = str(self.config.get_setting('terminal.theme', 'default'))
+        if rebuild:
+            chooser.set_themes(
+                getattr(self.config, 'terminal_themes', {}) or {},
+                selected,
+                self.config.custom_theme_keys(),
+            )
+        else:
+            chooser.set_selected(selected)
+
     def _on_terminal_theme_selected(self, scheme_key):
         """Persist a palette selection and apply it to active terminals."""
-        themes = getattr(self.config, 'terminal_themes', {}) or {}
-        if scheme_key not in SCHEME_KEYS or scheme_key not in themes:
+        if not self._is_selectable_scheme(scheme_key):
             scheme_key = SCHEME_KEYS[0]
 
         logger.info("Terminal color scheme changed to: %s", scheme_key)

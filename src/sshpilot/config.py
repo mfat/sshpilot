@@ -15,6 +15,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from gi.repository import Gio, GObject
 from .platform.locking import settings_transaction_lock
 from .platform_utils import get_config_dir
+from .custom_terminal_themes import (
+    CUSTOM_THEMES_SETTING,
+    load_custom_themes,
+    new_custom_theme_key,
+    normalize_terminal_theme,
+)
 from sshpilot.core.settings import (
     CONFIG_VERSION as _CORE_CONFIG_VERSION,
     ensure_config_defaults as _ensure_config_defaults_core,
@@ -48,8 +54,9 @@ class Config(GObject.Object):
         self._config_snapshot = deepcopy(self.config_data)
         self._import_legacy_gsettings()
         
-        # Load built-in themes
         self.terminal_themes = self.load_builtin_themes()
+        self.builtin_theme_keys = frozenset(self.terminal_themes)
+        self._reload_custom_themes()
 
     def _import_legacy_gsettings(self) -> None:
         """Move values a stale ``io.github.mfat.sshpilot`` schema holds into JSON.
@@ -159,6 +166,7 @@ class Config(GObject.Object):
         config = self.read_json_config_strict()
         self.config_data = config
         self._config_snapshot = deepcopy(config)
+        self._reload_custom_themes()
         return config
 
     def save_json_config(
@@ -738,29 +746,78 @@ class Config(GObject.Object):
                 changed_count += 1
         return changed_count
 
+    def _reload_custom_themes(self) -> None:
+        """Rebuild ``terminal_themes`` as the built-ins plus valid custom themes."""
+        if not hasattr(self, 'builtin_theme_keys'):
+            return  # still in __init__, before the built-ins are loaded
+        themes = {
+            key: theme
+            for key, theme in self.terminal_themes.items()
+            if key in self.builtin_theme_keys
+        }
+        themes.update(
+            load_custom_themes(
+                self.get_setting(CUSTOM_THEMES_SETTING, {}), self.builtin_theme_keys
+            )
+        )
+        self.terminal_themes = themes
+
+    def custom_theme_keys(self) -> List[str]:
+        """Keys of the loaded custom themes, oldest first."""
+        return [key for key in self.terminal_themes if key not in self.builtin_theme_keys]
+
+    def is_custom_theme(self, key: str) -> bool:
+        return key in self.terminal_themes and key not in self.builtin_theme_keys
+
+    def _store_custom_themes(self, themes: Dict[str, Dict[str, Any]]) -> None:
+        # Update the catalog before the setting signal fires, so listeners
+        # that rebuild pickers or repaint terminals see the new themes.
+        self.terminal_themes = {
+            key: theme
+            for key, theme in self.terminal_themes.items()
+            if key in self.builtin_theme_keys
+        }
+        self.terminal_themes.update(themes)
+        self.set_setting(CUSTOM_THEMES_SETTING, deepcopy(themes))
+
+    def save_custom_theme(
+        self, theme_data: Dict[str, Any], key: Optional[str] = None
+    ) -> Optional[str]:
+        """Add a custom theme, or replace the one stored under *key*.
+
+        Returns the theme's key, or ``None`` when *theme_data* is invalid or
+        *key* names a built-in theme.
+        """
+        theme = normalize_terminal_theme(theme_data)
+        if theme is None or (key is not None and key in self.builtin_theme_keys):
+            return None
+        themes = {k: self.terminal_themes[k] for k in self.custom_theme_keys()}
+        if key is None:
+            key = new_custom_theme_key(theme['name'], set(self.terminal_themes))
+        themes[key] = theme
+        self._store_custom_themes(themes)
+        logger.info("Saved custom terminal theme %s", key)
+        return key
+
     def add_custom_theme(self, name: str, theme_data: Dict[str, str]):
-        """Add a custom theme"""
-        self.terminal_themes[name] = theme_data
-        
-        # Save custom themes to config
-        custom_themes = self.get_setting('terminal.custom_themes', {})
-        custom_themes[name] = theme_data
-        self.set_setting('terminal.custom_themes', custom_themes)
-        
-        logger.info(f"Added custom theme: {name}")
+        """Add a custom theme under the key *name* (used by config import)."""
+        if name in self.builtin_theme_keys:
+            return
+        if self.save_custom_theme(theme_data, key=name) is None:
+            logger.warning("Ignored invalid custom theme: %s", name)
 
     def remove_custom_theme(self, name: str):
-        """Remove a custom theme"""
-        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe', 'catppuccin_macchiato', 'catppuccin_mocha']:
-            del self.terminal_themes[name]
-            
-            # Remove from config
-            custom_themes = self.get_setting('terminal.custom_themes', {})
-            if name in custom_themes:
-                del custom_themes[name]
-                self.set_setting('terminal.custom_themes', custom_themes)
-            
-            logger.info(f"Removed custom theme: {name}")
+        """Remove a custom theme; a terminal using it falls back to the default."""
+        if not self.is_custom_theme(name):
+            return
+        # Switch first, so nothing repaints with a theme that is already gone.
+        if self.get_setting('terminal.theme', 'default') == name:
+            self.set_setting('terminal.theme', 'default')
+        themes = {
+            k: self.terminal_themes[k] for k in self.custom_theme_keys() if k != name
+        }
+        self._store_custom_themes(themes)
+        logger.info("Removed custom terminal theme %s", name)
 
     def get_window_geometry(self) -> Dict[str, int]:
         """Get saved window geometry"""
@@ -857,6 +914,7 @@ class Config(GObject.Object):
         try:
             self.config_data = self.get_default_config()
             self.save_json_config()
+            self._reload_custom_themes()
             
             logger.info("Configuration reset to defaults")
             
@@ -868,9 +926,9 @@ class Config(GObject.Object):
         try:
             config_data = self.config_data.copy()
             
-            # Add custom themes
-            builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe', 'catppuccin_macchiato', 'catppuccin_mocha']
-            config_data['custom_themes'] = {name: theme for name, theme in self.terminal_themes.items() if name not in builtin}
+            config_data['custom_themes'] = {
+                key: self.terminal_themes[key] for key in self.custom_theme_keys()
+            }
             
             with open(file_path, 'w') as f:
                 json.dump(config_data, f, indent=2)
