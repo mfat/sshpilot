@@ -96,6 +96,14 @@ class GuiApp:
         self.window = self.app.window
         assert self.window is not None, 'app.window not set after activate()'
         self.pump(300)
+        # The daemon client is selected on a worker thread; a cold daemon
+        # start can take longer than the settle above.
+        for _ in range(100):
+            if getattr(self.window, 'client', None) is not None:
+                break
+            if not getattr(self.window, '_api_client_selection_pending', True):
+                break
+            self.pump(100)
         return self
 
     def shutdown(self):
