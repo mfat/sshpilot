@@ -6703,7 +6703,8 @@ class PreferencesWindow(Adw.NavigationPage):
         self._apply_backend_change(index, backend_id)
         backend_name = 'xterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
         dialog = Adw.AlertDialog(
-            heading=_("Only new tabs will use {backend}").format(backend=backend_name),
+            heading=_("Terminal backend switched to {backend}").format(backend=backend_name),
+            body=_("Only new terminal tabs will use the selected backend."),
         )
         dialog.add_response("ok", _("OK"))
         dialog.present(self)

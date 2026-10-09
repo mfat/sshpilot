@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 13:18+0330\n"
+"POT-Creation-Date: 2026-10-09 13:21+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -213,7 +213,7 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6708
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6709
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -10871,12 +10871,16 @@ msgstr "به WebKitGTK 6.0 نیاز دارد"
 
 #: src/sshpilot/preferences.py:6706
 #, python-brace-format
-msgid "Only new tabs will use {backend}"
-msgstr "فقط زبانه‌های جدید از {backend} استفاده می‌کنند"
+msgid "Terminal backend switched to {backend}"
+msgstr "پسانهٔ ترمینال به {backend} تغییر کرد"
+
+#: src/sshpilot/preferences.py:6707
+msgid "Only new terminal tabs will use the selected backend."
+msgstr "فقط زبانه‌های جدید ترمینال از پسانهٔ انتخاب‌شده استفاده می‌کنند."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7243 src/sshpilot/preferences.py:7262
+#: src/sshpilot/preferences.py:7244 src/sshpilot/preferences.py:7263
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "سفارشی"
@@ -15878,9 +15882,6 @@ msgstr "رونوشت کلید به سرور"
 #~ "\n"
 #~ "برای استفاده از بک‌اند جدید در ترمینال‌های موجود، آن برگه‌ها را ببندید و "
 #~ "دوباره باز کنید."
-
-#~ msgid "Terminal Backend Change"
-#~ msgstr "تغییر پسانهٔ ترمینال"
 
 #, python-brace-format
 #~ msgid "{current} — click for {next}"

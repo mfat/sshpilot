@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 13:18+0330\n"
+"POT-Creation-Date: 2026-10-09 13:21+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -211,7 +211,7 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6708
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6709
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -10929,12 +10929,16 @@ msgstr "Requer WebKitGTK 6.0"
 
 #: src/sshpilot/preferences.py:6706
 #, python-brace-format
-msgid "Only new tabs will use {backend}"
-msgstr "Apenas novas abas usarão {backend}"
+msgid "Terminal backend switched to {backend}"
+msgstr "Backend do terminal alterado para {backend}"
+
+#: src/sshpilot/preferences.py:6707
+msgid "Only new terminal tabs will use the selected backend."
+msgstr "Apenas novas abas de terminal usarão o backend selecionado."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7243 src/sshpilot/preferences.py:7262
+#: src/sshpilot/preferences.py:7244 src/sshpilot/preferences.py:7263
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "Personalizado"
@@ -16030,9 +16034,6 @@ msgstr "Copiar chave para o servidor"
 #~ "\n"
 #~ "Para usar o novo backend nos terminais existentes, feche e reabra essas "
 #~ "abas."
-
-#~ msgid "Terminal Backend Change"
-#~ msgstr "Alteração de backend do terminal"
 
 #, python-brace-format
 #~ msgid "{current} — click for {next}"
