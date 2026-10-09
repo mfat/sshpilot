@@ -3142,10 +3142,15 @@ class TerminalWidget(Gtk.Box):
         """Configure the active terminal through the backend contract."""
         if self.backend is None:
             raise RuntimeError("No terminal backend available for configuration")
-        font_desc = Pango.FontDescription()
-        font_desc.set_family("Monospace")
-        font_desc.set_size(12 * Pango.SCALE)
-        self.backend.set_font(font_desc)
+        # The configured font, not a fixed one: VTE re-reads it in apply_theme(),
+        # but xterm.js keeps whatever is set here, so every new xterm.js tab
+        # would otherwise come up in plain Monospace 12.
+        font_string = "Monospace 12"
+        try:
+            font_string = self.config.get_setting("terminal.font", font_string) or font_string
+        except Exception:
+            pass
+        self.backend.set_font(Pango.FontDescription.from_string(font_string))
         encoding = "UTF-8"
         cursor_shape = None
         cursor_blink = None
