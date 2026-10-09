@@ -6641,7 +6641,7 @@ msgstr[0] "适用于 {count} 个连接。"
 #: src/sshpilot/login_profile_dialogs.py:603
 #: src/sshpilot/login_profile_dialogs.py:668
 msgid "Login profile"
-msgstr "日志文件："
+msgstr "登录配置文件"
 
 #: src/sshpilot/login_profile_dialogs.py:661
 msgid "Group Login Profile"
@@ -6716,7 +6716,7 @@ msgstr "分离（保持会话运行）"
 #: src/sshpilot/login_profile_dialogs.py:876 src/sshpilot/macos_menubar.py:96
 #: src/sshpilot/window.py:3980
 msgid "Login Profiles"
-msgstr "日志文件："
+msgstr "登录配置文件"
 
 #: src/sshpilot/login_profile_dialogs.py:897
 msgid "No Login Profiles"
@@ -15833,3 +15833,167 @@ msgstr "复制密钥到服务器"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "发送命令后关闭命令片段"
+
+#: src/sshpilot/omni_search.py:91
+msgid ""
+"add server;add connection;add host;create host;create server;new host;new "
+"server;new machine"
+msgstr ""
+"添加服务器;添加连接;添加主机;创建主机;创建服务器;新主机;新服务器;新机器"
+
+#: src/sshpilot/omni_search.py:94
+msgid "folder;new folder;category;organize"
+msgstr "文件夹;新建文件夹;分类;整理"
+
+#: src/sshpilot/omni_search.py:96
+msgid "shell;terminal;local shell;command line;console;bash"
+msgstr "shell;终端;本地 shell;命令行;控制台;bash"
+
+#: src/sshpilot/omni_search.py:99
+msgid "split;split screen;side by side;tile;tiling;panes;grid"
+msgstr "分屏;拆分;并排;平铺;窗格;网格"
+
+#: src/sshpilot/omni_search.py:102
+msgid ""
+"ssh-copy-id;copy key;install key;deploy public key;ssh key;generate "
+"key;keygen;new key"
+msgstr "ssh-copy-id;复制密钥;安装密钥;部署公钥;ssh 密钥;生成密钥;keygen;新密钥"
+
+#: src/sshpilot/omni_search.py:106
+msgid ""
+"broadcast;send to all;run on all servers;all hosts;multi exec;multiple "
+"servers;cluster"
+msgstr "广播;发送到全部;在所有服务器上运行;所有主机;批量执行;多台服务器;集群"
+
+#: src/sshpilot/omni_search.py:110
+msgid ""
+"sftp;browse files;remote files;upload;download;file transfer;file browser"
+msgstr "sftp;浏览文件;远程文件;上传;下载;文件传输;文件浏览器"
+
+#: src/sshpilot/omni_search.py:114
+msgid ""
+"edit ssh config;ssh configuration;configure hosts;ssh config;config file"
+msgstr "编辑 ssh 配置;ssh 配置;配置主机;ssh config;配置文件"
+
+#: src/sshpilot/omni_search.py:118
+msgid "known hosts;host keys;fingerprints;server fingerprints"
+msgstr "已知主机;主机密钥;指纹;服务器指纹"
+
+#: src/sshpilot/omni_search.py:121
+msgid ""
+"identities;identity;credentials;accounts;users;usernames;logins;saved logins"
+msgstr "身份;身份信息;凭据;账户;用户;用户名;登录;已保存的登录"
+
+#: src/sshpilot/omni_search.py:125
+msgid "authorized keys;public keys;access keys;authorized_keys"
+msgstr "授权密钥;公钥;访问密钥;authorized_keys"
+
+#: src/sshpilot/omni_search.py:127
+msgid "save layout;save workspace;save tabs"
+msgstr "保存布局;保存工作区;保存标签页"
+
+#: src/sshpilot/omni_search.py:129
+msgid "load session;restore session;load layout;load workspace;restore tabs"
+msgstr "加载会话;恢复会话;加载布局;加载工作区;恢复标签页"
+
+#: src/sshpilot/omni_search.py:132
+msgid "sessions;workspaces;layouts"
+msgstr "会话;工作区;布局"
+
+#: src/sshpilot/omni_search.py:133
+msgid "backup;export;export settings;save settings"
+msgstr "备份;导出;导出设置;保存设置"
+
+#: src/sshpilot/omni_search.py:134
+msgid "restore;import;import settings;load settings"
+msgstr "恢复;导入;导入设置;加载设置"
+
+#: src/sshpilot/omni_search.py:135
+msgid "fullscreen;full screen;maximize"
+msgstr "全屏;最大化"
+
+#: src/sshpilot/omni_search.py:137
+msgid "hide sidebar;show sidebar;sidebar;connection list;side panel"
+msgstr "隐藏侧边栏;显示侧边栏;侧边栏;连接列表;侧面板"
+
+#: src/sshpilot/omni_search.py:140
+msgid "snippets;command snippets;saved commands;macros;command library"
+msgstr "代码片段;命令片段;已保存的命令;宏;命令库"
+
+#: src/sshpilot/omni_search.py:143
+msgid "settings;preferences;prefs;options;configure app;configuration"
+msgstr "设置;首选项;选项;配置应用;配置"
+
+#: src/sshpilot/omni_search.py:146
+msgid "shortcuts;hotkeys;keybindings;key bindings;keyboard shortcuts"
+msgstr "快捷键;热键;键位绑定;键盘快捷键"
+
+#: src/sshpilot/omni_search.py:148
+msgid "help;docs;manual;guide;user guide;documentation"
+msgstr "帮助;文档;手册;指南;用户指南"
+
+#: src/sshpilot/omni_search.py:149
+msgid "update;upgrade;new version;latest version"
+msgstr "更新;升级;新版本;最新版本"
+
+#: src/sshpilot/omni_search.py:150
+msgid "logs;log file;debug log"
+msgstr "日志;日志文件;调试日志"
+
+#: src/sshpilot/omni_search.py:151
+msgid "bug;crash;issue;report bug;feedback"
+msgstr "错误;崩溃;问题;报告错误;反馈"
+
+#: src/sshpilot/omni_search.py:152
+msgid "diagnostics;debug info;support bundle"
+msgstr "诊断;调试信息;支持包"
+
+#: src/sshpilot/omni_search.py:153
+msgid "about;version;credits;license"
+msgstr "关于;版本;致谢;许可证"
+
+#: src/sshpilot/omni_search.py:154
+msgid "quit;exit;close app"
+msgstr "退出;关闭;关闭应用"
+
+#: src/sshpilot/omni_search.py:160
+msgid "dark mode;dark theme;night mode;dark style"
+msgstr "深色模式;深色主题;夜间模式;暗色;深色样式"
+
+#: src/sshpilot/omni_search.py:163
+msgid "light mode;light theme;day mode;light style"
+msgstr "浅色模式;浅色主题;日间模式;亮色;浅色样式"
+
+#: src/sshpilot/omni_search.py:166
+msgid "system theme;follow system;automatic theme;auto theme"
+msgstr "系统主题;跟随系统;自动主题"
+
+#: src/sshpilot/omni_search.py:189
+msgid "appearance;language;tabs;sidebar settings;start page;interface"
+msgstr "外观;语言;标签页;侧边栏设置;起始页;界面"
+
+#: src/sshpilot/omni_search.py:192
+msgid ""
+"font;font size;color scheme;colour scheme;terminal "
+"theme;colors;cursor;scrollback;bell;terminal settings"
+msgstr "字体;字号;配色方案;终端主题;颜色;光标;回滚;响铃;终端设置"
+
+#: src/sshpilot/omni_search.py:196
+msgid "file manager settings;transfers;hidden files;file management"
+msgstr "文件管理器设置;传输;隐藏文件;文件管理"
+
+#: src/sshpilot/omni_search.py:199
+msgid "ssh settings;keepalive;compression;timeout;ssh options"
+msgstr "ssh 设置;保活;压缩;超时;ssh 选项"
+
+#: src/sshpilot/omni_search.py:202
+msgid "security;passwords;keyring;password storage;secrets;credentials"
+msgstr "安全;密码;密钥环;密码存储;机密;凭据"
+
+#: src/sshpilot/omni_search.py:204
+msgid "plugins;extensions;add-ons;addons"
+msgstr "插件;扩展;附加组件"
+
+#: src/sshpilot/omni_search.py:205
+msgid "advanced settings;advanced"
+msgstr "高级设置;高级"

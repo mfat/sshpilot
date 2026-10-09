@@ -1,11 +1,45 @@
 from types import SimpleNamespace
 
+import pytest
+
 from sshpilot.api.models.connection_store import ConnectionMetadataSummary
 from sshpilot.omni_search import (
     CommandSpec,
     _match_score,
     search_omni,
 )
+from sshpilot.plugins.api import Capability
+from sshpilot.plugins.registry import ProtocolRegistry
+
+_CAPS = {
+    "ssh": frozenset(Capability),
+    "rdp": frozenset({Capability.AUTH_PASSWORD}),
+    "mosh": frozenset({Capability.REMOTE_COMMAND}),
+}
+
+
+class _Backend:
+    def __init__(self, protocol_id, display_name):
+        self.protocol_id = protocol_id
+        self.display_name = display_name
+
+    def capabilities(self):
+        return _CAPS.get(self.protocol_id, frozenset())
+
+
+@pytest.fixture(autouse=True)
+def _protocols(monkeypatch):
+    """SSH, RDP and Mosh backends, as the built-in plugins register them."""
+    registry = ProtocolRegistry()
+    for pid, name in (("ssh", "SSH"), ("rdp", "RDP"), ("mosh", "Mosh")):
+        registry.register(_Backend(pid, name))
+    monkeypatch.setattr(
+        "sshpilot.omni_search.protocol_registry", lambda: registry
+    )
+    monkeypatch.setattr(
+        "sshpilot.omni_search.capabilities_for",
+        lambda c: _CAPS.get(getattr(c, "protocol", "ssh"), frozenset()),
+    )
 
 
 class _Connections:
@@ -53,7 +87,7 @@ def _window(connections=(), pinned=(), recent=None):
     )
 
 
-def _connection(name, host="example.com", user="alice"):
+def _connection(name, host="example.com", user="alice", protocol="ssh"):
     return SimpleNamespace(
         nickname=name,
         display_name=name,
@@ -61,6 +95,7 @@ def _connection(name, host="example.com", user="alice"):
         host=name,
         username=user,
         tags=[],
+        protocol=protocol,
     )
 
 
@@ -228,3 +263,71 @@ def test_ssh_results_share_field_validation_without_rejecting_aliases(
     assert invalid_port.kind == "validation"
     assert invalid_port.enabled is False
     assert alias.kind == "ssh"
+
+
+def test_dashboard_for_any_host_in_either_order(monkeypatch):
+    monkeypatch.setattr("sshpilot.omni_search.collect_commands", lambda _w: [])
+    web = _connection("web")
+    nas = _connection("nas", host="nas.lan")
+    for query in ("dashboard nas", "nas dashboard", "stats na"):
+        result = search_omni(_window([web, nas]), query)[0]
+        assert (result.kind, result.payload) == ("dashboard", nas), query
+
+    bare = search_omni(_window([web, nas]), "dashboard")
+    assert {r.payload.nickname for r in bare if r.kind == "dashboard"} == {
+        "web", "nas",
+    }
+
+
+def test_dashboard_skips_hosts_that_cannot_run_commands(monkeypatch):
+    monkeypatch.setattr("sshpilot.omni_search.collect_commands", lambda _w: [])
+    office = _connection("office", protocol="rdp")
+    results = search_omni(_window([office]), "dashboard office")
+    assert not [r for r in results if r.kind == "dashboard"]
+
+
+def test_transfer_skips_hosts_without_file_transfer(monkeypatch):
+    monkeypatch.setattr("sshpilot.omni_search.collect_commands", lambda _w: [])
+    office = _connection("office", protocol="rdp")
+    results = search_omni(_window([office]), "sftp office")
+    assert [r.payload for r in results if r.kind == "transfer"] == [
+        ("sftp", None)
+    ]
+
+
+def test_protocol_word_lists_saved_connections_of_that_protocol(monkeypatch):
+    monkeypatch.setattr("sshpilot.omni_search.collect_commands", lambda _w: [])
+    office = _connection("office", protocol="rdp")
+    lab = _connection("lab", protocol="rdp")
+    web = _connection("web")
+    for query in ("rdp", "remote desktop", "RDP"):
+        results = search_omni(_window([office, lab, web]), query)
+        assert {r.payload.nickname for r in results} == {"office", "lab"}
+    narrowed = search_omni(_window([office, lab, web]), "rdp off")
+    assert narrowed[0].payload is office
+
+
+def test_protocol_without_connections_offers_new_connection(monkeypatch):
+    new = CommandSpec("New Connection", "app.new-connection")
+    monkeypatch.setattr(
+        "sshpilot.omni_search.collect_commands", lambda _w: [new]
+    )
+    result = search_omni(_window([_connection("web")]), "mosh")[0]
+    assert result.kind == "command"
+    assert result.payload.action == "app.new-connection"
+
+
+def test_ssh_with_a_bare_word_ranks_below_a_command_match(monkeypatch):
+    keys = CommandSpec(
+        "Copy Key to Server", "app.new-key", aliases=("ssh key",),
+    )
+    monkeypatch.setattr(
+        "sshpilot.omni_search.collect_commands", lambda _w: [keys]
+    )
+    nas = _connection("nas")
+    assert search_omni(_window(), "ssh key")[0].payload is keys
+    # A saved host or a real destination still connects first.
+    assert search_omni(_window([nas]), "ssh nas")[0].payload is nas
+    assert search_omni(_window(), "ssh root@key")[0].kind == "ssh"
+    # An unknown word with nothing better on offer still connects.
+    assert search_omni(_window(), "ssh myalias")[0].kind == "ssh"
