@@ -20,7 +20,8 @@ from . import icon_utils
 
 logger = logging.getLogger(__name__)
 
-# A flat variant of the app icon (no raised base), bundled rather than looked
+# A flat variant of the app icon (no raised base; same art as the macOS icon,
+# packaging/macos/sshpilot.svg), bundled rather than looked
 # up in the icon theme so it also renders from a source checkout where hicolor
 # has nothing installed.
 _BRAND_MARK_RESOURCE = '/io/github/mfat/sshpilot/sshpilot-flat.svg'
