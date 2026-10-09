@@ -5565,11 +5565,70 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def open_cli_connect_resolved(self, resolved, sftp=False):
         """Open an already-resolved CLI target: file manager if *sftp*, else a tab."""
-        if sftp:
-            self._open_manage_files_for_connection(resolved.connection)
+        from .cli_connect import transient_remote_command
+
+        if resolved.existing:
+            if sftp:
+                self._open_manage_files_for_connection(resolved.connection)
+            else:
+                self.terminal_manager.connect_to_host(
+                    resolved.connection, force_new=True)
             return True
-        self.terminal_manager.connect_to_host(
-            resolved.connection, force_new=True)
+        # An unsaved destination: the daemon opens connections by id only.
+        return self.open_transient_connection(
+            resolved.connection,
+            remote_command=transient_remote_command(resolved.connection),
+            sftp=sftp,
+        )
+
+    def open_transient_connection(self, connection, *, remote_command=None,
+                                  sftp=False):
+        """Open a target that is not saved: ``ssh user@host``, ``mosh host``...
+
+        The daemon registers it without writing anything, then it opens like a
+        saved connection. ``connection`` keeps its nickname for the tab title
+        and the save prompt; the daemon id travels separately.
+        """
+        from .cli_connect import transient_request_data
+
+        bridge = getattr(self, 'client_bridge', None)
+        if getattr(self, 'client', None) is None or bridge is None:
+            self._show_daemon_unavailable_dialog()
+            return False
+        data = transient_request_data(getattr(connection, 'data', None) or {})
+
+        def _register():
+            return self.plugin_connection_services.open_transient_from_data(data)
+
+        def _registered(details):
+            try:
+                object.__setattr__(
+                    connection, 'transient_connection_id', str(details.id)
+                )
+            except Exception:
+                connection.transient_connection_id = str(details.id)
+            self._return_to_tab_view_if_welcome()
+            if sftp:
+                self._open_manage_files_for_connection(connection)
+                return
+            self.terminal_manager.connect_to_host(
+                connection, force_new=True, remote_command=remote_command,
+            )
+
+        def _failed(error):
+            logger.warning("Could not register unsaved target: %s", error)
+            self._error_dialog(
+                _("Could not open the connection"),
+                _("SSH Pilot could not prepare this destination. "
+                  "Check the address and try again."),
+                detail=getattr(error, "message", None) or str(error),
+            )
+
+        try:
+            bridge.submit(_register, on_success=_registered, on_error=_failed)
+        except RuntimeError as error:
+            _failed(error)
+            return False
         return True
 
     def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):

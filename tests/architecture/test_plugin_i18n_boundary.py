@@ -77,7 +77,9 @@ def test_shell_validation_and_daemon_helpers_stay_on_separate_paths():
 
 
 def test_localized_plugin_methods_are_frontend_only():
-    expected_caller = SOURCE / "connection_dialog.py"
+    # The connection editor, and the search box when it turns
+    # "telnet host 2323" into an unsaved target: both GTK, both in POTFILES.
+    expected_callers = {SOURCE / "connection_dialog.py", SOURCE / "omni_search.py"}
 
     for call in ("backend.validate(", "backend.connection_fields("):
         callers = {
@@ -85,7 +87,7 @@ def test_localized_plugin_methods_are_frontend_only():
             for path in SOURCE.rglob("*.py")
             if call in path.read_text(encoding="utf-8")
         }
-        assert callers == {expected_caller}
+        assert callers == expected_callers
 
 
 def test_frontend_gettext_owners_are_in_potfiles():

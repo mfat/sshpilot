@@ -278,6 +278,12 @@ class SshPilotClient(Protocol):
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
         ...
 
+    def open_transient_connection(
+        self, request: CreateConnectionRequest
+    ) -> ConnectionDetails:
+        """Register an unsaved target; open sessions on the returned id."""
+        ...
+
     def preview_asbru_import(self, source: str) -> AsbruImportPreview:
         ...
 

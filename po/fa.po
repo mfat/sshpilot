@@ -16472,3 +16472,20 @@ msgstr "افزونه‌ها;پلاگین‌ها;افزودنی‌ها"
 #: src/sshpilot/omni_search.py:205
 msgid "advanced settings;advanced"
 msgstr "تنظیمات پیشرفته;پیشرفته"
+
+#: src/sshpilot/omni_search.py:701
+#, python-brace-format
+msgid "Connect using {protocol}"
+msgstr "اتصال با {protocol}"
+
+#: src/sshpilot/window.py:5621
+msgid "Could not open the connection"
+msgstr "باز کردن اتصال ممکن نشد"
+
+#: src/sshpilot/window.py:5622
+msgid ""
+"SSH Pilot could not prepare this destination. Check the address and try "
+"again."
+msgstr ""
+"SSH Pilot نتوانست این مقصد را آماده کند. نشانی را بررسی کنید و دوباره تلاش "
+"کنید."

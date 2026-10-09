@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.79",
+  "api_implementation_version": "0.80",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -367,6 +367,10 @@
     },
     "open_sftp": {
       "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "open_transient_connection": {
+      "capability": "sessions.write",
       "status": "daemon-only"
     },
     "prepare_external_terminal_launch": {
@@ -743,6 +747,9 @@
     },
     "connections.move": {
       "capability": "connections.groups"
+    },
+    "connections.open_transient": {
+      "capability": "sessions.write"
     },
     "connections.prepare_external_terminal_launch": {
       "capability": "terminal.external_launch"

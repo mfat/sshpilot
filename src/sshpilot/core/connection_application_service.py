@@ -27,6 +27,7 @@ import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..api.capabilities import Capabilities, Capability
+from .connections.transient import is_transient_connection_id
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
@@ -1306,6 +1307,47 @@ class ConnectionApplicationService:
             display_name=self._record_to_summary(record).display_name,
         )
 
+    def open_transient_connection(
+        self, request: CreateConnectionRequest
+    ) -> ConnectionDetails:
+        """Register an unsaved target that sessions can open by the returned id.
+
+        Takes the same request as :meth:`create_connection` and validates it
+        the same way, but nothing is written: the record lives in the daemon
+        until it exits and never appears in listings.
+        """
+        self._assert_command_thread()
+        # The RPC itself is gated on sessions.write by the dispatcher.
+        self._require_capability(Capability.CONNECTIONS_READ)
+        if type(request) is not CreateConnectionRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A create connection request is required",
+            )
+        if request.protocol == "ssh" and request.plugin_data:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "SSH connections cannot contain plugin data",
+                details={"field": "plugin_data"},
+            )
+        if request.protocol != "ssh" and request.config_patch:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "Plugin connections cannot contain SSH configuration",
+                details={"field": "config_patch"},
+            )
+        data = self._build_create_data(request)
+        try:
+            record = self._repository.open_transient_connection(data)
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Transient connection preparation failed")
+            raise self._persistence_error() from error
+        return self._record_to_details(record)
+
     def preview_asbru_import(self, source: str) -> AsbruImportPreview:
         """Dry-run an Ásbrú export against the current connection store."""
         self._assert_command_thread()
@@ -1971,6 +2013,8 @@ class ConnectionApplicationService:
         result matches the authoritative store. No fallback path: a missing
         record or failed snapshot raises rather than silently guessing groups.
         """
+        if is_transient_connection_id(record.id):
+            return self._repository.transient_summary(record)
         snapshot = self._repository.snapshot()
         for summary in snapshot.connections:
             if summary.id == record.id:

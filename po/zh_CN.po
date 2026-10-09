@@ -15997,3 +15997,18 @@ msgstr "插件;扩展;附加组件"
 #: src/sshpilot/omni_search.py:205
 msgid "advanced settings;advanced"
 msgstr "高级设置;高级"
+
+#: src/sshpilot/omni_search.py:701
+#, python-brace-format
+msgid "Connect using {protocol}"
+msgstr "使用 {protocol} 连接"
+
+#: src/sshpilot/window.py:5621
+msgid "Could not open the connection"
+msgstr "无法打开连接"
+
+#: src/sshpilot/window.py:5622
+msgid ""
+"SSH Pilot could not prepare this destination. Check the address and try "
+"again."
+msgstr "SSH Pilot 无法准备此目标。请检查地址后重试。"

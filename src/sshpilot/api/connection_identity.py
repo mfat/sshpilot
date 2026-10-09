@@ -6,7 +6,15 @@ from .models.common import ConnectionId
 
 
 def connection_id_for(connection: Any) -> ConnectionId:
-    """Return the durable API identifier for a connection snapshot."""
+    """Return the durable API identifier for a connection snapshot.
+
+    An unsaved target (``ssh user@host`` typed in the search box) keeps its
+    user-facing nickname for display and the save dialog, and carries the id
+    the daemon registered it under in ``transient_connection_id``.
+    """
+    transient = str(getattr(connection, "transient_connection_id", None) or "").strip()
+    if transient:
+        return ConnectionId(transient)
     nickname = str(
         getattr(connection, "nickname", None)
         or getattr(connection, "id", None)

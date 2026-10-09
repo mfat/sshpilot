@@ -16521,3 +16521,20 @@ msgstr "greffons;extensions;modules;plugins"
 #: src/sshpilot/omni_search.py:205
 msgid "advanced settings;advanced"
 msgstr "paramètres avancés;avancé"
+
+#: src/sshpilot/omni_search.py:701
+#, python-brace-format
+msgid "Connect using {protocol}"
+msgstr "Se connecter avec {protocol}"
+
+#: src/sshpilot/window.py:5621
+msgid "Could not open the connection"
+msgstr "Impossible d’ouvrir la connexion"
+
+#: src/sshpilot/window.py:5622
+msgid ""
+"SSH Pilot could not prepare this destination. Check the address and try "
+"again."
+msgstr ""
+"SSH Pilot n’a pas pu préparer cette destination. Vérifiez l’adresse et "
+"réessayez."

@@ -171,3 +171,52 @@ def test_telnet_save_then_open_reaches_listener(tmp_path, telnet_registry):
             core.close()
     finally:
         server.stop()
+
+
+@pytest.mark.skipif(not shutil.which("telnet"), reason="telnet not installed")
+def test_unsaved_telnet_target_opens_without_saving(tmp_path, telnet_registry):
+    """``telnet 127.0.0.1 <port>`` typed in the search box: nothing saved."""
+    server = _BannerServer()
+    server.start()
+    try:
+        repository = _repo(tmp_path)
+        launch_provider = DaemonConnectionLaunchProvider(
+            repository.get_record, secret_provider=None, app_config=None,
+        )
+        core = ConnectionApplicationService(
+            repository,
+            launch_provider=launch_provider,
+            client_name="telnet-transient",
+            allow_cross_thread_commands=True,
+        )
+        try:
+            details = core.open_transient_connection(
+                CreateConnectionRequest(
+                    nickname="adhoc",
+                    hostname="127.0.0.1",
+                    port=server.port,
+                    protocol="telnet",
+                    plugin_data={"host": "127.0.0.1", "port": server.port},
+                )
+            )
+            assert core.list_connections() == []
+            assert not (tmp_path / "connections.json").exists() or (
+                details.id not in (tmp_path / "connections.json").read_text()
+            )
+
+            argv, _env = launch_provider.prepare_terminal_launch(
+                details.id, interaction_policy="none",
+            )
+            assert list(argv[1:]) == ["127.0.0.1", str(server.port)]
+            child = pexpect.spawn(argv[0], list(argv[1:]), timeout=15, encoding="utf-8")
+            try:
+                idx = child.expect(["SSHPILOT-TELNET-OK", pexpect.EOF, pexpect.TIMEOUT])
+                assert idx == 0, f"telnet did not reach listener: {child.before!r}"
+            finally:
+                if child.isalive():
+                    child.terminate(force=True)
+                child.close(force=True)
+        finally:
+            core.close()
+    finally:
+        server.stop()

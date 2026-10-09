@@ -397,6 +397,7 @@ receive_frame = receive_multiplexed_frame
 
 DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
+    "open_transient_connection": Capability.SESSIONS_WRITE,
     "broadcast_terminal_input": Capability.TERMINAL_INPUT,
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
@@ -969,6 +970,19 @@ class DaemonClient:
             from .transport.codec import connection_mutation_result_from_wire
 
             return connection_mutation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid connection details")
+
+    def open_transient_connection(
+        self, request: CreateConnectionRequest
+    ) -> ConnectionDetails:
+        self._require_capability(Capability.SESSIONS_WRITE)
+        result = self._request(
+            "connections.open_transient",
+            create_connection_request_to_wire(request),
+        )
+        try:
+            return connection_details_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
 

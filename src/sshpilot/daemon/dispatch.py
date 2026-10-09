@@ -269,6 +269,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sessions.list": Capability.SESSIONS_READ,
     "sessions.get": Capability.SESSIONS_READ,
     "sessions.open": Capability.SESSIONS_WRITE,
+    "connections.open_transient": Capability.SESSIONS_WRITE,
     "sessions.attach": Capability.SESSIONS_WRITE,
     "sessions.detach": Capability.SESSIONS_WRITE,
     "sessions.close": Capability.SESSIONS_WRITE,
@@ -410,6 +411,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "connections.metadata.rename_tag",
         "connections.update_metadata",
         "sessions.open",
+        "connections.open_transient",
         "sessions.attach",
         "sftp.open",
         "sftp.attach",
@@ -527,6 +529,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.metadata.update",
         "connections.metadata.rename_tag",
         "sessions.open",
+        "connections.open_transient",
         "sessions.close",
         "sftp.open",
         "sftp.close",
@@ -816,6 +819,7 @@ class RequestDispatcher:
             "sessions.list": self._handle_list_sessions,
             "sessions.get": self._handle_get_session,
             "sessions.open": self._handle_open_session,
+            "connections.open_transient": self._handle_open_transient_connection,
             "sessions.attach": self._handle_attach_session,
             "sessions.detach": self._handle_detach_session,
             "sessions.close": self._handle_close_session,
@@ -1222,6 +1226,20 @@ class RequestDispatcher:
                 ErrorCode.CAPABILITY_NOT_SUPPORTED,
                 f"Capability {capability.value} is required for this operation",
             )
+
+    def _handle_open_transient_connection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = create_connection_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: connection_details_to_wire(
+                self._connections.open_transient_connection(typed_request)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
 
     def _handle_create_connection(
         self,

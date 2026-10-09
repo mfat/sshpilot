@@ -25,6 +25,7 @@ import logging
 import os
 import stat
 import threading
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -76,6 +77,7 @@ from .service import ConnectionService
 from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
 from .ssh_config_store import SshConfigStore, _atomic_write_text
+from .transient import TransientConnections, is_transient_connection_id
 from .state_file import (
     ConnectionStateFileKind,
     ConnectionFileState,
@@ -399,6 +401,10 @@ class ConnectionRepository:
         self._generation = 0
         self._migrated_legacy = False
         self._legacy_migration_result = LegacyMigrationResult()
+        self._transient = TransientConnections(
+            lambda: self._ssh_store.root_path, isolated=self._isolated
+        )
+        weakref.finalize(self, self._transient.close)
         self._initial_load()
 
     # ------------------------------------------------------------------
@@ -416,7 +422,48 @@ class ConnectionRepository:
     def get_record(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:
             record = self._service.get(self._resolve_internal_id_locked(connection_id))
+            if record is None and is_transient_connection_id(connection_id):
+                return copy.deepcopy(self._transient.get(connection_id))
             return record
+
+    def open_transient_connection(self, data: Mapping[str, Any]) -> ConnectionRecord:
+        """Register an unsaved target the daemon can open but never stores.
+
+        Reads the SSH configuration (an SSH target includes it), so it runs on
+        the configuration lane like the other connection commands.
+        """
+        with self._lock:
+            return copy.deepcopy(self._transient.create(data))
+
+    def transient_summary(self, record: ConnectionRecord) -> ConnectionSummary:
+        """The public summary of a transient record (it has no snapshot row)."""
+        try:
+            port = int(record.port)
+        except (TypeError, ValueError):
+            port = 22
+        target = describe_target(record.protocol, record.data)
+        display_name = (
+            str(record.data.get("display_name") or "").strip()
+            or target
+            or record.hostname
+        )
+        return ConnectionSummary(
+            id=ConnectionId(record.id),
+            nickname=record.nickname,
+            host=record.host or str(record.data.get("host") or record.hostname),
+            hostname=record.hostname,
+            username=record.username,
+            port=port if 1 <= port <= 65535 else 22,
+            protocol=record.protocol or "ssh",
+            health=ConnectionHealth.UNKNOWN,
+            groups=(),
+            display_name=display_name,
+            target_summary=target,
+        )
+
+    def discard_transient_connection(self, connection_id: str) -> bool:
+        with self._lock:
+            return self._transient.discard(connection_id)
 
     def get_editor_record(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:

@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+- `open_transient_connection` (`connections.open_transient`, capability
+  `sessions.write`) takes a `CreateConnectionRequest` and returns the
+  `ConnectionDetails` of a connection the daemon can open but never stores:
+  `open_session` accepts its id until the daemon exits. Nothing is written to
+  the SSH config or `connections.json`, and the connection is not listed. An
+  SSH target launches through a private config holding its Host block followed
+  by `Include` of the user's SSH config, so the user's `Host` patterns still
+  apply. This is what opens `ssh user@host`, `mosh user@host` or
+  `telnet host 2323` typed into the search box or passed on the command line
+  without saving them first. New method, so the API implementation version is
+  0.80; Protocol remains 1.0.
 - `set_connection_layout` (`connections.set_layout`, capability
   `connections.groups`) takes the new `SetConnectionLayoutRequest` (ungrouped
   connection order plus a `GroupLayout` per group: parent, connections in

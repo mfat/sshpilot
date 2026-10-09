@@ -16723,3 +16723,20 @@ msgstr "complementos;extensiones;plugins"
 #: src/sshpilot/omni_search.py:205
 msgid "advanced settings;advanced"
 msgstr "ajustes avanzados;avanzado"
+
+#: src/sshpilot/omni_search.py:701
+#, python-brace-format
+msgid "Connect using {protocol}"
+msgstr "Conectar mediante {protocol}"
+
+#: src/sshpilot/window.py:5621
+msgid "Could not open the connection"
+msgstr "No se pudo abrir la conexión"
+
+#: src/sshpilot/window.py:5622
+msgid ""
+"SSH Pilot could not prepare this destination. Check the address and try "
+"again."
+msgstr ""
+"SSH Pilot no pudo preparar este destino. Compruebe la dirección e inténtelo "
+"de nuevo."

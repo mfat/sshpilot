@@ -683,7 +683,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Full v1 connection response without secret values or sensitive paths.
 
-**Related methods:** `create_connection`, `get_connection`, `update_connection`
+**Related methods:** `create_connection`, `get_connection`, `open_transient_connection`, `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1306,7 +1306,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `CreateConnectionRequest` record.
 
-**Related methods:** `create_connection`
+**Related methods:** `create_connection`, `open_transient_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

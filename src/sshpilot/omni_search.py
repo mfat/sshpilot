@@ -83,6 +83,12 @@ _PROTOCOL_WORDS = {
     "docker": ("podman", "container", "containers"),
 }
 
+# Words that read as a command, so "<word> <target>" also offers to connect
+# to an unsaved target: the protocol id, its display name and these. Loose
+# search words ("windows", "pods") only list saved connections. The preset
+# fills fields the word implies.
+_COMMAND_WORDS = {"podman": ("docker", {"runtime": "podman"})}
+
 # Search keywords per action: other words people use for the same thing.
 # One semicolon-separated msgid per action so translators can add their own
 # words; the English list stays searchable in every language.
@@ -586,10 +592,10 @@ def _dashboard_results(window, tokens, connections) -> List[OmniResult]:
     ]
 
 
-def _protocol_words() -> List[Tuple[str, str]]:
-    """(word, protocol id) for every registered non-SSH protocol, longest
-    word first so "remote desktop" wins over a shorter prefix."""
-    pairs = []
+def _protocol_words() -> List[Tuple[str, Any, bool]]:
+    """(word, backend, is_command) for every registered non-SSH protocol,
+    longest word first so "remote desktop" wins over a shorter prefix."""
+    triples = []
     try:
         backends = protocol_registry().all()
     except Exception:
@@ -599,31 +605,137 @@ def _protocol_words() -> List[Tuple[str, str]]:
         if not pid or pid == "ssh":
             continue
         name = str(getattr(backend, "display_name", "") or "")
-        words = {pid, name, *name.split("/"), *_PROTOCOL_WORDS.get(pid, ())}
-        pairs.extend((w.strip().casefold(), pid) for w in words if w.strip())
-    pairs.sort(key=lambda item: -len(item[0]))
-    return pairs
+        commands = {pid, name, *name.split("/")}
+        commands.update(w for w, (p, _preset) in _COMMAND_WORDS.items() if p == pid)
+        commands = {w.strip().casefold() for w in commands if w.strip()}
+        words = commands | {w.casefold() for w in _PROTOCOL_WORDS.get(pid, ())}
+        triples.extend((w, backend, w in commands) for w in words)
+    triples.sort(key=lambda item: -len(item[0]))
+    return triples
+
+
+def _protocol_match(query: str):
+    folded = query.casefold()
+    for word, backend, is_command in _protocol_words():
+        if folded == word or folded.startswith(word + " "):
+            return word, backend, is_command, query[len(word):].strip()
+    return None
+
+
+def _nickname_for(value: str, fallback: str) -> str:
+    nickname = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-.")
+    return nickname or fallback
+
+
+def _adhoc_data(backend, word: str, rest: str):
+    """Connection data for "<protocol> <target> [more]", or (None, error).
+
+    The first word fills the protocol's first required field; for a ``host``
+    field it may be ``user@host:port``. Further words fill the next fields in
+    the editor's order (telnet's port, serial's baud rate, a container's
+    command), skipping the username and secrets. Unset fields take their
+    defaults, as a connection saved from the editor would.
+    """
+    tokens, error = _parse_tokens(rest)
+    if not tokens:
+        return None, error
+    try:
+        fields = [f for f in backend.connection_fields() if f.kind != "password"]
+    except Exception:
+        fields = []
+    if not fields:
+        return None, None
+    first = next((f for f in fields if f.required), fields[0])
+    keys = {f.key for f in fields}
+    pid = str(backend.protocol_id)
+    data: dict = {}
+    data.update(_COMMAND_WORDS.get(word, ("", {}))[1])
+    target = tokens[0]
+    if first.key == "host":
+        user, _sep, host = target.rpartition("@")
+        port = None
+        match = re.fullmatch(r"\[([^\]]+)\](?::(\d+))?|([^:]+):(\d+)", host)
+        if match:
+            host = match.group(1) or match.group(3)
+            port = match.group(2) or match.group(4)
+        data["host"] = host
+        if user:
+            data["username"] = user
+        if port and "port" in keys:
+            data["port"] = port
+    else:
+        data[first.key] = target
+    remaining = [
+        f for f in fields
+        if f is not first and f.key not in data and f.key != "username"
+    ]
+    for value, field_spec in zip(tokens[1:], remaining):
+        data[field_spec.key] = value
+    for field_spec in fields:
+        if field_spec.key not in data and field_spec.default is not None:
+            data[field_spec.key] = field_spec.default
+    if "port" in data:
+        try:
+            data["port"] = int(data["port"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        errors = list(backend.validate(dict(data)) or [])
+    except Exception:
+        errors = []
+    if errors:
+        return None, str(errors[0])
+    host = str(data.get("host") or "")
+    data.update(
+        protocol=pid,
+        nickname=_nickname_for(host or target, pid),
+        hostname=host,
+    )
+    if not isinstance(data.get("port"), int):
+        data["port"] = int(getattr(backend, "default_port", None) or 22)
+    return data, None
+
+
+def _adhoc_result(backend, word: str, rest: str, query: str):
+    name = str(getattr(backend, "display_name", "") or backend.protocol_id)
+    title = _("Connect using {protocol}").format(protocol=name)
+    data, error = _adhoc_data(backend, word, rest)
+    if data is None:
+        if not error:
+            return None
+        return OmniResult(
+            "validation", title, error, "dialog-warning-symbolic", 1300,
+            enabled=False,
+        )
+    return OmniResult(
+        "adhoc", title, query, "utilities-terminal-symbolic", 1300, data,
+    )
 
 
 def _protocol_results(
     window, query: str, connections
 ) -> Optional[List[OmniResult]]:
-    """"rdp", "mosh web", "remote desktop office": saved connections of that
-    protocol. None when the query does not start with a protocol word."""
-    folded = query.casefold()
-    for word, pid in _protocol_words():
-        if folded != word and not folded.startswith(word + " "):
-            continue
-        rest = query[len(word):].strip()
-        same = [
-            c for c in connections
-            if str(getattr(c, "protocol", "ssh") or "ssh") == pid
-        ]
-        hosts = _hosts_for(window, rest, same)
-        if not hosts and not rest:
-            hosts = [(1390 - i, c) for i, c in enumerate(same[:5])]
-        return [_connection_result(c, score + 10) for score, c in hosts]
-    return None
+    """"rdp", "mosh web", "telnet 10.0.0.1 2323": saved connections of that
+    protocol, plus connecting to the typed target when it is not saved.
+    None when the query does not start with a protocol word."""
+    match = _protocol_match(query)
+    if match is None:
+        return None
+    word, backend, is_command, rest = match
+    pid = str(backend.protocol_id)
+    same = [
+        c for c in connections
+        if str(getattr(c, "protocol", "ssh") or "ssh") == pid
+    ]
+    hosts = _hosts_for(window, rest, same)
+    if not hosts and not rest:
+        hosts = [(1390 - i, c) for i, c in enumerate(same[:5])]
+    results = [_connection_result(c, score + 10) for score, c in hosts]
+    if rest and is_command:
+        adhoc = _adhoc_result(backend, word, rest, query)
+        if adhoc is not None:
+            results.append(adhoc)
+    return results
 
 
 def _intent_results(
@@ -1399,6 +1511,10 @@ class OmniSearchController:
             Gtk.Widget.activate_action(self.window, spec.action, spec.target)
         elif result.kind == "ssh":
             self.window.open_cli_connect(list(result.payload))
+        elif result.kind == "adhoc":
+            from .connection_model import Connection
+
+            self.window.open_transient_connection(Connection(dict(result.payload)))
         elif result.kind == "transfer":
             intent, connection = result.payload
             self.window.open_omni_transfer_intent(intent, connection)

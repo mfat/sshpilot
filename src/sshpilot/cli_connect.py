@@ -337,3 +337,37 @@ def resolve_cli_connect(
 
 def describe_cli_error(exc: BaseException) -> str:
     return str(exc) or exc.__class__.__name__
+
+
+def transient_request_data(data: dict) -> dict:
+    """Connection data for registering an unsaved target with the daemon.
+
+    The parser speaks the editor's vocabulary; a few fields map to the names
+    the daemon's configuration patch accepts (``-i`` is ``keyfile`` here and
+    ``identity_files`` there). Parser bookkeeping and the remote command stay
+    behind: the command rides the session request instead.
+    """
+    values = {
+        key: value for key, value in dict(data or {}).items()
+        if not str(key).startswith('__')
+        and key not in ('unparsed_args', 'port_explicit', 'keyfile', 'certificate')
+    }
+    keyfile = str((data or {}).get('keyfile') or '').strip()
+    if keyfile and not values.get('identity_files'):
+        values['identity_files'] = [keyfile]
+    certificate = str((data or {}).get('certificate') or '').strip()
+    if certificate and not values.get('certificate_files'):
+        values['certificate_files'] = [certificate]
+    return values
+
+
+def transient_remote_command(connection: Any) -> Optional[str]:
+    """``ssh host uptime``: the command after the destination, if any.
+
+    Joined with spaces, not shell-quoted: OpenSSH concatenates its remote
+    arguments the same way, so ``ssh host 'echo $((6*7))'`` runs the
+    expression on the far side.
+    """
+    data = getattr(connection, 'data', None) or {}
+    args = [str(arg) for arg in (data.get('unparsed_args') or []) if str(arg)]
+    return " ".join(args) if args else None
