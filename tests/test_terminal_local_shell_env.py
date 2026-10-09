@@ -62,6 +62,24 @@ def test_sanitize_local_shell_env_non_macos_unchanged(monkeypatch):
     assert sanitized is not source, "the helper still returns a copy"
 
 
+def test_sanitize_local_shell_env_replaces_inherited_term(monkeypatch):
+    """Launched from tmux, the shell must not believe it runs in tmux (#1311).
+
+    oh-my-zsh then sends ``ESC k title ESC \\``, which VTE prints as text, so
+    ``echo hello`` shows ``echohello``.
+    """
+    import sshpilot.terminal as terminal
+
+    for macos in (False, True):
+        monkeypatch.setattr(terminal, "is_macos", lambda macos=macos: macos)
+        for inherited in ("tmux-256color", "screen-256color", "dumb", None):
+            source = {"HOME": "/home/test"}
+            if inherited is not None:
+                source["TERM"] = inherited
+            sanitized = terminal.sanitize_local_shell_env(source)
+            assert sanitized["TERM"] == "xterm-256color"
+
+
 def test_sanitize_local_shell_env_sets_program_even_when_absent(monkeypatch):
     import sshpilot.terminal as terminal
 
@@ -78,6 +96,7 @@ def test_sanitize_local_shell_env_sets_program_even_when_absent(monkeypatch):
 def test_direct_spawn_path_runs_env_through_sanitizer(monkeypatch):
     """The direct-spawn local shell must not leak the launching terminal."""
     _ensure_cairo_stub()
+    monkeypatch.setenv("TERM", "tmux-256color")
     import sshpilot.identity as identity_mod
     import sshpilot.terminal as terminal
     from sshpilot.terminal import TerminalWidget
@@ -108,6 +127,7 @@ def test_direct_spawn_path_runs_env_through_sanitizer(monkeypatch):
     assert "TERM_PROGRAM_VERSION" not in env
     assert "TERM_SESSION_ID" not in env
     assert env.get("TERM_PROGRAM") == "sshPilot"
+    assert env.get("TERM") == "xterm-256color"
     assert "HOME" in env
 
 
@@ -138,3 +158,27 @@ def test_agent_spawn_path_runs_env_through_sanitizer(monkeypatch):
     assert "TERM_PROGRAM_VERSION" not in env
     assert "TERM_SESSION_ID" not in env
     assert env.get("TERM_PROGRAM") == "sshPilot"
+
+
+def test_agent_shell_gets_xterm_term_when_launched_from_tmux(tmp_path, monkeypatch):
+    """The host agent builds its own env; an inherited tmux TERM must not reach the shell."""
+    import os
+
+    from sshpilot.sshpilot_agent import PTYAgent
+
+    out = tmp_path / "term.txt"
+    shell = tmp_path / "fake-shell"
+    shell.write_text(f'#!/bin/sh\nprintf %s "$TERM" > {out}\n')
+    shell.chmod(0o755)
+    monkeypatch.setenv("TERM", "tmux-256color")
+
+    agent = PTYAgent()
+    agent.create_pty()
+    try:
+        pid = agent.spawn_shell(str(shell), cwd=str(tmp_path))
+        os.waitpid(pid, 0)
+    finally:
+        if agent.master_fd is not None:
+            os.close(agent.master_fd)
+
+    assert out.read_text() == "xterm-256color"
