@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 12:52+0330\n"
+"POT-Creation-Date: 2026-10-09 13:05+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -212,8 +212,9 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/rbw_setup.py:123
-#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:83
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6715
+#: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
+#: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
 #: src/sshpilot/terminal_manager.py:1083 src/sshpilot/terminal_manager.py:1248
 #: src/sshpilot/text_editor.py:1832 src/sshpilot/welcome_page.py:874
@@ -11008,48 +11009,40 @@ msgstr ""
 "SSH-Einstellungen konnten nicht gespeichert werden. Bitte überprüfen Sie die "
 "Werte und versuchen Sie es erneut."
 
-#: src/sshpilot/preferences.py:6702
-#, python-brace-format
-msgid ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tab will continue using its current backend.\n"
-"\n"
-"To use the new backend for the existing terminal, close and reopen that tab."
-msgid_plural ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tabs will continue using their current backend.\n"
-"\n"
-"To use the new backend for existing terminals, close and reopen those tabs."
-msgstr[0] ""
-"Das Terminal-Backend wurde in {backend} geändert.\n"
-"\n"
-"Diese Änderung gilt nur für neue Terminal-Registerkarten.\n"
-"Die vorhandene Terminal-Registerkarte {count} verwendet weiterhin ihr "
-"aktuelles Backend.\n"
-"\n"
-"Um das neue Backend für das vorhandene Terminal zu verwenden, schließen Sie "
-"diese Registerkarte und öffnen Sie sie erneut."
-msgstr[1] ""
-"Das Terminal-Backend wurde in {backend} geändert.\n"
-"\n"
-"Diese Änderung gilt nur für neue Terminal-Registerkarten.\n"
-"Vorhandene {count}-Terminalregisterkarten verwenden weiterhin ihr aktuelles "
-"Backend.\n"
-"\n"
-"Um das neue Backend für bestehende Terminals zu verwenden, schließen Sie "
-"diese Registerkarten und öffnen Sie sie erneut."
+#: src/sshpilot/preferences.py:6586
+msgid "VTE (default)"
+msgstr "VTE (Standard)"
 
-#: src/sshpilot/preferences.py:6718
-msgid "Terminal Backend Change"
-msgstr "Wechsel des Terminal-Backends"
+#: src/sshpilot/preferences.py:6587
+msgid "Native GTK terminal"
+msgstr "Natives GTK-Terminal"
+
+#: src/sshpilot/preferences.py:6600
+msgid "Web-based terminal running in WebKitGTK"
+msgstr "Webbasiertes Terminal in WebKitGTK"
+
+#: src/sshpilot/preferences.py:6609
+msgid "xterm.js (unavailable)"
+msgstr "xterm.js (nicht verfügbar)"
+
+#: src/sshpilot/preferences.py:6610
+msgid "Requires WebKitGTK 6.0"
+msgstr "Benötigt WebKitGTK 6.0"
+
+#: src/sshpilot/preferences.py:6708
+#, python-brace-format
+msgid "New tabs will use {backend}"
+msgstr "Neue Tabs verwenden {backend}"
+
+#: src/sshpilot/preferences.py:6710
+msgid "The open tab keeps its current backend until you reopen it."
+msgid_plural "Open tabs keep their current backend until you reopen them."
+msgstr[0] "Der geöffnete Tab behält sein aktuelles Backend, bis Sie ihn neu öffnen."
+msgstr[1] "Geöffnete Tabs behalten ihr aktuelles Backend, bis Sie sie neu öffnen."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7259 src/sshpilot/preferences.py:7278
+#: src/sshpilot/preferences.py:7250 src/sshpilot/preferences.py:7269
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "Benutzerdefiniert"
@@ -16196,6 +16189,46 @@ msgstr "Durchreichen"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Schlüssel auf Server kopieren"
+
+#, python-brace-format
+#~ msgid ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tab will continue using its current backend.\n"
+#~ "\n"
+#~ "To use the new backend for the existing terminal, close and reopen that "
+#~ "tab."
+#~ msgid_plural ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tabs will continue using their current "
+#~ "backend.\n"
+#~ "\n"
+#~ "To use the new backend for existing terminals, close and reopen those "
+#~ "tabs."
+#~ msgstr[0] ""
+#~ "Das Terminal-Backend wurde in {backend} geändert.\n"
+#~ "\n"
+#~ "Diese Änderung gilt nur für neue Terminal-Registerkarten.\n"
+#~ "Die vorhandene Terminal-Registerkarte {count} verwendet weiterhin ihr "
+#~ "aktuelles Backend.\n"
+#~ "\n"
+#~ "Um das neue Backend für das vorhandene Terminal zu verwenden, schließen "
+#~ "Sie diese Registerkarte und öffnen Sie sie erneut."
+#~ msgstr[1] ""
+#~ "Das Terminal-Backend wurde in {backend} geändert.\n"
+#~ "\n"
+#~ "Diese Änderung gilt nur für neue Terminal-Registerkarten.\n"
+#~ "Vorhandene {count}-Terminalregisterkarten verwenden weiterhin ihr "
+#~ "aktuelles Backend.\n"
+#~ "\n"
+#~ "Um das neue Backend für bestehende Terminals zu verwenden, schließen Sie "
+#~ "diese Registerkarten und öffnen Sie sie erneut."
+
+#~ msgid "Terminal Backend Change"
+#~ msgstr "Wechsel des Terminal-Backends"
 
 #, python-brace-format
 #~ msgid "{current} — click for {next}"

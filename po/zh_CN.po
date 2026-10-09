@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 12:52+0330\n"
+"POT-Creation-Date: 2026-10-09 13:05+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -207,8 +207,9 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/rbw_setup.py:123
-#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:83
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6715
+#: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
+#: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
 #: src/sshpilot/terminal_manager.py:1083 src/sshpilot/terminal_manager.py:1248
 #: src/sshpilot/text_editor.py:1832 src/sshpilot/welcome_page.py:874
@@ -10581,37 +10582,39 @@ msgstr "编码“{requested}”不可用。改用 {fallback}。"
 msgid "Could not save SSH settings. Please check the values and try again."
 msgstr "无法保存 SSH 设置。请检查设置值并重试。"
 
-#: src/sshpilot/preferences.py:6702
-#, python-brace-format
-msgid ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tab will continue using its current backend.\n"
-"\n"
-"To use the new backend for the existing terminal, close and reopen that tab."
-msgid_plural ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tabs will continue using their current backend.\n"
-"\n"
-"To use the new backend for existing terminals, close and reopen those tabs."
-msgstr[0] ""
-"终端后端已更改为 {backend}。\n"
-"\n"
-"此更改仅适用于新的终端标签页。\n"
-"现有的 {count} 个终端标签页将继续使用其当前后端。\n"
-"\n"
-"如需在现有终端中使用新后端，请关闭并重新打开该标签页。"
+#: src/sshpilot/preferences.py:6586
+msgid "VTE (default)"
+msgstr "VTE（默认）"
 
-#: src/sshpilot/preferences.py:6718
-msgid "Terminal Backend Change"
-msgstr "终端后端变更"
+#: src/sshpilot/preferences.py:6587
+msgid "Native GTK terminal"
+msgstr "原生 GTK 终端"
+
+#: src/sshpilot/preferences.py:6600
+msgid "Web-based terminal running in WebKitGTK"
+msgstr "在 WebKitGTK 中运行的网页终端"
+
+#: src/sshpilot/preferences.py:6609
+msgid "xterm.js (unavailable)"
+msgstr "xterm.js（不可用）"
+
+#: src/sshpilot/preferences.py:6610
+msgid "Requires WebKitGTK 6.0"
+msgstr "需要 WebKitGTK 6.0"
+
+#: src/sshpilot/preferences.py:6708
+#, python-brace-format
+msgid "New tabs will use {backend}"
+msgstr "新标签页将使用 {backend}"
+
+#: src/sshpilot/preferences.py:6710
+msgid "The open tab keeps its current backend until you reopen it."
+msgid_plural "Open tabs keep their current backend until you reopen them."
+msgstr[0] "打开的标签页会保留当前后端，直到重新打开。"
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7259 src/sshpilot/preferences.py:7278
+#: src/sshpilot/preferences.py:7250 src/sshpilot/preferences.py:7269
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "自定义"
@@ -15403,6 +15406,35 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#, python-brace-format
+#~ msgid ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tab will continue using its current backend.\n"
+#~ "\n"
+#~ "To use the new backend for the existing terminal, close and reopen that "
+#~ "tab."
+#~ msgid_plural ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tabs will continue using their current "
+#~ "backend.\n"
+#~ "\n"
+#~ "To use the new backend for existing terminals, close and reopen those "
+#~ "tabs."
+#~ msgstr[0] ""
+#~ "终端后端已更改为 {backend}。\n"
+#~ "\n"
+#~ "此更改仅适用于新的终端标签页。\n"
+#~ "现有的 {count} 个终端标签页将继续使用其当前后端。\n"
+#~ "\n"
+#~ "如需在现有终端中使用新后端，请关闭并重新打开该标签页。"
+
+#~ msgid "Terminal Backend Change"
+#~ msgstr "终端后端变更"
 
 #, python-brace-format
 #~ msgid "{current} — click for {next}"

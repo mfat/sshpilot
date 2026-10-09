@@ -6583,8 +6583,8 @@ class PreferencesWindow(Adw.NavigationPage):
         choices = [
             {
                 'id': 'vte',
-                'label': 'VTE (default)',
-                'description': 'Native VTE-based terminal',
+                'label': _('VTE (default)'),
+                'description': _('Native GTK terminal'),
                 'available': True,
                 'error': None,
             }
@@ -6596,8 +6596,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 choices.append(
                     {
                         'id': 'pyxterm',
-                        'label': 'PyXterm.js',
-                        'description': 'Embedded xterm.js terminal (in-process, no server)',
+                        'label': 'xterm.js',
+                        'description': _('Web-based terminal running in WebKitGTK'),
                         'available': True,
                         'error': None,
                     }
@@ -6606,8 +6606,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 choices.append(
                     {
                         'id': 'pyxterm',
-                        'label': 'PyXterm.js (unavailable)',
-                        'description': 'Requires WebKit 6.0',
+                        'label': _('xterm.js (unavailable)'),
+                        'description': _('Requires WebKitGTK 6.0'),
                         'available': False,
                         'error': pyxterm_error,
                     }
@@ -6670,7 +6670,10 @@ class PreferencesWindow(Adw.NavigationPage):
                     if (connection, terminal) not in terminals:
                         terminals.append((connection, terminal))
 
-        # Check tab_view for any terminal pages
+        # Check tab_view for any terminal pages. Other pages (the Start page,
+        # file manager, Host Info) are not terminals; terminals inside split
+        # views are already listed by the registries above.
+        from .terminal import TerminalWidget
         tab_view = getattr(self.parent_window, 'tab_view', None)
         if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
             try:
@@ -6679,7 +6682,9 @@ class PreferencesWindow(Adw.NavigationPage):
                     if page is None:
                         continue
                     terminal = page.get_child()
-                    if terminal and terminal not in [t for _unused, t in terminals]:
+                    if not isinstance(terminal, TerminalWidget):
+                        continue
+                    if terminal not in [t for _unused, t in terminals]:
                         # Try to find the connection for this terminal
                         terminal_to_connection = getattr(self.parent_window, 'terminal_to_connection', {})
                         connection = terminal_to_connection.get(terminal)
@@ -6694,35 +6699,21 @@ class PreferencesWindow(Adw.NavigationPage):
         return terminals
 
     def _show_backend_change_info(self, backend_id, open_terminals, index):
-        """Show an info dialog explaining that backend change only applies to new terminals"""
-        backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
-        num_terminals = len(open_terminals)
-
-        secondary_text = ngettext(
-            "The terminal backend has been changed to {backend}.\n\n"
-            "This change will only apply to new terminal tabs.\n"
-            "Existing {count} terminal tab will continue using its current backend.\n\n"
-            "To use the new backend for the existing terminal, close and reopen that tab.",
-            "The terminal backend has been changed to {backend}.\n\n"
-            "This change will only apply to new terminal tabs.\n"
-            "Existing {count} terminal tabs will continue using their current backend.\n\n"
-            "To use the new backend for existing terminals, close and reopen those tabs.",
-            num_terminals,
-        ).format(backend=backend_name, count=num_terminals)
-
-        dialog = Gtk.MessageDialog(
-            transient_for=self.get_root(),
-            modal=True,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text=_("Terminal Backend Change"),
-            secondary_text=secondary_text,
+        """Switch, then say that open tabs keep the backend they started with."""
+        self._apply_backend_change(index, backend_id)
+        backend_name = 'xterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
+        # The same terminal can be listed by more than one window registry.
+        count = len({id(terminal) for _connection, terminal in open_terminals})
+        dialog = Adw.AlertDialog(
+            heading=_("New tabs will use {backend}").format(backend=backend_name),
+            body=ngettext(
+                "The open tab keeps its current backend until you reopen it.",
+                "Open tabs keep their current backend until you reopen them.",
+                count,
+            ),
         )
-        def _on_info_response(d, response_id):
-            d.destroy()
-            self._apply_backend_change(index, backend_id)
-        dialog.connect("response", _on_info_response)
-        dialog.present()
+        dialog.add_response("ok", _("OK"))
+        dialog.present(self)
 
     def _apply_backend_change(self, index, backend_id):
         """Apply the backend change (only affects new terminals, not existing ones)"""

@@ -124,7 +124,7 @@ yay -S sshpilot-git
 
 A single self-contained file for any distribution that meets the
 [minimum requirements](#operating-system). It bundles GTK 4, libadwaita, VTE,
-GtkSourceView, WebKitGTK and Python — so the PyXterm.js terminal backend and
+GtkSourceView, WebKitGTK and Python — so the xterm.js terminal backend and
 the Host Info tab work the same as in the other packages — and uses the host's
 `ssh`. Download
 `sshpilot-<version>-linux-x86_64.AppImage` from the
@@ -158,7 +158,7 @@ Download the dmg file from the releases section https://github.com/mfat/sshpilot
 brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5
 ```
 
-**Note:** `webkitgtk` is Linux-only and not available on macOS via Homebrew. The PyXterm.js backend will not be available on macOS; the application will use the VTE backend instead.
+**Note:** `webkitgtk` is Linux-only and not available on macOS via Homebrew. The xterm.js backend is not available on macOS; the application will use the VTE backend instead.
 
 
 
@@ -220,7 +220,7 @@ https://t.me/sshpilot
 
 SSH Pilot uses the following third-party libraries:
 
-- **[xterm.js](https://github.com/xtermjs/xterm.js)** - The terminal emulator behind the PyXterm.js terminal backend, with its fit, search and web-links add-ons (MIT License)
+- **[xterm.js](https://github.com/xtermjs/xterm.js)** - The terminal emulator behind the xterm.js terminal backend, with its fit, search and web-links add-ons (MIT License)
 
 ## License
 

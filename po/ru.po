@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 12:52+0330\n"
+"POT-Creation-Date: 2026-10-09 13:05+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -216,8 +216,9 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/rbw_setup.py:123
-#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:83
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6715
+#: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
+#: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
 #: src/sshpilot/terminal_manager.py:1083 src/sshpilot/terminal_manager.py:1248
 #: src/sshpilot/text_editor.py:1832 src/sshpilot/welcome_page.py:874
@@ -10976,57 +10977,41 @@ msgid "Could not save SSH settings. Please check the values and try again."
 msgstr ""
 "Не удалось сохранить настройки SSH. Проверьте значения и повторите попытку."
 
-#: src/sshpilot/preferences.py:6702
-#, python-brace-format
-msgid ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tab will continue using its current backend.\n"
-"\n"
-"To use the new backend for the existing terminal, close and reopen that tab."
-msgid_plural ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tabs will continue using their current backend.\n"
-"\n"
-"To use the new backend for existing terminals, close and reopen those tabs."
-msgstr[0] ""
-"Бэкенд терминала изменён на {backend}.\n"
-"\n"
-"Это изменение применится только к новым вкладкам терминала.\n"
-"Существующая {count} вкладка терминала продолжит использовать текущий "
-"бэкенд.\n"
-"\n"
-"Чтобы использовать новый бэкенд для существующего терминала, закройте и "
-"снова откройте эту вкладку."
-msgstr[1] ""
-"Бэкенд терминала изменён на {backend}.\n"
-"\n"
-"Это изменение применится только к новым вкладкам терминала.\n"
-"Существующие {count} вкладки терминала продолжат использовать текущий "
-"бэкенд.\n"
-"\n"
-"Чтобы использовать новый бэкенд для существующих терминалов, закройте и "
-"снова откройте эти вкладки."
-msgstr[2] ""
-"Бэкенд терминала изменён на {backend}.\n"
-"\n"
-"Это изменение применится только к новым вкладкам терминала.\n"
-"Существующие {count} вкладок терминала продолжат использовать текущий "
-"бэкенд.\n"
-"\n"
-"Чтобы использовать новый бэкенд для существующих терминалов, закройте и "
-"снова откройте эти вкладки."
+#: src/sshpilot/preferences.py:6586
+msgid "VTE (default)"
+msgstr "VTE (по умолчанию)"
 
-#: src/sshpilot/preferences.py:6718
-msgid "Terminal Backend Change"
-msgstr "Смена бэкенда терминала"
+#: src/sshpilot/preferences.py:6587
+msgid "Native GTK terminal"
+msgstr "Встроенный терминал GTK"
+
+#: src/sshpilot/preferences.py:6600
+msgid "Web-based terminal running in WebKitGTK"
+msgstr "Веб-терминал на базе WebKitGTK"
+
+#: src/sshpilot/preferences.py:6609
+msgid "xterm.js (unavailable)"
+msgstr "xterm.js (недоступен)"
+
+#: src/sshpilot/preferences.py:6610
+msgid "Requires WebKitGTK 6.0"
+msgstr "Требуется WebKitGTK 6.0"
+
+#: src/sshpilot/preferences.py:6708
+#, python-brace-format
+msgid "New tabs will use {backend}"
+msgstr "Новые вкладки будут использовать {backend}"
+
+#: src/sshpilot/preferences.py:6710
+msgid "The open tab keeps its current backend until you reopen it."
+msgid_plural "Open tabs keep their current backend until you reopen them."
+msgstr[0] "Открытая вкладка сохранит текущий бэкенд, пока вы её не откроете заново."
+msgstr[1] "Открытые вкладки сохранят текущий бэкенд, пока вы их не откроете заново."
+msgstr[2] "Открытые вкладки сохранят текущий бэкенд, пока вы их не откроете заново."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7259 src/sshpilot/preferences.py:7278
+#: src/sshpilot/preferences.py:7250 src/sshpilot/preferences.py:7269
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "Пользовательский"
@@ -16116,6 +16101,55 @@ msgstr "Сквозная передача"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Скопировать ключ на сервер"
+
+#, python-brace-format
+#~ msgid ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tab will continue using its current backend.\n"
+#~ "\n"
+#~ "To use the new backend for the existing terminal, close and reopen that "
+#~ "tab."
+#~ msgid_plural ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tabs will continue using their current "
+#~ "backend.\n"
+#~ "\n"
+#~ "To use the new backend for existing terminals, close and reopen those "
+#~ "tabs."
+#~ msgstr[0] ""
+#~ "Бэкенд терминала изменён на {backend}.\n"
+#~ "\n"
+#~ "Это изменение применится только к новым вкладкам терминала.\n"
+#~ "Существующая {count} вкладка терминала продолжит использовать текущий "
+#~ "бэкенд.\n"
+#~ "\n"
+#~ "Чтобы использовать новый бэкенд для существующего терминала, закройте и "
+#~ "снова откройте эту вкладку."
+#~ msgstr[1] ""
+#~ "Бэкенд терминала изменён на {backend}.\n"
+#~ "\n"
+#~ "Это изменение применится только к новым вкладкам терминала.\n"
+#~ "Существующие {count} вкладки терминала продолжат использовать текущий "
+#~ "бэкенд.\n"
+#~ "\n"
+#~ "Чтобы использовать новый бэкенд для существующих терминалов, закройте и "
+#~ "снова откройте эти вкладки."
+#~ msgstr[2] ""
+#~ "Бэкенд терминала изменён на {backend}.\n"
+#~ "\n"
+#~ "Это изменение применится только к новым вкладкам терминала.\n"
+#~ "Существующие {count} вкладок терминала продолжат использовать текущий "
+#~ "бэкенд.\n"
+#~ "\n"
+#~ "Чтобы использовать новый бэкенд для существующих терминалов, закройте и "
+#~ "снова откройте эти вкладки."
+
+#~ msgid "Terminal Backend Change"
+#~ msgstr "Смена бэкенда терминала"
 
 #, python-brace-format
 #~ msgid "{current} — click for {next}"

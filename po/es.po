@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-09 12:52+0330\n"
+"POT-Creation-Date: 2026-10-09 13:05+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -208,8 +208,9 @@ msgstr "No se pudo abrir la ventana Copiar clave.{error}"
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:3780
 #: src/sshpilot/preferences.py:3903 src/sshpilot/preferences.py:4332
-#: src/sshpilot/preferences.py:4987 src/sshpilot/rbw_setup.py:123
-#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:83
+#: src/sshpilot/preferences.py:4987 src/sshpilot/preferences.py:6715
+#: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
+#: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
 #: src/sshpilot/terminal_manager.py:1083 src/sshpilot/terminal_manager.py:1248
 #: src/sshpilot/text_editor.py:1832 src/sshpilot/welcome_page.py:874
@@ -10936,48 +10937,40 @@ msgstr ""
 "No se pudo guardar la configuración de SSH. Por favor verifique los valores "
 "e inténtelo nuevamente."
 
-#: src/sshpilot/preferences.py:6702
-#, python-brace-format
-msgid ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tab will continue using its current backend.\n"
-"\n"
-"To use the new backend for the existing terminal, close and reopen that tab."
-msgid_plural ""
-"The terminal backend has been changed to {backend}.\n"
-"\n"
-"This change will only apply to new terminal tabs.\n"
-"Existing {count} terminal tabs will continue using their current backend.\n"
-"\n"
-"To use the new backend for existing terminals, close and reopen those tabs."
-msgstr[0] ""
-"El motor del terminal se ha cambiado a {backend}.\n"
-"\n"
-"Este cambio solo se aplicará a nuevas pestañas de terminal.\n"
-"La pestaña de terminal existente ({count}) continuará usando su motor "
-"actual.\n"
-"\n"
-"Para usar el nuevo motor en el terminal existente, cierre y vuelva a abrir "
-"esa pestaña."
-msgstr[1] ""
-"El motor del terminal se ha cambiado a {backend}.\n"
-"\n"
-"Este cambio solo se aplicará a nuevas pestañas de terminal.\n"
-"Las {count} pestañas de terminal existentes continuarán usando su motor "
-"actual.\n"
-"\n"
-"Para usar el nuevo motor en los terminales existentes, cierre y vuelva a "
-"abrir esas pestañas."
+#: src/sshpilot/preferences.py:6586
+msgid "VTE (default)"
+msgstr "VTE (predeterminado)"
 
-#: src/sshpilot/preferences.py:6718
-msgid "Terminal Backend Change"
-msgstr "Cambio de backend de terminal"
+#: src/sshpilot/preferences.py:6587
+msgid "Native GTK terminal"
+msgstr "Terminal nativo de GTK"
+
+#: src/sshpilot/preferences.py:6600
+msgid "Web-based terminal running in WebKitGTK"
+msgstr "Terminal web que se ejecuta en WebKitGTK"
+
+#: src/sshpilot/preferences.py:6609
+msgid "xterm.js (unavailable)"
+msgstr "xterm.js (no disponible)"
+
+#: src/sshpilot/preferences.py:6610
+msgid "Requires WebKitGTK 6.0"
+msgstr "Requiere WebKitGTK 6.0"
+
+#: src/sshpilot/preferences.py:6708
+#, python-brace-format
+msgid "New tabs will use {backend}"
+msgstr "Las pestañas nuevas usarán {backend}"
+
+#: src/sshpilot/preferences.py:6710
+msgid "The open tab keeps its current backend until you reopen it."
+msgid_plural "Open tabs keep their current backend until you reopen them."
+msgstr[0] "La pestaña abierta mantiene su motor actual hasta que la vuelva a abrir."
+msgstr[1] "Las pestañas abiertas mantienen su motor actual hasta que las vuelva a abrir."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7259 src/sshpilot/preferences.py:7278
+#: src/sshpilot/preferences.py:7250 src/sshpilot/preferences.py:7269
 #: src/sshpilot/terminal_theme_selector.py:197
 msgid "Custom"
 msgstr "Personalizado"
@@ -12517,7 +12510,8 @@ msgstr "¿Eliminar «{theme}»?"
 #: src/sshpilot/terminal_theme_editor.py:274
 #, python-brace-format
 msgid "Terminals using this color scheme switch to {fallback}."
-msgstr "Los terminales que usan este esquema de colores cambiarán a «{fallback}»."
+msgstr ""
+"Los terminales que usan este esquema de colores cambiarán a «{fallback}»."
 
 #: src/sshpilot/terminal_theme_selector.py:267
 #, python-brace-format
@@ -16075,6 +16069,46 @@ msgstr "paso a través"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copiar clave al servidor"
+
+#, python-brace-format
+#~ msgid ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tab will continue using its current backend.\n"
+#~ "\n"
+#~ "To use the new backend for the existing terminal, close and reopen that "
+#~ "tab."
+#~ msgid_plural ""
+#~ "The terminal backend has been changed to {backend}.\n"
+#~ "\n"
+#~ "This change will only apply to new terminal tabs.\n"
+#~ "Existing {count} terminal tabs will continue using their current "
+#~ "backend.\n"
+#~ "\n"
+#~ "To use the new backend for existing terminals, close and reopen those "
+#~ "tabs."
+#~ msgstr[0] ""
+#~ "El motor del terminal se ha cambiado a {backend}.\n"
+#~ "\n"
+#~ "Este cambio solo se aplicará a nuevas pestañas de terminal.\n"
+#~ "La pestaña de terminal existente ({count}) continuará usando su motor "
+#~ "actual.\n"
+#~ "\n"
+#~ "Para usar el nuevo motor en el terminal existente, cierre y vuelva a "
+#~ "abrir esa pestaña."
+#~ msgstr[1] ""
+#~ "El motor del terminal se ha cambiado a {backend}.\n"
+#~ "\n"
+#~ "Este cambio solo se aplicará a nuevas pestañas de terminal.\n"
+#~ "Las {count} pestañas de terminal existentes continuarán usando su motor "
+#~ "actual.\n"
+#~ "\n"
+#~ "Para usar el nuevo motor en los terminales existentes, cierre y vuelva a "
+#~ "abrir esas pestañas."
+
+#~ msgid "Terminal Backend Change"
+#~ msgstr "Cambio de backend de terminal"
 
 #, python-brace-format
 #~ msgid "{current} — click for {next}"
