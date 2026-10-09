@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-10-09 13:21+0330\n"
-"PO-Revision-Date: 2026-09-26 09:34+0200\n"
+"PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -1624,9 +1624,8 @@ msgid "No connections in group"
 msgstr "Aucune connexion dans le groupe"
 
 #: src/sshpilot/command_blocks.py:2350
-#, fuzzy
 msgid "No connections in group can run commands"
-msgstr "Aucune connexion dans le groupe"
+msgstr "Aucune connexion du groupe ne peut exécuter de commandes"
 
 #: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:676
 #: src/sshpilot/file_manager/pane.py:2242
@@ -2135,15 +2134,15 @@ msgstr "Protocole"
 #: src/sshpilot/connection_dialog.py:3690
 #: src/sshpilot/connection_dialog.py:4635
 #: src/sshpilot/connection_dialog.py:4640
-#, fuzzy
 msgid "Name (optional)"
-msgstr "Commande (facultative)"
+msgstr "Nom (facultatif)"
 
 #: src/sshpilot/connection_dialog.py:3692
 #: src/sshpilot/connection_dialog.py:4637
-#, fuzzy
 msgid "Shown in the connection list. Leave empty to use the SSH alias."
-msgstr "La connexion ne possède aucun hôte ni alias SSH."
+msgstr ""
+"Affiché dans la liste des connexions. Laissez ce champ vide pour utiliser "
+"l’alias SSH."
 
 #: src/sshpilot/connection_dialog.py:3698
 msgid "SSH Alias (no whitespace allowed)"
@@ -2376,6 +2375,8 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:3968
 msgid "Runs before SSH Pilot connects, for example to bring up a VPN."
 msgstr ""
+"S’exécute avant que SSH Pilot se connecte, par exemple pour établir une "
+"connexion VPN."
 
 #: src/sshpilot/connection_dialog.py:3973
 msgid ""
@@ -2518,30 +2519,28 @@ msgid ""
 "Shown in the connection list. Leave empty to name it after what it connects "
 "to."
 msgstr ""
+"Affiché dans la liste des connexions. Laissez ce champ vide pour utiliser le "
+"nom de la cible de connexion."
 
 #: src/sshpilot/connection_dialog.py:4675
-#, fuzzy
 msgid "Pre-Connect Command"
-msgstr "Diffuser une commande"
+msgstr "Commande avant connexion"
 
 #: src/sshpilot/connection_dialog.py:4682
-#, fuzzy
 msgid ""
 "Off: SSH Pilot warns and connects anyway, so the connection's own error is "
 "the one you see."
 msgstr ""
 "Désactivé : SSH Pilot affiche un avertissement et se connecte quand même ; "
-"vous voyez alors l’erreur SSH."
+"vous voyez alors l’erreur de la connexion."
 
 #: src/sshpilot/connection_dialog.py:4804
-#, fuzzy
 msgid "Display"
-msgstr "Affichage des groupes"
+msgstr "Affichage"
 
 #: src/sshpilot/connection_dialog.py:4806
-#, fuzzy
 msgid "Devices"
-msgstr "Périphérique"
+msgstr "Périphériques"
 
 #. Use the same neutral fallback as the local tab. Shell-provided
 #. titles can still replace it later.
@@ -2564,24 +2563,20 @@ msgid "Clear"
 msgstr "Effacer"
 
 #: src/sshpilot/connection_dialog.py:4938
-#, fuzzy
 msgid "Show suggestions"
-msgstr "Afficher plus d’actions"
+msgstr "Afficher les suggestions"
 
 #: src/sshpilot/connection_dialog.py:4970
-#, fuzzy
 msgid "Looking…"
-msgstr "Chargement…"
+msgstr "Recherche…"
 
 #: src/sshpilot/connection_dialog.py:5001
-#, fuzzy
 msgid "Nothing found"
-msgstr "Aucun port en écoute trouvé"
+msgstr "Aucun résultat"
 
 #: src/sshpilot/connection_dialog.py:5021
-#, fuzzy
 msgid "Filter…"
-msgstr "Filtrer les étiquettes…"
+msgstr "Filtrer…"
 
 #: src/sshpilot/connection_dialog.py:5212
 #: src/sshpilot/connection_dialog_validation.py:197
@@ -2705,32 +2700,30 @@ msgstr[1] "{n} connexions"
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:224
-#, fuzzy
 msgid "Profile"
-msgstr "Fichier journal :"
+msgstr "Profil"
 
 #: src/sshpilot/connection_dialog_login_profile.py:49
-#, fuzzy
 msgid "Manage Profiles…"
-msgstr "Gérer les fichiers"
+msgstr "Gérer les profils…"
 
 #: src/sshpilot/connection_dialog_login_profile.py:66
 msgid "Use a login profile"
-msgstr ""
+msgstr "Utiliser un profil de connexion"
 
 #: src/sshpilot/connection_dialog_login_profile.py:151
 msgid "Username (using a login profile)"
-msgstr ""
+msgstr "Nom d’utilisateur (avec un profil de connexion)"
 
 #: src/sshpilot/connection_dialog_login_profile.py:231
 #: src/sshpilot/login_profile_dialogs.py:583
 msgid "Don't use a profile"
-msgstr ""
+msgstr "Ne pas utiliser de profil"
 
 #: src/sshpilot/connection_dialog_login_profile.py:232
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "Inherit from group ({name})"
-msgstr "Groupe de connexions : {name}"
+msgstr "Hériter du groupe ({name})"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:42
 msgid "Listen port must be a number"
@@ -4255,7 +4248,7 @@ msgstr "Impossible de changer les permissions de « {name} » : {error}"
 #: src/sshpilot/file_manager_window.py:204
 #: src/sshpilot/file_manager_window.py:824
 msgid "Hide Local Pane"
-msgstr "Masquer le panneau local"
+msgstr "Masquer le volet local"
 
 #: src/sshpilot/file_manager_window.py:416
 #, python-brace-format
@@ -4290,7 +4283,7 @@ msgstr "Aucun hôte n’est défini pour cette connexion"
 
 #: src/sshpilot/file_manager_window.py:820
 msgid "Show Local Pane"
-msgstr "Afficher le panneau local"
+msgstr "Afficher le volet local"
 
 #: src/sshpilot/file_manager_window.py:840
 msgid "Connected"
@@ -4956,9 +4949,8 @@ msgid "The operation failed unexpectedly"
 msgstr "L’opération a échoué de manière inattendue"
 
 #: src/sshpilot/gtk/login_profile_messages.py:41
-#, fuzzy
 msgid "Agent socket to forward"
-msgstr "Socket de l’agent"
+msgstr "Socket de l’agent à rediriger"
 
 #: src/sshpilot/gtk/login_profile_messages.py:42
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:80
@@ -4970,118 +4962,108 @@ msgstr "Options SSH supplémentaires"
 
 #: src/sshpilot/gtk/login_profile_messages.py:51
 #: src/sshpilot/login_profile_dialogs.py:49
-#, fuzzy
 msgid "Specific keys only"
-msgstr "Utiliser des clés spécifiques"
+msgstr "Clés spécifiques uniquement"
 
 #: src/sshpilot/gtk/login_profile_messages.py:52
 #: src/sshpilot/login_profile_dialogs.py:50
-#, fuzzy
 msgid "Specific keys and agent"
-msgstr "Ajouter les clés à l’agent"
+msgstr "Clés spécifiques et agent"
 
 #: src/sshpilot/gtk/login_profile_messages.py:71
-#, fuzzy
 msgid "The login profile no longer exists."
-msgstr "Le fichier distant n’existe plus."
+msgstr "Le profil de connexion n’existe plus."
 
 #: src/sshpilot/gtk/login_profile_messages.py:73
-#, fuzzy
 msgid "A login profile with this name already exists."
-msgstr "Une clé portant ce nom existe déjà."
+msgstr "Un profil de connexion portant ce nom existe déjà."
 
 #: src/sshpilot/gtk/login_profile_messages.py:75
 #: src/sshpilot/login_profile_dialogs.py:400
-#, fuzzy
 msgid "Enter a name for the login profile."
-msgstr "Saisissez un nom pour le nouveau fichier"
+msgstr "Saisissez un nom pour le profil de connexion."
 
 #: src/sshpilot/gtk/login_profile_messages.py:76
 msgid "The login profile name is too long."
-msgstr ""
+msgstr "Le nom du profil de connexion est trop long."
 
 #: src/sshpilot/gtk/login_profile_messages.py:78
-#, fuzzy
 msgid "The username must not contain spaces."
-msgstr "Les noms d’étiquettes ne peuvent pas contenir de virgule."
+msgstr "Le nom d’utilisateur ne doit pas contenir d’espaces."
 
 #: src/sshpilot/gtk/login_profile_messages.py:81
 msgid "Extra SSH options cannot contain Host, Match or Include lines."
 msgstr ""
+"Les options SSH supplémentaires ne peuvent pas contenir de lignes Host, "
+"Match ou Include."
 
 #: src/sshpilot/gtk/login_profile_messages.py:84
 #, python-brace-format
 msgid "{keyword} has its own setting and cannot be used in Extra SSH options."
 msgstr ""
+"{keyword} possède son propre paramètre et ne peut pas être utilisé dans les "
+"options SSH supplémentaires."
 
 #: src/sshpilot/gtk/login_profile_messages.py:87
 #: src/sshpilot/window_dialogs.py:815
-#, fuzzy
 msgid "Login profiles apply to SSH connections."
-msgstr "• Le pare-feu autorise les connexions SSH"
+msgstr "Les profils de connexion s’appliquent aux connexions SSH."
 
 #: src/sshpilot/gtk/login_profile_messages.py:89
-#, fuzzy
 msgid "The group no longer exists."
-msgstr "Le fichier distant n’existe plus."
+msgstr "Le groupe n’existe plus."
 
 #: src/sshpilot/gtk/login_profile_messages.py:91
-#, fuzzy
 msgid "The replacement login profile is no longer available."
-msgstr "L’élément déplacé n’est plus disponible"
+msgstr "Le profil de connexion de remplacement n’est plus disponible."
 
 #: src/sshpilot/gtk/login_profile_messages.py:93
-#, fuzzy
 msgid "The login profile backup is invalid."
-msgstr "Le nom de la clé n’est pas valide."
+msgstr "La sauvegarde du profil de connexion n’est pas valide."
 
 #: src/sshpilot/gtk/login_profile_messages.py:95
 #: src/sshpilot/login_profile_dialogs.py:948
-#, fuzzy
 msgid "Login profiles are unavailable: their file could not be read."
 msgstr ""
-"Le démon est indisponible ; la sécurité de la restauration SSH n’a donc pas "
-"pu être vérifiée."
+"Les profils de connexion sont indisponibles : leur fichier n’a pas pu être "
+"lu."
 
 #: src/sshpilot/gtk/login_profile_messages.py:98
-#, fuzzy
 msgid "Secure storage is not available for login profile passwords."
-msgstr "Le stockage sécurisé est indisponible."
+msgstr ""
+"Le stockage sécurisé est indisponible pour les mots de passe des profils de "
+"connexion."
 
 #: src/sshpilot/gtk/login_profile_messages.py:104
 msgid "The login profile was changed elsewhere. Reopen it and try again."
 msgstr ""
+"Le profil de connexion a été modifié ailleurs. Rouvrez-le et réessayez."
 
 #: src/sshpilot/gtk/login_profile_messages.py:106
-#, fuzzy
 msgid "The connection no longer exists."
-msgstr "Le fichier distant n’existe plus."
+msgstr "La connexion n’existe plus."
 
 #: src/sshpilot/gtk/login_profile_messages.py:108
-#, fuzzy
 msgid "The password could not be stored in secure storage."
-msgstr "Impossible de déchiffrer ou de lire l’archive."
+msgstr "Le mot de passe n’a pas pu être enregistré dans le stockage sécurisé."
 
 #: src/sshpilot/gtk/login_profile_messages.py:113
 #: src/sshpilot/window_dialogs.py:755
-#, fuzzy
 msgid "The SSH Pilot daemon does not support login profiles."
-msgstr "Connectez-vous au démon SSH Pilot avant de déplacer des groupes."
+msgstr "Le démon SSH Pilot ne prend pas en charge les profils de connexion."
 
 #: src/sshpilot/gtk/login_profile_messages.py:141
 #, python-brace-format
 msgid "{label}: {before} → {after}"
-msgstr ""
+msgstr "{label}: {before} → {after}"
 
 #: src/sshpilot/gtk/login_profile_messages.py:171
-#, fuzzy
 msgid "password"
-msgstr "Mot de passe"
+msgstr "mot de passe"
 
 #: src/sshpilot/gtk/login_profile_messages.py:175
-#, fuzzy
 msgid "automatic keys"
-msgstr "Automatique"
+msgstr "clés automatiques"
 
 #: src/sshpilot/gtk/login_profile_messages.py:182
 #, python-brace-format
@@ -5092,22 +5074,26 @@ msgid_plural ""
 "{count} connections were detached from their login profile because their SSH "
 "config was edited."
 msgstr[0] ""
+"{count} connexion a été détachée de son profil de connexion car sa "
+"configuration SSH a été modifiée."
 msgstr[1] ""
+"{count} connexions ont été détachées de leur profil de connexion car leur "
+"configuration SSH a été modifiée."
 
 #: src/sshpilot/gtk/login_profile_messages.py:198
 msgid ""
 "The profile was saved, but a password or passphrase could not be stored."
 msgstr ""
+"Le profil a été enregistré, mais un mot de passe ou une phrase de passe n’a "
+"pas pu l’être."
 
 #: src/sshpilot/gtk/login_profile_messages.py:203
-#, fuzzy
 msgid "The key passphrase could not be stored."
-msgstr "Le transfert n’a pas pu être démarré"
+msgstr "La phrase de passe de la clé n’a pas pu être enregistrée."
 
 #: src/sshpilot/gtk/login_profile_messages.py:211
-#, fuzzy
 msgid "The login profile operation failed."
-msgstr "L’opération distante privilégiée a échoué."
+msgstr "L’opération sur le profil de connexion a échoué."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:16
 msgid "No container is configured for this connection."
@@ -5193,15 +5179,15 @@ msgstr ""
 "Installez « {preferred_program} » pour utiliser cette connexion."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:57
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid ""
 "Only '{fallback_program}' is available, which cannot change line endings, "
 "echo locally or log to a file. Install '{preferred_program}' to use this "
 "connection."
 msgstr ""
-"Seul « {fallback_program} » est disponible, mais il ne permet pas de régler "
-"les bits de données sur {databits}. Installez « {preferred_program} » pour "
-"utiliser cette connexion."
+"Seul « {fallback_program} » est disponible, mais il ne permet pas de "
+"modifier les fins de ligne, d’activer l’écho local ni de journaliser dans un "
+"fichier. Installez « {preferred_program} » pour utiliser cette connexion."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:62
 #, python-brace-format
@@ -5209,6 +5195,8 @@ msgid ""
 "You do not have permission to open {device}. Add your user to the '{group}' "
 "group and log in again."
 msgstr ""
+"Vous n’avez pas l’autorisation d’ouvrir {device}. Ajoutez votre utilisateur "
+"au groupe « {group} », puis reconnectez-vous."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:66
 #, python-brace-format
@@ -5220,61 +5208,58 @@ msgstr ""
 "Installez-en un pour utiliser les connexions série."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:70
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid ""
 "FreeRDP 3 is not installed. Install '{preferred_program}' or "
 "'{fallback_program}' to use RDP connections."
 msgstr ""
-"Ni « {preferred_program} » ni « {fallback_program} » n’est installé. "
-"Installez-en un pour utiliser les connexions série."
+"FreeRDP 3 n’est pas installé. Installez « {preferred_program} » ou "
+"« {fallback_program} » pour utiliser les connexions RDP."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:74
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid ""
 "The '{program}' program is not installed. Install it to use telnet "
 "connections."
 msgstr ""
 "Le programme « {program} » n’est pas installé. Installez-le pour utiliser "
-"les connexions Kubernetes."
+"les connexions telnet."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:81
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:311
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:352
 msgid "Extra FreeRDP arguments"
-msgstr ""
+msgstr "Arguments FreeRDP supplémentaires"
 
 #: src/sshpilot/gtk/protocol_suggestion_messages.py:12
-#, fuzzy
 msgid "No command was provided."
-msgstr "Commande SSH copiée"
+msgstr "Aucune commande n’a été fournie."
 
 #: src/sshpilot/gtk/protocol_suggestion_messages.py:14
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid ""
 "The '{program}' program is unavailable. Cannot run commands on the host."
 msgstr ""
-"Le programme « {program} » n’est pas installé. Installez-le pour utiliser "
-"les connexions Kubernetes."
+"Le programme « {program} » est indisponible. Impossible d’exécuter des "
+"commandes sur l’hôte."
 
 #: src/sshpilot/gtk/protocol_suggestion_messages.py:16
-#, fuzzy
 msgid "The command timed out."
-msgstr "Délai de connexion dépassé"
+msgstr "Le délai d’exécution de la commande est dépassé."
 
 #: src/sshpilot/gtk/protocol_suggestion_messages.py:17
-#, fuzzy
 msgid "The command could not be started."
-msgstr "La commande SSH n’a pas pu être démarrée."
+msgstr "La commande n’a pas pu être démarrée."
 
 #: src/sshpilot/gtk/protocol_suggestion_messages.py:19
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "The '{program}' command exited with status {status}."
-msgstr "La session SSH s’est terminée avec le code {status}"
+msgstr "La commande « {program} » s’est terminée avec le code {status}."
 
 #: src/sshpilot/gtk/protocol_suggestion_messages.py:34
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "Could not list suggestions: {error}"
-msgstr "Impossible de sélectionner la destination : {error}"
+msgstr "Impossible de lister les suggestions : {error}"
 
 #. : Shown while the command is still running, so a slow knock or VPN dial-up is
 #. : not a silent multi-second hang on connect.
@@ -5477,14 +5462,13 @@ msgid "The SSH session failed."
 msgstr "La session SSH a échoué."
 
 #: src/sshpilot/gtk/session_failure_messages.py:33
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "The session exited with status {status}"
-msgstr "La session SSH s’est terminée avec le code {status}"
+msgstr "La session s’est terminée avec le code {status}"
 
 #: src/sshpilot/gtk/session_failure_messages.py:35
-#, fuzzy
 msgid "The session failed."
-msgstr "La session SSH a échoué."
+msgstr "La session a échoué."
 
 #: src/sshpilot/gtk/secrets_interaction_presenter.py:32
 msgid "Bitwarden sign-in"
@@ -5616,9 +5600,8 @@ msgid "The daemon connection was closed."
 msgstr "La connexion au démon a été fermée."
 
 #: src/sshpilot/gtk/sftp_error_messages.py:23
-#, fuzzy
 msgid "The daemon request timed out."
-msgstr "Délai dépassé pour la demande de transfert du démon."
+msgstr "Le délai de la requête au démon est dépassé."
 
 #: src/sshpilot/gtk/sftp_error_messages.py:25
 #: src/sshpilot/gtk/sftp_failure_messages.py:28
@@ -5639,9 +5622,9 @@ msgstr "Le serveur ne prend pas en charge cette opération"
 
 #: src/sshpilot/gtk/sftp_error_messages.py:47
 #: src/sshpilot/gtk/transfer_error_messages.py:41
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "The daemon does not support {capability}"
-msgstr "Connectez-vous au démon SSH Pilot avant de déplacer des groupes."
+msgstr "Le démon ne prend pas en charge {capability}"
 
 #: src/sshpilot/gtk/transfer_error_messages.py:15
 #: src/sshpilot/gtk/sftp_failure_messages.py:59
@@ -5659,7 +5642,7 @@ msgstr "Délai dépassé pour la demande de transfert du démon."
 
 #: src/sshpilot/gtk/transfer_error_messages.py:28
 msgid "The transfer may have started. Refresh before trying again."
-msgstr ""
+msgstr "Le transfert a peut-être démarré. Actualisez avant de réessayer."
 
 #: src/sshpilot/gtk/sftp_failure_messages.py:14
 msgid "The SFTP session could not be established"
@@ -6813,102 +6796,97 @@ msgstr ""
 "d’utilisateur et des chemins de fichiers. Vérifiez-les avant tout partage."
 
 #: src/sshpilot/login_profile_dialogs.py:217
-#, fuzzy
 msgid "New profile"
-msgstr "Nouveau fichier"
+msgstr "Nouveau profil"
 
 #: src/sshpilot/login_profile_dialogs.py:219
 msgid "Edit Login Profile"
-msgstr ""
+msgstr "Modifier le profil de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:219
 #: src/sshpilot/login_profile_dialogs.py:890
 #: src/sshpilot/login_profile_dialogs.py:909
-#, fuzzy
 msgid "New Login Profile"
-msgstr "Fichier journal :"
+msgstr "Nouveau profil de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:234
 msgid "Method"
-msgstr ""
+msgstr "Méthode"
 
 #: src/sshpilot/login_profile_dialogs.py:309
 msgid "Agent socket to forward (optional)"
-msgstr ""
+msgstr "Socket de l’agent à rediriger (facultatif)"
 
 #: src/sshpilot/login_profile_dialogs.py:315
 msgid "Secrets"
-msgstr ""
+msgstr "Secrets"
 
 #: src/sshpilot/login_profile_dialogs.py:316
 msgid ""
 "Stored in your secure storage and shared by every connection using this "
 "profile."
 msgstr ""
+"Enregistrés dans votre stockage sécurisé et partagés par toutes les "
+"connexions utilisant ce profil."
 
 #: src/sshpilot/login_profile_dialogs.py:319
-#, fuzzy
 msgid "Login password"
-msgstr "Enregistrer le mot de passe"
+msgstr "Mot de passe de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:321
-#, fuzzy
 msgid "Remove stored login password"
-msgstr "Mémoriser le mot de passe principal"
+msgstr "Supprimer le mot de passe de connexion enregistré"
 
 #: src/sshpilot/login_profile_dialogs.py:324
-#, fuzzy
 msgid "Sudo password"
-msgstr "Enregistrer le mot de passe"
+msgstr "Mot de passe sudo"
 
 #: src/sshpilot/login_profile_dialogs.py:326
-#, fuzzy
 msgid "Remove stored sudo password"
-msgstr "Mémoriser le mot de passe principal"
+msgstr "Supprimer le mot de passe sudo enregistré"
 
 #: src/sshpilot/login_profile_dialogs.py:331
 msgid "Login password (stored — type to replace)"
 msgstr ""
+"Mot de passe de connexion (enregistré — saisissez-en un pour le remplacer)"
 
 #: src/sshpilot/login_profile_dialogs.py:333
 msgid "Sudo password (stored — type to replace)"
-msgstr ""
+msgstr "Mot de passe sudo (enregistré — saisissez-en un pour le remplacer)"
 
 #: src/sshpilot/login_profile_dialogs.py:338
 msgid ""
 "One directive per line, e.g. ServerAliveInterval 30. They replace the same "
 "directives of linked connections."
 msgstr ""
+"Une directive par ligne, par exemple ServerAliveInterval 30. Elles "
+"remplacent les mêmes directives des connexions liées."
 
 #: src/sshpilot/login_profile_dialogs.py:539
-#, fuzzy
 msgid "Replace connection settings?"
-msgstr "Supprimer les connexions ?"
+msgstr "Remplacer les paramètres de connexion ?"
 
 #: src/sshpilot/login_profile_dialogs.py:540
 msgid "The login profile will replace these settings:"
-msgstr ""
+msgstr "Le profil de connexion remplacera ces paramètres :"
 
 #: src/sshpilot/login_profile_dialogs.py:543
-#, fuzzy
 msgid "Apply Profile"
-msgstr "Tous les fichiers"
+msgstr "Appliquer le profil"
 
 #: src/sshpilot/login_profile_dialogs.py:579
 #: src/sshpilot/login_profile_dialogs.py:655 src/sshpilot/window_dialogs.py:754
 #: src/sshpilot/window_dialogs.py:864
-#, fuzzy
 msgid "Login profiles unavailable"
-msgstr "Le volet local est indisponible"
+msgstr "Profils de connexion indisponibles"
 
 #: src/sshpilot/login_profile_dialogs.py:588
-#, fuzzy
 msgid "Inherit from group"
-msgstr "Retirer du groupe"
+msgstr "Hériter du groupe"
 
 #: src/sshpilot/login_profile_dialogs.py:592
 msgid "Assign Login Profile"
-msgstr ""
+msgstr "Attribuer un profil de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:592
 #: src/sshpilot/login_profile_dialogs.py:661
@@ -6917,11 +6895,11 @@ msgid "Apply"
 msgstr "Appliquer"
 
 #: src/sshpilot/login_profile_dialogs.py:598
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "Applies to {count} connection."
 msgid_plural "Applies to {count} connections."
-msgstr[0] "{count} connexion"
-msgstr[1] "{count} connexions"
+msgstr[0] "S’applique à {count} connexion."
+msgstr[1] "S’applique à {count} connexions."
 
 #: src/sshpilot/login_profile_dialogs.py:603
 #: src/sshpilot/login_profile_dialogs.py:668
@@ -6930,74 +6908,78 @@ msgstr "Profil de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:661
 msgid "Group Login Profile"
-msgstr ""
+msgstr "Profil de connexion du groupe"
 
 #: src/sshpilot/login_profile_dialogs.py:665
 msgid ""
 "Connections in this group, and in nested groups without their own profile, "
 "can inherit it."
 msgstr ""
+"Les connexions de ce groupe et des groupes imbriqués sans profil propre "
+"peuvent en hériter."
 
 #: src/sshpilot/login_profile_dialogs.py:677
 msgid "Members that inherit the profile"
-msgstr ""
+msgstr "Membres héritant du profil"
 
 #: src/sshpilot/login_profile_dialogs.py:678
 msgid "Members with their own explicit profile are unchecked by default."
 msgstr ""
+"Les membres possédant leur propre profil explicite sont décochés par défaut."
 
 #: src/sshpilot/login_profile_dialogs.py:692
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "Uses profile “{name}”"
-msgstr "Cette opération supprimera « {name} »."
+msgstr "Utilise le profil « {name} »"
 
 #: src/sshpilot/login_profile_dialogs.py:760
-#, fuzzy
 msgid "Could not delete the profile"
-msgstr "Impossible de générer la clé SSH."
+msgstr "Impossible de supprimer le profil"
 
 #: src/sshpilot/login_profile_dialogs.py:765
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "Delete “{name}”?"
-msgstr "Supprimer {name} ?"
+msgstr "Supprimer « {name} » ?"
 
 #: src/sshpilot/login_profile_dialogs.py:766
 msgid ""
 "No connection or group uses this profile. Its stored passwords are deleted "
 "too."
 msgstr ""
+"Aucune connexion ni aucun groupe n’utilise ce profil. Ses mots de passe "
+"enregistrés seront également supprimés."
 
 #: src/sshpilot/login_profile_dialogs.py:780
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "Delete “{name}”"
-msgstr "Supprimer {name} ?"
+msgstr "Supprimer « {name} »"
 
 #: src/sshpilot/login_profile_dialogs.py:785
 msgid ""
 "These connections and groups use the profile. Choose what each should use "
 "instead. Detached connections keep their current settings."
 msgstr ""
+"Ces connexions et groupes utilisent le profil. Choisissez ce que chacun doit "
+"utiliser à la place. Les connexions détachées conservent leurs paramètres "
+"actuels."
 
 #. list of (label, profile_id or None)
 #: src/sshpilot/login_profile_dialogs.py:792
 msgid "Apply to all"
-msgstr ""
+msgstr "Appliquer à tous"
 
 #: src/sshpilot/login_profile_dialogs.py:794
 #: src/sshpilot/login_profile_dialogs.py:840
-#, fuzzy
 msgid "New Profile…"
-msgstr "Nouveau fichier"
+msgstr "Nouveau profil…"
 
 #: src/sshpilot/login_profile_dialogs.py:795
-#, fuzzy
 msgid "Affected"
-msgstr "Sélectionné"
+msgstr "Connexions et groupes concernés"
 
 #: src/sshpilot/login_profile_dialogs.py:806
-#, fuzzy
 msgid "Detach (keep current values)"
-msgstr "Détacher (maintenir la session active)"
+msgstr "Détacher (conserver les valeurs actuelles)"
 
 #: src/sshpilot/login_profile_dialogs.py:876 src/sshpilot/macos_menubar.py:96
 #: src/sshpilot/window.py:3980
@@ -7005,29 +6987,31 @@ msgid "Login Profiles"
 msgstr "Profils de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:897
-#, fuzzy
 msgid "No Login Profiles"
-msgstr "Fichier journal :"
+msgstr "Aucun profil de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:898
 msgid ""
 "A login profile bundles a username, keys and passwords. Assign it to "
 "connections or groups to reuse it."
 msgstr ""
+"Un profil de connexion regroupe un nom d’utilisateur, des clés et des mots "
+"de passe. Attribuez-le à des connexions ou à des groupes pour le réutiliser."
 
 #: src/sshpilot/login_profile_dialogs.py:956
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "{n} group"
 msgid_plural "{n} groups"
-msgstr[0] "{count} groupe"
-msgstr[1] "{count} groupes"
+msgstr[0] "{n} groupe"
+msgstr[1] "{n} groupes"
 
 #: src/sshpilot/login_profile_dialogs.py:993
 #, python-brace-format
 msgid "{count} connection was detached and kept its settings."
 msgid_plural "{count} connections were detached and kept their settings."
-msgstr[0] ""
+msgstr[0] "{count} connexion a été détachée et a conservé ses paramètres."
 msgstr[1] ""
+"{count} connexions ont été détachées et ont conservé leurs paramètres."
 
 #: src/sshpilot/machine_info_dialog.py:335
 msgid "Loopback"
@@ -8706,9 +8690,8 @@ msgid "Context"
 msgstr "Contexte"
 
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:89
-#, fuzzy
 msgid "(default)"
-msgstr "Par défaut"
+msgstr "(par défaut)"
 
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:90
 msgid "Daemon host"
@@ -8736,7 +8719,7 @@ msgstr "Le moteur d’exécution doit être docker ou podman."
 
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:116
 msgid "Set either a context or a daemon host, not both."
-msgstr ""
+msgstr "Définissez soit un contexte, soit un hôte de démon, pas les deux."
 
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:120
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:129
@@ -8750,11 +8733,11 @@ msgstr "Impossible d’analyser {field} : {diagnostic}."
 #. (deploy/web) keeps working, and kubectl exec picks one of its pods.
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:98
 msgid "Pod or workload"
-msgstr ""
+msgstr "Pod ou charge de travail"
 
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:99
 msgid "pod, deploy/name or svc/name"
-msgstr ""
+msgstr "pod, deploy/name ou svc/name"
 
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:101
 msgid "(default container)"
@@ -8766,7 +8749,7 @@ msgstr "Espace de noms"
 
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:103
 msgid "(context's namespace)"
-msgstr ""
+msgstr "(espace de noms du contexte)"
 
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:105
 msgid "(current context)"
@@ -8824,9 +8807,8 @@ msgstr "Port ou plage de ports UDP"
 #. Where the host keeps mosh-server off the login PATH (Homebrew
 #. on macOS, ~/.local): the most common reason mosh cannot start.
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:66
-#, fuzzy
 msgid "Remote mosh-server"
-msgstr "le serveur"
+msgstr "mosh-server distant"
 
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:80
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:325
@@ -8848,84 +8830,75 @@ msgstr "Le port doit être un nombre."
 
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:91
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:341
-#, fuzzy
 msgid "Enter a username to use the saved password."
-msgstr "Saisissez un nom pour le nouveau dossier"
+msgstr ""
+"Saisissez un nom d’utilisateur pour utiliser le mot de passe enregistré."
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:257
-#, fuzzy
 msgid "(asked when connecting)"
-msgstr "(aucune connexion)"
+msgstr "(demandé lors de la connexion)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:258
 msgid "Domain"
-msgstr ""
+msgstr "Domaine"
 
 #. GNOME Connections' wording: short enough to fit the row.
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:262
 msgid "Scale mode"
-msgstr ""
+msgstr "Mode de mise à l’échelle"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:264
-#, fuzzy
 msgid "Resize desktop"
-msgstr "Redimensionner le volet vers le haut"
+msgstr "Redimensionner le bureau"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:265
-#, fuzzy
 msgid "Fit window"
-msgstr "Fenêtre principale"
+msgstr "Adapter à la fenêtre"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:266
 msgid "Original size"
-msgstr ""
+msgstr "Taille d’origine"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:267
-#, fuzzy
 msgid "Full screen"
-msgstr "Quitter le plein écran"
+msgstr "Plein écran"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:268
-#, fuzzy
 msgid "Window size"
-msgstr "Fenêtre"
+msgstr "Taille de la fenêtre"
 
 #. For a HiDPI screen, where a 100% remote desktop is tiny.
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:271
-#, fuzzy
 msgid "Remote desktop scaling"
-msgstr "Destination distante"
+msgstr "Mise à l’échelle du bureau distant"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:273
-#, fuzzy
 msgid "Default (100%)"
-msgstr "Par défaut"
+msgstr "Par défaut (100%)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:275
 msgid "Use all monitors"
-msgstr ""
+msgstr "Utiliser tous les écrans"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:277
-#, fuzzy
 msgid "Share clipboard"
-msgstr "Copié dans le presse-papiers"
+msgstr "Partager le presse-papiers"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:279
 msgid "Play remote audio locally"
-msgstr ""
+msgstr "Lire l’audio distant localement"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:281
 msgid "Share microphone"
-msgstr ""
+msgstr "Partager le microphone"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:283
 msgid "Share printers"
-msgstr ""
+msgstr "Partager les imprimantes"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:285
-#, fuzzy
 msgid "Shared folder"
-msgstr "Nouveau dossier"
+msgstr "Dossier partagé"
 
 #. -- security ----------------------------------------------------
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:287
@@ -8934,96 +8907,88 @@ msgid "Security"
 msgstr "Sécurité"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:289
-#, fuzzy
 msgid "Negotiate (default)"
-msgstr "Adaptatif (par défaut)"
+msgstr "Négociation (par défaut)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:290
-#, fuzzy
 msgid "NLA"
-msgstr "N/D"
+msgstr "NLA"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:291
 msgid "TLS"
-msgstr ""
+msgstr "TLS"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:292
 msgid "RDP (legacy)"
-msgstr ""
+msgstr "RDP (ancien)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:293
-#, fuzzy
 msgid "Server certificate"
-msgstr "Certificats"
+msgstr "Certificat du serveur"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:295
-#, fuzzy
 msgid "Ask when unknown or changed"
-msgstr "Une erreur inconnue s’est produite."
+msgstr "Demander si le certificat est inconnu ou a changé"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:296
 msgid "Trust on first use"
-msgstr ""
+msgstr "Faire confiance à la première utilisation"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:297
 msgid "Ignore (insecure)"
-msgstr ""
+msgstr "Ignorer (non sécurisé)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:298
-#, fuzzy
 msgid "Connect to the console session"
-msgstr "La connexion correspond à"
+msgstr "Se connecter à la session de console"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:300
-#, fuzzy
 msgid "RD Gateway"
-msgstr "Passerelle par défaut"
+msgstr "Passerelle RD"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:302
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:342
-#, fuzzy
 msgid "Gateway username"
-msgstr "Interface de passerelle"
+msgstr "Nom d’utilisateur de la passerelle"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:303
 msgid "(same as the login)"
-msgstr ""
+msgstr "(identique à celui de la connexion)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:304
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:343
-#, fuzzy
 msgid "Gateway domain"
-msgstr "Interface de passerelle"
+msgstr "Domaine de la passerelle"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:306
 msgid "FreeRDP client"
-msgstr ""
+msgstr "Client FreeRDP"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:309
 msgid "SDL (Wayland, macOS)"
-msgstr ""
+msgstr "SDL (Wayland, macOS)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:310
 msgid "X11"
-msgstr ""
+msgstr "X11"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:335
 msgid "Window size must look like 1600x900."
-msgstr ""
+msgstr "La taille de la fenêtre doit être au format 1600x900."
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:338
 msgid "RD Gateway must be a host name, optionally with :port."
 msgstr ""
+"La passerelle RD doit être un nom d’hôte, éventuellement suivi de :port."
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:345
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid "{field} cannot contain a comma."
-msgstr "Les noms d’étiquettes ne peuvent pas contenir de virgule."
+msgstr "{field} ne peut pas contenir de virgule."
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:347
-#, fuzzy
 msgid "The shared folder path cannot contain a comma."
-msgstr "Les noms d’étiquettes ne peuvent pas contenir de virgule."
+msgstr "Le chemin du dossier partagé ne peut pas contenir de virgule."
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:120
 msgid "Baud rate"
@@ -9063,34 +9028,31 @@ msgstr "Bits d’arrêt"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:134
 msgid "Enter key sends"
-msgstr ""
+msgstr "La touche Entrée envoie"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:136
-#, fuzzy
 msgid "CR (default)"
-msgstr "Adaptatif (par défaut)"
+msgstr "CR (par défaut)"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:136
 msgid "LF"
-msgstr ""
+msgstr "LF"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:137
 msgid "CR LF"
-msgstr ""
+msgstr "CR LF"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:138
 msgid "Start received lines at the left edge"
-msgstr ""
+msgstr "Commencer les lignes reçues au bord gauche"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:140
-#, fuzzy
 msgid "Local echo"
-msgstr "Port local"
+msgstr "Écho local"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:142
-#, fuzzy
 msgid "Log to file"
-msgstr "Fichier journal :"
+msgstr "Journaliser dans un fichier"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:158
 msgid "A serial device is required."
@@ -9761,15 +9723,12 @@ msgstr ""
 "Afficher le bouton du gestionnaire de fichiers sur les lignes de connexion"
 
 #: src/sshpilot/preferences.py:1707
-#, fuzzy
 msgid "Dashboard Button"
-msgstr "Tableau de bord"
+msgstr "Bouton du Tableau de bord"
 
 #: src/sshpilot/preferences.py:1709
-#, fuzzy
 msgid "Show the dashboard button in connection rows"
-msgstr ""
-"Afficher le bouton du gestionnaire de fichiers sur les lignes de connexion"
+msgstr "Afficher le bouton du Tableau de bord sur les lignes de connexion"
 
 #: src/sshpilot/preferences.py:1724
 msgid "Show the split view button in group rows"
@@ -10307,13 +10266,13 @@ msgstr ""
 
 #: src/sshpilot/preferences.py:2872
 msgid "Terminal Panes"
-msgstr "Panneaux de terminal"
+msgstr "Volets de terminal"
 
 #: src/sshpilot/preferences.py:2874
 msgid "Terminals shown below a file manager tab, each under its file pane"
 msgstr ""
 "Terminaux affichés sous un onglet du gestionnaire de fichiers, chacun sous "
-"son panneau de fichiers"
+"son volet de fichiers"
 
 #: src/sshpilot/preferences.py:2877
 msgid "Visible Terminals"
@@ -10325,7 +10284,7 @@ msgid ""
 "toggles its own"
 msgstr ""
 "Ouverts avec chaque nouvel onglet du gestionnaire de fichiers ; le bouton de "
-"terminal sous un panneau affiche ou masque le sien"
+"terminal sous un volet affiche ou masque le terminal associé"
 
 #: src/sshpilot/preferences.py:2883
 msgid "Local and Remote"
@@ -10339,8 +10298,8 @@ msgstr "Suivre la navigation dans les dossiers"
 msgid ""
 "Change the terminal's folder when you open a folder in the file pane above it"
 msgstr ""
-"Changer le dossier du terminal quand vous ouvrez un dossier dans le panneau "
-"de fichiers au-dessus"
+"Changer le dossier du terminal quand vous ouvrez un dossier dans le volet de "
+"fichiers au-dessus"
 
 #: src/sshpilot/preferences.py:2914 src/sshpilot/preferences.py:2946
 msgid "Updates"
@@ -11044,7 +11003,8 @@ msgstr "Moteur du terminal changé pour {backend}"
 
 #: src/sshpilot/preferences.py:6707
 msgid "Only new terminal tabs will use the selected backend."
-msgstr "Seuls les nouveaux onglets de terminal utiliseront le moteur sélectionné."
+msgstr ""
+"Seuls les nouveaux onglets de terminal utiliseront le moteur sélectionné."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
@@ -11790,9 +11750,8 @@ msgid "Edit Group"
 msgstr "Modifier le groupe"
 
 #: src/sshpilot/sidebar.py:5149
-#, fuzzy
 msgid "Set Login Profile…"
-msgstr "Suppression des fichiers…"
+msgstr "Définir le profil de connexion…"
 
 #: src/sshpilot/sidebar.py:5151
 msgid "Run Command…"
@@ -11851,7 +11810,7 @@ msgstr "Copier vers le groupe"
 
 #: src/sshpilot/sidebar.py:5248
 msgid "Assign Login Profile…"
-msgstr ""
+msgstr "Attribuer un profil de connexion…"
 
 #: src/sshpilot/sidebar.py:5259
 msgid "Unpin from Start Page"
@@ -13631,9 +13590,9 @@ msgid "Failed to save connection"
 msgstr "Échec de l’enregistrement de la connexion"
 
 #: src/sshpilot/window.py:8321
-#, fuzzy
 msgid "Saved, but the login profile could not be applied."
-msgstr "Le fichier distant n’a pas pu être remplacé."
+msgstr ""
+"Connexion enregistrée, mais le profil de connexion n’a pas pu être appliqué."
 
 #: src/sshpilot/window.py:8630
 msgid ""
@@ -13717,9 +13676,8 @@ msgid "Connect to the SSH Pilot daemon before editing known hosts."
 msgstr "Connectez-vous au démon SSH Pilot avant de modifier les hôtes connus."
 
 #: src/sshpilot/window_dialogs.py:814
-#, fuzzy
 msgid "No SSH connections selected"
-msgstr "Aucune connexion SSH"
+msgstr "Aucune connexion SSH sélectionnée"
 
 #: src/sshpilot/window_dialogs.py:883
 #, python-brace-format
@@ -13727,6 +13685,8 @@ msgid ""
 "{connection} was detached from login profile “{profile}” because its SSH "
 "config was edited."
 msgstr ""
+"{connection} a été détachée du profil de connexion « {profile} » car sa "
+"configuration SSH a été modifiée."
 
 #: src/sshpilot/window_dialogs.py:1013
 msgid "Start Backup"
@@ -14838,53 +14798,53 @@ msgid "New logo"
 msgstr "Nouveau fichier"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:72
-#, fuzzy
 msgid "New \"Open in Terminal\" option in file manager"
-msgstr "Impossible d’ouvrir le gestionnaire de fichiers intégré"
+msgstr ""
+"Nouvelle option « Ouvrir dans un terminal » dans le gestionnaire de fichiers"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:73
 msgid ""
 "Open local and remote terminal panes in file manager with optional "
 "synchronized browsing"
 msgstr ""
+"Ouverture de volets de terminal local et distant dans le gestionnaire de "
+"fichiers avec suivi optionnel de la navigation dans les dossiers"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:78
-#, fuzzy
 msgid "SFTP file manager improvements"
-msgstr "Améliorations de l’interface du gestionnaire de fichiers"
+msgstr "Améliorations du gestionnaire de fichiers SFTP"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:83
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:89
 msgid "Added RDP support (requries freerdp3)"
-msgstr ""
+msgstr "Ajout de la prise en charge de RDP (nécessite freerdp3)"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:84
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:90
-#, fuzzy
 msgid "Improved UX for non-SSH protocol plugins"
-msgstr "Améliorations des greffons de protocoles non-SSH"
+msgstr ""
+"Amélioration de l’expérience utilisateur pour les greffons de protocoles non-"
+"SSH"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:95
 msgid ""
 "Introducing \"Login Profiles\", reusable, saved idenities you can assign to "
 "any connection or group"
 msgstr ""
+"Présentation des « Profils de connexion », des identités enregistrées et "
+"réutilisables que vous pouvez attribuer à toute connexion ou à tout groupe"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:96
-#, fuzzy
 msgid "New \"Dashboard\" button in connection rows"
-msgstr ""
-"Afficher le bouton du gestionnaire de fichiers sur les lignes de connexion"
+msgstr "Nouveau bouton « Tableau de bord » sur les lignes de connexion"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:97
-#, fuzzy
 msgid "UI improvements"
-msgstr "Améliorations mineures de l’interface"
+msgstr "Améliorations de l’interface"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:98
-#, fuzzy
 msgid "Updated translations"
-msgstr "Notifications de mise à jour"
+msgstr "Traductions mises à jour"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:103
 msgid "More SFTP improvemnets"
@@ -16204,131 +16164,6 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
-
-#~ msgid "The open tab keeps its current backend until you reopen it."
-#~ msgid_plural "Open tabs keep their current backend until you reopen them."
-#~ msgstr[0] ""
-#~ "L’onglet ouvert garde son moteur actuel jusqu’à ce que vous le rouvriez."
-#~ msgstr[1] ""
-#~ "Les onglets ouverts gardent leur moteur actuel jusqu’à ce que vous les "
-#~ "rouvriez."
-
-#, python-brace-format
-#~ msgid ""
-#~ "The terminal backend has been changed to {backend}.\n"
-#~ "\n"
-#~ "This change will only apply to new terminal tabs.\n"
-#~ "Existing {count} terminal tab will continue using its current backend.\n"
-#~ "\n"
-#~ "To use the new backend for the existing terminal, close and reopen that "
-#~ "tab."
-#~ msgid_plural ""
-#~ "The terminal backend has been changed to {backend}.\n"
-#~ "\n"
-#~ "This change will only apply to new terminal tabs.\n"
-#~ "Existing {count} terminal tabs will continue using their current "
-#~ "backend.\n"
-#~ "\n"
-#~ "To use the new backend for existing terminals, close and reopen those "
-#~ "tabs."
-#~ msgstr[0] ""
-#~ "Le moteur du terminal a été remplacé par {backend}.\n"
-#~ "\n"
-#~ "Ce changement ne s’appliquera qu’aux nouveaux onglets de terminal.\n"
-#~ "L’onglet de terminal existant ({count}) continuera à utiliser son moteur "
-#~ "actuel.\n"
-#~ "\n"
-#~ "Pour utiliser le nouveau moteur dans le terminal existant, fermez puis "
-#~ "rouvrez cet onglet."
-#~ msgstr[1] ""
-#~ "Le moteur du terminal a été remplacé par {backend}.\n"
-#~ "\n"
-#~ "Ce changement ne s’appliquera qu’aux nouveaux onglets de terminal.\n"
-#~ "Les {count} onglets de terminal existants continueront à utiliser leur "
-#~ "moteur actuel.\n"
-#~ "\n"
-#~ "Pour utiliser le nouveau moteur dans les terminaux existants, fermez puis "
-#~ "rouvrez ces onglets."
-
-#, python-brace-format
-#~ msgid "{current} — click for {next}"
-#~ msgstr "{current} — cliquez pour choisir {next}"
-
-#~ msgid "Downloading Files"
-#~ msgstr "Téléchargement de fichiers"
-
-#~ msgid "Uploading Files"
-#~ msgstr "Envoi de fichiers"
-
-#~ msgid "Transferring files…"
-#~ msgstr "Transfert des fichiers…"
-
-#~ msgid "Pod"
-#~ msgstr "Pod"
-
-#~ msgid "pod name"
-#~ msgstr "nom du pod"
-
-#~ msgid "New connection"
-#~ msgstr "Nouvelle connexion"
-
-#~ msgid "Edit SSH Configuration"
-#~ msgstr "Modifier la configuration SSH"
-
-#~ msgid "Manage Known hosts"
-#~ msgstr "Gérer les hôtes connus"
-
-#~ msgid "Authorized keys"
-#~ msgstr "Clés autorisées"
-
-#~ msgid "No Connections Yet"
-#~ msgstr "Aucune connexion"
-
-#~ msgid "Create a connection first to use this action."
-#~ msgstr "Créez d’abord une connexion pour utiliser cette action."
-
-#~ msgid "Plugin Disabled"
-#~ msgstr "Greffon désactivé"
-
-#, python-format
-#~ msgid ""
-#~ "The %s plugin is disabled. Enable it from Settings ▸ Plugins, then "
-#~ "restart SSH Pilot to use this feature."
-#~ msgstr ""
-#~ "Le greffon %s est désactivé. Activez-le depuis Paramètres ▸ Greffons, "
-#~ "puis redémarrez SSH Pilot pour utiliser cette fonctionnalité."
-
-#~ msgid "Open Settings"
-#~ msgstr "Ouvrir les paramètres"
-
-#, python-brace-format
-#~ msgid "{done} of {total} file"
-#~ msgid_plural "{done} of {total} files"
-#~ msgstr[0] "{done} fichier sur {total}"
-#~ msgstr[1] "{done} fichiers sur {total}"
-
-#, python-brace-format
-#~ msgid "{done} of {total} item"
-#~ msgid_plural "{done} of {total} items"
-#~ msgstr[0] "{done} élément sur {total}"
-#~ msgstr[1] "{done} éléments sur {total}"
-
-#~ msgid "Finished"
-#~ msgstr "Terminé"
-
-#, python-brace-format
-#~ msgid "Successfully transferred {count} file ({size})"
-#~ msgid_plural "Successfully transferred {count} files ({size})"
-#~ msgstr[0] "{count} fichier transféré ({size})"
-#~ msgstr[1] "{count} fichiers transférés ({size})"
-
-#, python-brace-format
-#~ msgid "Error uploading {name}: {error}"
-#~ msgstr "Erreur lors de l’envoi de {name} : {error}"
-
-#, python-brace-format
-#~ msgid "Error downloading {name}: {error}"
-#~ msgstr "Erreur lors du téléchargement de {name} : {error}"
 
 #: src/sshpilot/omni_search.py:91
 msgid ""
