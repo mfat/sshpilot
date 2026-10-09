@@ -1682,7 +1682,6 @@ class TerminalManager:
             daemon_readiness_user_message,
         )
 
-        window = self.window
         connection = getattr(terminal, "connection", None)
         if connection is None:
             logger.error("Cannot reconnect terminal without a connection")
@@ -1723,6 +1722,45 @@ class TerminalManager:
         terminal._set_disconnected_banner_visible(False)
         terminal._set_connecting_overlay_visible(True)
 
+        if isinstance(getattr(connection, "transient_connection_id", None), str):
+            # An unsaved target lives in the daemon's memory only: a daemon
+            # restart, or the limit on unsaved targets, may have dropped it.
+            # Register it again and reconnect on the new id.
+            return self._reregister_then_start(terminal, connection)
+        return self._start_reconnected_session(terminal, connection)
+
+    def _reregister_then_start(self, terminal, connection) -> bool:
+        from .cli_connect import transient_request_data
+
+        window = self.window
+        data = transient_request_data(getattr(connection, "data", None) or {})
+
+        def _registered(details):
+            object.__setattr__(
+                connection, "transient_connection_id", str(details.id)
+            )
+            self._start_reconnected_session(terminal, connection)
+
+        def _failed(error):
+            logger.warning("Could not register unsaved target again: %s", error)
+            terminal._set_connecting_overlay_visible(False)
+            terminal._on_connection_failed(
+                getattr(error, "message", None) or str(error)
+            )
+
+        try:
+            window.client_bridge.submit(
+                lambda: window.plugin_connection_services.open_transient_from_data(data),
+                on_success=_registered,
+                on_error=_failed,
+            )
+        except RuntimeError as error:
+            _failed(error)
+            return False
+        return True
+
+    def _start_reconnected_session(self, terminal, connection) -> bool:
+        window = self.window
         try:
             # The save flow re-keys every terminal from the pre-save snapshot
             # to the authoritative post-save ConnectionSummary, so the id

@@ -426,14 +426,16 @@ class ConnectionRepository:
                 return copy.deepcopy(self._transient.get(connection_id))
             return record
 
-    def open_transient_connection(self, data: Mapping[str, Any]) -> ConnectionRecord:
+    def open_transient_connection(
+        self, data: Mapping[str, Any], *, in_use: Tuple[str, ...] = ()
+    ) -> ConnectionRecord:
         """Register an unsaved target the daemon can open but never stores.
 
         Reads the SSH configuration (an SSH target includes it), so it runs on
         the configuration lane like the other connection commands.
         """
         with self._lock:
-            return copy.deepcopy(self._transient.create(data))
+            return copy.deepcopy(self._transient.create(data, in_use=in_use))
 
     def transient_summary(self, record: ConnectionRecord) -> ConnectionSummary:
         """The public summary of a transient record (it has no snapshot row)."""

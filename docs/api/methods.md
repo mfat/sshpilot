@@ -1580,8 +1580,11 @@ Requests bounded closure of one runtime forward.
 
 Daemon-only. Registers a target that is not a saved connection and returns
 its `ConnectionDetails`; pass the returned `id` to `open_session`. It takes
-the same `CreateConnectionRequest` as `create_connection` and validates it
-the same way, but writes nothing: the connection is never listed and lives
+the same `CreateConnectionRequest` as `create_connection`, validates it the
+same way and needs the same capabilities (`connections.write`, plus
+`connections.config.write` with a `config_patch`) on top of
+`sessions.write`, because a target can carry the same commands. It writes
+nothing: the connection is never listed and lives
 until the daemon exits (the oldest are dropped beyond 64). An SSH target
 launches through a private config that holds its Host block and then
 includes the user's SSH config, so `Host` patterns there still apply.

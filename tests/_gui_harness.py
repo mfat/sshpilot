@@ -104,6 +104,9 @@ class GuiApp:
             if not getattr(self.window, '_api_client_selection_pending', True):
                 break
             self.pump(100)
+        assert getattr(self.window, 'client', None) is not None, (
+            'the app did not connect to its daemon within ~10 s'
+        )
         return self
 
     def shutdown(self):

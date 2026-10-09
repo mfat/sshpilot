@@ -12,9 +12,9 @@ def connection_id_for(connection: Any) -> ConnectionId:
     user-facing nickname for display and the save dialog, and carries the id
     the daemon registered it under in ``transient_connection_id``.
     """
-    transient = str(getattr(connection, "transient_connection_id", None) or "").strip()
-    if transient:
-        return ConnectionId(transient)
+    transient = getattr(connection, "transient_connection_id", None)
+    if isinstance(transient, str) and transient.strip():
+        return ConnectionId(transient.strip())
     nickname = str(
         getattr(connection, "nickname", None)
         or getattr(connection, "id", None)

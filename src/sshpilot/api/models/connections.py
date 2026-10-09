@@ -6,7 +6,14 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple, Union
 
-from .common import ConnectionId, SessionId, require_identifier, validate_ssh_host_alias
+from .common import (
+    ConnectionId,
+    SessionId,
+    has_control_characters,
+    require_identifier,
+    validate_single_line,
+    validate_ssh_host_alias,
+)
 from .connection_store import validate_safe_metadata
 from .pre_command import PRE_COMMAND_METADATA_KEYS
 
@@ -145,6 +152,29 @@ def validate_config_patch(patch: Mapping[str, Any]) -> None:
         raise ValueError(f"Forbidden config patch fields: {sorted(forbidden)}")
     for key, value in patch.items():
         _validate_field_value(key, value)
+        _validate_field_lines(key, value)
+
+
+# Fields whose value is written across several ssh_config lines on purpose.
+# Every other patch field lands on one line, where a line break would start a
+# directive of the caller's choosing.
+_MULTILINE_PATCH_FIELDS = frozenset({"extra_ssh_config", "pre_command"})
+
+
+def _validate_field_lines(key: str, value: Any) -> None:
+    if isinstance(value, str):
+        if has_control_characters(
+            value, allow_newlines=key in _MULTILINE_PATCH_FIELDS
+        ):
+            raise ValueError(
+                f"{key} must not contain line breaks or control characters"
+            )
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_field_lines(key, item)
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            _validate_field_lines(key, item)
 
 
 def _validate_field_value(key: str, value: Any) -> None:
@@ -680,6 +710,9 @@ class CreateConnectionRequest:
             raise TypeError("connection hostname must be a string")
         if type(self.username) is not str:
             raise TypeError("connection username must be a string")
+        validate_single_line(self.hostname, "connection hostname")
+        validate_single_line(self.username, "connection username")
+        validate_single_line(self.display_name, "connection display name")
         if type(self.port) is not int or not 1 <= self.port <= 65535:
             raise ValueError("connection port must be between 1 and 65535")
         if type(self.protocol) is not str or not self.protocol.strip():
@@ -743,6 +776,13 @@ class UpdateConnectionRequest:
             raise TypeError("connection hostname must be a string")
         if self.username is not None and self.username is not UNSET and type(self.username) is not str:
             raise TypeError("connection username must be a string")
+        for name, value in (
+            ("connection hostname", self.hostname),
+            ("connection username", self.username),
+            ("connection display name", self.display_name),
+        ):
+            if isinstance(value, str):
+                validate_single_line(value, name)
         # ``""`` clears an authored Port so the host inherits again, matching
         # how an emptied username clears ``User``. Any other string is invalid.
         if self.port is not None and self.port is not UNSET:

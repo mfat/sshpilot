@@ -113,3 +113,116 @@ def test_unknown_ids_still_miss(tmp_path):
     repo, _root = _repo(tmp_path)
     assert repo.get_record(TRANSIENT_ID_PREFIX + "nope") is None
     assert repo.get_record("nope") is None
+
+
+# -- review: line breaks must never reach an ssh_config line ------------------
+
+import dataclasses  # noqa: E402
+
+import pytest  # noqa: E402
+
+from sshpilot.api.capabilities import Capability  # noqa: E402
+from sshpilot.api.errors import SshPilotError  # noqa: E402
+from sshpilot.api.models.connections import (  # noqa: E402
+    CreateConnectionRequest,
+    UpdateConnectionRequest,
+)
+from sshpilot.core.connection_application_service import (  # noqa: E402
+    ConnectionApplicationService,
+)
+from sshpilot.core.errors import CoreError  # noqa: E402
+from sshpilot.ssh_config_formatter import format_ssh_config_entry  # noqa: E402
+
+INJECTED = "-x\n    ProxyCommand sh -c 'touch /tmp/pwned'"
+
+
+@pytest.mark.parametrize("field", ["hostname", "username", "display_name"])
+def test_request_refuses_line_breaks_in_single_line_fields(field):
+    values = {"nickname": "x", "hostname": "h.example", field: INJECTED}
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(**values)
+
+
+def test_request_refuses_line_breaks_in_nickname_and_update():
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(nickname="x\n    ProxyCommand evil", hostname="h")
+    with pytest.raises(ValueError):
+        UpdateConnectionRequest(hostname=INJECTED)
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(
+            nickname="x", hostname="h",
+            config_patch={"proxy_command": "nc %h %p\nLocalCommand evil"},
+        )
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(
+            nickname="x", hostname="h",
+            config_patch={"proxy_jump": ["jump\nProxyCommand evil"]},
+        )
+    # extra_ssh_config is multi-line on purpose; other control characters are not.
+    CreateConnectionRequest(
+        nickname="x", hostname="h",
+        config_patch={"extra_ssh_config": "Compression yes\nServerAliveInterval 9"},
+    )
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(
+            nickname="x", hostname="h",
+            config_patch={"extra_ssh_config": "Compression yes\r\x1b"},
+        )
+
+
+def test_formatter_refuses_line_breaks():
+    with pytest.raises(ValueError):
+        format_ssh_config_entry({"nickname": "x", "hostname": INJECTED})
+
+
+def test_injected_hostname_never_reaches_a_config_file(tmp_path):
+    """The reviewer's exact payload, sent past the request model."""
+    repo, _root = _repo(tmp_path)
+    with pytest.raises(CoreError):
+        repo.open_transient_connection(
+            {"nickname": "x", "hostname": INJECTED, "protocol": "ssh"}
+        )
+    directory = repo._transient._directory
+    assert directory is None or list(Path(directory).glob("*.conf")) == []
+
+
+def _service(repo, *, without=()):
+    service = ConnectionApplicationService(
+        repo, client_name="transient-test", allow_cross_thread_commands=True,
+    )
+    caps = service._capabilities
+    service._capabilities = dataclasses.replace(
+        caps, supported=frozenset(caps.supported) - set(without)
+    )
+    return service
+
+
+def test_transient_needs_the_capabilities_create_needs(tmp_path):
+    repo, _root = _repo(tmp_path)
+    plain = CreateConnectionRequest(nickname="x", hostname="h.example")
+    patched = CreateConnectionRequest(
+        nickname="x", hostname="h.example",
+        config_patch={"proxy_command": "nc %h %p"},
+    )
+    with pytest.raises(SshPilotError):
+        _service(repo, without={Capability.CONNECTIONS_WRITE}).open_transient_connection(plain)
+    no_config = _service(repo, without={Capability.CONNECTIONS_CONFIG_WRITE})
+    with pytest.raises(SshPilotError):
+        no_config.open_transient_connection(patched)
+    assert no_config.open_transient_connection(plain).id.startswith(TRANSIENT_ID_PREFIX)
+
+
+def test_targets_in_use_survive_the_limit(tmp_path):
+    repo, _root = _repo(tmp_path)
+    service = _service(repo)
+    keep = service.open_transient_connection(
+        CreateConnectionRequest(nickname="t", hostname="keep.example", protocol="telnet")
+    )
+    service.set_transient_in_use(lambda: {keep.id})
+    for index in range(MAX_TRANSIENT_CONNECTIONS + 5):
+        service.open_transient_connection(
+            CreateConnectionRequest(
+                nickname="t", hostname=f"h{index}.example", protocol="telnet"
+            )
+        )
+    assert repo.get_record(keep.id) is not None

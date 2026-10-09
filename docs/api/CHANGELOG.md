@@ -6,7 +6,9 @@ notes remain separate.
 ## Unreleased
 
 - `open_transient_connection` (`connections.open_transient`, capability
-  `sessions.write`) takes a `CreateConnectionRequest` and returns the
+  `sessions.write`, plus `connections.write` and, with a `config_patch`,
+  `connections.config.write`, as `create_connection` needs) takes a
+  `CreateConnectionRequest` and returns the
   `ConnectionDetails` of a connection the daemon can open but never stores:
   `open_session` accepts its id until the daemon exits. Nothing is written to
   the SSH config or `connections.json`, and the connection is not listed. An

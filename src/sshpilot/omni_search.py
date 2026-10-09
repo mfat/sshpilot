@@ -741,14 +741,14 @@ def _protocol_results(
 def _intent_results(
     window, query: str, connections: Sequence[Any]
 ) -> List[OmniResult]:
+    """Transfer and dashboard intents; protocol intents are separate because
+    search_omni also needs to know whether one matched."""
     tokens, _error = _parse_tokens(query)
     if not tokens:
         return []
     return (
         _transfer_results(window, tokens, connections)
         or _dashboard_results(window, tokens, connections)
-        or _protocol_results(window, query, connections)
-        or []
     )
 
 
@@ -903,8 +903,12 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
         return suggestions[:limit]
 
     results: List[OmniResult] = []
-    results.extend(_intent_results(window, query, connections))
-    protocol_hosts = _protocol_results(window, query, connections)
+    intents = _intent_results(window, query, connections)
+    results.extend(intents)
+    # Computed once per keystroke: it asks the protocol plugin for its fields
+    # and runs its validation.
+    protocol_hosts = None if intents else _protocol_results(window, query, connections)
+    results.extend(protocol_hosts or ())
 
     ssh = _ssh_result(query, connections)
     if ssh is not None:

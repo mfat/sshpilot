@@ -118,3 +118,34 @@ def test_unsaved_ssh_target_launches_openssh(gui):
     reason = _reason()
     assert "does not exist" not in reason
     assert "refused" in reason.lower()
+
+
+@pytest.mark.skipif(not shutil.which("telnet"), reason="telnet not installed")
+def test_reconnect_registers_a_forgotten_target_again(gui, captured_output):
+    """After a daemon restart the unsaved target's id is gone; reconnecting
+    registers it again instead of failing with "does not exist"."""
+    from sshpilot.omni_search import search_omni
+
+    server = _BannerServer()
+    try:
+        win = gui.window
+        result = next(
+            r for r in search_omni(win, f"telnet 127.0.0.1 {server.port}")
+            if r.kind == "adhoc"
+        )
+        win._omni_search.activate_result(result)
+        assert _wait_for(gui, lambda: server.accepted >= 1)
+
+        terminal = next(
+            p.get_child() for p in win.tab_view.get_pages()
+            if getattr(getattr(p.get_child(), "connection", None), "protocol", "") == "telnet"
+        )
+        connection = terminal.connection
+        object.__setattr__(connection, "transient_connection_id", "adhoc-forgotten")
+        captured_output.clear()
+
+        assert win.terminal_manager.reconnect_terminal(terminal)
+        assert _wait_for(gui, lambda: server.accepted >= 2)
+        assert connection.transient_connection_id != "adhoc-forgotten"
+    finally:
+        server.stop()

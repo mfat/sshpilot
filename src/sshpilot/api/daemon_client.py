@@ -977,6 +977,9 @@ class DaemonClient:
         self, request: CreateConnectionRequest
     ) -> ConnectionDetails:
         self._require_capability(Capability.SESSIONS_WRITE)
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         result = self._request(
             "connections.open_transient",
             create_connection_request_to_wire(request),

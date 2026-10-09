@@ -59,8 +59,43 @@ def _preferred_auth_list(data: Dict[str, Any]) -> List[str]:
     return []
 
 
+# Keys this formatter writes, each onto a single ssh_config line. A line break
+# in one of them would start a directive of the caller's choosing (a
+# ProxyCommand runs locally), so they are refused here as well as at the API
+# boundary. ``extra_ssh_config`` is written one line per entry on purpose.
+_SINGLE_LINE_KEYS = (
+    'nickname', 'host', 'hostname', 'username', 'port', 'keyfile',
+    'certificate', 'identity_files', 'certificate_files', 'identity_agent',
+    'add_keys_to_agent', 'pkcs11_provider', 'security_key_provider',
+    'proxy_command', 'proxy_jump', 'local_command', 'remote_command',
+    'request_tty', 'forward_agent_target', 'forwarding_rules',
+)
+
+
+def _refuse_line_breaks(data: Dict[str, Any]) -> None:
+    from .api.models.common import has_control_characters
+
+    def _check(key: str, value: Any, allow_newlines: bool = False) -> None:
+        if isinstance(value, str):
+            if has_control_characters(value, allow_newlines=allow_newlines):
+                raise ValueError(
+                    f"{key} must not contain line breaks or control characters"
+                )
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                _check(key, item, allow_newlines)
+        elif isinstance(value, dict):
+            for item in value.values():
+                _check(key, item, allow_newlines)
+
+    for key in _SINGLE_LINE_KEYS:
+        _check(key, data.get(key))
+    _check('extra_ssh_config', data.get('extra_ssh_config'), allow_newlines=True)
+
+
 def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     """Format connection data as SSH config entry"""
+    _refuse_line_breaks(data)
     def _quote_token(token: str) -> str:
         if not token:
             return '""'

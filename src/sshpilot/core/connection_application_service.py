@@ -24,10 +24,9 @@ import getpass
 import ipaddress
 import re
 import threading
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..api.capabilities import Capabilities, Capability
-from .connections.transient import is_transient_connection_id
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
@@ -74,6 +73,7 @@ from .connections.repository import (
     ConnectionRepositoryProtocol,
     RepositoryChange,
 )
+from .connections.transient import is_transient_connection_id
 from .errors import CoreError
 
 from sshpilot import __version__ as sshpilot_version
@@ -1307,6 +1307,14 @@ class ConnectionApplicationService:
             display_name=self._record_to_summary(record).display_name,
         )
 
+    def set_transient_in_use(self, lookup: Callable[[], Any]) -> None:
+        """Daemon-internal: ids of transient connections live sessions use,
+        which the oldest-first limit must not drop."""
+        self._transient_ids_in_use = lookup
+
+    def _transient_ids_in_use(self) -> Any:
+        return ()
+
     def open_transient_connection(
         self, request: CreateConnectionRequest
     ) -> ConnectionDetails:
@@ -1317,8 +1325,12 @@ class ConnectionApplicationService:
         until it exits and never appears in listings.
         """
         self._assert_command_thread()
-        # The RPC itself is gated on sessions.write by the dispatcher.
-        self._require_capability(Capability.CONNECTIONS_READ)
+        # As expressive as create_connection (a config patch can carry
+        # ProxyCommand/LocalCommand, plugin data a container command), so it
+        # needs the same capabilities; the dispatcher adds sessions.write.
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         if type(request) is not CreateConnectionRequest:
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
@@ -1337,8 +1349,15 @@ class ConnectionApplicationService:
                 details={"field": "config_patch"},
             )
         data = self._build_create_data(request)
+        # Asked before any repository lock is taken: the session runtime has
+        # its own lock and calls back into this service.
         try:
-            record = self._repository.open_transient_connection(data)
+            in_use = tuple(self._transient_ids_in_use())
+        except Exception:
+            logger.debug("Transient in-use lookup failed", exc_info=True)
+            in_use = ()
+        try:
+            record = self._repository.open_transient_connection(data, in_use=in_use)
         except SshPilotError:
             raise
         except CoreError as error:

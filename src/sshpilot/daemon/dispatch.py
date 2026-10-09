@@ -1230,9 +1230,14 @@ class RequestDispatcher:
     def _handle_open_transient_connection(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         typed_request = create_connection_request_from_wire(request.params)
+        # Registering a target is as expressive as saving one: same
+        # capabilities as connections.create, on top of sessions.write.
+        self._require_capability(state, Capability.CONNECTIONS_WRITE)
+        if typed_request.config_patch:
+            self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
         return DeferredResult(
             operation=lambda: connection_details_to_wire(
                 self._connections.open_transient_connection(typed_request)

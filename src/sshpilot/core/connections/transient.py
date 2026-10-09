@@ -28,7 +28,7 @@ import tempfile
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 from ...ssh_config_formatter import merged_block_lines
 from ...api.models.common import validate_ssh_host_alias
@@ -40,9 +40,9 @@ from .ssh_config_loader import load_ssh_configuration
 #: cannot realistically name a saved Host as well.
 TRANSIENT_ID_PREFIX = "adhoc-"
 
-#: Transient records kept at once. A session holds its connection id for its
-#: whole life, so the oldest records are evicted first; 64 is far beyond the
-#: number of unsaved targets anyone has open together.
+#: Transient records kept at once. Beyond it the oldest record that no live
+#: session uses is dropped; records still in use are never dropped, so the
+#: limit can be exceeded while that many sessions are open.
 MAX_TRANSIENT_CONNECTIONS = 64
 
 
@@ -82,7 +82,9 @@ class TransientConnections:
 
     # -- public API ----------------------------------------------------------
 
-    def create(self, data: Mapping[str, Any]) -> ConnectionRecord:
+    def create(
+        self, data: Mapping[str, Any], *, in_use: Iterable[str] = ()
+    ) -> ConnectionRecord:
         payload = dict(data or {})
         protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
         hostname = str(payload.get("hostname") or payload.get("host") or "").strip()
@@ -101,7 +103,7 @@ class TransientConnections:
                     payload, connection_id=connection_id
                 )
             self._records[connection_id] = record
-            self._evict_locked()
+            self._evict_locked(frozenset(in_use) | {connection_id})
             return record
 
     def get(self, connection_id: str) -> Optional[ConnectionRecord]:
@@ -146,7 +148,10 @@ class TransientConnections:
         block.pop("display_name", None)
         block.update(nickname=token, id=token, hostname=hostname)
         root = Path(self._ssh_root())
-        lines = list(merged_block_lines(None, block))
+        try:
+            lines = list(merged_block_lines(None, block))
+        except ValueError as error:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
         if root.exists():
             lines.append(f"\nInclude {_quote(str(root))}\n")
         path = self._directory_locked() / f"{connection_id}.conf"
@@ -179,10 +184,13 @@ class TransientConnections:
         record.nickname = connection_id
         return record
 
-    def _evict_locked(self) -> None:
-        while len(self._records) > MAX_TRANSIENT_CONNECTIONS:
-            _connection_id, record = self._records.popitem(last=False)
-            self._remove_file(record)
+    def _evict_locked(self, keep: frozenset) -> None:
+        excess = len(self._records) - MAX_TRANSIENT_CONNECTIONS
+        if excess <= 0:
+            return
+        idle = [cid for cid in self._records if cid not in keep][:excess]
+        for connection_id in idle:
+            self._remove_file(self._records.pop(connection_id))
 
     def _remove_file(self, record: ConnectionRecord) -> None:
         directory = self._directory
