@@ -37,8 +37,11 @@ def _name_key(connection) -> Tuple[str, str, str, str]:
 #: Pass-through preset: show the ordering the daemon reports, untouched.
 MANUAL_CONNECTION_SORT = "manual"
 
-#: Nothing is sorted until the user asks, so the daemon's order is the default.
-DEFAULT_CONNECTION_SORT = MANUAL_CONNECTION_SORT
+#: A list nobody has arranged yet reads best alphabetically.
+DEFAULT_CONNECTION_SORT = "name-asc"
+
+#: Config key holding the selected preset id.
+CONNECTION_SORT_SETTING = "ui.connection_sort"
 
 CONNECTION_SORT_PRESETS: Dict[str, SortPreset] = {
     MANUAL_CONNECTION_SORT: SortPreset(
@@ -188,3 +191,65 @@ def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) 
     # ordinary rebuilds must preserve the authoritative daemon ordering so
     # manual drag-and-drop reordering is not overwritten.
     return changed
+
+
+def load_connection_sort(config) -> str:
+    """The saved preset id, or the default when none (or an unknown one) is saved."""
+    try:
+        value = config.get_setting(CONNECTION_SORT_SETTING, None)
+    except Exception:
+        value = None
+    return value if value in CONNECTION_SORT_PRESETS else DEFAULT_CONNECTION_SORT
+
+
+def _ordered_groups(groups):
+    """Groups in sibling order, ties kept in daemon order like the sidebar.
+
+    Only the order among groups sharing a parent matters to the layout.
+    """
+    return sorted(groups, key=lambda group: group[1])
+
+
+def layout_request_from_projection(group_manager, expected_generation=None):
+    """The arrangement ``group_manager`` shows, as a layout request."""
+    from .api.models.connection_store import GroupLayout, SetConnectionLayoutRequest
+
+    groups = getattr(group_manager, "groups", {}) or {}
+    entries = _ordered_groups(
+        (str(group_id), int(info.get("order", 0) or 0), info)
+        for group_id, info in groups.items()
+    )
+    return SetConnectionLayoutRequest(
+        root_connection_ids=tuple(
+            str(cid) for cid in getattr(group_manager, "root_connections", [])
+        ),
+        groups=tuple(
+            GroupLayout(
+                group_id=group_id,
+                parent_id=info.get("parent_id") or None,
+                connection_ids=tuple(str(cid) for cid in info.get("connections", [])),
+            )
+            for group_id, _order, info in entries
+        ),
+        expected_generation=expected_generation,
+    )
+
+
+def layout_request_from_snapshot(snapshot):
+    """The daemon's stored arrangement, as a layout request (for Undo)."""
+    from .api.models.connection_store import GroupLayout, SetConnectionLayoutRequest
+
+    entries = _ordered_groups(
+        (str(group.id), int(group.order), group) for group in snapshot.groups
+    )
+    return SetConnectionLayoutRequest(
+        root_connection_ids=tuple(str(cid) for cid in snapshot.root_connection_ids),
+        groups=tuple(
+            GroupLayout(
+                group_id=group_id,
+                parent_id=group.parent_id or None,
+                connection_ids=tuple(str(cid) for cid in group.connection_ids),
+            )
+            for group_id, _order, group in entries
+        ),
+    )

@@ -64,7 +64,11 @@ from .connection_sort import (
     CONNECTION_SORT_PRESETS,
     DEFAULT_CONNECTION_SORT,
     MANUAL_CONNECTION_SORT,
+    CONNECTION_SORT_SETTING,
     apply_connection_sort as apply_sort_to_manager,
+    layout_request_from_projection,
+    layout_request_from_snapshot,
+    load_connection_sort,
 )
 # Port forwarding UI is now integrated into connection_dialog.py
 # ConnectionDialog is imported lazily at its use site (show_connection_dialog) so
@@ -446,11 +450,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Active tag filter (casefolded tag key), or None for all connections
         self._tag_filter = None
 
-        # Sorting is a UI-only overlay on the daemon projection, and the next
-        # projection reset drops it. Persisting the preset across restarts made
-        # the button advertise a sort that was never applied, so the window
-        # always opens on the daemon's own (manual) order.
-        self._connection_sort_last = DEFAULT_CONNECTION_SORT
+        # Sorting is a display choice layered on the daemon's (manual) order:
+        # every list rebuild re-applies it, so a daemon refresh never drops it.
+        self._connection_sort_last = load_connection_sort(self.config)
         self.sort_button = None
 
         # Set up window
@@ -3281,36 +3283,114 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             preset_id = DEFAULT_CONNECTION_SORT
             preset = CONNECTION_SORT_PRESETS[preset_id]
 
-        if preset.manual:
-            # Manual order lives in the daemon, so "unsorting" means dropping
-            # the local overlay and re-reading the authoritative projection.
-            self.group_manager.bind_connections(self.connection_manager.connections)
-            self.rebuild_connection_list()
-        else:
-            changed = apply_sort_to_manager(
-                self.group_manager,
-                self.connection_manager.get_connections(),
-                preset_id,
-            )
-            if changed:
-                self.rebuild_connection_list()
-
-        self._connection_sort_last = preset_id
-        self._update_sort_button()
+        self._set_connection_sort(preset_id)
+        # Start from the daemon's own order; the rebuild sorts it when the
+        # preset asks for that.
+        self.group_manager.bind_connections(self.connection_manager.connections)
+        self.rebuild_connection_list()
         self._notify_sort_result(preset)
 
-    def _reset_sort_to_manual(self):
-        """Drop the sort overlay after the daemon replaced the projection.
-
-        ``GroupManager._refresh()`` restores the daemon ordering on every
-        projection reset, which silently discards whatever the sort button
-        applied. Without this the button keeps advertising a sort that is no
-        longer on screen, and its next click cycles on from a stale state.
-        """
-        if self._connection_sort_last == MANUAL_CONNECTION_SORT:
-            return
-        self._connection_sort_last = MANUAL_CONNECTION_SORT
+    def _set_connection_sort(self, preset_id: str) -> None:
+        """Record and persist the sort choice without touching the list."""
+        self._connection_sort_last = preset_id
+        try:
+            self.config.set_setting(CONNECTION_SORT_SETTING, preset_id)
+        except Exception:
+            logger.debug("Failed to save the connection sort", exc_info=True)
         self._update_sort_button()
+
+    def _apply_connection_sort_to_projection(self) -> None:
+        """Sort the group projection in place when a sort is selected."""
+        preset_id = getattr(self, "_connection_sort_last", MANUAL_CONNECTION_SORT)
+        preset = CONNECTION_SORT_PRESETS.get(preset_id)
+        if preset is None or preset.manual:
+            return
+        apply_sort_to_manager(
+            self.group_manager,
+            self.connection_manager.get_connections(),
+            preset_id,
+        )
+
+    def begin_saving_sorted_view(self, expected_generation=None):
+        """Prepare to save the sorted view as the manual order.
+
+        A drag in a sorted view is placed against the order on screen, not
+        the manual order stored in the daemon, so the drop must apply on top
+        of the sorted order saved as the new manual order. Returns ``None``
+        in manual mode, otherwise ``(layout_request, undo_request,
+        sorted_preset_id)``, and switches to manual order right away: the
+        projection already holds the sorted order, which is what is about to
+        be saved, so the next rebuild must not sort it again.
+        """
+        preset = CONNECTION_SORT_PRESETS.get(self._connection_sort_last)
+        if preset is None or preset.manual:
+            return None
+        snapshot = getattr(self.connection_manager, "snapshot", lambda: None)()
+        if snapshot is None:
+            return None
+        # Check the save against the projection the drag was computed from,
+        # so a stale drag still fails before anything changes.
+        if expected_generation is None:
+            expected_generation = getattr(snapshot, "generation", None)
+        layout = layout_request_from_projection(
+            self.group_manager, expected_generation=expected_generation
+        )
+        undo = layout_request_from_snapshot(snapshot)
+        sorted_preset_id = self._connection_sort_last
+        self._set_connection_sort(MANUAL_CONNECTION_SORT)
+        return layout, undo, sorted_preset_id
+
+    def sorted_view_save_failed(self, sorted_preset_id: str) -> None:
+        """The sorted view was not saved: go back to showing it sorted."""
+        self._set_connection_sort(sorted_preset_id)
+        self.group_manager.bind_connections(self.connection_manager.connections)
+        self.rebuild_connection_list()
+
+    def offer_sorted_view_undo(self, undo_request, sorted_preset_id: str) -> None:
+        """Tell the user the sorted view became the manual order; offer Undo."""
+        toast_overlay = getattr(self, "toast_overlay", None)
+        if not toast_overlay:
+            return
+        toast = Adw.Toast.new(_("Sorted order saved as your manual order"))
+        toast.set_button_label(_("Undo"))
+        toast.set_timeout(8)
+        toast.connect(
+            "button-clicked",
+            lambda *_args: self._undo_sorted_view_save(undo_request, sorted_preset_id),
+        )
+        toast_overlay.add_toast(toast)
+
+    def _undo_sorted_view_save(self, undo_request, sorted_preset_id: str) -> None:
+        controller = getattr(self.group_manager, "controller", None)
+        client = getattr(self, "client", None)
+        if controller is None or client is None:
+            return
+        # Show the sort again straight away, so the refresh that follows the
+        # restore does not flash the restored manual order first.
+        self._set_connection_sort(sorted_preset_id)
+
+        def _failed(error):
+            logger.warning(
+                "Undoing the saved sorted order failed: %s",
+                getattr(getattr(error, "code", None), "value", type(error).__name__),
+            )
+            self._set_connection_sort(MANUAL_CONNECTION_SORT)
+            self.group_manager.bind_connections(self.connection_manager.connections)
+            self.rebuild_connection_list()
+            toast_overlay = getattr(self, "toast_overlay", None)
+            if toast_overlay:
+                toast_overlay.add_toast(Adw.Toast.new(
+                    _("Could not undo: the connection list has changed since")
+                ))
+
+        try:
+            controller.run(
+                lambda: client.set_connection_layout(undo_request),
+                on_success=lambda _generation: None,
+                on_error=_failed,
+            )
+        except Exception as error:
+            _failed(error)
 
     def _notify_sort_result(self, preset):
         toast_overlay = getattr(self, "toast_overlay", None)
@@ -3973,6 +4053,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
         reset_connection_list_drag_session(self)
+        self._apply_connection_sort_to_projection()
 
         # Save current scroll position
         scroll_position = None
@@ -6449,9 +6530,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_projection_reset(self, manager, _connection=None):
         """Rebuild presentation state after an authoritative store refresh."""
         self.group_manager.bind_connections(manager.connections)
-        # bind_connections() just restored the daemon ordering, so any sort the
-        # button was advertising is gone from the list as well.
-        self._reset_sort_to_manual()
         self.rebuild_connection_list()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge

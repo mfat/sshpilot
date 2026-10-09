@@ -16081,3 +16081,11 @@ msgstr "صفحهٔ شروع"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:887
 msgid "Terminal and File Manager in One Tab"
 msgstr "ترمینال و مدیر فایل در یک زبانه"
+
+#: src/sshpilot/window.py
+msgid "Sorted order saved as your manual order"
+msgstr "ترتیب مرتب‌شده به‌عنوان ترتیب دستی شما ذخیره شد"
+
+#: src/sshpilot/window.py
+msgid "Could not undo: the connection list has changed since"
+msgstr "واگرد ممکن نیست: فهرست اتصال‌ها از آن زمان تغییر کرده است"

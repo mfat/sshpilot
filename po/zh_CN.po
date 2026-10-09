@@ -15625,3 +15625,11 @@ msgstr "起始页"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:887
 msgid "Terminal and File Manager in One Tab"
 msgstr "终端与文件管理器同处一个标签页"
+
+#: src/sshpilot/window.py
+msgid "Sorted order saved as your manual order"
+msgstr "已将排序后的顺序保存为您的手动顺序"
+
+#: src/sshpilot/window.py
+msgid "Could not undo: the connection list has changed since"
+msgstr "无法撤销：连接列表在此之后已更改"

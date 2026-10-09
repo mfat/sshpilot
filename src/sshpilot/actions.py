@@ -813,12 +813,15 @@ class WindowActions:
             from .sidebar import _submit_group_dnd_place, _sidebar_projection_generation
 
             index = len(self.group_manager.get_ordered_siblings(None))
+            # Not a placement the user picked on screen: a sorted view just
+            # shows the group in its sorted place, so nothing is saved.
             _submit_group_dnd_place(
                 self,
                 group_id,
                 None,
                 index,
                 expected_generation=_sidebar_projection_generation(self),
+                save_sorted_view=False,
             )
         except Exception as e:
             logger.error(f"Failed to move group to top level: {e}")

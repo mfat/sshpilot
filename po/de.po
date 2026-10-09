@@ -16433,3 +16433,11 @@ msgstr "Startseite"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:887
 msgid "Terminal and File Manager in One Tab"
 msgstr "Terminal und Dateimanager in einem Tab"
+
+#: src/sshpilot/window.py
+msgid "Sorted order saved as your manual order"
+msgstr "Sortierte Reihenfolge als Ihre manuelle Reihenfolge gespeichert"
+
+#: src/sshpilot/window.py
+msgid "Could not undo: the connection list has changed since"
+msgstr "Rückgängig machen nicht möglich: Die Verbindungsliste hat sich inzwischen geändert"

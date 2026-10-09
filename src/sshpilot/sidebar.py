@@ -4198,35 +4198,82 @@ def _show_sidebar_dnd_error(window, error):
         logger.error("Sidebar DnD failed: %s", error)
 
 
-def _submit_group_dnd_place(window, group_id, parent_id, index,
-                            expected_generation=None):
-    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
+def _run_dnd_mutation(window, make_operation, generation, *, save_sorted_view=True):
+    """Run a sidebar placement built against the projection at ``generation``.
 
-    request = PlaceGroupRequest(
-        group_id=GroupId(group_id),
-        parent_id=GroupId(parent_id) if parent_id else None,
-        index=index,
-        expected_generation=expected_generation,
-    )
-    operation = lambda: window.client.place_group(request)
+    ``make_operation(generation)`` returns the RPC call. In a sorted view the
+    user placed the item against the order on screen, not the manual order
+    the daemon stores, so that order is saved as the manual order first and
+    the placement runs on top of it, with an Undo offered afterwards.
+    """
+    on_error = lambda error: _show_sidebar_dnd_error(window, error)
     controller = getattr(window.group_manager, "controller", None)
-    if controller is not None:
+    begin = getattr(window, "begin_saving_sorted_view", None)
+    plan = None
+    if save_sorted_view and controller is not None and callable(begin):
+        plan = begin(expected_generation=generation)
+    if plan is None:
+        operation = make_operation(generation)
+        if controller is not None:
+            try:
+                controller.run(operation, on_success=lambda _result: None, on_error=on_error)
+                return True
+            except Exception as error:
+                on_error(error)
+                return False
         try:
-            controller.run(
-                operation,
-                on_success=lambda _result: None,
-                on_error=lambda error: _show_sidebar_dnd_error(window, error),
-            )
+            operation()
             return True
         except Exception as error:
-            _show_sidebar_dnd_error(window, error)
+            on_error(error)
             return False
+
+    layout, undo, sorted_preset_id = plan
+    saved = []
+
+    def _save_layout(_previous):
+        new_generation = window.client.set_connection_layout(layout)
+        saved.append(True)
+        return new_generation
+
+    def _failed(error):
+        if saved:
+            # The sorted order is the manual order now; only the placement
+            # on top of it failed.
+            window.offer_sorted_view_undo(undo, sorted_preset_id)
+        else:
+            window.sorted_view_save_failed(sorted_preset_id)
+        on_error(error)
+
     try:
-        operation()
+        controller.run_sequence(
+            (_save_layout, lambda new_generation: make_operation(new_generation)()),
+            on_success=lambda _result: window.offer_sorted_view_undo(undo, sorted_preset_id),
+            on_error=_failed,
+        )
         return True
     except Exception as error:
-        _show_sidebar_dnd_error(window, error)
+        window.sorted_view_save_failed(sorted_preset_id)
+        on_error(error)
         return False
+
+
+def _submit_group_dnd_place(window, group_id, parent_id, index,
+                            expected_generation=None, *, save_sorted_view=True):
+    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
+
+    def make_operation(generation):
+        request = PlaceGroupRequest(
+            group_id=GroupId(group_id),
+            parent_id=GroupId(parent_id) if parent_id else None,
+            index=index,
+            expected_generation=generation,
+        )
+        return lambda: window.client.place_group(request)
+
+    return _run_dnd_mutation(
+        window, make_operation, expected_generation, save_sorted_view=save_sorted_view
+    )
 
 
 def _submit_connection_dnd_tag(window, request):
@@ -4267,35 +4314,22 @@ def _submit_connection_dnd_move(
     if not nicknames:
         return False
     snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
-    generation = getattr(snapshot, "generation", None)
-    request = MoveConnectionsRequest(
-        connection_ids=tuple(nicknames),
-        source_group_id=source_group_id,
-        target_group_id=target_group_id,
-        target_connection_id=target_connection_id,
-        position=position,
-        expected_generation=generation,
-        mode=ConnectionPlacementMode(mode),
+
+    def make_operation(generation):
+        request = MoveConnectionsRequest(
+            connection_ids=tuple(nicknames),
+            source_group_id=source_group_id,
+            target_group_id=target_group_id,
+            target_connection_id=target_connection_id,
+            position=position,
+            expected_generation=generation,
+            mode=ConnectionPlacementMode(mode),
+        )
+        return lambda: window.client.move_connections(request)
+
+    return _run_dnd_mutation(
+        window, make_operation, getattr(snapshot, "generation", None)
     )
-    operation = lambda: window.client.move_connections(request)
-    controller = getattr(window.group_manager, "controller", None)
-    if controller is not None:
-        try:
-            controller.run(
-                operation,
-                on_success=lambda _result: None,
-                on_error=lambda error: _show_sidebar_dnd_error(window, error),
-            )
-            return True
-        except Exception as error:
-            _show_sidebar_dnd_error(window, error)
-            return False
-    try:
-        operation()
-        return True
-    except Exception as error:
-        _show_sidebar_dnd_error(window, error)
-        return False
 
 
 def _on_connection_list_drop(window, target, value, x, y):
