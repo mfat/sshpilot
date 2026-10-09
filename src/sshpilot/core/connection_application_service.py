@@ -1093,7 +1093,8 @@ class ConnectionApplicationService:
         normalized destination token (hostname, authored host alias, or
         connection alias) and explicit username match a saved record. This
         rule intentionally does not rerun OpenSSH in GTK or infer identity
-        from presentation-store paths.
+        from presentation-store paths. A destination of another protocol is
+        saved when a connection of that protocol names the same target.
         """
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_READ)
@@ -1126,12 +1127,52 @@ class ConnectionApplicationService:
                 ):
                     saved = True
                     break
+        elif not saved:
+            protocol = request.protocol.strip().casefold()
+            saved = any(
+                (record.protocol or "ssh").strip().casefold() == protocol
+                and self._saved_target_matches(record, request)
+                for record in self._repository.list_records()
+            )
         return UnsavedHostCheckResult(
             saved=saved,
             hostname=hostname.casefold(),
             username=username,
             generation=max(0, int(snapshot.generation)),
         )
+
+    @classmethod
+    def _saved_target_matches(
+        cls, record: ConnectionRecord, request: UnsavedHostCheckRequest
+    ) -> bool:
+        """Whether a saved non-SSH connection names the requested target.
+
+        No OpenSSH resolution applies: a mosh, telnet or RDP target is its
+        host, user and port as saved; a serial, container or pod target is the
+        protocol's own fields the frontend named in ``request.target``. An
+        omitted user or port matches whatever the saved connection has.
+        """
+        if request.target:
+            columns = {
+                "host": record.hostname,
+                "hostname": record.hostname,
+                "username": record.username,
+                "port": record.port,
+            }
+            data = record.data or {}
+            for key, value in request.target:
+                saved_value = data.get(key, columns.get(key))
+                if str(saved_value if saved_value is not None else "").strip() != value.strip():
+                    return False
+            return True
+        if cls._normalize_host(record.hostname or "") != cls._normalize_host(
+            request.hostname
+        ):
+            return False
+        username = request.username.strip()
+        if username and username != str(record.username or "").strip():
+            return False
+        return request.port is None or request.port == record.port
 
     def _active_config_file(self) -> Optional[str]:
         root = getattr(self._repository, "root_config_path", None)

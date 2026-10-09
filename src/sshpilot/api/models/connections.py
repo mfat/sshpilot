@@ -479,6 +479,11 @@ class UnsavedHostCheckRequest:
     port: Optional[int] = None
     protocol: str = "ssh"
     proxy_jump: Tuple[str, ...] = ()
+    # A protocol without a host (serial, containers, pods) names its target
+    # in its own fields: ``(("device", "/dev/ttyUSB0"),)``. The frontend,
+    # which knows the protocol's fields, supplies them; the daemon compares
+    # them with saved connections of the same protocol instead of the host.
+    target: Tuple[Tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.hostname) is not str or not self.hostname.strip() or "\x00" in self.hostname:
@@ -493,6 +498,16 @@ class UnsavedHostCheckRequest:
             raise TypeError("proxy_jump must be a tuple")
         if any(type(item) is not str or not item.strip() or "\x00" in item for item in self.proxy_jump):
             raise ValueError("proxy_jump contains an invalid destination")
+        if type(self.target) is not tuple:
+            raise TypeError("target must be a tuple")
+        for item in self.target:
+            if (
+                type(item) is not tuple
+                or len(item) != 2
+                or any(type(part) is not str or "\x00" in part for part in item)
+                or not item[0].strip()
+            ):
+                raise ValueError("target must hold (field, value) text pairs")
         if self.connection_id is not None:
             require_identifier(self.connection_id, "connection id")
 

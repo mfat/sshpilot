@@ -2170,6 +2170,8 @@ def unsaved_host_check_request_to_wire(
     }
     if value.connection_id is not None:
         result["connection_id"] = value.connection_id
+    if value.target:
+        result["target"] = {key: text for key, text in value.target}
     return result
 
 
@@ -2177,9 +2179,12 @@ def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
     data = _strict_fields(
         value,
         required={"hostname", "username"},
-        optional={"connection_id", "port", "protocol", "proxy_jump"},
+        optional={"connection_id", "port", "protocol", "proxy_jump", "target"},
         context="unsaved host check request",
     )
+    target = data.get("target", {})
+    if not isinstance(target, dict):
+        raise ValueError("unsaved host check target must be a JSON object")
     return UnsavedHostCheckRequest(
         hostname=data["hostname"],
         username=data["username"],
@@ -2187,6 +2192,7 @@ def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
         port=data.get("port"),
         protocol=data.get("protocol", "ssh"),
         proxy_jump=tuple(data.get("proxy_jump", ())),
+        target=tuple(sorted(target.items())),
     )
 
 

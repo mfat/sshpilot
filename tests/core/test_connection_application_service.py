@@ -520,9 +520,45 @@ def test_unsaved_host_check_uses_daemon_resolved_identity_matrix(monkeypatch):
             hostname="other", username="alice", port=2222, proxy_jump=("jump",)
         )
     ).saved is False
+    # The serial record is never an SSH destination; a serial request names
+    # its device instead of a host.
     assert service.check_unsaved_host(
-        UnsavedHostCheckRequest(hostname="example.com", username="alice", protocol="serial")
+        UnsavedHostCheckRequest(
+            hostname="example.com",
+            username="alice",
+            protocol="serial",
+            target=(("device", "/dev/ttyUSB0"),),
+        )
     ).saved is False
+
+
+def test_unsaved_host_check_matches_other_protocols_by_their_target():
+    repo = FakeRepository(
+        [
+            _record(record_id="web-mosh", hostname="Web.Example", username="alice",
+                    protocol="mosh"),
+            _record(record_id="ssh-only", hostname="ssh.example", username="alice"),
+            _record(record_id="console", hostname="localhost", protocol="serial",
+                    data={"device": "/dev/ttyUSB0", "baud": "115200"}),
+        ]
+    )
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    def saved(**kwargs):
+        return service.check_unsaved_host(UnsavedHostCheckRequest(**kwargs)).saved
+
+    assert saved(hostname="web.example", username="alice", port=22, protocol="mosh")
+    # An omitted user matches whichever account the saved connection uses.
+    assert saved(hostname="web.example", protocol="mosh")
+    assert not saved(hostname="web.example", username="bob", protocol="mosh")
+    assert not saved(hostname="web.example", port=2222, protocol="mosh")
+    # A saved SSH connection to the host does not cover a mosh session to it.
+    assert not saved(hostname="ssh.example", username="alice", protocol="mosh")
+    assert not saved(hostname="web.example", username="alice", protocol="telnet")
+    assert saved(hostname="dev-ttyUSB0", protocol="serial",
+                 target=(("device", "/dev/ttyUSB0"),))
+    assert not saved(hostname="dev-ttyUSB1", protocol="serial",
+                     target=(("device", "/dev/ttyUSB1"),))
 
 
 def test_unsaved_host_empty_user_uses_daemon_effective_login(monkeypatch):

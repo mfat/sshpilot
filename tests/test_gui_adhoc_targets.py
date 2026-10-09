@@ -149,3 +149,42 @@ def test_reconnect_registers_a_forgotten_target_again(gui, captured_output):
         assert connection.transient_connection_id != "adhoc-forgotten"
     finally:
         server.stop()
+
+
+@pytest.mark.skipif(not shutil.which("telnet"), reason="telnet not installed")
+def test_unsaved_telnet_target_offers_to_save_it(gui, monkeypatch):
+    """The save prompt is not only for ``ssh user@host``: a target of any
+    protocol from the search box offers it, and Save opens that protocol's
+    editor rather than an SSH one."""
+    from sshpilot.omni_search import search_omni
+
+    server = _BannerServer()
+    try:
+        win = gui.window
+        opened = []
+        monkeypatch.setattr(
+            win, "show_connection_dialog",
+            lambda connection, **kwargs: opened.append((connection, kwargs)),
+        )
+        result = next(
+            r for r in search_omni(win, f"telnet 127.0.0.1 {server.port}")
+            if r.kind == "adhoc"
+        )
+        win._omni_search.activate_result(result)
+        assert _wait_for(gui, lambda: server.accepted >= 1)
+
+        terminal = next(
+            p.get_child() for p in win.tab_view.get_pages()
+            if getattr(getattr(p.get_child(), "connection", None), "protocol", "") == "telnet"
+        )
+        assert _wait_for(
+            gui, lambda: terminal.save_connection_revealer.get_reveal_child()
+        )
+        terminal._on_save_connection_prompt_save()
+        assert len(opened) == 1
+        connection, kwargs = opened[0]
+        assert kwargs == {"as_new": True}
+        assert connection.protocol == "telnet"
+        assert connection.port == server.port
+    finally:
+        server.stop()

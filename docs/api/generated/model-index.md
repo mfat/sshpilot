@@ -6349,6 +6349,7 @@ Synthetic representation:
 | `port` | `int | None` | No | `null` | No |
 | `protocol` | `str` | No | `ssh` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `target` | `tuple[tuple[str, str], ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -6359,6 +6360,7 @@ Synthetic representation:
   "port": null,
   "protocol": "ssh",
   "proxy_jump": [],
+  "target": [],
   "username": ""
 }
 ```

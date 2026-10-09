@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `UnsavedHostCheckRequest` gains `target`, `(field, value)` pairs naming a
+  target that has no host (serial's `device`, a container, a pod); it is sent
+  as a JSON object and only when non-empty. `check_unsaved_host` now answers
+  for every protocol: a mosh, telnet or RDP destination is saved when a
+  connection of that protocol has the same host, and the same user and port
+  when they are given; a hostless one when a connection of that protocol has
+  the same `target` values. A saved SSH connection no longer stands in for
+  another protocol. The save prompt uses it to offer saving any unsaved
+  target opened from the search box. New field, so the API implementation
+  version is 0.81; Protocol remains 1.0.
 - `open_transient_connection` (`connections.open_transient`, capability
   `sessions.write`, plus `connections.write` and, with a `config_patch`,
   `connections.config.write`, as `create_connection` needs) takes a

@@ -1332,12 +1332,20 @@ class TerminalManager:
             data = getattr(connection, "data", None) or {}
             from .cli_connect import CLI_CONNECT_FLAG
 
-            if not data.get(CLI_CONNECT_FLAG):
+            # ``ssh user@host`` carries the CLI flag; "mosh host", "serial
+            # /dev/ttyUSB0" and the other unsaved targets from the search box
+            # carry only the id the daemon registered them under.
+            transient = getattr(connection, "transient_connection_id", None)
+            if not data.get(CLI_CONNECT_FLAG) and not isinstance(transient, str):
                 return
 
             from .api.connection_identity import connection_id_for
             from .api.models.connections import UnsavedHostCheckRequest
-            from .unsaved_host import SavePromptDismissals, connection_destination
+            from .unsaved_host import (
+                SavePromptDismissals,
+                connection_destination,
+                connection_target,
+            )
 
             window = self.window
             app = window.get_application() if hasattr(window, "get_application") else None
@@ -1347,11 +1355,15 @@ class TerminalManager:
                 if app is not None:
                     app.save_prompt_dismissals = dismissals
 
+            if dismissals.is_connection_dismissed(connection):
+                return
             hostname, username = connection_destination(connection)
-            if dismissals.is_dismissed(hostname, username):
-                return
-            if (getattr(connection, "protocol", "ssh") or "ssh") != "ssh":
-                return
+            protocol = str(getattr(connection, "protocol", "ssh") or "ssh")
+            target = ()
+            if protocol != "ssh":
+                target = connection_target(
+                    connection, self._required_protocol_fields(protocol)
+                )
 
             bridge = getattr(window, "client_bridge", None)
             client = getattr(window, "client", None)
@@ -1362,7 +1374,7 @@ class TerminalManager:
             # compatibility, but that is not a durable daemon identity.  Do
             # not let a hostname-shaped nickname short-circuit the
             # authoritative host/user comparison.
-            if data.get(CLI_CONNECT_FLAG):
+            if data.get(CLI_CONNECT_FLAG) or isinstance(transient, str):
                 stored_id = None
             else:
                 try:
@@ -1376,11 +1388,16 @@ class TerminalManager:
                 connection_id=stored_id,
                 port=(
                     int(getattr(connection, "port", 22) or 22)
-                    if bool(data.get("port_explicit"))
+                    if bool(data.get("port_explicit")) or protocol != "ssh"
                     else None
                 ),
-                protocol=str(getattr(connection, "protocol", "ssh") or "ssh"),
-                proxy_jump=tuple(getattr(connection, "proxy_jump", ()) or ()),
+                protocol=protocol,
+                proxy_jump=(
+                    tuple(getattr(connection, "proxy_jump", ()) or ())
+                    if protocol == "ssh"
+                    else ()
+                ),
+                target=target,
             )
 
             def _after_check(result):
@@ -1421,6 +1438,22 @@ class TerminalManager:
             )
         except Exception:
             logger.debug("Save-connection offer skipped", exc_info=True)
+
+    @staticmethod
+    def _required_protocol_fields(protocol):
+        """The required fields of ``protocol``'s editor, for the save check."""
+        try:
+            from .plugins.registry import protocol_registry
+
+            backend = protocol_registry().get(protocol)
+            fields = backend.connection_fields() if backend is not None else []
+        except Exception:
+            logger.debug("No fields for protocol %s", protocol, exc_info=True)
+            return []
+        return [
+            field.key for field in fields
+            if field.required and field.kind != "password"
+        ]
 
     def on_terminal_disconnected(self, terminal):
         # The just-disconnected terminal has already flipped its own
