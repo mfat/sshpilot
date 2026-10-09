@@ -26,11 +26,22 @@ def setup_gi(monkeypatch):
         @classmethod
         def new(cls, name, parameter_type):
             return cls(name, parameter_type)
+        @classmethod
+        def new_stateful(cls, name, parameter_type, _state):
+            return cls(name, parameter_type)
         def connect(self, *args, **kwargs):
             pass
     repository.Gio.SimpleAction = SimpleAction
-    # Parameterised actions (e.g. sort-connections) construct a VariantType.
+    # Parameterised actions (e.g. sort-connections) construct a VariantType,
+    # and stateful ones an initial Variant.
     repository.GLib.VariantType = types.SimpleNamespace(new=lambda *_a, **_k: object())
+    class Variant:
+        def __init__(self, *_args, **_kwargs):
+            pass
+        @staticmethod
+        def new_boolean(_value):
+            return object()
+    repository.GLib.Variant = Variant
     repository.Gtk.ToggleButton = type("ToggleButton", (), {})
 
 

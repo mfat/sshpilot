@@ -60,7 +60,7 @@ from .connection_display import (
     format_connection_host_display,
 )
 from .connection_sort import (
-    CONNECTION_SORT_CYCLE,
+    CONNECTION_SORT_MENU,
     CONNECTION_SORT_PRESETS,
     DEFAULT_CONNECTION_SORT,
     MANUAL_CONNECTION_SORT,
@@ -3203,11 +3203,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _build_sort_button(self):
-        from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("view-list-symbolic")
+        """A menu of the sort choices; the current one carries a radio mark."""
+        button = Gtk.MenuButton()
         button.add_css_class('flat')
         button.set_can_focus(False)
-        button.connect("clicked", self._on_sort_button_clicked)
+        menu = Gio.Menu()
+        for preset_id in CONNECTION_SORT_MENU:
+            item = Gio.MenuItem.new(CONNECTION_SORT_PRESETS[preset_id].title, None)
+            item.set_action_and_target_value(
+                'win.sort-connections', GLib.Variant('s', preset_id)
+            )
+            menu.append_item(item)
+        button.set_menu_model(menu)
         self.sort_button = button
         self._update_sort_button()
         return button
@@ -3234,48 +3241,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         button.connect("clicked", lambda *_: self.show_preferences())
         return button
 
-    def _next_sort_preset_id(self, current_id: str) -> str:
-        """Step the button through manual -> A-Z -> Z-A -> manual."""
-        try:
-            index = CONNECTION_SORT_CYCLE.index(current_id)
-        except ValueError:
-            return CONNECTION_SORT_CYCLE[0]
-        return CONNECTION_SORT_CYCLE[(index + 1) % len(CONNECTION_SORT_CYCLE)]
-
     def _update_sort_button(self):
+        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
+        preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
+        # The action state drives the radio mark in the button's menu.
+        action = getattr(self, 'sort_connections_action', None)
+        if action is not None and action.get_state().get_string() != preset_id:
+            action.set_state(GLib.Variant('s', preset_id))
         if not self.sort_button:
             return
 
         from sshpilot import icon_utils
-        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
-        preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
         icon_utils.set_button_icon(self.sort_button, preset.icon_name)
-
-        next_preset_id = self._next_sort_preset_id(preset_id)
-        next_preset = CONNECTION_SORT_PRESETS.get(next_preset_id)
-        if next_preset:
-            # "Sort Manual order" reads badly, so the preset titles carry the
-            # wording and the template only supplies the current/next framing.
-            tooltip = _("{current} — click for {next}").format(
-                current=preset.title, next=next_preset.title
-            )
-        else:
-            tooltip = preset.title
-
-        # The tooltip names the *next* preset and changes on every click, so
-        # it is no basis for an accessible name; keep the name fixed and put
-        # the current preset in the description.
         label_icon_button(
             self.sort_button,
             _("Sort Connections"),
-            tooltip=tooltip,
             description=preset.title,
         )
-
-    def _on_sort_button_clicked(self, *_args):
-        current = self._connection_sort_last or DEFAULT_CONNECTION_SORT
-        next_preset = self._next_sort_preset_id(current)
-        self.apply_connection_sort_preset(next_preset)
 
     def apply_connection_sort_preset(self, preset_id: str):
         preset = CONNECTION_SORT_PRESETS.get(preset_id)

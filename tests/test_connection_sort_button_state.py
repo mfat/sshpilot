@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from sshpilot.connection_sort import (
+    CONNECTION_SORT_MENU,
     CONNECTION_SORT_PRESETS,
     CONNECTION_SORT_SETTING,
     DEFAULT_CONNECTION_SORT,
@@ -143,15 +144,56 @@ def test_startup_loads_the_saved_sort():
     assert load_connection_sort(_Config({CONNECTION_SORT_SETTING: "size"})) == "name-asc"
 
 
-@needs_window
-def test_sort_button_cycles_manual_then_ascending_then_descending():
-    window = SimpleNamespace()
-    nxt = lambda current: MainWindow._next_sort_preset_id(window, current)
+def test_sort_menu_offers_each_preset_once():
+    assert CONNECTION_SORT_MENU == ("name-asc", "name-desc", MANUAL_CONNECTION_SORT)
+    assert set(CONNECTION_SORT_MENU) == set(CONNECTION_SORT_PRESETS)
 
-    assert nxt(MANUAL_CONNECTION_SORT) == "name-asc"
-    assert nxt("name-asc") == "name-desc"
-    assert nxt("name-desc") == MANUAL_CONNECTION_SORT
-    assert nxt("size-asc") == MANUAL_CONNECTION_SORT
+
+class _Action:
+    """Stands in for the stateful ``win.sort-connections`` action."""
+
+    def __init__(self, state):
+        self.state = state
+        self.set_calls = 0
+
+    def get_state(self):
+        return SimpleNamespace(get_string=lambda: self.state)
+
+    def set_state(self, variant):
+        self.set_calls += 1
+        self.state = variant.get_string()
+
+
+@needs_window
+def test_choosing_a_sort_moves_the_menu_radio_mark(monkeypatch):
+    monkeypatch.setattr(
+        window_module.GLib,
+        "Variant",
+        lambda _type, value: SimpleNamespace(get_string=lambda: value),
+        raising=False,
+    )
+    window = _window(sort=MANUAL_CONNECTION_SORT)
+    window.sort_connections_action = _Action(MANUAL_CONNECTION_SORT)
+    window._update_sort_button = MainWindow._update_sort_button.__get__(window)
+
+    window.apply_connection_sort_preset("name-desc")
+
+    assert window.sort_connections_action.state == "name-desc"
+    # A drag in a sorted view switches to manual; the mark follows.
+    window.begin_saving_sorted_view()
+    assert window.sort_connections_action.state == MANUAL_CONNECTION_SORT
+
+
+@needs_window
+def test_menu_selection_applies_the_chosen_preset():
+    applied = []
+    window = SimpleNamespace(apply_connection_sort_preset=applied.append)
+
+    MainWindow.on_sort_connections_action(
+        window, None, SimpleNamespace(get_string=lambda: "name-desc")
+    )
+
+    assert applied == ["name-desc"]
 
 
 @needs_window

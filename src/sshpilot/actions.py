@@ -1567,7 +1567,15 @@ def register_window_actions(window):
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)
         window.add_action(window.open_in_system_terminal_action)
 
-    window.sort_connections_action = Gio.SimpleAction.new('sort-connections', GLib.VariantType.new('s'))
+    # Stateful so the sort menu marks the current choice.
+    from .connection_sort import DEFAULT_CONNECTION_SORT
+    window.sort_connections_action = Gio.SimpleAction.new_stateful(
+        'sort-connections',
+        GLib.VariantType.new('s'),
+        GLib.Variant(
+            's', getattr(window, '_connection_sort_last', None) or DEFAULT_CONNECTION_SORT
+        ),
+    )
     window.sort_connections_action.connect('activate', window.on_sort_connections_action)
     window.add_action(window.sort_connections_action)
 

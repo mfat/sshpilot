@@ -68,8 +68,8 @@ CONNECTION_SORT_PRESETS: Dict[str, SortPreset] = {
     ),
 }
 
-#: Order the sort button steps through on each click.
-CONNECTION_SORT_CYCLE = (MANUAL_CONNECTION_SORT, "name-asc", "name-desc")
+#: Choices in the sort button's menu, top to bottom.
+CONNECTION_SORT_MENU = ("name-asc", "name-desc", MANUAL_CONNECTION_SORT)
 
 
 def _normalize_key(value: Optional[Sequence[str]]) -> Tuple:
