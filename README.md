@@ -220,7 +220,7 @@ https://t.me/sshpilot
 
 SSH Pilot uses the following third-party libraries:
 
-- **[pyxtermjs](https://github.com/cs01/pyxtermjs)** - A fully functional terminal in your browser, used as an alternative terminal backend (MIT License)
+- **[xterm.js](https://github.com/xtermjs/xterm.js)** - The terminal emulator behind the PyXterm.js terminal backend, with its fit, search and web-links add-ons (MIT License)
 
 ## License
 
