@@ -337,3 +337,70 @@ def test_projection_layout_matches_the_sorted_projection():
     assert [g.group_id for g in request.groups] == ["a-group", "b-group"]
     assert request.groups[1].connection_ids == ("x", "y")
     assert request.expected_generation == 9
+
+
+class _UndoController:
+    def __init__(self):
+        self.operations = []
+
+    def run(self, operation, *, on_success, on_error):
+        self.operations.append(operation)
+        on_success(operation())
+
+
+def _undo_window(daemon_order, generation):
+    window = _window(daemon_order=daemon_order, sort=MANUAL_CONNECTION_SORT)
+    window.connection_manager.generation = generation
+    window.group_manager.controller = _UndoController()
+    window.client = SimpleNamespace(
+        restored=[],
+        set_connection_layout=lambda request: window.client.restored.append(request) or 99,
+    )
+    window.refusals = []
+    window._refuse_sorted_view_undo = lambda: window.refusals.append(True)
+    return window
+
+
+@needs_window
+def test_undo_restores_when_only_the_generation_moved():
+    # Opening a connection stamps last_used, which bumps the generation but
+    # leaves the arrangement alone; Undo must still work.
+    window = _undo_window(("alpha", "zulu"), generation=5)
+    saved = layout_request_from_snapshot(window.connection_manager.snapshot())
+    window.connection_manager.generation = 6
+
+    MainWindow._undo_sorted_view_save(window, "undo-layout", "name-asc", saved)
+
+    assert window.client.restored == ["undo-layout"]
+    assert window.refusals == []
+    assert window._connection_sort_last == "name-asc"
+
+
+@needs_window
+def test_undo_is_refused_after_a_later_rearrangement():
+    window = _undo_window(("alpha", "zulu"), generation=5)
+    saved = layout_request_from_snapshot(window.connection_manager.snapshot())
+    # A second drag reorders the list while the Undo toast is still up.
+    window.connection_manager.connections.reverse()
+
+    MainWindow._undo_sorted_view_save(window, "undo-layout", "name-asc", saved)
+
+    assert window.client.restored == []
+    assert window.group_manager.controller.operations == []
+    assert window.refusals == [True]
+    assert window._connection_sort_last == MANUAL_CONNECTION_SORT
+
+
+@needs_window
+def test_picking_the_current_menu_choice_does_nothing():
+    applied = []
+    window = SimpleNamespace(
+        _connection_sort_last="name-asc",
+        apply_connection_sort_preset=applied.append,
+    )
+
+    MainWindow.on_sort_connections_action(
+        window, None, SimpleNamespace(get_string=lambda: "name-asc")
+    )
+
+    assert applied == []

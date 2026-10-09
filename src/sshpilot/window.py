@@ -3329,23 +3329,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.rebuild_connection_list()
 
     def offer_sorted_view_undo(self, undo_request, sorted_preset_id: str) -> None:
-        """Tell the user the sorted view became the manual order; offer Undo."""
+        """Tell the user the sorted view became the manual order; offer Undo.
+
+        Called once the store has been refreshed after the drop, so the
+        snapshot now holds the arrangement Undo is allowed to replace.
+        """
         toast_overlay = getattr(self, "toast_overlay", None)
         if not toast_overlay:
             return
+        snapshot = getattr(self.connection_manager, "snapshot", lambda: None)()
+        if snapshot is None:
+            return
+        saved_arrangement = layout_request_from_snapshot(snapshot)
         toast = Adw.Toast.new(_("Sorted order saved as your manual order"))
         toast.set_button_label(_("Undo"))
         toast.set_timeout(8)
         toast.connect(
             "button-clicked",
-            lambda *_args: self._undo_sorted_view_save(undo_request, sorted_preset_id),
+            lambda *_args: self._undo_sorted_view_save(
+                undo_request, sorted_preset_id, saved_arrangement
+            ),
         )
         toast_overlay.add_toast(toast)
 
-    def _undo_sorted_view_save(self, undo_request, sorted_preset_id: str) -> None:
+    def _refuse_sorted_view_undo(self) -> None:
+        toast_overlay = getattr(self, "toast_overlay", None)
+        if toast_overlay:
+            toast_overlay.add_toast(Adw.Toast.new(
+                _("Could not undo: the connection list has changed since")
+            ))
+
+    def _undo_sorted_view_save(
+        self, undo_request, sorted_preset_id: str, saved_arrangement
+    ) -> None:
         controller = getattr(self.group_manager, "controller", None)
         client = getattr(self, "client", None)
         if controller is None or client is None:
+            return
+        # Undo replaces the whole arrangement, so it may only replace the one
+        # the drag produced. Compare arrangements rather than the generation:
+        # metadata writes (last_used on every connect, tags) bump the
+        # generation without moving anything.
+        snapshot = getattr(self.connection_manager, "snapshot", lambda: None)()
+        if snapshot is None or layout_request_from_snapshot(snapshot) != saved_arrangement:
+            logger.info("Not undoing the saved sorted order: the arrangement changed since")
+            self._refuse_sorted_view_undo()
             return
         # Show the sort again straight away, so the refresh that follows the
         # restore does not flash the restored manual order first.
@@ -3359,11 +3387,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._set_connection_sort(MANUAL_CONNECTION_SORT)
             self.group_manager.bind_connections(self.connection_manager.connections)
             self.rebuild_connection_list()
-            toast_overlay = getattr(self, "toast_overlay", None)
-            if toast_overlay:
-                toast_overlay.add_toast(Adw.Toast.new(
-                    _("Could not undo: the connection list has changed since")
-                ))
+            self._refuse_sorted_view_undo()
 
         try:
             controller.run(

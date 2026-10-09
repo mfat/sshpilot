@@ -596,6 +596,9 @@ class WindowActions:
 
         if not preset_id:
             return
+        # Picking the choice already marked in the menu changes nothing.
+        if preset_id == getattr(self, '_connection_sort_last', None):
+            return
 
         if hasattr(self, 'apply_connection_sort_preset'):
             self.apply_connection_sort_preset(preset_id)
