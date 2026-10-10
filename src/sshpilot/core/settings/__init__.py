@@ -1,4 +1,11 @@
 """GTK-free settings models: defaults, migration, serialization, SSH overrides."""
+from .assistant_access import (
+    CONFIG_SECTION as ASSISTANT_ACCESS_SECTION,
+    DEFAULT_ASSISTANT_ACCESS,
+    assistant_access_from_settings,
+    compute_assistant_access_revision,
+    normalize_assistant_access,
+)
 from .defaults import CONFIG_VERSION, get_default_config
 from .identity import (
     AUTO_PROVIDER,
@@ -39,9 +46,11 @@ from .store import (
 )
 
 __all__ = [
+    "ASSISTANT_ACCESS_SECTION",
     "AUTO_PROVIDER",
     "CONFIG_VERSION",
     "CUSTOM_PROVIDER",
+    "DEFAULT_ASSISTANT_ACCESS",
     "DEFAULT_IDENTITY_SETTINGS",
     "DEFAULT_SSH_OVERRIDES",
     "EDITABLE_FIELDS",
@@ -51,7 +60,9 @@ __all__ = [
     "INTEGER_RANGES",
     "VALID_HOST_KEY_VALUES",
     "SettingsFileError",
+    "assistant_access_from_settings",
     "compose_ssh_overrides",
+    "compute_assistant_access_revision",
     "compute_identity_revision",
     "compute_ssh_overrides_revision",
     "ensure_config_defaults",
@@ -59,6 +70,7 @@ __all__ = [
     "get_nested",
     "load_settings",
     "load_settings_strict",
+    "normalize_assistant_access",
     "normalize_custom_socket",
     "normalize_identity_settings",
     "normalize_provider",

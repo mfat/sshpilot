@@ -146,7 +146,9 @@ values (`SftpReadFileResult.content`, `SshConfigText.text`,
 emitted as `<redacted>` rather than their real value, so remote file content,
 SSH config text, claim nonces, and opaque operation payloads never reach model
 context implicitly. An explicit opt-in `SSHPILOT_MCP_CONTENT=1` restores the
-live values.
+live values. Field names in the runtime always-redact denylist (`nonce`,
+`password`, `passphrase`, and related secret names) stay redacted even when
+content is opted in.
 
 Reason: MCP output goes to a model context, which is a stronger exposure than
 the reference CLI's terminal output, and the daemon already declares which DTO
@@ -155,3 +157,35 @@ maintaining a second secret-field list keeps redaction mechanically derived
 (D004). Free-form operation payloads are treated as opaque because they may
 contain content that has lost a nested DTO's marker. Content is restored only
 by an explicit, named operator decision.
+
+## D011 — Daemon assistant-access is the ceiling over env flags
+
+Status: Accepted
+
+Decision: Preferences / `get_assistant_access` owns the master switch,
+connection allowlist, and operate/mutate/content ceiling. Environment
+`SSHPILOT_MCP_*` flags may only tighten that ceiling; they cannot enable a
+level the app disabled. Disabling the master switch or removing a server from
+the allowlist takes effect on the next tool call without editing AI client
+config. Daemons that lack the assistant-access capability fall back to
+env-only policy with no allowlist (contributor/legacy mode).
+
+Reason: Users must be able to revoke assistant access from SSH Pilot alone,
+and least privilege must not depend on every MCP client remembering to set
+restrictive env vars.
+
+## D012 — Daemon-managed localhost Streamable HTTP sidecar
+
+Status: Accepted
+
+Decision: The runtime MCP server may be hosted as a daemon-managed Streamable
+HTTP sidecar on `127.0.0.1` (path `/mcp`) when Preferences enables
+`assistant_access.http_listen`. The sidecar uses the same interpreter as
+`sshpilotd`, talks to the daemon only through `DaemonClient` (D002), and
+requires a bearer token. Stdio (`python -m sshpilot.mcp.runtime`) remains an
+optional contributor fallback. Policy ceiling stays daemon `assistant_access`
+(D011). The listener never binds non-localhost addresses.
+
+Reason: End users should enable AI clients from Preferences without installing
+or managing a separate Python MCP process; AppImage/bundled Python already
+provides the runtime.

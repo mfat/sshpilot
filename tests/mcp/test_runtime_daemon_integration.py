@@ -87,16 +87,39 @@ class _TestConnectionManager:
         self._listeners.remove(callback)
 
 
-def _build_server(manager):
-    server = DaemonServer(
-        lambda: __import__(
-            "sshpilot.core.connection_application_service",
-            fromlist=["ConnectionApplicationService"],
-        ).ConnectionApplicationService(
+def _build_server(manager, tmp_path):
+    from sshpilot.core.assistant_access_service import AssistantAccessService
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.settings import get_default_config, save_settings
+    from sshpilot.daemon.server import CoreServices
+    from sshpilot.api.models.settings import UpdateAssistantAccessRequest
+
+    config_path = tmp_path / "config.json"
+    save_settings(config_path, get_default_config())
+    access = AssistantAccessService(
+        config_path,
+        known_connection_ids=lambda: ["demo"],
+    )
+    access.update(
+        UpdateAssistantAccessRequest(
+            enabled=True,
+            allowed_connection_ids=("demo",),
+            operate=True,
+            mutate=True,
+            content=True,
+        )
+    )
+
+    def factory():
+        connections = ConnectionApplicationService(
             manager,
             secret_provider=manager,
             client_name="sshpilotd-test",
-        ),
+        )
+        return CoreServices(connections=connections, assistant_access=access)
+
+    server = DaemonServer(
+        factory,
         socket_path=manager._socket_path,
         idle_shutdown_seconds=0.0,
     )
@@ -115,7 +138,7 @@ async def _daemon_session(tmp_path) -> AsyncIterator:
 
     manager = _TestConnectionManager()
     manager._socket_path = socket_path
-    server = _build_server(manager)
+    server = _build_server(manager, tmp_path)
     server.start_in_thread()
     try:
         client = DaemonClient(socket_path=socket_path, client_name="mcp-test")

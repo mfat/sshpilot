@@ -209,6 +209,50 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: AssistantAccessSettings -->
+## `AssistantAccessSettings`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Daemon-owned policy for AI assistant MCP access.
+
+**Related methods:** `get_assistant_access`, `set_assistant_access`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `revision` | `str` | Yes | — | No |
+| `enabled` | `bool` | Yes | — | No |
+| `allowed_connection_ids` | `Tuple[str, ...]` | Yes | — | No |
+| `operate` | `bool` | Yes | — | No |
+| `mutate` | `bool` | Yes | — | No |
+| `content` | `bool` | Yes | — | No |
+| `http_listen` | `bool` | No | `false` | No |
+| `http_port` | `int` | No | `0` | No |
+| `http_token` | `str` | No | `` | No |
+| `http_listening` | `bool` | No | `false` | No |
+| `http_bound_port` | `Optional[int]` | No | `null` | No |
+| `http_url` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "allowed_connection_ids": {},
+  "content": {},
+  "enabled": {},
+  "http_bound_port": null,
+  "http_listen": false,
+  "http_listening": false,
+  "http_port": 0,
+  "http_token": "",
+  "http_url": "",
+  "mutate": {},
+  "operate": {},
+  "revision": {}
+}
+```
+
 <!-- api-model: AttachSessionRequest -->
 ## `AttachSessionRequest`
 
@@ -1121,7 +1165,7 @@ Synthetic representation:
 **Purpose:** Frontend-neutral `CoreEvent` record.
 
 **Related methods:** `subscribe_events`
-**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `connection.pre_command`, `login_profiles.changed`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `operation.created`, `operation.state_changed`, `broadcast.output`, `daemon.state_changed`, `error.occurred`
+**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `connection.pre_command`, `login_profiles.changed`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `operation.created`, `operation.state_changed`, `broadcast.output`, `assistant.activity`, `daemon.state_changed`, `error.occurred`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
@@ -2247,6 +2291,51 @@ Synthetic representation:
 {
   "key": "example",
   "plugin_id": "example.plugin"
+}
+```
+
+<!-- api-model: GlobalSshOverrides -->
+## `GlobalSshOverrides`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Immutable snapshot of daemon-owned global SSH overrides.
+
+Every field uses the public API name; the persisted config key mapping
+lives in the core ``sshpilot.core.settings.ssh_overrides`` module.
+
+**Related methods:** `get_global_ssh_overrides`, `reset_global_ssh_overrides`, `update_global_ssh_overrides`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `revision` | `str` | Yes | — | No |
+| `connect_timeout` | `int` | Yes | — | No |
+| `connection_attempts` | `int` | Yes | — | No |
+| `server_alive_interval` | `int` | Yes | — | No |
+| `server_alive_count_max` | `int` | Yes | — | No |
+| `strict_host_key_checking` | `str` | Yes | — | No |
+| `batch_mode` | `bool` | Yes | — | No |
+| `compression` | `bool` | Yes | — | No |
+| `verbosity` | `int` | Yes | — | No |
+| `debug_enabled` | `bool` | Yes | — | No |
+| `applies_immediately` | `bool` | No | `true` | No |
+
+Synthetic representation:
+
+```json
+{
+  "applies_immediately": true,
+  "batch_mode": {},
+  "compression": {},
+  "connect_timeout": {},
+  "connection_attempts": {},
+  "debug_enabled": {},
+  "revision": {},
+  "server_alive_count_max": {},
+  "server_alive_interval": {},
+  "strict_host_key_checking": {},
+  "verbosity": {}
 }
 ```
 
@@ -6393,6 +6482,47 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: UpdateAssistantAccessRequest -->
+## `UpdateAssistantAccessRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Replace the assistant-access policy snapshot.
+
+Unlike SSH overrides, this is a full replace of the known fields so the
+Preferences UI can send the exact allowlist after checkbox edits.
+
+**Related methods:** `set_assistant_access`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `enabled` | `bool` | Yes | — | No |
+| `allowed_connection_ids` | `Tuple[str, ...]` | Yes | — | No |
+| `operate` | `bool` | No | `true` | No |
+| `mutate` | `bool` | No | `false` | No |
+| `content` | `bool` | No | `false` | No |
+| `http_listen` | `bool` | No | `false` | No |
+| `http_port` | `int` | No | `0` | No |
+| `regenerate_token` | `bool` | No | `false` | No |
+| `expected_revision` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "allowed_connection_ids": {},
+  "content": false,
+  "enabled": {},
+  "expected_revision": null,
+  "http_listen": false,
+  "http_port": 0,
+  "mutate": false,
+  "operate": true,
+  "regenerate_token": false
+}
+```
+
 <!-- api-model: UpdateConnectionMetadataRequest -->
 ## `UpdateConnectionMetadataRequest`
 
@@ -6461,6 +6591,37 @@ Synthetic representation:
   "plugin_data": {},
   "port": "`UNSET`",
   "username": "`UNSET`"
+}
+```
+
+<!-- api-model: UpdateGlobalSshOverridesRequest -->
+## `UpdateGlobalSshOverridesRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A partial update to global SSH overrides.
+
+``patch`` contains only the fields to change (partial semantics).  The
+mapping is copied and frozen on construction: mutating the caller's
+original dictionary afterwards does not change the request, and the
+request's own ``patch`` is read-only.
+``expected_revision`` enables optimistic concurrency control: the
+service rejects the update if the current revision does not match.
+
+**Related methods:** `update_global_ssh_overrides`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `patch` | `Mapping[str, object]` | Yes | — | No |
+| `expected_revision` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "expected_revision": null,
+  "patch": {}
 }
 ```
 

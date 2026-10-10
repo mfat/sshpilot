@@ -170,8 +170,15 @@ from .models.daemon import (
     SetOperationModeRequest,
 )
 from .models.host_info import HostInfoRequest, HostInfoSummary
+from .models.assistant_activity import (
+    AssistantActivityEntry,
+    AssistantActivityList,
+    RecordAssistantActivityRequest,
+)
 from .models.settings import (
+    AssistantAccessSettings,
     GlobalSshOverrides,
+    UpdateAssistantAccessRequest,
     UpdateGlobalSshOverridesRequest,
 )
 from .models.login_profiles import (
@@ -707,6 +714,24 @@ class SshPilotClient(Protocol):
         self,
         expected_revision: Optional[str] = None,
     ) -> GlobalSshOverrides:
+        ...
+
+    def get_assistant_access(self) -> AssistantAccessSettings:
+        ...
+
+    def set_assistant_access(
+        self,
+        request: UpdateAssistantAccessRequest,
+    ) -> AssistantAccessSettings:
+        ...
+
+    def list_assistant_activity(self) -> AssistantActivityList:
+        ...
+
+    def record_assistant_activity(
+        self,
+        request: RecordAssistantActivityRequest,
+    ) -> AssistantActivityEntry:
         ...
 
     def get_login_profiles(self) -> LoginProfileSnapshot:

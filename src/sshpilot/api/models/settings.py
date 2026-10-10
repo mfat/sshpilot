@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from sshpilot.core.settings.ssh_overrides import (
     EDITABLE_FIELDS,
@@ -175,3 +175,140 @@ class UpdateGlobalSshOverridesRequest:
         object.__setattr__(
             self, "patch", MappingProxyType(dict(self.patch))
         )
+
+
+# ---------------------------------------------------------------------------
+# Assistant access (AI MCP clients)
+# ---------------------------------------------------------------------------
+
+
+def _validate_connection_ids(value: Any) -> Tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        items = (value,)
+    elif isinstance(value, (list, tuple)):
+        items = value
+    else:
+        raise TypeError("allowed_connection_ids must be a list of connection ids")
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if type(item) is not str or not item.strip():
+            raise ValueError("connection ids must be non-empty strings")
+        cleaned = item.strip()
+        if "\x00" in cleaned:
+            raise ValueError("connection ids must not contain NUL")
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return tuple(result)
+
+
+@dataclass(frozen=True)
+class AssistantAccessSettings:
+    """Daemon-owned policy for AI assistant MCP access."""
+
+    revision: str
+    enabled: bool
+    allowed_connection_ids: Tuple[str, ...]
+    operate: bool
+    mutate: bool
+    content: bool
+    http_listen: bool = False
+    http_port: int = 0
+    http_token: str = ""
+    #: Runtime-only: True while the localhost Streamable HTTP sidecar is up.
+    http_listening: bool = False
+    #: Runtime-only: actual bound TCP port (may differ from http_port when 0).
+    http_bound_port: Optional[int] = None
+    #: Runtime-only: ``http://127.0.0.1:<bound>/mcp`` when listening.
+    http_url: str = ""
+
+    def __post_init__(self) -> None:
+        _validate_revision(self.revision)
+        _validate_boolean(self.enabled, "enabled")
+        _validate_boolean(self.operate, "operate")
+        _validate_boolean(self.mutate, "mutate")
+        _validate_boolean(self.content, "content")
+        _validate_boolean(self.http_listen, "http_listen")
+        _validate_boolean(self.http_listening, "http_listening")
+        object.__setattr__(
+            self,
+            "allowed_connection_ids",
+            _validate_connection_ids(self.allowed_connection_ids),
+        )
+        object.__setattr__(self, "http_port", _validate_http_port(self.http_port))
+        object.__setattr__(self, "http_token", _validate_http_token(self.http_token))
+        if self.http_bound_port is not None:
+            object.__setattr__(
+                self,
+                "http_bound_port",
+                _validate_http_port(self.http_bound_port, allow_zero=False),
+            )
+        if type(self.http_url) is not str:
+            raise TypeError("http_url must be a string")
+
+
+@dataclass(frozen=True)
+class UpdateAssistantAccessRequest:
+    """Replace the assistant-access policy snapshot.
+
+    Unlike SSH overrides, this is a full replace of the known fields so the
+    Preferences UI can send the exact allowlist after checkbox edits.
+    """
+
+    enabled: bool
+    allowed_connection_ids: Tuple[str, ...]
+    operate: bool = True
+    mutate: bool = False
+    content: bool = False
+    http_listen: bool = False
+    http_port: int = 0
+    regenerate_token: bool = False
+    expected_revision: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _validate_boolean(self.enabled, "enabled")
+        _validate_boolean(self.operate, "operate")
+        _validate_boolean(self.mutate, "mutate")
+        _validate_boolean(self.content, "content")
+        _validate_boolean(self.http_listen, "http_listen")
+        _validate_boolean(self.regenerate_token, "regenerate_token")
+        object.__setattr__(
+            self,
+            "allowed_connection_ids",
+            _validate_connection_ids(self.allowed_connection_ids),
+        )
+        object.__setattr__(self, "http_port", _validate_http_port(self.http_port))
+        if self.expected_revision is not None and (
+            not isinstance(self.expected_revision, str)
+            or not self.expected_revision.strip()
+        ):
+            raise ValueError(
+                "expected_revision must be a non-empty string or None"
+            )
+
+
+def _validate_http_port(value: Any, *, allow_zero: bool = True) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("http_port must be an integer")
+    lo = 0 if allow_zero else 1
+    if not lo <= value <= 65535:
+        raise ValueError(f"http_port must be between {lo} and 65535")
+    return value
+
+
+def _validate_http_token(value: Any) -> str:
+    if type(value) is not str:
+        raise TypeError("http_token must be a string")
+    # Empty is allowed on wire before the daemon has minted one.
+    if value == "":
+        return value
+    cleaned = value.strip()
+    if not cleaned or "\x00" in cleaned or any(ch.isspace() for ch in cleaned):
+        raise ValueError("http_token must be a non-empty token without whitespace")
+    if len(cleaned) > 256:
+        raise ValueError("http_token is too long")
+    return cleaned

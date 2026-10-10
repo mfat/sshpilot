@@ -499,6 +499,10 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_global_ssh_overrides": Capability.SSH_OVERRIDES_READ,
     "update_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
+    "get_assistant_access": Capability.ASSISTANT_ACCESS_READ,
+    "set_assistant_access": Capability.ASSISTANT_ACCESS_WRITE,
+    "list_assistant_activity": Capability.ASSISTANT_ACTIVITY_READ,
+    "record_assistant_activity": Capability.ASSISTANT_ACTIVITY_WRITE,
     "get_login_profiles": Capability.LOGIN_PROFILES_READ,
     "preview_login_profile_assignment": Capability.LOGIN_PROFILES_READ,
     "create_login_profile": Capability.LOGIN_PROFILES_WRITE,
@@ -2008,6 +2012,70 @@ class DaemonClient:
             return global_ssh_overrides_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid SSH overrides")
+
+    # -- assistant access -------------------------------------------------
+
+    def get_assistant_access(self):
+        self._require_capability(Capability.ASSISTANT_ACCESS_READ)
+        result = self._request("assistant_access.get", {})
+        try:
+            from sshpilot.api.transport.codec import assistant_access_from_wire
+
+            return assistant_access_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid assistant access settings")
+
+    def set_assistant_access(self, request):
+        from sshpilot.api.models.settings import UpdateAssistantAccessRequest
+
+        self._require_capability(Capability.ASSISTANT_ACCESS_WRITE)
+        if type(request) is not UpdateAssistantAccessRequest:
+            raise TypeError("an UpdateAssistantAccessRequest is required")
+        from sshpilot.api.transport.codec import (
+            assistant_access_from_wire,
+            update_assistant_access_request_to_wire,
+        )
+
+        result = self._request(
+            "assistant_access.update",
+            update_assistant_access_request_to_wire(request),
+        )
+        try:
+            return assistant_access_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid assistant access settings")
+
+    # -- assistant activity -------------------------------------------------
+
+    def list_assistant_activity(self):
+        self._require_capability(Capability.ASSISTANT_ACTIVITY_READ)
+        result = self._request("assistant_activity.list", {})
+        try:
+            from sshpilot.api.transport.codec import assistant_activity_list_from_wire
+
+            return assistant_activity_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid assistant activity")
+
+    def record_assistant_activity(self, request):
+        from sshpilot.api.models.assistant_activity import RecordAssistantActivityRequest
+
+        self._require_capability(Capability.ASSISTANT_ACTIVITY_WRITE)
+        if type(request) is not RecordAssistantActivityRequest:
+            raise TypeError("a RecordAssistantActivityRequest is required")
+        from sshpilot.api.transport.codec import (
+            assistant_activity_entry_from_wire,
+            record_assistant_activity_request_to_wire,
+        )
+
+        result = self._request(
+            "assistant_activity.record",
+            record_assistant_activity_request_to_wire(request),
+        )
+        try:
+            return assistant_activity_entry_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid assistant activity")
 
     # -- login profiles ------------------------------------------------------
 

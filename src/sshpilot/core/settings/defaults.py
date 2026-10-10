@@ -210,4 +210,16 @@ def get_default_config() -> Dict[str, Any]:
             'auto_hide_sidebar': False,
             'insert_only': False,
         },
+        # AI assistant MCP access (daemon-owned). Off by default; only
+        # explicitly allowlisted connection ids are visible to runtime MCP.
+        'assistant_access': {
+            'enabled': False,
+            'allowed_connection_ids': [],
+            'operate': True,
+            'mutate': False,
+            'content': False,
+            'http_listen': False,
+            'http_port': 0,
+            'http_token': '',
+        },
     }

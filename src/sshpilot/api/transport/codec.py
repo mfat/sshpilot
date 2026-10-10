@@ -552,6 +552,7 @@ _OPERATION_EVENT_TYPES = frozenset(
     }
 )
 _BROADCAST_EVENT_TYPES = frozenset({EventType.BROADCAST_OUTPUT})
+_ASSISTANT_ACTIVITY_EVENT_TYPES = frozenset({EventType.ASSISTANT_ACTIVITY})
 #: The launcher's pre-connection command step. Deliberately its own set
 #: rather than part of _CONNECTION_EVENT_TYPES: those all carry a
 #: ConnectionSummary, and connection_event_from_envelope would decode this
@@ -569,6 +570,7 @@ _FORWARDED_EVENT_TYPES = (
     | _DAEMON_EVENT_TYPES
     | _OPERATION_EVENT_TYPES
     | _BROADCAST_EVENT_TYPES
+    | _ASSISTANT_ACTIVITY_EVENT_TYPES
     | _PRE_COMMAND_EVENT_TYPES
     | _LOGIN_PROFILE_EVENT_TYPES
 )
@@ -651,6 +653,12 @@ def public_event_to_envelope(
             "stream": event.payload.stream,
             "text": event.payload.text,
         }
+    elif event.type in _ASSISTANT_ACTIVITY_EVENT_TYPES:
+        from ..models.assistant_activity import AssistantActivityEntry
+
+        if type(event.payload) is not AssistantActivityEntry:
+            raise TypeError("assistant activity event payload is invalid")
+        payload = assistant_activity_entry_to_wire(event.payload)
     else:
         if type(event.payload) is not SessionSummary:
             raise TypeError("session event payload must be SessionSummary")
@@ -792,6 +800,14 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             payload=payload,
             sequence=envelope.sequence,
             connection_id=payload.connection_id,
+        )
+    if event_type in _ASSISTANT_ACTIVITY_EVENT_TYPES:
+        entry = assistant_activity_entry_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=entry,
+            sequence=envelope.sequence,
+            connection_id=entry.connection_id,
         )
     summary = session_summary_from_wire(dict(envelope.payload))
     return CoreEvent(
@@ -6443,6 +6459,279 @@ def update_global_ssh_overrides_request_from_wire(
     return UpdateGlobalSshOverridesRequest(
         patch=patch,
         expected_revision=data.get("expected_revision"),
+    )
+
+
+def assistant_access_to_wire(settings: Any) -> Dict[str, Any]:
+    from ..models.settings import AssistantAccessSettings
+
+    if type(settings) is not AssistantAccessSettings:
+        raise TypeError("AssistantAccessSettings is required")
+    result: Dict[str, Any] = {
+        "revision": settings.revision,
+        "enabled": settings.enabled,
+        "allowed_connection_ids": list(settings.allowed_connection_ids),
+        "operate": settings.operate,
+        "mutate": settings.mutate,
+        "content": settings.content,
+        "http_listen": settings.http_listen,
+        "http_port": settings.http_port,
+        "http_token": settings.http_token,
+        "http_listening": settings.http_listening,
+        "http_url": settings.http_url,
+    }
+    if settings.http_bound_port is not None:
+        result["http_bound_port"] = settings.http_bound_port
+    else:
+        result["http_bound_port"] = None
+    return result
+
+
+def assistant_access_from_wire(value: Any) -> Any:
+    from ..models.settings import AssistantAccessSettings
+
+    data = _strict_fields(
+        value,
+        required={
+            "revision",
+            "enabled",
+            "allowed_connection_ids",
+            "operate",
+            "mutate",
+            "content",
+            "http_listen",
+            "http_port",
+            "http_token",
+            "http_listening",
+            "http_url",
+        },
+        optional={"http_bound_port"},
+        context="assistant access settings",
+    )
+    ids = data["allowed_connection_ids"]
+    if type(ids) is not list:
+        raise ValueError("allowed_connection_ids must be a list")
+    bound = data.get("http_bound_port")
+    if bound is not None and (
+        isinstance(bound, bool) or not isinstance(bound, int)
+    ):
+        raise ValueError("http_bound_port must be an integer or null")
+    return AssistantAccessSettings(
+        revision=_identifier(data["revision"], "revision"),
+        enabled=_boolean(data["enabled"], "enabled"),
+        allowed_connection_ids=tuple(
+            _identifier(item, "connection id") for item in ids
+        ),
+        operate=_boolean(data["operate"], "operate"),
+        mutate=_boolean(data["mutate"], "mutate"),
+        content=_boolean(data["content"], "content"),
+        http_listen=_boolean(data["http_listen"], "http_listen"),
+        http_port=int(data["http_port"]),
+        http_token=str(data["http_token"]),
+        http_listening=_boolean(data["http_listening"], "http_listening"),
+        http_bound_port=bound,
+        http_url=str(data["http_url"]),
+    )
+
+
+def update_assistant_access_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.settings import UpdateAssistantAccessRequest
+
+    if type(request) is not UpdateAssistantAccessRequest:
+        raise TypeError("UpdateAssistantAccessRequest is required")
+    result: Dict[str, Any] = {
+        "enabled": request.enabled,
+        "allowed_connection_ids": list(request.allowed_connection_ids),
+        "operate": request.operate,
+        "mutate": request.mutate,
+        "content": request.content,
+        "http_listen": request.http_listen,
+        "http_port": request.http_port,
+        "regenerate_token": request.regenerate_token,
+    }
+    if request.expected_revision is not None:
+        result["expected_revision"] = request.expected_revision
+    return result
+
+
+def update_assistant_access_request_from_wire(value: Any) -> Any:
+    from ..models.settings import UpdateAssistantAccessRequest
+
+    data = _strict_fields(
+        value,
+        required={
+            "enabled",
+            "allowed_connection_ids",
+            "operate",
+            "mutate",
+            "content",
+            "http_listen",
+            "http_port",
+        },
+        optional={"expected_revision", "regenerate_token"},
+        context="update assistant access request",
+    )
+    ids = data["allowed_connection_ids"]
+    if type(ids) is not list:
+        raise ValueError("allowed_connection_ids must be a list")
+    regenerate = data.get("regenerate_token", False)
+    return UpdateAssistantAccessRequest(
+        enabled=_boolean(data["enabled"], "enabled"),
+        allowed_connection_ids=tuple(
+            _identifier(item, "connection id") for item in ids
+        ),
+        operate=_boolean(data["operate"], "operate"),
+        mutate=_boolean(data["mutate"], "mutate"),
+        content=_boolean(data["content"], "content"),
+        http_listen=_boolean(data["http_listen"], "http_listen"),
+        http_port=int(data["http_port"]),
+        regenerate_token=_boolean(regenerate, "regenerate_token"),
+        expected_revision=data.get("expected_revision"),
+    )
+
+
+def assistant_activity_entry_to_wire(entry: Any) -> Dict[str, Any]:
+    from ..models.assistant_activity import AssistantActivityEntry
+
+    if type(entry) is not AssistantActivityEntry:
+        raise TypeError("AssistantActivityEntry is required")
+    result: Dict[str, Any] = {
+        "activity_id": entry.activity_id,
+        "tool": entry.tool,
+        "state": entry.state.value,
+        "summary": entry.summary,
+        "timestamp": _datetime_to_wire(entry.timestamp, "timestamp"),
+        "detail": entry.detail,
+        "error": entry.error,
+        "level": entry.level,
+    }
+    if entry.connection_id is not None:
+        result["connection_id"] = entry.connection_id
+    return result
+
+
+def assistant_activity_entry_from_wire(value: Any) -> Any:
+    from ..models.assistant_activity import (
+        AssistantActivityEntry,
+        AssistantActivityState,
+    )
+
+    data = _strict_fields(
+        value,
+        required={
+            "activity_id",
+            "tool",
+            "state",
+            "summary",
+            "timestamp",
+            "detail",
+            "error",
+            "level",
+        },
+        optional={"connection_id"},
+        context="assistant activity entry",
+    )
+    state_value = data["state"]
+    try:
+        state = AssistantActivityState(state_value)
+    except ValueError as error:
+        raise ValueError(f"invalid assistant activity state: {state_value!r}") from error
+    return AssistantActivityEntry(
+        activity_id=_identifier(data["activity_id"], "activity_id"),
+        tool=_identifier(data["tool"], "tool"),
+        state=state,
+        summary=str(data["summary"]),
+        timestamp=_datetime_from_wire(data["timestamp"], "timestamp"),
+        connection_id=(
+            _identifier(data["connection_id"], "connection_id")
+            if data.get("connection_id") is not None
+            else None
+        ),
+        detail=str(data["detail"]),
+        error=str(data["error"]),
+        level=str(data["level"]),
+    )
+
+
+def assistant_activity_list_to_wire(snapshot: Any) -> Dict[str, Any]:
+    from ..models.assistant_activity import AssistantActivityList
+
+    if type(snapshot) is not AssistantActivityList:
+        raise TypeError("AssistantActivityList is required")
+    return {
+        "entries": [assistant_activity_entry_to_wire(item) for item in snapshot.entries]
+    }
+
+
+def assistant_activity_list_from_wire(value: Any) -> Any:
+    from ..models.assistant_activity import AssistantActivityList
+
+    data = _strict_fields(
+        value,
+        required={"entries"},
+        context="assistant activity list",
+    )
+    entries = data["entries"]
+    if type(entries) is not list:
+        raise ValueError("entries must be a list")
+    return AssistantActivityList(
+        entries=tuple(assistant_activity_entry_from_wire(item) for item in entries)
+    )
+
+
+def record_assistant_activity_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.assistant_activity import RecordAssistantActivityRequest
+
+    if type(request) is not RecordAssistantActivityRequest:
+        raise TypeError("RecordAssistantActivityRequest is required")
+    result: Dict[str, Any] = {
+        "tool": request.tool,
+        "state": request.state.value,
+        "summary": request.summary,
+        "detail": request.detail,
+        "error": request.error,
+        "level": request.level,
+    }
+    if request.activity_id is not None:
+        result["activity_id"] = request.activity_id
+    if request.connection_id is not None:
+        result["connection_id"] = request.connection_id
+    return result
+
+
+def record_assistant_activity_request_from_wire(value: Any) -> Any:
+    from ..models.assistant_activity import (
+        AssistantActivityState,
+        RecordAssistantActivityRequest,
+    )
+
+    data = _strict_fields(
+        value,
+        required={"tool", "state", "summary", "detail", "error", "level"},
+        optional={"activity_id", "connection_id"},
+        context="record assistant activity request",
+    )
+    try:
+        state = AssistantActivityState(data["state"])
+    except ValueError as error:
+        raise ValueError(f"invalid assistant activity state: {data['state']!r}") from error
+    return RecordAssistantActivityRequest(
+        tool=_identifier(data["tool"], "tool"),
+        state=state,
+        summary=str(data["summary"]),
+        activity_id=(
+            _identifier(data["activity_id"], "activity_id")
+            if data.get("activity_id") is not None
+            else None
+        ),
+        connection_id=(
+            _identifier(data["connection_id"], "connection_id")
+            if data.get("connection_id") is not None
+            else None
+        ),
+        detail=str(data["detail"]),
+        error=str(data["error"]),
+        level=str(data["level"]),
     )
 
 

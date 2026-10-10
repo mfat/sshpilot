@@ -1587,6 +1587,15 @@ def register_window_actions(window):
     window.broadcast_command_action.connect('activate', window.on_broadcast_command_action)
     window.add_action(window.broadcast_command_action)
 
+    if hasattr(window, 'on_toggle_assistant_activity_action'):
+        window.toggle_assistant_activity_action = Gio.SimpleAction.new(
+            'toggle-assistant-activity', None
+        )
+        window.toggle_assistant_activity_action.connect(
+            'activate', window.on_toggle_assistant_activity_action
+        )
+        window.add_action(window.toggle_assistant_activity_action)
+
     # Action for editing known hosts
     if hasattr(window, 'on_edit_known_hosts_action'):
         window.edit_known_hosts_action = Gio.SimpleAction.new('edit-known-hosts', None)

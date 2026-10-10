@@ -566,6 +566,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.secrets_controller = self._build_secrets_controller()
         self._attach_secrets_interaction_presenter()
         self._settle_plugin_backend()
+        self._attach_assistant_activity_controller()
 
     def _settle_plugin_backend(self) -> None:
         """Release the held ``app_started`` event now that selection resolved.
@@ -3776,6 +3777,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
         banner_box.add_controller(banner_controller)
 
+        self._build_assistant_activity_panel()
+
         # The content side is an Adw.ToolbarView carrying the custom title bar,
         # which keeps the sidebar and the content edge to edge under their own
         # headers. The legacy fallback below has none, and fullscreen degrades
@@ -3797,6 +3800,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
+            content_wrapper.append(self.assistant_activity_banner)
             content_wrapper.append(self.tab_overview)
             self._command_content_overlay = Gtk.Overlay()
             self._command_content_overlay.set_hexpand(True)
@@ -3813,6 +3817,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
+            main_box.append(self.assistant_activity_banner)
             self._command_content_overlay = Gtk.Overlay()
             self._command_content_overlay.set_hexpand(True)
             self._command_content_overlay.set_vexpand(True)
@@ -7357,6 +7362,163 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.show_connection_dialog(connection)
         except Exception as e:
             logger.error(f"Failed to edit connection: {e}")
+
+    def _build_assistant_activity_panel(self) -> None:
+        """Bottom panel listing recent AI assistant MCP tool activity."""
+        self.assistant_activity_banner = Gtk.Revealer()
+        self.assistant_activity_banner.set_visible(True)
+        self.assistant_activity_banner.set_reveal_child(False)
+        self.assistant_activity_banner.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_UP
+        )
+        self._assistant_activity_rows: list = []
+        self._assistant_activity_controller = None
+
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        panel.add_css_class("banner")
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.set_margin_start(12)
+        header.set_margin_end(12)
+        header.set_margin_top(8)
+        header.set_margin_bottom(4)
+        title = Gtk.Label(label=_("AI Activity"))
+        title.set_xalign(0)
+        title.add_css_class("title-4")
+        title.set_hexpand(True)
+        header.append(title)
+        hide = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        hide.set_tooltip_text(_("Hide"))
+        hide.connect("clicked", lambda *_: self.set_assistant_activity_visible(False))
+        header.append(hide)
+        panel.append(header)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(120)
+        scrolled.set_max_content_height(220)
+        scrolled.set_margin_start(8)
+        scrolled.set_margin_end(8)
+        scrolled.set_margin_bottom(8)
+        self.assistant_activity_list = Gtk.ListBox()
+        self.assistant_activity_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.assistant_activity_list.add_css_class("boxed-list")
+        scrolled.set_child(self.assistant_activity_list)
+        panel.append(scrolled)
+        self.assistant_activity_banner.set_child(panel)
+
+    def _attach_assistant_activity_controller(self) -> None:
+        previous = getattr(self, "_assistant_activity_controller", None)
+        if previous is not None:
+            previous.stop()
+            self._assistant_activity_controller = None
+        client = getattr(self, "client", None)
+        if client is None or not hasattr(self, "assistant_activity_list"):
+            return
+        try:
+            from .api.capabilities import Capability
+            from .gtk.assistant_activity_controller import AssistantActivityController
+
+            if not client.get_capabilities().supports(Capability.ASSISTANT_ACTIVITY_READ):
+                return
+            controller = AssistantActivityController(
+                client,
+                on_entry=self._on_assistant_activity_entry,
+                on_toast=self._on_assistant_activity_toast,
+            )
+            controller.start()
+            self._assistant_activity_controller = controller
+        except Exception:
+            logger.debug("Assistant activity controller unavailable", exc_info=True)
+
+    def set_assistant_activity_visible(self, visible: bool) -> None:
+        banner = getattr(self, "assistant_activity_banner", None)
+        if banner is None:
+            return
+        banner.set_reveal_child(bool(visible))
+
+    def on_toggle_assistant_activity_action(self, action=None, param=None):
+        banner = getattr(self, "assistant_activity_banner", None)
+        if banner is None:
+            return
+        self.set_assistant_activity_visible(not banner.get_reveal_child())
+
+    def _on_assistant_activity_entry(self, entry) -> None:
+        listbox = getattr(self, "assistant_activity_list", None)
+        if listbox is None:
+            return
+        host = entry.connection_id or "—"
+        state = getattr(entry.state, "value", entry.state)
+        title = f"{entry.tool} · {state}"
+        subtitle = f"{host}: {entry.summary}"
+        # Update an existing row for the same activity id when possible.
+        for row in list(getattr(self, "_assistant_activity_rows", [])):
+            if getattr(row, "_activity_id", None) == entry.activity_id:
+                row.set_title(title)
+                row.set_subtitle(subtitle)
+                return
+        row = Adw.ActionRow()
+        row.set_title(title)
+        row.set_subtitle(subtitle)
+        row._activity_id = entry.activity_id  # type: ignore[attr-defined]
+        listbox.prepend(row)
+        self._assistant_activity_rows.insert(0, row)
+        while len(self._assistant_activity_rows) > 50:
+            old = self._assistant_activity_rows.pop()
+            listbox.remove(old)
+        if entry.level in {"operate", "mutate"} and state == "started":
+            self.set_assistant_activity_visible(True)
+
+    def _on_assistant_activity_toast(self, entry) -> None:
+        overlay = getattr(self, "toast_overlay", None)
+        if overlay is None:
+            return
+        host = entry.connection_id or _("server")
+        message = _("AI: {tool} on {host}").format(tool=entry.tool, host=host)
+        toast = Adw.Toast.new(message)
+        toast.set_timeout(3)
+        toast.set_button_label(_("Show"))
+        toast.connect(
+            "button-clicked",
+            lambda *_: self.set_assistant_activity_visible(True),
+        )
+        overlay.add_toast(toast)
+
+    def on_toggle_assistant_access_action(self, action=None, param=None):
+        """Allowlist the context-menu connection for AI assistant MCP access."""
+        connection = getattr(self, '_context_menu_connection', None)
+        if connection is None:
+            row = self.connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+        if connection is None:
+            return
+        client = getattr(self, 'client', None)
+        if client is None:
+            return
+        connection_id = str(getattr(connection, 'id', '') or '')
+        if not connection_id:
+            return
+        try:
+            from .api.capabilities import Capability
+            from .gtk.assistant_access_controller import AssistantAccessController
+
+            if not client.get_capabilities().supports(Capability.ASSISTANT_ACCESS_WRITE):
+                return
+            controller = AssistantAccessController(client)
+            current = controller.load()
+            allowed = connection_id not in current.allowed_connection_ids
+            controller.set_connection_allowed(connection_id, allowed)
+            nickname = getattr(connection, 'nickname', connection_id)
+            if hasattr(self, 'toast_overlay') and self.toast_overlay is not None:
+                from gi.repository import Adw
+
+                message = (
+                    _("AI assistants can use {name}").format(name=nickname)
+                    if allowed
+                    else _("AI assistants can no longer use {name}").format(name=nickname)
+                )
+                self.toast_overlay.add_toast(Adw.Toast.new(message))
+        except Exception:
+            logger.exception("Failed to update assistant access allowlist")
 
     def on_copy_ssh_command_action(self, action=None, param=None):
         """Copy the SSH command this connection actually runs to the clipboard.

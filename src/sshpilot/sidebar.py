@@ -5195,6 +5195,11 @@ def _attach_connection_list_context_menu(window):
                         menu.add_item('document-edit-symbolic', _('Edit'), lambda: window.on_edit_connection_action(None, None)),
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_in_split_view_action(None, None)),
                         menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: window.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
+                        menu.add_item(
+                            'network-workgroup-symbolic',
+                            _('Allow AI assistants'),
+                            lambda: window.on_toggle_assistant_access_action(None, None),
+                        ) if hasattr(window, 'on_toggle_assistant_access_action') else None,
                         menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: window.on_duplicate_connection_action(None, None)),
                         # A container, pod or serial console has no address: the
                         # fallback would copy the connection's own ID.

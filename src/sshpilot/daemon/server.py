@@ -23,6 +23,7 @@ from sshpilot.runtime_identity import new_server_instance_id
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.core.errors import CoreError
 from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.core.assistant_access_service import AssistantAccessService
 from sshpilot.core.ssh_overrides_service import SshOverridesService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, EventPublisher, Subscription
@@ -173,6 +174,7 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.FORWARD_FAILED,
         EventType.DAEMON_STATE_CHANGED,
         EventType.BROADCAST_OUTPUT,
+        EventType.ASSISTANT_ACTIVITY,
         EventType.OPERATION_STATE_CHANGED,
         # Broadcast to every client, not only the one that started the launch:
         # a pre-connection command runs per *connection*, and a second client
@@ -223,6 +225,7 @@ class CoreServices:
     known_hosts: Optional[KnownHostsService] = None
     keys: Optional[DaemonKeyService] = None
     ssh_overrides: Optional[SshOverridesService] = None
+    assistant_access: Optional[AssistantAccessService] = None
     secrets: Any = None
     identity: Any = None
     operations: Any = None
@@ -349,6 +352,7 @@ class DaemonServer:
         self._known_hosts_service: Optional[KnownHostsService] = None
         self._key_service: Optional[DaemonKeyService] = None
         self._ssh_overrides_service: Optional[SshOverridesService] = None
+        self._assistant_access_service: Optional[AssistantAccessService] = None
         self._login_profiles: Any = None
         self._login_profile_subscription: Optional[Subscription] = None
         self._secrets_service: Any = None
@@ -391,7 +395,11 @@ class DaemonServer:
         self._pre_command_runner: Optional[Any] = None
         self._pre_command_subscription: Optional[Subscription] = None
         self._broadcast_publisher = EventPublisher()
+        self._assistant_activity_publisher = EventPublisher()
+        self._assistant_activity_service = None
+        self._mcp_http_service = None
         self._broadcast_subscription: Optional[Subscription] = None
+        self._assistant_activity_subscription: Optional[Subscription] = None
         self._command_input_condition = threading.Condition()
         # Protected inputs are registered before a request is dispatched and
         # are owned by the peer that sent that request. This prevents an
@@ -468,6 +476,7 @@ class DaemonServer:
         with self._event_lock:
             self._accepting_core_events = True
         self._ready.set()
+        self._start_mcp_http_sidecar()
         try:
             while not self._stopping.is_set():
                 selector = self._selector
@@ -624,6 +633,8 @@ class DaemonServer:
                 self._known_hosts_service = core.known_hosts
                 self._key_service = core.keys
                 self._ssh_overrides_service = core.ssh_overrides
+                self._assistant_access_service = core.assistant_access
+                self._install_assistant_runtime_services()
                 self._login_profiles = core.login_profiles
                 self._secrets_service = core.secrets
                 self._identity_service = core.identity
@@ -849,6 +860,12 @@ class DaemonServer:
                 known_hosts_service=self._known_hosts_service,
                 key_service=self._key_service,
                 ssh_overrides_service=self._ssh_overrides_service,
+                assistant_access_service=getattr(
+                    self, "_assistant_access_service", None
+                ),
+                assistant_activity_service=getattr(
+                    self, "_assistant_activity_service", None
+                ),
                 login_profiles=self._login_profiles,
                 secrets_service=self._secrets_service,
                 identity_service=self._identity_service,
@@ -908,6 +925,9 @@ class DaemonServer:
             )
         self._broadcast_subscription = self._broadcast_publisher.subscribe(
             self._on_core_event
+        )
+        self._assistant_activity_subscription = (
+            self._assistant_activity_publisher.subscribe(self._on_core_event)
         )
         subscribe_profiles = getattr(self._login_profiles, "subscribe_events", None)
         if callable(subscribe_profiles):
@@ -2505,6 +2525,9 @@ class DaemonServer:
         self._run_bounded_shutdown(
             "Forward runtime", self._forward_runtime, deadline
         )
+        self._run_bounded_shutdown(
+            "MCP HTTP sidecar", self._mcp_http_service, deadline
+        )
 
         runtime_thread = None
         if runtime is not None:
@@ -2548,6 +2571,41 @@ class DaemonServer:
             except queue.Empty:
                 break
 
+    def _install_assistant_runtime_services(self) -> None:
+        """Wire MCP HTTP sidecar + AI activity log onto assistant-access."""
+        from .assistant_activity_service import AssistantActivityService
+        from .mcp_http_service import McpHttpService
+
+        access = getattr(self, "_assistant_access_service", None)
+        if access is None:
+            return
+
+        activity = AssistantActivityService(
+            on_entry=self._publish_assistant_activity,
+        )
+        self._assistant_activity_service = activity
+
+        mcp_http = McpHttpService(
+            socket_path=self.socket_path,
+            settings_provider=access.get,
+        )
+        self._mcp_http_service = mcp_http
+        access.set_http_status_provider(mcp_http.status)
+        access.set_on_changed(mcp_http.sync_from_settings)
+        # Sidecar start is deferred until the accept loop is ready; connecting
+        # DaemonClient during bind/setup would block the child's handshake.
+
+    def _start_mcp_http_sidecar(self) -> None:
+        mcp_http = getattr(self, "_mcp_http_service", None)
+        access = getattr(self, "_assistant_access_service", None)
+        if mcp_http is None or access is None:
+            return
+        try:
+            mcp_http.sync_from_settings(access.get())
+            mcp_http.start_monitor()
+        except Exception:  # noqa: BLE001 - listen is best-effort at boot
+            logger.exception("Failed to start MCP HTTP sidecar from settings")
+
     def _publish_broadcast_output(self, operation_id, connection_id, stream, text):
         from sshpilot.api.models.broadcast import BroadcastCommandOutput
 
@@ -2555,6 +2613,13 @@ class DaemonServer:
             EventType.BROADCAST_OUTPUT,
             BroadcastCommandOutput(operation_id, connection_id, stream, text),
             connection_id=connection_id,
+        )
+
+    def _publish_assistant_activity(self, entry) -> None:
+        self._assistant_activity_publisher.publish(
+            EventType.ASSISTANT_ACTIVITY,
+            entry,
+            connection_id=getattr(entry, "connection_id", None),
         )
 
     def _on_core_event(self, event: CoreEvent) -> None:

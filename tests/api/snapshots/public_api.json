@@ -13,8 +13,13 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.81",
+  "api_implementation_version": "0.83",
   "capabilities": [
+    "assistant_access.read",
+    "assistant_access.write",
+    "assistant_activity.events",
+    "assistant_activity.read",
+    "assistant_activity.write",
     "broadcast.events",
     "broadcast.read",
     "broadcast.write",
@@ -264,6 +269,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "get_assistant_access": {
+      "capability": "assistant_access.read",
+      "status": "daemon-only"
+    },
     "get_broadcast_command": {
       "capability": "broadcast.read",
       "status": "schema-only"
@@ -404,6 +413,10 @@
       "capability": "identity.read",
       "status": "daemon-only"
     },
+    "list_assistant_activity": {
+      "capability": "assistant_activity.read",
+      "status": "daemon-only"
+    },
     "list_authorized_keys": {
       "capability": "identity.read",
       "status": "daemon-only"
@@ -508,6 +521,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "record_assistant_activity": {
+      "capability": "assistant_activity.write",
+      "status": "daemon-only"
+    },
     "release_interaction": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -570,6 +587,10 @@
     },
     "send_terminal_input": {
       "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "set_assistant_access": {
+      "capability": "assistant_access.write",
       "status": "daemon-only"
     },
     "set_connection_layout": {
@@ -798,6 +819,7 @@
     "fetch_public_keys",
     "forget_master_password",
     "generate_key",
+    "get_assistant_access",
     "get_broadcast_command",
     "get_capabilities",
     "get_connection",
@@ -835,6 +857,7 @@
     "keepassxc_lock",
     "keepassxc_unlock",
     "list_agent_keys",
+    "list_assistant_activity",
     "list_authorized_keys",
     "list_bitwarden_backups",
     "list_connections",
@@ -866,6 +889,7 @@
     "rbw_sync",
     "rbw_unlock",
     "read_public_key",
+    "record_assistant_activity",
     "release_interaction",
     "release_terminal_input",
     "remember_master_password",
@@ -886,6 +910,7 @@
     "save_ssh_config_text",
     "send_interaction_secret",
     "send_terminal_input",
+    "set_assistant_access",
     "set_connection_layout",
     "set_daemon_log_level",
     "set_group_color",
@@ -1415,6 +1440,10 @@
       ],
       "return": "GenerateKeyResult"
     },
+    "get_assistant_access": {
+      "parameters": [],
+      "return": "AssistantAccessSettings"
+    },
     "get_broadcast_command": {
       "parameters": [
         {
@@ -1734,6 +1763,10 @@
       "parameters": [],
       "return": "AgentKeyList"
     },
+    "list_assistant_activity": {
+      "parameters": [],
+      "return": "AssistantActivityList"
+    },
     "list_authorized_keys": {
       "parameters": [
         {
@@ -1986,6 +2019,16 @@
       ],
       "return": "PublicKeyResult"
     },
+    "record_assistant_activity": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "RecordAssistantActivityRequest"
+        }
+      ],
+      "return": "AssistantActivityEntry"
+    },
     "release_interaction": {
       "parameters": [
         {
@@ -2194,6 +2237,16 @@
         }
       ],
       "return": "None"
+    },
+    "set_assistant_access": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "UpdateAssistantAccessRequest"
+        }
+      ],
+      "return": "AssistantAccessSettings"
     },
     "set_connection_layout": {
       "parameters": [
@@ -2761,6 +2814,18 @@
     }
   },
   "daemon_method_contract": {
+    "assistant_access.get": {
+      "capability": "assistant_access.read"
+    },
+    "assistant_access.update": {
+      "capability": "assistant_access.write"
+    },
+    "assistant_activity.list": {
+      "capability": "assistant_activity.read"
+    },
+    "assistant_activity.record": {
+      "capability": "assistant_activity.write"
+    },
     "authorized_keys.fetch": {
       "capability": "identity.read"
     },
@@ -3420,6 +3485,7 @@
     "validation_failed"
   ],
   "event_types": [
+    "assistant.activity",
     "broadcast.output",
     "connection.created",
     "connection.deleted",
@@ -3480,6 +3546,10 @@
     "AsbruImportResult",
     "AssignConnectionToGroupRequest",
     "AssignLoginProfileRequest",
+    "AssistantAccessSettings",
+    "AssistantActivityEntry",
+    "AssistantActivityList",
+    "AssistantActivityState",
     "AttachSessionRequest",
     "AttachSessionResult",
     "AttachSftpRequest",
@@ -3678,6 +3748,7 @@
     "PublicKeyResult",
     "RbwStatus",
     "ReadPublicKeyRequest",
+    "RecordAssistantActivityRequest",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
     "RemoteFileEntry",
@@ -3780,6 +3851,7 @@
     "UnlockResultKind",
     "UnsavedHostCheckRequest",
     "UnsavedHostCheckResult",
+    "UpdateAssistantAccessRequest",
     "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
     "UpdateGlobalSshOverridesRequest",
@@ -3842,6 +3914,20 @@
       "connection_ids",
       "mode",
       "profile_id"
+    ],
+    "AssistantAccessSettings": [
+      "revision",
+      "enabled",
+      "allowed_connection_ids",
+      "operate",
+      "mutate",
+      "content",
+      "http_listen",
+      "http_port",
+      "http_token",
+      "http_listening",
+      "http_bound_port",
+      "http_url"
     ],
     "AttachSessionRequest": [
       "session_id",
@@ -4315,6 +4401,19 @@
     "GetPluginSecretRequest": [
       "plugin_id",
       "key"
+    ],
+    "GlobalSshOverrides": [
+      "revision",
+      "connect_timeout",
+      "connection_attempts",
+      "server_alive_interval",
+      "server_alive_count_max",
+      "strict_host_key_checking",
+      "batch_mode",
+      "compression",
+      "verbosity",
+      "debug_enabled",
+      "applies_immediately"
     ],
     "GroupLayout": [
       "group_id",
@@ -5224,6 +5323,17 @@
       "username",
       "generation"
     ],
+    "UpdateAssistantAccessRequest": [
+      "enabled",
+      "allowed_connection_ids",
+      "operate",
+      "mutate",
+      "content",
+      "http_listen",
+      "http_port",
+      "regenerate_token",
+      "expected_revision"
+    ],
     "UpdateConnectionMetadataRequest": [
       "connection_id",
       "meta"
@@ -5237,6 +5347,10 @@
       "config_patch",
       "plugin_data",
       "expected_generation"
+    ],
+    "UpdateGlobalSshOverridesRequest": [
+      "patch",
+      "expected_revision"
     ],
     "UpdateLoginProfileRequest": [
       "profile_id",
@@ -5358,6 +5472,11 @@
       "host_info.read",
       "ssh_overrides.read",
       "ssh_overrides.write",
+      "assistant_access.read",
+      "assistant_access.write",
+      "assistant_activity.read",
+      "assistant_activity.write",
+      "assistant_activity.events",
       "login_profiles.read",
       "login_profiles.write",
       "plugins",
@@ -5534,6 +5653,7 @@
       "operation.created",
       "operation.state_changed",
       "broadcast.output",
+      "assistant.activity",
       "daemon.state_changed",
       "error.occurred"
     ],
