@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-<img src="screenshots/split.webp" alt="Split view with multiple terminals" width="90%" /><br/>
+<img src="screenshots/split.png" alt="Split view with multiple terminals" width="90%" /><br/>
 <sub>Split view with multiple terminals</sub>
 </p>
 
