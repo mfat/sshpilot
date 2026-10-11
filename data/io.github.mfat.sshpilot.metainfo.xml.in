@@ -876,8 +876,8 @@
   <content_rating type="oars-1.1"/>
 
   <branding>
-    <color type="primary" scheme_preference="light">#5a7c5b</color>
-    <color type="primary" scheme_preference="dark">#1c2840</color>
+    <color type="primary" scheme_preference="light">#ffa348</color>
+    <color type="primary" scheme_preference="dark">#c64600</color>
   </branding>
 
   <screenshots>
