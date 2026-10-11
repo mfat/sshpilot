@@ -6,6 +6,7 @@
     </linearGradient>
     <clipPath id="w"><rect x="22" y="26" width="84" height="72" rx="6"></rect></clipPath>
   </defs>
+  <g transform="translate(64 64) scale(0.990385) translate(-64 -64)">
   <g transform="translate(0 2)">
   <rect x="12" y="16" width="104" height="92" rx="14" fill="url(#face)"></rect>
   <g clip-path="url(#w)">
@@ -17,5 +18,6 @@
   <rect x="24.5" y="58" width="20" height="11" rx="2.5" fill="#ffffff" stroke="#deddda" stroke-width="1"></rect><circle cx="29" cy="63.5" r="2" fill="#2ec27e"></circle><rect x="33" y="61.5" width="5" height="1.5" rx=".75" fill="#c0bfbc"></rect><rect x="33" y="64" width="8" height="1.5" rx=".75" fill="#c0bfbc"></rect>
   <path d="M57.7 51.2 l14.4 11.2 l-14.4 11.2" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"></path>
   <rect x="78.5" y="68.8" width="20.8" height="8" rx="2" fill="#ffa348"></rect>
+  </g>
   </g>
 </svg>
