@@ -3700,9 +3700,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.broadcast_banner.set_visible(False)
         self.broadcast_banner.set_reveal_child(False)
         self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.NONE)
-        self.broadcast_hide_timeout_id: Optional[int] = None
-        self.broadcast_entry_dirty = False
-        self._suppress_broadcast_entry_changed = False
 
         # Create banner content box
         banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3746,17 +3743,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         set_accessible_name(self.broadcast_entry, _("Broadcast Command"))
         self.broadcast_entry.set_hexpand(True)
         self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
-        self.broadcast_entry.connect('changed', self.on_broadcast_entry_changed)
 
         # Add ESC key handling to the entry
         entry_controller = Gtk.EventControllerKey()
         entry_controller.connect('key-pressed', self.on_broadcast_entry_key_pressed)
         self.broadcast_entry.add_controller(entry_controller)
-
-        focus_controller = Gtk.EventControllerFocus()
-        focus_controller.connect('enter', self.on_broadcast_entry_focus_enter)
-        focus_controller.connect('leave', self.on_broadcast_entry_focus_leave)
-        self.broadcast_entry.add_controller(focus_controller)
 
         banner_content.append(self.broadcast_entry)
 

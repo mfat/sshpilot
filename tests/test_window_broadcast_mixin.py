@@ -28,11 +28,6 @@ _BROADCAST_METHODS = (
     "hide_broadcast_banner",
     "_focus_active_terminal_tab",
     "show_broadcast_banner",
-    "on_broadcast_entry_changed",
-    "on_broadcast_entry_focus_enter",
-    "on_broadcast_entry_focus_leave",
-    "_cancel_broadcast_hide_timeout",
-    "_schedule_broadcast_hide_timeout",
     "on_broadcast_command_action",
 )
 
@@ -102,3 +97,21 @@ def test_second_send_is_ignored_while_first_submission_callback_is_pending():
     window.terminal_manager.broadcast_command.assert_called_once()
     assert window._broadcast_submission_pending is True
     window.broadcast_send_button.set_sensitive.assert_called_once_with(False)
+
+
+def test_banner_never_hides_itself():
+    # The banner stays until the user dismisses it (Cancel/Escape): sending
+    # must not hide it, and no auto-hide timer machinery may come back.
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    for name in ("_schedule_broadcast_hide_timeout", "on_broadcast_entry_focus_leave"):
+        assert not hasattr(WindowBroadcastMixin, name)
+
+    window = Mock()
+    window._broadcast_submission_pending = False
+    window.broadcast_entry.get_text.return_value = "uptime"
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    window.hide_broadcast_banner.assert_not_called()
+    window.broadcast_banner.set_reveal_child.assert_not_called()
+    window.broadcast_banner.set_visible.assert_not_called()
