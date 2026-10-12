@@ -127,6 +127,12 @@ def _install_sidebar_color_css():
            osd's white text unreadable in light mode. Keep it dark. */
         row.osd:hover:not(:selected) { background-color: rgba(0, 0, 0, 0.8); }
         row.osd:active:not(:selected) { background-color: rgba(0, 0, 0, 0.85); }
+
+        /* Connected status lock: GNOME palette Green 4 (--green-4 / #2ec27e).
+           Prefer the palette variable over Adwaita .success (--success-color),
+           which is a standalone color tuned for neutral backgrounds and reads
+           too dark on accent-selected sidebar rows. */
+        image.conn-status-up { color: var(--green-4); }
         """
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
@@ -2527,30 +2533,6 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     # -- display updates --------------------------------------------------
 
-    @staticmethod
-    def _install_status_css():
-        """Custom color for the failed/disconnected status icon. Uses an explicit
-        red (#DC2626) instead of libadwaita's .error so it stays the same red in
-        dark mode (where .error becomes a coral/orange-ish tone)."""
-        try:
-            display = Gdk.Display.get_default()
-            if not display:
-                return
-            if getattr(display, "_status_css_installed", False):
-                return
-            provider = Gtk.CssProvider()
-            css = (
-                "image.conn-status-up { color: #16A34A; }"
-                "image.conn-status-down { color: #DC2626; }"
-            )
-            provider.load_from_data(css.encode("utf-8"))
-            Gtk.StyleContext.add_provider_for_display(
-                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-            )
-            setattr(display, "_status_css_installed", True)
-        except Exception:
-            pass
-
     def set_indicators_reserved(self, reserved: bool) -> None:
         """Keep the port-forwarding indicator, or shed it for a narrow sidebar.
 
@@ -2699,10 +2681,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
-            # Clear any previously-applied semantic color classes before re-styling.
-            self._install_status_css()
-            for _cls in ("success", "warning", "error", "dim-label",
-                         "conn-status-up", "conn-status-down"):
+            # Clear previously-applied color classes before re-styling.
+            for _cls in ("conn-status-up", "warning", "error", "dim-label"):
                 self.status_icon.remove_css_class(_cls)
 
             # Idle / never connected this session: no status box at all.
@@ -2733,14 +2713,14 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.status_icon.set_tooltip_text(_("Connecting to {host}…").format(host=host_value))
             elif state == ConnectionState.FAILED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
-                self.status_icon.add_css_class("conn-status-down")
+                self.status_icon.add_css_class("error")
                 self.status_icon.set_tooltip_text(
                     _("Connection failed: {reason}").format(reason=reason) if reason
                     else _("Connection failed")
                 )
             else:  # DISCONNECTED — a previously-live session that went down.
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
-                self.status_icon.add_css_class("conn-status-down")
+                self.status_icon.add_css_class("error")
                 self.status_icon.set_tooltip_text(_("Disconnected"))
 
             self.status_icon.queue_draw()
