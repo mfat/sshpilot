@@ -2135,9 +2135,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         maybe_set_native_controls(self._window_controls_start, False)
         maybe_set_native_controls(self._window_controls_end, False)
 
+        # Match Adwaita's headerbar start-box spacing (6px) so the gap between
+        # the sidebar toggle and the local-terminal button equals the gap from
+        # that button to the first tab (home), after the tab bar's -4 margin.
         self._headerbar_start_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=0,
+            spacing=6,
         )
         self._headerbar_end_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -2174,9 +2177,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.header_bar.set_child(self._content_header_box)
         self._tab_bar_in_custom_titlebar = True
 
-        # Add sidebar toggle button to the title bar's start controls.
-        self.sidebar_toggle_button = Gtk.ToggleButton()
-        self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
+        # Sidebar control is a flat Gtk.Button (Planify-style), not a
+        # ToggleButton — toggles keep Adwaita's :checked fill even with .flat.
+        self.sidebar_toggle_button = Gtk.Button()
+        self.sidebar_toggle_button.set_can_focus(False)
+        self.sidebar_toggle_button.add_css_class('flat')
 
         # Sidebar always starts visible
         sidebar_visible = True
@@ -2192,9 +2197,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _('Toggle Sidebar'),
             tooltip=_('Hide Sidebar ({accels})').format(accels=accel_labels),
         )
-        # Button should not appear pressed when sidebar is visible
-        self.sidebar_toggle_button.set_active(False)
-        self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
+        self.sidebar_toggle_button.connect('clicked', self.on_sidebar_toggle)
         self._headerbar_start_box.append(self.sidebar_toggle_button)
 
         # Add local terminal button right after the sidebar toggle
@@ -2244,12 +2247,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sidebar_visible = not start_hidden
         # Tracked alongside the widget state so callers have a cheap answer.
         self._sidebar_visible = sidebar_visible
-        # Keep the header toggle button in sync (active == hidden).
-        if hasattr(self, 'sidebar_toggle_button'):
-            try:
-                self.sidebar_toggle_button.set_active(start_hidden)
-            except Exception:
-                pass
+        self._sync_sidebar_toggle_button(sidebar_visible)
 
         # Recorded on the split view now; setup_sidebar() applies it to the
         # sidebar widget as soon as that widget exists.
@@ -3575,8 +3573,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
-        # Reduce the visual gap between the Local Terminal button and the
-        # first tab without changing the spacing around the window controls.
+        # Pull the first tab 4px toward the start controls. Combined with the
+        # start box's 6px spacing, the sidebar↔terminal and terminal↔home gaps
+        # match without changing spacing around the window controls.
         self.tab_bar.set_margin_start(-4)
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
@@ -4740,9 +4739,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             if hasattr(self, 'connection_list') and self.connection_list:
                 # If sidebar is hidden, show it first
-                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(False)
+                if self._sidebar_hidden_by_toggle():
+                    self._apply_sidebar_visible(True)
 
                 # Close the search bar (if open) and clear the filter so the
                 # full connection list is shown when focus moves here.
@@ -4837,10 +4835,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not (hasattr(self, 'search_entry') and self.search_entry):
                 return
 
-            sidebar_hidden = bool(
-                getattr(self, 'sidebar_toggle_button', None)
-                and self.sidebar_toggle_button.get_active()
-            )
+            sidebar_hidden = self._sidebar_hidden_by_toggle()
 
             was_visible = True
             if hasattr(self, 'search_container') and self.search_container:
@@ -5101,10 +5096,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Toggle search on/off and show appropriate toast notification."""
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
-                sidebar_hidden = bool(
-                    getattr(self, 'sidebar_toggle_button', None)
-                    and self.sidebar_toggle_button.get_active()
-                )
+                sidebar_hidden = self._sidebar_hidden_by_toggle()
 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
@@ -6253,33 +6245,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug("Cannot edit group row")
 
     def on_sidebar_toggle(self, button):
-        """Handle sidebar toggle button click"""
+        """Handle sidebar toggle button click (flat Gtk.Button, Planify-style)."""
         try:
-            # Button active state now represents the action to perform
-            # True = hide sidebar, False = show sidebar
-            should_hide = button.get_active()
-            is_visible = not should_hide
+            is_visible = not bool(getattr(self, '_sidebar_visible', True))
             self._toggle_sidebar_visibility(is_visible)
             # A manual toggle cancels any pending "hide on terminal open" delay.
             self._cancel_pending_sidebar_hide()
-
-            # Update button icon and tooltip based on current sidebar state
-            from sshpilot import icon_utils
-            if is_visible:
-                icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
-                button.set_tooltip_text(
-                    _('Hide Sidebar (F9, {modifier}+B)').format(
-                        modifier=get_primary_modifier_label())
-                )
-            else:
-                icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
-                button.set_tooltip_text(
-                    _('Show Sidebar (F9, {modifier}+B)').format(
-                        modifier=get_primary_modifier_label())
-                )
-
-            # No need to save state - sidebar always starts visible
-
+            self._sync_sidebar_toggle_button(is_visible)
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
 
@@ -6378,18 +6350,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return max(0, int(h.get_y() + h.get_height())) if ok else 0
 
     def _sidebar_hidden_by_toggle(self) -> bool:
-        """True while the sidebar is hidden (toggle 'active' means hidden)."""
+        """True while the sidebar is hidden via the header control / F9."""
+        return not bool(getattr(self, '_sidebar_visible', True))
+
+    def _sync_sidebar_toggle_button(self, visible: bool) -> None:
+        """Update the flat sidebar button tooltip for the current visibility."""
         button = getattr(self, 'sidebar_toggle_button', None)
-        return bool(button is not None and button.get_active())
+        if button is None:
+            return
+        try:
+            from sshpilot import icon_utils
+            icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
+            if visible:
+                button.set_tooltip_text(
+                    _('Hide Sidebar (F9, {modifier}+B)').format(
+                        modifier=get_primary_modifier_label())
+                )
+            else:
+                button.set_tooltip_text(
+                    _('Show Sidebar (F9, {modifier}+B)').format(
+                        modifier=get_primary_modifier_label())
+                )
+        except Exception:
+            logger.debug("sync sidebar toggle button failed", exc_info=True)
 
     def _apply_sidebar_visible(self, visible: bool) -> None:
-        """Programmatically show/hide the sidebar and keep the toggle button in
+        """Programmatically show/hide the sidebar and keep the header button in
         sync (used by the behavior hooks)."""
         try:
             self._toggle_sidebar_visibility(visible)
-            if hasattr(self, 'sidebar_toggle_button'):
-                # Button 'active' means "hidden" (see on_sidebar_toggle).
-                self.sidebar_toggle_button.set_active(not visible)
+            self._sync_sidebar_toggle_button(visible)
         except Exception:
             logger.debug("apply_sidebar_visible failed", exc_info=True)
 

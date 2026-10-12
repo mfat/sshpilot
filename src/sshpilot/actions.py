@@ -255,9 +255,8 @@ class WindowActions:
                 if hasattr(self, '_cancel_pending_sidebar_hide'):
                     self._cancel_pending_sidebar_hide()
 
-                # Update button state if it exists (inverted logic: active = should hide)
-                if hasattr(self, 'sidebar_toggle_button'):
-                    self.sidebar_toggle_button.set_active(not new_visible)
+                if hasattr(self, '_sync_sidebar_toggle_button'):
+                    self._sync_sidebar_toggle_button(new_visible)
         except Exception as e:
             logger.error(f"Failed to toggle sidebar via action: {e}")
 
