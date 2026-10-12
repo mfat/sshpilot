@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import List, Optional
 
-from gi.repository import Gtk, Gdk, GLib, Adw
+from gi.repository import Gtk, Gdk, GLib, Adw, Pango
 from gettext import gettext as _, ngettext
 
 from .dnd_payload import (
@@ -137,15 +138,53 @@ box.row-drag-ghost {
     min-height: 2px;
 }
 
-/* Pane borders: margin creates a gap; non-inset shadow fills it visibly.
-   @window_fg_color is black in light mode, white in dark mode.
-   margin > spread ensures corners are never clipped by the parent. */
+/* Pane card: header and terminal share one dark rounded surface.
+   margin > ring spread so the active ring is never clipped. */
 box.split-pane {
-    margin: 1px;
-    box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
+    margin: 4px;
+    border-radius: 10px;
+    box-shadow: 0 0 0 1px alpha(@window_fg_color, 0.18);
 }
 box.split-pane.split-pane-active {
     box-shadow: 0 0 0 2px #f5c400;
+}
+box.split-pane-card {
+    background-color: #0b0b0c;
+}
+
+/* Pane header: one terminal per pane, so a title row, not a tab bar */
+box.split-pane-header {
+    background-color: #18181a;
+    box-shadow: inset 0 -1px alpha(white, 0.06);
+    padding: 5px 6px 5px 12px;
+    min-height: 24px;
+    color: #9a9996;
+}
+box.split-pane.split-pane-active box.split-pane-header {
+    color: #ffffff;
+}
+box.split-pane-header label.split-pane-title {
+    font-size: 13px;
+    font-weight: 500;
+}
+box.split-pane-header button.split-pane-close {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    color: alpha(white, 0.7);
+}
+box.split-pane-header button.split-pane-close:hover {
+    background-color: alpha(white, 0.10);
+}
+
+/* Group chip at the trailing edge of the header */
+box.split-pane-group {
+    padding: 2px 8px 2px 7px;
+    border-radius: 999px;
+    background-color: alpha(white, 0.06);
+    color: #c0bfbc;
+    font-size: 11.5px;
+    font-weight: 500;
 }
 """)
     Gtk.StyleContext.add_provider_for_display(
@@ -209,9 +248,10 @@ class SplitPane(Gtk.Box):
     """
     A single pane in the split view grid.
 
-    Each pane contains its own mini Adw.TabBar + Adw.TabView so multiple
-    terminals can be stacked as sub-tabs within one pane.  When empty, a
-    placeholder is shown with a "Pick existing tab" pill button.
+    Each pane holds exactly one terminal under a compact title header
+    (icon, title, group chip, close). An Adw.TabView is kept as the
+    single-page container. When empty, a placeholder is shown with a
+    "Pick existing tab" pill button.
     """
 
     __gtype_name__ = "SshPilotSplitPane"
@@ -229,6 +269,8 @@ class SplitPane(Gtk.Box):
         ))
         _ensure_row_handle_css()
         self.add_css_class("split-pane")
+        # Clip header + terminal to the pane's rounded corners.
+        self.set_overflow(Gtk.Overflow.HIDDEN)
 
         focus_ctrl = Gtk.EventControllerFocus()
         focus_ctrl.connect('enter', self._on_pane_focus_enter)
@@ -258,30 +300,33 @@ class SplitPane(Gtk.Box):
         self._inner_tab_view.connect('close-page', self._on_inner_close)
         self._inner_tab_view.connect('notify::selected-page', self._on_inner_tab_selected)
 
-        self._inner_tab_bar = Adw.TabBar()
-        self._inner_tab_bar.set_view(self._inner_tab_view)
-        self._inner_tab_bar.set_autohide(False)
+        # A pane holds exactly one terminal, so the header is a plain title
+        # row (icon · title · group chip · close) instead of an Adw.TabBar.
+        # The Adw.TabView stays as the single-page container so close-page
+        # cleanup keeps working unchanged.
+        self._title_page = None
+        self._title_handler = None
+        self._header = self._build_header()
 
-        # When the pane is populated the per-tab × buttons (Adwaita default,
-        # visible on hover/selected) are the close mechanism.  No extra
-        # "Close Pane" end-action button is added here; the placeholder has
-        # its own close button for when the pane is empty.
+        # The header's close button closes the pane; the placeholder has its
+        # own close button for when the pane is empty.
 
         self._tab_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._tab_container.add_css_class("split-pane-card")
         self._tab_container.set_hexpand(True)
         self._tab_container.set_vexpand(True)
-        self._tab_container.append(self._inner_tab_bar)
+        self._tab_container.append(self._header)
         self._tab_container.append(self._inner_tab_view)
 
         # ── placeholder ──────────────────────────────────────────────────
         self._placeholder = self._build_placeholder()
         self.append(self._placeholder)
 
-        # ── inner tab bar: double-click to rename ────────────────────────
+        # ── header: double-click to rename ───────────────────────────────
         rename_gesture = Gtk.GestureClick()
         rename_gesture.set_button(1)
-        rename_gesture.connect("pressed", self._on_inner_tab_bar_pressed)
-        self._inner_tab_bar.add_controller(rename_gesture)
+        rename_gesture.connect("pressed", self._on_header_pressed)
+        self._header.add_controller(rename_gesture)
 
         # ── drop target ──────────────────────────────────────────────────
         self._setup_drop_target()
@@ -295,6 +340,115 @@ class SplitPane(Gtk.Box):
 
     def _on_inner_tab_selected(self, *_args) -> None:
         self._split_view_tab._note_active_pane(self)
+        self._bind_title()
+        self._update_group_chip()
+
+    # ── header ───────────────────────────────────────────────────────────────
+
+    def _build_header(self) -> Gtk.Widget:
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.add_css_class("split-pane-header")
+        header.set_hexpand(True)
+
+        icon = Gtk.Image.new_from_icon_name("utilities-terminal-symbolic")
+        icon.set_pixel_size(14)
+        header.append(icon)
+
+        self._title_label = Gtk.Label(label=_("Terminal"))
+        self._title_label.add_css_class("split-pane-title")
+        self._title_label.set_xalign(0)
+        self._title_label.set_hexpand(True)
+        self._title_label.set_ellipsize(Pango.EllipsizeMode.END)
+        header.append(self._title_label)
+
+        header.append(self._build_group_chip())
+
+        close_btn = Gtk.Button()
+        close_btn.set_icon_name("window-close-symbolic")
+        close_btn.add_css_class("flat")
+        close_btn.add_css_class("split-pane-close")
+        close_btn.set_tooltip_text(_("Close Pane"))
+        close_btn.set_valign(Gtk.Align.CENTER)
+        close_btn.connect("clicked", lambda _b: self.close_pane())
+        header.append(close_btn)
+        return header
+
+    def _bind_title(self) -> None:
+        """Mirror the single page's title into the header label."""
+        page = self._inner_tab_view.get_selected_page() if self._has_terminals else None
+        if page is self._title_page:
+            return
+        if self._title_page is not None and self._title_handler is not None:
+            try:
+                self._title_page.disconnect(self._title_handler)
+            except Exception:
+                pass
+        self._title_page = page
+        self._title_handler = None
+        if page is None:
+            return
+        self._title_label.set_label(page.get_title() or _("Terminal"))
+        self._title_handler = page.connect(
+            'notify::title',
+            lambda p, _ps: self._title_label.set_label(p.get_title() or _("Terminal")),
+        )
+
+    def _build_group_chip(self) -> Gtk.Widget:
+        chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chip.add_css_class("split-pane-group")
+        chip.set_valign(Gtk.Align.CENTER)
+        self._group_rgba: Optional[Gdk.RGBA] = None
+        dot = Gtk.DrawingArea()
+        dot.set_content_width(6)
+        dot.set_content_height(6)
+        dot.set_valign(Gtk.Align.CENTER)
+        dot.set_draw_func(self._draw_group_dot)
+        self._group_dot = dot
+        self._group_label = Gtk.Label()
+        chip.append(dot)
+        chip.append(self._group_label)
+        chip.set_visible(False)
+        self._group_chip = chip
+        return chip
+
+    def _draw_group_dot(self, _area, cr, width, height) -> None:
+        rgba = self._group_rgba
+        if rgba is None:
+            return
+        cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
+        cr.arc(width / 2, height / 2, min(width, height) / 2, 0, 2 * math.pi)
+        cr.fill()
+
+    def _group_for_terminal(self, terminal):
+        """Return (name, color) of the terminal's connection group, or (None, None)."""
+        conn = getattr(terminal, 'connection', None)
+        gm = getattr(self._window, 'group_manager', None)
+        if conn is None or gm is None:
+            return None, None
+        try:
+            gid = gm.get_connection_group(conn)
+            group = gm.groups.get(gid) if gid else None
+        except Exception:
+            return None, None
+        if not group:
+            return None, None
+        return group.get('name'), group.get('color')
+
+    def _update_group_chip(self) -> None:
+        if getattr(self, '_group_chip', None) is None:
+            return
+        page = self._inner_tab_view.get_selected_page() if self._has_terminals else None
+        terminal = page.get_child() if page is not None else None
+        name, color = self._group_for_terminal(terminal) if terminal else (None, None)
+        if not name:
+            self._group_chip.set_visible(False)
+            return
+        self._group_label.set_label(name)
+        rgba = Gdk.RGBA()
+        self._group_rgba = rgba if color and rgba.parse(color) else None
+        self._group_dot.set_visible(self._group_rgba is not None)
+        self._group_dot.queue_draw()
+        self._group_chip.set_visible(True)
 
     # ── placeholder ──────────────────────────────────────────────────────────
 
@@ -396,7 +550,12 @@ class SplitPane(Gtk.Box):
     # ── terminal management ──────────────────────────────────────────────────
 
     def add_terminal(self, terminal, title: Optional[str] = None) -> None:
-        """Embed a TerminalWidget as a sub-tab in this pane."""
+        """Embed a TerminalWidget in this pane (one terminal per pane).
+
+        If this pane is already occupied the terminal goes into a new pane."""
+        if self.get_terminal_count() >= 1:
+            self._split_view_tab.add_pane().add_terminal(terminal, title)
+            return
         # If this terminal came from the main tab view it carries the window's
         # convert-to-split DropTarget. Inside a pane that target just swallows
         # connection drops over the terminal area (its handler finds no main-tab
@@ -441,6 +600,8 @@ class SplitPane(Gtk.Box):
         self._inner_tab_view.set_selected_page(page)
         self._split_view_tab._update_tab_title()
         self._split_view_tab._note_active_pane(self)
+        self._bind_title()
+        self._update_group_chip()
 
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
@@ -546,13 +707,10 @@ class SplitPane(Gtk.Box):
 
     # ── inner tab rename ─────────────────────────────────────────────────────
 
-    def _on_inner_tab_bar_pressed(self, gesture, n_press, x, y) -> None:
+    def _on_header_pressed(self, gesture, n_press, x, y) -> None:
         if n_press != 2:
             return
-        # Import locally: window_tabs imports SplitViewTab from this module
-        # inside methods, so a top-level import here would be circular.
-        from .window_tabs import find_tab_page_at
-        page = find_tab_page_at(self._inner_tab_bar, x, y)
+        page = self._inner_tab_view.get_selected_page() if self._has_terminals else None
         if page is not None:
             self._show_inner_tab_rename_popover(page, x, y)
 
@@ -563,7 +721,7 @@ class SplitPane(Gtk.Box):
 
         popover = Gtk.Popover()
         popover.set_child(entry)
-        popover.set_parent(self._inner_tab_bar)
+        popover.set_parent(self._header)
         popover.set_has_arrow(False)
 
         rect = Gdk.Rectangle()
