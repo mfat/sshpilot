@@ -30,8 +30,8 @@ Lifecycle
 A panel docked to a side (``LEFT`` / ``RIGHT``) slides in from that edge and
 back out, fading as it goes; other placements appear in place. ``visible``
 flips at the start of a hide, while the content is re-docked only once the
-slide-out finishes. The slide is an ``Adw.TimedAnimation``, so it honours the
-desktop's "reduce animations" setting.
+slide-out finishes. The slide is a ``Gtk.Revealer`` around the panel, so it
+honours the desktop's "reduce animations" setting and flips under RTL.
 
 Decoupling
 ----------
@@ -84,6 +84,13 @@ _ALIGN = {
     Position.TOP: (Gtk.Align.CENTER, Gtk.Align.START, 48),
 }
 
+# Side-docked panels slide in from their edge; the rest appear in place.
+# GtkRevealer mirrors SLIDE_LEFT/RIGHT itself under RTL.
+_SLIDE = {
+    Position.LEFT: Gtk.RevealerTransitionType.SLIDE_RIGHT,
+    Position.RIGHT: Gtk.RevealerTransitionType.SLIDE_LEFT,
+}
+
 # name -> presentation config. width/height None means "derive".
 _PRESETS = {
     "sidebar": dict(position=Position.LEFT, width=None, height=None,
@@ -104,11 +111,9 @@ _PRESETS = {
 class SearchPopup:
     """A floating panel that detaches ``content`` over the work area."""
 
-    # Slide state: 0 = off-screen, 1 = in place. A popup built without
-    # __init__ (unit tests) keeps _animate False and shows/hides at once.
-    _animate = False
-    _slide = 1.0
-    _anim = None
+    # The revealer that slides the panel; a popup built without __init__
+    # (unit tests) has none and shows/hides at once.
+    _frame = None
     _hiding = False
 
     def __init__(
@@ -136,7 +141,6 @@ class SearchPopup:
         self._transparent = False
         self._scrim = None
         self._panel = None
-        self._animate = True
 
         # Presentation state (defaults to the 'sidebar' preset — today's look).
         self._mode = "sidebar"
@@ -176,9 +180,17 @@ class SearchPopup:
         key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         key.connect("key-pressed", self._on_key)
         self._panel.add_controller(key)
-        self._overlay.add_overlay(self._panel)
-        self._overlay.set_measure_overlay(self._panel, False)
-        self._overlay.connect("get-child-position", self._on_child_position)
+
+        # Placement (alignment, margins) goes on the revealer, size on the
+        # panel; aligned rather than filling, the revealer covers only the
+        # panel and the work area around it keeps its input.
+        self._frame = Gtk.Revealer()
+        self._frame.set_transition_duration(SLIDE_MS)
+        self._frame.set_child(self._panel)
+        self._frame.set_visible(False)
+        self._frame.connect("notify::child-revealed", self._on_child_revealed)
+        self._overlay.add_overlay(self._frame)
+        self._overlay.set_measure_overlay(self._frame, False)
 
         self._apply_layout()
         self._apply_backdrop()
@@ -270,11 +282,15 @@ class SearchPopup:
     def _apply_layout(self):
         if self._panel is None:
             return
+        host = self._frame if self._frame is not None else self._panel
+        if self._frame is not None:
+            self._frame.set_transition_type(_SLIDE.get(
+                self._position, Gtk.RevealerTransitionType.NONE))
         start, end, top, bottom = self._margins
-        self._panel.set_margin_start(start)
-        self._panel.set_margin_end(end)
-        self._panel.set_margin_top(top)
-        self._panel.set_margin_bottom(bottom)
+        host.set_margin_start(start)
+        host.set_margin_end(end)
+        host.set_margin_top(top)
+        host.set_margin_bottom(bottom)
         anchor = getattr(self, "_anchor", None)
         if self._position == Position.ANCHORED and anchor is not None:
             try:
@@ -287,19 +303,19 @@ class SearchPopup:
             except (AttributeError, TypeError, ValueError):
                 ok, x, y = False, 0, 0
             if ok:
-                self._panel.set_halign(Gtk.Align.START)
-                self._panel.set_valign(Gtk.Align.START)
-                self._panel.set_margin_start(max(0, int(x)))
-                self._panel.set_margin_top(max(0, int(y)))
+                host.set_halign(Gtk.Align.START)
+                host.set_valign(Gtk.Align.START)
+                host.set_margin_start(max(0, int(x)))
+                host.set_margin_top(max(0, int(y)))
                 width = max(1, anchor.get_width())
                 height = self._height if self._height is not None else -1
                 self._panel.set_size_request(width, height)
                 return
         halign, valign, top_margin = _ALIGN.get(
             self._position, (Gtk.Align.START, Gtk.Align.FILL, 0))
-        self._panel.set_halign(halign)
-        self._panel.set_valign(valign)
-        self._panel.set_margin_top(top + top_margin)
+        host.set_halign(halign)
+        host.set_valign(valign)
+        host.set_margin_top(top + top_margin)
         width = self._width if self._width is not None else self._width_func()
         height = self._height if self._height is not None else -1
         self._panel.set_size_request(width, height)
@@ -343,7 +359,7 @@ class SearchPopup:
             self._hiding = False
             self._visible = True
             self._scrim.set_visible(True)
-            self._slide_to(1.0)
+            self._frame.set_reveal_child(True)
             return
         self._apply_layout()
 
@@ -355,9 +371,9 @@ class SearchPopup:
         self._scrim.set_visible(True)
         self._panel.set_visible(True)
         self._visible = True
-        if self._slides():
-            self._slide = 0.0
-            self._slide_to(1.0)
+        if self._frame is not None:
+            self._frame.set_visible(True)
+            self._frame.set_reveal_child(True)
 
         if self._focus_func is not None:
             widget = self._focus_func()
@@ -374,8 +390,6 @@ class SearchPopup:
         already under way (for when the home is about to be shown)."""
         if not self._visible:
             if self._hiding and not animate:
-                self._anim.pause()
-                self._anim = None
                 self._finish_hide()
             return
         self._visible = False
@@ -384,12 +398,19 @@ class SearchPopup:
         self._scrim.set_visible(False)
         if animate and self._slides():
             self._hiding = True
-            self._slide_to(0.0)
+            self._frame.set_reveal_child(False)
             return
         self._finish_hide()
 
     def _finish_hide(self) -> None:
         self._hiding = False
+        if self._frame is not None:
+            # Snap shut, so a slide-out cut short doesn't resume next show.
+            transition = self._frame.get_transition_type()
+            self._frame.set_transition_type(Gtk.RevealerTransitionType.NONE)
+            self._frame.set_reveal_child(False)
+            self._frame.set_transition_type(transition)
+            self._frame.set_visible(False)
         self._panel.set_visible(False)
 
         # Reparent content: panel -> home.
@@ -409,55 +430,11 @@ class SearchPopup:
     # -- slide ------------------------------------------------------------
 
     def _slides(self) -> bool:
-        return (
-            self._animate
-            and self._position in (Position.LEFT, Position.RIGHT)
-        )
+        return self._frame is not None and self._position in _SLIDE
 
-    def _slide_to(self, target: float) -> None:
-        from gi.repository import Adw
-
-        if self._anim is not None:
-            self._anim.pause()
-        anim = Adw.TimedAnimation.new(
-            self._panel, self._slide, target, SLIDE_MS,
-            Adw.CallbackAnimationTarget.new(self._on_slide_frame))
-        anim.set_easing(Adw.Easing.EASE_OUT_CUBIC)
-        anim.connect("done", self._on_slide_done)
-        self._anim = anim
-        anim.play()
-
-    def _on_slide_frame(self, value: float) -> None:
-        self._slide = value
-        self._panel.set_opacity(min(1.0, 0.4 + 0.6 * value))
-        self._overlay.queue_allocate()
-
-    def _on_slide_done(self, anim) -> None:
-        if anim is not self._anim:
-            return  # superseded by a reversal; that one owns the outcome
-        self._anim = None
-        if self._hiding:
+    def _on_child_revealed(self, frame, _pspec) -> None:
+        if self._hiding and not frame.get_child_revealed():
             self._finish_hide()
-
-    def _on_child_position(self, overlay, widget, allocation) -> bool:
-        """Offset the panel toward its edge while it slides.
-
-        It gets the whole overlay area, shifted; its own alignment and margins
-        still place it inside that, exactly where it rests when not sliding.
-        """
-        if widget is not self._panel or self._slide >= 1.0:
-            return False
-        at_left = self._position == Position.LEFT
-        if overlay.get_direction() == Gtk.TextDirection.RTL:
-            at_left = not at_left  # START/END alignment flips under RTL
-        # Not yet allocated on the first frame: fall back to the width asked for.
-        width = max(widget.get_width(), widget.get_size_request()[0], 1)
-        offset = int((1.0 - self._slide) * width)
-        allocation.x = -offset if at_left else offset
-        allocation.y = 0
-        allocation.width = overlay.get_width()
-        allocation.height = overlay.get_height()
-        return True
 
     # -- helpers ----------------------------------------------------------
 

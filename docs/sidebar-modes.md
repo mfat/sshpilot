@@ -224,13 +224,15 @@ press-drag onto the edge does not reveal.
 
 ### Slide animation
 
-A side-docked panel (`Position.LEFT` / `RIGHT`) slides in from its edge and back
-out over 200 ms, fading as it goes; centered and anchored placements appear in
-place. The offset comes from the overlay's `get-child-position` signal, driven
-by an `Adw.TimedAnimation` (so "reduce animations" turns it off). `visible`
-flips at the start of a hide, but the content is re-docked only when the
-slide-out ends; `show()` mid slide-out reverses it, and `hide(animate=False)`
-re-docks at once (used when the sidebar itself is shown again).
+The panel sits in a `Gtk.Revealer` (`SearchPopup._frame`): placement
+(alignment, margins) goes on the revealer, size on the panel, so the revealer
+covers only the panel and the work area keeps its input. A side-docked panel
+(`Position.LEFT` / `RIGHT`) slides in from its edge over 200 ms; other
+placements use no transition and appear in place. The revealer honours "reduce
+animations" and mirrors the slide under RTL. `visible` flips at the start of a
+hide, but the content is re-docked only when `child-revealed` drops; `show()`
+mid slide-out reverses it, and `hide(animate=False)` snaps shut and re-docks at
+once (used when the sidebar itself is shown again).
 
 ### Subtle transparency (programmatic only)
 

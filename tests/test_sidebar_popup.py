@@ -195,23 +195,25 @@ def test_anchored_preset_uses_anchor_bounds():
 
 def _sliding_popup():
     p = _popup()
-    p._animate = True
-    p._slide_to = MagicMock()
+    p._frame = MagicMock()
+    p._frame.get_child_revealed.return_value = True
     return p
 
 
-def test_side_panel_slides_in_from_off_screen():
+def test_side_panel_slides_in_through_its_revealer():
     p = _sliding_popup()
     p.show()
-    assert p._slide == 0.0
-    p._slide_to.assert_called_once_with(1.0)
+    p._frame.set_visible.assert_called_with(True)
+    p._frame.set_reveal_child.assert_called_with(True)
 
 
-def test_centered_panel_does_not_slide():
+def test_placement_goes_on_the_revealer_and_size_on_the_panel():
     p = _sliding_popup()
-    p._position = 'center'
-    p.show()
-    p._slide_to.assert_not_called()
+    p.set_margins(start=4, top=8)
+    p._frame.set_margin_start.assert_called_with(4)
+    p._frame.set_halign.assert_called()
+    p._panel.set_margin_start.assert_not_called()
+    p._panel.set_size_request.assert_called_with(280, -1)
 
 
 def test_hide_redocks_only_after_the_slide_out():
@@ -220,12 +222,13 @@ def test_hide_redocks_only_after_the_slide_out():
     p.hide()
     assert p.visible is False and p._hiding is True
     p._scrim.set_visible.assert_called_with(False)
+    p._frame.set_reveal_child.assert_called_with(False)
     p._home.set_content.assert_called_once_with(None)   # not re-docked yet
-    p._slide_to.assert_called_with(0.0)
 
-    p._anim = anim = MagicMock()
-    p._on_slide_done(anim)
+    p._frame.get_child_revealed.return_value = False
+    p._on_child_revealed(p._frame, None)
     p._home.set_content.assert_called_with(p._content)
+    p._frame.set_visible.assert_called_with(False)
     p._on_hidden.assert_called_once_with()
 
 
@@ -235,7 +238,7 @@ def test_show_during_slide_out_turns_it_around():
     p.hide()
     p.show()
     assert p.visible is True and p._hiding is False
-    p._slide_to.assert_called_with(1.0)
+    p._frame.set_reveal_child.assert_called_with(True)
     p._panel.append.assert_called_once()   # content never left the panel
 
 
@@ -243,25 +246,15 @@ def test_hide_without_animation_cuts_a_slide_out_short():
     p = _sliding_popup()
     p.show()
     p.hide()
-    p._anim = MagicMock()
     p.hide(animate=False)
     p._home.set_content.assert_called_with(p._content)
     assert p._hiding is False
 
 
-def test_child_position_offsets_the_panel_toward_its_edge():
-    p = _popup()
-    p._slide = 0.25
-    p._panel.get_width.return_value = 280
-    p._panel.get_size_request.return_value = (280, -1)
-    overlay = MagicMock()
-    overlay.get_width.return_value = 1000
-    overlay.get_height.return_value = 700
-    overlay.get_direction.return_value = 'ltr'
-    rect = MagicMock()
-    assert p._on_child_position(overlay, p._panel, rect) is True
-    assert (rect.x, rect.width, rect.height) == (-210, 1000, 700)
-
-    p._slide = 1.0
-    assert p._on_child_position(overlay, p._panel, rect) is False
-    assert p._on_child_position(overlay, MagicMock(), rect) is False
+def test_centered_panel_hides_at_once():
+    p = _sliding_popup()
+    p._position = 'center'
+    p.show()
+    p.hide()
+    p._home.set_content.assert_called_with(p._content)
+    assert p._hiding is False
