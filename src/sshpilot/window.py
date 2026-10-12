@@ -2276,14 +2276,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
             priority=GLib.PRIORITY_LOW,
         )
-        # Resting the pointer on the leading edge while the sidebar is hidden
-        # floats it out in the same popup (see sidebar_edge_reveal.py).
+        # Resting the pointer on the leading edge, or on the header bar's
+        # sidebar toggle, while the sidebar is hidden floats it out in the same
+        # popup (see sidebar_edge_reveal.py).
         from .sidebar_edge_reveal import SidebarEdgeReveal
         self._sidebar_edge_reveal = SidebarEdgeReveal(
             self._content_overlay,
             popup_func=lambda: getattr(self, '_search_popup', None),
             is_hidden=self._sidebar_hidden_by_toggle,
             keep_open=lambda: bool(getattr(self, '_search_expanded_sidebar', False)),
+            in_hot_zone=self._in_sidebar_toggle_zone,
         )
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
@@ -6323,7 +6325,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return DEFAULT_SIDEBAR_MAX_WIDTH
 
     def _on_search_popup_shown(self) -> None:
-        """Detached: honour search-only modes (spotlight hides the list)."""
+        """Detached: start below the header bar, and honour search-only modes
+        (spotlight hides the list)."""
+        self._search_popup.set_margins(top=self._sidebar_popup_top_inset())
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(not self._search_popup.search_only)
 
@@ -6341,6 +6345,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             popup = getattr(self, '_search_popup', None)
             if popup is not None:
                 popup.hide()
+
+    def _in_sidebar_toggle_zone(self, x: float, y: float) -> bool:
+        """Whether overlay point (x, y) is on the header bar's leading run up
+        to and including the sidebar toggle: the button, the window controls
+        before it and the padding around it, over the header's full height."""
+        button = getattr(self, 'sidebar_toggle_button', None)
+        header = getattr(self, 'header_bar', None)
+        overlay = getattr(self, '_content_overlay', None)
+        if button is None or header is None or overlay is None:
+            return False
+        if not (button.get_mapped() and header.get_mapped()):
+            return False
+        ok_b, b = button.compute_bounds(overlay)
+        ok_h, h = header.compute_bounds(overlay)
+        if not (ok_b and ok_h):
+            return False
+        if not h.get_y() <= y <= h.get_y() + h.get_height():
+            return False
+        if overlay.get_direction() == Gtk.TextDirection.RTL:
+            return x >= b.get_x()
+        return x <= b.get_x() + b.get_width()
+
+    def _sidebar_popup_top_inset(self) -> int:
+        """Height to keep clear above the sidebar popup: the content header
+        bar, so its sidebar toggle stays clickable while the popup is up."""
+        header = getattr(self, 'header_bar', None)
+        overlay = getattr(self, '_content_overlay', None)
+        if header is None or overlay is None or not header.get_mapped():
+            return 0
+        ok, h = header.compute_bounds(overlay)
+        return max(0, int(h.get_y() + h.get_height())) if ok else 0
 
     def _sidebar_hidden_by_toggle(self) -> bool:
         """True while the sidebar is hidden (toggle 'active' means hidden)."""

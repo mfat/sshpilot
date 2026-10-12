@@ -59,7 +59,7 @@ def _controller(state=0):
     return c
 
 
-def _reveal(hidden=True, keep_open=False, width=800):
+def _reveal(hidden=True, keep_open=False, width=800, hot_zone=None):
     overlay = MagicMock()
     overlay.get_direction.return_value = Gtk.TextDirection.LTR
     overlay.get_width.return_value = width
@@ -70,6 +70,7 @@ def _reveal(hidden=True, keep_open=False, width=800):
     r._popup_func = lambda: popup
     r._is_hidden = lambda: hidden
     r._keep_open = lambda: keep_open
+    r._in_hot_zone = hot_zone or (lambda _x, _y: False)
     r._revealed = False
     r._reveal_id = 0
     r._hide_id = 0
@@ -106,6 +107,26 @@ def test_leaving_the_edge_before_the_delay_cancels_the_reveal():
 def test_dragging_onto_the_edge_does_not_reveal():
     r, popup = _reveal()
     r._on_motion(_controller(BUTTON1), 0, 200)
+    assert not r._reveal_id
+
+
+def test_resting_on_the_hot_zone_reveals_the_hidden_sidebar():
+    r, popup = _reveal(hot_zone=lambda x, y: 20 <= x <= 60 and y <= 46)
+    r._on_motion(_controller(), 40, 20)
+    _fire(r, '_reveal_id', r._reveal)
+    assert popup.visible
+
+
+def test_hot_zone_does_nothing_while_the_sidebar_is_docked():
+    r, popup = _reveal(hidden=False, hot_zone=lambda x, y: True)
+    r._on_motion(_controller(), 40, 20)
+    assert not r._reveal_id
+
+
+def test_leaving_the_hot_zone_before_the_delay_cancels_the_reveal():
+    r, popup = _reveal(hot_zone=lambda x, y: y <= 46)
+    r._on_motion(_controller(), 40, 20)
+    r._on_motion(_controller(), 40, 300)
     assert not r._reveal_id
 
 

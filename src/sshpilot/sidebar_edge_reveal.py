@@ -1,7 +1,8 @@
 """Reveal the hidden sidebar as a floating popup when the pointer hits the edge.
 
 While the sidebar is hidden (F9), resting the pointer on the window's leading
-edge for a moment shows the sidebar in the same detachable ``SearchPopup`` that
+edge, or on an owner-defined hot zone (the header bar's sidebar toggle), for a
+moment shows the sidebar in the same detachable ``SearchPopup`` that
 Ctrl+F uses, so the terminal never resizes. Moving the pointer off the panel
 hides it again, unless something has since claimed it (search was opened, or a
 popover such as a row's context menu holds focus inside it).
@@ -45,11 +46,13 @@ class SidebarEdgeReveal:
         popup_func: Callable[[], Optional[object]],
         is_hidden: Callable[[], bool],
         keep_open: Callable[[], bool],
+        in_hot_zone: Optional[Callable[[float, float], bool]] = None,
     ):
         self._overlay = overlay
         self._popup_func = popup_func
         self._is_hidden = is_hidden
         self._keep_open = keep_open
+        self._in_hot_zone = in_hot_zone or (lambda _x, _y: False)
         self._revealed = False
         self._reveal_id = 0
         self._hide_id = 0
@@ -85,7 +88,7 @@ class SidebarEdgeReveal:
             or popup.visible
             or not self._is_hidden()
             or controller.get_current_event_state() & _BUTTONS_MASK
-            or not self._on_edge(x)
+            or not (self._on_edge(x) or self._in_hot_zone(x, y))
         ):
             self._cancel_reveal()
             return

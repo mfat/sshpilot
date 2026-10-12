@@ -211,11 +211,17 @@ overlay children:
 - **The sidebar shown again** (F9 / toggle button) — `_toggle_sidebar_visibility`
   re-docks it first, or the pane would come back empty.
 
+The popup starts below the content header bar (`_sidebar_popup_top_inset`,
+applied in `_on_search_popup_shown`), so the sidebar toggle stays clickable
+while it is up; a click meant for the toggle would otherwise land on the
+sidebar's own toolbar.
+
 ### Edge-hover reveal
 
 `src/sshpilot/sidebar_edge_reveal.py` — while the sidebar is hidden (F9),
-resting the pointer on the window's leading edge (left, or right in RTL) for
-150 ms shows the same popup, sliding in from that edge. Moving off the
+resting the pointer on the window's leading edge (left, or right in RTL), or on
+the header bar from that edge through the sidebar toggle
+(`_in_sidebar_toggle_zone`), for 150 ms shows the same popup, sliding in from that edge. Moving off the
 panel hides it after a 300 ms grace, unless search was opened from it
 (`_search_expanded_sidebar`) or a popover inside it (a row menu) holds focus.
 One CAPTURE-phase `Gtk.EventControllerMotion` on `_content_overlay` drives both
