@@ -40,6 +40,7 @@ from .file_manager_integration import should_hide_external_terminal_options
 from .groups import GroupManager
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
+from .accent_override_css import NAVIGATION_SIDEBAR_SELECTION_CSS
 from .shortcut_utils import get_primary_modifier_label
 from .tag_groups import compute_tag_groups, effective_tags
 
@@ -353,23 +354,9 @@ def install_sidebar_css():
           margin: 1px 4px;
         }
 
-        /* Selected sidebar row: neutral overlay, matching Adwaita's
-           .navigation-sidebar model (not accent fill). Accent selection
-           fights standalone semantic colours (.success/.error) and swamps
-           group colour bars. Stronger than libadwaita's default ~0.10 shade
-           so selection still reads on dark sidebar cards. */
-        .navigation-sidebar row:selected {
-          background-color: alpha(@window_fg_color, 0.18);
-          color: @window_fg_color;
-        }
-
-        .navigation-sidebar row:selected:hover {
-          background-color: alpha(@window_fg_color, 0.22);
-        }
-
-        .navigation-sidebar row:selected:active {
-          background-color: alpha(@window_fg_color, 0.26);
-        }
+        /* Selected sidebar row: shared with accent_override_css so hover/press
+           survive equal-priority provider reordering after accent changes. */
+""" + NAVIGATION_SIDEBAR_SELECTION_CSS + """
 
         .navigation-sidebar row.tinted {
           margin: 4px 8px;
@@ -770,9 +757,9 @@ def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
         }}
 
         /* Selected state intentionally omitted: selection uses the uniform
-           accent style from the sidebar CSS (see window.py
-           `.navigation-sidebar row.tinted:selected`) so every selected row
-           looks the same regardless of its own color. */
+           neutral overlay from the sidebar CSS (see
+           accent_override_css.NAVIGATION_SIDEBAR_SELECTION_CSS) so every
+           selected row looks the same regardless of its own colour. */
         """
         provider.load_from_data(css_data.encode('utf-8'))
 
@@ -2654,7 +2641,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             # Clear previously-applied Adwaita semantic colour classes.
             # .success/.warning/.error use oklab standalone colours, which
             # need the neutral .navigation-sidebar selection above.
-            for _cls in ("success", "warning", "error", "dim-label", "conn-status-up"):
+            for _cls in ("success", "warning", "error", "dim-label"):
                 self.status_icon.remove_css_class(_cls)
 
             # Idle / never connected this session: no status box at all.

@@ -5773,71 +5773,21 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.remove_color_override_provider()
                 return
 
-            # Build CSS with accent color overrides
-            css_rules = [
-                f"@define-color accent_color {accent_color};",
-                f"@define-color accent_bg_color {accent_color};",
-                "@define-color accent_fg_color white;",
-                f"@define-color theme_selected_bg_color {accent_color};",
-                "@define-color theme_selected_fg_color white;",
-                f"@define-color theme_unfocused_selected_bg_color {accent_color};",
-                "@define-color theme_unfocused_selected_fg_color white;",
-            ]
+            from .accent_override_css import build_accent_override_css
 
-            if css_rules:
-                # Force non-sidebar row selection to the custom accent. Keep
-                # .navigation-sidebar on Adwaita's neutral selection model so
-                # standalone semantic status colours (.success/.error) stay
-                # readable; the class may live on the list and/or the row.
-                css_rules.append("")
-                css_rules.append("/* Force row selection to use custom colors */")
-                css_rules.append("row:selected {")
-                css_rules.append("  background-color: @theme_selected_bg_color;")
-                css_rules.append("  color: @theme_selected_fg_color;")
-                css_rules.append("}")
-                css_rules.append("")
-                css_rules.append("row:selected:focus {")
-                css_rules.append("  background-color: @theme_selected_bg_color;")
-                css_rules.append("  color: @theme_selected_fg_color;")
-                css_rules.append("}")
-                css_rules.append("")
-                css_rules.append("list row:selected {")
-                css_rules.append("  background-color: @theme_selected_bg_color;")
-                css_rules.append("  color: @theme_selected_fg_color;")
-                css_rules.append("}")
-                css_rules.append("")
-                css_rules.append(
-                    ".navigation-sidebar row:selected,"
-                    ".navigation-sidebar row:selected:focus,"
-                    "row.navigation-sidebar:selected,"
-                    "row.navigation-sidebar:selected:focus {"
-                )
-                css_rules.append("  background-color: alpha(@window_fg_color, 0.18);")
-                css_rules.append("  color: @window_fg_color;")
-                css_rules.append("}")
+            provider = Gtk.CssProvider()
+            provider.load_from_data(build_accent_override_css(accent_color).encode('utf-8'))
 
-                # Apply custom CSS
-                provider = Gtk.CssProvider()
-                css = "\n".join(css_rules)
-                provider.load_from_data(css.encode('utf-8'))
-
-                # Add provider to display
-                display = Gdk.Display.get_default()
-                if display:
-                    # Remove any existing color override provider first
-                    self.remove_color_override_provider()
-
-                    Gtk.StyleContext.add_provider_for_display(
-                        display,
-                        provider,
-                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                    )
-                    # Store provider reference for cleanup
-                    display._color_override_provider = provider
-                    logger.info("Applied accent color override")
-            else:
-                # Remove any existing color override provider
+            display = Gdk.Display.get_default()
+            if display:
                 self.remove_color_override_provider()
+                Gtk.StyleContext.add_provider_for_display(
+                    display,
+                    provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                display._color_override_provider = provider
+                logger.info("Applied accent color override")
 
         except Exception as e:
             logger.error(f"Failed to apply color overrides: {e}")
