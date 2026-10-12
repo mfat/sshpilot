@@ -27,6 +27,12 @@ Lifecycle
 ---------
     popup.show() / popup.hide() / popup.visible / popup.dismiss()
 
+A panel docked to a side (``LEFT`` / ``RIGHT``) slides in from that edge and
+back out, fading as it goes; other placements appear in place. ``visible``
+flips at the start of a hide, while the content is re-docked only once the
+slide-out finishes. The slide is an ``Adw.TimedAnimation``, so it honours the
+desktop's "reduce animations" setting.
+
 Decoupling
 ----------
 The popup knows nothing about *why* it's shown or what the content is. It only
@@ -53,6 +59,8 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gdk, GLib
 
 logger = logging.getLogger(__name__)
+
+SLIDE_MS = 200
 
 
 class Position:
@@ -96,6 +104,13 @@ _PRESETS = {
 class SearchPopup:
     """A floating panel that detaches ``content`` over the work area."""
 
+    # Slide state: 0 = off-screen, 1 = in place. A popup built without
+    # __init__ (unit tests) keeps _animate False and shows/hides at once.
+    _animate = False
+    _slide = 1.0
+    _anim = None
+    _hiding = False
+
     def __init__(
         self,
         overlay: Gtk.Overlay,
@@ -121,6 +136,7 @@ class SearchPopup:
         self._transparent = False
         self._scrim = None
         self._panel = None
+        self._animate = True
 
         # Presentation state (defaults to the 'sidebar' preset — today's look).
         self._mode = "sidebar"
@@ -162,6 +178,7 @@ class SearchPopup:
         self._panel.add_controller(key)
         self._overlay.add_overlay(self._panel)
         self._overlay.set_measure_overlay(self._panel, False)
+        self._overlay.connect("get-child-position", self._on_child_position)
 
         self._apply_layout()
         self._apply_backdrop()
@@ -320,6 +337,14 @@ class SearchPopup:
         or the popup wasn't built."""
         if self._visible or self._panel is None:
             return
+        if self._hiding:
+            # Shown again mid slide-out: the content never left the panel,
+            # so just turn the slide around.
+            self._hiding = False
+            self._visible = True
+            self._scrim.set_visible(True)
+            self._slide_to(1.0)
+            return
         self._apply_layout()
 
         # Reparent content: home -> panel.
@@ -330,6 +355,9 @@ class SearchPopup:
         self._scrim.set_visible(True)
         self._panel.set_visible(True)
         self._visible = True
+        if self._slides():
+            self._slide = 0.0
+            self._slide_to(1.0)
 
         if self._focus_func is not None:
             widget = self._focus_func()
@@ -340,21 +368,35 @@ class SearchPopup:
         """Recompute panel geometry after its owner changes presentation."""
         self._apply_layout()
 
-    def hide(self) -> None:
+    def hide(self, animate: bool = True) -> None:
         """Re-attach ``content`` to its home, hiding the panel. No-op if not
-        shown."""
+        shown. ``animate=False`` re-docks at once, cutting short a slide-out
+        already under way (for when the home is about to be shown)."""
         if not self._visible:
+            if self._hiding and not animate:
+                self._anim.pause()
+                self._anim = None
+                self._finish_hide()
             return
-        self._panel.set_visible(False)
+        self._visible = False
+        # The scrim goes at once so clicks reach the work area during the
+        # slide-out.
         self._scrim.set_visible(False)
+        if animate and self._slides():
+            self._hiding = True
+            self._slide_to(0.0)
+            return
+        self._finish_hide()
+
+    def _finish_hide(self) -> None:
+        self._hiding = False
+        self._panel.set_visible(False)
 
         # Reparent content: panel -> home.
         if self._content.get_parent() is self._panel:
             self._panel.remove(self._content)
         self._set_home_content(self._content)
         self._on_hidden()
-
-        self._visible = False
 
     def dismiss(self) -> None:
         """Dismiss (Esc / click-outside): the owner's ``on_dismiss`` if given
@@ -363,6 +405,59 @@ class SearchPopup:
             self._on_dismiss()
         else:
             self.hide()
+
+    # -- slide ------------------------------------------------------------
+
+    def _slides(self) -> bool:
+        return (
+            self._animate
+            and self._position in (Position.LEFT, Position.RIGHT)
+        )
+
+    def _slide_to(self, target: float) -> None:
+        from gi.repository import Adw
+
+        if self._anim is not None:
+            self._anim.pause()
+        anim = Adw.TimedAnimation.new(
+            self._panel, self._slide, target, SLIDE_MS,
+            Adw.CallbackAnimationTarget.new(self._on_slide_frame))
+        anim.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+        anim.connect("done", self._on_slide_done)
+        self._anim = anim
+        anim.play()
+
+    def _on_slide_frame(self, value: float) -> None:
+        self._slide = value
+        self._panel.set_opacity(min(1.0, 0.4 + 0.6 * value))
+        self._overlay.queue_allocate()
+
+    def _on_slide_done(self, anim) -> None:
+        if anim is not self._anim:
+            return  # superseded by a reversal; that one owns the outcome
+        self._anim = None
+        if self._hiding:
+            self._finish_hide()
+
+    def _on_child_position(self, overlay, widget, allocation) -> bool:
+        """Offset the panel toward its edge while it slides.
+
+        It gets the whole overlay area, shifted; its own alignment and margins
+        still place it inside that, exactly where it rests when not sliding.
+        """
+        if widget is not self._panel or self._slide >= 1.0:
+            return False
+        at_left = self._position == Position.LEFT
+        if overlay.get_direction() == Gtk.TextDirection.RTL:
+            at_left = not at_left  # START/END alignment flips under RTL
+        # Not yet allocated on the first frame: fall back to the width asked for.
+        width = max(widget.get_width(), widget.get_size_request()[0], 1)
+        offset = int((1.0 - self._slide) * width)
+        allocation.x = -offset if at_left else offset
+        allocation.y = 0
+        allocation.width = overlay.get_width()
+        allocation.height = overlay.get_height()
+        return True
 
     # -- helpers ----------------------------------------------------------
 

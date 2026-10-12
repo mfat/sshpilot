@@ -191,3 +191,77 @@ def test_anchored_preset_uses_anchor_bounds():
     p._panel.set_margin_start.assert_called_with(24)
     p._panel.set_margin_top.assert_called_with(80)
     p._panel.set_size_request.assert_called_with(560, -1)
+
+
+def _sliding_popup():
+    p = _popup()
+    p._animate = True
+    p._slide_to = MagicMock()
+    return p
+
+
+def test_side_panel_slides_in_from_off_screen():
+    p = _sliding_popup()
+    p.show()
+    assert p._slide == 0.0
+    p._slide_to.assert_called_once_with(1.0)
+
+
+def test_centered_panel_does_not_slide():
+    p = _sliding_popup()
+    p._position = 'center'
+    p.show()
+    p._slide_to.assert_not_called()
+
+
+def test_hide_redocks_only_after_the_slide_out():
+    p = _sliding_popup()
+    p.show()
+    p.hide()
+    assert p.visible is False and p._hiding is True
+    p._scrim.set_visible.assert_called_with(False)
+    p._home.set_content.assert_called_once_with(None)   # not re-docked yet
+    p._slide_to.assert_called_with(0.0)
+
+    p._anim = anim = MagicMock()
+    p._on_slide_done(anim)
+    p._home.set_content.assert_called_with(p._content)
+    p._on_hidden.assert_called_once_with()
+
+
+def test_show_during_slide_out_turns_it_around():
+    p = _sliding_popup()
+    p.show()
+    p.hide()
+    p.show()
+    assert p.visible is True and p._hiding is False
+    p._slide_to.assert_called_with(1.0)
+    p._panel.append.assert_called_once()   # content never left the panel
+
+
+def test_hide_without_animation_cuts_a_slide_out_short():
+    p = _sliding_popup()
+    p.show()
+    p.hide()
+    p._anim = MagicMock()
+    p.hide(animate=False)
+    p._home.set_content.assert_called_with(p._content)
+    assert p._hiding is False
+
+
+def test_child_position_offsets_the_panel_toward_its_edge():
+    p = _popup()
+    p._slide = 0.25
+    p._panel.get_width.return_value = 280
+    p._panel.get_size_request.return_value = (280, -1)
+    overlay = MagicMock()
+    overlay.get_width.return_value = 1000
+    overlay.get_height.return_value = 700
+    overlay.get_direction.return_value = 'ltr'
+    rect = MagicMock()
+    assert p._on_child_position(overlay, p._panel, rect) is True
+    assert (rect.x, rect.width, rect.height) == (-210, 1000, 700)
+
+    p._slide = 1.0
+    assert p._on_child_position(overlay, p._panel, rect) is False
+    assert p._on_child_position(overlay, MagicMock(), rect) is False

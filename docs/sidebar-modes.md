@@ -215,12 +215,22 @@ overlay children:
 
 `src/sshpilot/sidebar_edge_reveal.py` — while the sidebar is hidden (F9),
 resting the pointer on the window's leading edge (left, or right in RTL) for
-150 ms shows the same popup, instantly and without animation. Moving off the
+150 ms shows the same popup, sliding in from that edge. Moving off the
 panel hides it after a 300 ms grace, unless search was opened from it
 (`_search_expanded_sidebar`) or a popover inside it (a row menu) holds focus.
 One CAPTURE-phase `Gtk.EventControllerMotion` on `_content_overlay` drives both
 directions and never claims events, so the terminal still gets its motion. A
 press-drag onto the edge does not reveal.
+
+### Slide animation
+
+A side-docked panel (`Position.LEFT` / `RIGHT`) slides in from its edge and back
+out over 200 ms, fading as it goes; centered and anchored placements appear in
+place. The offset comes from the overlay's `get-child-position` signal, driven
+by an `Adw.TimedAnimation` (so "reduce animations" turns it off). `visible`
+flips at the start of a hide, but the content is re-docked only when the
+slide-out ends; `show()` mid slide-out reverses it, and `hide(animate=False)`
+re-docks at once (used when the sidebar itself is shown again).
 
 ### Subtle transparency (programmatic only)
 

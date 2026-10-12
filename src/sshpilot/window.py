@@ -6407,9 +6407,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Re-dock a sidebar that is floating in the popup first, or
                 # the pane comes back empty.
                 popup = getattr(self, '_search_popup', None)
-                if popup is not None and popup.visible:
+                if popup is not None:
                     self._search_expanded_sidebar = False
-                    popup.hide()
+                    popup.hide(animate=False)
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
             if getattr(self, '_split_variant', '') == 'paned':
                 self._sidebar_visible = bool(is_visible)
