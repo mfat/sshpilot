@@ -5,9 +5,10 @@ import logging
 import math
 from typing import List, Optional
 
-from gi.repository import Gtk, Gdk, GLib, Adw, Pango
+from gi.repository import Gtk, Gdk, Gio, GLib, Adw, Pango
 from gettext import gettext as _, ngettext
 
+from .i18n import N_
 from .dnd_payload import (
     claim_in_app_drops_ahead_of_children,
     decode_dnd_payload,
@@ -349,6 +350,11 @@ class SplitPane(Gtk.Box):
         rename_gesture.connect("pressed", self._on_header_pressed)
         self._header.add_controller(rename_gesture)
 
+        # ── header: right-click menu ─────────────────────────────────────
+        self._header_menu: Optional[Gtk.PopoverMenu] = None
+        self._header_menu_xy = (0.0, 0.0)
+        self._install_header_menu()
+
         # ── drop target ──────────────────────────────────────────────────
         self._setup_drop_target()
 
@@ -382,12 +388,10 @@ class SplitPane(Gtk.Box):
         self._title_label.set_ellipsize(Pango.EllipsizeMode.END)
         header.append(self._title_label)
 
-        header.append(self._build_group_chip())
-
-        # Unsplit and full screen are revealed on hover (see the CSS); close
-        # stays visible.
+        # Unsplit and fullscreen are revealed on hover (see the CSS) and sit
+        # ahead of the group chip, which keeps its place next to close.
         unsplit_btn = self._make_header_button(
-            "tab-new-symbolic", _("Move to Own Tab"),
+            "adw-external-link-symbolic", _("Move to Own Tab"),
             lambda _b: self._split_view_tab.move_pane_to_own_tab(self),
         )
         unsplit_btn.add_css_class("split-pane-hover-action")
@@ -399,6 +403,8 @@ class SplitPane(Gtk.Box):
         )
         self._fullscreen_btn.add_css_class("split-pane-hover-action")
         header.append(self._fullscreen_btn)
+
+        header.append(self._build_group_chip())
 
         header.append(self._make_header_button(
             "window-close-symbolic", _("Close Pane"),
@@ -416,6 +422,136 @@ class SplitPane(Gtk.Box):
         button.set_valign(Gtk.Align.CENTER)
         button.connect("clicked", on_clicked)
         return button
+
+    # ── header right-click menu ──────────────────────────────────────────────
+
+    # Terminal-tab menu items that apply to a pane unchanged; they run the
+    # window's own tab-menu handlers on this pane's terminal.
+    _DELEGATED_TAB_ACTIONS = (
+        ('tabmenu-reconnect', N_('Reconnect')),
+        ('tabmenu-manage-files', N_('Manage Files')),
+        ('tabmenu-show-files-panel', N_('Show File Pane')),
+        ('tabmenu-hide-files-panel', N_('Hide File Pane')),
+        ('tabmenu-open-system-terminal', N_('Open in System Terminal')),
+    )
+
+    def _install_header_menu(self) -> None:
+        group = Gio.SimpleActionGroup()
+
+        def _add(name, callback):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect('activate', lambda *_a: callback())
+            group.add_action(action)
+
+        _add('duplicate', self._duplicate_into_new_pane)
+        _add('rename', self._rename_from_menu)
+        for name, _label in self._DELEGATED_TAB_ACTIONS:
+            _add(name, lambda n=name: self._run_tab_action(n))
+        _add('unsplit', lambda: self._split_view_tab.move_pane_to_own_tab(self))
+        _add('fullscreen', lambda: self._split_view_tab.toggle_pane_fullscreen(self))
+        _add('exit-fullscreen', lambda: self._split_view_tab.toggle_pane_fullscreen(self))
+        _add('close', self.close_pane)
+        self.insert_action_group('pane', group)
+        self._header_actions = group
+
+        def _item(label, name):
+            item = Gio.MenuItem.new(label, 'pane.' + name)
+            # Same convention as the tab menu: inapplicable items vanish.
+            item.set_attribute_value('hidden-when', GLib.Variant('s', 'action-disabled'))
+            return item
+
+        menu = Gio.Menu()
+        sec = Gio.Menu()
+        sec.append_item(_item(_('Duplicate'), 'duplicate'))
+        sec.append_item(_item(_('Rename…'), 'rename'))
+        menu.append_section(None, sec)
+        sec = Gio.Menu()
+        for name, label in self._DELEGATED_TAB_ACTIONS:
+            sec.append_item(_item(_(label), name))
+        menu.append_section(None, sec)
+        sec = Gio.Menu()
+        sec.append_item(_item(_('Move to Own Tab'), 'unsplit'))
+        sec.append_item(_item(_('Fullscreen'), 'fullscreen'))
+        sec.append_item(_item(_('Exit Fullscreen'), 'exit-fullscreen'))
+        menu.append_section(None, sec)
+        sec = Gio.Menu()
+        sec.append_item(_item(_('Close Pane'), 'close'))
+        menu.append_section(None, sec)
+        self._header_menu_model = menu
+
+        gesture = Gtk.GestureClick()
+        gesture.set_button(Gdk.BUTTON_SECONDARY)
+        gesture.connect('pressed', self._on_header_secondary_pressed)
+        self._header.add_controller(gesture)
+
+    def _current_terminal(self):
+        terminals = self.get_terminals()
+        return terminals[0] if terminals else None
+
+    def _on_header_secondary_pressed(self, gesture, _n_press, x, y) -> None:
+        terminal = self._current_terminal()
+        if terminal is None:
+            return
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self._split_view_tab._focus_pane(self)
+        self._header_menu_xy = (x, y)
+
+        try:
+            enabled = self._window._enabled_tab_actions(terminal)
+        except Exception:
+            logger.debug("Could not gate the pane menu", exc_info=True)
+            enabled = set()
+        fullscreen = self._split_view_tab._fullscreen_pane is self
+        states = {name: name in enabled for name, _label in self._DELEGATED_TAB_ACTIONS}
+        states.update({
+            'duplicate': 'tabmenu-duplicate' in enabled,
+            'rename': True,
+            'unsplit': True,
+            'fullscreen': not fullscreen,
+            'exit-fullscreen': fullscreen,
+            'close': True,
+        })
+        for name, state in states.items():
+            self._header_actions.lookup_action(name).set_enabled(state)
+
+        if self._header_menu is None:
+            self._header_menu = Gtk.PopoverMenu.new_from_model(self._header_menu_model)
+            self._header_menu.set_parent(self._header)
+            self._header_menu.set_has_arrow(False)
+            self._header_menu.set_halign(Gtk.Align.START)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        self._header_menu.set_pointing_to(rect)
+        self._header_menu.popup()
+
+    def _run_tab_action(self, name: str) -> None:
+        terminal = self._current_terminal()
+        if terminal is not None:
+            self._window.run_tab_menu_action_for(terminal, name)
+
+    def _duplicate_into_new_pane(self) -> None:
+        """Duplicate opens the same host (or a local shell) in a new pane."""
+        terminal = self._current_terminal()
+        if terminal is None:
+            return
+        try:
+            is_local = terminal._is_local_terminal()
+        except Exception:
+            is_local = False
+        if is_local:
+            self._split_view_tab.add_pane().add_local_terminal()
+            return
+        conn = self._window.terminal_to_connection.get(terminal) or getattr(
+            terminal, 'connection', None
+        )
+        if conn is not None:
+            self._split_view_tab.add_pane().add_connection(conn)
+
+    def _rename_from_menu(self) -> None:
+        page = self._inner_tab_view.get_selected_page() if self._has_terminals else None
+        if page is not None:
+            x, y = self._header_menu_xy
+            self._show_inner_tab_rename_popover(page, x, y)
 
     def set_fullscreen_state(self, fullscreen: bool) -> None:
         """Flip the header's full screen button between enter and exit."""
@@ -767,6 +903,12 @@ class SplitPane(Gtk.Box):
     # ── inner tab rename ─────────────────────────────────────────────────────
 
     def _on_header_pressed(self, gesture, n_press, x, y) -> None:
+        if n_press == 1:
+            # The header holds nothing focusable, so a click there would leave
+            # focus (and the active ring) on another pane; hand it to the
+            # terminal as a click inside the pane does.
+            self._split_view_tab._focus_pane(self)
+            return
         if n_press != 2:
             return
         page = self._inner_tab_view.get_selected_page() if self._has_terminals else None

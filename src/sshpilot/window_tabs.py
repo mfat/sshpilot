@@ -516,6 +516,10 @@ class WindowTabsMixin:
 
     def _tab_menu_target(self):
         """Return (page, child) for the current tab menu target, or (None, None)."""
+        override = getattr(self, '_tab_menu_child_override', None)
+        if override is not None:
+            # A split pane's header menu: the terminal has no outer tab page.
+            return None, override
         page = getattr(self, '_tab_menu_page', None)
         if page is None:
             return None, None
@@ -524,6 +528,22 @@ class WindowTabsMixin:
         except Exception:
             child = None
         return page, child
+
+    def run_tab_menu_action_for(self, child, name: str) -> None:
+        """Run the tab menu's *name* action on *child* instead of a tab.
+
+        Split panes reuse the tab menu's handlers for their header menu, so a
+        pane offers exactly what a terminal tab does (and gates it the same
+        way through _enabled_tab_actions).
+        """
+        handler = getattr(self, '_on_' + name.replace('-', '_'), None)
+        if handler is None:
+            return
+        self._tab_menu_child_override = child
+        try:
+            handler(None)
+        finally:
+            self._tab_menu_child_override = None
 
     def _on_tabmenu_duplicate(self, action, param=None):
         try:
