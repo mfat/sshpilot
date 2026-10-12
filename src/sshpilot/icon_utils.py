@@ -115,7 +115,7 @@ _ICON_RESOURCE_MAP = {
     'zoom-in-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/zoom-in-symbolic.svg',
     'network-transmit-receive-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-transmit-receive-symbolic.svg',
     'network-shield-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-symbolic.svg',
-    # Connection-status indicators (recolored by .conn-status-up / .warning / .error).
+    # Connection-status indicators (recolored by .success / .warning / .error).
     'wired-lock-closed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-closed-symbolic.svg',
     'wired-lock-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-dots-symbolic.svg',
     'wired-lock-none-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-none-symbolic.svg',

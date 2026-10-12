@@ -2126,7 +2126,10 @@ class SshPilotApplication(Adw.Application):
             ]
 
             if css_rules:
-                # Add specific CSS rules for row selection
+                # Force non-sidebar row selection to the custom accent. Keep
+                # .navigation-sidebar on Adwaita's neutral selection model so
+                # standalone semantic status colours (.success/.error) stay
+                # readable; the class may live on the list and/or the row.
                 css_rules.append("")
                 css_rules.append("/* Force row selection to use custom colors */")
                 css_rules.append("row:selected {")
@@ -2142,6 +2145,16 @@ class SshPilotApplication(Adw.Application):
                 css_rules.append("list row:selected {")
                 css_rules.append("  background-color: @theme_selected_bg_color;")
                 css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                css_rules.append("")
+                css_rules.append(
+                    ".navigation-sidebar row:selected,"
+                    ".navigation-sidebar row:selected:focus,"
+                    "row.navigation-sidebar:selected,"
+                    "row.navigation-sidebar:selected:focus {"
+                )
+                css_rules.append("  background-color: alpha(@window_fg_color, 0.18);")
+                css_rules.append("  color: @window_fg_color;")
                 css_rules.append("}")
                 
                 # Apply custom CSS

@@ -127,12 +127,6 @@ def _install_sidebar_color_css():
            osd's white text unreadable in light mode. Keep it dark. */
         row.osd:hover:not(:selected) { background-color: rgba(0, 0, 0, 0.8); }
         row.osd:active:not(:selected) { background-color: rgba(0, 0, 0, 0.85); }
-
-        /* Connected status lock: GNOME palette Green 4 (--green-4 / #2ec27e).
-           Prefer the palette variable over Adwaita .success (--success-color),
-           which is a standalone color tuned for neutral backgrounds and reads
-           too dark on accent-selected sidebar rows. */
-        image.conn-status-up { color: var(--green-4); }
         """
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
@@ -359,18 +353,22 @@ def install_sidebar_css():
           margin: 1px 4px;
         }
 
-        /* Selected sidebar row: always use the accent so selection is
-           visible in dark mode by default. libadwaita's default
-           navigation-sidebar selection is a neutral shade that is nearly
-           invisible against the dark card background; this rule (which the
-           accent-override path already emits, but only when an override is
-           set) makes selection clear unconditionally.
-           @accent_bg_color / @accent_fg_color follow the system accent and
-           any user override. The more specific .tinted:selected rule below
-           keeps the identical color for grouped rows. */
+        /* Selected sidebar row: neutral overlay, matching Adwaita's
+           .navigation-sidebar model (not accent fill). Accent selection
+           fights standalone semantic colours (.success/.error) and swamps
+           group colour bars. Stronger than libadwaita's default ~0.10 shade
+           so selection still reads on dark sidebar cards. */
         .navigation-sidebar row:selected {
-          background-color: @accent_bg_color;
-          color: @accent_fg_color;
+          background-color: alpha(@window_fg_color, 0.18);
+          color: @window_fg_color;
+        }
+
+        .navigation-sidebar row:selected:hover {
+          background-color: alpha(@window_fg_color, 0.22);
+        }
+
+        .navigation-sidebar row:selected:active {
+          background-color: alpha(@window_fg_color, 0.26);
         }
 
         .navigation-sidebar row.tinted {
@@ -391,38 +389,10 @@ def install_sidebar_css():
           background-color: alpha(@accent_bg_color, 0.30);
         }
 
+        /* Selected tinted rows share the neutral selection above; drop any
+           accent inset so standalone status colours stay readable. */
         .navigation-sidebar row.tinted:selected {
-          background-color: @accent_bg_color;
-          color: @accent_fg_color;
-          box-shadow: inset 0 0 0 1px @accent_bg_color;
-        }
-
-        .navigation-sidebar row.tinted:selected:hover {
-          background-color: shade(@accent_bg_color, 0.95);
-        }
-
-        .navigation-sidebar row.tinted:selected:active {
-          background-color: shade(@accent_bg_color, 0.90);
-        }
-
-        /* Accent-bar mode: the coloured left bar is the highlight, so a
-           selected row uses a neutral overlay instead of the accent fill
-           (which would swamp the bar). Stronger than libadwaita's default
-           ~0.10 shade so selection still reads on dark sidebar cards.
-           Every bar-mode row carries .color-bar, and this out-specifies the
-           accent `row:selected` rule above at the same provider priority. */
-        .navigation-sidebar row.color-bar:selected {
-          background-color: alpha(@window_fg_color, 0.18);
-          color: @window_fg_color;
           box-shadow: none;
-        }
-
-        .navigation-sidebar row.color-bar:selected:hover {
-          background-color: alpha(@window_fg_color, 0.22);
-        }
-
-        .navigation-sidebar row.color-bar:selected:active {
-          background-color: alpha(@window_fg_color, 0.26);
         }
 
 
@@ -2681,8 +2651,10 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
-            # Clear previously-applied color classes before re-styling.
-            for _cls in ("conn-status-up", "warning", "error", "dim-label"):
+            # Clear previously-applied Adwaita semantic colour classes.
+            # .success/.warning/.error use oklab standalone colours, which
+            # need the neutral .navigation-sidebar selection above.
+            for _cls in ("success", "warning", "error", "dim-label", "conn-status-up"):
                 self.status_icon.remove_css_class(_cls)
 
             # Idle / never connected this session: no status box at all.
@@ -2705,7 +2677,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             if state == ConnectionState.CONNECTED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
-                self.status_icon.add_css_class("conn-status-up")
+                self.status_icon.add_css_class("success")
                 self.status_icon.set_tooltip_text(_("Connected to {host}").format(host=host_value))
             elif state == ConnectionState.CONNECTING:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-dots-symbolic")

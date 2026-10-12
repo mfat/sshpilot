@@ -40,7 +40,7 @@ def test_connected_shows_the_status_box():
     mod.ConnectionRow.update_status(row)
 
     row.status_box.set_visible.assert_called_with(True)
-    row.status_icon.add_css_class.assert_called_with('conn-status-up')
+    row.status_icon.add_css_class.assert_called_with('success')
 
 
 def test_failed_uses_error_style_class():
