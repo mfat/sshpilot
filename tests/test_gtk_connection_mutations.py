@@ -123,6 +123,7 @@ class _MutationWindow:
     _plugin_editor_load_failed = MainWindow._plugin_editor_load_failed
     _retry_plugin_editor_hydrate = MainWindow._retry_plugin_editor_hydrate
     show_connection_dialog = MainWindow.show_connection_dialog
+    _apply_dialog_group_change = MainWindow._apply_dialog_group_change
 
     def __init__(self):
         self.client = _Client()
@@ -747,6 +748,64 @@ def test_new_connection_save_does_not_prompt():
 
     assert completed == [True]
     assert prompts == []
+
+
+def _group_dialog(change):
+    dialog = SimpleNamespace(
+        is_editing=False, connection=None, _initial_group_id="",
+    )
+    dialog.get_group_change = lambda: (
+        None if change == dialog._initial_group_id else change
+    )
+    return dialog
+
+
+def _save_new_with_group(change):
+    window = _MutationWindow()
+    moves = []
+    window.move_connection_to_group = lambda nick, gid: moves.append((nick, gid))
+    completed = []
+    data = _basic_data(
+        nickname="new",
+        hostname="new.example",
+        __save_completion=lambda ok, *a, **k: completed.append(ok),
+    )
+    dialog = _group_dialog(change)
+    window.on_connection_saved(dialog, data)
+    return window, dialog, moves, completed
+
+
+def test_group_picked_in_dialog_is_applied_after_save():
+    window, dialog, moves, completed = _save_new_with_group("g1")
+    assert moves == []  # nothing moves before the daemon confirms the save
+
+    create, create_ok, _failure = window.client_bridge.calls[0]
+    create_ok(create())
+    window.client_bridge.calls[1][1](True)
+
+    assert completed == [True]
+    assert moves == [("new", "g1")]
+    # A resumed save completes again; the move must not repeat.
+    window._apply_dialog_group_change(dialog, {"nickname": "new"})
+    assert moves == [("new", "g1")]
+
+
+def test_unchanged_dialog_group_leaves_membership_alone():
+    window, _dialog, moves, completed = _save_new_with_group("")
+    create, create_ok, _failure = window.client_bridge.calls[0]
+    create_ok(create())
+    window.client_bridge.calls[1][1](True)
+
+    assert completed == [True]
+    assert moves == []
+
+
+def test_failed_save_does_not_apply_dialog_group():
+    window, _dialog, moves, completed = _save_new_with_group("g1")
+    window.client_bridge.calls[0][2](RuntimeError("boom"))
+
+    assert completed == [False]
+    assert moves == []
 
 
 def test_unavailable_daemon_edit_does_not_mutate_local_state():

@@ -8638,6 +8638,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         save_completion(bool(ok), result)
                     except TypeError:
                         save_completion(bool(ok))
+            if ok:
+                self._apply_dialog_group_change(dialog, connection_data)
             has_secret_work = bool(
                 secret_plan and (
                     secret_plan.get('password_changed')
@@ -8674,6 +8676,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to save connection: {e}")
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
+
+    def _apply_dialog_group_change(self, dialog, connection_data):
+        """Move a just-saved connection into the group picked in the dialog."""
+        get_change = getattr(dialog, 'get_group_change', None)
+        target = get_change() if callable(get_change) else None
+        nickname = (connection_data.get('nickname') or '').strip()
+        if target is None or not nickname:
+            return
+        # A resumed save completes again; move only once.
+        dialog._initial_group_id = target
+        self.move_connection_to_group(nickname, target or None)
 
     def show_effective_config_for_connection(self, connection) -> None:
         """Open the effective-config viewer from a daemon comparison result."""

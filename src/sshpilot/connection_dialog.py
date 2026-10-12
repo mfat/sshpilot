@@ -3730,6 +3730,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._setup_comma_autocomplete(self.tags_row, self._tag_candidates)
         basic_group.add(self.tags_row)
 
+        # Group (sidebar folder, owned by the daemon's group store). Applied
+        # by the window after the save succeeds, and only when changed.
+        self.group_row = self._build_group_row()
+        basic_group.add(self.group_row)
+
         # Wake-on-LAN Group
         wol_group = Adw.PreferencesGroup(
             title=_("Wake on LAN"),
@@ -4602,14 +4607,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         host_group = getattr(self, '_host_group', None)
         if host_group is None or not rows:
             return
-        tags_row = getattr(self, 'tags_row', None)
+        trailing = [
+            row for row in (getattr(self, 'tags_row', None),
+                            getattr(self, 'group_row', None))
+            if row is not None
+        ]
         try:
-            if tags_row is not None:
-                host_group.remove(tags_row)
+            for row in trailing:
+                host_group.remove(row)
             for row in rows:
                 host_group.add(row)
-            if tags_row is not None:
-                host_group.add(tags_row)
+            for row in trailing:
+                host_group.add(row)
         except Exception:
             logger.debug("Could not place protocol fields", exc_info=True)
         self._plugin_header_rows = list(rows)
@@ -5272,6 +5281,53 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.close()
             # else: consumer claimed the request and will complete it
             # asynchronously (or already did synchronously).
+
+    def _build_group_row(self):
+        """A combo of "No group" plus every group, nested ones as paths."""
+        row = Adw.ComboRow(title=_("Group"))
+        self._group_choices = [""]
+        names = Gtk.StringList()
+        names.append(_("No group"))
+        group_manager = getattr(self.parent_window, 'group_manager', None)
+
+        def _walk(groups, prefix):
+            for group in groups:
+                path = f"{prefix}{group.get('name', '')}"
+                self._group_choices.append(str(group.get('id', '')))
+                names.append(path)
+                _walk(group.get('children') or [], f"{path} / ")
+
+        try:
+            _walk(group_manager.get_group_hierarchy() if group_manager else [], "")
+        except Exception:
+            logger.debug("Could not list groups for the dialog", exc_info=True)
+        row.set_model(names)
+
+        self._initial_group_id = ""
+        if self.is_editing and group_manager is not None:
+            try:
+                self._initial_group_id = (
+                    group_manager.get_connection_group(self.connection) or ""
+                )
+            except Exception:
+                logger.debug("Could not read the connection's group", exc_info=True)
+        if self._initial_group_id in self._group_choices:
+            row.set_selected(self._group_choices.index(self._initial_group_id))
+        # Nothing to choose from: keep the form short.
+        row.set_visible(len(self._group_choices) > 1)
+        return row
+
+    def get_group_change(self):
+        """The group ID picked in the dialog ("" = ungrouped), or None when
+        the selection is unchanged and membership must be left alone."""
+        row = getattr(self, 'group_row', None)
+        if row is None:
+            return None
+        index = row.get_selected()
+        if index < 0 or index >= len(self._group_choices):
+            return None
+        chosen = self._group_choices[index]
+        return None if chosen == self._initial_group_id else chosen
 
     def _collect_connection_meta(self):
         """Collect Wake-on-LAN, tags and pre-connection metadata (protocol-
