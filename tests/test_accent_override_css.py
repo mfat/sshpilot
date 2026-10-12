@@ -24,3 +24,14 @@ def test_build_accent_override_css_embeds_shared_selection_ladder():
     assert 'alpha(@window_fg_color, 0.22)' in css
     assert 'alpha(@window_fg_color, 0.26)' in css
     assert 'row:selected:hover' in css
+
+
+def test_focus_rests_at_selected_shade_not_hover():
+    # A clicked row is selected and focused; sharing the hover shade with
+    # :focus would make hover a no-op on it.
+    css = NAVIGATION_SIDEBAR_SELECTION_CSS
+    hover_rule = css[css.index('row:selected:hover'):]
+    hover_rule = hover_rule[:hover_rule.index('}')]
+    assert ':focus' not in hover_rule
+    rest_rule = css[:css.index('alpha(@window_fg_color, 0.18)')]
+    assert 'row:selected:focus' in rest_rule

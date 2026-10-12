@@ -14,16 +14,18 @@ from __future__ import annotations
 # libadwaita's default ~0.10 shade so selection still reads on dark cards.
 # Include list- and row-scoped class forms; either may carry the class.
 NAVIGATION_SIDEBAR_SELECTION_CSS = """
+/* :focus belongs at rest: a clicked row is selected *and* focused, so
+   grouping it with :hover would leave hover with no visible step. */
 .navigation-sidebar row:selected,
-row.navigation-sidebar:selected {
+.navigation-sidebar row:selected:focus,
+row.navigation-sidebar:selected,
+row.navigation-sidebar:selected:focus {
   background-color: alpha(@window_fg_color, 0.18);
   color: @window_fg_color;
 }
 
 .navigation-sidebar row:selected:hover,
-.navigation-sidebar row:selected:focus,
-row.navigation-sidebar:selected:hover,
-row.navigation-sidebar:selected:focus {
+row.navigation-sidebar:selected:hover {
   background-color: alpha(@window_fg_color, 0.22);
   color: @window_fg_color;
 }
