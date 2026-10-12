@@ -208,6 +208,19 @@ overlay children:
 - **A search result opened** — `_close_search_if_open()` runs on the shared
   connection-open path (`_cycle_connection_tabs_or_open` /
   `_focus_most_recent_tab_or_open_new`).
+- **The sidebar shown again** (F9 / toggle button) — `_toggle_sidebar_visibility`
+  re-docks it first, or the pane would come back empty.
+
+### Edge-hover reveal
+
+`src/sshpilot/sidebar_edge_reveal.py` — while the sidebar is hidden (F9),
+resting the pointer on the window's leading edge (left, or right in RTL) for
+150 ms shows the same popup, instantly and without animation. Moving off the
+panel hides it after a 300 ms grace, unless search was opened from it
+(`_search_expanded_sidebar`) or a popover inside it (a row menu) holds focus.
+One CAPTURE-phase `Gtk.EventControllerMotion` on `_content_overlay` drives both
+directions and never claims events, so the terminal still gets its motion. A
+press-drag onto the edge does not reveal.
 
 ### Subtle transparency (programmatic only)
 

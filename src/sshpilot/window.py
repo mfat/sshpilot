@@ -2276,6 +2276,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
             priority=GLib.PRIORITY_LOW,
         )
+        # Resting the pointer on the leading edge while the sidebar is hidden
+        # floats it out in the same popup (see sidebar_edge_reveal.py).
+        from .sidebar_edge_reveal import SidebarEdgeReveal
+        self._sidebar_edge_reveal = SidebarEdgeReveal(
+            self._content_overlay,
+            popup_func=lambda: getattr(self, '_search_popup', None),
+            is_hidden=self._sidebar_hidden_by_toggle,
+            keep_open=lambda: bool(getattr(self, '_search_expanded_sidebar', False)),
+        )
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
@@ -6333,6 +6342,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if popup is not None:
                 popup.hide()
 
+    def _sidebar_hidden_by_toggle(self) -> bool:
+        """True while the sidebar is hidden (toggle 'active' means hidden)."""
+        button = getattr(self, 'sidebar_toggle_button', None)
+        return bool(button is not None and button.get_active())
+
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
@@ -6389,6 +6403,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
         try:
+            if is_visible:
+                # Re-dock a sidebar that is floating in the popup first, or
+                # the pane comes back empty.
+                popup = getattr(self, '_search_popup', None)
+                if popup is not None and popup.visible:
+                    self._search_expanded_sidebar = False
+                    popup.hide()
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
             if getattr(self, '_split_variant', '') == 'paned':
                 self._sidebar_visible = bool(is_visible)

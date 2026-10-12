@@ -306,6 +306,11 @@ class SearchPopup:
         self._home.set_child(content)
 
     @property
+    def panel(self) -> Optional[Gtk.Widget]:
+        """The floating panel widget (None if the popup wasn't built)."""
+        return self._panel
+
+    @property
     def visible(self) -> bool:
         """True while the content is detached into the popup."""
         return self._visible
