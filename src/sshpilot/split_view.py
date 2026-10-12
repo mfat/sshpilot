@@ -181,6 +181,24 @@ box.split-pane-header button.split-pane-close {
     min-height: 24px;
     padding: 0;
 }
+/* Unsplit / full screen: hidden until the pointer is over the pane (or a
+   button has keyboard focus); full screen stays shown while zoomed. */
+box.split-pane-header button.split-pane-hover-action {
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+}
+box.split-pane:hover box.split-pane-header button.split-pane-hover-action,
+box.split-pane.split-pane-fullscreen box.split-pane-header button.split-pane-hover-action,
+box.split-pane-header button.split-pane-hover-action:focus-visible {
+    opacity: 1;
+}
+
+/* A full screen pane fills the window edge to edge. */
+box.split-pane.split-pane-fullscreen {
+    margin: 0;
+    border-radius: 0;
+    border-width: 0;
+}
 
 /* Group chip at the trailing edge of the header */
 box.split-pane-group {
@@ -366,15 +384,53 @@ class SplitPane(Gtk.Box):
 
         header.append(self._build_group_chip())
 
-        close_btn = Gtk.Button()
-        close_btn.set_icon_name("window-close-symbolic")
-        close_btn.add_css_class("flat")
-        close_btn.add_css_class("split-pane-close")
-        close_btn.set_tooltip_text(_("Close Pane"))
-        close_btn.set_valign(Gtk.Align.CENTER)
-        close_btn.connect("clicked", lambda _b: self.close_pane())
-        header.append(close_btn)
+        # Unsplit and full screen are revealed on hover (see the CSS); close
+        # stays visible.
+        unsplit_btn = self._make_header_button(
+            "tab-new-symbolic", _("Move to Own Tab"),
+            lambda _b: self._split_view_tab.move_pane_to_own_tab(self),
+        )
+        unsplit_btn.add_css_class("split-pane-hover-action")
+        header.append(unsplit_btn)
+
+        self._fullscreen_btn = self._make_header_button(
+            "view-fullscreen-symbolic", _("Fullscreen"),
+            lambda _b: self._split_view_tab.toggle_pane_fullscreen(self),
+        )
+        self._fullscreen_btn.add_css_class("split-pane-hover-action")
+        header.append(self._fullscreen_btn)
+
+        header.append(self._make_header_button(
+            "window-close-symbolic", _("Close Pane"),
+            lambda _b: self.close_pane(),
+        ))
         return header
+
+    def _make_header_button(self, icon_name: str, tooltip: str, on_clicked) -> Gtk.Button:
+        from sshpilot import icon_utils  # noqa: PLC0415
+        button = Gtk.Button()
+        icon_utils.set_button_icon(button, icon_name)
+        button.add_css_class("flat")
+        button.add_css_class("split-pane-close")
+        button.set_tooltip_text(tooltip)
+        button.set_valign(Gtk.Align.CENTER)
+        button.connect("clicked", on_clicked)
+        return button
+
+    def set_fullscreen_state(self, fullscreen: bool) -> None:
+        """Flip the header's full screen button between enter and exit."""
+        from sshpilot import icon_utils  # noqa: PLC0415
+        icon_utils.set_button_icon(
+            self._fullscreen_btn,
+            "view-restore-symbolic" if fullscreen else "view-fullscreen-symbolic",
+        )
+        self._fullscreen_btn.set_tooltip_text(
+            _("Exit Fullscreen") if fullscreen else _("Fullscreen")
+        )
+        if fullscreen:
+            self.add_css_class("split-pane-fullscreen")
+        else:
+            self.remove_css_class("split-pane-fullscreen")
 
     def _bind_title(self) -> None:
         """Mirror the single page's title into the header label."""
@@ -932,6 +988,17 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
         self.append(self._scroll_overlay)
 
+        # Holds the one pane shown in pane full screen (see
+        # _begin_pane_fullscreen); hidden otherwise.
+        self._fullscreen_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._fullscreen_box.set_hexpand(True)
+        self._fullscreen_box.set_vexpand(True)
+        self._fullscreen_box.set_visible(False)
+        self.append(self._fullscreen_box)
+        self._fullscreen_pane: Optional[SplitPane] = None
+        self._started_window_fullscreen = False
+        self._fullscreened_handler: Optional[int] = None
+
         # Refit the panes whenever the scroll viewport's height changes. GTK4
         # widgets have no usable size-change signal ('notify::height' is not a
         # real property and Gtk.Box ignores a do_size_allocate override), but the
@@ -1329,13 +1396,6 @@ class SplitViewTab(Gtk.Box):
             return False
 
         terminal = terminals[0]
-        inner_page = pane._inner_tab_view.get_page(terminal)
-        title = (
-            inner_page.get_title()
-            if inner_page is not None
-            else getattr(getattr(terminal, 'connection', None), 'nickname', None)
-        ) or _("Terminal")
-
         tab_view = self.window.tab_view
         try:
             position = tab_view.get_page_position(self._tab_page)
@@ -1344,10 +1404,8 @@ class SplitViewTab(Gtk.Box):
 
         # Detach only the widget. Closing the inner page would run its normal
         # terminal cleanup path and disconnect the session we are preserving.
-        try:
-            terminal.unparent()
-        except Exception:
-            logger.debug("Could not detach surviving split terminal", exc_info=True)
+        title = self._detach_pane_terminal(pane, terminal)
+        if title is None:
             return False
 
         self.window._suppress_close_confirmation = True
@@ -1356,6 +1414,29 @@ class SplitViewTab(Gtk.Box):
         finally:
             self.window._suppress_close_confirmation = False
 
+        self._insert_main_tab(terminal, title, position)
+        return False
+
+    def _detach_pane_terminal(self, pane: SplitPane, terminal) -> Optional[str]:
+        """Unparent a pane's terminal without closing its session.
+
+        Returns the terminal's title, or None if it could not be detached.
+        """
+        inner_page = pane._inner_tab_view.get_page(terminal)
+        title = (
+            inner_page.get_title()
+            if inner_page is not None
+            else getattr(getattr(terminal, 'connection', None), 'nickname', None)
+        ) or _("Terminal")
+        try:
+            terminal.unparent()
+        except Exception:
+            logger.debug("Could not detach split terminal", exc_info=True)
+            return None
+        return title
+
+    def _insert_main_tab(self, terminal, title: str, position: int) -> None:
+        tab_view = self.window.tab_view
         try:
             page = tab_view.insert(terminal, position)
         except Exception:
@@ -1370,7 +1451,111 @@ class SplitViewTab(Gtk.Box):
             pass
         tab_view.set_selected_page(page)
         self.window._update_tab_button_visibility()
-        return False
+
+    def move_pane_to_own_tab(self, pane: SplitPane) -> None:
+        """Unsplit: move the pane's terminal into a regular tab of its own.
+
+        The new tab opens right after this split tab. The emptied pane is
+        removed, which may in turn collapse or close this split tab.
+        """
+        terminals = pane.get_terminals()
+        if not terminals or self._tab_page is None:
+            return
+        if self._fullscreen_pane is not None:
+            self._end_pane_fullscreen()
+        terminal = terminals[0]
+        tab_view = self.window.tab_view
+        try:
+            position = tab_view.get_page_position(self._tab_page) + 1
+        except Exception:
+            position = tab_view.get_n_pages()
+        title = self._detach_pane_terminal(pane, terminal)
+        if title is None:
+            return
+        # The pane's own close path would clean up the terminal; it no longer
+        # holds it, so it just leaves the layout.
+        pane._has_terminals = False
+        self._insert_main_tab(terminal, title, position)
+        self.remove_pane(pane)
+
+    # ── pane full screen ─────────────────────────────────────────────────────
+
+    def toggle_pane_fullscreen(self, pane: SplitPane) -> None:
+        if self._fullscreen_pane is pane:
+            self._end_pane_fullscreen()
+        else:
+            self._begin_pane_fullscreen(pane)
+
+    def _begin_pane_fullscreen(self, pane: SplitPane) -> None:
+        """Show one pane alone, filling the window in full screen.
+
+        The pane leaves the grid for a dedicated container; leaving full
+        screen rebuilds the grid, which puts it back in place.
+        """
+        if self._fullscreen_pane is not None:
+            self._end_pane_fullscreen()
+        if pane not in self._panes:
+            return
+        self._release_pane(pane)
+        self._fullscreen_box.append(pane)
+        self._scroll_overlay.set_visible(False)
+        self._add_strip.set_visible(False)
+        self._fullscreen_box.set_visible(True)
+        self._fullscreen_pane = pane
+        pane.set_fullscreen_state(True)
+        self._focus_pane(pane)
+
+        controller = getattr(self.window, 'fullscreen_controller', None)
+        self._started_window_fullscreen = False
+        if controller is not None and not controller.active:
+            controller.enter()
+            self._started_window_fullscreen = True
+        if self._fullscreened_handler is None:
+            self._fullscreened_handler = self.window.connect(
+                'notify::fullscreened', self._on_window_fullscreened_changed
+            )
+
+    def _end_pane_fullscreen(self, *, leave_window_fullscreen: bool = True) -> None:
+        pane = self._fullscreen_pane
+        if pane is None:
+            return
+        self._fullscreen_pane = None
+        if self._fullscreened_handler is not None:
+            self.window.disconnect(self._fullscreened_handler)
+            self._fullscreened_handler = None
+        try:
+            self._fullscreen_box.remove(pane)
+        except Exception:
+            pass
+        self._fullscreen_box.set_visible(False)
+        self._scroll_overlay.set_visible(True)
+        self._add_strip.set_visible(True)
+        pane.set_fullscreen_state(False)
+        if pane in self._panes:
+            self._rebuild_layout()
+            self._focus_pane(pane)
+
+        controller = getattr(self.window, 'fullscreen_controller', None)
+        if (leave_window_fullscreen and self._started_window_fullscreen
+                and controller is not None and controller.active):
+            controller.exit()
+        self._started_window_fullscreen = False
+
+    def _on_window_fullscreened_changed(self, window, _pspec) -> None:
+        # Escape, F11 or the WM took the window out of full screen: the pane
+        # goes back into the grid too.
+        if not window.is_fullscreen():
+            self._end_pane_fullscreen(leave_window_fullscreen=False)
+
+    def _release_pane(self, pane: SplitPane) -> None:
+        parent = pane.get_parent()
+        if isinstance(parent, Gtk.Paned):
+            if parent.get_start_child() is pane:
+                parent.set_start_child(None)
+            elif parent.get_end_child() is pane:
+                parent.set_end_child(None)
+        elif parent is not None:
+            parent.remove(pane)
 
     def register_pane(self, pane: SplitPane) -> None:
         if pane not in self._panes:
@@ -1463,6 +1648,11 @@ class SplitViewTab(Gtk.Box):
 
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
+        # Any change to the grid (adding, closing or moving a pane) ends pane
+        # full screen first, so the zoomed pane is never pulled out from
+        # under its container.
+        if self._fullscreen_pane is not None:
+            self._end_pane_fullscreen()
         self._scroll_spacer = None
 
         # Preserve the horizontal split ratio of each pane pair across the
@@ -2036,6 +2226,8 @@ class SplitViewTab(Gtk.Box):
         return (idx // 2, idx % 2)
 
     def _navigate_pane(self, direction: str) -> None:
+        if self._fullscreen_pane is not None:
+            return  # the other panes are not on screen
         current = self._get_focused_pane()
         if current is None:
             if self._panes:

@@ -4,6 +4,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 
+def _bind_tab_helpers(split):
+    from sshpilot.split_view import SplitViewTab
+
+    for name in ('_detach_pane_terminal', '_insert_main_tab'):
+        method = getattr(SplitViewTab, name)
+        setattr(split, name, lambda *args, _m=method: _m(split, *args))
+
+
 def test_removing_penultimate_pane_schedules_auto_collapse(monkeypatch):
     from sshpilot import split_view as module
 
@@ -67,6 +75,7 @@ def test_single_surviving_pane_collapses_without_cleaning_terminal(monkeypatch):
         _tab_page=split_page,
         window=window,
     )
+    _bind_tab_helpers(split)
     monkeypatch.setattr(
         'sshpilot.icon_utils.new_gicon_from_icon_name', lambda _name: object()
     )
@@ -81,3 +90,49 @@ def test_single_surviving_pane_collapses_without_cleaning_terminal(monkeypatch):
     assert normal_page.title == 'Custom pane title'
     tab_view.set_selected_page.assert_called_once_with(normal_page)
     assert window._suppress_close_confirmation is False
+
+
+def test_unsplit_moves_terminal_to_tab_after_split_without_cleaning(monkeypatch):
+    from sshpilot.split_view import SplitViewTab
+
+    terminal = MagicMock()
+    inner_page = SimpleNamespace(get_title=lambda: 'web-1')
+    pane = SimpleNamespace(
+        get_terminals=lambda: [terminal],
+        _inner_tab_view=SimpleNamespace(get_page=lambda child: inner_page),
+        _has_terminals=True,
+    )
+    split_page = object()
+    normal_page = MagicMock()
+    tab_view = SimpleNamespace(
+        get_page_position=lambda page: 2,
+        get_n_pages=lambda: 4,
+        insert=MagicMock(return_value=normal_page),
+        append=MagicMock(),
+        set_selected_page=MagicMock(),
+    )
+    window = SimpleNamespace(
+        tab_view=tab_view,
+        _update_tab_button_visibility=MagicMock(),
+    )
+    split = SimpleNamespace(
+        _tab_page=split_page,
+        _fullscreen_pane=None,
+        window=window,
+        remove_pane=MagicMock(),
+    )
+    _bind_tab_helpers(split)
+    monkeypatch.setattr(
+        'sshpilot.icon_utils.new_gicon_from_icon_name', lambda _name: object()
+    )
+
+    SplitViewTab.move_pane_to_own_tab(split, pane)
+
+    terminal.unparent.assert_called_once_with()
+    # Right after the split tab, keeping its title.
+    tab_view.insert.assert_called_once_with(terminal, 3)
+    normal_page.set_title.assert_called_once_with('web-1')
+    tab_view.set_selected_page.assert_called_once_with(normal_page)
+    # The pane leaves without its close path, which would clean up the terminal.
+    assert pane._has_terminals is False
+    split.remove_pane.assert_called_once_with(pane)
