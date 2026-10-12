@@ -216,10 +216,10 @@ box.split-pane-group {
     _row_handle_css_installed = True
 
 
-# Active-pane ring, from the GNOME HIG palette: Yellow 4 reads well on the
-# dark header but nearly vanishes on the light one (1.4:1), and no palette
-# yellow does better than 1.8:1 there, so light mode uses Orange 4 (2.9:1).
-_ACTIVE_RING_COLORS = {True: "#f5c211", False: "#e66100"}
+# Active-pane ring: Yellow 4 from the GNOME HIG palette reads well on the
+# dark header but nearly vanishes on the light one (1.4:1), so light mode
+# uses the accent color, which libadwaita keeps legible on light surfaces.
+_ACTIVE_RING_COLORS = {True: "#f5c211", False: "@accent_color"}
 
 
 def _install_active_ring_css() -> None:
