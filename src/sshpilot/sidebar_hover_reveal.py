@@ -51,6 +51,11 @@ class SidebarHoverReveal:
         self._keep_open = keep_open
         self._in_hot_zone = in_hot_zone
         self._revealed = False
+        # Armed only by entering the zone while the sidebar is hidden, so a
+        # click on the toggle that hides it doesn't pop it straight back out
+        # under the resting pointer.
+        self._in_zone = False
+        self._armed = False
         self._reveal_id = 0
         self._hide_id = 0
 
@@ -72,6 +77,13 @@ class SidebarHoverReveal:
     # -- pointer ----------------------------------------------------------
 
     def _on_motion(self, controller, x, y):
+        in_zone = self._in_hot_zone(x, y)
+        if not self._is_hidden():
+            self._armed = False
+        elif in_zone and not self._in_zone:
+            self._armed = True
+        self._in_zone = in_zone
+
         if self.revealed:
             if self._over_panel(x, y):
                 self._cancel_hide()
@@ -85,7 +97,8 @@ class SidebarHoverReveal:
             or popup.visible
             or not self._is_hidden()
             or controller.get_current_event_state() & _BUTTONS_MASK
-            or not self._in_hot_zone(x, y)
+            or not in_zone
+            or not self._armed
         ):
             self._cancel_reveal()
             return
@@ -95,6 +108,7 @@ class SidebarHoverReveal:
     def _on_leave(self, _controller):
         # Leaving the overlay entirely: off the window, or onto a popover's
         # own surface (a row menu). Neither should hide or reveal anything.
+        self._in_zone = False
         self._cancel_reveal()
         self._cancel_hide()
 

@@ -275,7 +275,8 @@ class SearchPopup:
     def set_margins(
         self, *, start: int = 0, end: int = 0, top: int = 0, bottom: int = 0
     ) -> None:
-        """Inset the panel from the edges of its overlay allocation."""
+        """Inset the panel from the edges of its overlay allocation. The top
+        inset also keeps the click-outside scrim clear of that band."""
         self._margins = (start, end, top, bottom)
         self._apply_layout()
 
@@ -287,6 +288,10 @@ class SearchPopup:
             self._frame.set_transition_type(_SLIDE.get(
                 self._position, Gtk.RevealerTransitionType.NONE))
         start, end, top, bottom = self._margins
+        if self._scrim is not None:
+            # The scrim keeps clear of the same top band as the panel, so a
+            # header bar left uncovered still takes its own clicks.
+            self._scrim.set_margin_top(top)
         host.set_margin_start(start)
         host.set_margin_end(end)
         host.set_margin_top(top)

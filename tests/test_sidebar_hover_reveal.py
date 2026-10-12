@@ -76,6 +76,8 @@ def _reveal(hidden=True, keep_open=False, width=800, hot_zone=None):
     r._keep_open = lambda: keep_open
     r._in_hot_zone = hot_zone or _toggle_zone
     r._revealed = False
+    r._in_zone = False
+    r._armed = False
     r._reveal_id = 0
     r._hide_id = 0
     return r, popup
@@ -99,6 +101,20 @@ def test_resting_on_the_hot_zone_reveals_the_hidden_sidebar():
     r._on_motion(_controller(), 40, 20)
     _fire(r, '_reveal_id', r._reveal)
     assert popup.visible
+
+
+def test_hiding_with_the_pointer_on_the_toggle_does_not_pop_it_back_out():
+    hidden = [False]
+    r, popup = _reveal()
+    r._is_hidden = lambda: hidden[0]
+    r._on_motion(_controller(), 30, 20)    # on the toggle, sidebar docked
+    hidden[0] = True                       # the click hides it
+    r._on_motion(_controller(), 31, 20)    # the hand rests, jitters
+    assert not r._reveal_id
+    r._on_motion(_controller(), 30, 300)   # leave the zone ...
+    r._on_motion(_controller(), 30, 20)    # ... and come back: armed
+    assert r._reveal_id
+    r._cancel_reveal()
 
 
 def test_the_window_edge_below_the_header_does_not_reveal():

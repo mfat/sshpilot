@@ -258,3 +258,9 @@ def test_centered_panel_hides_at_once():
     p.hide()
     p._home.set_content.assert_called_with(p._content)
     assert p._hiding is False
+
+
+def test_top_inset_keeps_the_scrim_off_the_header():
+    p = _popup()
+    p.set_margins(top=46)
+    p._scrim.set_margin_top.assert_called_with(46)
