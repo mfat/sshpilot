@@ -16815,3 +16815,7 @@ msgstr "Скопировать ключ на сервер"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Закрывать фрагменты команд после отправки команды"
+
+#: src/sshpilot/window.py:6374
+msgid "Hover to peek at the sidebar"
+msgstr "Наведите указатель, чтобы заглянуть в боковую панель"

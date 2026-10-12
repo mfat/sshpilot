@@ -16528,3 +16528,7 @@ msgstr "رونوشت کلید به سرور"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "پس از ارسال دستور، قطعات فرمان را ببندید"
+
+#: src/sshpilot/window.py:6374
+msgid "Hover to peek at the sidebar"
+msgstr "برای نگاهی گذرا به نوار کناری، نشانگر را روی آن نگه دارید"

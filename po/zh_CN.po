@@ -16051,3 +16051,7 @@ msgstr "复制密钥到服务器"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "发送命令后关闭命令片段"
+
+#: src/sshpilot/window.py:6374
+msgid "Hover to peek at the sidebar"
+msgstr "悬停以预览侧边栏"

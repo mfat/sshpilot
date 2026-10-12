@@ -16412,3 +16412,7 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#: src/sshpilot/window.py:6374
+msgid "Hover to peek at the sidebar"
+msgstr "Survolez pour jeter un œil à la barre latérale"

@@ -6367,9 +6367,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         modifier=get_primary_modifier_label())
                 )
             else:
+                # Second line advertises the hover reveal (sidebar_hover_reveal).
                 button.set_tooltip_text(
                     _('Show Sidebar (F9, {modifier}+B)').format(
                         modifier=get_primary_modifier_label())
+                    + '\n' + _('Hover to peek at the sidebar')
                 )
         except Exception:
             logger.debug("sync sidebar toggle button failed", exc_info=True)

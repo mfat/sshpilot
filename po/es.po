@@ -16779,3 +16779,7 @@ msgstr "Copiar clave al servidor"
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Cerrar fragmentos de comando después de enviar un comando"
+
+#: src/sshpilot/window.py:6374
+msgid "Hover to peek at the sidebar"
+msgstr "Pasa el puntero para echar un vistazo a la barra lateral"
