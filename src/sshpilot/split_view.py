@@ -138,30 +138,39 @@ box.row-drag-ghost {
     min-height: 2px;
 }
 
-/* Pane card: header and terminal share one dark rounded surface.
-   margin > ring spread so the active ring is never clipped. */
+/* Pane card: a rounded surface holding the header and the terminal.
+   The ring is a real border over the pane's own background, not an outer
+   box-shadow: a shadow leaves the anti-aliased clip edge see-through, so
+   the window showed through as light specks at the corners. The border is
+   2px in both states so focusing a pane never shifts its content. */
 box.split-pane {
     margin: 4px;
     border-radius: 10px;
-    box-shadow: 0 0 0 1px alpha(@window_fg_color, 0.18);
+    border: 2px solid mix(@headerbar_bg_color, @window_fg_color, 0.15);
+    background-color: @headerbar_bg_color;
 }
 box.split-pane.split-pane-active {
-    box-shadow: 0 0 0 2px #f5c400;
+    border-color: #f5c400;
 }
-box.split-pane-card {
-    background-color: #0b0b0c;
+
+/* The terminal already frames itself as a margined, rounded card; inside
+   a pane that card would be a second frame, so it fills the pane flat. */
+box.split-pane .terminal-card {
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 /* Pane header: one terminal per pane, so a title row, not a tab bar */
 box.split-pane-header {
-    background-color: #18181a;
-    box-shadow: inset 0 -1px alpha(white, 0.06);
+    background-color: @headerbar_bg_color;
+    box-shadow: inset 0 -1px @headerbar_shade_color;
     padding: 5px 6px 5px 12px;
     min-height: 24px;
-    color: #9a9996;
+    color: alpha(@headerbar_fg_color, 0.6);
 }
 box.split-pane.split-pane-active box.split-pane-header {
-    color: #ffffff;
+    color: @headerbar_fg_color;
 }
 box.split-pane-header label.split-pane-title {
     font-size: 13px;
@@ -171,18 +180,13 @@ box.split-pane-header button.split-pane-close {
     min-width: 24px;
     min-height: 24px;
     padding: 0;
-    color: alpha(white, 0.7);
-}
-box.split-pane-header button.split-pane-close:hover {
-    background-color: alpha(white, 0.10);
 }
 
 /* Group chip at the trailing edge of the header */
 box.split-pane-group {
     padding: 2px 8px 2px 7px;
     border-radius: 999px;
-    background-color: alpha(white, 0.06);
-    color: #c0bfbc;
+    background-color: alpha(currentColor, 0.1);
     font-size: 11.5px;
     font-weight: 500;
 }
@@ -312,7 +316,6 @@ class SplitPane(Gtk.Box):
         # own close button for when the pane is empty.
 
         self._tab_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self._tab_container.add_css_class("split-pane-card")
         self._tab_container.set_hexpand(True)
         self._tab_container.set_vexpand(True)
         self._tab_container.append(self._header)
