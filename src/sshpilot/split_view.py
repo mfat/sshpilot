@@ -391,7 +391,7 @@ class SplitPane(Gtk.Box):
         # Unsplit and fullscreen are revealed on hover (see the CSS) and sit
         # ahead of the group chip, which keeps its place next to close.
         unsplit_btn = self._make_header_button(
-            "adw-external-link-symbolic", _("Move to Own Tab"),
+            "split-pane-unsplit-symbolic", _("Move to Own Tab"),
             lambda _b: self._split_view_tab.move_pane_to_own_tab(self),
         )
         unsplit_btn.add_css_class("split-pane-hover-action")
@@ -407,7 +407,7 @@ class SplitPane(Gtk.Box):
         header.append(self._build_group_chip())
 
         header.append(self._make_header_button(
-            "window-close-symbolic", _("Close Pane"),
+            "split-pane-close-symbolic", _("Close Pane"),
             lambda _b: self.close_pane(),
         ))
         return header

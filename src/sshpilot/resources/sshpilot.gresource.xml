@@ -110,6 +110,9 @@
     <file alias="zoom-in-symbolic.svg">icons/scalable/actions/zoom-in-symbolic.svg</file>
     <file alias="zoom-out-symbolic.svg">icons/scalable/actions/zoom-out-symbolic.svg</file>
     <file alias="adw-external-link-symbolic.svg">icons/scalable/actions/adw-external-link-symbolic.svg</file>
+    <file alias="split-pane-close-symbolic.svg">icons/scalable/actions/split-pane-close-symbolic.svg</file>
+    <file alias="split-pane-unsplit-symbolic.svg">icons/scalable/actions/split-pane-unsplit-symbolic.svg</file>
+    <file alias="view-fullscreen-symbolic.svg">icons/scalable/actions/view-fullscreen-symbolic.svg</file>
     <file alias="bitwarden.svg">icons/scalable/actions/bitwarden.svg</file>
     <file alias="application-x-addon-symbolic.svg">icons/scalable/actions/application-x-addon-symbolic.svg</file>
     <file alias="application-x-executable-symbolic.svg">icons/scalable/actions/application-x-executable-symbolic.svg</file>
