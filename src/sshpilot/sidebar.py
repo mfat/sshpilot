@@ -505,7 +505,7 @@ def install_sidebar_css():
 # (margin_start, margin_end, margin_top, margin_bottom, spacing)
 # Full keeps a smaller start inset so root rows do not read as already nested
 # (real nesting still adds _GROUP_ROW_INDENT_WIDTH per level on top of this).
-_SIDEBAR_ROW_DENSITY_FULL = (4, 12, 6, 6, 12)
+_SIDEBAR_ROW_DENSITY_FULL = (0, 12, 6, 6, 12)
 # Cursor-like compact: minimal vertical padding, tight horizontal inset.
 _SIDEBAR_ROW_DENSITY_COMPACT = (4, 4, 0, 0, 4)
 
@@ -1064,7 +1064,7 @@ class SectionHeaderRow(Gtk.ListBoxRow):
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         # Match Full row start inset so section labels line up with root rows.
-        content.set_margin_start(4)
+        content.set_margin_start(0)
         content.set_margin_end(8)
         content.set_margin_top(4)
         content.set_margin_bottom(2)
@@ -1488,7 +1488,7 @@ class GroupRow(Gtk.ListBoxRow):
         if content is None:
             return
 
-        base = getattr(self, '_content_margin_base', 4)
+        base = getattr(self, '_content_margin_base', 0)
         indent_px = max(0, getattr(self, '_indent_level', 0)) * _GROUP_ROW_INDENT_WIDTH
 
         if indent_px <= 0:
