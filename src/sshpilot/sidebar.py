@@ -505,7 +505,7 @@ def install_sidebar_css():
 # (margin_start, margin_end, margin_top, margin_bottom, spacing)
 # Full keeps a smaller start inset so root rows do not read as already nested
 # (real nesting still adds _GROUP_ROW_INDENT_WIDTH per level on top of this).
-_SIDEBAR_ROW_DENSITY_FULL = (0, 12, 6, 6, 12)
+_SIDEBAR_ROW_DENSITY_FULL = (0, 0, 6, 6, 12)
 # Cursor-like compact: minimal vertical padding, tight horizontal inset.
 _SIDEBAR_ROW_DENSITY_COMPACT = (4, 4, 0, 0, 4)
 
