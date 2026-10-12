@@ -7,7 +7,11 @@ from typing import List, Optional
 from gi.repository import Gtk, Gdk, GLib, Adw
 from gettext import gettext as _, ngettext
 
-from .dnd_payload import decode_dnd_payload, new_internal_drop_target
+from .dnd_payload import (
+    claim_in_app_drops_ahead_of_children,
+    decode_dnd_payload,
+    new_internal_drop_target,
+)
 from .shortcut_utils import (
     accel_matches_latin_fallback,
     latin_fallback_keyvals,
@@ -506,6 +510,9 @@ class SplitPane(Gtk.Box):
         dt = new_internal_drop_target()
         dt.connect("drop", self._on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        # The pane holds the terminals, so it must get ahead of PyXterm's
+        # web view as well.
+        claim_in_app_drops_ahead_of_children(dt)
         self.add_controller(dt)
 
     def _on_drop(self, _target, value, _x: float, _y: float) -> bool:

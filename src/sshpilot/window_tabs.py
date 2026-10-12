@@ -23,7 +23,11 @@ from gettext import gettext as _, ngettext
 from sshpilot import icon_utils
 from .connection_model import Connection
 from .dialog_focus import mark_default_response_visible
-from .dnd_payload import decode_dnd_payload, new_internal_drop_target
+from .dnd_payload import (
+    claim_in_app_drops_ahead_of_children,
+    decode_dnd_payload,
+    new_internal_drop_target,
+)
 from .terminal import TerminalWidget
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
@@ -1448,6 +1452,7 @@ class WindowTabsMixin:
 
         dt.connect("drop", _on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        claim_in_app_drops_ahead_of_children(dt)
         terminal.add_controller(dt)
         # Remember it so SplitPane.add_terminal can detach it when this terminal
         # is embedded into a pane (otherwise it keeps intercepting connection

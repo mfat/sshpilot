@@ -121,3 +121,32 @@ def test_set_internal_drag_icon_uses_dragicon_off_macos(monkeypatch):
     source.set_icon.assert_not_called()
     icon.set_child.assert_called_once_with(image)
     image.set_icon_size.assert_called_once()
+
+
+
+def test_claimed_drop_target_runs_ahead_and_takes_only_in_app_strings():
+    # PyXterm's WebKit view swallows string drops, so the terminal/pane target
+    # must run in CAPTURE — but only for our own drags, so external text still
+    # reaches the terminal.
+    from gi.repository import GObject, Gtk
+    from sshpilot.dnd_payload import (
+        _accept_in_app_string_drop,
+        claim_in_app_drops_ahead_of_children,
+    )
+
+    target = MagicMock()
+    claim_in_app_drops_ahead_of_children(target)
+    target.set_propagation_phase.assert_called_once_with(Gtk.PropagationPhase.CAPTURE)
+    target.connect.assert_called_once_with("accept", _accept_in_app_string_drop)
+
+    for drag, has_string, expected in (
+        (object(), True, True),
+        (None, True, False),
+        (object(), False, False),
+    ):
+        drop = MagicMock()
+        drop.get_drag.return_value = drag
+        drop.get_formats.return_value.contain_gtype.side_effect = (
+            lambda gtype, s=has_string: s and gtype == GObject.TYPE_STRING
+        )
+        assert _accept_in_app_string_drop(target, drop) is expected
