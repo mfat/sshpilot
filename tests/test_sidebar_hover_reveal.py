@@ -1,4 +1,4 @@
-"""Edge-hover reveal of the hidden sidebar (sidebar_edge_reveal.py).
+"""Hover reveal of the hidden sidebar (sidebar_hover_reveal.py).
 
 Drives the motion handlers directly with a stub popup and a fake GLib timer
 that the tests fire by hand, so they run under the suite's stubbed ``gi`` and
@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sshpilot import sidebar_edge_reveal as mod
-from sshpilot.sidebar_edge_reveal import SidebarEdgeReveal
+from sshpilot import sidebar_hover_reveal as mod
+from sshpilot.sidebar_hover_reveal import SidebarHoverReveal
 
 Gtk = mod.Gtk
 BUTTON1 = 1
@@ -59,18 +59,22 @@ def _controller(state=0):
     return c
 
 
+def _toggle_zone(x, y):
+    return x <= 50 and y <= 46
+
+
 def _reveal(hidden=True, keep_open=False, width=800, hot_zone=None):
     overlay = MagicMock()
     overlay.get_direction.return_value = Gtk.TextDirection.LTR
     overlay.get_width.return_value = width
     overlay.get_root.return_value = None
     popup = _Popup()
-    r = SidebarEdgeReveal.__new__(SidebarEdgeReveal)
+    r = SidebarHoverReveal.__new__(SidebarHoverReveal)
     r._overlay = overlay
     r._popup_func = lambda: popup
     r._is_hidden = lambda: hidden
     r._keep_open = lambda: keep_open
-    r._in_hot_zone = hot_zone or (lambda _x, _y: False)
+    r._in_hot_zone = hot_zone or _toggle_zone
     r._revealed = False
     r._reveal_id = 0
     r._hide_id = 0
@@ -84,29 +88,9 @@ def _fire(r, attr, callback):
     callback()
 
 
-def test_resting_on_the_left_edge_reveals_the_hidden_sidebar():
+def test_dragging_onto_the_hot_zone_does_not_reveal():
     r, popup = _reveal()
-    r._on_motion(_controller(), 1, 200)
-    _fire(r, '_reveal_id', r._reveal)
-    assert popup.visible and r.revealed
-
-
-def test_edge_does_nothing_while_the_sidebar_is_docked():
-    r, popup = _reveal(hidden=False)
-    r._on_motion(_controller(), 0, 200)
-    assert not r._reveal_id and not popup.visible
-
-
-def test_leaving_the_edge_before_the_delay_cancels_the_reveal():
-    r, popup = _reveal()
-    r._on_motion(_controller(), 0, 200)
-    r._on_motion(_controller(), 40, 200)
-    assert not r._reveal_id and not popup.visible
-
-
-def test_dragging_onto_the_edge_does_not_reveal():
-    r, popup = _reveal()
-    r._on_motion(_controller(BUTTON1), 0, 200)
+    r._on_motion(_controller(BUTTON1), 30, 20)
     assert not r._reveal_id
 
 
@@ -115,6 +99,12 @@ def test_resting_on_the_hot_zone_reveals_the_hidden_sidebar():
     r._on_motion(_controller(), 40, 20)
     _fire(r, '_reveal_id', r._reveal)
     assert popup.visible
+
+
+def test_the_window_edge_below_the_header_does_not_reveal():
+    r, popup = _reveal()
+    r._on_motion(_controller(), 0, 400)
+    assert not r._reveal_id
 
 
 def test_hot_zone_does_nothing_while_the_sidebar_is_docked():
@@ -130,19 +120,9 @@ def test_leaving_the_hot_zone_before_the_delay_cancels_the_reveal():
     assert not r._reveal_id
 
 
-def test_rtl_uses_the_right_edge():
-    r, popup = _reveal()
-    r._overlay.get_direction.return_value = Gtk.TextDirection.RTL
-    r._on_motion(_controller(), 0, 200)
-    assert not r._reveal_id
-    r._on_motion(_controller(), 799, 200)
-    assert r._reveal_id
-    r._cancel_reveal()
-
-
 def _revealed_with_panel(**kw):
     r, popup = _reveal(**kw)
-    r._on_motion(_controller(), 0, 200)
+    r._on_motion(_controller(), 30, 20)
     _fire(r, '_reveal_id', r._reveal)
     bounds = MagicMock()
     bounds.get_x.return_value = 0
@@ -186,6 +166,7 @@ def test_a_popup_opened_by_search_is_not_hover_hidden():
 )
 def test_real_overlay_takes_a_capture_motion_controller():
     overlay = Gtk.Overlay()
-    r = SidebarEdgeReveal(overlay, lambda: None, lambda: True, lambda: False)
+    r = SidebarHoverReveal(overlay, lambda: None, lambda: True, lambda: False,
+                           _toggle_zone)
     assert r._motion.get_propagation_phase() == Gtk.PropagationPhase.CAPTURE
     assert r._motion.get_widget() is overlay

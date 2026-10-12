@@ -216,17 +216,16 @@ applied in `_on_search_popup_shown`), so the sidebar toggle stays clickable
 while it is up; a click meant for the toggle would otherwise land on the
 sidebar's own toolbar.
 
-### Edge-hover reveal
+### Hover reveal
 
-`src/sshpilot/sidebar_edge_reveal.py` — while the sidebar is hidden (F9),
-resting the pointer on the window's leading edge (left, or right in RTL), or on
-the header bar from that edge through the sidebar toggle
-(`_in_sidebar_toggle_zone`), for 150 ms shows the same popup, sliding in from that edge. Moving off the
-panel hides it after a 300 ms grace, unless search was opened from it
-(`_search_expanded_sidebar`) or a popover inside it (a row menu) holds focus.
-One CAPTURE-phase `Gtk.EventControllerMotion` on `_content_overlay` drives both
-directions and never claims events, so the terminal still gets its motion. A
-press-drag onto the edge does not reveal.
+`src/sshpilot/sidebar_hover_reveal.py` — while the sidebar is hidden (F9),
+resting the pointer on the header bar from the window edge through the sidebar
+toggle (`_in_sidebar_toggle_zone`) for 150 ms shows the same popup, sliding in
+from the leading edge. Moving off the panel hides it after a 300 ms grace, unless
+search was opened from it (`_search_expanded_sidebar`) or a popover inside it
+(a row menu) holds focus. One CAPTURE-phase `Gtk.EventControllerMotion` on
+`_content_overlay` drives both directions and never claims events, so the
+terminal still gets its motion. A press-drag onto the zone does not reveal.
 
 ### Slide animation
 

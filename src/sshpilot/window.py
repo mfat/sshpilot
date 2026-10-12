@@ -2276,11 +2276,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
             priority=GLib.PRIORITY_LOW,
         )
-        # Resting the pointer on the leading edge, or on the header bar's
-        # sidebar toggle, while the sidebar is hidden floats it out in the same
-        # popup (see sidebar_edge_reveal.py).
-        from .sidebar_edge_reveal import SidebarEdgeReveal
-        self._sidebar_edge_reveal = SidebarEdgeReveal(
+        # Resting the pointer on the header bar's sidebar toggle while the
+        # sidebar is hidden floats it out in the same popup (see
+        # sidebar_hover_reveal.py).
+        from .sidebar_hover_reveal import SidebarHoverReveal
+        self._sidebar_hover_reveal = SidebarHoverReveal(
             self._content_overlay,
             popup_func=lambda: getattr(self, '_search_popup', None),
             is_hidden=self._sidebar_hidden_by_toggle,

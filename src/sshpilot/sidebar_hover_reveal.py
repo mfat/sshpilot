@@ -1,8 +1,7 @@
-"""Reveal the hidden sidebar as a floating popup when the pointer hits the edge.
+"""Reveal the hidden sidebar as a floating popup on hover.
 
-While the sidebar is hidden (F9), resting the pointer on the window's leading
-edge, or on an owner-defined hot zone (the header bar's sidebar toggle), for a
-moment shows the sidebar in the same detachable ``SearchPopup`` that
+While the sidebar is hidden (F9), resting the pointer on an owner-defined hot
+zone (the header bar's sidebar toggle) for a moment shows the sidebar in the same detachable ``SearchPopup`` that
 Ctrl+F uses, so the terminal never resizes. Moving the pointer off the panel
 hides it again, unless something has since claimed it (search was opened, or a
 popover such as a row's context menu holds focus inside it).
@@ -20,10 +19,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, GLib, Gtk
 
-# How close to the edge counts as "on" it, and how long the pointer must rest
-# there: long enough that sweeping past the edge toward another window doesn't
-# pop the sidebar open.
-EDGE_PX = 3
+# How long the pointer must rest on the hot zone: long enough that passing
+# over it on the way elsewhere doesn't pop the sidebar open.
 REVEAL_DELAY_MS = 150
 # Grace before hiding, so a brief overshoot past the panel edge is forgiven.
 HIDE_DELAY_MS = 300
@@ -37,8 +34,8 @@ _BUTTONS_MASK = (
 )
 
 
-class SidebarEdgeReveal:
-    """Show ``popup_func()`` on a leading-edge hover while ``is_hidden()``."""
+class SidebarHoverReveal:
+    """Show ``popup_func()`` on a hot-zone hover while ``is_hidden()``."""
 
     def __init__(
         self,
@@ -46,13 +43,13 @@ class SidebarEdgeReveal:
         popup_func: Callable[[], Optional[object]],
         is_hidden: Callable[[], bool],
         keep_open: Callable[[], bool],
-        in_hot_zone: Optional[Callable[[float, float], bool]] = None,
+        in_hot_zone: Callable[[float, float], bool],
     ):
         self._overlay = overlay
         self._popup_func = popup_func
         self._is_hidden = is_hidden
         self._keep_open = keep_open
-        self._in_hot_zone = in_hot_zone or (lambda _x, _y: False)
+        self._in_hot_zone = in_hot_zone
         self._revealed = False
         self._reveal_id = 0
         self._hide_id = 0
@@ -66,7 +63,7 @@ class SidebarEdgeReveal:
 
     @property
     def revealed(self) -> bool:
-        """True while the popup is up because of an edge hover."""
+        """True while the popup is up because of a hover."""
         popup = self._popup_func()
         if self._revealed and (popup is None or not popup.visible):
             self._revealed = False
@@ -88,7 +85,7 @@ class SidebarEdgeReveal:
             or popup.visible
             or not self._is_hidden()
             or controller.get_current_event_state() & _BUTTONS_MASK
-            or not (self._on_edge(x) or self._in_hot_zone(x, y))
+            or not self._in_hot_zone(x, y)
         ):
             self._cancel_reveal()
             return
@@ -100,11 +97,6 @@ class SidebarEdgeReveal:
         # own surface (a row menu). Neither should hide or reveal anything.
         self._cancel_reveal()
         self._cancel_hide()
-
-    def _on_edge(self, x: float) -> bool:
-        if self._overlay.get_direction() == Gtk.TextDirection.RTL:
-            return x >= self._overlay.get_width() - EDGE_PX
-        return x <= EDGE_PX
 
     def _over_panel(self, x: float, y: float) -> bool:
         panel = getattr(self._popup_func(), "panel", None)
