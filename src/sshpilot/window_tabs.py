@@ -1439,7 +1439,15 @@ class WindowTabsMixin:
                     # _on_default_clicked resets horizontal splits to 50/50 and
                     # applies the default sizing for the pane count (fill for ≤2,
                     # 50% rows for more) — same as a freshly-opened split.
-                    GLib.idle_add(lambda: (svt._on_default_clicked(), False)[1])
+                    # Then focus the dropped pane: focus is still on the drag
+                    # source (e.g. the sidebar), and an SSH pane's spawn does
+                    # not grab it, so no pane would be focused otherwise.
+                    def _settle():
+                        svt._on_default_clicked()
+                        if len(svt._panes) > 1:
+                            svt._focus_pane(svt._panes[1])
+                        return False
+                    GLib.idle_add(_settle)
                     return False
                 GLib.idle_add(_embed_terminal_in_pane0)
 
