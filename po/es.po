@@ -2533,7 +2533,7 @@ msgstr "Terminal"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_logs.py:99
 #: src/sshpilot/window_dialogs.py:3218 src/sshpilot/window_dialogs.py:3623
 msgid "Clear"
-msgstr "Claro"
+msgstr "Limpiar"
 
 #: src/sshpilot/connection_dialog.py:4947
 #, fuzzy

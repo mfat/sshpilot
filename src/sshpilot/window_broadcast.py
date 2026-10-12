@@ -8,7 +8,7 @@ terminal sessions and does not own a backend operation.
 
 import logging
 
-from gi.repository import Adw, GLib, Gdk
+from gi.repository import Adw, GLib, Gdk, Gtk
 from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,26 @@ class WindowBroadcastMixin:
     def on_broadcast_entry_activate(self, entry):
         """Handle Enter key press in broadcast entry"""
         self.on_broadcast_send_clicked(self.broadcast_send_button)
+
+    def on_broadcast_entry_changed(self, entry):
+        """Show the clear icon only while there is text to clear"""
+        self._update_broadcast_clear_icon()
+
+    def _update_broadcast_clear_icon(self):
+        pos = Gtk.EntryIconPosition.SECONDARY
+        if not self.broadcast_entry.get_text():
+            self.broadcast_entry.set_icon_from_icon_name(pos, None)
+            return
+        self.broadcast_entry.set_icon_from_icon_name(pos, 'edit-clear-symbolic')
+        self.broadcast_entry.set_icon_tooltip_text(pos, _("Clear"))
+        self.broadcast_entry.set_icon_activatable(pos, True)
+
+    def on_broadcast_entry_icon_release(self, entry, icon_pos):
+        """Clear the command and keep typing in the entry"""
+        if icon_pos != Gtk.EntryIconPosition.SECONDARY:
+            return
+        self.broadcast_entry.set_text("")
+        self.broadcast_entry.grab_focus()
 
     def on_broadcast_entry_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in broadcast entry"""

@@ -115,3 +115,17 @@ def test_banner_never_hides_itself():
     window.hide_broadcast_banner.assert_not_called()
     window.broadcast_banner.set_reveal_child.assert_not_called()
     window.broadcast_banner.set_visible.assert_not_called()
+
+
+def test_clear_icon_empties_entry_and_keeps_focus():
+    from unittest.mock import Mock
+    from gi.repository import Gtk
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    WindowBroadcastMixin.on_broadcast_entry_icon_release(
+        window, window.broadcast_entry, Gtk.EntryIconPosition.SECONDARY
+    )
+    window.broadcast_entry.set_text.assert_called_once_with("")
+    window.broadcast_entry.grab_focus.assert_called_once()
+    window.hide_broadcast_banner.assert_not_called()

@@ -3742,7 +3742,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # a labelled-by relation, so name the entry directly.
         set_accessible_name(self.broadcast_entry, _("Broadcast Command"))
         self.broadcast_entry.set_hexpand(True)
+        self._update_broadcast_clear_icon()
         self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
+        self.broadcast_entry.connect('changed', self.on_broadcast_entry_changed)
+        self.broadcast_entry.connect('icon-release', self.on_broadcast_entry_icon_release)
 
         # Add ESC key handling to the entry
         entry_controller = Gtk.EventControllerKey()
