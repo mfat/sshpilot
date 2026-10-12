@@ -150,9 +150,6 @@ box.split-pane {
     border: 2px solid mix(@headerbar_bg_color, @window_fg_color, 0.15);
     background-color: @headerbar_bg_color;
 }
-box.split-pane.split-pane-active {
-    border-color: #f5c400;
-}
 
 /* The terminal already frames itself as a margined, rounded card; inside
    a pane that card would be a second frame, so it fills the pane flat. */
@@ -215,7 +212,33 @@ box.split-pane-group {
         provider,
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
+    _install_active_ring_css()
     _row_handle_css_installed = True
+
+
+# Active-pane ring, from the GNOME HIG palette: Yellow 4 reads well on the
+# dark header but nearly vanishes on the light one (1.4:1), and no palette
+# yellow does better than 1.8:1 there, so light mode uses Orange 4 (2.9:1).
+_ACTIVE_RING_COLORS = {True: "#f5c211", False: "#e66100"}
+
+
+def _install_active_ring_css() -> None:
+    provider = Gtk.CssProvider()
+    style_manager = Adw.StyleManager.get_default()
+
+    def _apply(*_args) -> None:
+        color = _ACTIVE_RING_COLORS[bool(style_manager.get_dark())]
+        provider.load_from_data(
+            f"box.split-pane.split-pane-active {{ border-color: {color}; }}".encode()
+        )
+
+    _apply()
+    style_manager.connect("notify::dark", _apply)
+    Gtk.StyleContext.add_provider_for_display(
+        Gdk.Display.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
 
 
 class RowResizeHandle(Gtk.DrawingArea):
