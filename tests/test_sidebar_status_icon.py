@@ -22,7 +22,6 @@ def _row(*, state=ConnectionState.UNKNOWN, show_status=True):
     row.status_box = MagicMock(name='status_box')
     row.status_icon = MagicMock(name='status_icon')
     row._resolve_status = lambda: (state, '')
-    row._install_status_css = lambda: None
     row._apply_group_color_style = MagicMock()
     return row, mod
 
@@ -41,6 +40,16 @@ def test_connected_shows_the_status_box():
     mod.ConnectionRow.update_status(row)
 
     row.status_box.set_visible.assert_called_with(True)
+    row.status_icon.add_css_class.assert_called_with('success')
+
+
+def test_failed_uses_error_style_class():
+    row, mod = _row(state=ConnectionState.FAILED)
+
+    mod.ConnectionRow.update_status(row)
+
+    row.status_box.set_visible.assert_called_with(True)
+    row.status_icon.add_css_class.assert_called_with('error')
 
 
 def test_status_pref_off_hides_the_status_box():

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -226,3 +228,53 @@ def test_targets_in_use_survive_the_limit(tmp_path):
             )
         )
     assert repo.get_record(keep.id) is not None
+
+
+def _ssh_resolve(config: Path, host: str) -> dict:
+    """What real OpenSSH resolves for ``host`` under ``-F config``."""
+    ssh = shutil.which("ssh")
+    if ssh is None:
+        pytest.skip("OpenSSH client not installed")
+    out = subprocess.run(
+        [ssh, "-G", "-F", str(config), host],
+        check=True, capture_output=True, text=True, timeout=10,
+    ).stdout
+    resolved = {}
+    for line in out.splitlines():
+        key, _, value = line.partition(" ")
+        resolved.setdefault(key, value)
+    return resolved
+
+
+def test_issue_1320_jump_host_sees_the_users_config(tmp_path):
+    # The reporter's config: every host jumps through jumpTest, and jumpTest
+    # has its own HostName and Port.
+    repo, _root = _repo(
+        tmp_path,
+        "Host jumpTest\n"
+        "    Hostname jumpTest.site.net\n"
+        "    ProxyJump none\n"
+        "    Port 2022\n"
+        "Host *\n"
+        "    HostName %h.site.net\n"
+        "    Port 2022\n"
+        "    User root\n"
+        "    ProxyJump jumpTest\n",
+    )
+    record = repo.open_transient_connection({"hostname": "hi", "protocol": "ssh"})
+    provider = DaemonConnectionLaunchProvider(repo.get_record)
+    argv, _env = provider.prepare_terminal_launch(
+        record.id, interaction_policy="broker"
+    )
+    config = Path(argv[argv.index("-F") + 1])
+
+    # The target itself picks up Host * ...
+    target = _ssh_resolve(config, "hi")
+    assert target["proxyjump"] == "jumpTest"
+
+    # ... and OpenSSH re-runs ``ssh -F <same file> -W ... jumpTest`` for the
+    # hop, so jumpTest must resolve through that file exactly as it does
+    # through the user's own config.
+    jump = _ssh_resolve(config, "jumpTest")
+    assert jump["hostname"] == "jumptest.site.net"
+    assert jump["port"] == "2022"

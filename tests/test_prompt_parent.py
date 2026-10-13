@@ -331,3 +331,26 @@ def test_no_output_sink_is_the_default(monkeypatch):
 
     assert app.output_sinks == {"scope-7": None}
 
+
+def test_shown_settings_window_takes_prompts_meant_for_its_main_window():
+    """Settings is transient for the main window and covers it, so a prompt
+    that would land on the main window goes to Settings instead."""
+    main = FakeWin()
+    main._preferences_window = FakeWin()
+    parent = resolve_topmost_prompt_parent([main, main._preferences_window], main, main)
+    assert parent is main._preferences_window
+
+
+def test_hidden_settings_window_is_ignored():
+    main = FakeWin()
+    main._preferences_window = FakeWin(visible=False)
+    parent = resolve_topmost_prompt_parent([main, main._preferences_window], main, main)
+    assert parent is main
+
+
+def test_modal_secondary_still_beats_shown_settings():
+    main = FakeWin()
+    main._preferences_window = FakeWin()
+    browse = FakeWin(modal=True)
+    parent = resolve_topmost_prompt_parent([main, browse], main, main)
+    assert parent is browse

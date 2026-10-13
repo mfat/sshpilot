@@ -208,6 +208,36 @@ overlay children:
 - **A search result opened** — `_close_search_if_open()` runs on the shared
   connection-open path (`_cycle_connection_tabs_or_open` /
   `_focus_most_recent_tab_or_open_new`).
+- **The sidebar shown again** (F9 / toggle button) — `_toggle_sidebar_visibility`
+  re-docks it first, or the pane would come back empty.
+
+The popup starts below the content header bar (`_sidebar_popup_top_inset`,
+applied in `_on_search_popup_shown`), so the sidebar toggle stays clickable
+while it is up; a click meant for the toggle would otherwise land on the
+sidebar's own toolbar.
+
+### Hover reveal
+
+`src/sshpilot/sidebar_hover_reveal.py` — while the sidebar is hidden (F9),
+resting the pointer on the header bar from the window edge through the sidebar
+toggle (`_in_sidebar_toggle_zone`) for 350 ms shows the same popup, sliding in
+from the leading edge. Moving off the panel hides it after a 300 ms grace, unless
+search was opened from it (`_search_expanded_sidebar`) or a popover inside it
+(a row menu) holds focus. One CAPTURE-phase `Gtk.EventControllerMotion` on
+`_content_overlay` drives both directions and never claims events, so the
+terminal still gets its motion. A press-drag onto the zone does not reveal.
+
+### Slide animation
+
+The panel sits in a `Gtk.Revealer` (`SearchPopup._frame`): placement
+(alignment, margins) goes on the revealer, size on the panel, so the revealer
+covers only the panel and the work area keeps its input. A side-docked panel
+(`Position.LEFT` / `RIGHT`) slides in from its edge over 200 ms; other
+placements use no transition and appear in place. The revealer honours "reduce
+animations" and mirrors the slide under RTL. `visible` flips at the start of a
+hide, but the content is re-docked only when `child-revealed` drops; `show()`
+mid slide-out reverses it, and `hide(animate=False)` snaps shut and re-docks at
+once (used when the sidebar itself is shown again).
 
 ### Subtle transparency (programmatic only)
 

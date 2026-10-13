@@ -40,6 +40,7 @@ from .file_manager_integration import should_hide_external_terminal_options
 from .groups import GroupManager
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
+from .accent_override_css import NAVIGATION_SIDEBAR_SELECTION_CSS
 from .shortcut_utils import get_primary_modifier_label
 from .tag_groups import compute_tag_groups, effective_tags
 
@@ -79,7 +80,6 @@ logger = logging.getLogger(__name__)
 _COLOR_CSS_INSTALLED = False
 _DEFAULT_ROW_MARGIN_START = 0
 _DEFAULT_ROW_WIDGET_MARGIN_START = -1
-_GROUP_DISPLAY_OPTIONS = {"fullwidth", "nested"}
 _GROUP_ROW_INDENT_WIDTH = 20
 _MIN_VALID_MARGIN = 0
 
@@ -353,19 +353,9 @@ def install_sidebar_css():
           margin: 1px 4px;
         }
 
-        /* Selected sidebar row: always use the accent so selection is
-           visible in dark mode by default. libadwaita's default
-           navigation-sidebar selection is a neutral shade that is nearly
-           invisible against the dark card background; this rule (which the
-           accent-override path already emits, but only when an override is
-           set) makes selection clear unconditionally.
-           @accent_bg_color / @accent_fg_color follow the system accent and
-           any user override. The more specific .tinted:selected rule below
-           keeps the identical color for grouped rows. */
-        .navigation-sidebar row:selected {
-          background-color: @accent_bg_color;
-          color: @accent_fg_color;
-        }
+        /* Selected sidebar row: shared with accent_override_css so hover/press
+           survive equal-priority provider reordering after accent changes. */
+""" + NAVIGATION_SIDEBAR_SELECTION_CSS + """
 
         .navigation-sidebar row.tinted {
           margin: 4px 8px;
@@ -385,38 +375,10 @@ def install_sidebar_css():
           background-color: alpha(@accent_bg_color, 0.30);
         }
 
+        /* Selected tinted rows share the neutral selection above; drop any
+           accent inset so standalone status colours stay readable. */
         .navigation-sidebar row.tinted:selected {
-          background-color: @accent_bg_color;
-          color: @accent_fg_color;
-          box-shadow: inset 0 0 0 1px @accent_bg_color;
-        }
-
-        .navigation-sidebar row.tinted:selected:hover {
-          background-color: shade(@accent_bg_color, 0.95);
-        }
-
-        .navigation-sidebar row.tinted:selected:active {
-          background-color: shade(@accent_bg_color, 0.90);
-        }
-
-        /* Accent-bar mode: the coloured left bar is the highlight, so a
-           selected row uses a neutral overlay instead of the accent fill
-           (which would swamp the bar). Stronger than libadwaita's default
-           ~0.10 shade so selection still reads on dark sidebar cards.
-           Every bar-mode row carries .color-bar, and this out-specifies the
-           accent `row:selected` rule above at the same provider priority. */
-        .navigation-sidebar row.color-bar:selected {
-          background-color: alpha(@window_fg_color, 0.18);
-          color: @window_fg_color;
           box-shadow: none;
-        }
-
-        .navigation-sidebar row.color-bar:selected:hover {
-          background-color: alpha(@window_fg_color, 0.22);
-        }
-
-        .navigation-sidebar row.color-bar:selected:active {
-          background-color: alpha(@window_fg_color, 0.26);
         }
 
 
@@ -540,7 +502,9 @@ def install_sidebar_css():
 
 #: Row content margins/spacing for full vs compact sidebar modes.
 # (margin_start, margin_end, margin_top, margin_bottom, spacing)
-_SIDEBAR_ROW_DENSITY_FULL = (12, 12, 6, 6, 12)
+# Full keeps a smaller start inset so root rows do not read as already nested
+# (real nesting still adds _GROUP_ROW_INDENT_WIDTH per level on top of this).
+_SIDEBAR_ROW_DENSITY_FULL = (0, 0, 6, 6, 12)
 # Cursor-like compact: minimal vertical padding, tight horizontal inset.
 _SIDEBAR_ROW_DENSITY_COMPACT = (4, 4, 0, 0, 4)
 
@@ -794,9 +758,9 @@ def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
         }}
 
         /* Selected state intentionally omitted: selection uses the uniform
-           accent style from the sidebar CSS (see window.py
-           `.navigation-sidebar row.tinted:selected`) so every selected row
-           looks the same regardless of its own color. */
+           neutral overlay from the sidebar CSS (see
+           accent_override_css.NAVIGATION_SIDEBAR_SELECTION_CSS) so every
+           selected row looks the same regardless of its own colour. */
         """
         provider.load_from_data(css_data.encode('utf-8'))
 
@@ -1098,7 +1062,8 @@ class SectionHeaderRow(Gtk.ListBoxRow):
         self._expanded = self._load_expanded()
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        content.set_margin_start(12)
+        # Match Full row start inset so section labels line up with root rows.
+        content.set_margin_start(0)
         content.set_margin_end(8)
         content.set_margin_top(4)
         content.set_margin_bottom(2)
@@ -1228,13 +1193,11 @@ class GroupRow(Gtk.ListBoxRow):
         # Main content
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         _apply_sidebar_row_density(content, config)
-        # Kept so set_indentation() can offset nested group headers and honor
-        # the fullwidth/nested Group Layout preference.
+        # Kept so set_indentation() can offset nested group headers.
         self._content = content
         self._content_margin_base = content.get_margin_start()
         self._content_spacing_base = content.get_spacing()
         self._indent_level = 0
-        self._group_display_mode = None
 
         from sshpilot import icon_utils
         self.color_dot = _create_color_dot("big-dot-symbolic")
@@ -1488,55 +1451,17 @@ class GroupRow(Gtk.ListBoxRow):
             self._indent_level = max(0, int(level or 0))
         except (TypeError, ValueError):
             self._indent_level = 0
-        self._apply_group_display_mode()
+        self._apply_indentation()
 
-    def refresh_group_display_mode(self, new_mode: Optional[str] = None) -> None:
-        """Re-apply indentation when the Group Layout preference changes."""
-        if new_mode:
-            normalized = str(new_mode).lower()
-            if normalized in _GROUP_DISPLAY_OPTIONS:
-                self._group_display_mode = normalized
-        else:
-            self._group_display_mode = None
-        self._apply_group_display_mode()
-
-    def _get_group_display_mode(self) -> str:
-        if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
-            return self._group_display_mode
-
-        mode = 'nested'
-        config = getattr(self.group_manager, 'config', None)
-        if config:
-            try:
-                value = str(config.get_setting('ui.group_row_display', mode)).lower()
-                if value in _GROUP_DISPLAY_OPTIONS:
-                    mode = value
-            except Exception:
-                pass
-
-        self._group_display_mode = mode
-        return mode
-
-    def _apply_group_display_mode(self) -> None:
+    def _apply_indentation(self) -> None:
+        """Shift the whole header card right by its depth in the tree."""
         content = getattr(self, '_content', None)
         if content is None:
             return
 
-        base = getattr(self, '_content_margin_base', 12)
         indent_px = max(0, getattr(self, '_indent_level', 0)) * _GROUP_ROW_INDENT_WIDTH
-
-        if indent_px <= 0:
-            self.set_margin_start(0)
-            content.set_margin_start(base)
-            return
-
-        if self._get_group_display_mode() == 'fullwidth':
-            # Row spans full width; only the header content is indented.
-            self.set_margin_start(0)
-            content.set_margin_start(base + indent_px)
-        else:  # nested: the whole header card shifts right
-            self.set_margin_start(indent_px)
-            content.set_margin_start(base)
+        self.set_margin_start(indent_px)
+        content.set_margin_start(getattr(self, '_content_margin_base', 0))
 
     def add_member_row(self, row: Gtk.ListBoxRow) -> None:
         """Track a direct member row for in-place expand/collapse."""
@@ -1654,7 +1579,7 @@ class GroupRow(Gtk.ListBoxRow):
             _apply_sidebar_row_density(content, config)
             self._content_margin_base = content.get_margin_start()
             self._content_spacing_base = content.get_spacing()
-            self._apply_group_display_mode()
+            self._apply_indentation()
         if hasattr(self, 'expand_button') and self.expand_button is not None:
             # Keep the expand chevron in both Full and Compact modes.
             self.expand_button.set_visible(True)
@@ -1865,7 +1790,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         # ``FULL_LABEL_MIN_CHARS`` floor.
         self._indicators_reserved = True
         self._indent_level = 0
-        self._group_display_mode = None
         self._row_margin_base = None
         self._content_margin_base = None
         self._content_spacing_base = 12
@@ -2262,38 +2186,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         else:
             self._row_margin_base = _DEFAULT_ROW_WIDGET_MARGIN_START
 
-        self._apply_group_display_mode()
+        self._apply_indentation()
 
-    def refresh_group_display_mode(self, new_mode: Optional[str] = None):
-        """Refresh indentation styling when the preference changes."""
-        if new_mode:
-            normalized = str(new_mode).lower()
-            if normalized in _GROUP_DISPLAY_OPTIONS:
-                self._group_display_mode = normalized
-        else:
-            # Force new lookup from config
-            self._group_display_mode = None
-
-        self._apply_group_display_mode()
-
-    def _get_group_display_mode(self) -> str:
-        if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
-            return self._group_display_mode
-
-        mode = 'nested'
-        config = getattr(self, 'config', None)
-        if config:
-            try:
-                value = str(config.get_setting('ui.group_row_display', mode)).lower()
-                if value in _GROUP_DISPLAY_OPTIONS:
-                    mode = value
-            except Exception:
-                pass
-
-        self._group_display_mode = mode
-        return mode
-
-    def _apply_group_display_mode(self):
+    def _apply_indentation(self):
+        """Shift the whole row right by its depth in the tree."""
         content = getattr(self, '_content_box', None)
         if not content:
             return
@@ -2306,20 +2202,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         indent_level = getattr(self, '_indent_level', 0)
         indent_px = max(0, indent_level) * _GROUP_ROW_INDENT_WIDTH
-
-        mode = self._get_group_display_mode()
-
-        if indent_px <= 0:
-            self.set_margin_start(self._row_margin_base)
-            content.set_margin_start(self._content_margin_base)
-            return
-
-        if mode == 'fullwidth':
-            self.set_margin_start(self._row_margin_base)
-            content.set_margin_start(self._content_margin_base + indent_px)
-        else:  # nested mode
-            self.set_margin_start(self._row_margin_base + indent_px)
-            content.set_margin_start(self._content_margin_base)
+        self.set_margin_start(self._row_margin_base + indent_px)
+        content.set_margin_start(self._content_margin_base)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
         # Rows listed under a virtual tag group are colorless: the color
@@ -2527,30 +2411,6 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     # -- display updates --------------------------------------------------
 
-    @staticmethod
-    def _install_status_css():
-        """Custom color for the failed/disconnected status icon. Uses an explicit
-        red (#DC2626) instead of libadwaita's .error so it stays the same red in
-        dark mode (where .error becomes a coral/orange-ish tone)."""
-        try:
-            display = Gdk.Display.get_default()
-            if not display:
-                return
-            if getattr(display, "_status_css_installed", False):
-                return
-            provider = Gtk.CssProvider()
-            css = (
-                "image.conn-status-up { color: #16A34A; }"
-                "image.conn-status-down { color: #DC2626; }"
-            )
-            provider.load_from_data(css.encode("utf-8"))
-            Gtk.StyleContext.add_provider_for_display(
-                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-            )
-            setattr(display, "_status_css_installed", True)
-        except Exception:
-            pass
-
     def set_indicators_reserved(self, reserved: bool) -> None:
         """Keep the port-forwarding indicator, or shed it for a narrow sidebar.
 
@@ -2658,7 +2518,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             _apply_sidebar_row_density(content, self.config)
             self._content_margin_base = content.get_margin_start()
             self._content_spacing_base = content.get_spacing()
-            self._apply_group_display_mode()
+            self._apply_indentation()
         compact = _sidebar_is_compact(self.config)
         show_host = False
         if not compact and self.config is not None:
@@ -2699,10 +2559,10 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
-            # Clear any previously-applied semantic color classes before re-styling.
-            self._install_status_css()
-            for _cls in ("success", "warning", "error", "dim-label",
-                         "conn-status-up", "conn-status-down"):
+            # Clear previously-applied Adwaita semantic colour classes.
+            # .success/.warning/.error use oklab standalone colours, which
+            # need the neutral .navigation-sidebar selection above.
+            for _cls in ("success", "warning", "error", "dim-label"):
                 self.status_icon.remove_css_class(_cls)
 
             # Idle / never connected this session: no status box at all.
@@ -2725,7 +2585,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             if state == ConnectionState.CONNECTED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
-                self.status_icon.add_css_class("conn-status-up")
+                self.status_icon.add_css_class("success")
                 self.status_icon.set_tooltip_text(_("Connected to {host}").format(host=host_value))
             elif state == ConnectionState.CONNECTING:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-dots-symbolic")
@@ -2733,14 +2593,14 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.status_icon.set_tooltip_text(_("Connecting to {host}…").format(host=host_value))
             elif state == ConnectionState.FAILED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
-                self.status_icon.add_css_class("conn-status-down")
+                self.status_icon.add_css_class("error")
                 self.status_icon.set_tooltip_text(
                     _("Connection failed: {reason}").format(reason=reason) if reason
                     else _("Connection failed")
                 )
             else:  # DISCONNECTED — a previously-live session that went down.
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
-                self.status_icon.add_css_class("conn-status-down")
+                self.status_icon.add_css_class("error")
                 self.status_icon.set_tooltip_text(_("Disconnected"))
 
             self.status_icon.queue_draw()

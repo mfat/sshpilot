@@ -238,6 +238,11 @@ def test_dark_mode_targets_the_dark_style(gui):
     ("font", "terminal"),
     ("color scheme", "terminal"),
     ("keyring", "security-&-credentials"),
+    ("accent color", "appearance"),
+    ("group colors", "appearance"),
+    ("compact sidebar", "sidebar"),
+    ("flat rows", "sidebar"),
+    ("window size", "interface"),
 ])
 def test_settings_wording_opens_the_settings_page(gui, query, page):
     result = _top(gui.window, query)
@@ -246,7 +251,7 @@ def test_settings_wording_opens_the_settings_page(gui, query, page):
     gui.window._omni_search.activate_result(result)
     gui.pump(300)
     prefs = gui.window._preferences_window
-    assert gui.window.nav_view.get_visible_page() is prefs
+    assert prefs.get_visible()
     assert prefs.content_stack.get_visible_child_name() == page
 
 

@@ -192,7 +192,15 @@ _EXTRA_COMMANDS = (
 # The page id is derived from the English title (PreferencesWindow._page_id).
 _SETTINGS_PAGES = (
     ("interface", N_("Interface"), N_(
-        "appearance;language;tabs;sidebar settings;start page;interface"
+        "language;tabs;start page;startup;header bar;tips;window size;interface"
+    )),
+    ("appearance", N_("Appearance"), N_(
+        "theme;accent color;accent colour;monospace font;group colors;"
+        "group colours;group layout;appearance"
+    )),
+    ("sidebar", N_("Sidebar"), N_(
+        "sidebar settings;sidebar mode;compact sidebar;connection rows;"
+        "row style;flat rows;card rows;row buttons;sidebar"
     )),
     ("terminal", N_("Terminal"), N_(
         "font;font size;color scheme;colour scheme;terminal theme;colors;"
@@ -938,6 +946,22 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
                 "emblem-system-symbolic", score - 5, page_id,
             ))
 
+    from .settings_index import PAGE_TITLES, SETTINGS
+
+    for entry in SETTINGS:
+        # Below pages and commands: "terminal" should offer the Terminal page
+        # before every setting that mentions it. Fuzzy matches are left out;
+        # ninety-odd near-misses would crowd out everything else.
+        score = _match_score(query, (_(entry.title), entry.title, *entry.keyword_list()))
+        if score >= 650:
+            results.append(OmniResult(
+                "setting", _(entry.title),
+                # Translators: an omni-search result that opens a page of
+                # Settings, e.g. "Settings › Terminal".
+                _("Settings › {page}").format(page=_(PAGE_TITLES[entry.page_id])),
+                "emblem-system-symbolic", score - 60, entry,
+            ))
+
     if protocol_hosts is not None and not protocol_hosts:
         # "rdp" with no RDP connections saved yet: offer to add one.
         for command in commands:
@@ -956,6 +980,8 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
             key = ("command", spec.action, str(spec.target))
         elif result.kind in ("connection", "dashboard"):
             key = (result.kind, getattr(result.payload, "nickname", result.title))
+        elif result.kind == "setting":
+            key = (result.kind, result.payload.page_id, result.title)
         else:
             key = (result.kind, result.title)
         if key in seen:
@@ -1110,16 +1136,7 @@ class OmniSearchController:
         return _("Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”")
 
     def _start_is_visible(self) -> bool:
-        if not self.window.is_start_tab_selected():
-            return False
-        nav = getattr(self.window, "nav_view", None)
-        work = getattr(self.window, "_work_page", None)
-        if nav is None:
-            return True
-        try:
-            return nav.get_visible_page() is work
-        except Exception:
-            return True
+        return bool(self.window.is_start_tab_selected())
 
     def _apply_presentation(self) -> None:
         self._anchored = self._start_is_visible()
@@ -1527,3 +1544,6 @@ class OmniSearchController:
             self.window._open_dashboard_for_connection(result.payload)
         elif result.kind == "settings":
             self.window.show_preferences(result.payload)
+        elif result.kind == "setting":
+            entry = result.payload
+            self.window.show_preferences(entry.page_id, _(entry.title))

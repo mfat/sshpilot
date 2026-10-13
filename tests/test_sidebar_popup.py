@@ -191,3 +191,76 @@ def test_anchored_preset_uses_anchor_bounds():
     p._panel.set_margin_start.assert_called_with(24)
     p._panel.set_margin_top.assert_called_with(80)
     p._panel.set_size_request.assert_called_with(560, -1)
+
+
+def _sliding_popup():
+    p = _popup()
+    p._frame = MagicMock()
+    p._frame.get_child_revealed.return_value = True
+    return p
+
+
+def test_side_panel_slides_in_through_its_revealer():
+    p = _sliding_popup()
+    p.show()
+    p._frame.set_visible.assert_called_with(True)
+    p._frame.set_reveal_child.assert_called_with(True)
+
+
+def test_placement_goes_on_the_revealer_and_size_on_the_panel():
+    p = _sliding_popup()
+    p.set_margins(start=4, top=8)
+    p._frame.set_margin_start.assert_called_with(4)
+    p._frame.set_halign.assert_called()
+    p._panel.set_margin_start.assert_not_called()
+    p._panel.set_size_request.assert_called_with(280, -1)
+
+
+def test_hide_redocks_only_after_the_slide_out():
+    p = _sliding_popup()
+    p.show()
+    p.hide()
+    assert p.visible is False and p._hiding is True
+    p._scrim.set_visible.assert_called_with(False)
+    p._frame.set_reveal_child.assert_called_with(False)
+    p._home.set_content.assert_called_once_with(None)   # not re-docked yet
+
+    p._frame.get_child_revealed.return_value = False
+    p._on_child_revealed(p._frame, None)
+    p._home.set_content.assert_called_with(p._content)
+    p._frame.set_visible.assert_called_with(False)
+    p._on_hidden.assert_called_once_with()
+
+
+def test_show_during_slide_out_turns_it_around():
+    p = _sliding_popup()
+    p.show()
+    p.hide()
+    p.show()
+    assert p.visible is True and p._hiding is False
+    p._frame.set_reveal_child.assert_called_with(True)
+    p._panel.append.assert_called_once()   # content never left the panel
+
+
+def test_hide_without_animation_cuts_a_slide_out_short():
+    p = _sliding_popup()
+    p.show()
+    p.hide()
+    p.hide(animate=False)
+    p._home.set_content.assert_called_with(p._content)
+    assert p._hiding is False
+
+
+def test_centered_panel_hides_at_once():
+    p = _sliding_popup()
+    p._position = 'center'
+    p.show()
+    p.hide()
+    p._home.set_content.assert_called_with(p._content)
+    assert p._hiding is False
+
+
+def test_top_inset_keeps_the_scrim_off_the_header():
+    p = _popup()
+    p.set_margins(top=46)
+    p._scrim.set_margin_top.assert_called_with(46)

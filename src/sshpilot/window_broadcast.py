@@ -8,14 +8,18 @@ terminal sessions and does not own a backend operation.
 
 import logging
 
-from gi.repository import Adw, GLib, Gdk
+from gi.repository import Adw, GLib, Gdk, Gtk
 from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
 
 class WindowBroadcastMixin:
-    """Broadcast-command banner: show/hide, entry handling, send, timeouts."""
+    """Broadcast-command banner: show/hide, entry handling, send.
+
+    The banner stays open until the user dismisses it (Cancel or Escape); it
+    never hides itself on a timer, after sending, or on focus loss.
+    """
 
     def on_broadcast_send_clicked(self, button):
         """Handle broadcast banner send button click"""
@@ -39,14 +43,6 @@ class WindowBroadcastMixin:
                 self._broadcast_submission_pending = False
                 self.broadcast_send_button.set_sensitive(True)
 
-            # Update banner message with result (we'll need to find the title label)
-            # For now, just hide the banner after sending
-            self.broadcast_entry_dirty = False
-            self._schedule_broadcast_hide_timeout()
-        else:
-            self.broadcast_entry_dirty = False
-            self._schedule_broadcast_hide_timeout()
-
     def _on_broadcast_sent(self, _result):
         """Handle the immediate session-input mutation acknowledgement."""
         self._broadcast_submission_pending = False
@@ -66,12 +62,31 @@ class WindowBroadcastMixin:
         """Handle Enter key press in broadcast entry"""
         self.on_broadcast_send_clicked(self.broadcast_send_button)
 
+    def on_broadcast_entry_changed(self, entry):
+        """Show the clear icon only while there is text to clear"""
+        self._update_broadcast_clear_icon()
+
+    def _update_broadcast_clear_icon(self):
+        pos = Gtk.EntryIconPosition.SECONDARY
+        if not self.broadcast_entry.get_text():
+            self.broadcast_entry.set_icon_from_icon_name(pos, None)
+            return
+        self.broadcast_entry.set_icon_from_icon_name(pos, 'edit-clear-symbolic')
+        self.broadcast_entry.set_icon_tooltip_text(pos, _("Clear"))
+        self.broadcast_entry.set_icon_activatable(pos, True)
+
+    def on_broadcast_entry_icon_release(self, entry, icon_pos):
+        """Clear the command and keep typing in the entry"""
+        if icon_pos != Gtk.EntryIconPosition.SECONDARY:
+            return
+        self.broadcast_entry.set_text("")
+        self.broadcast_entry.grab_focus()
+
     def on_broadcast_entry_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in broadcast entry"""
         if keyval == Gdk.KEY_Escape:
             self.hide_broadcast_banner()
             return True  # Consume the key event
-        self._cancel_broadcast_hide_timeout()
         return False  # Let other keys pass through
 
     def on_broadcast_banner_key_pressed(self, controller, keyval, keycode, state):
@@ -83,15 +98,9 @@ class WindowBroadcastMixin:
 
     def hide_broadcast_banner(self):
         """Hide the broadcast banner"""
-        self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_reveal_child(False)
         self.broadcast_banner.set_visible(False)
-        self.broadcast_entry_dirty = False
-        self._suppress_broadcast_entry_changed = True
-        try:
-            self.broadcast_entry.set_text("")
-        finally:
-            self._suppress_broadcast_entry_changed = False
+        self.broadcast_entry.set_text("")
 
         # Focus the active terminal tab after hiding the banner
         self._focus_active_terminal_tab()
@@ -107,10 +116,8 @@ class WindowBroadcastMixin:
 
     def show_broadcast_banner(self):
         """Show the broadcast banner"""
-        self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_visible(True)
         self.broadcast_banner.set_reveal_child(True)
-        self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
 
         # Focus the entry after a short delay to ensure banner is visible
         def focus_entry():
@@ -118,53 +125,6 @@ class WindowBroadcastMixin:
             return False
 
         GLib.idle_add(focus_entry)
-
-    def on_broadcast_entry_changed(self, entry):
-        """Track user edits to the broadcast entry"""
-        if self._suppress_broadcast_entry_changed:
-            return
-        self.broadcast_entry_dirty = True
-        self._cancel_broadcast_hide_timeout()
-
-    def on_broadcast_entry_focus_enter(self, controller, *args):
-        """Cancel hide timeout when the entry gains focus"""
-        self._cancel_broadcast_hide_timeout()
-
-    def on_broadcast_entry_focus_leave(self, controller, *args):
-        """Schedule hiding when the entry loses focus"""
-        if not self.broadcast_banner.get_reveal_child():
-            return
-        self._schedule_broadcast_hide_timeout()
-
-    def _cancel_broadcast_hide_timeout(self):
-        """Cancel any pending hide timeout for the broadcast banner"""
-        if self.broadcast_hide_timeout_id is not None:
-            try:
-                GLib.source_remove(self.broadcast_hide_timeout_id)
-            except Exception:
-                pass
-            finally:
-                self.broadcast_hide_timeout_id = None
-
-    def _schedule_broadcast_hide_timeout(self, timeout_ms: int = 5000):
-        """Schedule hiding the broadcast banner after a delay"""
-        self._cancel_broadcast_hide_timeout()
-
-        def maybe_hide_banner():
-            self.broadcast_hide_timeout_id = None
-            entry_has_focus = False
-            try:
-                entry_has_focus = self.broadcast_entry.has_focus()
-            except Exception:
-                entry_has_focus = False
-
-            if entry_has_focus and self.broadcast_entry_dirty:
-                return False
-
-            self.hide_broadcast_banner()
-            return False
-
-        self.broadcast_hide_timeout_id = GLib.timeout_add(timeout_ms, maybe_hide_banner)
 
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows banner to input command"""

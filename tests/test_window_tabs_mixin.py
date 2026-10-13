@@ -37,6 +37,7 @@ _TAB_METHODS = (
     "_teardown_all_file_manager_tabs",
     "_enabled_tab_actions",
     "_tab_menu_target",
+    "run_tab_menu_action_for",
     "_on_tabmenu_duplicate",
     "_on_tabmenu_rename",
     "_rename_tab_page",
@@ -581,3 +582,24 @@ def test_new_file_manager_tab_opens_the_configured_terminals(monkeypatch, settin
     )
     win.open_configured_file_manager_terminals(embed)
     assert sorted(embed.panels) == sides
+
+
+def test_pane_menu_runs_tab_handler_on_the_pane_terminal():
+    """A split pane's header menu reuses the tab handlers on its terminal."""
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    seen = []
+
+    class Stub(WindowTabsMixin):
+        _tab_menu_page = object()  # a stale right-clicked tab must not win
+
+        def _on_tabmenu_reconnect(self, action, param=None):
+            seen.append(self._tab_menu_target())
+
+    stub = Stub()
+    terminal = object()
+    stub.run_tab_menu_action_for(terminal, 'tabmenu-reconnect')
+
+    assert seen == [(None, terminal)]
+    # The override ends with the action; the tab menu targets tabs again.
+    assert stub._tab_menu_target()[0] is Stub._tab_menu_page

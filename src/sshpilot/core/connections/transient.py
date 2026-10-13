@@ -12,11 +12,13 @@ records never appear in snapshots or listings.
 
 SSH targets keep native OpenSSH semantics. Their Host block is rendered by
 the same formatter a saved connection uses and written to a private file
-that ends with ``Include <the user's SSH config>``; the launch passes that
-file with ``-F``. The block therefore wins for what the user typed, and every
-``Host *`` or ``Host *.corp`` block of the real config still applies, exactly
-as it would for ``ssh <host>`` on the command line. The Host token is the
-destination itself, so patterns match the host the user named.
+that ends with ``Host *`` and ``Include <the user's SSH config>``; the launch
+passes that file with ``-F``. The block therefore wins for what the user
+typed, and every ``Host *`` or ``Host *.corp`` block of the real config still
+applies, exactly as it would for ``ssh <host>`` on the command line. The
+Include sits under ``Host *`` because a ProxyJump hop re-reads the same file
+for the jump host. The Host token is the destination itself, so patterns
+match the host the user named.
 """
 
 from __future__ import annotations
@@ -153,7 +155,10 @@ class TransientConnections:
         except ValueError as error:
             raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
         if root.exists():
-            lines.append(f"\nInclude {_quote(str(root))}\n")
+            # ``Host *`` closes the destination block: an Include inside it is
+            # read only for that host, and a ProxyJump hop re-reads this same
+            # -F file for the jump host, which then never sees its own block.
+            lines.append(f"\nHost *\nInclude {_quote(str(root))}\n")
         path = self._directory_locked() / f"{connection_id}.conf"
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:

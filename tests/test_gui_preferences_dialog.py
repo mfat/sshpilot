@@ -1,8 +1,9 @@
-"""GUI regression tests for Preferences as a main-window Settings mode.
+"""GUI regression tests for the Settings window.
 
-Settings is an ``Adw.NavigationPage`` pushed onto the main ``Adw.NavigationView``,
-not an ``Adw.Dialog`` and not a tab. Easy silent regressions: failing to push,
-not flushing on pop, or parenting dialogs to a non-window.
+Settings is a separate, non-modal ``Adw.Window`` owned by a main window. Easy
+silent regressions: dialogs parented to the wrong window (and opening behind
+Settings, or on it after it was closed), app actions resolving the Settings
+window instead of the main window, or the window not being reused.
 
 These boot the real app and open the real Settings page. Opt-in only:
 SSHPILOT_GUI_TESTS=1 pytest -m gui
@@ -23,30 +24,49 @@ def _open_preferences(gui, page_id=None):
     return getattr(gui.window, '_preferences_window', None)
 
 
-def test_preferences_pushes_onto_navigation_view(gui):
+def _settle(gui, condition, ms=3000):
+    for _i in range(ms // 50):
+        if condition():
+            return True
+        gui.pump(50)
+    return condition()
+
+
+def test_preferences_is_a_non_modal_window_above_the_main_window(gui):
     from gi.repository import Adw
 
     prefs = _open_preferences(gui)
-    assert prefs is not None, 'show_preferences() did not store the page'
-    assert isinstance(prefs, Adw.NavigationPage), f'expected NavigationPage, got {type(prefs)}'
-    assert gui.window.nav_view.get_visible_page() is prefs
-    assert prefs.get_root() is gui.window
+    assert prefs is not None, 'show_preferences() did not store the window'
+    assert isinstance(prefs, Adw.Window), f'expected Adw.Window, got {type(prefs)}'
+    assert prefs is not gui.window
+    assert prefs.get_visible()
+    assert not prefs.get_modal()
+    # Transient so it cannot fall behind the main window.
+    assert prefs.get_transient_for() is gui.window
+    assert prefs.parent_window is gui.window
+    # Registered, so routed prompts can find it as the active window.
+    assert prefs in gui.app.get_windows()
     assert gui.window.is_preferences_visible()
 
 
-def test_preferences_is_reused_and_pops_back_to_work(gui):
+def test_preferences_close_hides_and_reuses_the_window(gui):
     first = _open_preferences(gui)
     assert first is not None
 
     again = _open_preferences(gui)
     assert again is first
 
-    assert gui.window.leave_preferences()
-    gui.pump(500)
-    assert gui.window.nav_view.get_visible_page() is gui.window._work_page
+    first.close()
+    gui.pump(300)
+    assert not first.get_visible()
     assert not gui.window.is_preferences_visible()
-    # Instance is kept for reuse on the next open.
+    # Close only hides: the instance (and its built pages) is kept for reuse.
     assert getattr(gui.window, '_preferences_window', None) is first
+
+    assert _open_preferences(gui) is first
+    assert gui.window.leave_preferences()
+    gui.pump(300)
+    assert not first.get_visible()
 
 
 def test_preferences_select_page_deep_link(gui):
@@ -56,28 +76,165 @@ def test_preferences_select_page_deep_link(gui):
     assert prefs.content_stack.get_visible_child_name() == 'plugins'
 
 
-def test_dialogs_parented_to_preferences_get_a_window(gui):
-    """Anything that takes Preferences as a parent must still resolve a window."""
+def test_appearance_and_sidebar_have_their_own_pages(gui):
+    """Theme, accent and group styling live on Appearance; sidebar options on Sidebar."""
+    from gi.repository import Adw
+
+    prefs = _open_preferences(gui, page_id='appearance')
+    assert prefs is not None
+    _open_preferences(gui, page_id='sidebar')
+
+    ids = []
+    row = prefs.sidebar.get_first_child()
+    while row is not None:
+        ids.append(row.get_name())
+        row = row.get_next_sibling()
+    assert ids[:4] == ['interface', 'appearance', 'sidebar', 'terminal']
+
+    appearance = prefs.pages['appearance']
+    sidebar = prefs.pages['sidebar']
+    assert prefs.theme_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.accent_color_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.group_color_display_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.group_preview_list.get_ancestor(Adw.PreferencesPage) is appearance
+    assert 'groups' not in ids
+    assert prefs.sidebar_mode_row.get_ancestor(Adw.PreferencesPage) is sidebar
+
+    group_titles = [
+        r.get_ancestor(Adw.PreferencesGroup).get_title()
+        for r in prefs._sidebar_mode_dependent_rows
+    ]
+    assert set(group_titles) == {'Layout', 'Row Details', 'Row Buttons'}
+
+    config = gui.window.config
+    old_flat = config.get_setting('ui.sidebar_flat_rows', False)
+    try:
+        prefs.sidebar_row_style_row.set_selected(1)
+        assert config.get_setting('ui.sidebar_flat_rows') is True
+        prefs.sidebar_row_style_row.set_selected(0)
+        assert config.get_setting('ui.sidebar_flat_rows') is False
+    finally:
+        config.set_setting('ui.sidebar_flat_rows', old_flat)
+
+
+def test_group_preview_follows_group_settings_live(gui):
+    """The preview is built from real sidebar rows and rebuilds on a settings change."""
+    from sshpilot.sidebar import ConnectionRow, GroupRow
+
+    prefs = _open_preferences(gui, page_id='appearance')
+    config = gui.window.config
+
+    def rows():
+        found, row = [], prefs.group_preview_list.get_first_child()
+        while row is not None:
+            found.append(row)
+            row = row.get_next_sibling()
+        return found
+
+    old_mode = config.get_setting('ui.group_color_display', 'dot')
+    try:
+        config.set_setting('ui.group_color_display', 'fill')
+        # The rebuild is an idle; under load it can land after a fixed pump.
+        _settle(gui, lambda: rows() and rows()[0].has_css_class('tinted'))
+        built = rows()
+        assert [type(r) for r in built if isinstance(r, (GroupRow, ConnectionRow))] == [
+            GroupRow, ConnectionRow, ConnectionRow, GroupRow, ConnectionRow,
+        ]
+        assert built[0].has_css_class('tinted')
+
+        config.set_setting('ui.group_color_display', 'bar')
+        _settle(gui, lambda: rows()[0] is not built[0])
+        rebuilt = rows()
+        assert rebuilt[0] is not built[0], 'preview did not rebuild'
+        assert not rebuilt[0].has_css_class('tinted')
+        assert rebuilt[0].has_css_class('color-bar')
+    finally:
+        config.set_setting('ui.group_color_display', old_mode)
+
+
+def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
+    """A layout card writes the startup settings the other pages show, and back."""
+    prefs = _open_preferences(gui, page_id='interface')
+    for page_id in ('sidebar',):
+        prefs._ensure_page_built(page_id)
+    config = gui.window.config
+    chooser = prefs.layout_preset_chooser
+
+    def selected():
+        return [k for k, card in chooser._cards.items() if card.get_active()]
+
+    def settle(condition, ms=3000):
+        # The sync is an idle; Settings builds its other pages in low-priority
+        # idles too, and one slow page can outlast a fixed short pump.
+        for _i in range(ms // 50):
+            if condition():
+                return True
+            gui.pump(50)
+        return condition()
+
+    old = (config.get_setting('app-startup-behavior', 'welcome'),
+           config.get_setting('ui.sidebar_hide_on_startup', False))
+    try:
+        chooser._cards['terminal'].set_active(True)
+        assert settle(lambda: prefs.terminal_startup_radio.get_active()
+                      and prefs.hide_on_startup_switch.get_active())
+        assert config.get_setting('app-startup-behavior') == 'terminal'
+        assert config.get_setting('ui.sidebar_hide_on_startup') is True
+        assert selected() == ['terminal']
+
+        prefs.hide_on_startup_switch.set_active(False)
+        assert settle(lambda: selected() == ['sidebar']), 'sidebar goes with a terminal too'
+
+        chooser._cards['startpage'].set_active(True)
+        assert settle(lambda: prefs.welcome_startup_radio.get_active()
+                      and prefs.hide_on_startup_switch.get_active())
+        assert not prefs.terminal_startup_radio.get_active()
+
+        chooser._cards['sidebar'].set_active(True)
+        assert settle(lambda: not prefs.hide_on_startup_switch.get_active())
+        assert prefs.welcome_startup_radio.get_active(), 'the sidebar card keeps the view'
+
+        prefs.previous_session_startup_radio.set_active(True)
+        prefs.hide_on_startup_switch.set_active(True)
+        assert settle(lambda: selected() == [])
+    finally:
+        config.set_setting('app-startup-behavior', old[0])
+        config.set_setting('ui.sidebar_hide_on_startup', old[1])
+
+
+def test_sidebar_peek_hint_shows_while_the_sidebar_is_set_to_hide(gui):
+    """The hover-reveal hint follows the hide switches and the header button."""
+    prefs = _open_preferences(gui, page_id='sidebar')
+    config = gui.window.config
+    row = prefs.sidebar_peek_row
+    on_startup, on_terminal_open = prefs._sidebar_hide_switches
+    old = (on_startup.get_active(), on_terminal_open.get_active(),
+           config.get_setting('ui.headerbar_show_sidebar_toggle', True))
+    try:
+        on_startup.set_active(False)
+        on_terminal_open.set_active(False)
+        assert not row.get_visible()
+        on_terminal_open.set_active(True)
+        assert row.get_visible()
+        hover_hint = row.get_subtitle()
+
+        config.set_setting('ui.headerbar_show_sidebar_toggle', False)
+        gui.pump(50)
+        assert row.get_subtitle() != hover_hint
+    finally:
+        on_startup.set_active(old[0])
+        on_terminal_open.set_active(old[1])
+        config.set_setting('ui.headerbar_show_sidebar_toggle', old[2])
+
+
+def test_dialogs_from_settings_are_parented_to_settings(gui):
+    """Page widgets resolve to the Settings window, so their dialogs stack on it."""
     from gi.repository import Gtk
     from sshpilot.window_dialogs import parent_window
 
     prefs = _open_preferences(gui)
-    assert prefs is not None
-
-    resolved = parent_window(prefs)
-    assert isinstance(resolved, Gtk.Window), f'resolved {type(resolved)}'
-    assert resolved is gui.window
-    assert parent_window(gui.window) is gui.window
-    assert parent_window(None) is None
-    assert isinstance(prefs.get_root(), Gtk.Window)
-
-
-def test_every_page_widget_resolves_a_window_root(gui):
-    """Page code parents dialogs with self.get_root(); that must be MainWindow."""
-    from gi.repository import Gtk
-
-    prefs = _open_preferences(gui)
-    assert prefs is not None
+    assert parent_window(prefs) is prefs
+    assert prefs._dialog_parent() is prefs
 
     def walk(widget):
         yield widget
@@ -88,15 +245,111 @@ def test_every_page_widget_resolves_a_window_root(gui):
 
     widgets = list(walk(prefs))
     assert len(widgets) > 50, f'only {len(widgets)} widgets; page tree did not build'
-
     for w in widgets:
-        root = w.get_root()
-        assert isinstance(root, Gtk.Window), f'{type(w).__name__} resolved {type(root)}'
-        assert root is gui.window
+        assert w.get_root() is prefs, f'{type(w).__name__} resolved {type(w.get_root())}'
 
     page = getattr(prefs, 'shortcuts_editor_page', None)
     if page is not None:
-        assert page._transient_parent is None or isinstance(page._transient_parent, Gtk.Window)
+        assert page._transient_parent is prefs
+
+
+def test_dialog_finishing_after_settings_closed_goes_to_main_window(gui, monkeypatch):
+    """A plugin download that fails after Settings closed must not alert on a hidden window."""
+    import time
+    from gi.repository import Adw
+    import sshpilot.plugins.registry_client as registry_client
+
+    def slow_fail(*_args, **_kwargs):
+        time.sleep(0.3)
+        raise RuntimeError('network down')
+
+    monkeypatch.setattr(registry_client, 'download_package', slow_fail)
+    prefs = _open_preferences(gui, page_id='plugins')
+    prefs._start_registry_install({'download_url': 'x', 'checksum_url': 'y'}, lambda: None)
+    prefs.close()
+
+    def hosted_alerts(root):
+        found, stack = [], [root]
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, Adw.AlertDialog) and widget.get_mapped():
+                found.append(widget)
+            child = widget.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        return found
+
+    alert = None
+    for _ in range(20):
+        gui.pump(100)
+        alert = next(iter(hosted_alerts(gui.window)), None)
+        if alert is not None:
+            break
+    assert not hosted_alerts(prefs), 'the alert went to the hidden Settings window'
+    assert alert is not None, 'the failure alert was not shown on the main window'
+    assert alert.get_root() is gui.window
+    alert.force_close()
+    gui.pump(200)
+
+
+def test_routed_prompts_stack_on_active_settings(gui):
+    """With Settings active, a daemon prompt (vault unlock) is presented on it."""
+    from sshpilot.window_dialogs import resolve_topmost_prompt_parent
+
+    prefs = _open_preferences(gui)
+    target = resolve_topmost_prompt_parent(gui.app.get_windows(), prefs, gui.window)
+    assert target is prefs
+
+
+def test_app_actions_from_settings_act_on_the_main_window(gui):
+    """App accelerators pressed in Settings must reach MainWindow, not Settings."""
+    import types
+
+    prefs = _open_preferences(gui)
+    fake_app = types.SimpleNamespace(
+        props=types.SimpleNamespace(active_window=prefs), window=gui.window)
+    # The Settings action itself (Ctrl+, pressed in Settings) keeps it shown.
+    assert type(gui.app)._action_window(fake_app, keep_settings=True) is gui.window
+    assert prefs.get_visible()
+    # Any other action (Ctrl+Q's quit confirmation, a new tab) shows its
+    # result on the main window, which the transient Settings would cover.
+    assert type(gui.app)._action_window(fake_app) is gui.window
+    gui.pump(200)
+    assert not prefs.get_visible(), 'Settings still covers the main window'
+
+
+def test_plugin_page_leaves_settings(gui, monkeypatch):
+    """A plugin's settings tab opens in the main window, so Settings must step aside."""
+    import types
+
+    prefs = _open_preferences(gui, page_id='plugins')
+    opened = []
+    monkeypatch.setattr(gui.window, 'plugin_host', types.SimpleNamespace(
+        ui=types.SimpleNamespace(open_page=opened.append)), raising=False)
+    prefs._open_plugin_page('example.page')
+    gui.pump(200)
+    assert opened == ['example.page']
+    assert not prefs.get_visible(), 'the plugin tab opened behind Settings'
+
+
+def test_toasts_show_on_settings_while_it_is_shown(gui):
+    """Settings' own toasts, and routed pre-connection alerts, land on Settings."""
+    prefs = _open_preferences(gui)
+    assert prefs.toast_overlay is not None
+    assert gui.app._pre_command_toast_overlay() is prefs.toast_overlay
+
+    shown = []
+    prefs.toast_overlay.add_toast = shown.append
+    gui.window.toast_overlay.add_toast = lambda toast: shown.append(('main', toast))
+    prefs._show_toast('on settings')
+    assert len(shown) == 1 and shown[0].get_title() == 'on settings'
+
+    # Hidden: its toasts go to the main window rather than nowhere.
+    prefs.close()
+    gui.pump(200)
+    prefs._show_toast('on main')
+    assert shown[-1][0] == 'main' and shown[-1][1].get_title() == 'on main'
 
 
 def test_show_content_false_when_split_not_collapsed(gui):
@@ -147,21 +400,20 @@ def test_collapsed_split_shows_content_on_page_change(gui):
     assert not split.get_show_content(), 'reselecting the same row forced content'
 
 
-def _assert_alert_stacks_over_settings(gui, alert):
-    """Shared checks: presented into MainWindow, above Settings, interactive."""
+def _assert_alert_hosted_on_settings(gui, prefs, alert):
+    """Shared checks: presented into the Settings window, topmost, interactive."""
     from gi.repository import Adw
 
     assert alert.get_visible()
     assert alert.get_mapped()
-    assert gui.window.is_preferences_visible(), 'alert should not leave Settings'
-    assert alert.get_root() is gui.window
+    assert prefs.get_visible(), 'alert should not close Settings'
+    assert alert.get_root() is prefs
 
     host = alert.get_parent()
     assert host is not None, 'alert was not hosted in the window'
     assert type(host).__name__ == 'AdwDialogHost', (
         f'expected AdwDialogHost parent, got {type(host).__name__}'
     )
-    # Newest hosted dialog is last among the host's dialog children.
     last_dialog = None
     child = host.get_first_child()
     while child is not None:
@@ -169,55 +421,28 @@ def _assert_alert_stacks_over_settings(gui, alert):
             last_dialog = child
         child = child.get_next_sibling()
     assert last_dialog is alert, 'alert is not the topmost hosted dialog'
-
-    def focus_inside_alert():
-        # Adw.Dialog keeps its own focus widget; window focus may be unset when
-        # the toplevel is inactive (common on Wayland after prior GUI tests).
-        widget = alert.get_focus() or gui.window.get_focus()
-        while widget is not None:
-            if widget is alert:
-                return True
-            widget = widget.get_parent()
-        return False
-
-    if gui.window.is_active():
-        for _ in range(20):
-            if focus_inside_alert():
-                break
-            gui.pump(100)
-        assert focus_inside_alert(), 'active window did not move focus into the alert'
-    else:
-        # Wayland clients cannot force reactivation after another surface stole
-        # focus; present() still hosts the dialog, and it must accept focus.
-        alert.grab_focus()
-        gui.pump(100)
-        assert alert.get_focus() is not None, 'hosted alert cannot accept focus'
+    alert.grab_focus()
+    gui.pump(100)
+    assert alert.get_focus() is not None, 'hosted alert cannot accept focus'
 
 
-def test_dialog_presented_on_the_window_while_in_settings(gui):
-    """A dialog parented to MainWindow still works while Settings mode is open."""
+def test_dialog_presented_from_settings_is_hosted_on_it(gui):
     from gi.repository import Adw
 
-    _open_preferences(gui)
-    assert gui.window.is_preferences_visible()
-
-    alert = Adw.AlertDialog(heading='Unlock', body='parented to the window')
+    prefs = _open_preferences(gui)
+    alert = Adw.AlertDialog(heading='Unlock', body='presented from Settings')
     alert.add_response('ok', 'OK')
-    alert.present(gui.window)
+    alert.present(prefs._dialog_parent())
     gui.pump(300)
 
-    _assert_alert_stacks_over_settings(gui, alert)
+    _assert_alert_hosted_on_settings(gui, prefs, alert)
 
     alert.close()
     gui.pump(200)
 
 
 def test_dialog_stacks_after_settings_split_churn(gui):
-    """Regression: NavigationSplitView churn must not bury window-parented alerts.
-
-    Prior GUI tests that collapse/select Settings rows can leave the Wayland
-    toplevel inactive. Presentation and stacking must still succeed.
-    """
+    """Collapsing and re-selecting Settings rows must not bury its dialogs."""
     from gi.repository import Adw
 
     prefs = _open_preferences(gui)
@@ -238,10 +463,11 @@ def test_dialog_stacks_after_settings_split_churn(gui):
 
     alert = Adw.AlertDialog(heading='Unlock', body='after split churn')
     alert.add_response('ok', 'OK')
-    alert.present(gui.window)
+    alert.present(prefs._dialog_parent())
     gui.pump(300)
 
-    _assert_alert_stacks_over_settings(gui, alert)
+    _assert_alert_hosted_on_settings(gui, prefs, alert)
 
     alert.close()
+    split.set_collapsed(False)
     gui.pump(200)

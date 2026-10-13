@@ -76,12 +76,34 @@ def test_search_and_omnisearch_callbacks_use_separate_paths():
         focus_search_entry=lambda: calls.append('search'),
         activate_omni_search=lambda: calls.append('omnisearch'),
     )
-    app = SimpleNamespace(props=SimpleNamespace(active_window=window))
+    app = SimpleNamespace(
+        _action_window=lambda: window,
+        props=SimpleNamespace(active_window=window),
+    )
 
     SshPilotApplication.on_search(app, None, None)
     SshPilotApplication.on_omnisearch(app, None, None)
 
     assert calls == ['search', 'omnisearch']
+
+
+def test_search_in_a_window_with_its_own_search_stays_there():
+    """Ctrl+F in Settings searches Settings instead of the connection list."""
+    try:
+        from sshpilot.main import SshPilotApplication
+    except Exception as exc:  # pragma: no cover - depends on GTK test stubs
+        pytest.skip(f"GTK stubs unavailable: {exc}")
+
+    calls = []
+    settings = SimpleNamespace(start_search=lambda: calls.append('settings'))
+    app = SimpleNamespace(
+        _action_window=lambda: calls.append('main window'),
+        props=SimpleNamespace(active_window=settings),
+    )
+
+    SshPilotApplication.on_search(app, None, None)
+
+    assert calls == ['settings']
 
 
 def test_double_shift_shortcut_uses_stable_config_token():

@@ -105,7 +105,6 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_mode': 'full',
             'group_color_display': 'dot',
             'group_color_child_rows': True,
-            'group_row_display': 'nested',
             'use_group_color_in_tab': False,
             'use_group_color_in_terminal': False,
             'sidebar_show_user_hostname': False,
@@ -130,6 +129,9 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_hide_on_startup': False,
             'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
             'sidebar_show_when_no_tabs': False,
+            # Set by "Don't Show Again" on the start-up hover-reveal hint
+            # (sidebar_peek_hint.py).
+            'sidebar_peek_hint_dismissed': False,
             # What happens to the sidebar when a session opens:
             # 'none' | 'hide'. ('minimize' / icon strip is retired; migration
             # rewrites any persisted 'minimize' to 'none'.)

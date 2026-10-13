@@ -216,8 +216,8 @@ class GuiApp:
                 omni.dismiss(clear=True)
         except Exception:
             pass
-        # Leave Settings and close hosted Adw dialogs so a prior test cannot
-        # leak NavigationPage state or an AlertDialog into the next one.
+        # Close Settings and hosted Adw dialogs so a prior test cannot leak an
+        # open Settings window or an AlertDialog into the next one.
         try:
             if hasattr(win, 'is_preferences_visible') and win.is_preferences_visible():
                 win.leave_preferences()
@@ -245,10 +245,9 @@ class GuiApp:
         self.pump(300)
 
     def _close_hosted_dialogs(self):
-        """Force-close any mapped ``Adw.Dialog`` still hosted on the main window."""
+        """Force-close any mapped ``Adw.Dialog`` hosted on the main or Settings window."""
         Adw = self.Adw
-        win = self.window
-        if win is None:
+        if self.window is None:
             return
 
         def walk(widget):
@@ -258,7 +257,9 @@ class GuiApp:
                 yield from walk(child)
                 child = child.get_next_sibling()
 
-        for widget in list(walk(win)):
+        roots = [self.window, getattr(self.window, '_preferences_window', None)]
+        widgets = [w for root in roots if root is not None for w in walk(root)]
+        for widget in widgets:
             if isinstance(widget, Adw.Dialog) and widget.get_mapped():
                 try:
                     widget.force_close()

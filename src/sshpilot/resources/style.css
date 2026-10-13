@@ -174,3 +174,72 @@
 .backup-path {
     font-family: monospace;
 }
+
+/* A Settings row reached from search flashes briefly so the eye finds it. */
+row.settings-search-highlight {
+    background-color: alpha(@accent_bg_color, 0.25);
+}
+
+preferencesgroup.settings-search-highlight {
+    background-color: alpha(@accent_bg_color, 0.15);
+    border-radius: 12px;
+}
+
+/* Settings › Interface › Layout: preset cards with a sketch of the window
+   (layout_preset_chooser.py). */
+button.layout-card {
+    padding: 8px;
+    border-radius: 12px;
+    background-color: @card_bg_color;
+    box-shadow:
+        0 0 0 1px alpha(@window_fg_color, 0.03),
+        0 1px 3px 1px alpha(#000000, 0.07),
+        0 2px 6px 2px alpha(#000000, 0.03);
+    transition: box-shadow 160ms ease-out;
+}
+button.layout-card:hover {
+    background-color: mix(@card_bg_color, @window_fg_color, 0.03);
+}
+button.layout-card:checked {
+    background-color: @card_bg_color;
+    box-shadow:
+        0 0 0 2px @accent_bg_color,
+        0 0 0 6px alpha(@accent_bg_color, 0.16);
+}
+.layout-sketch {
+    border-radius: 6px;
+    background-color: @window_bg_color;
+    box-shadow: inset 0 0 0 1px alpha(@window_fg_color, 0.1);
+}
+.layout-sketch-sidebar {
+    padding: 7px 6px;
+    background-color: @sidebar_bg_color;
+    border-right: 1px solid alpha(@window_fg_color, 0.07);
+}
+.layout-sketch-strong { border-radius: 2px; background-color: alpha(@window_fg_color, 0.45); }
+.layout-sketch-line { border-radius: 2px; background-color: alpha(@window_fg_color, 0.35); }
+.layout-sketch-faint { border-radius: 1px; background-color: alpha(@window_fg_color, 0.14); }
+.layout-sketch-dot { border-radius: 2px; }
+.layout-sketch-dot-ed333b { background-color: #ed333b; }
+.layout-sketch-dot-ff7800 { background-color: #ff7800; }
+.layout-sketch-dot-9141ac { background-color: #9141ac; }
+.layout-sketch-dot-f6d32d { background-color: #f6d32d; }
+.layout-sketch-search {
+    border-radius: 2px;
+    background-color: @view_bg_color;
+    box-shadow: 0 0 0 1px alpha(@window_fg_color, 0.16);
+}
+.layout-sketch-button {
+    border-radius: 1px;
+    box-shadow: inset 0 0 0 1px alpha(@window_fg_color, 0.4);
+}
+.layout-sketch-tab { border-radius: 2px; background-color: alpha(@window_fg_color, 0.08); }
+.layout-sketch-terminal {
+    margin: 0 3px 3px 3px;
+    padding: 5px 6px;
+    border-radius: 3px;
+    background-color: #000000;
+    font-family: monospace;
+    font-size: 7px;
+    font-weight: bold;
+}

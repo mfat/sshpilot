@@ -57,6 +57,9 @@ _ICON_RESOURCE_MAP = {
     'view-conceal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-conceal-symbolic.svg',
     'view-reveal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-reveal-symbolic.svg',
     'view-dual-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-dual-symbolic.svg',
+    'split-pane-close-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/split-pane-close-symbolic.svg',
+    'split-pane-unsplit-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/split-pane-unsplit-symbolic.svg',
+    'view-fullscreen-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-fullscreen-symbolic.svg',
     'view-pin-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-pin-symbolic.svg',
     'double-ended-arrows-horizontal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/double-ended-arrows-horizontal-symbolic.svg',
     'double-ended-arrows-vertical-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/double-ended-arrows-vertical-symbolic.svg',
@@ -115,7 +118,7 @@ _ICON_RESOURCE_MAP = {
     'zoom-in-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/zoom-in-symbolic.svg',
     'network-transmit-receive-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-transmit-receive-symbolic.svg',
     'network-shield-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-symbolic.svg',
-    # Connection-status indicators (recolored by the .success/.warning/.error classes).
+    # Connection-status indicators (recolored by .success / .warning / .error).
     'wired-lock-closed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-closed-symbolic.svg',
     'wired-lock-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-dots-symbolic.svg',
     'wired-lock-none-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-none-symbolic.svg',

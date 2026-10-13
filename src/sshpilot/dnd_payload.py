@@ -91,6 +91,26 @@ def new_internal_drop_target(
     return Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=actions)
 
 
+def claim_in_app_drops_ahead_of_children(target: Gtk.DropTarget) -> None:
+    """Let *target* take in-app drags before any descendant drop target.
+
+    The PyXterm backend embeds a WebKit web view, whose own drop target
+    accepts any string and so swallows a sidebar drag before it can bubble
+    up to the terminal or pane. Run in the CAPTURE phase to get ahead of it,
+    but accept only drags that started in this process so text dragged in
+    from other apps still reaches the terminal.
+    """
+    target.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    target.connect("accept", _accept_in_app_string_drop)
+
+
+def _accept_in_app_string_drop(_target: Gtk.DropTarget, drop: Gdk.Drop) -> bool:
+    # A drop from another process has no Gdk.Drag in ours.
+    if drop.get_drag() is None:
+        return False
+    return bool(drop.get_formats().contain_gtype(GObject.TYPE_STRING))
+
+
 def _unwrap_gvalue(value: Any) -> Any:
     if isinstance(value, GObject.Value):
         for getter in ("get_string", "get_boxed", "get_object", "get"):

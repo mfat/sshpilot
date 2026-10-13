@@ -27,6 +27,12 @@ Lifecycle
 ---------
     popup.show() / popup.hide() / popup.visible / popup.dismiss()
 
+A panel docked to a side (``LEFT`` / ``RIGHT``) slides in from that edge and
+back out, fading as it goes; other placements appear in place. ``visible``
+flips at the start of a hide, while the content is re-docked only once the
+slide-out finishes. The slide is a ``Gtk.Revealer`` around the panel, so it
+honours the desktop's "reduce animations" setting and flips under RTL.
+
 Decoupling
 ----------
 The popup knows nothing about *why* it's shown or what the content is. It only
@@ -54,6 +60,8 @@ from gi.repository import Gtk, Gdk, GLib
 
 logger = logging.getLogger(__name__)
 
+SLIDE_MS = 200
+
 
 class Position:
     LEFT = "left"
@@ -76,6 +84,13 @@ _ALIGN = {
     Position.TOP: (Gtk.Align.CENTER, Gtk.Align.START, 48),
 }
 
+# Side-docked panels slide in from their edge; the rest appear in place.
+# GtkRevealer mirrors SLIDE_LEFT/RIGHT itself under RTL.
+_SLIDE = {
+    Position.LEFT: Gtk.RevealerTransitionType.SLIDE_RIGHT,
+    Position.RIGHT: Gtk.RevealerTransitionType.SLIDE_LEFT,
+}
+
 # name -> presentation config. width/height None means "derive".
 _PRESETS = {
     "sidebar": dict(position=Position.LEFT, width=None, height=None,
@@ -95,6 +110,11 @@ _PRESETS = {
 
 class SearchPopup:
     """A floating panel that detaches ``content`` over the work area."""
+
+    # The revealer that slides the panel; a popup built without __init__
+    # (unit tests) has none and shows/hides at once.
+    _frame = None
+    _hiding = False
 
     def __init__(
         self,
@@ -160,8 +180,17 @@ class SearchPopup:
         key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         key.connect("key-pressed", self._on_key)
         self._panel.add_controller(key)
-        self._overlay.add_overlay(self._panel)
-        self._overlay.set_measure_overlay(self._panel, False)
+
+        # Placement (alignment, margins) goes on the revealer, size on the
+        # panel; aligned rather than filling, the revealer covers only the
+        # panel and the work area around it keeps its input.
+        self._frame = Gtk.Revealer()
+        self._frame.set_transition_duration(SLIDE_MS)
+        self._frame.set_child(self._panel)
+        self._frame.set_visible(False)
+        self._frame.connect("notify::child-revealed", self._on_child_revealed)
+        self._overlay.add_overlay(self._frame)
+        self._overlay.set_measure_overlay(self._frame, False)
 
         self._apply_layout()
         self._apply_backdrop()
@@ -246,18 +275,27 @@ class SearchPopup:
     def set_margins(
         self, *, start: int = 0, end: int = 0, top: int = 0, bottom: int = 0
     ) -> None:
-        """Inset the panel from the edges of its overlay allocation."""
+        """Inset the panel from the edges of its overlay allocation. The top
+        inset also keeps the click-outside scrim clear of that band."""
         self._margins = (start, end, top, bottom)
         self._apply_layout()
 
     def _apply_layout(self):
         if self._panel is None:
             return
+        host = self._frame if self._frame is not None else self._panel
+        if self._frame is not None:
+            self._frame.set_transition_type(_SLIDE.get(
+                self._position, Gtk.RevealerTransitionType.NONE))
         start, end, top, bottom = self._margins
-        self._panel.set_margin_start(start)
-        self._panel.set_margin_end(end)
-        self._panel.set_margin_top(top)
-        self._panel.set_margin_bottom(bottom)
+        if self._scrim is not None:
+            # The scrim keeps clear of the same top band as the panel, so a
+            # header bar left uncovered still takes its own clicks.
+            self._scrim.set_margin_top(top)
+        host.set_margin_start(start)
+        host.set_margin_end(end)
+        host.set_margin_top(top)
+        host.set_margin_bottom(bottom)
         anchor = getattr(self, "_anchor", None)
         if self._position == Position.ANCHORED and anchor is not None:
             try:
@@ -270,19 +308,19 @@ class SearchPopup:
             except (AttributeError, TypeError, ValueError):
                 ok, x, y = False, 0, 0
             if ok:
-                self._panel.set_halign(Gtk.Align.START)
-                self._panel.set_valign(Gtk.Align.START)
-                self._panel.set_margin_start(max(0, int(x)))
-                self._panel.set_margin_top(max(0, int(y)))
+                host.set_halign(Gtk.Align.START)
+                host.set_valign(Gtk.Align.START)
+                host.set_margin_start(max(0, int(x)))
+                host.set_margin_top(max(0, int(y)))
                 width = max(1, anchor.get_width())
                 height = self._height if self._height is not None else -1
                 self._panel.set_size_request(width, height)
                 return
         halign, valign, top_margin = _ALIGN.get(
             self._position, (Gtk.Align.START, Gtk.Align.FILL, 0))
-        self._panel.set_halign(halign)
-        self._panel.set_valign(valign)
-        self._panel.set_margin_top(top + top_margin)
+        host.set_halign(halign)
+        host.set_valign(valign)
+        host.set_margin_top(top + top_margin)
         width = self._width if self._width is not None else self._width_func()
         height = self._height if self._height is not None else -1
         self._panel.set_size_request(width, height)
@@ -306,6 +344,11 @@ class SearchPopup:
         self._home.set_child(content)
 
     @property
+    def panel(self) -> Optional[Gtk.Widget]:
+        """The floating panel widget (None if the popup wasn't built)."""
+        return self._panel
+
+    @property
     def visible(self) -> bool:
         """True while the content is detached into the popup."""
         return self._visible
@@ -314,6 +357,14 @@ class SearchPopup:
         """Detach ``content`` into the panel (floating). No-op if already shown
         or the popup wasn't built."""
         if self._visible or self._panel is None:
+            return
+        if self._hiding:
+            # Shown again mid slide-out: the content never left the panel,
+            # so just turn the slide around.
+            self._hiding = False
+            self._visible = True
+            self._scrim.set_visible(True)
+            self._frame.set_reveal_child(True)
             return
         self._apply_layout()
 
@@ -325,6 +376,9 @@ class SearchPopup:
         self._scrim.set_visible(True)
         self._panel.set_visible(True)
         self._visible = True
+        if self._frame is not None:
+            self._frame.set_visible(True)
+            self._frame.set_reveal_child(True)
 
         if self._focus_func is not None:
             widget = self._focus_func()
@@ -335,21 +389,40 @@ class SearchPopup:
         """Recompute panel geometry after its owner changes presentation."""
         self._apply_layout()
 
-    def hide(self) -> None:
+    def hide(self, animate: bool = True) -> None:
         """Re-attach ``content`` to its home, hiding the panel. No-op if not
-        shown."""
+        shown. ``animate=False`` re-docks at once, cutting short a slide-out
+        already under way (for when the home is about to be shown)."""
         if not self._visible:
+            if self._hiding and not animate:
+                self._finish_hide()
             return
-        self._panel.set_visible(False)
+        self._visible = False
+        # The scrim goes at once so clicks reach the work area during the
+        # slide-out.
         self._scrim.set_visible(False)
+        if animate and self._slides():
+            self._hiding = True
+            self._frame.set_reveal_child(False)
+            return
+        self._finish_hide()
+
+    def _finish_hide(self) -> None:
+        self._hiding = False
+        if self._frame is not None:
+            # Snap shut, so a slide-out cut short doesn't resume next show.
+            transition = self._frame.get_transition_type()
+            self._frame.set_transition_type(Gtk.RevealerTransitionType.NONE)
+            self._frame.set_reveal_child(False)
+            self._frame.set_transition_type(transition)
+            self._frame.set_visible(False)
+        self._panel.set_visible(False)
 
         # Reparent content: panel -> home.
         if self._content.get_parent() is self._panel:
             self._panel.remove(self._content)
         self._set_home_content(self._content)
         self._on_hidden()
-
-        self._visible = False
 
     def dismiss(self) -> None:
         """Dismiss (Esc / click-outside): the owner's ``on_dismiss`` if given
@@ -358,6 +431,15 @@ class SearchPopup:
             self._on_dismiss()
         else:
             self.hide()
+
+    # -- slide ------------------------------------------------------------
+
+    def _slides(self) -> bool:
+        return self._frame is not None and self._position in _SLIDE
+
+    def _on_child_revealed(self, frame, _pspec) -> None:
+        if self._hiding and not frame.get_child_revealed():
+            self._finish_hide()
 
     # -- helpers ----------------------------------------------------------
 

@@ -1,3 +1,17 @@
+sshpilot (6.3.1-1) unstable; urgency=medium
+
+  * Release v6.3.1.
+  * New Settings dialog with built-in search and dedicated pages for
+    Appearance and Sidebar
+  * Improved look and feel for split view terminals
+  * New layout chooser in settings - choose between default look with
+    sidebar and plain terminal look
+  * Reveal a hidden sidebar by hovering over the sidebar toggle
+  * Improved Broadcast command experience, disable autohide
+  * Various UI fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Tue, 13 Oct 2026 14:10:58 +0000
+
 sshpilot (6.3.0-1) unstable; urgency=medium
 
   * Release v6.3.0.

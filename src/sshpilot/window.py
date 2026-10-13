@@ -495,6 +495,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
+        # The Settings window belongs to this window; it must not outlive it
+        # (a registered app window keeps the application running).
+        self.connect('destroy', self._destroy_preferences_window)
 
         # Start with welcome view (tab view setup already shows welcome initially)
 
@@ -2135,9 +2138,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         maybe_set_native_controls(self._window_controls_start, False)
         maybe_set_native_controls(self._window_controls_end, False)
 
+        # Match Adwaita's headerbar start-box spacing (6px) so the gap between
+        # the sidebar toggle and the local-terminal button equals the gap from
+        # that button to the first tab (home), after the tab bar's -4 margin.
         self._headerbar_start_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=0,
+            spacing=6,
         )
         self._headerbar_end_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -2174,9 +2180,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.header_bar.set_child(self._content_header_box)
         self._tab_bar_in_custom_titlebar = True
 
-        # Add sidebar toggle button to the title bar's start controls.
-        self.sidebar_toggle_button = Gtk.ToggleButton()
-        self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
+        # Sidebar control is a flat Gtk.Button (Planify-style), not a
+        # ToggleButton — toggles keep Adwaita's :checked fill even with .flat.
+        self.sidebar_toggle_button = Gtk.Button()
+        self.sidebar_toggle_button.set_can_focus(False)
+        self.sidebar_toggle_button.add_css_class('flat')
 
         # Sidebar always starts visible
         sidebar_visible = True
@@ -2192,9 +2200,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _('Toggle Sidebar'),
             tooltip=_('Hide Sidebar ({accels})').format(accels=accel_labels),
         )
-        # Button should not appear pressed when sidebar is visible
-        self.sidebar_toggle_button.set_active(False)
-        self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
+        self.sidebar_toggle_button.connect('clicked', self.on_sidebar_toggle)
         self._headerbar_start_box.append(self.sidebar_toggle_button)
 
         # Add local terminal button right after the sidebar toggle
@@ -2244,12 +2250,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sidebar_visible = not start_hidden
         # Tracked alongside the widget state so callers have a cheap answer.
         self._sidebar_visible = sidebar_visible
-        # Keep the header toggle button in sync (active == hidden).
-        if hasattr(self, 'sidebar_toggle_button'):
-            try:
-                self.sidebar_toggle_button.set_active(start_hidden)
-            except Exception:
-                pass
+        self._sync_sidebar_toggle_button(sidebar_visible)
 
         # Recorded on the split view now; setup_sidebar() applies it to the
         # sidebar widget as soon as that widget exists.
@@ -2276,39 +2277,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
             priority=GLib.PRIORITY_LOW,
         )
+        # Resting the pointer on the header bar's sidebar toggle while the
+        # sidebar is hidden floats it out in the same popup (see
+        # sidebar_hover_reveal.py).
+        from .sidebar_hover_reveal import SidebarHoverReveal
+        self._sidebar_hover_reveal = SidebarHoverReveal(
+            self._content_overlay,
+            popup_func=lambda: getattr(self, '_search_popup', None),
+            is_hidden=self._sidebar_hidden_by_toggle,
+            keep_open=lambda: bool(getattr(self, '_search_expanded_sidebar', False)),
+            in_hot_zone=self._in_sidebar_toggle_zone,
+        )
+        # The first start with the sidebar hidden explains the hover above.
+        from . import sidebar_peek_hint
+        sidebar_peek_hint.schedule(self)
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
-        # Outer NavigationView: work UI is the root page; Settings is pushed on
-        # top (Telegram-style mode). Back / Esc pops Settings and restores work.
-        self.nav_view = None
-        self._work_page = None
-        if hasattr(Adw, 'NavigationView'):
-            self.nav_view = Adw.NavigationView()
-            self.nav_view.set_hexpand(True)
-            self.nav_view.set_vexpand(True)
-            # Work UI <-> Settings is a mode switch, not a deeper page: swap
-            # instantly instead of the forward slide push() would animate.
-            try:
-                self.nav_view.set_animate_transitions(False)
-            except Exception:
-                logger.debug('NavigationView animate-transitions unavailable', exc_info=True)
-            self._work_page = Adw.NavigationPage.new(self._content_overlay, _('SSH Pilot'))
-            try:
-                self._work_page.set_tag('work')
-            except Exception:
-                pass
-            try:
-                self._work_page.set_can_pop(False)
-            except Exception:
-                pass
-            self.nav_view.add(self._work_page)
-            root_widget = self.nav_view
-        else:
-            root_widget = self._content_overlay
+        root_widget = self._content_overlay
 
-        # The omni-search must float above both the work page and pages pushed
-        # onto NavigationView (Preferences, editors, plugin pages).
+        # The omni-search floats above the whole work UI.
         self._global_overlay = Gtk.Overlay()
         self._global_overlay.set_hexpand(True)
         self._global_overlay.set_vexpand(True)
@@ -2333,29 +2321,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.exception("Plugin host bind_window failed")
 
-    def is_preferences_visible(self) -> bool:
-        """True when Settings mode is the visible NavigationView page."""
-        nav = getattr(self, 'nav_view', None)
+    def _destroy_preferences_window(self, *_args) -> None:
         prefs = getattr(self, '_preferences_window', None)
-        if nav is None or prefs is None:
-            return False
+        self._preferences_window = None
+        if prefs is not None:
+            try:
+                prefs.destroy()
+            except Exception:
+                logger.debug('Failed to destroy the Settings window', exc_info=True)
+
+    def is_preferences_visible(self) -> bool:
+        """True when this window's Settings window is shown."""
+        prefs = getattr(self, '_preferences_window', None)
         try:
-            return nav.get_visible_page() is prefs
+            return prefs is not None and prefs.get_visible()
         except Exception:
             return False
 
     def leave_preferences(self) -> bool:
-        """Pop Settings mode if it is visible. Returns True if it was showing."""
-        nav = getattr(self, 'nav_view', None)
+        """Hide the Settings window if it is shown. Returns True if it was showing."""
         prefs = getattr(self, '_preferences_window', None)
-        if nav is None or prefs is None:
+        if not self.is_preferences_visible():
             return False
         try:
-            if nav.get_visible_page() is prefs:
-                nav.pop()
-                return True
+            prefs.set_visible(False)
+            return True
         except Exception:
-            logger.debug('Failed to leave preferences mode', exc_info=True)
+            logger.debug('Failed to hide the Settings window', exc_info=True)
         return False
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
@@ -2488,7 +2480,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             False if compact
             else self.config.get_setting('ui.sidebar_show_group_icon', True)
         )
-        # Compact is always flat; otherwise honor the Flat Sidebar Rows toggle.
+        # Compact is always flat; otherwise honor the sidebar Row Style.
         flat_rows = True if compact else self.config.get_setting(
             'ui.sidebar_flat_rows', False
         )
@@ -3564,8 +3556,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
-        # Reduce the visual gap between the Local Terminal button and the
-        # first tab without changing the spacing around the window controls.
+        # Pull the first tab 4px toward the start controls. Combined with the
+        # start box's 6px spacing, the sidebar↔terminal and terminal↔home gaps
+        # match without changing spacing around the window controls.
         self.tab_bar.set_margin_start(-4)
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
@@ -3700,9 +3693,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.broadcast_banner.set_visible(False)
         self.broadcast_banner.set_reveal_child(False)
         self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.NONE)
-        self.broadcast_hide_timeout_id: Optional[int] = None
-        self.broadcast_entry_dirty = False
-        self._suppress_broadcast_entry_changed = False
 
         # Create banner content box
         banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3745,18 +3735,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # a labelled-by relation, so name the entry directly.
         set_accessible_name(self.broadcast_entry, _("Broadcast Command"))
         self.broadcast_entry.set_hexpand(True)
+        self._update_broadcast_clear_icon()
         self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
         self.broadcast_entry.connect('changed', self.on_broadcast_entry_changed)
+        self.broadcast_entry.connect('icon-release', self.on_broadcast_entry_icon_release)
 
         # Add ESC key handling to the entry
         entry_controller = Gtk.EventControllerKey()
         entry_controller.connect('key-pressed', self.on_broadcast_entry_key_pressed)
         self.broadcast_entry.add_controller(entry_controller)
-
-        focus_controller = Gtk.EventControllerFocus()
-        focus_controller.connect('enter', self.on_broadcast_entry_focus_enter)
-        focus_controller.connect('leave', self.on_broadcast_entry_focus_leave)
-        self.broadcast_entry.add_controller(focus_controller)
 
         banner_content.append(self.broadcast_entry)
 
@@ -4735,9 +4722,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             if hasattr(self, 'connection_list') and self.connection_list:
                 # If sidebar is hidden, show it first
-                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(False)
+                if self._sidebar_hidden_by_toggle():
+                    self._apply_sidebar_visible(True)
 
                 # Close the search bar (if open) and clear the filter so the
                 # full connection list is shown when focus moves here.
@@ -4832,10 +4818,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not (hasattr(self, 'search_entry') and self.search_entry):
                 return
 
-            sidebar_hidden = bool(
-                getattr(self, 'sidebar_toggle_button', None)
-                and self.sidebar_toggle_button.get_active()
-            )
+            sidebar_hidden = self._sidebar_hidden_by_toggle()
 
             was_visible = True
             if hasattr(self, 'search_container') and self.search_container:
@@ -5096,10 +5079,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Toggle search on/off and show appropriate toast notification."""
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
-                sidebar_hidden = bool(
-                    getattr(self, 'sidebar_toggle_button', None)
-                    and self.sidebar_toggle_button.get_active()
-                )
+                sidebar_hidden = self._sidebar_hidden_by_toggle()
 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
@@ -6248,33 +6228,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug("Cannot edit group row")
 
     def on_sidebar_toggle(self, button):
-        """Handle sidebar toggle button click"""
+        """Handle sidebar toggle button click (flat Gtk.Button, Planify-style)."""
         try:
-            # Button active state now represents the action to perform
-            # True = hide sidebar, False = show sidebar
-            should_hide = button.get_active()
-            is_visible = not should_hide
+            is_visible = not bool(getattr(self, '_sidebar_visible', True))
             self._toggle_sidebar_visibility(is_visible)
             # A manual toggle cancels any pending "hide on terminal open" delay.
             self._cancel_pending_sidebar_hide()
-
-            # Update button icon and tooltip based on current sidebar state
-            from sshpilot import icon_utils
-            if is_visible:
-                icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
-                button.set_tooltip_text(
-                    _('Hide Sidebar (F9, {modifier}+B)').format(
-                        modifier=get_primary_modifier_label())
-                )
-            else:
-                icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
-                button.set_tooltip_text(
-                    _('Show Sidebar (F9, {modifier}+B)').format(
-                        modifier=get_primary_modifier_label())
-                )
-
-            # No need to save state - sidebar always starts visible
-
+            self._sync_sidebar_toggle_button(is_visible)
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
 
@@ -6320,7 +6280,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return DEFAULT_SIDEBAR_MAX_WIDTH
 
     def _on_search_popup_shown(self) -> None:
-        """Detached: honour search-only modes (spotlight hides the list)."""
+        """Detached: start below the header bar, and honour search-only modes
+        (spotlight hides the list)."""
+        self._search_popup.set_margins(top=self._sidebar_popup_top_inset())
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(not self._search_popup.search_only)
 
@@ -6339,14 +6301,70 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if popup is not None:
                 popup.hide()
 
+    def _in_sidebar_toggle_zone(self, x: float, y: float) -> bool:
+        """Whether overlay point (x, y) is on the header bar's leading run up
+        to and including the sidebar toggle: the button, the window controls
+        before it and the padding around it, over the header's full height."""
+        button = getattr(self, 'sidebar_toggle_button', None)
+        header = getattr(self, 'header_bar', None)
+        overlay = getattr(self, '_content_overlay', None)
+        if button is None or header is None or overlay is None:
+            return False
+        if not (button.get_mapped() and header.get_mapped()):
+            return False
+        ok_b, b = button.compute_bounds(overlay)
+        ok_h, h = header.compute_bounds(overlay)
+        if not (ok_b and ok_h):
+            return False
+        if not h.get_y() <= y <= h.get_y() + h.get_height():
+            return False
+        if overlay.get_direction() == Gtk.TextDirection.RTL:
+            return x >= b.get_x()
+        return x <= b.get_x() + b.get_width()
+
+    def _sidebar_popup_top_inset(self) -> int:
+        """Height to keep clear above the sidebar popup: the content header
+        bar, so its sidebar toggle stays clickable while the popup is up."""
+        header = getattr(self, 'header_bar', None)
+        overlay = getattr(self, '_content_overlay', None)
+        if header is None or overlay is None or not header.get_mapped():
+            return 0
+        ok, h = header.compute_bounds(overlay)
+        return max(0, int(h.get_y() + h.get_height())) if ok else 0
+
+    def _sidebar_hidden_by_toggle(self) -> bool:
+        """True while the sidebar is hidden via the header control / F9."""
+        return not bool(getattr(self, '_sidebar_visible', True))
+
+    def _sync_sidebar_toggle_button(self, visible: bool) -> None:
+        """Update the flat sidebar button tooltip for the current visibility."""
+        button = getattr(self, 'sidebar_toggle_button', None)
+        if button is None:
+            return
+        try:
+            from sshpilot import icon_utils
+            icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
+            if visible:
+                button.set_tooltip_text(
+                    _('Hide Sidebar (F9, {modifier}+B)').format(
+                        modifier=get_primary_modifier_label())
+                )
+            else:
+                # Second line advertises the hover reveal (sidebar_hover_reveal).
+                button.set_tooltip_text(
+                    _('Show Sidebar (F9, {modifier}+B)').format(
+                        modifier=get_primary_modifier_label())
+                    + '\n' + _('Hover to peek at the sidebar')
+                )
+        except Exception:
+            logger.debug("sync sidebar toggle button failed", exc_info=True)
+
     def _apply_sidebar_visible(self, visible: bool) -> None:
-        """Programmatically show/hide the sidebar and keep the toggle button in
+        """Programmatically show/hide the sidebar and keep the header button in
         sync (used by the behavior hooks)."""
         try:
             self._toggle_sidebar_visibility(visible)
-            if hasattr(self, 'sidebar_toggle_button'):
-                # Button 'active' means "hidden" (see on_sidebar_toggle).
-                self.sidebar_toggle_button.set_active(not visible)
+            self._sync_sidebar_toggle_button(visible)
         except Exception:
             logger.debug("apply_sidebar_visible failed", exc_info=True)
 
@@ -6395,6 +6413,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
         try:
+            if is_visible:
+                # Re-dock a sidebar that is floating in the popup first, or
+                # the pane comes back empty.
+                popup = getattr(self, '_search_popup', None)
+                if popup is not None:
+                    self._search_expanded_sidebar = False
+                    popup.hide(animate=False)
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
             if getattr(self, '_split_variant', '') == 'paned':
                 self._sidebar_visible = bool(is_visible)
@@ -6870,20 +6895,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
-        elif key == 'ui.group_row_display':
-            normalized = 'nested'
-            try:
-                normalized = str(value).lower()
-            except Exception:
-                pass
-            if normalized not in {'fullwidth', 'nested'}:
-                normalized = 'nested'
-
-            # Covers both connection rows and group headers (nested groups
-            # honor the same fullwidth/nested layout).
-            for row in self.connection_list:
-                if hasattr(row, 'refresh_group_display_mode'):
-                    row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -8638,6 +8649,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         save_completion(bool(ok), result)
                     except TypeError:
                         save_completion(bool(ok))
+            if ok:
+                self._apply_dialog_group_change(dialog, connection_data)
             has_secret_work = bool(
                 secret_plan and (
                     secret_plan.get('password_changed')
@@ -8674,6 +8687,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to save connection: {e}")
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
+
+    def _apply_dialog_group_change(self, dialog, connection_data):
+        """Move a just-saved connection into the group picked in the dialog."""
+        get_change = getattr(dialog, 'get_group_change', None)
+        target = get_change() if callable(get_change) else None
+        nickname = (connection_data.get('nickname') or '').strip()
+        if target is None or not nickname:
+            return
+        # A resumed save completes again; move only once.
+        dialog._initial_group_id = target
+        self.move_connection_to_group(nickname, target or None)
 
     def show_effective_config_for_connection(self, connection) -> None:
         """Open the effective-config viewer from a daemon comparison result."""

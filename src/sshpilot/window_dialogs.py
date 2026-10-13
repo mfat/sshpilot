@@ -129,9 +129,9 @@ def parent_window(parent):
     """Return a ``Gtk.Window`` for APIs that require one, given a window *or* a widget.
 
     ``transient_for``, :class:`Gtk.FileDialog` and friends only accept a
-    :class:`Gtk.Window`. Callers may hold a widget instead — Settings is an
-    :class:`Adw.NavigationPage` inside the main window — so resolve the
-    widget's root. Windows pass through untouched and ``None`` stays ``None``.
+    :class:`Gtk.Window`. Callers may hold a widget instead (a preferences page,
+    a row inside a dialog), so resolve the widget's root. Windows pass through
+    untouched and ``None`` stays ``None``.
 
     This is the cheap structural unwrap. Use :func:`resolve_app_modal_parent`
     when you want the app's primary window regardless of what you were handed.
@@ -231,7 +231,10 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
        :func:`Gtk.Application.get_windows` order — most recently focused
        first — so the first match is the most recently focused).
     3. The active window, if visible (non-modal secondary window, e.g. FM).
-    4. The main window.
+    4. The main window's Settings window, if shown: it is transient for the
+       main window, so it always stacks above it and would cover a prompt
+       presented there.
+    5. The main window.
 
     Pure function over already-extracted GTK state so it can be unit-tested.
     """
@@ -258,6 +261,9 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
     if active_window is not None and active_window is not main_window \
             and _visible(active_window):
         return active_window
+    settings = getattr(main_window, '_preferences_window', None)
+    if settings is not None and _visible(settings):
+        return settings
     return main_window
 
 
@@ -898,18 +904,14 @@ class WindowConfigDialogsMixin:
             except Exception:
                 logger.debug("Could not show the detach toast", exc_info=True)
 
-    def show_preferences(self, page_id=None):
-        """Enter Settings mode (pushes onto the main NavigationView).
+    def show_preferences(self, page_id=None, setting=None):
+        """Open (or raise) this window's Settings window.
 
         ``page_id`` optionally selects a preferences page by stack id
-        (e.g. ``plugins``, ``security-&-credentials``).
+        (e.g. ``plugins``, ``security-&-credentials``); ``setting``, the
+        translated title of a row on that page, also scrolls to that row.
         """
         logger.info("Show preferences")
-        nav = getattr(self, 'nav_view', None)
-        if nav is None:
-            logger.error('NavigationView unavailable; cannot open Settings mode')
-            return
-
         prefs = getattr(self, '_preferences_window', None)
         if prefs is None:
             try:
@@ -922,16 +924,23 @@ class WindowConfigDialogsMixin:
                 )
                 self._preferences_window = prefs
             except Exception as e:
-                logger.error(f"Failed to create preferences page: {e}")
+                logger.error(f"Failed to create preferences window: {e}")
                 return
 
         try:
-            visible = nav.get_visible_page()
-            if visible is not prefs:
-                # Re-push after a previous pop (page stays alive for reuse).
-                nav.push(prefs)
-            if page_id:
+            # A registered app window, so routed prompts (vault unlock, KeePass
+            # master password) stack on Settings while it is the active window.
+            if prefs.get_application() is None:
+                associate_window_with_parent_application(prefs, self)
+            # Transient: Settings stays above the main window instead of
+            # disappearing behind it when the main window is clicked. Still
+            # non-modal, so the main window remains usable.
+            prefs.set_transient_for(self)
+            if page_id and setting:
+                prefs.reveal_setting(page_id, setting)
+            elif page_id:
                 prefs.select_page(page_id)
+            prefs.present()
         except Exception as e:
             logger.error(f"Failed to show preferences: {e}")
 

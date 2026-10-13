@@ -1,4 +1,4 @@
-"""Preferences UI (main-window Settings mode) and font selection utilities."""
+"""Preferences UI (the Settings window) and font selection utilities."""
 
 import os
 import functools
@@ -19,6 +19,7 @@ from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CH
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
+from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 from .terminal_osc52 import (
@@ -59,145 +60,6 @@ _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "debug_enabled": False,
 }
 
-
-_GROUP_PREVIEW_CSS_INSTALLED = False
-
-
-class _GroupDisplayToggleFallback:
-    """Fallback controller for group display toggle when Adw.ToggleGroup is missing."""
-
-    def __init__(self, buttons: Dict[str, Gtk.ToggleButton], default: str = "fullwidth"):
-        self._buttons = buttons
-        self._default = default
-        self._active_name: Optional[str] = None
-        self._callbacks: List[Any] = []
-        self._syncing = False
-
-        for name, button in self._buttons.items():
-            button.connect("toggled", self._on_button_toggled, name)
-
-    def get_active_name(self) -> str:
-        if self._active_name:
-            return self._active_name
-        if self._default in self._buttons:
-            return self._default
-        if self._buttons:
-            return next(iter(self._buttons.keys()))
-        return self._default
-
-    def set_active_name(self, name: str):
-        if name not in self._buttons:
-            return
-        if self._active_name == name:
-            return
-
-        self._syncing = True
-        try:
-            self._active_name = name
-            for option, button in self._buttons.items():
-                button.set_active(option == name)
-        finally:
-            self._syncing = False
-
-    def connect(self, callback):
-        self._callbacks.append(callback)
-
-    def _emit_changed(self):
-        for callback in self._callbacks:
-            callback(self, None)
-
-    def _on_button_toggled(self, button: Gtk.ToggleButton, name: str):
-        if self._syncing:
-            return
-
-        if not button.get_active():
-            # Keep one option active at all times.
-            if self._active_name == name:
-                self._syncing = True
-                try:
-                    button.set_active(True)
-                finally:
-                    self._syncing = False
-            return
-
-        if self._active_name == name:
-            return
-
-        self._active_name = name
-        self._syncing = True
-        try:
-            for option, other_button in self._buttons.items():
-                if option != name and other_button.get_active():
-                    other_button.set_active(False)
-        finally:
-            self._syncing = False
-
-        self._emit_changed()
-
-
-def _install_group_display_preview_css():
-    global _GROUP_PREVIEW_CSS_INSTALLED
-    if _GROUP_PREVIEW_CSS_INSTALLED:
-        return
-
-    display = Gdk.Display.get_default()
-    if not display:
-        return
-
-    provider = Gtk.CssProvider()
-    css = """
-    .group-display-preview-container {
-        padding: 4px 0;
-    }
-
-    .group-display-preview-title {
-        font-weight: 600;
-    }
-
-    .group-display-preview-parent {
-        background-color: alpha(@accent_bg_color, 0.12);
-        border-radius: 8px;
-        padding: 8px 10px;
-    }
-
-    .group-display-preview-parent-title {
-        font-weight: 600;
-    }
-
-    .group-display-preview-parent-subtitle {
-        opacity: 0.7;
-        font-size: 0.9em;
-    }
-
-    .group-display-preview-row {
-        background-color: alpha(@accent_bg_color, 0.18);
-        border-radius: 10px;
-        padding: 8px 12px;
-        transition: background-color 0.15s ease-in-out;
-    }
-
-    .group-display-preview-row.active {
-        background-color: alpha(@accent_bg_color, 0.36);
-        box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
-    }
-
-    .group-display-preview-row-title {
-        font-weight: 600;
-    }
-
-    .group-display-preview-row-subtitle {
-        opacity: 0.7;
-        font-size: 0.9em;
-    }
-    """
-    try:
-        provider.load_from_data(css.encode('utf-8'))
-        Gtk.StyleContext.add_provider_for_display(
-            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        _GROUP_PREVIEW_CSS_INSTALLED = True
-    except Exception:
-        logger.debug("Failed to install group display preview CSS", exc_info=True)
 
 # These capability helpers moved to file_manager_integration so callers that
 # only need a boolean don't pull this heavy Preferences module onto the startup
@@ -242,27 +104,53 @@ def _detect_pyxterm_backend():
     return True, None
 
 
+class _PreviewGroupManager:
+    """Just enough of GroupManager for real sidebar rows to draw sample data."""
+
+    def __init__(self, config, groups):
+        self.config = config
+        self.groups = groups
+
+    def resolve_display_group_id(self, connection_reference, context_group_id=None):
+        if context_group_id is not None:
+            return context_group_id
+        return next(
+            (gid for gid, info in self.groups.items()
+             if connection_reference in info.get('connections', [])),
+            None,
+        )
+
+    def set_group_expanded(self, group_id, expanded):
+        pass
+
+
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
-class PreferencesWindow(Adw.NavigationPage):
-    """Settings mode page for the main window.
+class PreferencesWindow(Adw.Window):
+    """The Settings window: non-modal, transient for its main window.
 
-    An ``Adw.NavigationPage`` pushed onto the window's ``Adw.NavigationView``.
-    It replaces the work UI (connection sidebar + tabs) for the duration of the
-    mode; HeaderBar Back / Esc pops back to work. Internally an
-    ``Adw.NavigationSplitView`` hosts the category list and preference pages
-    (collapses to list↔detail on narrow widths).
+    An ``Adw.NavigationSplitView`` hosts the category list and preference pages
+    (collapses to list↔detail on narrow widths). Closing it only hides it, so
+    the built pages are reused on the next open.
 
-    ``self.get_root()`` is the main window once the page is in the tree — use it
-    wherever a ``Gtk.Window`` is required (e.g. ``transient_for``).
+    ``self.parent_window`` is the main window whose terminals, sidebar and
+    daemon services the settings act on. Present dialogs on
+    :meth:`_dialog_parent`, never on ``get_root()`` directly: once Settings is
+    closed its own window is hidden and a dialog shown there would be invisible.
     """
 
     __gtype_name__ = "SshPilotPreferencesWindow"
 
+    toast_overlay = Gtk.Template.Child()
     split_view = Gtk.Template.Child()
     sidebar_page = Gtk.Template.Child()
     content_page = Gtk.Template.Child()
     sidebar_header_bar = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
+    search_button = Gtk.Template.Child()
+    search_bar = Gtk.Template.Child()
+    search_entry = Gtk.Template.Child()
+    sidebar_stack = Gtk.Template.Child()
+    search_results = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
@@ -299,6 +187,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._suppress_operation_mode_toggle = False
 
         self.pages = {}
+        self._page_icons = {}
         self._page_builders = {}
         self._page_placeholders = {}
         self._idle_building_scheduled = False
@@ -315,8 +204,11 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self._base_header_title = _("Settings")
         self.set_title(self._base_header_title)
+        self.set_hide_on_close(True)
+        install_esc_to_close(self)
 
         self.setup_navigation_layout()
+        self.setup_settings_search()
         self.setup_preferences()
         self.apply_color_overrides()
 
@@ -338,35 +230,26 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
-        # Explicit "Done" action in place of the window-close (X) button, which
-        # would quit the app rather than Settings. Hide the X / window controls
-        # and the Back arrow so Done is the sole, unambiguous way to leave.
-        self.header_bar.set_show_end_title_buttons(False)
-        self.header_bar.set_show_back_button(False)
-        done_button = Gtk.Button(label=_("Done"))
-        done_button.add_css_class('suggested-action')
-        done_button.set_tooltip_text(_("Close Settings"))
-        done_button.connect('clicked', self._on_done_clicked)
-        self.header_bar.pack_end(done_button)
-
         self.pages = {}
         self._update_header_title()
 
-    def _on_done_clicked(self, _button):
-        """Leave Settings mode (pop back to the work UI)."""
+    def _dialog_parent(self):
+        """Where a dialog from Settings belongs: here while shown, else the main window.
+
+        Async work (a plugin download, a daemon call) can finish after the user
+        closed Settings. Presenting on the hidden Settings window would leave
+        the dialog invisible, so it goes to the main window instead.
+        """
         try:
-            self.parent_window.leave_preferences()
+            visible = self.get_visible()
         except Exception:
-            logger.debug('Failed to leave preferences from Done button', exc_info=True)
+            visible = True
+        if visible or self.parent_window is None:
+            return self
+        return self.parent_window
 
     def _sync_split_show_content(self, *_args):
-        """Keep show_content aligned with layout so Back pops Settings on first press.
-
-        AdwNavigationSplitView handles navigation.pop locally whenever
-        show_content is TRUE (even when not collapsed), so leaving it TRUE on
-        wide layouts makes the first HeaderBar Back a no-op while Esc still pops
-        the outer NavigationView immediately.
-        """
+        """Show the category list side by side, and the picked page when collapsed."""
         try:
             collapsed = self.split_view.get_collapsed()
             if not collapsed:
@@ -459,8 +342,6 @@ class PreferencesWindow(Adw.NavigationPage):
             self.content_page.set_title(title)
         except Exception:
             pass
-        # Keep the outer Settings page title stable for Back tooltips / stack.
-        self.set_title(self._base_header_title)
 
     def select_page(self, page_id: Optional[str]) -> bool:
         """Select a preferences page by stack id (e.g. ``plugins``).
@@ -479,6 +360,258 @@ class PreferencesWindow(Adw.NavigationPage):
                 return True
             row = row.get_next_sibling()
         return False
+
+    # --- search -------------------------------------------------------------
+
+    def setup_settings_search(self):
+        """Search individual settings from the sidebar (Ctrl+F, or just type)."""
+        self.search_bar.connect_entry(self.search_entry)
+        self.search_bar.set_key_capture_widget(self)
+        self.search_bar.connect('notify::search-mode-enabled', self._on_search_mode_changed)
+        self.search_entry.connect('search-changed', self._on_settings_search_changed)
+        self.search_entry.connect('activate', self._on_settings_search_activate)
+        self.search_entry.connect('stop-search', self._on_settings_search_stop)
+        self.search_results.connect('row-activated', self._on_search_result_activated)
+        # Down from the entry moves into the results, as in a list search.
+        keys = Gtk.EventControllerKey()
+        keys.connect('key-pressed', self._on_search_entry_key)
+        self.search_entry.add_controller(keys)
+        self._search_highlight_id = None
+
+    def start_search(self):
+        """Open the search bar and focus it (Ctrl+F while Settings is active)."""
+        self.search_bar.set_search_mode(True)
+        self.search_entry.grab_focus()
+
+    def _on_search_mode_changed(self, *_args):
+        if not self.search_bar.get_search_mode():
+            if self.search_entry.get_text():
+                self.search_entry.set_text('')
+            self.sidebar_stack.set_visible_child_name('pages')
+
+    def _on_settings_search_stop(self, entry):
+        # Esc: leave search first; a second Esc (bubbling to the window) closes.
+        self.search_bar.set_search_mode(False)
+        selected = self.sidebar.get_selected_row()
+        if selected is not None:
+            selected.grab_focus()
+
+    def _on_search_entry_key(self, _controller, keyval, _keycode, _state):
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down):
+            first = self.search_results.get_row_at_index(0)
+            if first is not None and self.sidebar_stack.get_visible_child_name() == 'results':
+                first.grab_focus()
+                return True
+        return False
+
+    def _on_settings_search_activate(self, _entry):
+        # Enter opens the best match and ends the search (as GNOME Settings
+        # does); clicking a result keeps the results up for the next one.
+        first = self.search_results.get_row_at_index(0)
+        if first is not None and self.sidebar_stack.get_visible_child_name() == 'results':
+            self._on_search_result_activated(self.search_results, first)
+            self.search_bar.set_search_mode(False)
+
+    # Building Plugins starts a plugin registry download; search must not.
+    # Until it is opened, search finds that page by name only.
+    _SEARCH_SKIPS_UNBUILT = {"plugins"}
+
+    def _build_all_pages(self):
+        for page_id in list(getattr(self, '_page_builders', {})):
+            if page_id not in self._SEARCH_SKIPS_UNBUILT:
+                self._ensure_page_built(page_id)
+
+    @staticmethod
+    def _has_preference_rows(widget):
+        stack = [widget.get_first_child()]
+        while stack:
+            child = stack.pop()
+            while child is not None:
+                if isinstance(child, Adw.PreferencesRow):
+                    return True
+                stack.append(child.get_first_child())
+                child = child.get_next_sibling()
+        return False
+
+    def _iter_setting_rows(self):
+        """Yield (page_id, group title, row) for every shown row on every page.
+
+        A titled group without rows (radio buttons, the palette) is yielded
+        itself, with an empty group title.
+        """
+        from .settings_index import NOT_INDEXED
+
+        not_indexed = {(page, _(title)) for page, title in NOT_INDEXED}
+        for page_id, page in self.pages.items():
+            stack = [(page, '', None)]
+            while stack:
+                widget, group, expander = stack.pop()
+                if not widget.get_visible():
+                    continue
+                if isinstance(widget, Adw.PreferencesGroup):
+                    group = widget.get_title() or ''
+                    if (group and (page_id, group) not in not_indexed
+                            and not self._has_preference_rows(widget)):
+                        yield page_id, '', widget
+                        continue
+                if isinstance(widget, Adw.PreferencesRow):
+                    title = widget.get_title() or ''
+                    # An ExpanderRow draws its header with an inner ActionRow.
+                    header = expander is not None and title == expander.get_title()
+                    if title and not header and (page_id, title) not in not_indexed:
+                        yield page_id, group, widget
+                    if isinstance(widget, Adw.ExpanderRow):
+                        expander = widget
+                children = []
+                child = widget.get_first_child()
+                while child is not None:
+                    children.append((child, group, expander))
+                    child = child.get_next_sibling()
+                stack.extend(reversed(children))
+
+    @staticmethod
+    def _fold(text):
+        import unicodedata
+
+        decomposed = unicodedata.normalize('NFKD', text or '')
+        return ''.join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+    def search_settings(self, query):
+        """Rows matching *query*, best first: [(page_id, group, row)]."""
+        from .settings_index import entry_for
+
+        tokens = self._fold(query).split()
+        if not tokens:
+            return []
+        self._build_all_pages()
+        page_order = list(self.pages)
+        matches = []
+        for index, page_id in enumerate(page_order):
+            # Whole pages first when their name matches ("terminal", "plugins").
+            folded_page = self._fold(self._page_title(page_id))
+            if folded_page and all(t in folded_page for t in tokens):
+                matches.append((-1, index, 0, page_id, '', None))
+        for index, (page_id, group, row) in enumerate(self._iter_setting_rows()):
+            title = row.get_title() or ''
+            if isinstance(row, Adw.PreferencesGroup):
+                subtitle = row.get_description()
+            else:
+                subtitle = row.get_subtitle() if hasattr(row, 'get_subtitle') else ''
+            entry = entry_for(page_id, title)
+            keywords = ' '.join(entry.keyword_list()) if entry else ''
+            page_title = self._page_title(page_id)
+            fields = [self._fold(f) for f in (title, keywords, subtitle or '', f'{group} {page_title}')]
+            if not all(any(t in f for f in fields) for t in tokens):
+                continue
+            folded_title = fields[0]
+            if folded_title.startswith(' '.join(tokens)):
+                rank = 0
+            elif all(t in folded_title for t in tokens):
+                rank = 1
+            elif all(t in fields[0] or t in fields[1] for t in tokens):
+                rank = 2
+            else:
+                rank = 3
+            matches.append((rank, page_order.index(page_id), index, page_id, group, row))
+        matches.sort(key=lambda m: m[:3])
+        return [(page_id, group, row) for *_rest, page_id, group, row in matches]
+
+    def _page_title(self, page_id):
+        row = self._sidebar_row(page_id)
+        return (row.get_title() if row is not None else '') or ''
+
+    def _sidebar_row(self, page_id):
+        row = self.sidebar.get_first_child()
+        while row is not None:
+            if row.get_name() == page_id:
+                return row
+            row = row.get_next_sibling()
+        return None
+
+    def _on_settings_search_changed(self, entry):
+        query = entry.get_text()
+        while (child := self.search_results.get_first_child()) is not None:
+            self.search_results.remove(child)
+        if not query.strip():
+            self.sidebar_stack.set_visible_child_name('pages')
+            return
+        from sshpilot import icon_utils
+
+        results = self.search_settings(query)
+        for page_id, group, target in results:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_activatable(True)
+            page_title = self._page_title(page_id)
+            row.set_title(target.get_title() if target is not None else page_title)
+            if target is None:
+                row.set_subtitle(_("Page"))
+            elif group and group != page_title:
+                # Translators: where a search result lives, e.g. "Terminal › Mouse".
+                row.set_subtitle(_("{page} › {group}").format(page=page_title, group=group))
+            else:
+                row.set_subtitle(page_title)
+            icon_name = self._page_icons.get(page_id)
+            if icon_name:
+                row.add_prefix(icon_utils.new_image_from_icon_name(icon_name))
+            row._search_target = (page_id, target)
+            self.search_results.append(row)
+        self.sidebar_stack.set_visible_child_name('results' if results else 'empty')
+
+    def _on_search_result_activated(self, _listbox, row):
+        target = getattr(row, '_search_target', None)
+        if target is not None:
+            self.reveal_setting_row(*target)
+
+    def reveal_setting_row(self, page_id, target):
+        """Show *target* on its page: select the page, scroll to it, flash it."""
+        self.select_page(page_id)
+        if target is None or page_id != getattr(self, '_selected_page_name', None):
+            return
+        parent = target.get_parent()
+        while parent is not None:
+            if isinstance(parent, Adw.ExpanderRow) and not parent.get_expanded():
+                parent.set_expanded(True)
+            parent = parent.get_parent()
+
+        def _focus():
+            # Focusing scrolls the page's viewport to the row (or to a group's
+            # first control).
+            if isinstance(target, Adw.PreferencesGroup):
+                target.child_focus(Gtk.DirectionType.TAB_FORWARD)
+            else:
+                target.grab_focus()
+            self._flash_setting_row(target)
+            return GLib.SOURCE_REMOVE
+
+        # After the stack switch, so the page is mapped and allocated.
+        GLib.timeout_add(150, _focus)
+
+    def reveal_setting(self, page_id, title):
+        """Select *page_id* and reveal the shown row titled *title* (translated)."""
+        self._ensure_page_built(page_id)
+        for row_page, _group, row in self._iter_setting_rows():
+            if row_page == page_id and row.get_title() == title:
+                self.reveal_setting_row(page_id, row)
+                return True
+        self.select_page(page_id)
+        return False
+
+    def _flash_setting_row(self, row):
+        row.add_css_class('settings-search-highlight')
+        if self._search_highlight_id:
+            GLib.source_remove(self._search_highlight_id)
+            previous = getattr(self, '_search_highlight_row', None)
+            if previous is not None and previous is not row:
+                previous.remove_css_class('settings-search-highlight')
+
+        def _clear():
+            self._search_highlight_id = None
+            row.remove_css_class('settings-search-highlight')
+            return GLib.SOURCE_REMOVE
+
+        self._search_highlight_row = row
+        self._search_highlight_id = GLib.timeout_add(1500, _clear)
 
     @staticmethod
     def _page_id(title):
@@ -503,6 +636,7 @@ class PreferencesWindow(Adw.NavigationPage):
         row.set_title(_(title))
         page_id = self._page_id(title)
         row.set_name(page_id)
+        self._page_icons[page_id] = icon_name
 
         # Add icon using bundled icon helper
         from sshpilot import icon_utils
@@ -637,7 +771,7 @@ class PreferencesWindow(Adw.NavigationPage):
         shape = self.config.get_setting('terminal.cursor_shape', None)
         blink = self.config.get_setting('terminal.cursor_blink', None)
         try:
-            parent_window = self.get_root()
+            parent_window = self.parent_window
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():
@@ -1095,7 +1229,7 @@ class PreferencesWindow(Adw.NavigationPage):
         return terminal_page
 
 
-    def _add_group_appearance_group(self, groups_page):
+    def _add_group_appearance_group(self, appearance_page):
         """Add the Group Appearance preferences group."""
         group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
 
@@ -1193,154 +1327,100 @@ class PreferencesWindow(Adw.NavigationPage):
         group_appearance_group.add(self.terminal_group_color_row)
 
 
-        groups_page.add(group_appearance_group)
+        appearance_page.add(group_appearance_group)
 
-    def _add_group_layout_group(self, groups_page):
-        """Add the Group Layout preferences group and previews."""
-        # Group display layout section (shown after appearance options)
-        group_layout_group = Adw.PreferencesGroup(title=_("Group Layout"))
+    def _add_group_preview_group(self, appearance_page):
+        """Add a live preview of the sidebar built from its real row widgets."""
+        preview_group = Adw.PreferencesGroup(title=_("Preview"))
 
-        self._group_display_preview_rows = {}
-        _install_group_display_preview_css()
+        self.group_preview_list = Gtk.ListBox()
+        self.group_preview_list.add_css_class("navigation-sidebar")
+        self.group_preview_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        # Inert: the rows carry the sidebar's hover, drag and click handlers.
+        self.group_preview_list.set_can_target(False)
+        self.group_preview_list.set_can_focus(False)
 
-        self._group_display_modes = ['fullwidth', 'nested']
-        self.group_display_toggle_row = Adw.ActionRow()
-        self.group_display_toggle_row.set_title(_("Group Display"))
-        self.group_display_toggle_row.set_subtitle(
-            _("Choose how grouped connections appear in the sidebar")
-        )
-        self.group_display_toggle_row.set_activatable(False)
+        frame = Gtk.Frame()
+        frame.set_child(self.group_preview_list)
+        frame.set_halign(Gtk.Align.CENTER)
+        frame.set_size_request(320, -1)
+        preview_group.add(frame)
+
+        self._group_preview_refresh_id = 0
+        self._rebuild_group_preview()
+        appearance_page.add(preview_group)
+
+    def _schedule_group_preview_refresh(self):
+        if getattr(self, 'group_preview_list', None) is None:
+            return
+        if not getattr(self, '_group_preview_refresh_id', 0):
+            self._group_preview_refresh_id = GLib.idle_add(self._rebuild_group_preview)
+
+    def _rebuild_group_preview(self):
+        """Replace the preview rows with fresh ones built from current settings."""
+        self._group_preview_refresh_id = 0
+        listbox = getattr(self, 'group_preview_list', None)
+        if listbox is None:
+            return False
         try:
-            self.group_display_toggle_row.set_focusable(False)
-        except Exception:
-            pass
+            from .connection_model import Connection, ConnectionState
+            from .sidebar import (
+                ConnectionRow, GroupRow, LocalTerminalRow,
+                _apply_sidebar_list_compact_class,
+            )
 
-        self.group_display_toggle_group = None
-        self._group_display_toggle_controller = None
+            listbox.remove_all()
+            _apply_sidebar_list_compact_class(listbox, self.config)
 
-        if hasattr(Adw, 'ToggleGroup') and hasattr(Adw.ToggleGroup, 'new'):
-            toggle_group = Adw.ToggleGroup.new()
-            toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
-            toggle_group.add_css_class('linked')
-            toggle_group.set_hexpand(True)
-            try:
-                toggle_group.set_homogeneous(True)
-            except Exception:
-                pass
-
-            self.group_display_toggle_fullwidth = Adw.Toggle.new()
-            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
-            self.group_display_toggle_fullwidth.set_label(_('Fullwidth'))
-
-            self.group_display_toggle_nested = Adw.Toggle.new()
-            self.group_display_toggle_nested.props.name = 'nested'
-            self.group_display_toggle_nested.set_label(_('Nested'))
-
-            toggle_group.add(self.group_display_toggle_fullwidth)
-            toggle_group.add(self.group_display_toggle_nested)
-            self.group_display_toggle_row.set_child(toggle_group)
-
-            self.group_display_toggle_group = toggle_group
-            self._group_display_toggle_controller = toggle_group
-        else:
-            fallback_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-            fallback_box.add_css_class('linked')
-            fallback_box.set_hexpand(True)
-
-            self.group_display_toggle_fullwidth = Gtk.ToggleButton(label=_('Fullwidth'))
-            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
-            self.group_display_toggle_fullwidth.set_hexpand(True)
-
-            self.group_display_toggle_nested = Gtk.ToggleButton(label=_('Nested'))
-            self.group_display_toggle_nested.props.name = 'nested'
-            self.group_display_toggle_nested.set_hexpand(True)
-
-            fallback_box.append(self.group_display_toggle_fullwidth)
-            fallback_box.append(self.group_display_toggle_nested)
-            self.group_display_toggle_row.set_child(fallback_box)
-
-            buttons = {
-                'fullwidth': self.group_display_toggle_fullwidth,
-                'nested': self.group_display_toggle_nested,
+            groups = {
+                'production': {
+                    'id': 'production', 'name': _("Production Servers"),
+                    'color': '#3584e4', 'parent_id': None, 'expanded': True,
+                    'connections': ['web-01', 'db-01'],
+                },
+                'backups': {
+                    'id': 'backups', 'name': _("Backups"),
+                    'color': '#e66100', 'parent_id': 'production', 'expanded': True,
+                    'connections': ['backup-01'],
+                },
             }
-            self._group_display_toggle_controller = _GroupDisplayToggleFallback(buttons)
+            manager = _PreviewGroupManager(self.config, groups)
+            connections = {
+                'web-01': Connection({'nickname': 'web-01', 'hostname': 'web-01.example.com',
+                                      'username': 'ops'}),
+                'db-01': Connection({'nickname': 'db-01', 'hostname': 'db-01.example.com',
+                                     'username': 'postgres'}),
+                'backup-01': Connection({'nickname': 'backup-01',
+                                         'hostname': 'backup-01.example.com',
+                                         'username': 'backup'}),
+            }
+            connections['web-01'].set_status(ConnectionState.CONNECTED)
+            connections['db-01'].forwarding_rules = [{
+                'type': 'local', 'listen_port': 5432,
+                'remote_host': 'localhost', 'remote_port': 5432,
+            }]
 
-        current_display_mode = 'nested'
-        try:
-            current_display_mode = str(
-                self.config.get_setting('ui.group_row_display', 'nested')
-            ).lower()
+            if self.config.get_setting('ui.sidebar_show_local_terminal', False):
+                listbox.append(LocalTerminalRow(self.config))
+
+            def add_group(group_id, level):
+                info = groups[group_id]
+                group_row = GroupRow(info, manager, connections)
+                group_row.set_indentation(level)
+                listbox.append(group_row)
+                for nickname in info['connections']:
+                    row = ConnectionRow(
+                        connections[nickname], manager, self.config,
+                        display_group_id=group_id,
+                    )
+                    row.set_indentation(level + 1)
+                    listbox.append(row)
+
+            add_group('production', 0)
+            add_group('backups', 1)
         except Exception:
-            current_display_mode = 'nested'
-        if current_display_mode not in self._group_display_modes:
-            current_display_mode = 'nested'
-
-        self._group_display_toggle_sync = True
-        try:
-            if self._group_display_toggle_controller:
-                self._group_display_toggle_controller.set_active_name(current_display_mode)
-        finally:
-            self._group_display_toggle_sync = False
-
-        if isinstance(self._group_display_toggle_controller, _GroupDisplayToggleFallback):
-            self._group_display_toggle_controller.connect(
-                self.on_group_row_display_changed
-            )
-        elif self.group_display_toggle_group is not None:
-            self.group_display_toggle_group.connect(
-                'notify::active-name', self.on_group_row_display_changed
-            )
-
-        group_layout_group.add(self.group_display_toggle_row)
-
-        # Preview showing both layout styles
-        self.group_display_preview_row = Adw.ActionRow()
-        self.group_display_preview_row.set_title(_("Layout Preview"))
-        self.group_display_preview_row.set_activatable(False)
-        try:
-            self.group_display_preview_row.set_focusable(False)
-        except Exception:
-            pass
-
-        preview_stack = Gtk.Stack()
-        preview_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        preview_stack.set_transition_duration(150)
-
-        preview_stack.set_margin_top(4)
-        preview_stack.set_margin_bottom(4)
-
-        preview_fullwidth_wrapper, preview_fullwidth_row = self._create_group_display_preview(
-            'fullwidth', 'Fullwidth'
-        )
-        preview_nested_wrapper, preview_nested_row = self._create_group_display_preview(
-            'nested', 'Nested'
-        )
-
-        preview_stack.add_named(preview_fullwidth_wrapper, 'fullwidth')
-        preview_stack.add_named(preview_nested_wrapper, 'nested')
-
-        self.group_display_preview_row.set_child(preview_stack)
-        self._group_display_preview_rows = {
-            'fullwidth': preview_fullwidth_row,
-            'nested': preview_nested_row,
-        }
-        self._group_display_preview_stack = preview_stack
-
-        self._update_group_display_preview(current_display_mode)
-
-        group_layout_group.add(self.group_display_preview_row)
-        groups_page.add(group_layout_group)
-
-    def _build_groups_preferences_page(self):
-        """Build the Groups preferences page."""
-        groups_page = Adw.PreferencesPage()
-        groups_page.set_title(_("Groups"))
-        groups_page.set_icon_name("folder-open-symbolic")
-
-        self._add_group_appearance_group(groups_page)
-        self._add_group_layout_group(groups_page)
-        return groups_page
-
+            logger.debug("Failed to build the group preview", exc_info=True)
+        return False
 
     def _add_interface_language_group(self, interface_page):
         """Add the Language preferences group."""
@@ -1468,10 +1548,41 @@ class PreferencesWindow(Adw.NavigationPage):
 
         interface_page.add(startup_group)
 
-    def _add_interface_appearance_groups(self, interface_page):
-        """Add Interface appearance and color-override groups."""
-        # Appearance group
-        interface_appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
+    def _add_interface_layout_group(self, interface_page):
+        """Add the Layout group: presets over the startup settings."""
+        from .layout_preset_chooser import LayoutPresetChooser
+
+        layout_group = Adw.PreferencesGroup(title=_("Layout"))
+        layout_group.set_description(_("Choose what the main window shows when it opens"))
+        self.layout_preset_chooser = LayoutPresetChooser(self.config)
+        layout_group.add(self.layout_preset_chooser)
+        interface_page.add(layout_group)
+
+    def _sync_startup_layout_controls(self):
+        """Mirror a startup-setting change into every control showing it."""
+        self._startup_layout_sync_pending = False
+        chooser = getattr(self, 'layout_preset_chooser', None)
+        if chooser is not None:
+            chooser.sync()
+        switch = getattr(self, 'hide_on_startup_switch', None)
+        hide = bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
+        if switch is not None and switch.get_active() != hide:
+            switch.set_active(hide)
+        radios = {
+            'terminal': getattr(self, 'terminal_startup_radio', None),
+            'welcome': getattr(self, 'welcome_startup_radio', None),
+            'previous-session': getattr(self, 'previous_session_startup_radio', None),
+            'saved-session': getattr(self, 'saved_session_startup_radio', None),
+        }
+        radio = radios.get(self.config.get_setting('app-startup-behavior', 'welcome'))
+        if radio is not None and not radio.get_active():
+            radio.set_active(True)
+        return GLib.SOURCE_REMOVE
+
+    def _add_appearance_groups(self, appearance_page):
+        """Add the theme and color-override groups."""
+        # Untitled: the page is already called Appearance.
+        interface_appearance_group = Adw.PreferencesGroup()
 
         # Theme selection
         self.theme_row = Adw.ComboRow()
@@ -1539,8 +1650,8 @@ class PreferencesWindow(Adw.NavigationPage):
         reset_colors_row.add_suffix(reset_button)
         color_override_group.add(reset_colors_row)
 
-        interface_page.add(interface_appearance_group)
-        interface_page.add(color_override_group)
+        appearance_page.add(interface_appearance_group)
+        appearance_page.add(color_override_group)
 
         # Initialize color button states from saved accent override
         self.refresh_color_buttons()
@@ -1554,15 +1665,22 @@ class PreferencesWindow(Adw.NavigationPage):
         remember_size_switch = Adw.SwitchRow()
         remember_size_switch.set_title(_("Remember Window Size"))
         remember_size_switch.set_subtitle(_("Restore window size on startup"))
-        remember_size_switch.set_active(True)
+        remember_size_switch.set_active(
+            bool(self.config.get_setting('ui.remember_window_size', True))
+        )
+        remember_size_switch.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('ui.remember_window_size', bool(r.get_active())),
+        )
 
         window_group.add(remember_size_switch)
         interface_page.add(window_group)
 
-    def _add_interface_sidebar_groups(self, interface_page):
-        """Add Sidebar and Sidebar behavior preferences groups."""
-        # Sidebar group (at bottom of Interface page)
-        sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
+    def _add_sidebar_groups(self, sidebar_page):
+        """Add the Layout, Row Details, Row Buttons and Behavior groups."""
+        sidebar_group = Adw.PreferencesGroup(title=_("Layout"))
+        row_details_group = Adw.PreferencesGroup(title=_("Row Details"))
+        row_buttons_group = Adw.PreferencesGroup(title=_("Row Buttons"))
 
         # Presentation mode: Full (individual chrome toggles) vs Compact
         # (title-only flat list). Compact greys out the toggles below.
@@ -1594,19 +1712,25 @@ class PreferencesWindow(Adw.NavigationPage):
         # whether that pinned entry appears, not row chrome.
         self._sidebar_mode_dependent_rows = []
 
-        flat_rows_switch = Adw.SwitchRow()
-        flat_rows_switch.set_title(_("Flat Sidebar Rows"))
-        flat_rows_switch.set_subtitle(
-            _("Use flat list rows instead of cards in the connection sidebar")
+        # Row style: cards (default) or flat list rows. Stored as the
+        # ui.sidebar_flat_rows boolean.
+        self.sidebar_row_style_row = Adw.ComboRow()
+        self.sidebar_row_style_row.set_title(_("Row Style"))
+        self.sidebar_row_style_row.set_subtitle(
+            _("Choose how connection rows are drawn in the sidebar")
         )
-        flat_rows_switch.set_active(
-            bool(self.config.get_setting('ui.sidebar_flat_rows', False))
+        row_style_options = Gtk.StringList()
+        row_style_options.append(_("Cards"))
+        row_style_options.append(_("Flat"))
+        self.sidebar_row_style_row.set_model(row_style_options)
+        self.sidebar_row_style_row.set_selected(
+            1 if self.config.get_setting('ui.sidebar_flat_rows', False) else 0
         )
-        flat_rows_switch.connect(
-            'notify::active', self.on_sidebar_flat_rows_changed
+        self.sidebar_row_style_row.connect(
+            'notify::selected', self.on_sidebar_row_style_changed
         )
-        sidebar_group.add(flat_rows_switch)
-        self._sidebar_mode_dependent_rows.append(flat_rows_switch)
+        sidebar_group.add(self.sidebar_row_style_row)
+        self._sidebar_mode_dependent_rows.append(self.sidebar_row_style_row)
 
         show_local_terminal_switch = Adw.SwitchRow()
         show_local_terminal_switch.set_title(_("Local Terminal Row"))
@@ -1629,7 +1753,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_user_hostname', False)
         )
         show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
-        sidebar_group.add(show_user_hostname_switch)
+        row_details_group.add(show_user_hostname_switch)
         self._sidebar_mode_dependent_rows.append(show_user_hostname_switch)
 
         # Display connection count in groups toggle
@@ -1640,7 +1764,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_group_count', False)
         )
         show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
-        sidebar_group.add(show_group_count_switch)
+        row_details_group.add(show_group_count_switch)
         self._sidebar_mode_dependent_rows.append(show_group_count_switch)
 
         # Display connection status toggle
@@ -1651,7 +1775,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_connection_status', True)
         )
         show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
-        sidebar_group.add(show_status_switch)
+        row_details_group.add(show_status_switch)
         self._sidebar_mode_dependent_rows.append(show_status_switch)
 
         # Display port forwarding icon toggle
@@ -1662,7 +1786,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         )
         show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
-        sidebar_group.add(show_port_forwarding_switch)
+        row_details_group.add(show_port_forwarding_switch)
         self._sidebar_mode_dependent_rows.append(show_port_forwarding_switch)
 
         # Display connection icon toggle
@@ -1673,7 +1797,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_connection_icon', True)
         )
         show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
-        sidebar_group.add(show_connection_icon_switch)
+        row_details_group.add(show_connection_icon_switch)
         self._sidebar_mode_dependent_rows.append(show_connection_icon_switch)
 
         # Display group icon toggle
@@ -1684,7 +1808,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_group_icon', True)
         )
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
-        sidebar_group.add(show_group_icon_switch)
+        row_details_group.add(show_group_icon_switch)
         self._sidebar_mode_dependent_rows.append(show_group_icon_switch)
 
         # File manager hover button on connection rows
@@ -1699,7 +1823,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_file_manager_button_switch.connect(
             'notify::active', self.on_sidebar_show_file_manager_button_changed
         )
-        sidebar_group.add(show_file_manager_button_switch)
+        row_buttons_group.add(show_file_manager_button_switch)
         self._sidebar_mode_dependent_rows.append(show_file_manager_button_switch)
 
         # Dashboard hover button on connection rows (on for new installs)
@@ -1714,7 +1838,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_dashboard_button_switch.connect(
             'notify::active', self.on_sidebar_show_dashboard_button_changed
         )
-        sidebar_group.add(show_dashboard_button_switch)
+        row_buttons_group.add(show_dashboard_button_switch)
         self._sidebar_mode_dependent_rows.append(show_dashboard_button_switch)
 
         # Split-view hover button on group rows (off by default)
@@ -1729,16 +1853,17 @@ class PreferencesWindow(Adw.NavigationPage):
         show_split_view_button_switch.connect(
             'notify::active', self.on_sidebar_show_split_view_button_changed
         )
-        sidebar_group.add(show_split_view_button_switch)
+        row_buttons_group.add(show_split_view_button_switch)
         self._sidebar_mode_dependent_rows.append(show_split_view_button_switch)
 
         self._update_sidebar_mode_dependent_sensitivity()
-        interface_page.add(sidebar_group)
+        sidebar_page.add(sidebar_group)
+        sidebar_page.add(row_details_group)
+        sidebar_page.add(row_buttons_group)
 
-        # Sidebar behavior
-        sidebar_behavior_group = Adw.PreferencesGroup(title=_("Sidebar behavior"))
+        sidebar_behavior_group = Adw.PreferencesGroup(title=_("Behavior"))
 
-        hide_on_startup_switch = Adw.SwitchRow()
+        hide_on_startup_switch = self.hide_on_startup_switch = Adw.SwitchRow()
         hide_on_startup_switch.set_title(_("Hide Sidebar on Startup"))
         hide_on_startup_switch.set_subtitle(_("Start with the sidebar collapsed"))
         hide_on_startup_switch.set_active(
@@ -1750,27 +1875,21 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(hide_on_startup_switch)
 
-        # When a terminal opens: do nothing / hide.
-        self._on_terminal_open_values = ['none', 'hide']
-        on_terminal_open_row = Adw.ComboRow()
-        on_terminal_open_row.set_title(_("When a Terminal Opens"))
-        on_terminal_open_row.set_subtitle(
-            _("What happens to the sidebar when any session opens, including local terminals"))
-        on_terminal_options = Gtk.StringList()
-        on_terminal_options.append(_("Do Nothing"))
-        on_terminal_options.append(_("Hide Sidebar"))
-        on_terminal_open_row.set_model(on_terminal_options)
+        hide_on_terminal_open_switch = Adw.SwitchRow()
+        hide_on_terminal_open_switch.set_title(
+            _("Hide Sidebar When a Terminal Tab Opens")
+        )
+        hide_on_terminal_open_switch.set_subtitle(
+            _("Including SSH sessions and local terminals")
+        )
         current_on_open = 'none'
         win = self.parent_window
         if win is not None and hasattr(win, '_sidebar_on_terminal_open'):
             current_on_open = win._sidebar_on_terminal_open()
-        if current_on_open not in self._on_terminal_open_values:
-            current_on_open = 'none'
-        on_terminal_open_row.set_selected(
-            self._on_terminal_open_values.index(current_on_open))
-        on_terminal_open_row.connect(
-            'notify::selected', self.on_sidebar_on_terminal_open_changed)
-        sidebar_behavior_group.add(on_terminal_open_row)
+        hide_on_terminal_open_switch.set_active(current_on_open == 'hide')
+        hide_on_terminal_open_switch.connect(
+            'notify::active', self.on_sidebar_on_terminal_open_changed)
+        sidebar_behavior_group.add(hide_on_terminal_open_switch)
 
         show_when_no_tabs_switch = Adw.SwitchRow()
         show_when_no_tabs_switch.set_title(_("Show When No Tab Is Open"))
@@ -1784,17 +1903,46 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
 
-        interface_page.add(sidebar_behavior_group)
+        # Shown while a setting above hides the sidebar: how to get it back
+        # without un-hiding it (sidebar_hover_reveal.py).
+        from .sidebar_peek_preview import SidebarPeekPreview
 
-    def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
-        """Persist the merged 'when a terminal opens' behavior."""
+        self.sidebar_peek_row = Adw.ActionRow()
+        self.sidebar_peek_row.set_title(_("Peek at the Hidden Sidebar"))
+        self.sidebar_peek_row.add_suffix(SidebarPeekPreview())
+        sidebar_behavior_group.add(self.sidebar_peek_row)
+        self._sidebar_hide_switches = (hide_on_startup_switch, hide_on_terminal_open_switch)
+        for switch in self._sidebar_hide_switches:
+            switch.connect('notify::active', lambda *_a: self._sync_sidebar_peek_row())
+        self._sync_sidebar_peek_row()
+
+        sidebar_page.add(sidebar_behavior_group)
+
+    def _sync_sidebar_peek_row(self):
+        """Show the hover-reveal hint while the sidebar is set to hide."""
+        row = getattr(self, 'sidebar_peek_row', None)
+        if row is None:
+            return
+        row.set_visible(any(s.get_active() for s in self._sidebar_hide_switches))
+        if self.config.get_setting('ui.headerbar_show_sidebar_toggle', True):
+            row.set_subtitle(_(
+                "While the sidebar is hidden, rest the pointer on the sidebar "
+                "button in the header bar to float it over the terminal"
+            ))
+        else:
+            row.set_subtitle(_(
+                "Turn on the Sidebar Toggle Button under Interface › Header "
+                "Bar Buttons to reveal the hidden sidebar by hovering it"
+            ))
+
+    def on_sidebar_on_terminal_open_changed(self, switch_row, _param):
+        """Persist whether the sidebar hides when a terminal tab opens."""
         try:
-            idx = combo_row.get_selected()
-            values = getattr(self, '_on_terminal_open_values', ['none', 'hide'])
-            action = values[idx] if 0 <= idx < len(values) else 'none'
+            hide = bool(switch_row.get_active())
+            action = 'hide' if hide else 'none'
             self.config.set_setting('ui.sidebar_on_terminal_open', action)
             # Keep the legacy booleans consistent for any older readers.
-            self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
+            self.config.set_setting('ui.sidebar_hide_on_terminal_open', hide)
             self.config.set_setting('ui.sidebar_minimize_on_connect', False)
         except Exception:
             logger.debug("sidebar on-terminal-open change failed", exc_info=True)
@@ -1852,7 +2000,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         interface_page.add(headerbar_group)
 
-        # Tips group at the bottom of the Interface page. Lets users
+        # Tips group, just above Window. Lets users
         # re-enable the tips banner after dismissing it with "Don't show again".
         tips_group = Adw.PreferencesGroup(title=_("Tips"))
         show_tips_switch = Adw.SwitchRow()
@@ -1873,13 +2021,30 @@ class PreferencesWindow(Adw.NavigationPage):
         interface_page.set_title(_("Interface"))
         interface_page.set_icon_name("brush-monitor-symbolic")
 
+        self._add_interface_layout_group(interface_page)
         self._add_interface_language_group(interface_page)
         self._add_interface_startup_group(interface_page)
-        self._add_interface_appearance_groups(interface_page)
-        self._add_interface_window_group(interface_page)
-        self._add_interface_sidebar_groups(interface_page)
         self._add_interface_headerbar_and_tips_groups(interface_page)
+        self._add_interface_window_group(interface_page)
         return interface_page
+
+    def _build_appearance_preferences_page(self):
+        """Build the Appearance preferences page."""
+        appearance_page = Adw.PreferencesPage()
+        appearance_page.set_title(_("Appearance"))
+        appearance_page.set_icon_name("color-symbolic")
+        self._add_appearance_groups(appearance_page)
+        self._add_group_appearance_group(appearance_page)
+        self._add_group_preview_group(appearance_page)
+        return appearance_page
+
+    def _build_sidebar_preferences_page(self):
+        """Build the Sidebar preferences page."""
+        sidebar_page = Adw.PreferencesPage()
+        sidebar_page.set_title(_("Sidebar"))
+        sidebar_page.set_icon_name("sidebar-show-symbolic")
+        self._add_sidebar_groups(sidebar_page)
+        return sidebar_page
 
 
     def _build_shortcuts_preferences_page(self):
@@ -1913,7 +2078,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
         try:
             self.shortcuts_editor_page = ShortcutsPreferencesPage(
-                parent_widget=self.parent_window,
+                # Capture and conflict dialogs stack on the Settings window.
+                parent_widget=self,
                 app=self.parent_window.get_application() if self.parent_window else None,
                 config=self.config,
                 owner_window=self.parent_window,
@@ -2937,10 +3103,11 @@ class PreferencesWindow(Adw.NavigationPage):
             interface_page = self._build_interface_preferences_page()
 
             self.add_page_to_layout(N_("Interface"), "brush-monitor-symbolic", interface_page)
+            self.add_page_to_layout(N_("Appearance"), "color-symbolic", self._build_appearance_preferences_page)
+            self.add_page_to_layout(N_("Sidebar"), "sidebar-show-symbolic", self._build_sidebar_preferences_page)
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
             self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
             self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
-            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", self._build_groups_preferences_page)
             self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", self._build_ssh_settings_preferences_page)
             self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
             self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
@@ -2981,8 +3148,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def _resolve_secrets_controller(self):
         """The daemon-backed secrets controller reachable from this page, or ``None``.
 
-        Preferences is a NavigationPage inside MainWindow; the controller lives on
-        the main window. Never falls back to ``secret_storage``.
+        The controller lives on the main window that owns this Settings window. Never falls back to ``secret_storage``.
         """
         controller = getattr(self, 'parent_window', None)
         if controller is not None:
@@ -2990,7 +3156,7 @@ class PreferencesWindow(Adw.NavigationPage):
             if controller is not None:
                 return controller
         try:
-            return getattr(self.get_root(), 'secrets_controller', None)
+            return getattr(self.parent_window, 'secrets_controller', None)
         except Exception:
             return None
 
@@ -3770,7 +3936,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
                 if not ok:
                     dlg = Adw.MessageDialog(
-                        transient_for=self.get_root(), modal=True,
+                        transient_for=self._dialog_parent(), modal=True,
                         heading=_("Log out failed"),
                         body=_(
                             "Could not sign out of Bitwarden. "
@@ -3828,7 +3994,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 except Exception:
                     pass  # user cancelled / no selection
 
-            dialog.select_folder(self.get_root(), None, _picked)
+            dialog.select_folder(self._dialog_parent(), None, _picked)
         except Exception as exc:
             logger.debug("bw profile browse failed: %s", exc)
 
@@ -3888,7 +4054,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 except Exception:
                     pass  # cancelled / no selection
 
-            dialog.open(self.get_root(), None, _picked)
+            dialog.open(self._dialog_parent(), None, _picked)
         except Exception as exc:
             logger.debug("KDBX file browse failed: %s", exc)
 
@@ -3899,7 +4065,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._kdbx_file_browse(_("Choose key file"), 'kdbx_keyfile_row')
 
     def _kdbx_message(self, heading, body):
-        d = Adw.MessageDialog(transient_for=self.get_root(), modal=True, heading=heading, body=body)
+        d = Adw.MessageDialog(transient_for=self._dialog_parent(), modal=True, heading=heading, body=body)
         d.add_response('ok', _('OK'))
         d.present()
 
@@ -3937,7 +4103,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
                 self._prompt_new_kdbx_password(path)
 
-            dialog.save(self.get_root(), None, _picked)
+            dialog.save(self._dialog_parent(), None, _picked)
         except Exception as exc:
             logger.error("KDBX create dialog failed: %s", exc)
 
@@ -4161,7 +4327,7 @@ class PreferencesWindow(Adw.NavigationPage):
         dialog.set_default_response('cancel')
         dialog.set_close_response('cancel')
         dialog.connect('response', self._on_daemon_restart_response)
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
 
     def _on_daemon_restart_response(self, _dialog, response):
         if response != 'restart':
@@ -4225,7 +4391,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 self._restart_app_after_mode_change()
 
         dialog.connect("response", _on_response)
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
 
     @staticmethod
     def _restart_app_after_mode_change():
@@ -4310,7 +4476,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
-                    warn.present(self)
+                    warn.present(self._dialog_parent())
                     return
                 if result.accepted:
                     on_complete()
@@ -4332,7 +4498,7 @@ class PreferencesWindow(Adw.NavigationPage):
         err.add_response('ok', _("OK"))
         err.set_default_response('ok')
         err.set_close_response('ok')
-        err.present(self)
+        err.present(self._dialog_parent())
 
     def _schedule_daemon_reconnect_after_restart(self) -> None:
         """Ask the running application to spawn/reconnect after an explicit restart."""
@@ -4415,7 +4581,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def apply_font_to_terminals(self, font_string):
         """Apply font to all active terminal widgets"""
         try:
-            parent_window = self.get_root()
+            parent_window = self.parent_window
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 font_desc = Pango.FontDescription.from_string(font_string)
                 count = 0
@@ -4498,48 +4664,6 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update group color display preference: %s", exc)
             return
-
-        if not getattr(self, '_config_signal_id', None):
-            self._trigger_sidebar_refresh()
-
-    def on_group_row_display_changed(self, toggle_group, _param):
-        """Persist sidebar group display layout preference."""
-        if getattr(self, '_group_display_toggle_sync', False):
-            return
-
-        try:
-            active_name = toggle_group.get_active_name() or 'fullwidth'
-        except Exception:
-            active_name = 'fullwidth'
-
-        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
-        if active_name not in valid_modes:
-            active_name = 'nested'
-
-        try:
-            current_value = str(
-                self.config.get_setting('ui.group_row_display', 'nested')
-            ).lower()
-        except Exception:
-            current_value = 'nested'
-
-        if current_value not in valid_modes:
-            current_value = 'nested'
-
-        if current_value == active_name:
-            self._update_group_display_preview(active_name)
-            return
-
-        try:
-            self.config.set_setting('ui.group_row_display', active_name)
-        except Exception as exc:
-            logger.error(
-                "Failed to update group display preference: %s", exc
-            )
-            self._sync_group_display_toggle_group(current_value)
-            return
-
-        self._update_group_display_preview(active_name)
 
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
@@ -4634,7 +4758,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
 
     def _trigger_sidebar_refresh(self):
-        parent = self.get_root() or self.parent_window
+        parent = self.parent_window
         if not parent:
             return
 
@@ -4645,7 +4769,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 logger.debug("Failed to rebuild connection list after preference change: %s", exc)
 
     def _trigger_terminal_style_refresh(self):
-        parent = self.get_root() or self.parent_window
+        parent = self.parent_window
         if not parent:
             return
 
@@ -4985,7 +5109,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def _alert(self, heading, body):
         dlg = Adw.AlertDialog(heading=heading, body=body)
         dlg.add_response('ok', _("OK"))
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _prompt_restart_required(self, body):
         """Alert that a change needs a restart, with Later / Restart Now."""
@@ -5002,7 +5126,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 restart_app()
 
         dlg.connect('response', _on_response)
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _add_permissions_info(self, row, permissions):
         """Add an info button to a plugin row listing its declared permissions."""
@@ -5093,7 +5217,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         dlg.set_extra_child(box)
         dlg.add_response('close', _("Close"))
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _plugin_consent(self, *, name, permissions, action, on_accept,
                         on_decline=None, sha256=None, verified=False):
@@ -5170,7 +5294,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
             on_accept()
         dlg.connect('response', _resp)
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _install_from_folder(self):
         dialog = Gtk.FileDialog()
@@ -5183,7 +5307,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 return
             if gfile and gfile.get_path():
                 self._install_plugin_from_dir(Path(gfile.get_path()))
-        dialog.select_folder(self.get_root(), None, _done)
+        dialog.select_folder(self._dialog_parent(), None, _done)
 
     def _install_from_zip(self):
         dialog = Gtk.FileDialog()
@@ -5205,7 +5329,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 return
             if gfile and gfile.get_path():
                 self._install_plugin_from_zip(Path(gfile.get_path()))
-        dialog.open(self.get_root(), None, _done)
+        dialog.open(self._dialog_parent(), None, _done)
 
     @staticmethod
     def _locate_manifest_dir(root: Path):
@@ -5311,7 +5435,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     else:
                         _abort()
                 confirm.connect('response', _resp)
-                confirm.present(self)
+                confirm.present(self._dialog_parent())
                 return
             self._finish_install(mdir, dest, meta, _cleanup)
 
@@ -5352,7 +5476,7 @@ class PreferencesWindow(Adw.NavigationPage):
         confirm.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE)
         confirm.connect('response',
                         lambda _d, r, i=info: self._remove_plugin(i) if r == 'remove' else None)
-        confirm.present(self)
+        confirm.present(self._dialog_parent())
 
     def _remove_plugin(self, info):
         try:
@@ -5398,9 +5522,13 @@ class PreferencesWindow(Adw.NavigationPage):
         ui = getattr(host, 'ui', None) if host else None
         if ui is not None:
             ui.open_page(full_id)
-        # Leave Settings so the plugin tab (under work mode) is visible.
-        if self.parent_window and hasattr(self.parent_window, 'leave_preferences'):
-            self.parent_window.leave_preferences()
+        # The plugin tab opens in the main window, which Settings (transient
+        # for it) covers: step out of Settings and bring the tab forward.
+        if self.parent_window is not None:
+            leave = getattr(self.parent_window, 'leave_preferences', None)
+            if callable(leave):
+                leave()
+            self.parent_window.present()
 
     def _mark_plugin_restart_needed(self, row=None):
         """Subtitle + dialog: plugins load/unload only on the next launch."""
@@ -5467,135 +5595,6 @@ class PreferencesWindow(Adw.NavigationPage):
         page.add(group)
         return page
 
-    def _create_group_display_preview(self, mode: str, title: str):
-        """Create a small sample widget that illustrates the layout mode."""
-        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        wrapper.add_css_class('group-display-preview-container')
-        wrapper.set_hexpand(True)
-
-        title_label = Gtk.Label(label=title)
-        title_label.set_halign(Gtk.Align.START)
-        title_label.set_xalign(0.0)
-        title_label.add_css_class('group-display-preview-title')
-        wrapper.append(title_label)
-
-        sample_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        sample_box.set_hexpand(True)
-
-        parent_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        parent_row.add_css_class('group-display-preview-parent')
-        parent_row.set_margin_start(0)
-        parent_row.set_margin_end(8)
-
-        from sshpilot import icon_utils
-        parent_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-        parent_row.append(parent_icon)
-
-        parent_labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        parent_title = Gtk.Label(label=_('Production Servers'))
-        parent_title.set_halign(Gtk.Align.START)
-        parent_title.set_xalign(0.0)
-        parent_title.add_css_class('group-display-preview-parent-title')
-
-        parent_sub = Gtk.Label(label=_('3 connections'))
-        parent_sub.set_halign(Gtk.Align.START)
-        parent_sub.set_xalign(0.0)
-        parent_sub.add_css_class('group-display-preview-parent-subtitle')
-
-        parent_labels.append(parent_title)
-        parent_labels.append(parent_sub)
-        parent_row.append(parent_labels)
-
-        tinted = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        tinted.add_css_class('group-display-preview-row')
-        tinted.set_hexpand(True)
-        tinted.set_margin_top(2)
-        tinted.set_margin_bottom(2)
-        tinted.set_margin_end(8)
-
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        if mode == 'fullwidth':
-            tinted.set_margin_start(0)
-            content_box.set_margin_start(24)
-        else:  # nested mode shifts entire row
-            tinted.set_margin_start(24)
-            content_box.set_margin_start(0)
-
-        title_text = Gtk.Label(label='db-backups')
-        title_text.set_halign(Gtk.Align.START)
-        title_text.set_xalign(0.0)
-        title_text.add_css_class('group-display-preview-row-title')
-
-        subtitle_text = Gtk.Label(label='ops@example.com')
-        subtitle_text.set_halign(Gtk.Align.START)
-        subtitle_text.set_xalign(0.0)
-        subtitle_text.add_css_class('group-display-preview-row-subtitle')
-
-        content_box.append(title_text)
-        content_box.append(subtitle_text)
-
-        tinted.append(content_box)
-        sample_box.append(parent_row)
-        sample_box.append(tinted)
-        wrapper.append(sample_box)
-
-        return wrapper, tinted
-
-    def _update_group_display_preview(self, active_mode: str):
-        preview_map = getattr(self, '_group_display_preview_rows', None)
-        if not preview_map:
-            return
-
-        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
-        if active_mode not in valid_modes:
-            active_mode = valid_modes[0]
-
-        for mode, tinted in preview_map.items():
-            if not tinted:
-                continue
-            if mode == active_mode:
-                tinted.add_css_class('active')
-            else:
-                tinted.remove_css_class('active')
-
-        stack = getattr(self, '_group_display_preview_stack', None)
-        if stack:
-            try:
-                stack.set_visible_child_name(active_mode)
-            except Exception:
-                pass
-
-    def _sync_group_display_toggle_group(self, value):
-        controller = getattr(self, '_group_display_toggle_controller', None)
-        if controller is None:
-            return
-
-        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
-        normalized = 'fullwidth'
-        try:
-            normalized = str(value).lower()
-        except Exception:
-            pass
-        if normalized not in valid_modes:
-            normalized = 'fullwidth'
-
-        try:
-            current_active = controller.get_active_name()
-        except Exception:
-            current_active = 'fullwidth'
-
-        if current_active == normalized:
-            self._update_group_display_preview(normalized)
-            return
-
-        self._group_display_toggle_sync = True
-        try:
-            controller.set_active_name(normalized)
-        finally:
-            self._group_display_toggle_sync = False
-
-        self._update_group_display_preview(normalized)
-
     def _sync_group_color_display_row(self, value):
         if not hasattr(self, 'group_color_display_row') or self.group_color_display_row is None:
             return
@@ -5647,15 +5646,23 @@ class PreferencesWindow(Adw.NavigationPage):
             self._group_terminal_color_sync = False
 
     def _on_config_setting_changed(self, _config, key, value):
+        if key == 'ui.headerbar_show_sidebar_toggle':
+            self._sync_sidebar_peek_row()
+        if key in ('app-startup-behavior', 'ui.sidebar_hide_on_startup'):
+            # Deferred: the change may come from one of these controls while
+            # its radio group is mid-toggle, and setting a radio re-entrantly
+            # there leaves two of them active.
+            if not getattr(self, '_startup_layout_sync_pending', False):
+                self._startup_layout_sync_pending = True
+                GLib.idle_add(self._sync_startup_layout_controls)
+        if key.startswith(('ui.group_color', 'ui.sidebar_')):
+            self._schedule_group_preview_refresh()
         if key == 'terminal.theme':
             self._sync_terminal_theme_chooser()
         elif key == 'terminal.custom_themes':
             self._sync_terminal_theme_chooser(rebuild=True)
         elif key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
-            self._trigger_sidebar_refresh()
-        elif key == 'ui.group_row_display':
-            self._sync_group_display_toggle_group(value)
             self._trigger_sidebar_refresh()
         elif key == 'ui.group_color_child_rows':
             self._sync_group_color_child_rows(value)
@@ -5773,58 +5780,21 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.remove_color_override_provider()
                 return
 
-            # Build CSS with accent color overrides
-            css_rules = [
-                f"@define-color accent_color {accent_color};",
-                f"@define-color accent_bg_color {accent_color};",
-                "@define-color accent_fg_color white;",
-                f"@define-color theme_selected_bg_color {accent_color};",
-                "@define-color theme_selected_fg_color white;",
-                f"@define-color theme_unfocused_selected_bg_color {accent_color};",
-                "@define-color theme_unfocused_selected_fg_color white;",
-            ]
+            from .accent_override_css import build_accent_override_css
 
-            if css_rules:
-                # Add specific CSS rules for row selection
-                css_rules.append("")
-                css_rules.append("/* Force row selection to use custom colors */")
-                css_rules.append("row:selected {")
-                css_rules.append("  background-color: @theme_selected_bg_color;")
-                css_rules.append("  color: @theme_selected_fg_color;")
-                css_rules.append("}")
-                css_rules.append("")
-                css_rules.append("row:selected:focus {")
-                css_rules.append("  background-color: @theme_selected_bg_color;")
-                css_rules.append("  color: @theme_selected_fg_color;")
-                css_rules.append("}")
-                css_rules.append("")
-                css_rules.append("list row:selected {")
-                css_rules.append("  background-color: @theme_selected_bg_color;")
-                css_rules.append("  color: @theme_selected_fg_color;")
-                css_rules.append("}")
+            provider = Gtk.CssProvider()
+            provider.load_from_data(build_accent_override_css(accent_color).encode('utf-8'))
 
-                # Apply custom CSS
-                provider = Gtk.CssProvider()
-                css = "\n".join(css_rules)
-                provider.load_from_data(css.encode('utf-8'))
-
-                # Add provider to display
-                display = Gdk.Display.get_default()
-                if display:
-                    # Remove any existing color override provider first
-                    self.remove_color_override_provider()
-
-                    Gtk.StyleContext.add_provider_for_display(
-                        display,
-                        provider,
-                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                    )
-                    # Store provider reference for cleanup
-                    display._color_override_provider = provider
-                    logger.info("Applied accent color override")
-            else:
-                # Remove any existing color override provider
+            display = Gdk.Display.get_default()
+            if display:
                 self.remove_color_override_provider()
+                Gtk.StyleContext.add_provider_for_display(
+                    display,
+                    provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                display._color_override_provider = provider
+                logger.info("Applied accent color override")
 
         except Exception as e:
             logger.error(f"Failed to apply color overrides: {e}")
@@ -6481,6 +6451,15 @@ class PreferencesWindow(Adw.NavigationPage):
         logger.warning(message)
         self._show_toast(message)
 
+    def add_toast(self, toast):
+        """Show *toast* on Settings, or on the main window once Settings is hidden."""
+        overlay = self.toast_overlay if self.get_visible() else None
+        if overlay is None:
+            overlay = getattr(self.parent_window, 'toast_overlay', None)
+        if overlay is None:
+            raise RuntimeError('no toast overlay')
+        overlay.add_toast(toast)
+
     def _show_toast(self, message):
         try:
             toast = Adw.Toast.new(message)
@@ -6707,7 +6686,7 @@ class PreferencesWindow(Adw.NavigationPage):
             body=_("Only new terminal tabs will use the selected backend."),
         )
         dialog.add_response("ok", _("OK"))
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
 
     def _apply_backend_change(self, index, backend_id):
         """Apply the backend change (only affects new terminals, not existing ones)"""
@@ -6809,10 +6788,10 @@ class PreferencesWindow(Adw.NavigationPage):
                     exc_info=True,
                 )
 
-    def on_sidebar_flat_rows_changed(self, switch, *args):
-        """Persist flat vs card styling for sidebar connection rows."""
+    def on_sidebar_row_style_changed(self, combo_row, *args):
+        """Persist the Cards/Flat row style for sidebar connection rows."""
         try:
-            active = bool(switch.get_active())
+            active = combo_row.get_selected() == 1
             self.config.set_setting('ui.sidebar_flat_rows', active)
             if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
                 self.parent_window.update_sidebar_display()
@@ -7299,7 +7278,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
         try:
-            parent_window = self.get_root()
+            parent_window = self.parent_window
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():

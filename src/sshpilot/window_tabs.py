@@ -23,7 +23,11 @@ from gettext import gettext as _, ngettext
 from sshpilot import icon_utils
 from .connection_model import Connection
 from .dialog_focus import mark_default_response_visible
-from .dnd_payload import decode_dnd_payload, new_internal_drop_target
+from .dnd_payload import (
+    claim_in_app_drops_ahead_of_children,
+    decode_dnd_payload,
+    new_internal_drop_target,
+)
 from .terminal import TerminalWidget
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
@@ -512,6 +516,10 @@ class WindowTabsMixin:
 
     def _tab_menu_target(self):
         """Return (page, child) for the current tab menu target, or (None, None)."""
+        override = getattr(self, '_tab_menu_child_override', None)
+        if override is not None:
+            # A split pane's header menu: the terminal has no outer tab page.
+            return None, override
         page = getattr(self, '_tab_menu_page', None)
         if page is None:
             return None, None
@@ -520,6 +528,22 @@ class WindowTabsMixin:
         except Exception:
             child = None
         return page, child
+
+    def run_tab_menu_action_for(self, child, name: str) -> None:
+        """Run the tab menu's *name* action on *child* instead of a tab.
+
+        Split panes reuse the tab menu's handlers for their header menu, so a
+        pane offers exactly what a terminal tab does (and gates it the same
+        way through _enabled_tab_actions).
+        """
+        handler = getattr(self, '_on_' + name.replace('-', '_'), None)
+        if handler is None:
+            return
+        self._tab_menu_child_override = child
+        try:
+            handler(None)
+        finally:
+            self._tab_menu_child_override = None
 
     def _on_tabmenu_duplicate(self, action, param=None):
         try:
@@ -1415,7 +1439,15 @@ class WindowTabsMixin:
                     # _on_default_clicked resets horizontal splits to 50/50 and
                     # applies the default sizing for the pane count (fill for ≤2,
                     # 50% rows for more) — same as a freshly-opened split.
-                    GLib.idle_add(lambda: (svt._on_default_clicked(), False)[1])
+                    # Then focus the dropped pane: focus is still on the drag
+                    # source (e.g. the sidebar), and an SSH pane's spawn does
+                    # not grab it, so no pane would be focused otherwise.
+                    def _settle():
+                        svt._on_default_clicked()
+                        if len(svt._panes) > 1:
+                            svt._focus_pane(svt._panes[1])
+                        return False
+                    GLib.idle_add(_settle)
                     return False
                 GLib.idle_add(_embed_terminal_in_pane0)
 
@@ -1448,6 +1480,7 @@ class WindowTabsMixin:
 
         dt.connect("drop", _on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        claim_in_app_drops_ahead_of_children(dt)
         terminal.add_controller(dt)
         # Remember it so SplitPane.add_terminal can detach it when this terminal
         # is embedded into a pane (otherwise it keeps intercepting connection
