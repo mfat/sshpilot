@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 17:10+0330\n"
+"POT-Creation-Date: 2026-10-13 17:21+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1899,7 +1899,8 @@ msgstr "为此连接写入 IdentitiesOnly yes。"
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53
+#: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "默认"
 
@@ -7355,7 +7356,7 @@ msgid ""
 "colours;group layout;appearance"
 msgstr "主题;强调色;强调色;等宽字体;分组颜色;分组颜色;分组布局;外观"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:135
 #: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
 #: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
@@ -9042,23 +9043,19 @@ msgstr "端口 {p} 上的 SOCKS 代理"
 msgid "… +{n} more"
 msgstr "… +{n} 项"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "With the start page or a terminal"
-msgstr "搭配起始页或终端"
-
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Start Page Only"
 msgstr "仅起始页"
 
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Sidebar hidden"
 msgstr "隐藏侧边栏"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Terminal Only"
 msgstr "仅终端"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Opens a local shell"
 msgstr "打开本地 shell"
 
@@ -10830,7 +10827,11 @@ msgid ""
 "click it to show the sidebar again."
 msgstr "将指针停留在此按钮上，可让侧边栏浮现在终端上方；点击它则重新显示侧边栏。"
 
-#: src/sshpilot/sidebar_peek_hint.py:60
+#: src/sshpilot/sidebar_peek_hint.py:64
+msgid "Don't Show Again"
+msgstr "不再显示"
+
+#: src/sshpilot/sidebar_peek_hint.py:67
 msgid "Got It"
 msgstr "知道了"
 
@@ -15806,6 +15807,9 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#~ msgid "With the start page or a terminal"
+#~ msgstr "搭配起始页或终端"
 
 #~ msgid "Sidebar and Start Page"
 #~ msgstr "侧边栏和起始页"

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 17:10+0330\n"
+"POT-Creation-Date: 2026-10-13 17:21+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -1962,7 +1962,8 @@ msgstr "Écrire IdentitiesOnly yes pour cette connexion."
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53
+#: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "Par défaut"
 
@@ -7679,7 +7680,7 @@ msgstr ""
 "fixe;couleurs des groupes;couleurs des groupes;disposition des "
 "groupes;apparence"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:135
 #: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
 #: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
@@ -9377,23 +9378,19 @@ msgstr "Proxy SOCKS sur le port {p}"
 msgid "… +{n} more"
 msgstr "… et {n} de plus"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "With the start page or a terminal"
-msgstr "Avec la page d’accueil ou un terminal"
-
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Start Page Only"
 msgstr "Page d’accueil seule"
 
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Sidebar hidden"
 msgstr "Barre latérale masquée"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Terminal Only"
 msgstr "Terminal seul"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Opens a local shell"
 msgstr "Ouvre un shell local"
 
@@ -11303,7 +11300,11 @@ msgstr ""
 "Laissez le pointeur sur ce bouton pour afficher la barre latérale par-dessus "
 "le terminal, ou cliquez dessus pour la réafficher."
 
-#: src/sshpilot/sidebar_peek_hint.py:60
+#: src/sshpilot/sidebar_peek_hint.py:64
+msgid "Don't Show Again"
+msgstr "Ne plus afficher"
+
+#: src/sshpilot/sidebar_peek_hint.py:67
 msgid "Got It"
 msgstr "Compris"
 
@@ -16677,6 +16678,9 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#~ msgid "With the start page or a terminal"
+#~ msgstr "Avec la page d’accueil ou un terminal"
 
 #~ msgid "Sidebar and Start Page"
 #~ msgstr "Barre latérale et page d’accueil"

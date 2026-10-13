@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 17:10+0330\n"
+"POT-Creation-Date: 2026-10-13 17:21+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1969,7 +1969,8 @@ msgstr "Записать IdentitiesOnly yes для этого подключен
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53
+#: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "По умолчанию"
 
@@ -7709,7 +7710,7 @@ msgstr ""
 "тема;акцентный цвет;акцентный цвет;моноширинный шрифт;цвета групп;цвета "
 "групп;расположение групп;внешний вид"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:135
 #: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
 #: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
@@ -9416,23 +9417,19 @@ msgstr "SOCKS-прокси на порту {p}"
 msgid "… +{n} more"
 msgstr "… ещё +{n}"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "With the start page or a terminal"
-msgstr "Со стартовой страницей или терминалом"
-
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Start Page Only"
 msgstr "Только стартовая страница"
 
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Sidebar hidden"
 msgstr "Боковая панель скрыта"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Terminal Only"
 msgstr "Только терминал"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Opens a local shell"
 msgstr "Открывает локальную оболочку"
 
@@ -11294,7 +11291,11 @@ msgstr ""
 "Задержите указатель на этой кнопке, чтобы показать боковую панель поверх "
 "терминала, или нажмите её, чтобы снова показать панель."
 
-#: src/sshpilot/sidebar_peek_hint.py:60
+#: src/sshpilot/sidebar_peek_hint.py:64
+msgid "Don't Show Again"
+msgstr "Больше не показывать"
+
+#: src/sshpilot/sidebar_peek_hint.py:67
 msgid "Got It"
 msgstr "Понятно"
 
@@ -16604,6 +16605,9 @@ msgstr "Сквозная передача"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Скопировать ключ на сервер"
+
+#~ msgid "With the start page or a terminal"
+#~ msgstr "Со стартовой страницей или терминалом"
 
 #~ msgid "Sidebar and Start Page"
 #~ msgstr "Боковая панель и стартовая страница"

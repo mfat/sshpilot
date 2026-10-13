@@ -1,10 +1,10 @@
-"""One-time hint: how to peek at a sidebar hidden on startup.
+"""Start-up hint: how to peek at a sidebar hidden on startup.
 
-The first time the main window opens with the sidebar hidden, a popover on
-the header bar's sidebar button plays the hover-reveal sketch (the same one
-Settings › Sidebar › Behavior shows) and explains it. It is shown once; it is
-skipped, and stays pending, while that button is turned off, since the hover
-zone is the button (sidebar_hover_reveal.py).
+Each time the main window opens with the sidebar hidden, a popover on the
+header bar's sidebar button plays the hover-reveal sketch (the same one
+Settings › Sidebar › Behavior shows) and explains it, until the user picks
+"Don't Show Again". It is skipped while that button is turned off, since the
+hover zone is the button (sidebar_hover_reveal.py).
 """
 
 import logging
@@ -19,14 +19,14 @@ from .sidebar_peek_preview import SidebarPeekPreview
 
 logger = logging.getLogger(__name__)
 
-HINT_SHOWN_KEY = 'ui.sidebar_peek_hint_shown'
+HINT_DISMISSED_KEY = 'ui.sidebar_peek_hint_dismissed'
 # After the window maps, so the hint lands once the start-up layout settles.
 SHOW_DELAY_MS = 800
 
 
 def should_show(window) -> bool:
     config = window.config
-    if config.get_setting(HINT_SHOWN_KEY, False):
+    if config.get_setting(HINT_DISMISSED_KEY, False):
         return False
     if getattr(window, '_sidebar_visible', True):
         return False
@@ -34,7 +34,7 @@ def should_show(window) -> bool:
     return button is not None and button.get_mapped()
 
 
-def _build_popover(button):
+def _build_popover(button, config):
     popover = Gtk.Popover()
     popover.add_css_class('sidebar-peek-hint')
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -57,13 +57,23 @@ def _build_popover(button):
     )
     box.append(body)
 
+    def dismiss(*_args):
+        config.set_setting(HINT_DISMISSED_KEY, True)
+        popover.popdown()
+
+    dont_show = Gtk.Button(label=_("Don't Show Again"))
+    dont_show.add_css_class('flat')
+    dont_show.connect('clicked', dismiss)
     got_it = Gtk.Button(label=_("Got It"))
     got_it.add_css_class('suggested-action')
-    got_it.add_css_class('pill')
-    got_it.set_halign(Gtk.Align.END)
     got_it.connect('clicked', lambda *_a: popover.popdown())
-    box.append(got_it)
+    buttons = Gtk.Box(spacing=6)
+    buttons.set_halign(Gtk.Align.END)
+    buttons.append(dont_show)
+    buttons.append(got_it)
+    box.append(buttons)
 
+    popover.dont_show_button = dont_show
     popover.set_child(box)
     popover.set_parent(button)
     popover.connect('closed', lambda p: GLib.idle_add(_unparent, p))
@@ -81,8 +91,7 @@ def show_if_needed(window):
     try:
         if not should_show(window):
             return None
-        popover, got_it = _build_popover(window.sidebar_toggle_button)
-        window.config.set_setting(HINT_SHOWN_KEY, True)
+        popover, got_it = _build_popover(window.sidebar_toggle_button, window.config)
         popover.popup()
         got_it.grab_focus()
         return popover

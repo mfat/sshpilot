@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 17:10+0330\n"
+"POT-Creation-Date: 2026-10-13 17:21+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -1952,7 +1952,8 @@ msgstr "برای این اتصال IdentitiesOnly بله بنویسید."
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53
+#: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "پیش‌فرض"
 
@@ -7596,7 +7597,7 @@ msgstr ""
 "پوسته;رنگ تأکیدی;رنگ تأکیدی;قلم تک‌فاصله;رنگ‌های گروه;رنگ‌های گروه;چیدمان "
 "گروه;ظاهر"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:135
 #: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
 #: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
@@ -9300,23 +9301,19 @@ msgstr "پروکسی SOCKS در پورت {p}"
 msgid "… +{n} more"
 msgstr "… +{n} بیشتر"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "With the start page or a terminal"
-msgstr "همراه صفحهٔ شروع یا ترمینال"
-
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Start Page Only"
 msgstr "فقط صفحهٔ شروع"
 
-#: src/sshpilot/layout_preset_chooser.py:119
+#: src/sshpilot/layout_preset_chooser.py:136
 msgid "Sidebar hidden"
 msgstr "نوار کناری پنهان"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Terminal Only"
 msgstr "فقط ترمینال"
 
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:137
 msgid "Opens a local shell"
 msgstr "یک پوستهٔ محلی باز می‌کند"
 
@@ -11171,7 +11168,11 @@ msgstr ""
 "نشانگر را روی این دکمه نگه دارید تا نوار کناری روی ترمینال نمایان شود، یا روی"
 " آن کلیک کنید تا نوار کناری دوباره نمایش داده شود."
 
-#: src/sshpilot/sidebar_peek_hint.py:60
+#: src/sshpilot/sidebar_peek_hint.py:64
+msgid "Don't Show Again"
+msgstr "دیگر نشان داده نشود"
+
+#: src/sshpilot/sidebar_peek_hint.py:67
 msgid "Got It"
 msgstr "فهمیدم"
 
@@ -16367,6 +16368,9 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
+
+#~ msgid "With the start page or a terminal"
+#~ msgstr "همراه صفحهٔ شروع یا ترمینال"
 
 #~ msgid "Sidebar and Start Page"
 #~ msgstr "نوار کناری و صفحهٔ شروع"
