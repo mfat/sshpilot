@@ -8,7 +8,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Pango
 
 from . import icon_utils
-from .layout_presets import apply_preset, current_preset
+from .layout_presets import STARTUP_BEHAVIOR_KEY, apply_preset, current_preset
 
 # Group colours of the sidebar sketch: (dot colour, connection rows below it).
 _SKETCH_GROUPS = (('#ed333b', 1), ('#ff7800', 1), ('#9141ac', 0), ('#f6d32d', 0))
@@ -72,14 +72,35 @@ def _header_sketch(*widgets, center=False):
     return header
 
 
-def _sketch(preset_id):
-    """A miniature of the main window as *preset_id* opens it."""
+def _terminal_sketch():
+    terminal = Gtk.Label(xalign=0, yalign=0)
+    terminal.add_css_class('layout-sketch-terminal')
+    terminal.set_use_markup(True)
+    terminal.set_markup(
+        '<span foreground="#4e9a06">user@laptop</span>'
+        '<span foreground="#d3d7cf">:~$ ▯</span>'
+    )
+    terminal.set_vexpand(True)
+    terminal.set_hexpand(True)
+    terminal.set_ellipsize(Pango.EllipsizeMode.END)
+    return terminal
+
+
+def _sketch(preset_id, terminal_beside_sidebar=False):
+    """A miniature of the main window as *preset_id* opens it. The sidebar
+    layout shows whichever view App Startup opens next to it."""
     frame = Gtk.Box()
     frame.add_css_class('layout-sketch')
     frame.set_overflow(Gtk.Overflow.HIDDEN)
     if preset_id == 'sidebar':
         frame.append(_sidebar_sketch())
-        frame.append(_start_page_sketch())
+        if terminal_beside_sidebar:
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content.append(_header_sketch(_bar('layout-sketch-tab', 32, 7), center=True))
+            content.append(_terminal_sketch())
+            frame.append(content)
+        else:
+            frame.append(_start_page_sketch())
     elif preset_id == 'startpage':
         frame.set_orientation(Gtk.Orientation.VERTICAL)
         frame.append(_header_sketch(
@@ -89,18 +110,11 @@ def _sketch(preset_id):
     else:
         frame.set_orientation(Gtk.Orientation.VERTICAL)
         frame.append(_header_sketch(_bar('layout-sketch-tab', 48, 7), center=True))
-        terminal = Gtk.Label(xalign=0, yalign=0)
-        terminal.add_css_class('layout-sketch-terminal')
-        terminal.set_use_markup(True)
-        terminal.set_markup(
-            '<span foreground="#4e9a06">user@laptop</span>'
-            '<span foreground="#d3d7cf">:~$ ▯</span>'
-        )
-        terminal.set_vexpand(True)
-        terminal.set_ellipsize(Pango.EllipsizeMode.END)
-        frame.append(terminal)
+        frame.append(_terminal_sketch())
     aspect = Gtk.AspectFrame(ratio=1.6, obey_child=False)
     aspect.set_child(frame)
+    # The terminal fills the sketch; its vexpand must not stretch the card.
+    aspect.set_vexpand(False)
     return aspect
 
 
@@ -115,7 +129,7 @@ class LayoutPresetChooser(Gtk.Box):
         self._cards = {}
         self._indicators = {}
         presets = (
-            ('sidebar', _("Sidebar"), _("With the start page or a terminal")),
+            ('sidebar', _("Sidebar"), _("Default")),
             ('startpage', _("Start Page Only"), _("Sidebar hidden")),
             ('terminal', _("Terminal Only"), _("Opens a local shell")),
         )
@@ -153,6 +167,9 @@ class LayoutPresetChooser(Gtk.Box):
             # Top-aligned, so a wrapped title elsewhere cannot shift this sketch.
             content.set_valign(Gtk.Align.START)
             content.append(_sketch(preset_id))
+            if preset_id == 'sidebar':
+                self._sidebar_content = content
+                self._sidebar_shows_terminal = False
             content.append(footer)
             card.set_child(content)
             card.update_property([Gtk.AccessibleProperty.LABEL], [title])
@@ -166,6 +183,12 @@ class LayoutPresetChooser(Gtk.Box):
     def sync(self):
         """Select the card the current settings match (none when custom)."""
         selected = current_preset(self._config)
+        shows_terminal = self._config.get_setting(STARTUP_BEHAVIOR_KEY, 'welcome') == 'terminal'
+        if shows_terminal != self._sidebar_shows_terminal:
+            self._sidebar_shows_terminal = shows_terminal
+            content = self._sidebar_content
+            content.remove(content.get_first_child())
+            content.prepend(_sketch('sidebar', shows_terminal))
         self._syncing = True
         try:
             for preset_id, card in self._cards.items():
