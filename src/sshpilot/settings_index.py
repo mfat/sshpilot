@@ -63,7 +63,7 @@ GENERATED_PAGES = frozenset({"shortcuts", "plugins"})
 # setting, matched in addition to its title. Translate each term; keep the
 # semicolons.
 SETTINGS = (
-    SettingEntry("interface", N_("Layout"), N_("Show Sidebar"),
+    SettingEntry("interface", None, N_("Layout"),
                  N_("layout;view;profile;preset;hide sidebar;plain terminal")),
     SettingEntry("interface", None, N_("App Startup"),
                  N_("startup;start page;restore session;saved session;launch")),

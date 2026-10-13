@@ -1,12 +1,13 @@
 """Layout presets are shortcuts over the existing startup settings."""
 
+import pytest
+
 from sshpilot.layout_presets import (
     HIDE_SIDEBAR_KEY,
+    LAYOUT_PRESETS,
     STARTUP_BEHAVIOR_KEY,
-    apply_view,
-    current_view,
-    set_sidebar_shown,
-    sidebar_shown,
+    apply_preset,
+    current_preset,
 )
 
 
@@ -23,30 +24,24 @@ class _Config:
         self.writes.append(key)
 
 
-def test_defaults_are_start_page_with_sidebar():
-    config = _Config()
-    assert current_view(config) == 'startpage'
-    assert sidebar_shown(config)
+def test_defaults_match_the_sidebar_preset():
+    assert current_preset(_Config()) == 'sidebar'
 
 
-def test_view_and_sidebar_are_independent():
-    config = _Config()
-    apply_view(config, 'terminal')
-    set_sidebar_shown(config, True)
-    assert (current_view(config), sidebar_shown(config)) == ('terminal', True)
-    set_sidebar_shown(config, False)
-    assert current_view(config) == 'terminal'
-    assert config.settings[HIDE_SIDEBAR_KEY] is True
-    apply_view(config, 'startpage')
-    assert (current_view(config), sidebar_shown(config)) == ('startpage', False)
+@pytest.mark.parametrize('preset_id', list(LAYOUT_PRESETS))
+def test_apply_then_detect_round_trips(preset_id):
+    config = _Config(**{STARTUP_BEHAVIOR_KEY: 'saved-session'})
+    apply_preset(config, preset_id)
+    assert current_preset(config) == preset_id
 
 
-def test_restored_session_selects_no_view():
-    assert current_view(_Config(**{STARTUP_BEHAVIOR_KEY: 'previous-session'})) is None
+def test_settings_matching_no_preset_select_none():
+    assert current_preset(_Config(**{STARTUP_BEHAVIOR_KEY: 'previous-session'})) is None
+    assert current_preset(_Config(**{STARTUP_BEHAVIOR_KEY: 'terminal',
+                                     HIDE_SIDEBAR_KEY: False})) is None
 
 
-def test_writes_only_what_changes():
-    config = _Config(**{STARTUP_BEHAVIOR_KEY: 'terminal'})
-    apply_view(config, 'terminal')
-    set_sidebar_shown(config, True)
-    assert config.writes == []
+def test_apply_writes_only_what_changes():
+    config = _Config(**{STARTUP_BEHAVIOR_KEY: 'welcome', HIDE_SIDEBAR_KEY: False})
+    apply_preset(config, 'startpage')
+    assert config.writes == [HIDE_SIDEBAR_KEY]

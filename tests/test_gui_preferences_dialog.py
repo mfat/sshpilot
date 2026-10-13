@@ -175,21 +175,18 @@ def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
     old = (config.get_setting('app-startup-behavior', 'welcome'),
            config.get_setting('ui.sidebar_hide_on_startup', False))
     try:
-        chooser.sidebar_switch.set_active(True)
         chooser._cards['terminal'].set_active(True)
-        assert settle(lambda: prefs.terminal_startup_radio.get_active())
+        assert settle(lambda: prefs.terminal_startup_radio.get_active()
+                      and prefs.hide_on_startup_switch.get_active())
         assert config.get_setting('app-startup-behavior') == 'terminal'
-        assert not prefs.hide_on_startup_switch.get_active(), 'terminal keeps the sidebar'
-
-        chooser.sidebar_switch.set_active(False)
-        assert settle(lambda: prefs.hide_on_startup_switch.get_active())
-        assert selected() == ['terminal'], 'hiding the sidebar keeps the view'
+        assert config.get_setting('ui.sidebar_hide_on_startup') is True
+        assert selected() == ['terminal']
 
         prefs.hide_on_startup_switch.set_active(False)
-        assert settle(lambda: chooser.sidebar_switch.get_active())
+        assert settle(lambda: selected() == []), 'terminal with a visible sidebar is no preset'
 
         prefs.welcome_startup_radio.set_active(True)
-        assert settle(lambda: selected() == ['startpage'])
+        assert settle(lambda: selected() == ['sidebar'])
         assert not prefs.terminal_startup_radio.get_active()
 
         prefs.previous_session_startup_radio.set_active(True)
