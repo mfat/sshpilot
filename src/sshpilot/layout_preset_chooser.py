@@ -1,4 +1,4 @@
-"""The layout preset cards on Settings › Appearance (see layout_presets.py)."""
+"""The layout preset cards on Settings › Interface (see layout_presets.py)."""
 
 from gettext import gettext as _
 

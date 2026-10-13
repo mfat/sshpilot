@@ -1548,7 +1548,7 @@ class PreferencesWindow(Adw.Window):
 
         interface_page.add(startup_group)
 
-    def _add_appearance_layout_group(self, appearance_page):
+    def _add_interface_layout_group(self, interface_page):
         """Add the Layout group: presets over the startup settings."""
         from .layout_preset_chooser import LayoutPresetChooser
 
@@ -1556,7 +1556,7 @@ class PreferencesWindow(Adw.Window):
         layout_group.set_description(_("Choose what the main window shows when it opens"))
         self.layout_preset_chooser = LayoutPresetChooser(self.config)
         layout_group.add(self.layout_preset_chooser)
-        appearance_page.add(layout_group)
+        interface_page.add(layout_group)
 
     def _sync_startup_layout_controls(self):
         """Mirror a startup-setting change into every control showing it."""
@@ -1991,6 +1991,7 @@ class PreferencesWindow(Adw.Window):
         interface_page.set_title(_("Interface"))
         interface_page.set_icon_name("brush-monitor-symbolic")
 
+        self._add_interface_layout_group(interface_page)
         self._add_interface_language_group(interface_page)
         self._add_interface_startup_group(interface_page)
         self._add_interface_headerbar_and_tips_groups(interface_page)
@@ -2002,7 +2003,6 @@ class PreferencesWindow(Adw.Window):
         appearance_page = Adw.PreferencesPage()
         appearance_page.set_title(_("Appearance"))
         appearance_page.set_icon_name("color-symbolic")
-        self._add_appearance_layout_group(appearance_page)
         self._add_appearance_groups(appearance_page)
         self._add_group_appearance_group(appearance_page)
         self._add_group_preview_group(appearance_page)

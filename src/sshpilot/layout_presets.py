@@ -1,4 +1,4 @@
-"""Main-window layout presets offered on Settings › Appearance.
+"""Main-window layout presets offered on Settings › Interface.
 
 A preset is only a shortcut: it writes the existing startup settings
 (Interface › App Startup and Sidebar › Hide Sidebar on Startup), so every

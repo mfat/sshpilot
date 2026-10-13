@@ -145,8 +145,8 @@ def test_group_preview_follows_group_settings_live(gui):
 
 def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
     """A layout card writes the startup settings the other pages show, and back."""
-    prefs = _open_preferences(gui, page_id='appearance')
-    for page_id in ('interface', 'sidebar'):
+    prefs = _open_preferences(gui, page_id='interface')
+    for page_id in ('sidebar',):
         prefs._ensure_page_built(page_id)
     config = gui.window.config
     chooser = prefs.layout_preset_chooser
