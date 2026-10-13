@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 16:48+0330\n"
+"POT-Creation-Date: 2026-10-13 17:06+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -1952,8 +1952,7 @@ msgstr "برای این اتصال IdentitiesOnly بله بنویسید."
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53
-#: src/sshpilot/layout_preset_chooser.py:118 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "پیش‌فرض"
 
@@ -2499,16 +2498,16 @@ msgstr "دستگاه"
 #. titles can still replace it later.
 #. Move the existing terminal out of the main tab_view into pane 0
 #: src/sshpilot/connection_dialog.py:4817 src/sshpilot/omni_search.py:205
-#: src/sshpilot/preferences.py:1220 src/sshpilot/preferences.py:3108
-#: src/sshpilot/shortcut_editor.py:252 src/sshpilot/settings_index.py:48
-#: src/sshpilot/split_view.py:407 src/sshpilot/split_view.py:608
-#: src/sshpilot/split_view.py:611 src/sshpilot/split_view.py:809
-#: src/sshpilot/split_view.py:832 src/sshpilot/split_view.py:834
-#: src/sshpilot/split_view.py:1000 src/sshpilot/split_view.py:1595
-#: src/sshpilot/terminal.py:832 src/sshpilot/terminal.py:3594
-#: src/sshpilot/terminal_manager.py:969 src/sshpilot/terminal_manager.py:1011
-#: src/sshpilot/terminal_manager.py:1572 src/sshpilot/window_tabs.py:1423
-#: src/sshpilot/window_tabs.py:1521
+#: src/sshpilot/layout_preset_chooser.py:126 src/sshpilot/preferences.py:1220
+#: src/sshpilot/preferences.py:3108 src/sshpilot/shortcut_editor.py:252
+#: src/sshpilot/settings_index.py:48 src/sshpilot/split_view.py:407
+#: src/sshpilot/split_view.py:608 src/sshpilot/split_view.py:611
+#: src/sshpilot/split_view.py:809 src/sshpilot/split_view.py:832
+#: src/sshpilot/split_view.py:834 src/sshpilot/split_view.py:1000
+#: src/sshpilot/split_view.py:1595 src/sshpilot/terminal.py:832
+#: src/sshpilot/terminal.py:3594 src/sshpilot/terminal_manager.py:969
+#: src/sshpilot/terminal_manager.py:1011 src/sshpilot/terminal_manager.py:1572
+#: src/sshpilot/window_tabs.py:1423 src/sshpilot/window_tabs.py:1521
 msgid "Terminal"
 msgstr "ترمینال"
 
@@ -9300,25 +9299,26 @@ msgstr "پروکسی SOCKS در پورت {p}"
 msgid "… +{n} more"
 msgstr "… +{n} بیشتر"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "Sidebar and Start Page"
-msgstr "نوار کناری و صفحهٔ شروع"
+#: src/sshpilot/layout_preset_chooser.py:125
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
+msgid "Start Page"
+msgstr "صفحهٔ شروع"
 
-#: src/sshpilot/layout_preset_chooser.py:119
-msgid "Start Page Only"
-msgstr "فقط صفحهٔ شروع"
+#: src/sshpilot/layout_preset_chooser.py:125
+msgid "Search and recent connections"
+msgstr "جستجو و اتصال‌های اخیر"
 
-#: src/sshpilot/layout_preset_chooser.py:119
-msgid "Sidebar hidden"
-msgstr "نوار کناری پنهان"
-
-#: src/sshpilot/layout_preset_chooser.py:120
-msgid "Plain Terminal"
-msgstr "ترمینال ساده"
-
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:126
 msgid "Opens a local shell"
 msgstr "یک پوستهٔ محلی باز می‌کند"
+
+#: src/sshpilot/layout_preset_chooser.py:178 src/sshpilot/settings_index.py:66
+msgid "Show Sidebar"
+msgstr "نمایش نوار کناری"
+
+#: src/sshpilot/layout_preset_chooser.py:179
+msgid "Open the main window with the sidebar visible"
+msgstr "پنجرهٔ اصلی با نوار کناری نمایان باز شود"
 
 #: src/sshpilot/preferences.py:548
 msgid "Page"
@@ -16164,10 +16164,6 @@ msgstr "- خروجی گزارش بهتر"
 msgid "Added sorting to connection list"
 msgstr "افزودن مرتب‌سازی به فهرست اتصال‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
-msgid "Start Page"
-msgstr "صفحهٔ شروع"
-
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:890
 msgid "Main Window"
 msgstr "پنجرهٔ اصلی"
@@ -16367,6 +16363,18 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
+
+#~ msgid "Sidebar and Start Page"
+#~ msgstr "نوار کناری و صفحهٔ شروع"
+
+#~ msgid "Start Page Only"
+#~ msgstr "فقط صفحهٔ شروع"
+
+#~ msgid "Sidebar hidden"
+#~ msgstr "نوار کناری پنهان"
+
+#~ msgid "Plain Terminal"
+#~ msgstr "ترمینال ساده"
 
 #~ msgid ""
 #~ "What happens to the sidebar when any session opens, including local terminals"

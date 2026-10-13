@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 16:48+0330\n"
+"POT-Creation-Date: 2026-10-13 17:06+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -1974,8 +1974,7 @@ msgstr "IdentitiesOnly yes für diese Verbindung schreiben."
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53
-#: src/sshpilot/layout_preset_chooser.py:118 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "Standard"
 
@@ -2535,16 +2534,16 @@ msgstr "Gerät"
 #. titles can still replace it later.
 #. Move the existing terminal out of the main tab_view into pane 0
 #: src/sshpilot/connection_dialog.py:4817 src/sshpilot/omni_search.py:205
-#: src/sshpilot/preferences.py:1220 src/sshpilot/preferences.py:3108
-#: src/sshpilot/shortcut_editor.py:252 src/sshpilot/settings_index.py:48
-#: src/sshpilot/split_view.py:407 src/sshpilot/split_view.py:608
-#: src/sshpilot/split_view.py:611 src/sshpilot/split_view.py:809
-#: src/sshpilot/split_view.py:832 src/sshpilot/split_view.py:834
-#: src/sshpilot/split_view.py:1000 src/sshpilot/split_view.py:1595
-#: src/sshpilot/terminal.py:832 src/sshpilot/terminal.py:3594
-#: src/sshpilot/terminal_manager.py:969 src/sshpilot/terminal_manager.py:1011
-#: src/sshpilot/terminal_manager.py:1572 src/sshpilot/window_tabs.py:1423
-#: src/sshpilot/window_tabs.py:1521
+#: src/sshpilot/layout_preset_chooser.py:126 src/sshpilot/preferences.py:1220
+#: src/sshpilot/preferences.py:3108 src/sshpilot/shortcut_editor.py:252
+#: src/sshpilot/settings_index.py:48 src/sshpilot/split_view.py:407
+#: src/sshpilot/split_view.py:608 src/sshpilot/split_view.py:611
+#: src/sshpilot/split_view.py:809 src/sshpilot/split_view.py:832
+#: src/sshpilot/split_view.py:834 src/sshpilot/split_view.py:1000
+#: src/sshpilot/split_view.py:1595 src/sshpilot/terminal.py:832
+#: src/sshpilot/terminal.py:3594 src/sshpilot/terminal_manager.py:969
+#: src/sshpilot/terminal_manager.py:1011 src/sshpilot/terminal_manager.py:1572
+#: src/sshpilot/window_tabs.py:1423 src/sshpilot/window_tabs.py:1521
 msgid "Terminal"
 msgstr "Terminal"
 
@@ -9421,25 +9420,26 @@ msgstr "SOCKS-Proxy auf Port {p}"
 msgid "… +{n} more"
 msgstr "… +{n} weitere"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "Sidebar and Start Page"
-msgstr "Seitenleiste und Startseite"
+#: src/sshpilot/layout_preset_chooser.py:125
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
+msgid "Start Page"
+msgstr "Startseite"
 
-#: src/sshpilot/layout_preset_chooser.py:119
-msgid "Start Page Only"
-msgstr "Nur Startseite"
+#: src/sshpilot/layout_preset_chooser.py:125
+msgid "Search and recent connections"
+msgstr "Suche und letzte Verbindungen"
 
-#: src/sshpilot/layout_preset_chooser.py:119
-msgid "Sidebar hidden"
-msgstr "Seitenleiste ausgeblendet"
-
-#: src/sshpilot/layout_preset_chooser.py:120
-msgid "Plain Terminal"
-msgstr "Einfaches Terminal"
-
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:126
 msgid "Opens a local shell"
 msgstr "Öffnet eine lokale Shell"
+
+#: src/sshpilot/layout_preset_chooser.py:178 src/sshpilot/settings_index.py:66
+msgid "Show Sidebar"
+msgstr "Seitenleiste anzeigen"
+
+#: src/sshpilot/layout_preset_chooser.py:179
+msgid "Open the main window with the sidebar visible"
+msgstr "Das Hauptfenster mit sichtbarer Seitenleiste öffnen"
 
 #: src/sshpilot/preferences.py:548
 msgid "Page"
@@ -16492,10 +16492,6 @@ msgstr "- Verbesserte Protokollausgabe"
 msgid "Added sorting to connection list"
 msgstr "Sortierung zur Verbindungsliste hinzugefügt"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
-msgid "Start Page"
-msgstr "Startseite"
-
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:890
 msgid "Main Window"
 msgstr "Hauptfenster"
@@ -16697,6 +16693,18 @@ msgstr "Durchreichen"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Schlüssel auf Server kopieren"
+
+#~ msgid "Sidebar and Start Page"
+#~ msgstr "Seitenleiste und Startseite"
+
+#~ msgid "Start Page Only"
+#~ msgstr "Nur Startseite"
+
+#~ msgid "Sidebar hidden"
+#~ msgstr "Seitenleiste ausgeblendet"
+
+#~ msgid "Plain Terminal"
+#~ msgstr "Einfaches Terminal"
 
 #~ msgid ""
 #~ "What happens to the sidebar when any session opens, including local terminals"

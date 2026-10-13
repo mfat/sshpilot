@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 16:48+0330\n"
+"POT-Creation-Date: 2026-10-13 17:06+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1899,8 +1899,7 @@ msgstr "为此连接写入 IdentitiesOnly yes。"
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53
-#: src/sshpilot/layout_preset_chooser.py:118 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "默认"
 
@@ -2426,16 +2425,16 @@ msgstr "设备"
 #. titles can still replace it later.
 #. Move the existing terminal out of the main tab_view into pane 0
 #: src/sshpilot/connection_dialog.py:4817 src/sshpilot/omni_search.py:205
-#: src/sshpilot/preferences.py:1220 src/sshpilot/preferences.py:3108
-#: src/sshpilot/shortcut_editor.py:252 src/sshpilot/settings_index.py:48
-#: src/sshpilot/split_view.py:407 src/sshpilot/split_view.py:608
-#: src/sshpilot/split_view.py:611 src/sshpilot/split_view.py:809
-#: src/sshpilot/split_view.py:832 src/sshpilot/split_view.py:834
-#: src/sshpilot/split_view.py:1000 src/sshpilot/split_view.py:1595
-#: src/sshpilot/terminal.py:832 src/sshpilot/terminal.py:3594
-#: src/sshpilot/terminal_manager.py:969 src/sshpilot/terminal_manager.py:1011
-#: src/sshpilot/terminal_manager.py:1572 src/sshpilot/window_tabs.py:1423
-#: src/sshpilot/window_tabs.py:1521
+#: src/sshpilot/layout_preset_chooser.py:126 src/sshpilot/preferences.py:1220
+#: src/sshpilot/preferences.py:3108 src/sshpilot/shortcut_editor.py:252
+#: src/sshpilot/settings_index.py:48 src/sshpilot/split_view.py:407
+#: src/sshpilot/split_view.py:608 src/sshpilot/split_view.py:611
+#: src/sshpilot/split_view.py:809 src/sshpilot/split_view.py:832
+#: src/sshpilot/split_view.py:834 src/sshpilot/split_view.py:1000
+#: src/sshpilot/split_view.py:1595 src/sshpilot/terminal.py:832
+#: src/sshpilot/terminal.py:3594 src/sshpilot/terminal_manager.py:969
+#: src/sshpilot/terminal_manager.py:1011 src/sshpilot/terminal_manager.py:1572
+#: src/sshpilot/window_tabs.py:1423 src/sshpilot/window_tabs.py:1521
 msgid "Terminal"
 msgstr "终端"
 
@@ -9042,25 +9041,26 @@ msgstr "端口 {p} 上的 SOCKS 代理"
 msgid "… +{n} more"
 msgstr "… +{n} 项"
 
-#: src/sshpilot/layout_preset_chooser.py:118
-msgid "Sidebar and Start Page"
-msgstr "侧边栏和起始页"
+#: src/sshpilot/layout_preset_chooser.py:125
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
+msgid "Start Page"
+msgstr "起始页"
 
-#: src/sshpilot/layout_preset_chooser.py:119
-msgid "Start Page Only"
-msgstr "仅起始页"
+#: src/sshpilot/layout_preset_chooser.py:125
+msgid "Search and recent connections"
+msgstr "搜索和最近连接"
 
-#: src/sshpilot/layout_preset_chooser.py:119
-msgid "Sidebar hidden"
-msgstr "隐藏侧边栏"
-
-#: src/sshpilot/layout_preset_chooser.py:120
-msgid "Plain Terminal"
-msgstr "纯终端"
-
-#: src/sshpilot/layout_preset_chooser.py:120
+#: src/sshpilot/layout_preset_chooser.py:126
 msgid "Opens a local shell"
 msgstr "打开本地 shell"
+
+#: src/sshpilot/layout_preset_chooser.py:178 src/sshpilot/settings_index.py:66
+msgid "Show Sidebar"
+msgstr "显示侧边栏"
+
+#: src/sshpilot/layout_preset_chooser.py:179
+msgid "Open the main window with the sidebar visible"
+msgstr "打开主窗口时显示侧边栏"
 
 #: src/sshpilot/preferences.py:548
 msgid "Page"
@@ -15611,10 +15611,6 @@ msgstr "- 更好的日志输出"
 msgid "Added sorting to connection list"
 msgstr "连接列表新增排序功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
-msgid "Start Page"
-msgstr "起始页"
-
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:890
 msgid "Main Window"
 msgstr "主窗口"
@@ -15806,6 +15802,18 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#~ msgid "Sidebar and Start Page"
+#~ msgstr "侧边栏和起始页"
+
+#~ msgid "Start Page Only"
+#~ msgstr "仅起始页"
+
+#~ msgid "Sidebar hidden"
+#~ msgstr "隐藏侧边栏"
+
+#~ msgid "Plain Terminal"
+#~ msgstr "纯终端"
 
 #~ msgid ""
 #~ "What happens to the sidebar when any session opens, including local terminals"

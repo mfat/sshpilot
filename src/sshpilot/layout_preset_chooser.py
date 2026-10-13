@@ -5,10 +5,11 @@ from gettext import gettext as _
 import gi
 
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Pango
+gi.require_version('Adw', '1')
+from gi.repository import Adw, Gtk, Pango
 
 from . import icon_utils
-from .layout_presets import apply_preset, current_preset
+from .layout_presets import apply_view, current_view, set_sidebar_shown, sidebar_shown
 
 # Group colours of the sidebar sketch: (dot colour, connection rows below it).
 _SKETCH_GROUPS = (('#ed333b', 1), ('#ff7800', 1), ('#9141ac', 0), ('#f6d32d', 0))
@@ -72,55 +73,60 @@ def _header_sketch(*widgets, center=False):
     return header
 
 
-def _sketch(preset_id):
-    """A miniature of the main window as *preset_id* opens it."""
-    frame = Gtk.Box()
-    frame.add_css_class('layout-sketch')
-    frame.set_overflow(Gtk.Overflow.HIDDEN)
-    if preset_id == 'sidebar':
-        frame.append(_sidebar_sketch())
-        frame.append(_start_page_sketch())
-    elif preset_id == 'startpage':
-        frame.set_orientation(Gtk.Orientation.VERTICAL)
-        frame.append(_header_sketch(
-            _bar('layout-sketch-button', 6, 5), _bar('layout-sketch-button', 6, 5)
-        ))
-        frame.append(_start_page_sketch())
+def _sketch(view_id, with_sidebar):
+    """A miniature of the main window as it opens."""
+    if view_id == 'startpage':
+        body = _start_page_sketch()
     else:
-        frame.set_orientation(Gtk.Orientation.VERTICAL)
-        frame.append(_header_sketch(_bar('layout-sketch-tab', 48, 7), center=True))
-        terminal = Gtk.Label(xalign=0, yalign=0)
-        terminal.add_css_class('layout-sketch-terminal')
-        terminal.set_use_markup(True)
-        terminal.set_markup(
+        body = Gtk.Label(xalign=0, yalign=0)
+        body.add_css_class('layout-sketch-terminal')
+        body.set_use_markup(True)
+        body.set_markup(
             '<span foreground="#4e9a06">user@laptop</span>'
             '<span foreground="#d3d7cf">:~$ ▯</span>'
         )
-        terminal.set_vexpand(True)
-        terminal.set_ellipsize(Pango.EllipsizeMode.END)
-        frame.append(terminal)
+        body.set_vexpand(True)
+        body.set_hexpand(True)
+        body.set_ellipsize(Pango.EllipsizeMode.END)
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    content.set_hexpand(True)
+    if view_id == 'terminal':
+        content.append(_header_sketch(_bar('layout-sketch-tab', 40, 7), center=True))
+    elif not with_sidebar:
+        content.append(_header_sketch(
+            _bar('layout-sketch-button', 6, 5), _bar('layout-sketch-button', 6, 5)
+        ))
+    content.append(body)
+
+    frame = Gtk.Box()
+    frame.add_css_class('layout-sketch')
+    frame.set_overflow(Gtk.Overflow.HIDDEN)
+    if with_sidebar:
+        frame.append(_sidebar_sketch())
+    frame.append(content)
     aspect = Gtk.AspectFrame(ratio=1.6, obey_child=False)
     aspect.set_child(frame)
     return aspect
 
 
 class LayoutPresetChooser(Gtk.Box):
-    """Three cards that each set the main window's startup layout."""
+    """View cards (Start Page / Terminal) plus a sidebar switch below them."""
 
     def __init__(self, config):
-        super().__init__(spacing=12, homogeneous=True)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.add_css_class('layout-presets')
         self._config = config
         self._syncing = False
         self._cards = {}
         self._indicators = {}
-        presets = (
-            ('sidebar', _("Sidebar and Start Page"), _("Default")),
-            ('startpage', _("Start Page Only"), _("Sidebar hidden")),
-            ('terminal', _("Plain Terminal"), _("Opens a local shell")),
+        self._sketch_slots = {}
+        cards_box = Gtk.Box(spacing=12, homogeneous=True)
+        views = (
+            ('startpage', _("Start Page"), _("Search and recent connections")),
+            ('terminal', _("Terminal"), _("Opens a local shell")),
         )
         first_card = first_indicator = None
-        for preset_id, title, caption in presets:
+        for view_id, title, caption in views:
             card = Gtk.ToggleButton()
             card.add_css_class('layout-card')
             card.set_tooltip_text(caption)
@@ -149,34 +155,66 @@ class LayoutPresetChooser(Gtk.Box):
             footer.append(indicator)
             footer.append(labels)
 
+            slot = Gtk.Box()
             content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             # Top-aligned, so a wrapped title elsewhere cannot shift this sketch.
             content.set_valign(Gtk.Align.START)
-            content.append(_sketch(preset_id))
+            content.append(slot)
             content.append(footer)
             card.set_child(content)
             card.update_property([Gtk.AccessibleProperty.LABEL], [title])
             card.update_property([Gtk.AccessibleProperty.DESCRIPTION], [caption])
-            card.connect('toggled', self._on_card_toggled, preset_id)
-            self.append(card)
-            self._cards[preset_id] = card
-            self._indicators[preset_id] = indicator
+            card.connect('toggled', self._on_card_toggled, view_id)
+            cards_box.append(card)
+            self._cards[view_id] = card
+            self._indicators[view_id] = indicator
+            self._sketch_slots[view_id] = slot
+        self.append(cards_box)
+
+        sidebar_list = Gtk.ListBox()
+        sidebar_list.add_css_class('boxed-list')
+        sidebar_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.sidebar_switch = Adw.SwitchRow()
+        self.sidebar_switch.set_title(_("Show Sidebar"))
+        self.sidebar_switch.set_subtitle(_("Open the main window with the sidebar visible"))
+        self.sidebar_switch.connect('notify::active', self._on_sidebar_toggled)
+        sidebar_list.append(self.sidebar_switch)
+        self.append(sidebar_list)
+        self._shown_sidebar = None
         self.sync()
 
     def sync(self):
-        """Select the card the current settings match (none when custom)."""
-        selected = current_preset(self._config)
+        """Show the current settings: the view card (none for a restored
+        session), the sidebar switch, and sketches with or without it."""
+        view = current_view(self._config)
+        shown = sidebar_shown(self._config)
         self._syncing = True
         try:
-            for preset_id, card in self._cards.items():
-                active = preset_id == selected
+            for view_id, card in self._cards.items():
+                active = view_id == view
                 card.set_active(active)
-                self._indicators[preset_id].set_active(active)
+                self._indicators[view_id].set_active(active)
+            self.sidebar_switch.set_active(shown)
         finally:
             self._syncing = False
+        if shown != self._shown_sidebar:
+            self._shown_sidebar = shown
+            for view_id, slot in self._sketch_slots.items():
+                old = slot.get_first_child()
+                if old is not None:
+                    slot.remove(old)
+                sketch = _sketch(view_id, shown)
+                sketch.set_hexpand(True)
+                slot.append(sketch)
 
-    def _on_card_toggled(self, card, preset_id):
-        self._indicators[preset_id].set_active(card.get_active())
+    def _on_card_toggled(self, card, view_id):
+        self._indicators[view_id].set_active(card.get_active())
         if self._syncing or not card.get_active():
             return
-        apply_preset(self._config, preset_id)
+        apply_view(self._config, view_id)
+
+    def _on_sidebar_toggled(self, switch, _param):
+        if self._syncing:
+            return
+        set_sidebar_shown(self._config, switch.get_active())
+        self.sync()
