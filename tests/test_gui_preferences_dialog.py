@@ -182,6 +182,31 @@ def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
         config.set_setting('ui.sidebar_hide_on_startup', old[1])
 
 
+def test_sidebar_peek_hint_shows_while_the_sidebar_is_set_to_hide(gui):
+    """The hover-reveal hint follows the hide switches and the header button."""
+    prefs = _open_preferences(gui, page_id='sidebar')
+    config = gui.window.config
+    row = prefs.sidebar_peek_row
+    on_startup, on_terminal_open = prefs._sidebar_hide_switches
+    old = (on_startup.get_active(), on_terminal_open.get_active(),
+           config.get_setting('ui.headerbar_show_sidebar_toggle', True))
+    try:
+        on_startup.set_active(False)
+        on_terminal_open.set_active(False)
+        assert not row.get_visible()
+        on_terminal_open.set_active(True)
+        assert row.get_visible()
+        hover_hint = row.get_subtitle()
+
+        config.set_setting('ui.headerbar_show_sidebar_toggle', False)
+        gui.pump(50)
+        assert row.get_subtitle() != hover_hint
+    finally:
+        on_startup.set_active(old[0])
+        on_terminal_open.set_active(old[1])
+        config.set_setting('ui.headerbar_show_sidebar_toggle', old[2])
+
+
 def test_dialogs_from_settings_are_parented_to_settings(gui):
     """Page widgets resolve to the Settings window, so their dialogs stack on it."""
     from gi.repository import Gtk

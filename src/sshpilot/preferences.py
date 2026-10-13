@@ -1903,7 +1903,37 @@ class PreferencesWindow(Adw.Window):
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
 
+        # Shown while a setting above hides the sidebar: how to get it back
+        # without un-hiding it (sidebar_hover_reveal.py).
+        from .sidebar_peek_preview import SidebarPeekPreview
+
+        self.sidebar_peek_row = Adw.ActionRow()
+        self.sidebar_peek_row.set_title(_("Peek at the Hidden Sidebar"))
+        self.sidebar_peek_row.add_suffix(SidebarPeekPreview())
+        sidebar_behavior_group.add(self.sidebar_peek_row)
+        self._sidebar_hide_switches = (hide_on_startup_switch, hide_on_terminal_open_switch)
+        for switch in self._sidebar_hide_switches:
+            switch.connect('notify::active', lambda *_a: self._sync_sidebar_peek_row())
+        self._sync_sidebar_peek_row()
+
         sidebar_page.add(sidebar_behavior_group)
+
+    def _sync_sidebar_peek_row(self):
+        """Show the hover-reveal hint while the sidebar is set to hide."""
+        row = getattr(self, 'sidebar_peek_row', None)
+        if row is None:
+            return
+        row.set_visible(any(s.get_active() for s in self._sidebar_hide_switches))
+        if self.config.get_setting('ui.headerbar_show_sidebar_toggle', True):
+            row.set_subtitle(_(
+                "While the sidebar is hidden, rest the pointer on the sidebar "
+                "button in the header bar to float it over the terminal"
+            ))
+        else:
+            row.set_subtitle(_(
+                "Turn on the Sidebar Toggle Button under Interface › Header "
+                "Bar Buttons to reveal the hidden sidebar by hovering it"
+            ))
 
     def on_sidebar_on_terminal_open_changed(self, switch_row, _param):
         """Persist whether the sidebar hides when a terminal tab opens."""
@@ -5616,6 +5646,8 @@ class PreferencesWindow(Adw.Window):
             self._group_terminal_color_sync = False
 
     def _on_config_setting_changed(self, _config, key, value):
+        if key == 'ui.headerbar_show_sidebar_toggle':
+            self._sync_sidebar_peek_row()
         if key in ('app-startup-behavior', 'ui.sidebar_hide_on_startup'):
             # Deferred: the change may come from one of these controls while
             # its radio group is mid-toggle, and setting a radio re-entrantly

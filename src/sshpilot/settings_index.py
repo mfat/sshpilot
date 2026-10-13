@@ -109,6 +109,8 @@ SETTINGS = (
                  N_("Hide Sidebar When a Terminal Tab Opens"),
                  N_("hide sidebar;collapse sidebar;terminal tab")),
     SettingEntry("sidebar", N_("Behavior"), N_("Show When No Tab Is Open")),
+    SettingEntry("sidebar", N_("Behavior"), N_("Peek at the Hidden Sidebar"),
+                 N_("hover;reveal;peek;show sidebar")),
     SettingEntry("terminal", None, N_("Preferred Terminal"),
                  N_("external terminal;built-in terminal;terminal emulator")),
     SettingEntry("terminal", None, N_("Color Scheme"),
