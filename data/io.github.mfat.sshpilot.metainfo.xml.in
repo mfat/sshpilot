@@ -61,6 +61,16 @@
 
 
 
+    <release version="6.3.1" date="2026-10-13">
+      <description>
+        <p>New Settings dialog with built-in search and dedicated pages for Appearance and Sidebar</p>
+        <p>Improved look and feel for split view terminals</p>
+        <p>New layout chooser in settings - choose between default look with sidebar and plain terminal look</p>
+        <p>Reveal a hidden sidebar by hovering over the sidebar toggle</p>
+        <p>Improved Broadcast command experience, disable autohide</p>
+        <p>Various UI fixes and improvements</p>
+      </description>
+    </release>
     <release version="6.3.0" date="2026-10-09">
       <description>
         <p>Connections are now automatically tagged by protocol</p>
