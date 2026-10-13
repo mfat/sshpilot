@@ -24,6 +24,14 @@ def _open_preferences(gui, page_id=None):
     return getattr(gui.window, '_preferences_window', None)
 
 
+def _settle(gui, condition, ms=3000):
+    for _i in range(ms // 50):
+        if condition():
+            return True
+        gui.pump(50)
+    return condition()
+
+
 def test_preferences_is_a_non_modal_window_above_the_main_window(gui):
     from gi.repository import Adw
 
@@ -126,7 +134,8 @@ def test_group_preview_follows_group_settings_live(gui):
     old_mode = config.get_setting('ui.group_color_display', 'dot')
     try:
         config.set_setting('ui.group_color_display', 'fill')
-        gui.pump(200)
+        # The rebuild is an idle; under load it can land after a fixed pump.
+        _settle(gui, lambda: rows() and rows()[0].has_css_class('tinted'))
         built = rows()
         assert [type(r) for r in built if isinstance(r, (GroupRow, ConnectionRow))] == [
             GroupRow, ConnectionRow, ConnectionRow, GroupRow, ConnectionRow,
@@ -134,7 +143,7 @@ def test_group_preview_follows_group_settings_live(gui):
         assert built[0].has_css_class('tinted')
 
         config.set_setting('ui.group_color_display', 'bar')
-        gui.pump(200)
+        _settle(gui, lambda: rows()[0] is not built[0])
         rebuilt = rows()
         assert rebuilt[0] is not built[0], 'preview did not rebuild'
         assert not rebuilt[0].has_css_class('tinted')
