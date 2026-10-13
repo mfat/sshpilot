@@ -3086,8 +3086,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 # filled in dimmed by _load_inherited_values_async; if that
                 # cannot run, empty still correctly means "inherit".
                 authored = getattr(self.connection, 'authored_directives', None)
+                data = getattr(self.connection, 'data', None)
+                # A target typed in the search box without a port inherits
+                # one, often from ``Host *`` (#1320); a 22 here would be
+                # written as this host's Port on save.
+                port_typed = not (
+                    isinstance(data, dict) and data.get('port_explicit') is False
+                )
                 try:
-                    if authored is not None and 'port' not in authored:
+                    if not port_typed or (
+                        authored is not None and 'port' not in authored
+                    ):
                         self.port_row.set_text("")
                     else:
                         self.port_row.set_text(
