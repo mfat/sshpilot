@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
+import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -226,3 +229,144 @@ def test_targets_in_use_survive_the_limit(tmp_path):
             )
         )
     assert repo.get_record(keep.id) is not None
+
+
+# Native config evaluation only: -G never starts a session or a ProxyJump child.
+# Fixtures use no keys, exec predicates, ProxyCommand, or reachable hosts.
+_NATIVE_SSH = shutil.which("ssh")
+_JUMP_CONFIG = """Host jump.invalid
+    HostName gateway.invalid
+    User jumpuser
+    Port 2022
+    ProxyJump none
+Host *
+    HostName %h.site.invalid
+    User configuser
+    Port 2200
+    ProxyJump jump.invalid
+    ServerAliveInterval 7
+    IdentityFile none
+    IdentityAgent none
+"""
+
+
+def _ssh_g(argv):
+    result = subprocess.run(
+        [_NATIVE_SSH, "-G", *argv],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        check=True, timeout=10,
+    )
+    return dict(line.split(None, 1) for line in result.stdout.splitlines())
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(_NATIVE_SSH is None, reason="OpenSSH ssh is required")
+@pytest.mark.parametrize("layout", ["reported", "nested", "match"])
+@pytest.mark.parametrize("typed", [False, True])
+def test_native_transient_launch_preserves_destination_and_jump_config(
+    tmp_path, layout, typed,
+):
+    # Every participating path contains spaces, including nested Includes.
+    directory = tmp_path / "config with spaces"
+    directory.mkdir()
+    if layout == "nested":
+        leaf = directory / "jump hosts.conf"
+        leaf.write_text(_JUMP_CONFIG)
+        nested = directory / "nested hosts.conf"
+        nested.write_text(f'Host *.invalid\n    Include "{leaf}"\n')
+        config = f'Include "{nested}"\n'
+    elif layout == "match":
+        config = (
+            "Match originalhost jump.invalid\n"
+            "    HostName gateway.invalid\n"
+            "    User jumpuser\n"
+            "    Port 2022\n"
+            "    ProxyJump none\n"
+            "Match all\n" + _JUMP_CONFIG
+        )
+    else:
+        config = _JUMP_CONFIG
+    repo, root = _repo(directory, config)
+    before = {path: path.read_bytes() for path in directory.iterdir()}
+    payload = {"hostname": "target.invalid", "protocol": "ssh"}
+    overrides = []
+    if typed:
+        payload.update(
+            username="typeduser", port=2222,
+            extra_ssh_config="ServerAliveInterval 19",
+        )
+        overrides = ["-l", "typeduser", "-p", "2222", "-o", "ServerAliveInterval=19"]
+    record = repo.open_transient_connection(payload)
+    transient = Path(record.source)
+    try:
+        argv, _env = DaemonConnectionLaunchProvider(repo.get_record).prepare_terminal_launch(
+            record.id, interaction_policy="broker",
+        )
+        transient = Path(argv[argv.index("-F") + 1])
+        assert transient == Path(record.source)
+        assert argv[-1] == "target.invalid"
+        expected = _ssh_g(["-F", str(root), *overrides, "target.invalid"])
+        config_destination = _ssh_g(["-F", str(transient), "target.invalid"])
+        # Check both the authored file and the actual daemon launch arguments:
+        # command-line -l/-p must not conceal a config precedence regression.
+        for actual in (
+            config_destination,
+            _ssh_g(argv[1:]),
+        ):
+            for option in ("hostname", "user", "port", "proxyjump"):
+                assert actual[option] == expected[option], (option, actual, expected)
+        # The daemon adds its own keepalive CLI options; inspect the file to
+        # check that the destination's authored interval stays scoped to it.
+        assert config_destination["serveraliveinterval"] == expected["serveraliveinterval"]
+        assert expected["hostname"] == "target.invalid.site.invalid"
+        assert expected["proxyjump"] == "jump.invalid"
+        expected_jump = _ssh_g(["-F", str(root), "jump.invalid"])
+        # An implicit ProxyJump child reuses -F, without destination -l/-p.
+        actual_jump = _ssh_g(["-F", str(transient), "jump.invalid"])
+        for option in ("hostname", "user", "port", "proxyjump", "serveraliveinterval"):
+            assert actual_jump.get(option) == expected_jump.get(option), (
+                option, actual_jump, expected_jump,
+            )
+        assert actual_jump["hostname"] == "gateway.invalid"
+        assert actual_jump["port"] == "2022"
+        assert actual_jump["user"] == "jumpuser"
+        # OpenSSH omits ProxyJump from -G output when it is explicitly none.
+        assert actual_jump.get("proxyjump", "none") == "none"
+        assert "proxycommand" not in actual_jump
+        assert actual_jump["serveraliveinterval"] == "7"
+        assert stat.S_IMODE(transient.stat().st_mode) == 0o600
+        assert stat.S_IMODE(transient.parent.stat().st_mode) == 0o700
+        assert record.id not in {item.id for item in repo.snapshot().connections}
+        assert not (directory / "config.json").exists()
+    finally:
+        repo.discard_transient_connection(record.id)
+        repo._transient.close()
+    assert not transient.exists()
+    assert not transient.parent.exists()
+    assert {path: path.read_bytes() for path in directory.iterdir()} == before
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(_NATIVE_SSH is None, reason="OpenSSH ssh is required")
+def test_native_transient_launch_with_missing_root(tmp_path):
+    repo, root = _repo(tmp_path)
+    record = repo.open_transient_connection({
+        "hostname": "target.invalid", "username": "typeduser", "port": 2222,
+        "identity_agent": "none", "identity_files": ["none"], "protocol": "ssh",
+    })
+    transient = Path(record.source)
+    try:
+        argv, _env = DaemonConnectionLaunchProvider(repo.get_record).prepare_terminal_launch(
+            record.id, interaction_policy="broker",
+        )
+        transient = Path(argv[argv.index("-F") + 1])
+        assert "Include" not in transient.read_text()
+        actual = _ssh_g(argv[1:])
+        assert actual["hostname"] == "target.invalid"
+        assert actual["user"] == "typeduser"
+        assert actual["port"] == "2222"
+        assert not root.exists()
+    finally:
+        repo.discard_transient_connection(record.id)
+        repo._transient.close()
+    assert not transient.exists()
