@@ -24,7 +24,7 @@ def _open_preferences(gui, page_id=None):
     return getattr(gui.window, '_preferences_window', None)
 
 
-def test_preferences_is_a_separate_non_modal_window(gui):
+def test_preferences_is_a_non_modal_window_above_the_main_window(gui):
     from gi.repository import Adw
 
     prefs = _open_preferences(gui)
@@ -33,7 +33,8 @@ def test_preferences_is_a_separate_non_modal_window(gui):
     assert prefs is not gui.window
     assert prefs.get_visible()
     assert not prefs.get_modal()
-    assert prefs.get_transient_for() is None
+    # Transient so it cannot fall behind the main window.
+    assert prefs.get_transient_for() is gui.window
     assert prefs.parent_window is gui.window
     # Registered, so routed prompts can find it as the active window.
     assert prefs in gui.app.get_windows()

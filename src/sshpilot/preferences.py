@@ -126,7 +126,7 @@ class _PreviewGroupManager:
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
 class PreferencesWindow(Adw.Window):
-    """The Settings window: a separate, non-modal window per main window.
+    """The Settings window: non-modal, transient for its main window.
 
     An ``Adw.NavigationSplitView`` hosts the category list and preference pages
     (collapses to list↔detail on narrow widths). Closing it only hides it, so

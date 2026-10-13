@@ -231,7 +231,10 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
        :func:`Gtk.Application.get_windows` order — most recently focused
        first — so the first match is the most recently focused).
     3. The active window, if visible (non-modal secondary window, e.g. FM).
-    4. The main window.
+    4. The main window's Settings window, if shown: it is transient for the
+       main window, so it always stacks above it and would cover a prompt
+       presented there.
+    5. The main window.
 
     Pure function over already-extracted GTK state so it can be unit-tested.
     """
@@ -258,6 +261,9 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
     if active_window is not None and active_window is not main_window \
             and _visible(active_window):
         return active_window
+    settings = getattr(main_window, '_preferences_window', None)
+    if settings is not None and _visible(settings):
+        return settings
     return main_window
 
 
@@ -925,6 +931,10 @@ class WindowConfigDialogsMixin:
             # master password) stack on Settings while it is the active window.
             if prefs.get_application() is None:
                 associate_window_with_parent_application(prefs, self)
+            # Transient: Settings stays above the main window instead of
+            # disappearing behind it when the main window is clicked. Still
+            # non-modal, so the main window remains usable.
+            prefs.set_transient_for(self)
             if page_id:
                 prefs.select_page(page_id)
             prefs.present()

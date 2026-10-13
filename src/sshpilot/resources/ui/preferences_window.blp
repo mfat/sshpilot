@@ -6,9 +6,10 @@ using Adw 1;
 // the NavigationSplitView / ToolbarView / HeaderBar / ScrolledWindow structure
 // and the collapse breakpoint.
 //
-// A separate, non-modal Adw.Window: the main window stays usable so font,
-// color and sidebar changes can be watched live. Dialogs opened from Settings
-// are presented on this window (see PreferencesWindow._dialog_parent).
+// A separate, non-modal Adw.Window, transient for its main window (set in
+// show_preferences) so it stays above it: the main window stays usable so
+// font, color and sidebar changes can be watched live. Dialogs opened from
+// Settings are presented on this window (see PreferencesWindow._dialog_parent).
 template $SshPilotPreferencesWindow: Adw.Window {
   title: _("Settings");
   default-width: 960;
