@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 16:48+0330\n"
+"POT-Creation-Date: 2026-10-13 17:10+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1957,8 +1957,7 @@ msgstr "Gravar IdentitiesOnly yes para esta conexão."
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53
-#: src/sshpilot/layout_preset_chooser.py:118 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "Padrão"
 
@@ -7630,8 +7629,9 @@ msgstr ""
 "tema;cor de destaque;cor de destaque;fonte monoespaçada;cores dos "
 "grupos;cores dos grupos;layout dos grupos;aparência"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/preferences.py:2044
-#: src/sshpilot/preferences.py:3107 src/sshpilot/settings_index.py:47
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
+#: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
 msgstr "Barra lateral"
 
@@ -9335,8 +9335,8 @@ msgid "… +{n} more"
 msgstr "… +{n} mais"
 
 #: src/sshpilot/layout_preset_chooser.py:118
-msgid "Sidebar and Start Page"
-msgstr "Barra lateral e página inicial"
+msgid "With the start page or a terminal"
+msgstr "Com a página inicial ou um terminal"
 
 #: src/sshpilot/layout_preset_chooser.py:119
 msgid "Start Page Only"
@@ -9347,8 +9347,8 @@ msgid "Sidebar hidden"
 msgstr "Barra lateral oculta"
 
 #: src/sshpilot/layout_preset_chooser.py:120
-msgid "Plain Terminal"
-msgstr "Terminal simples"
+msgid "Terminal Only"
+msgstr "Somente terminal"
 
 #: src/sshpilot/layout_preset_chooser.py:120
 msgid "Opens a local shell"
@@ -16499,6 +16499,12 @@ msgstr "Passagem direta"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copiar chave para o servidor"
+
+#~ msgid "Sidebar and Start Page"
+#~ msgstr "Barra lateral e página inicial"
+
+#~ msgid "Plain Terminal"
+#~ msgstr "Terminal simples"
 
 #~ msgid ""
 #~ "What happens to the sidebar when any session opens, including local terminals"

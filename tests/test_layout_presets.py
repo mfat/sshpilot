@@ -4,7 +4,6 @@ import pytest
 
 from sshpilot.layout_presets import (
     HIDE_SIDEBAR_KEY,
-    LAYOUT_PRESETS,
     STARTUP_BEHAVIOR_KEY,
     apply_preset,
     current_preset,
@@ -24,24 +23,30 @@ class _Config:
         self.writes.append(key)
 
 
+def _config(behavior, hide):
+    return _Config(**{STARTUP_BEHAVIOR_KEY: behavior, HIDE_SIDEBAR_KEY: hide})
+
+
 def test_defaults_match_the_sidebar_preset():
     assert current_preset(_Config()) == 'sidebar'
 
 
-@pytest.mark.parametrize('preset_id', list(LAYOUT_PRESETS))
-def test_apply_then_detect_round_trips(preset_id):
-    config = _Config(**{STARTUP_BEHAVIOR_KEY: 'saved-session'})
+@pytest.mark.parametrize('behavior', ['welcome', 'terminal', 'previous-session'])
+def test_sidebar_preset_goes_with_any_startup_view(behavior):
+    config = _config(behavior, True)
+    apply_preset(config, 'sidebar')
+    assert config.writes == [HIDE_SIDEBAR_KEY], 'App Startup left alone'
+    assert current_preset(config) == 'sidebar'
+
+
+@pytest.mark.parametrize('preset_id, behavior', [('startpage', 'welcome'),
+                                                 ('terminal', 'terminal')])
+def test_only_presets_hide_the_sidebar(preset_id, behavior):
+    config = _config('previous-session', False)
     apply_preset(config, preset_id)
+    assert config.settings == {STARTUP_BEHAVIOR_KEY: behavior, HIDE_SIDEBAR_KEY: True}
     assert current_preset(config) == preset_id
 
 
-def test_settings_matching_no_preset_select_none():
-    assert current_preset(_Config(**{STARTUP_BEHAVIOR_KEY: 'previous-session'})) is None
-    assert current_preset(_Config(**{STARTUP_BEHAVIOR_KEY: 'terminal',
-                                     HIDE_SIDEBAR_KEY: False})) is None
-
-
-def test_apply_writes_only_what_changes():
-    config = _Config(**{STARTUP_BEHAVIOR_KEY: 'welcome', HIDE_SIDEBAR_KEY: False})
-    apply_preset(config, 'startpage')
-    assert config.writes == [HIDE_SIDEBAR_KEY]
+def test_hidden_sidebar_with_a_restored_session_matches_no_preset():
+    assert current_preset(_config('previous-session', True)) is None

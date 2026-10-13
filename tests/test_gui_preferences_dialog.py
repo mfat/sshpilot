@@ -183,13 +183,19 @@ def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
         assert selected() == ['terminal']
 
         prefs.hide_on_startup_switch.set_active(False)
-        assert settle(lambda: selected() == []), 'terminal with a visible sidebar is no preset'
+        assert settle(lambda: selected() == ['sidebar']), 'sidebar goes with a terminal too'
 
-        prefs.welcome_startup_radio.set_active(True)
-        assert settle(lambda: selected() == ['sidebar'])
+        chooser._cards['startpage'].set_active(True)
+        assert settle(lambda: prefs.welcome_startup_radio.get_active()
+                      and prefs.hide_on_startup_switch.get_active())
         assert not prefs.terminal_startup_radio.get_active()
 
+        chooser._cards['sidebar'].set_active(True)
+        assert settle(lambda: not prefs.hide_on_startup_switch.get_active())
+        assert prefs.welcome_startup_radio.get_active(), 'the sidebar card keeps the view'
+
         prefs.previous_session_startup_radio.set_active(True)
+        prefs.hide_on_startup_switch.set_active(True)
         assert settle(lambda: selected() == [])
     finally:
         config.set_setting('app-startup-behavior', old[0])

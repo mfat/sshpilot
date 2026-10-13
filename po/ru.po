@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 16:48+0330\n"
+"POT-Creation-Date: 2026-10-13 17:10+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1969,8 +1969,7 @@ msgstr "Записать IdentitiesOnly yes для этого подключен
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53
-#: src/sshpilot/layout_preset_chooser.py:118 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "По умолчанию"
 
@@ -7710,8 +7709,9 @@ msgstr ""
 "тема;акцентный цвет;акцентный цвет;моноширинный шрифт;цвета групп;цвета "
 "групп;расположение групп;внешний вид"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/preferences.py:2044
-#: src/sshpilot/preferences.py:3107 src/sshpilot/settings_index.py:47
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
+#: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
 msgstr "Боковая панель"
 
@@ -9417,8 +9417,8 @@ msgid "… +{n} more"
 msgstr "… ещё +{n}"
 
 #: src/sshpilot/layout_preset_chooser.py:118
-msgid "Sidebar and Start Page"
-msgstr "Боковая панель и стартовая страница"
+msgid "With the start page or a terminal"
+msgstr "Со стартовой страницей или терминалом"
 
 #: src/sshpilot/layout_preset_chooser.py:119
 msgid "Start Page Only"
@@ -9429,8 +9429,8 @@ msgid "Sidebar hidden"
 msgstr "Боковая панель скрыта"
 
 #: src/sshpilot/layout_preset_chooser.py:120
-msgid "Plain Terminal"
-msgstr "Простой терминал"
+msgid "Terminal Only"
+msgstr "Только терминал"
 
 #: src/sshpilot/layout_preset_chooser.py:120
 msgid "Opens a local shell"
@@ -16604,6 +16604,12 @@ msgstr "Сквозная передача"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Скопировать ключ на сервер"
+
+#~ msgid "Sidebar and Start Page"
+#~ msgstr "Боковая панель и стартовая страница"
+
+#~ msgid "Plain Terminal"
+#~ msgstr "Простой терминал"
 
 #~ msgid ""
 #~ "What happens to the sidebar when any session opens, including local terminals"

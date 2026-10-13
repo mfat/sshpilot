@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 16:48+0330\n"
+"POT-Creation-Date: 2026-10-13 17:10+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1899,8 +1899,7 @@ msgstr "为此连接写入 IdentitiesOnly yes。"
 #: src/sshpilot/connection_dialog.py:3497
 #: src/sshpilot/connection_dialog.py:3543
 #: src/sshpilot/connection_dialog.py:3804
-#: src/sshpilot/login_profile_dialogs.py:53
-#: src/sshpilot/layout_preset_chooser.py:118 src/sshpilot/split_view.py:1375
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "默认"
 
@@ -7356,8 +7355,9 @@ msgid ""
 "colours;group layout;appearance"
 msgstr "主题;强调色;强调色;等宽字体;分组颜色;分组颜色;分组布局;外观"
 
-#: src/sshpilot/omni_search.py:201 src/sshpilot/preferences.py:2044
-#: src/sshpilot/preferences.py:3107 src/sshpilot/settings_index.py:47
+#: src/sshpilot/omni_search.py:201 src/sshpilot/layout_preset_chooser.py:118
+#: src/sshpilot/preferences.py:2044 src/sshpilot/preferences.py:3107
+#: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
 msgstr "侧边栏"
 
@@ -9043,8 +9043,8 @@ msgid "… +{n} more"
 msgstr "… +{n} 项"
 
 #: src/sshpilot/layout_preset_chooser.py:118
-msgid "Sidebar and Start Page"
-msgstr "侧边栏和起始页"
+msgid "With the start page or a terminal"
+msgstr "搭配起始页或终端"
 
 #: src/sshpilot/layout_preset_chooser.py:119
 msgid "Start Page Only"
@@ -9055,8 +9055,8 @@ msgid "Sidebar hidden"
 msgstr "隐藏侧边栏"
 
 #: src/sshpilot/layout_preset_chooser.py:120
-msgid "Plain Terminal"
-msgstr "纯终端"
+msgid "Terminal Only"
+msgstr "仅终端"
 
 #: src/sshpilot/layout_preset_chooser.py:120
 msgid "Opens a local shell"
@@ -15806,6 +15806,12 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#~ msgid "Sidebar and Start Page"
+#~ msgstr "侧边栏和起始页"
+
+#~ msgid "Plain Terminal"
+#~ msgstr "纯终端"
 
 #~ msgid ""
 #~ "What happens to the sidebar when any session opens, including local terminals"

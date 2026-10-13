@@ -115,9 +115,9 @@ class LayoutPresetChooser(Gtk.Box):
         self._cards = {}
         self._indicators = {}
         presets = (
-            ('sidebar', _("Sidebar and Start Page"), _("Default")),
+            ('sidebar', _("Sidebar"), _("With the start page or a terminal")),
             ('startpage', _("Start Page Only"), _("Sidebar hidden")),
-            ('terminal', _("Plain Terminal"), _("Opens a local shell")),
+            ('terminal', _("Terminal Only"), _("Opens a local shell")),
         )
         first_card = first_indicator = None
         for preset_id, title, caption in presets:
