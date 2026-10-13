@@ -225,7 +225,47 @@ def test_app_actions_from_settings_act_on_the_main_window(gui):
     prefs = _open_preferences(gui)
     fake_app = types.SimpleNamespace(
         props=types.SimpleNamespace(active_window=prefs), window=gui.window)
+    # The Settings action itself (Ctrl+, pressed in Settings) keeps it shown.
+    assert type(gui.app)._action_window(fake_app, keep_settings=True) is gui.window
+    assert prefs.get_visible()
+    # Any other action (Ctrl+Q's quit confirmation, a new tab) shows its
+    # result on the main window, which the transient Settings would cover.
     assert type(gui.app)._action_window(fake_app) is gui.window
+    gui.pump(200)
+    assert not prefs.get_visible(), 'Settings still covers the main window'
+
+
+def test_plugin_page_leaves_settings(gui, monkeypatch):
+    """A plugin's settings tab opens in the main window, so Settings must step aside."""
+    import types
+
+    prefs = _open_preferences(gui, page_id='plugins')
+    opened = []
+    monkeypatch.setattr(gui.window, 'plugin_host', types.SimpleNamespace(
+        ui=types.SimpleNamespace(open_page=opened.append)), raising=False)
+    prefs._open_plugin_page('example.page')
+    gui.pump(200)
+    assert opened == ['example.page']
+    assert not prefs.get_visible(), 'the plugin tab opened behind Settings'
+
+
+def test_toasts_show_on_settings_while_it_is_shown(gui):
+    """Settings' own toasts, and routed pre-connection alerts, land on Settings."""
+    prefs = _open_preferences(gui)
+    assert prefs.toast_overlay is not None
+    assert gui.app._pre_command_toast_overlay() is prefs.toast_overlay
+
+    shown = []
+    prefs.toast_overlay.add_toast = shown.append
+    gui.window.toast_overlay.add_toast = lambda toast: shown.append(('main', toast))
+    prefs._show_toast('on settings')
+    assert len(shown) == 1 and shown[0].get_title() == 'on settings'
+
+    # Hidden: its toasts go to the main window rather than nowhere.
+    prefs.close()
+    gui.pump(200)
+    prefs._show_toast('on main')
+    assert shown[-1][0] == 'main' and shown[-1][1].get_title() == 'on main'
 
 
 def test_show_content_false_when_split_not_collapsed(gui):

@@ -19,68 +19,72 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <property name="content">
-      <object class="AdwNavigationSplitView" id="split_view">
-        <property name="min-sidebar-width">180</property>
-        <property name="max-sidebar-width">280</property>
-        <property name="sidebar-width-fraction">0.25</property>
-        <property name="sidebar">
-          <object class="AdwNavigationPage" id="sidebar_page">
-            <property name="title" translatable="yes">Settings</property>
-            <property name="tag">prefs-sidebar</property>
-            <property name="child">
-              <object class="AdwToolbarView">
-                <child type="top">
-                  <object class="AdwHeaderBar" id="sidebar_header_bar">
-                    <property name="show-end-title-buttons">false</property>
-                    <style>
-                      <class name="flat"/>
-                    </style>
-                  </object>
-                </child>
-                <property name="content">
-                  <object class="GtkScrolledWindow">
-                    <property name="hscrollbar-policy">2</property>
-                    <property name="vscrollbar-policy">1</property>
-                    <child>
-                      <object class="GtkListBox" id="sidebar">
-                        <property name="selection-mode">1</property>
-                        <property name="activate-on-single-click">true</property>
+      <object class="AdwToastOverlay" id="toast_overlay">
+        <property name="child">
+          <object class="AdwNavigationSplitView" id="split_view">
+            <property name="min-sidebar-width">180</property>
+            <property name="max-sidebar-width">280</property>
+            <property name="sidebar-width-fraction">0.25</property>
+            <property name="sidebar">
+              <object class="AdwNavigationPage" id="sidebar_page">
+                <property name="title" translatable="yes">Settings</property>
+                <property name="tag">prefs-sidebar</property>
+                <property name="child">
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar" id="sidebar_header_bar">
+                        <property name="show-end-title-buttons">false</property>
                         <style>
-                          <class name="navigation-sidebar"/>
+                          <class name="flat"/>
                         </style>
                       </object>
                     </child>
+                    <property name="content">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">2</property>
+                        <property name="vscrollbar-policy">1</property>
+                        <child>
+                          <object class="GtkListBox" id="sidebar">
+                            <property name="selection-mode">1</property>
+                            <property name="activate-on-single-click">true</property>
+                            <style>
+                              <class name="navigation-sidebar"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
                   </object>
                 </property>
               </object>
             </property>
-          </object>
-        </property>
-        <property name="content">
-          <object class="AdwNavigationPage" id="content_page">
-            <property name="title" translatable="yes">Settings</property>
-            <property name="tag">prefs-content</property>
-            <property name="child">
-              <object class="AdwToolbarView">
-                <child type="top">
-                  <object class="AdwHeaderBar" id="header_bar">
-                    <property name="show-start-title-buttons">false</property>
-                    <style>
-                      <class name="flat"/>
-                    </style>
-                  </object>
-                </child>
-                <property name="content">
-                  <object class="GtkScrolledWindow">
-                    <property name="hscrollbar-policy">2</property>
-                    <property name="vscrollbar-policy">1</property>
-                    <child>
-                      <object class="GtkStack" id="content_stack">
-                        <property name="hexpand">true</property>
-                        <property name="vexpand">true</property>
-                        <property name="transition-type">1</property>
+            <property name="content">
+              <object class="AdwNavigationPage" id="content_page">
+                <property name="title" translatable="yes">Settings</property>
+                <property name="tag">prefs-content</property>
+                <property name="child">
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar" id="header_bar">
+                        <property name="show-start-title-buttons">false</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
                       </object>
                     </child>
+                    <property name="content">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">2</property>
+                        <property name="vscrollbar-policy">1</property>
+                        <child>
+                          <object class="GtkStack" id="content_stack">
+                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
+                            <property name="transition-type">1</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
                   </object>
                 </property>
               </object>

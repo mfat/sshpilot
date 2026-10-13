@@ -29,64 +29,69 @@ template $SshPilotPreferencesWindow: Adw.Window {
     }
   }
 
-  content: Adw.NavigationSplitView split_view {
-    min-sidebar-width: 180;
-    max-sidebar-width: 280;
-    sidebar-width-fraction: 0.25;
+  // Settings covers part of its main window, so toasts meant for whatever the
+  // user is looking at land here while it is shown (add_toast, and the
+  // pre-connection alert routing in main.py).
+  content: Adw.ToastOverlay toast_overlay {
+    child: Adw.NavigationSplitView split_view {
+      min-sidebar-width: 180;
+      max-sidebar-width: 280;
+      sidebar-width-fraction: 0.25;
 
-    sidebar: Adw.NavigationPage sidebar_page {
-      title: _("Settings");
-      tag: "prefs-sidebar";
+      sidebar: Adw.NavigationPage sidebar_page {
+        title: _("Settings");
+        tag: "prefs-sidebar";
 
-      child: Adw.ToolbarView {
-        [top]
-        Adw.HeaderBar sidebar_header_bar {
-          show-end-title-buttons: false;
-
-          styles [
-            "flat",
-          ]
-        }
-
-        content: Gtk.ScrolledWindow {
-          hscrollbar-policy: never;
-          vscrollbar-policy: automatic;
-
-          Gtk.ListBox sidebar {
-            selection-mode: single;
-            activate-on-single-click: true;
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar sidebar_header_bar {
+            show-end-title-buttons: false;
 
             styles [
-              "navigation-sidebar",
+              "flat",
             ]
           }
+
+          content: Gtk.ScrolledWindow {
+            hscrollbar-policy: never;
+            vscrollbar-policy: automatic;
+
+            Gtk.ListBox sidebar {
+              selection-mode: single;
+              activate-on-single-click: true;
+
+              styles [
+                "navigation-sidebar",
+              ]
+            }
+          };
         };
       };
-    };
 
-    content: Adw.NavigationPage content_page {
-      title: _("Settings");
-      tag: "prefs-content";
+      content: Adw.NavigationPage content_page {
+        title: _("Settings");
+        tag: "prefs-content";
 
-      child: Adw.ToolbarView {
-        [top]
-        Adw.HeaderBar header_bar {
-          show-start-title-buttons: false;
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar header_bar {
+            show-start-title-buttons: false;
 
-          styles [
-            "flat",
-          ]
-        }
-
-        content: Gtk.ScrolledWindow {
-          hscrollbar-policy: never;
-          vscrollbar-policy: automatic;
-
-          Gtk.Stack content_stack {
-            hexpand: true;
-            vexpand: true;
-            transition-type: crossfade;
+            styles [
+              "flat",
+            ]
           }
+
+          content: Gtk.ScrolledWindow {
+            hscrollbar-policy: never;
+            vscrollbar-policy: automatic;
+
+            Gtk.Stack content_stack {
+              hexpand: true;
+              vexpand: true;
+              transition-type: crossfade;
+            }
+          };
         };
       };
     };

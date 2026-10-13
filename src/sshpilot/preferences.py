@@ -140,6 +140,7 @@ class PreferencesWindow(Adw.Window):
 
     __gtype_name__ = "SshPilotPreferencesWindow"
 
+    toast_overlay = Gtk.Template.Child()
     split_view = Gtk.Template.Child()
     sidebar_page = Gtk.Template.Child()
     content_page = Gtk.Template.Child()
@@ -5206,8 +5207,12 @@ class PreferencesWindow(Adw.Window):
         ui = getattr(host, 'ui', None) if host else None
         if ui is not None:
             ui.open_page(full_id)
-        # The plugin tab opens in the main window; bring it forward.
+        # The plugin tab opens in the main window, which Settings (transient
+        # for it) covers: step out of Settings and bring the tab forward.
         if self.parent_window is not None:
+            leave = getattr(self.parent_window, 'leave_preferences', None)
+            if callable(leave):
+                leave()
             self.parent_window.present()
 
     def _mark_plugin_restart_needed(self, row=None):
@@ -6121,6 +6126,15 @@ class PreferencesWindow(Adw.Window):
         ).format(requested=requested, fallback=fallback)
         logger.warning(message)
         self._show_toast(message)
+
+    def add_toast(self, toast):
+        """Show *toast* on Settings, or on the main window once Settings is hidden."""
+        overlay = self.toast_overlay if self.get_visible() else None
+        if overlay is None:
+            overlay = getattr(self.parent_window, 'toast_overlay', None)
+        if overlay is None:
+            raise RuntimeError('no toast overlay')
+        overlay.add_toast(toast)
 
     def _show_toast(self, message):
         try:

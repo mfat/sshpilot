@@ -1854,13 +1854,16 @@ class SshPilotApplication(Adw.Application):
         """Return the order in which actions were registered."""
         return list(self._action_order)
 
-    def _action_window(self):
+    def _action_window(self, keep_settings=False):
         """The main window an app action applies to.
 
         App accelerators also fire in secondary windows (Settings, the
         connection editor, the file manager), where ``active_window`` is that
         window and has none of MainWindow's API. Route to the main window it
         belongs to, and raise it so the result (a new tab, a dialog) is seen.
+        Settings is transient for its main window and would still cover the
+        result (a quit confirmation, a new tab), so it is hidden first --
+        unless *keep_settings* (the Settings action itself).
         """
         win = self.props.active_window
         if win is None or win.__class__.__name__ == 'MainWindow':
@@ -1870,6 +1873,11 @@ class SshPilotApplication(Adw.Application):
             owner = self.window
         if owner is None:
             return win
+        if not keep_settings and win is getattr(owner, '_preferences_window', None):
+            try:
+                owner.leave_preferences()
+            except Exception:
+                logger.debug('Could not hide Settings for an app action', exc_info=True)
         try:
             owner.present()
         except Exception:
@@ -2040,7 +2048,7 @@ class SshPilotApplication(Adw.Application):
     def on_preferences(self, action, param):
         """Handle preferences action"""
         logger.debug("Preferences action triggered")
-        win = self._action_window()
+        win = self._action_window(keep_settings=True)
         if win:
             win.show_preferences()
 
