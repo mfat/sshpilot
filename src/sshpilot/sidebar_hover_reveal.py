@@ -21,7 +21,7 @@ from gi.repository import Gdk, GLib, Gtk
 
 # How long the pointer must rest on the hot zone: long enough that passing
 # over it on the way elsewhere doesn't pop the sidebar open.
-REVEAL_DELAY_MS = 150
+REVEAL_DELAY_MS = 350
 # Grace before hiding, so a brief overshoot past the panel edge is forgiven.
 HIDE_DELAY_MS = 300
 # Extra room around the panel that still counts as "on" it.

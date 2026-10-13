@@ -220,7 +220,7 @@ sidebar's own toolbar.
 
 `src/sshpilot/sidebar_hover_reveal.py` — while the sidebar is hidden (F9),
 resting the pointer on the header bar from the window edge through the sidebar
-toggle (`_in_sidebar_toggle_zone`) for 150 ms shows the same popup, sliding in
+toggle (`_in_sidebar_toggle_zone`) for 350 ms shows the same popup, sliding in
 from the leading edge. Moving off the panel hides it after a 300 ms grace, unless
 search was opened from it (`_search_expanded_sidebar`) or a popover inside it
 (a row menu) holds focus. One CAPTURE-phase `Gtk.EventControllerMotion` on
