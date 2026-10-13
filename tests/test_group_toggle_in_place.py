@@ -207,8 +207,8 @@ def test_resolve_group_color_retain_own_else_inherit(monkeypatch):
     assert _resolve_group_color_by_id(mgr, "orphan") is None
 
 
-def test_group_row_indentation_honors_display_mode():
-    """Nested group headers follow the fullwidth/nested Group Layout setting."""
+def test_group_row_indentation_shifts_the_whole_header():
+    """Nested group headers shift the whole card right; content keeps its margin."""
 
     class _Box:
         def __init__(self):
@@ -217,42 +217,21 @@ def test_group_row_indentation_honors_display_mode():
         def set_margin_start(self, value):
             self.margin = value
 
-    class _Config:
-        def __init__(self, mode):
-            self.mode = mode
-
-        def get_setting(self, key, default=None):
-            return self.mode
-
-    class _Manager:
-        def __init__(self, mode):
-            self.config = _Config(mode)
-
-    def _make(mode):
+    def _make():
         row = GroupRow.__new__(GroupRow)
-        row.group_manager = _Manager(mode)
         row._content = _Box()
         row._content_margin_base = 12
         row._indent_level = 0
-        row._group_display_mode = None
         row.widget_margin = None
         row.set_margin_start = lambda value: setattr(row, "widget_margin", value)
         return row
 
-    # nested → the whole header card shifts right; content margin unchanged.
-    nested = _make("nested")
+    nested = _make()
     nested.set_indentation(2)
     assert nested.widget_margin == 2 * 20
     assert nested._content.margin == 12
 
-    # fullwidth → only the header content indents; row stays full width.
-    full = _make("fullwidth")
-    full.set_indentation(2)
-    assert full.widget_margin == 0
-    assert full._content.margin == 12 + 2 * 20
-
-    # root level → no indentation regardless of mode.
-    root = _make("nested")
+    root = _make()
     root.set_indentation(0)
     assert root.widget_margin == 0
     assert root._content.margin == 12

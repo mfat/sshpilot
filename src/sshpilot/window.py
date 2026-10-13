@@ -6912,20 +6912,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
-        elif key == 'ui.group_row_display':
-            normalized = 'nested'
-            try:
-                normalized = str(value).lower()
-            except Exception:
-                pass
-            if normalized not in {'fullwidth', 'nested'}:
-                normalized = 'nested'
-
-            # Covers both connection rows and group headers (nested groups
-            # honor the same fullwidth/nested layout).
-            for row in self.connection_list:
-                if hasattr(row, 'refresh_group_display_mode'):
-                    row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""

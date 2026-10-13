@@ -105,7 +105,6 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_mode': 'full',
             'group_color_display': 'dot',
             'group_color_child_rows': True,
-            'group_row_display': 'nested',
             'use_group_color_in_tab': False,
             'use_group_color_in_terminal': False,
             'sidebar_show_user_hostname': False,

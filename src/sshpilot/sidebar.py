@@ -80,7 +80,6 @@ logger = logging.getLogger(__name__)
 _COLOR_CSS_INSTALLED = False
 _DEFAULT_ROW_MARGIN_START = 0
 _DEFAULT_ROW_WIDGET_MARGIN_START = -1
-_GROUP_DISPLAY_OPTIONS = {"fullwidth", "nested"}
 _GROUP_ROW_INDENT_WIDTH = 20
 _MIN_VALID_MARGIN = 0
 
@@ -1194,13 +1193,11 @@ class GroupRow(Gtk.ListBoxRow):
         # Main content
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         _apply_sidebar_row_density(content, config)
-        # Kept so set_indentation() can offset nested group headers and honor
-        # the fullwidth/nested Group Layout preference.
+        # Kept so set_indentation() can offset nested group headers.
         self._content = content
         self._content_margin_base = content.get_margin_start()
         self._content_spacing_base = content.get_spacing()
         self._indent_level = 0
-        self._group_display_mode = None
 
         from sshpilot import icon_utils
         self.color_dot = _create_color_dot("big-dot-symbolic")
@@ -1454,55 +1451,17 @@ class GroupRow(Gtk.ListBoxRow):
             self._indent_level = max(0, int(level or 0))
         except (TypeError, ValueError):
             self._indent_level = 0
-        self._apply_group_display_mode()
+        self._apply_indentation()
 
-    def refresh_group_display_mode(self, new_mode: Optional[str] = None) -> None:
-        """Re-apply indentation when the Group Layout preference changes."""
-        if new_mode:
-            normalized = str(new_mode).lower()
-            if normalized in _GROUP_DISPLAY_OPTIONS:
-                self._group_display_mode = normalized
-        else:
-            self._group_display_mode = None
-        self._apply_group_display_mode()
-
-    def _get_group_display_mode(self) -> str:
-        if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
-            return self._group_display_mode
-
-        mode = 'nested'
-        config = getattr(self.group_manager, 'config', None)
-        if config:
-            try:
-                value = str(config.get_setting('ui.group_row_display', mode)).lower()
-                if value in _GROUP_DISPLAY_OPTIONS:
-                    mode = value
-            except Exception:
-                pass
-
-        self._group_display_mode = mode
-        return mode
-
-    def _apply_group_display_mode(self) -> None:
+    def _apply_indentation(self) -> None:
+        """Shift the whole header card right by its depth in the tree."""
         content = getattr(self, '_content', None)
         if content is None:
             return
 
-        base = getattr(self, '_content_margin_base', 0)
         indent_px = max(0, getattr(self, '_indent_level', 0)) * _GROUP_ROW_INDENT_WIDTH
-
-        if indent_px <= 0:
-            self.set_margin_start(0)
-            content.set_margin_start(base)
-            return
-
-        if self._get_group_display_mode() == 'fullwidth':
-            # Row spans full width; only the header content is indented.
-            self.set_margin_start(0)
-            content.set_margin_start(base + indent_px)
-        else:  # nested: the whole header card shifts right
-            self.set_margin_start(indent_px)
-            content.set_margin_start(base)
+        self.set_margin_start(indent_px)
+        content.set_margin_start(getattr(self, '_content_margin_base', 0))
 
     def add_member_row(self, row: Gtk.ListBoxRow) -> None:
         """Track a direct member row for in-place expand/collapse."""
@@ -1620,7 +1579,7 @@ class GroupRow(Gtk.ListBoxRow):
             _apply_sidebar_row_density(content, config)
             self._content_margin_base = content.get_margin_start()
             self._content_spacing_base = content.get_spacing()
-            self._apply_group_display_mode()
+            self._apply_indentation()
         if hasattr(self, 'expand_button') and self.expand_button is not None:
             # Keep the expand chevron in both Full and Compact modes.
             self.expand_button.set_visible(True)
@@ -1831,7 +1790,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         # ``FULL_LABEL_MIN_CHARS`` floor.
         self._indicators_reserved = True
         self._indent_level = 0
-        self._group_display_mode = None
         self._row_margin_base = None
         self._content_margin_base = None
         self._content_spacing_base = 12
@@ -2228,38 +2186,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         else:
             self._row_margin_base = _DEFAULT_ROW_WIDGET_MARGIN_START
 
-        self._apply_group_display_mode()
+        self._apply_indentation()
 
-    def refresh_group_display_mode(self, new_mode: Optional[str] = None):
-        """Refresh indentation styling when the preference changes."""
-        if new_mode:
-            normalized = str(new_mode).lower()
-            if normalized in _GROUP_DISPLAY_OPTIONS:
-                self._group_display_mode = normalized
-        else:
-            # Force new lookup from config
-            self._group_display_mode = None
-
-        self._apply_group_display_mode()
-
-    def _get_group_display_mode(self) -> str:
-        if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
-            return self._group_display_mode
-
-        mode = 'nested'
-        config = getattr(self, 'config', None)
-        if config:
-            try:
-                value = str(config.get_setting('ui.group_row_display', mode)).lower()
-                if value in _GROUP_DISPLAY_OPTIONS:
-                    mode = value
-            except Exception:
-                pass
-
-        self._group_display_mode = mode
-        return mode
-
-    def _apply_group_display_mode(self):
+    def _apply_indentation(self):
+        """Shift the whole row right by its depth in the tree."""
         content = getattr(self, '_content_box', None)
         if not content:
             return
@@ -2272,20 +2202,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         indent_level = getattr(self, '_indent_level', 0)
         indent_px = max(0, indent_level) * _GROUP_ROW_INDENT_WIDTH
-
-        mode = self._get_group_display_mode()
-
-        if indent_px <= 0:
-            self.set_margin_start(self._row_margin_base)
-            content.set_margin_start(self._content_margin_base)
-            return
-
-        if mode == 'fullwidth':
-            self.set_margin_start(self._row_margin_base)
-            content.set_margin_start(self._content_margin_base + indent_px)
-        else:  # nested mode
-            self.set_margin_start(self._row_margin_base + indent_px)
-            content.set_margin_start(self._content_margin_base)
+        self.set_margin_start(self._row_margin_base + indent_px)
+        content.set_margin_start(self._content_margin_base)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
         # Rows listed under a virtual tag group are colorless: the color
@@ -2600,7 +2518,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             _apply_sidebar_row_density(content, self.config)
             self._content_margin_base = content.get_margin_start()
             self._content_spacing_base = content.get_spacing()
-            self._apply_group_display_mode()
+            self._apply_indentation()
         compact = _sidebar_is_compact(self.config)
         show_host = False
         if not compact and self.config is not None:

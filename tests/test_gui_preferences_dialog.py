@@ -76,7 +76,7 @@ def test_appearance_and_sidebar_have_their_own_pages(gui):
     assert prefs.theme_row.get_ancestor(Adw.PreferencesPage) is appearance
     assert prefs.accent_color_row.get_ancestor(Adw.PreferencesPage) is appearance
     assert prefs.group_color_display_row.get_ancestor(Adw.PreferencesPage) is appearance
-    assert prefs.group_display_toggle_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.group_preview_list.get_ancestor(Adw.PreferencesPage) is appearance
     assert 'groups' not in ids
     assert prefs.sidebar_mode_row.get_ancestor(Adw.PreferencesPage) is sidebar
 
@@ -85,6 +85,40 @@ def test_appearance_and_sidebar_have_their_own_pages(gui):
         for r in prefs._sidebar_mode_dependent_rows
     ]
     assert set(group_titles) == {'Layout', 'Row Details', 'Row Buttons'}
+
+
+def test_group_preview_follows_group_settings_live(gui):
+    """The preview is built from real sidebar rows and rebuilds on a settings change."""
+    from sshpilot.sidebar import ConnectionRow, GroupRow
+
+    prefs = _open_preferences(gui, page_id='appearance')
+    config = gui.window.config
+
+    def rows():
+        found, row = [], prefs.group_preview_list.get_first_child()
+        while row is not None:
+            found.append(row)
+            row = row.get_next_sibling()
+        return found
+
+    old_mode = config.get_setting('ui.group_color_display', 'dot')
+    try:
+        config.set_setting('ui.group_color_display', 'fill')
+        gui.pump(200)
+        built = rows()
+        assert [type(r) for r in built if isinstance(r, (GroupRow, ConnectionRow))] == [
+            GroupRow, ConnectionRow, ConnectionRow, GroupRow, ConnectionRow,
+        ]
+        assert built[0].has_css_class('tinted')
+
+        config.set_setting('ui.group_color_display', 'bar')
+        gui.pump(200)
+        rebuilt = rows()
+        assert rebuilt[0] is not built[0], 'preview did not rebuild'
+        assert not rebuilt[0].has_css_class('tinted')
+        assert rebuilt[0].has_css_class('color-bar')
+    finally:
+        config.set_setting('ui.group_color_display', old_mode)
 
 
 def test_dialogs_parented_to_preferences_get_a_window(gui):
