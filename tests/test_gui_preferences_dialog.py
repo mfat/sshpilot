@@ -143,6 +143,45 @@ def test_group_preview_follows_group_settings_live(gui):
         config.set_setting('ui.group_color_display', old_mode)
 
 
+def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
+    """A layout card writes the startup settings the other pages show, and back."""
+    prefs = _open_preferences(gui, page_id='appearance')
+    for page_id in ('interface', 'sidebar'):
+        prefs._ensure_page_built(page_id)
+    config = gui.window.config
+    chooser = prefs.layout_preset_chooser
+
+    def selected():
+        return [k for k, card in chooser._cards.items() if card.get_active()]
+
+    old = (config.get_setting('app-startup-behavior', 'welcome'),
+           config.get_setting('ui.sidebar_hide_on_startup', False))
+    try:
+        chooser._cards['terminal'].set_active(True)
+        gui.pump(100)
+        assert config.get_setting('app-startup-behavior') == 'terminal'
+        assert config.get_setting('ui.sidebar_hide_on_startup') is True
+        assert prefs.terminal_startup_radio.get_active()
+        assert prefs.hide_on_startup_switch.get_active()
+        assert selected() == ['terminal']
+
+        prefs.hide_on_startup_switch.set_active(False)
+        gui.pump(100)
+        assert selected() == [], 'terminal with a visible sidebar is no preset'
+
+        prefs.welcome_startup_radio.set_active(True)
+        gui.pump(100)
+        assert selected() == ['sidebar']
+        assert not prefs.terminal_startup_radio.get_active()
+
+        prefs.previous_session_startup_radio.set_active(True)
+        gui.pump(100)
+        assert selected() == []
+    finally:
+        config.set_setting('app-startup-behavior', old[0])
+        config.set_setting('ui.sidebar_hide_on_startup', old[1])
+
+
 def test_dialogs_from_settings_are_parented_to_settings(gui):
     """Page widgets resolve to the Settings window, so their dialogs stack on it."""
     from gi.repository import Gtk

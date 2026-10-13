@@ -79,6 +79,7 @@ src/sshpilot/plugins/builtin/telnet_protocol/__init__.py
 src/sshpilot/plugins/host.py
 src/sshpilot/plugins/registry_client.py
 src/sshpilot/port_utils.py
+src/sshpilot/layout_preset_chooser.py
 src/sshpilot/preferences.py
 src/sshpilot/rbw_setup.py
 src/sshpilot/scp_utils.py

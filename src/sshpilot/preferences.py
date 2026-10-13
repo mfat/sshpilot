@@ -1548,6 +1548,37 @@ class PreferencesWindow(Adw.Window):
 
         interface_page.add(startup_group)
 
+    def _add_appearance_layout_group(self, appearance_page):
+        """Add the Layout group: presets over the startup settings."""
+        from .layout_preset_chooser import LayoutPresetChooser
+
+        layout_group = Adw.PreferencesGroup(title=_("Layout"))
+        layout_group.set_description(_("Choose what the main window shows when it opens"))
+        self.layout_preset_chooser = LayoutPresetChooser(self.config)
+        layout_group.add(self.layout_preset_chooser)
+        appearance_page.add(layout_group)
+
+    def _sync_startup_layout_controls(self):
+        """Mirror a startup-setting change into every control showing it."""
+        self._startup_layout_sync_pending = False
+        chooser = getattr(self, 'layout_preset_chooser', None)
+        if chooser is not None:
+            chooser.sync()
+        switch = getattr(self, 'hide_on_startup_switch', None)
+        hide = bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
+        if switch is not None and switch.get_active() != hide:
+            switch.set_active(hide)
+        radios = {
+            'terminal': getattr(self, 'terminal_startup_radio', None),
+            'welcome': getattr(self, 'welcome_startup_radio', None),
+            'previous-session': getattr(self, 'previous_session_startup_radio', None),
+            'saved-session': getattr(self, 'saved_session_startup_radio', None),
+        }
+        radio = radios.get(self.config.get_setting('app-startup-behavior', 'welcome'))
+        if radio is not None and not radio.get_active():
+            radio.set_active(True)
+        return GLib.SOURCE_REMOVE
+
     def _add_appearance_groups(self, appearance_page):
         """Add the theme and color-override groups."""
         # Untitled: the page is already called Appearance.
@@ -1832,7 +1863,7 @@ class PreferencesWindow(Adw.Window):
 
         sidebar_behavior_group = Adw.PreferencesGroup(title=_("Behavior"))
 
-        hide_on_startup_switch = Adw.SwitchRow()
+        hide_on_startup_switch = self.hide_on_startup_switch = Adw.SwitchRow()
         hide_on_startup_switch.set_title(_("Hide Sidebar on Startup"))
         hide_on_startup_switch.set_subtitle(_("Start with the sidebar collapsed"))
         hide_on_startup_switch.set_active(
@@ -1971,6 +2002,7 @@ class PreferencesWindow(Adw.Window):
         appearance_page = Adw.PreferencesPage()
         appearance_page.set_title(_("Appearance"))
         appearance_page.set_icon_name("color-symbolic")
+        self._add_appearance_layout_group(appearance_page)
         self._add_appearance_groups(appearance_page)
         self._add_group_appearance_group(appearance_page)
         self._add_group_preview_group(appearance_page)
@@ -5584,6 +5616,13 @@ class PreferencesWindow(Adw.Window):
             self._group_terminal_color_sync = False
 
     def _on_config_setting_changed(self, _config, key, value):
+        if key in ('app-startup-behavior', 'ui.sidebar_hide_on_startup'):
+            # Deferred: the change may come from one of these controls while
+            # its radio group is mid-toggle, and setting a radio re-entrantly
+            # there leaves two of them active.
+            if not getattr(self, '_startup_layout_sync_pending', False):
+                self._startup_layout_sync_pending = True
+                GLib.idle_add(self._sync_startup_layout_controls)
         if key.startswith(('ui.group_color', 'ui.sidebar_')):
             self._schedule_group_preview_refresh()
         if key == 'terminal.theme':
