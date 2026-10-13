@@ -1468,10 +1468,10 @@ class PreferencesWindow(Adw.NavigationPage):
 
         interface_page.add(startup_group)
 
-    def _add_interface_appearance_groups(self, interface_page):
-        """Add Interface appearance and color-override groups."""
-        # Appearance group
-        interface_appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
+    def _add_appearance_groups(self, appearance_page):
+        """Add the theme and color-override groups."""
+        # Untitled: the page is already called Appearance.
+        interface_appearance_group = Adw.PreferencesGroup()
 
         # Theme selection
         self.theme_row = Adw.ComboRow()
@@ -1539,8 +1539,8 @@ class PreferencesWindow(Adw.NavigationPage):
         reset_colors_row.add_suffix(reset_button)
         color_override_group.add(reset_colors_row)
 
-        interface_page.add(interface_appearance_group)
-        interface_page.add(color_override_group)
+        appearance_page.add(interface_appearance_group)
+        appearance_page.add(color_override_group)
 
         # Initialize color button states from saved accent override
         self.refresh_color_buttons()
@@ -1559,10 +1559,11 @@ class PreferencesWindow(Adw.NavigationPage):
         window_group.add(remember_size_switch)
         interface_page.add(window_group)
 
-    def _add_interface_sidebar_groups(self, interface_page):
-        """Add Sidebar and Sidebar behavior preferences groups."""
-        # Sidebar group (at bottom of Interface page)
-        sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
+    def _add_sidebar_groups(self, sidebar_page):
+        """Add the Layout, Row Details, Row Buttons and Behavior groups."""
+        sidebar_group = Adw.PreferencesGroup(title=_("Layout"))
+        row_details_group = Adw.PreferencesGroup(title=_("Row Details"))
+        row_buttons_group = Adw.PreferencesGroup(title=_("Row Buttons"))
 
         # Presentation mode: Full (individual chrome toggles) vs Compact
         # (title-only flat list). Compact greys out the toggles below.
@@ -1629,7 +1630,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_user_hostname', False)
         )
         show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
-        sidebar_group.add(show_user_hostname_switch)
+        row_details_group.add(show_user_hostname_switch)
         self._sidebar_mode_dependent_rows.append(show_user_hostname_switch)
 
         # Display connection count in groups toggle
@@ -1640,7 +1641,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_group_count', False)
         )
         show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
-        sidebar_group.add(show_group_count_switch)
+        row_details_group.add(show_group_count_switch)
         self._sidebar_mode_dependent_rows.append(show_group_count_switch)
 
         # Display connection status toggle
@@ -1651,7 +1652,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_connection_status', True)
         )
         show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
-        sidebar_group.add(show_status_switch)
+        row_details_group.add(show_status_switch)
         self._sidebar_mode_dependent_rows.append(show_status_switch)
 
         # Display port forwarding icon toggle
@@ -1662,7 +1663,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         )
         show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
-        sidebar_group.add(show_port_forwarding_switch)
+        row_details_group.add(show_port_forwarding_switch)
         self._sidebar_mode_dependent_rows.append(show_port_forwarding_switch)
 
         # Display connection icon toggle
@@ -1673,7 +1674,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_connection_icon', True)
         )
         show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
-        sidebar_group.add(show_connection_icon_switch)
+        row_details_group.add(show_connection_icon_switch)
         self._sidebar_mode_dependent_rows.append(show_connection_icon_switch)
 
         # Display group icon toggle
@@ -1684,7 +1685,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.get_setting('ui.sidebar_show_group_icon', True)
         )
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
-        sidebar_group.add(show_group_icon_switch)
+        row_details_group.add(show_group_icon_switch)
         self._sidebar_mode_dependent_rows.append(show_group_icon_switch)
 
         # File manager hover button on connection rows
@@ -1699,7 +1700,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_file_manager_button_switch.connect(
             'notify::active', self.on_sidebar_show_file_manager_button_changed
         )
-        sidebar_group.add(show_file_manager_button_switch)
+        row_buttons_group.add(show_file_manager_button_switch)
         self._sidebar_mode_dependent_rows.append(show_file_manager_button_switch)
 
         # Dashboard hover button on connection rows (on for new installs)
@@ -1714,7 +1715,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_dashboard_button_switch.connect(
             'notify::active', self.on_sidebar_show_dashboard_button_changed
         )
-        sidebar_group.add(show_dashboard_button_switch)
+        row_buttons_group.add(show_dashboard_button_switch)
         self._sidebar_mode_dependent_rows.append(show_dashboard_button_switch)
 
         # Split-view hover button on group rows (off by default)
@@ -1729,14 +1730,15 @@ class PreferencesWindow(Adw.NavigationPage):
         show_split_view_button_switch.connect(
             'notify::active', self.on_sidebar_show_split_view_button_changed
         )
-        sidebar_group.add(show_split_view_button_switch)
+        row_buttons_group.add(show_split_view_button_switch)
         self._sidebar_mode_dependent_rows.append(show_split_view_button_switch)
 
         self._update_sidebar_mode_dependent_sensitivity()
-        interface_page.add(sidebar_group)
+        sidebar_page.add(sidebar_group)
+        sidebar_page.add(row_details_group)
+        sidebar_page.add(row_buttons_group)
 
-        # Sidebar behavior
-        sidebar_behavior_group = Adw.PreferencesGroup(title=_("Sidebar behavior"))
+        sidebar_behavior_group = Adw.PreferencesGroup(title=_("Behavior"))
 
         hide_on_startup_switch = Adw.SwitchRow()
         hide_on_startup_switch.set_title(_("Hide Sidebar on Startup"))
@@ -1784,7 +1786,7 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
 
-        interface_page.add(sidebar_behavior_group)
+        sidebar_page.add(sidebar_behavior_group)
 
     def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
         """Persist the merged 'when a terminal opens' behavior."""
@@ -1875,11 +1877,25 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self._add_interface_language_group(interface_page)
         self._add_interface_startup_group(interface_page)
-        self._add_interface_appearance_groups(interface_page)
         self._add_interface_window_group(interface_page)
-        self._add_interface_sidebar_groups(interface_page)
         self._add_interface_headerbar_and_tips_groups(interface_page)
         return interface_page
+
+    def _build_appearance_preferences_page(self):
+        """Build the Appearance preferences page."""
+        appearance_page = Adw.PreferencesPage()
+        appearance_page.set_title(_("Appearance"))
+        appearance_page.set_icon_name("color-symbolic")
+        self._add_appearance_groups(appearance_page)
+        return appearance_page
+
+    def _build_sidebar_preferences_page(self):
+        """Build the Sidebar preferences page."""
+        sidebar_page = Adw.PreferencesPage()
+        sidebar_page.set_title(_("Sidebar"))
+        sidebar_page.set_icon_name("sidebar-show-symbolic")
+        self._add_sidebar_groups(sidebar_page)
+        return sidebar_page
 
 
     def _build_shortcuts_preferences_page(self):
@@ -2937,6 +2953,8 @@ class PreferencesWindow(Adw.NavigationPage):
             interface_page = self._build_interface_preferences_page()
 
             self.add_page_to_layout(N_("Interface"), "brush-monitor-symbolic", interface_page)
+            self.add_page_to_layout(N_("Appearance"), "color-symbolic", self._build_appearance_preferences_page)
+            self.add_page_to_layout(N_("Sidebar"), "sidebar-show-symbolic", self._build_sidebar_preferences_page)
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
             self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
             self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)

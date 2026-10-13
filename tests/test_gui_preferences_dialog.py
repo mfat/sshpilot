@@ -56,6 +56,34 @@ def test_preferences_select_page_deep_link(gui):
     assert prefs.content_stack.get_visible_child_name() == 'plugins'
 
 
+def test_appearance_and_sidebar_have_their_own_pages(gui):
+    """Theme/accent and the sidebar options live on dedicated pages, not Interface."""
+    from gi.repository import Adw
+
+    prefs = _open_preferences(gui, page_id='appearance')
+    assert prefs is not None
+    _open_preferences(gui, page_id='sidebar')
+
+    ids = []
+    row = prefs.sidebar.get_first_child()
+    while row is not None:
+        ids.append(row.get_name())
+        row = row.get_next_sibling()
+    assert ids[:4] == ['interface', 'appearance', 'sidebar', 'terminal']
+
+    appearance = prefs.pages['appearance']
+    sidebar = prefs.pages['sidebar']
+    assert prefs.theme_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.accent_color_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.sidebar_mode_row.get_ancestor(Adw.PreferencesPage) is sidebar
+
+    group_titles = [
+        r.get_ancestor(Adw.PreferencesGroup).get_title()
+        for r in prefs._sidebar_mode_dependent_rows
+    ]
+    assert set(group_titles) == {'Layout', 'Row Details', 'Row Buttons'}
+
+
 def test_dialogs_parented_to_preferences_get_a_window(gui):
     """Anything that takes Preferences as a parent must still resolve a window."""
     from gi.repository import Gtk
