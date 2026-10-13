@@ -76,7 +76,7 @@ def test_search_and_omnisearch_callbacks_use_separate_paths():
         focus_search_entry=lambda: calls.append('search'),
         activate_omni_search=lambda: calls.append('omnisearch'),
     )
-    app = SimpleNamespace(props=SimpleNamespace(active_window=window))
+    app = SimpleNamespace(_action_window=lambda: window)
 
     SshPilotApplication.on_search(app, None, None)
     SshPilotApplication.on_omnisearch(app, None, None)

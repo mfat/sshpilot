@@ -495,6 +495,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
+        # The Settings window belongs to this window; it must not outlive it
+        # (a registered app window keeps the application running).
+        self.connect('destroy', self._destroy_preferences_window)
 
         # Start with welcome view (tab view setup already shows welcome initially)
 
@@ -2288,36 +2291,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
-        # Outer NavigationView: work UI is the root page; Settings is pushed on
-        # top (Telegram-style mode). Back / Esc pops Settings and restores work.
-        self.nav_view = None
-        self._work_page = None
-        if hasattr(Adw, 'NavigationView'):
-            self.nav_view = Adw.NavigationView()
-            self.nav_view.set_hexpand(True)
-            self.nav_view.set_vexpand(True)
-            # Work UI <-> Settings is a mode switch, not a deeper page: swap
-            # instantly instead of the forward slide push() would animate.
-            try:
-                self.nav_view.set_animate_transitions(False)
-            except Exception:
-                logger.debug('NavigationView animate-transitions unavailable', exc_info=True)
-            self._work_page = Adw.NavigationPage.new(self._content_overlay, _('SSH Pilot'))
-            try:
-                self._work_page.set_tag('work')
-            except Exception:
-                pass
-            try:
-                self._work_page.set_can_pop(False)
-            except Exception:
-                pass
-            self.nav_view.add(self._work_page)
-            root_widget = self.nav_view
-        else:
-            root_widget = self._content_overlay
+        root_widget = self._content_overlay
 
-        # The omni-search must float above both the work page and pages pushed
-        # onto NavigationView (Preferences, editors, plugin pages).
+        # The omni-search floats above the whole work UI.
         self._global_overlay = Gtk.Overlay()
         self._global_overlay.set_hexpand(True)
         self._global_overlay.set_vexpand(True)
@@ -2342,29 +2318,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.exception("Plugin host bind_window failed")
 
-    def is_preferences_visible(self) -> bool:
-        """True when Settings mode is the visible NavigationView page."""
-        nav = getattr(self, 'nav_view', None)
+    def _destroy_preferences_window(self, *_args) -> None:
         prefs = getattr(self, '_preferences_window', None)
-        if nav is None or prefs is None:
-            return False
+        self._preferences_window = None
+        if prefs is not None:
+            try:
+                prefs.destroy()
+            except Exception:
+                logger.debug('Failed to destroy the Settings window', exc_info=True)
+
+    def is_preferences_visible(self) -> bool:
+        """True when this window's Settings window is shown."""
+        prefs = getattr(self, '_preferences_window', None)
         try:
-            return nav.get_visible_page() is prefs
+            return prefs is not None and prefs.get_visible()
         except Exception:
             return False
 
     def leave_preferences(self) -> bool:
-        """Pop Settings mode if it is visible. Returns True if it was showing."""
-        nav = getattr(self, 'nav_view', None)
+        """Hide the Settings window if it is shown. Returns True if it was showing."""
         prefs = getattr(self, '_preferences_window', None)
-        if nav is None or prefs is None:
+        if not self.is_preferences_visible():
             return False
         try:
-            if nav.get_visible_page() is prefs:
-                nav.pop()
-                return True
+            prefs.set_visible(False)
+            return True
         except Exception:
-            logger.debug('Failed to leave preferences mode', exc_info=True)
+            logger.debug('Failed to hide the Settings window', exc_info=True)
         return False
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:

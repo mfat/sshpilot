@@ -1118,16 +1118,7 @@ class OmniSearchController:
         return _("Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”")
 
     def _start_is_visible(self) -> bool:
-        if not self.window.is_start_tab_selected():
-            return False
-        nav = getattr(self.window, "nav_view", None)
-        work = getattr(self.window, "_work_page", None)
-        if nav is None:
-            return True
-        try:
-            return nav.get_visible_page() is work
-        except Exception:
-            return True
+        return bool(self.window.is_start_tab_selected())
 
     def _apply_presentation(self) -> None:
         self._anchored = self._start_is_visible()

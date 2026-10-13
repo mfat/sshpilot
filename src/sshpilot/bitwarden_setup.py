@@ -530,7 +530,7 @@ def _terminal_host_candidates(window):
     except Exception:
         pass
     try:
-        # Settings is a NavigationPage inside MainWindow; climb to the root.
+        # A widget inside a window: climb to that window.
         add(window.get_root())
     except Exception:
         pass
@@ -557,10 +557,10 @@ def _resolve_main_window(window):
 
 
 def _hide_preferences_windows(window) -> list:
-    """Leave Settings mode so the work UI (tabs) is visible.
+    """Hide the Settings window so the main window's terminal tab is in view.
 
-    Returns a list of main windows that were in Settings mode (so callers can
-    re-enter via ``_restore_preferences_windows``).
+    Returns the main windows whose Settings was showing (so callers can
+    reopen it via ``_restore_preferences_windows``).
     """
     left = []
     main = _resolve_main_window(window)
@@ -579,7 +579,7 @@ def _hide_preferences_windows(window) -> list:
             except Exception:
                 pass
         elif host.__class__.__name__ == 'PreferencesWindow':
-            # Legacy path: Preferences was a separate widget; no longer used.
+            # Handed the Settings window itself: hide it through its owner.
             parent = getattr(host, 'parent_window', None)
             leave_parent = getattr(parent, 'leave_preferences', None) if parent else None
             if callable(leave_parent):
@@ -592,7 +592,7 @@ def _hide_preferences_windows(window) -> list:
 
 
 def _restore_preferences_windows(windows) -> None:
-    """Re-enter Settings mode on windows that left it for a terminal reveal."""
+    """Reopen Settings on windows that hid it for a terminal reveal."""
     for host in windows:
         show = getattr(host, 'show_preferences', None)
         if callable(show):
@@ -629,7 +629,7 @@ def _toast_main(window, message: str) -> None:
 
 
 def _reveal_terminal_workspace(window) -> list:
-    """Leave Settings mode and raise the main window before opening a terminal tab."""
+    """Hide Settings and raise the main window before opening a terminal tab."""
     hidden = _hide_preferences_windows(window)
     _present_main_window(window)
     return hidden

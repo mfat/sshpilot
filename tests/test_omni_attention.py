@@ -138,12 +138,8 @@ class _FakeTickArea:
 
 
 class _FakeWindow:
-    def __init__(self, start_selected=True, nav_is_work=True):
+    def __init__(self, start_selected=True):
         self._start_selected = start_selected
-        self._work_page = object()
-        self.nav_view = types.SimpleNamespace(
-            get_visible_page=lambda: self._work_page if nav_is_work else object()
-        )
 
     def is_start_tab_selected(self):
         return self._start_selected
@@ -315,14 +311,6 @@ def test_cancel_attention_clears_everything_and_is_idempotent(timeout_queue):
 
 def test_no_tracer_when_start_hidden(timeout_queue):
     omni = _make_omni(_FakeWindow(start_selected=False))
-    omni.request_attention()
-
-    assert not omni.attention_active
-    assert omni._attention_area.callback is None
-
-
-def test_no_tracer_when_nav_pushed_over_work(timeout_queue):
-    omni = _make_omni(_FakeWindow(start_selected=True, nav_is_work=False))
     omni.request_attention()
 
     assert not omni.attention_active

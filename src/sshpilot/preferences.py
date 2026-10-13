@@ -1,4 +1,4 @@
-"""Preferences UI (main-window Settings mode) and font selection utilities."""
+"""Preferences UI (the Settings window) and font selection utilities."""
 
 import os
 import functools
@@ -19,6 +19,7 @@ from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CH
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
+from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 from .terminal_osc52 import (
@@ -124,17 +125,17 @@ class _PreviewGroupManager:
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
-class PreferencesWindow(Adw.NavigationPage):
-    """Settings mode page for the main window.
+class PreferencesWindow(Adw.Window):
+    """The Settings window: a separate, non-modal window per main window.
 
-    An ``Adw.NavigationPage`` pushed onto the window's ``Adw.NavigationView``.
-    It replaces the work UI (connection sidebar + tabs) for the duration of the
-    mode; HeaderBar Back / Esc pops back to work. Internally an
-    ``Adw.NavigationSplitView`` hosts the category list and preference pages
-    (collapses to list↔detail on narrow widths).
+    An ``Adw.NavigationSplitView`` hosts the category list and preference pages
+    (collapses to list↔detail on narrow widths). Closing it only hides it, so
+    the built pages are reused on the next open.
 
-    ``self.get_root()`` is the main window once the page is in the tree — use it
-    wherever a ``Gtk.Window`` is required (e.g. ``transient_for``).
+    ``self.parent_window`` is the main window whose terminals, sidebar and
+    daemon services the settings act on. Present dialogs on
+    :meth:`_dialog_parent`, never on ``get_root()`` directly: once Settings is
+    closed its own window is hidden and a dialog shown there would be invisible.
     """
 
     __gtype_name__ = "SshPilotPreferencesWindow"
@@ -196,6 +197,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self._base_header_title = _("Settings")
         self.set_title(self._base_header_title)
+        self.set_hide_on_close(True)
+        install_esc_to_close(self)
 
         self.setup_navigation_layout()
         self.setup_preferences()
@@ -219,35 +222,26 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
-        # Explicit "Done" action in place of the window-close (X) button, which
-        # would quit the app rather than Settings. Hide the X / window controls
-        # and the Back arrow so Done is the sole, unambiguous way to leave.
-        self.header_bar.set_show_end_title_buttons(False)
-        self.header_bar.set_show_back_button(False)
-        done_button = Gtk.Button(label=_("Done"))
-        done_button.add_css_class('suggested-action')
-        done_button.set_tooltip_text(_("Close Settings"))
-        done_button.connect('clicked', self._on_done_clicked)
-        self.header_bar.pack_end(done_button)
-
         self.pages = {}
         self._update_header_title()
 
-    def _on_done_clicked(self, _button):
-        """Leave Settings mode (pop back to the work UI)."""
+    def _dialog_parent(self):
+        """Where a dialog from Settings belongs: here while shown, else the main window.
+
+        Async work (a plugin download, a daemon call) can finish after the user
+        closed Settings. Presenting on the hidden Settings window would leave
+        the dialog invisible, so it goes to the main window instead.
+        """
         try:
-            self.parent_window.leave_preferences()
+            visible = self.get_visible()
         except Exception:
-            logger.debug('Failed to leave preferences from Done button', exc_info=True)
+            visible = True
+        if visible or self.parent_window is None:
+            return self
+        return self.parent_window
 
     def _sync_split_show_content(self, *_args):
-        """Keep show_content aligned with layout so Back pops Settings on first press.
-
-        AdwNavigationSplitView handles navigation.pop locally whenever
-        show_content is TRUE (even when not collapsed), so leaving it TRUE on
-        wide layouts makes the first HeaderBar Back a no-op while Esc still pops
-        the outer NavigationView immediately.
-        """
+        """Show the category list side by side, and the picked page when collapsed."""
         try:
             collapsed = self.split_view.get_collapsed()
             if not collapsed:
@@ -340,8 +334,6 @@ class PreferencesWindow(Adw.NavigationPage):
             self.content_page.set_title(title)
         except Exception:
             pass
-        # Keep the outer Settings page title stable for Back tooltips / stack.
-        self.set_title(self._base_header_title)
 
     def select_page(self, page_id: Optional[str]) -> bool:
         """Select a preferences page by stack id (e.g. ``plugins``).
@@ -518,7 +510,7 @@ class PreferencesWindow(Adw.NavigationPage):
         shape = self.config.get_setting('terminal.cursor_shape', None)
         blink = self.config.get_setting('terminal.cursor_blink', None)
         try:
-            parent_window = self.get_root()
+            parent_window = self.parent_window
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():
@@ -1770,7 +1762,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
         try:
             self.shortcuts_editor_page = ShortcutsPreferencesPage(
-                parent_widget=self.parent_window,
+                # Capture and conflict dialogs stack on the Settings window.
+                parent_widget=self,
                 app=self.parent_window.get_application() if self.parent_window else None,
                 config=self.config,
                 owner_window=self.parent_window,
@@ -2839,8 +2832,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def _resolve_secrets_controller(self):
         """The daemon-backed secrets controller reachable from this page, or ``None``.
 
-        Preferences is a NavigationPage inside MainWindow; the controller lives on
-        the main window. Never falls back to ``secret_storage``.
+        The controller lives on the main window that owns this Settings window. Never falls back to ``secret_storage``.
         """
         controller = getattr(self, 'parent_window', None)
         if controller is not None:
@@ -2848,7 +2840,7 @@ class PreferencesWindow(Adw.NavigationPage):
             if controller is not None:
                 return controller
         try:
-            return getattr(self.get_root(), 'secrets_controller', None)
+            return getattr(self.parent_window, 'secrets_controller', None)
         except Exception:
             return None
 
@@ -3628,7 +3620,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
                 if not ok:
                     dlg = Adw.MessageDialog(
-                        transient_for=self.get_root(), modal=True,
+                        transient_for=self._dialog_parent(), modal=True,
                         heading=_("Log out failed"),
                         body=_(
                             "Could not sign out of Bitwarden. "
@@ -3686,7 +3678,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 except Exception:
                     pass  # user cancelled / no selection
 
-            dialog.select_folder(self.get_root(), None, _picked)
+            dialog.select_folder(self._dialog_parent(), None, _picked)
         except Exception as exc:
             logger.debug("bw profile browse failed: %s", exc)
 
@@ -3746,7 +3738,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 except Exception:
                     pass  # cancelled / no selection
 
-            dialog.open(self.get_root(), None, _picked)
+            dialog.open(self._dialog_parent(), None, _picked)
         except Exception as exc:
             logger.debug("KDBX file browse failed: %s", exc)
 
@@ -3757,7 +3749,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._kdbx_file_browse(_("Choose key file"), 'kdbx_keyfile_row')
 
     def _kdbx_message(self, heading, body):
-        d = Adw.MessageDialog(transient_for=self.get_root(), modal=True, heading=heading, body=body)
+        d = Adw.MessageDialog(transient_for=self._dialog_parent(), modal=True, heading=heading, body=body)
         d.add_response('ok', _('OK'))
         d.present()
 
@@ -3795,7 +3787,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
                 self._prompt_new_kdbx_password(path)
 
-            dialog.save(self.get_root(), None, _picked)
+            dialog.save(self._dialog_parent(), None, _picked)
         except Exception as exc:
             logger.error("KDBX create dialog failed: %s", exc)
 
@@ -4019,7 +4011,7 @@ class PreferencesWindow(Adw.NavigationPage):
         dialog.set_default_response('cancel')
         dialog.set_close_response('cancel')
         dialog.connect('response', self._on_daemon_restart_response)
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
 
     def _on_daemon_restart_response(self, _dialog, response):
         if response != 'restart':
@@ -4083,7 +4075,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 self._restart_app_after_mode_change()
 
         dialog.connect("response", _on_response)
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
 
     @staticmethod
     def _restart_app_after_mode_change():
@@ -4168,7 +4160,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
-                    warn.present(self)
+                    warn.present(self._dialog_parent())
                     return
                 if result.accepted:
                     on_complete()
@@ -4190,7 +4182,7 @@ class PreferencesWindow(Adw.NavigationPage):
         err.add_response('ok', _("OK"))
         err.set_default_response('ok')
         err.set_close_response('ok')
-        err.present(self)
+        err.present(self._dialog_parent())
 
     def _schedule_daemon_reconnect_after_restart(self) -> None:
         """Ask the running application to spawn/reconnect after an explicit restart."""
@@ -4273,7 +4265,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def apply_font_to_terminals(self, font_string):
         """Apply font to all active terminal widgets"""
         try:
-            parent_window = self.get_root()
+            parent_window = self.parent_window
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 font_desc = Pango.FontDescription.from_string(font_string)
                 count = 0
@@ -4450,7 +4442,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
 
     def _trigger_sidebar_refresh(self):
-        parent = self.get_root() or self.parent_window
+        parent = self.parent_window
         if not parent:
             return
 
@@ -4461,7 +4453,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 logger.debug("Failed to rebuild connection list after preference change: %s", exc)
 
     def _trigger_terminal_style_refresh(self):
-        parent = self.get_root() or self.parent_window
+        parent = self.parent_window
         if not parent:
             return
 
@@ -4801,7 +4793,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def _alert(self, heading, body):
         dlg = Adw.AlertDialog(heading=heading, body=body)
         dlg.add_response('ok', _("OK"))
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _prompt_restart_required(self, body):
         """Alert that a change needs a restart, with Later / Restart Now."""
@@ -4818,7 +4810,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 restart_app()
 
         dlg.connect('response', _on_response)
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _add_permissions_info(self, row, permissions):
         """Add an info button to a plugin row listing its declared permissions."""
@@ -4909,7 +4901,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         dlg.set_extra_child(box)
         dlg.add_response('close', _("Close"))
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _plugin_consent(self, *, name, permissions, action, on_accept,
                         on_decline=None, sha256=None, verified=False):
@@ -4986,7 +4978,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
             on_accept()
         dlg.connect('response', _resp)
-        dlg.present(self)
+        dlg.present(self._dialog_parent())
 
     def _install_from_folder(self):
         dialog = Gtk.FileDialog()
@@ -4999,7 +4991,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 return
             if gfile and gfile.get_path():
                 self._install_plugin_from_dir(Path(gfile.get_path()))
-        dialog.select_folder(self.get_root(), None, _done)
+        dialog.select_folder(self._dialog_parent(), None, _done)
 
     def _install_from_zip(self):
         dialog = Gtk.FileDialog()
@@ -5021,7 +5013,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 return
             if gfile and gfile.get_path():
                 self._install_plugin_from_zip(Path(gfile.get_path()))
-        dialog.open(self.get_root(), None, _done)
+        dialog.open(self._dialog_parent(), None, _done)
 
     @staticmethod
     def _locate_manifest_dir(root: Path):
@@ -5127,7 +5119,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     else:
                         _abort()
                 confirm.connect('response', _resp)
-                confirm.present(self)
+                confirm.present(self._dialog_parent())
                 return
             self._finish_install(mdir, dest, meta, _cleanup)
 
@@ -5168,7 +5160,7 @@ class PreferencesWindow(Adw.NavigationPage):
         confirm.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE)
         confirm.connect('response',
                         lambda _d, r, i=info: self._remove_plugin(i) if r == 'remove' else None)
-        confirm.present(self)
+        confirm.present(self._dialog_parent())
 
     def _remove_plugin(self, info):
         try:
@@ -5214,9 +5206,9 @@ class PreferencesWindow(Adw.NavigationPage):
         ui = getattr(host, 'ui', None) if host else None
         if ui is not None:
             ui.open_page(full_id)
-        # Leave Settings so the plugin tab (under work mode) is visible.
-        if self.parent_window and hasattr(self.parent_window, 'leave_preferences'):
-            self.parent_window.leave_preferences()
+        # The plugin tab opens in the main window; bring it forward.
+        if self.parent_window is not None:
+            self.parent_window.present()
 
     def _mark_plugin_restart_needed(self, row=None):
         """Subtitle + dialog: plugins load/unload only on the next launch."""
@@ -6356,7 +6348,7 @@ class PreferencesWindow(Adw.NavigationPage):
             body=_("Only new terminal tabs will use the selected backend."),
         )
         dialog.add_response("ok", _("OK"))
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
 
     def _apply_backend_change(self, index, backend_id):
         """Apply the backend change (only affects new terminals, not existing ones)"""
@@ -6948,7 +6940,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
         try:
-            parent_window = self.get_root()
+            parent_window = self.parent_window
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():

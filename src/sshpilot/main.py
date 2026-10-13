@@ -431,7 +431,7 @@ class SshPilotApplication(Adw.Application):
 
             def _handle_sigint(signum, frame):
                 def _close_active_window():
-                    win = self.props.active_window
+                    win = self._action_window()
                     if win:
                         try:
                             win.close()  # triggers MainWindow.on_close_request
@@ -570,7 +570,7 @@ class SshPilotApplication(Adw.Application):
         startup unlock prompt never actually appeared. Poll briefly (~5s) for the
         selection to finish, mirroring ``_schedule_startup_diagnostics``.
         """
-        window = getattr(self, "window", None) or self.props.active_window
+        window = getattr(self, "window", None) or self._action_window()
         pending = (
             True if window is None
             else bool(getattr(window, "_api_client_selection_pending", False))
@@ -1350,7 +1350,7 @@ class SshPilotApplication(Adw.Application):
 
         # Alias lookup needs ConnectionManager (created with the window).
         self.activate()
-        window = self.window or self.props.active_window
+        window = self.window or self._action_window()
         if window is None or not hasattr(window, 'open_cli_connect'):
             return _cli_fail('Application window is not ready')
 
@@ -1854,9 +1854,31 @@ class SshPilotApplication(Adw.Application):
         """Return the order in which actions were registered."""
         return list(self._action_order)
 
+    def _action_window(self):
+        """The main window an app action applies to.
+
+        App accelerators also fire in secondary windows (Settings, the
+        connection editor, the file manager), where ``active_window`` is that
+        window and has none of MainWindow's API. Route to the main window it
+        belongs to, and raise it so the result (a new tab, a dialog) is seen.
+        """
+        win = self.props.active_window
+        if win is None or win.__class__.__name__ == 'MainWindow':
+            return win
+        owner = getattr(win, 'parent_window', None)
+        if owner is None or owner.__class__.__name__ != 'MainWindow':
+            owner = self.window
+        if owner is None:
+            return win
+        try:
+            owner.present()
+        except Exception:
+            logger.debug('Could not raise the main window for an app action', exc_info=True)
+        return owner
+
     def quit(self):
         """Request application shutdown, showing confirmation if needed."""
-        win = self.props.active_window
+        win = self._action_window()
         if win and not getattr(win, "_is_quitting", False):
             if win.on_close_request(win):
                 return  # dialog will handle quitting or cancellation
@@ -1868,7 +1890,7 @@ class SshPilotApplication(Adw.Application):
 
     def on_edit_ssh_config(self, action=None, param=None):
         """Handle SSH config editor action."""
-        win = self.props.active_window
+        win = self._action_window()
         if win and hasattr(win, '_open_ssh_config_editor'):
             win._open_ssh_config_editor()
 
@@ -1902,15 +1924,17 @@ class SshPilotApplication(Adw.Application):
         window = self.props.active_window
         if window and self._new_connection_key_is_new_folder_key():
             # Application accels run before the file list's own shortcut, so
-            # with a file list focused this key means New Folder (Nautilus).
+            # with a file list focused (in any window, including a separate
+            # file manager) this key means New Folder (Nautilus).
             from .file_manager.pane import file_pane_for_focus
             pane = file_pane_for_focus(window.get_focus())
             if pane is not None:
                 pane._shortcut_new_folder()
                 return
-        if self.props.active_window:
+        win = self._action_window()
+        if win:
             try:
-                self.props.active_window.show_connection_dialog()
+                win.show_connection_dialog()
                 logger.debug("Connection dialog shown successfully")
             except Exception as e:
                 logger.error(f"Failed to show connection dialog: {e}")
@@ -1920,42 +1944,47 @@ class SshPilotApplication(Adw.Application):
     def on_open_new_connection_tab(self, action, param):
         """Handle open new connection tab action (Ctrl/⌘+Alt+N)"""
         logger.debug("Open new connection tab action triggered")
-        if self.props.active_window:
+        win = self._action_window()
+        if win:
             # Forward to the window's action
-            self.props.active_window.open_new_connection_tab_action.activate(None)
+            win.open_new_connection_tab_action.activate(None)
 
     def on_toggle_list(self, action, param):
         """Handle toggle list focus action"""
         logger.debug("Toggle list focus action triggered")
-        if self.props.active_window:
-            self.props.active_window.toggle_list_focus()
+        win = self._action_window()
+        if win:
+            win.toggle_list_focus()
 
     def on_search(self, action, param):
         """Show the original connection-list search."""
         logger.debug("Search action triggered")
-        if self.props.active_window:
-            self.props.active_window.focus_search_entry()
+        win = self._action_window()
+        if win:
+            win.focus_search_entry()
 
     def on_omnisearch(self, action, param):
         """Show the global Omnisearch."""
         logger.debug("Omnisearch action triggered")
-        if self.props.active_window:
-            self.props.active_window.activate_omni_search()
+        win = self._action_window()
+        if win:
+            win.activate_omni_search()
 
     def on_new_key(self, action, param):
         """Handle new SSH key action"""
         logger.debug("New SSH key action triggered")
-        if self.props.active_window:
+        win = self._action_window()
+        if win:
             try:
                 # Check if there's a selected connection
-                selected_row = self.props.active_window.connection_list.get_selected_row()
+                selected_row = win.connection_list.get_selected_row()
                 if not selected_row or not getattr(selected_row, "connection", None):
                     # No connection selected, show a dialog to select one
                     logger.info("No connection selected, showing connection selection dialog")
-                    self.props.active_window.show_connection_selection_for_ssh_copy()
+                    win.show_connection_selection_for_ssh_copy()
                 else:
                     # Use the selected connection
-                    self.props.active_window.on_copy_key_to_server_clicked(None)
+                    win.on_copy_key_to_server_clicked(None)
                 logger.debug("SSH key copy dialog shown successfully")
             except Exception as e:
                 logger.error(f"Failed to show SSH key copy dialog: {e}")
@@ -1964,7 +1993,7 @@ class SshPilotApplication(Adw.Application):
 
     def on_manage_files(self, action, param):
         """Handle manage files shortcut."""
-        win = self.props.active_window
+        win = self._action_window()
         if not win:
             return
 
@@ -1994,12 +2023,13 @@ class SshPilotApplication(Adw.Application):
     def on_local_terminal(self, action, param):
         """Handle local terminal action"""
         logger.debug("Local terminal action triggered")
-        if self.props.active_window:
-            self.props.active_window.terminal_manager.show_local_terminal()
+        win = self._action_window()
+        if win:
+            win.terminal_manager.show_local_terminal()
 
     def on_terminal_search(self, action, param):
         """Toggle the search overlay for the active terminal."""
-        window = self.props.active_window
+        window = self._action_window()
         if not window:
             return
 
@@ -2010,42 +2040,46 @@ class SshPilotApplication(Adw.Application):
     def on_preferences(self, action, param):
         """Handle preferences action"""
         logger.debug("Preferences action triggered")
-        if self.props.active_window:
-            self.props.active_window.show_preferences()
+        win = self._action_window()
+        if win:
+            win.show_preferences()
 
     def on_about(self, action, param):
         """Handle about dialog action"""
         logger.debug("About dialog action triggered")
-        if self.props.active_window:
-            self.props.active_window.show_about_dialog()
+        win = self._action_window()
+        if win:
+            win.show_about_dialog()
 
     def on_help(self, action, param):
         """Handle help action"""
         logger.debug("Help action triggered")
-        if self.props.active_window:
-            self.props.active_window.open_help_url()
+        win = self._action_window()
+        if win:
+            win.open_help_url()
 
     def on_shortcuts(self, action, param):
         """Handle keyboard shortcuts overlay action"""
         logger.debug("Shortcuts action triggered")
-        if self.props.active_window:
-            self.props.active_window.show_shortcuts_window()
+        win = self._action_window()
+        if win:
+            win.show_shortcuts_window()
 
     def on_tab_next(self, action, param):
         """Switch to next tab"""
-        win = self.props.active_window
+        win = self._action_window()
         if win and hasattr(win, '_select_tab_relative'):
             win._select_tab_relative(1)
 
     def on_tab_prev(self, action, param):
         """Switch to previous tab"""
-        win = self.props.active_window
+        win = self._action_window()
         if win and hasattr(win, '_select_tab_relative'):
             win._select_tab_relative(-1)
 
     def on_tab_close(self, action, param):
         """Close the current tab — or, in a split-view tab, the focused pane."""
-        win = self.props.active_window
+        win = self._action_window()
         if not win:
             return
         try:
@@ -2060,19 +2094,19 @@ class SshPilotApplication(Adw.Application):
 
     def on_tab_move_left(self, action, param):
         """Move the current tab one position to the left."""
-        win = self.props.active_window
+        win = self._action_window()
         if win and hasattr(win, '_move_tab_relative'):
             win._move_tab_relative(-1)
 
     def on_tab_move_right(self, action, param):
         """Move the current tab one position to the right."""
-        win = self.props.active_window
+        win = self._action_window()
         if win and hasattr(win, '_move_tab_relative'):
             win._move_tab_relative(1)
 
     def on_tab_overview(self, action, param):
         """Toggle tab overview"""
-        win = self.props.active_window
+        win = self._action_window()
         if not win or not hasattr(win, 'tab_overview'):
             return
         try:
@@ -2085,14 +2119,15 @@ class SshPilotApplication(Adw.Application):
     def on_broadcast_command(self, action, param):
         """Handle broadcast command action (Ctrl/⌘+Shift+B)"""
         logger.debug("Broadcast command action triggered")
-        if self.props.active_window:
+        win = self._action_window()
+        if win:
             # Forward to the window's action
-            self.props.active_window.broadcast_command_action.activate(None)
+            win.broadcast_command_action.activate(None)
 
     def on_new_split_view_tab(self, action, param=None):
         """Open a new empty split-view tab (Ctrl/⌘+Shift+S)."""
         logger.debug("New split view tab action triggered")
-        win = self.props.active_window
+        win = self._action_window()
         if win and hasattr(win, 'on_new_split_view_tab'):
             win.on_new_split_view_tab(action, param)
 
