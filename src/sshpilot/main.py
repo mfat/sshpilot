@@ -1967,6 +1967,12 @@ class SshPilotApplication(Adw.Application):
     def on_search(self, action, param):
         """Show the original connection-list search."""
         logger.debug("Search action triggered")
+        # A window with its own search (Settings) keeps Ctrl+F; elsewhere it
+        # searches the connection list.
+        start_search = getattr(self.props.active_window, 'start_search', None)
+        if callable(start_search):
+            start_search()
+            return
         win = self._action_window()
         if win:
             win.focus_search_entry()

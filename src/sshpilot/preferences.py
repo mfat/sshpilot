@@ -146,6 +146,11 @@ class PreferencesWindow(Adw.Window):
     content_page = Gtk.Template.Child()
     sidebar_header_bar = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
+    search_button = Gtk.Template.Child()
+    search_bar = Gtk.Template.Child()
+    search_entry = Gtk.Template.Child()
+    sidebar_stack = Gtk.Template.Child()
+    search_results = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
@@ -182,6 +187,7 @@ class PreferencesWindow(Adw.Window):
         self._suppress_operation_mode_toggle = False
 
         self.pages = {}
+        self._page_icons = {}
         self._page_builders = {}
         self._page_placeholders = {}
         self._idle_building_scheduled = False
@@ -202,6 +208,7 @@ class PreferencesWindow(Adw.Window):
         install_esc_to_close(self)
 
         self.setup_navigation_layout()
+        self.setup_settings_search()
         self.setup_preferences()
         self.apply_color_overrides()
 
@@ -354,6 +361,258 @@ class PreferencesWindow(Adw.Window):
             row = row.get_next_sibling()
         return False
 
+    # --- search -------------------------------------------------------------
+
+    def setup_settings_search(self):
+        """Search individual settings from the sidebar (Ctrl+F, or just type)."""
+        self.search_bar.connect_entry(self.search_entry)
+        self.search_bar.set_key_capture_widget(self)
+        self.search_bar.connect('notify::search-mode-enabled', self._on_search_mode_changed)
+        self.search_entry.connect('search-changed', self._on_settings_search_changed)
+        self.search_entry.connect('activate', self._on_settings_search_activate)
+        self.search_entry.connect('stop-search', self._on_settings_search_stop)
+        self.search_results.connect('row-activated', self._on_search_result_activated)
+        # Down from the entry moves into the results, as in a list search.
+        keys = Gtk.EventControllerKey()
+        keys.connect('key-pressed', self._on_search_entry_key)
+        self.search_entry.add_controller(keys)
+        self._search_highlight_id = None
+
+    def start_search(self):
+        """Open the search bar and focus it (Ctrl+F while Settings is active)."""
+        self.search_bar.set_search_mode(True)
+        self.search_entry.grab_focus()
+
+    def _on_search_mode_changed(self, *_args):
+        if not self.search_bar.get_search_mode():
+            if self.search_entry.get_text():
+                self.search_entry.set_text('')
+            self.sidebar_stack.set_visible_child_name('pages')
+
+    def _on_settings_search_stop(self, entry):
+        # Esc: leave search first; a second Esc (bubbling to the window) closes.
+        self.search_bar.set_search_mode(False)
+        selected = self.sidebar.get_selected_row()
+        if selected is not None:
+            selected.grab_focus()
+
+    def _on_search_entry_key(self, _controller, keyval, _keycode, _state):
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down):
+            first = self.search_results.get_row_at_index(0)
+            if first is not None and self.sidebar_stack.get_visible_child_name() == 'results':
+                first.grab_focus()
+                return True
+        return False
+
+    def _on_settings_search_activate(self, _entry):
+        # Enter opens the best match and ends the search (as GNOME Settings
+        # does); clicking a result keeps the results up for the next one.
+        first = self.search_results.get_row_at_index(0)
+        if first is not None and self.sidebar_stack.get_visible_child_name() == 'results':
+            self._on_search_result_activated(self.search_results, first)
+            self.search_bar.set_search_mode(False)
+
+    # Building Plugins starts a plugin registry download; search must not.
+    # Until it is opened, search finds that page by name only.
+    _SEARCH_SKIPS_UNBUILT = {"plugins"}
+
+    def _build_all_pages(self):
+        for page_id in list(getattr(self, '_page_builders', {})):
+            if page_id not in self._SEARCH_SKIPS_UNBUILT:
+                self._ensure_page_built(page_id)
+
+    @staticmethod
+    def _has_preference_rows(widget):
+        stack = [widget.get_first_child()]
+        while stack:
+            child = stack.pop()
+            while child is not None:
+                if isinstance(child, Adw.PreferencesRow):
+                    return True
+                stack.append(child.get_first_child())
+                child = child.get_next_sibling()
+        return False
+
+    def _iter_setting_rows(self):
+        """Yield (page_id, group title, row) for every shown row on every page.
+
+        A titled group without rows (radio buttons, the palette) is yielded
+        itself, with an empty group title.
+        """
+        from .settings_index import NOT_INDEXED
+
+        not_indexed = {(page, _(title)) for page, title in NOT_INDEXED}
+        for page_id, page in self.pages.items():
+            stack = [(page, '', None)]
+            while stack:
+                widget, group, expander = stack.pop()
+                if not widget.get_visible():
+                    continue
+                if isinstance(widget, Adw.PreferencesGroup):
+                    group = widget.get_title() or ''
+                    if (group and (page_id, group) not in not_indexed
+                            and not self._has_preference_rows(widget)):
+                        yield page_id, '', widget
+                        continue
+                if isinstance(widget, Adw.PreferencesRow):
+                    title = widget.get_title() or ''
+                    # An ExpanderRow draws its header with an inner ActionRow.
+                    header = expander is not None and title == expander.get_title()
+                    if title and not header and (page_id, title) not in not_indexed:
+                        yield page_id, group, widget
+                    if isinstance(widget, Adw.ExpanderRow):
+                        expander = widget
+                children = []
+                child = widget.get_first_child()
+                while child is not None:
+                    children.append((child, group, expander))
+                    child = child.get_next_sibling()
+                stack.extend(reversed(children))
+
+    @staticmethod
+    def _fold(text):
+        import unicodedata
+
+        decomposed = unicodedata.normalize('NFKD', text or '')
+        return ''.join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+    def search_settings(self, query):
+        """Rows matching *query*, best first: [(page_id, group, row)]."""
+        from .settings_index import entry_for
+
+        tokens = self._fold(query).split()
+        if not tokens:
+            return []
+        self._build_all_pages()
+        page_order = list(self.pages)
+        matches = []
+        for index, page_id in enumerate(page_order):
+            # Whole pages first when their name matches ("terminal", "plugins").
+            folded_page = self._fold(self._page_title(page_id))
+            if folded_page and all(t in folded_page for t in tokens):
+                matches.append((-1, index, 0, page_id, '', None))
+        for index, (page_id, group, row) in enumerate(self._iter_setting_rows()):
+            title = row.get_title() or ''
+            if isinstance(row, Adw.PreferencesGroup):
+                subtitle = row.get_description()
+            else:
+                subtitle = row.get_subtitle() if hasattr(row, 'get_subtitle') else ''
+            entry = entry_for(page_id, title)
+            keywords = ' '.join(entry.keyword_list()) if entry else ''
+            page_title = self._page_title(page_id)
+            fields = [self._fold(f) for f in (title, keywords, subtitle or '', f'{group} {page_title}')]
+            if not all(any(t in f for f in fields) for t in tokens):
+                continue
+            folded_title = fields[0]
+            if folded_title.startswith(' '.join(tokens)):
+                rank = 0
+            elif all(t in folded_title for t in tokens):
+                rank = 1
+            elif all(t in fields[0] or t in fields[1] for t in tokens):
+                rank = 2
+            else:
+                rank = 3
+            matches.append((rank, page_order.index(page_id), index, page_id, group, row))
+        matches.sort(key=lambda m: m[:3])
+        return [(page_id, group, row) for *_rest, page_id, group, row in matches]
+
+    def _page_title(self, page_id):
+        row = self._sidebar_row(page_id)
+        return (row.get_title() if row is not None else '') or ''
+
+    def _sidebar_row(self, page_id):
+        row = self.sidebar.get_first_child()
+        while row is not None:
+            if row.get_name() == page_id:
+                return row
+            row = row.get_next_sibling()
+        return None
+
+    def _on_settings_search_changed(self, entry):
+        query = entry.get_text()
+        while (child := self.search_results.get_first_child()) is not None:
+            self.search_results.remove(child)
+        if not query.strip():
+            self.sidebar_stack.set_visible_child_name('pages')
+            return
+        from sshpilot import icon_utils
+
+        results = self.search_settings(query)
+        for page_id, group, target in results:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_activatable(True)
+            page_title = self._page_title(page_id)
+            row.set_title(target.get_title() if target is not None else page_title)
+            if target is None:
+                row.set_subtitle(_("Page"))
+            elif group and group != page_title:
+                # Translators: where a search result lives, e.g. "Terminal › Mouse".
+                row.set_subtitle(_("{page} › {group}").format(page=page_title, group=group))
+            else:
+                row.set_subtitle(page_title)
+            icon_name = self._page_icons.get(page_id)
+            if icon_name:
+                row.add_prefix(icon_utils.new_image_from_icon_name(icon_name))
+            row._search_target = (page_id, target)
+            self.search_results.append(row)
+        self.sidebar_stack.set_visible_child_name('results' if results else 'empty')
+
+    def _on_search_result_activated(self, _listbox, row):
+        target = getattr(row, '_search_target', None)
+        if target is not None:
+            self.reveal_setting_row(*target)
+
+    def reveal_setting_row(self, page_id, target):
+        """Show *target* on its page: select the page, scroll to it, flash it."""
+        self.select_page(page_id)
+        if target is None or page_id != getattr(self, '_selected_page_name', None):
+            return
+        parent = target.get_parent()
+        while parent is not None:
+            if isinstance(parent, Adw.ExpanderRow) and not parent.get_expanded():
+                parent.set_expanded(True)
+            parent = parent.get_parent()
+
+        def _focus():
+            # Focusing scrolls the page's viewport to the row (or to a group's
+            # first control).
+            if isinstance(target, Adw.PreferencesGroup):
+                target.child_focus(Gtk.DirectionType.TAB_FORWARD)
+            else:
+                target.grab_focus()
+            self._flash_setting_row(target)
+            return GLib.SOURCE_REMOVE
+
+        # After the stack switch, so the page is mapped and allocated.
+        GLib.timeout_add(150, _focus)
+
+    def reveal_setting(self, page_id, title):
+        """Select *page_id* and reveal the shown row titled *title* (translated)."""
+        self._ensure_page_built(page_id)
+        for row_page, _group, row in self._iter_setting_rows():
+            if row_page == page_id and row.get_title() == title:
+                self.reveal_setting_row(page_id, row)
+                return True
+        self.select_page(page_id)
+        return False
+
+    def _flash_setting_row(self, row):
+        row.add_css_class('settings-search-highlight')
+        if self._search_highlight_id:
+            GLib.source_remove(self._search_highlight_id)
+            previous = getattr(self, '_search_highlight_row', None)
+            if previous is not None and previous is not row:
+                previous.remove_css_class('settings-search-highlight')
+
+        def _clear():
+            self._search_highlight_id = None
+            row.remove_css_class('settings-search-highlight')
+            return GLib.SOURCE_REMOVE
+
+        self._search_highlight_row = row
+        self._search_highlight_id = GLib.timeout_add(1500, _clear)
+
     @staticmethod
     def _page_id(title):
         """Sidebar/stack id derived from a page title. Single source of truth so callers
@@ -377,6 +636,7 @@ class PreferencesWindow(Adw.Window):
         row.set_title(_(title))
         page_id = self._page_id(title)
         row.set_name(page_id)
+        self._page_icons[page_id] = icon_name
 
         # Add icon using bundled icon helper
         from sshpilot import icon_utils

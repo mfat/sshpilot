@@ -174,3 +174,13 @@
 .backup-path {
     font-family: monospace;
 }
+
+/* A Settings row reached from search flashes briefly so the eye finds it. */
+row.settings-search-highlight {
+    background-color: alpha(@accent_bg_color, 0.25);
+}
+
+preferencesgroup.settings-search-highlight {
+    background-color: alpha(@accent_bg_color, 0.15);
+    border-radius: 12px;
+}

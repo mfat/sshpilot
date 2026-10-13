@@ -904,11 +904,12 @@ class WindowConfigDialogsMixin:
             except Exception:
                 logger.debug("Could not show the detach toast", exc_info=True)
 
-    def show_preferences(self, page_id=None):
+    def show_preferences(self, page_id=None, setting=None):
         """Open (or raise) this window's Settings window.
 
         ``page_id`` optionally selects a preferences page by stack id
-        (e.g. ``plugins``, ``security-&-credentials``).
+        (e.g. ``plugins``, ``security-&-credentials``); ``setting``, the
+        translated title of a row on that page, also scrolls to that row.
         """
         logger.info("Show preferences")
         prefs = getattr(self, '_preferences_window', None)
@@ -935,7 +936,9 @@ class WindowConfigDialogsMixin:
             # disappearing behind it when the main window is clicked. Still
             # non-modal, so the main window remains usable.
             prefs.set_transient_for(self)
-            if page_id:
+            if page_id and setting:
+                prefs.reveal_setting(page_id, setting)
+            elif page_id:
                 prefs.select_page(page_id)
             prefs.present()
         except Exception as e:

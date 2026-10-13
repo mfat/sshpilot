@@ -47,22 +47,77 @@ template $SshPilotPreferencesWindow: Adw.Window {
           Adw.HeaderBar sidebar_header_bar {
             show-end-title-buttons: false;
 
+            [end]
+            Gtk.ToggleButton search_button {
+              icon-name: "system-search-symbolic";
+              tooltip-text: _("Search Settings");
+            }
+
             styles [
               "flat",
             ]
           }
 
-          content: Gtk.ScrolledWindow {
-            hscrollbar-policy: never;
-            vscrollbar-policy: automatic;
+          // Search matches individual settings, not just pages; results
+          // replace the category list (see setup_settings_search).
+          [top]
+          Gtk.SearchBar search_bar {
+            search-mode-enabled: bind search_button.active bidirectional;
 
-            Gtk.ListBox sidebar {
-              selection-mode: single;
-              activate-on-single-click: true;
+            child: Gtk.SearchEntry search_entry {
+              placeholder-text: _("Search settings");
+              hexpand: true;
+            };
+          }
 
-              styles [
-                "navigation-sidebar",
-              ]
+          content: Gtk.Stack sidebar_stack {
+            Gtk.StackPage {
+              name: "pages";
+
+              child: Gtk.ScrolledWindow {
+                hscrollbar-policy: never;
+                vscrollbar-policy: automatic;
+
+                Gtk.ListBox sidebar {
+                  selection-mode: single;
+                  activate-on-single-click: true;
+
+                  styles [
+                    "navigation-sidebar",
+                  ]
+                }
+              };
+            }
+
+            Gtk.StackPage {
+              name: "results";
+
+              child: Gtk.ScrolledWindow {
+                hscrollbar-policy: never;
+                vscrollbar-policy: automatic;
+
+                Gtk.ListBox search_results {
+                  selection-mode: single;
+                  activate-on-single-click: true;
+
+                  styles [
+                    "navigation-sidebar",
+                  ]
+                }
+              };
+            }
+
+            Gtk.StackPage {
+              name: "empty";
+
+              child: Adw.StatusPage {
+                icon-name: "system-search-symbolic";
+                title: _("No Results");
+
+                styles [
+                  "compact",
+                ]
+              };
             }
           };
         };
