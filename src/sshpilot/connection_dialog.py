@@ -1994,7 +1994,7 @@ class ConnectionDialog(
                 pass
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
-        # Saving a search-box target: show what its session inherited.
+        # Saving a search-box target: fill in what its session used.
         if self._typed_target_directives() is not None:
             try:
                 self._load_inherited_values_async()
@@ -2716,9 +2716,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _typed_target_directives(self):
         """Directives an unsaved search-box target authored, or None.
 
-        Such a target is saved as a block holding only what was typed, so
-        every other row inherits. Its daemon id resolves through the same -F
-        file its session used, which is what the inherited rows must show.
+        The rows for everything else are filled in with what the session
+        used, resolved through the same -F file under the target's daemon id.
         """
         if self.is_editing:
             return None
@@ -2749,25 +2748,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 authored.add(directive)
         return frozenset(authored)
 
-    def _strip_unadopted_inherited_values(self, connection_data):
-        """Keep values shown as inherited out of a new connection's block.
+    # What ``ssh -G`` prints for a directive nothing set. Written into a
+    # Host block it would only restate the default, so it is not filled in.
+    _EFFECTIVE_UNSET_VALUES = {
+        'proxyjump': 'none',
+        'proxycommand': 'none',
+        'pkcs11provider': 'none',
+        'securitykeyprovider': 'internal',
+        'localcommand': 'none',
+        'remotecommand': 'none',
+    }
 
-        An edit saves only its delta, so untouched inherited rows never reach
-        the config. A create sends the whole form, and writing those values
-        would pin them for this host and stop ``Host *`` from supplying them.
-        """
-        handlers = getattr(self, '_inherited_row_handlers', None) or {}
-        for row_name in handlers:
-            field = self._INHERITED_ROW_FIELDS.get(row_name)
-            if field not in connection_data:
-                continue
-            if field == 'hostname':
-                # Equal to the nickname, the formatter writes no HostName.
-                connection_data[field] = connection_data.get('nickname', '')
-            elif field == 'proxy_jump':
-                connection_data[field] = []
-            else:
-                connection_data[field] = ''
+    @classmethod
+    def _fillable_effective_value(cls, ssh_key, value):
+        """*value* as a save-dialog row should hold it, or '' for unset."""
+        value = str(value or '').strip()
+        if value.lower() == cls._EFFECTIVE_UNSET_VALUES.get(ssh_key):
+            return ''
+        return value
 
     def _load_inherited_values_async(self):
         """Fill unauthored rows with what OpenSSH resolves, styled as inherited.
@@ -2787,8 +2785,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         unrelated configuration RPCs.
         """
         authored = getattr(self.connection, 'authored_directives', None)
+        # Saving a search-box target fills in what its session used, as the
+        # user's own values: they just connected with them, and Save writes
+        # them into the new Host block.
+        fill_effective = False
         if authored is None:
             authored = self._typed_target_directives()
+            fill_effective = authored is not None
         if authored is None:
             return
         # Remember the text each row holds now: `ssh -G` runs off-thread, and a
@@ -2837,6 +2840,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 try:
                     if row.get_text() != text_at_schedule:
                         continue  # edited while the daemon was resolving
+                    if fill_effective:
+                        value = self._fillable_effective_value(ssh_key, value)
+                        if value and row_name == 'proxy_jump_row':
+                            self._set_text_without_completion(row, value)
+                        elif value:
+                            row.set_text(value)
+                        continue
                     self._show_inherited_value(row_name, row, value)
                 except Exception:
                     logger.debug(
@@ -5592,8 +5602,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             connection_data['__changed_fields'] = self._changed_editor_fields(
                 connection_data
             )
-        else:
-            self._strip_unadopted_inherited_values(connection_data)
 
         # Create a separate local-only secret plan that never enters wire DTOs.
         passphrase_ops = []

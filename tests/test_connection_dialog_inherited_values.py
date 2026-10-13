@@ -290,20 +290,14 @@ def test_only_unsaved_targets_being_saved_use_the_typed_directives(form):
     assert ConnectionDialog._typed_target_directives(form) is None
 
 
-def test_a_new_connection_never_writes_values_still_shown_as_inherited():
-    dialog = types.SimpleNamespace(
-        _inherited_row_handlers={
-            "hostname_row": 1, "username_row": 2, "port_row": 3,
-            "proxy_jump_row": 4,
-        },
-        _INHERITED_ROW_FIELDS=ConnectionDialog._INHERITED_ROW_FIELDS,
-    )
-    data = {
-        "nickname": "hi", "hostname": "hi.site.net", "username": "root",
-        "port": 2022, "proxy_jump": ["jumpTest"], "proxy_command": "nc %h %p",
-    }
-    ConnectionDialog._strip_unadopted_inherited_values(dialog, data)
-    assert data == {
-        "nickname": "hi", "hostname": "hi", "username": "", "port": "",
-        "proxy_jump": [], "proxy_command": "nc %h %p",
-    }
+@pytest.mark.parametrize("ssh_key, value, expected", [
+    ("port", "2022", "2022"),
+    ("user", "root", "root"),
+    ("proxyjump", "testJump", "testJump"),
+    # What ``ssh -G`` prints when nothing set the directive.
+    ("proxyjump", "none", ""),
+    ("proxycommand", "none", ""),
+    ("securitykeyprovider", "internal", ""),
+])
+def test_save_dialog_fills_in_what_the_session_used(ssh_key, value, expected):
+    assert ConnectionDialog._fillable_effective_value(ssh_key, value) == expected
