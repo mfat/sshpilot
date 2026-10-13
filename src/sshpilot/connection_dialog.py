@@ -1994,6 +1994,12 @@ class ConnectionDialog(
                 pass
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
+        # Saving a search-box target: show what its session inherited.
+        if self._typed_target_directives() is not None:
+            try:
+                self._load_inherited_values_async()
+            except Exception:
+                logger.debug("Could not start inherited-value lookup", exc_info=True)
         try:
             self.start_login_profile_load()
         except Exception:
@@ -2707,6 +2713,62 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if field in _FORWARD_AGENT_FIELDS:
                 adopted.update(_FORWARD_AGENT_FIELDS)
 
+    def _typed_target_directives(self):
+        """Directives an unsaved search-box target authored, or None.
+
+        Such a target is saved as a block holding only what was typed, so
+        every other row inherits. Its daemon id resolves through the same -F
+        file its session used, which is what the inherited rows must show.
+        """
+        if self.is_editing:
+            return None
+        transient = getattr(self.connection, 'transient_connection_id', None)
+        if not (isinstance(transient, str) and transient.strip()):
+            return None
+        data = getattr(self.connection, 'data', None)
+        data = data if isinstance(data, dict) else {}
+
+        def typed(name):
+            value = getattr(self.connection, name, None) or data.get(name)
+            return bool(value.strip() if isinstance(value, str) else value)
+
+        authored = set()
+        if typed('username'):
+            authored.add('user')
+        if data.get('port_explicit'):
+            authored.add('port')
+        for field, directive in (
+            ('proxy_jump', 'proxyjump'),
+            ('proxy_command', 'proxycommand'),
+            ('pkcs11_provider', 'pkcs11provider'),
+            ('security_key_provider', 'securitykeyprovider'),
+            ('local_command', 'localcommand'),
+            ('remote_command', 'remotecommand'),
+        ):
+            if typed(field):
+                authored.add(directive)
+        return frozenset(authored)
+
+    def _strip_unadopted_inherited_values(self, connection_data):
+        """Keep values shown as inherited out of a new connection's block.
+
+        An edit saves only its delta, so untouched inherited rows never reach
+        the config. A create sends the whole form, and writing those values
+        would pin them for this host and stop ``Host *`` from supplying them.
+        """
+        handlers = getattr(self, '_inherited_row_handlers', None) or {}
+        for row_name in handlers:
+            field = self._INHERITED_ROW_FIELDS.get(row_name)
+            if field not in connection_data:
+                continue
+            if field == 'hostname':
+                # Equal to the nickname, the formatter writes no HostName.
+                connection_data[field] = connection_data.get('nickname', '')
+            elif field == 'proxy_jump':
+                connection_data[field] = []
+            else:
+                connection_data[field] = ''
+
     def _load_inherited_values_async(self):
         """Fill unauthored rows with what OpenSSH resolves, styled as inherited.
 
@@ -2725,6 +2787,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         unrelated configuration RPCs.
         """
         authored = getattr(self.connection, 'authored_directives', None)
+        if authored is None:
+            authored = self._typed_target_directives()
         if authored is None:
             return
         # Remember the text each row holds now: `ssh -G` runs off-thread, and a
@@ -3106,11 +3170,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self.port_row.set_text("")
 
             # Load proxy settings (without triggering inline completion)
-            if hasattr(self.connection, 'proxy_jump'):
+            # A search-box target (``-J``) carries it only in ``data``.
+            jump_data = getattr(self.connection, 'data', None)
+            if hasattr(self.connection, 'proxy_jump') or (
+                isinstance(jump_data, dict) and jump_data.get('proxy_jump')
+            ):
                 try:
+                    jumps = getattr(self.connection, 'proxy_jump', None)
+                    if jumps is None:
+                        jumps = jump_data.get('proxy_jump')
+                    if isinstance(jumps, str):
+                        jumps = [h for h in re.split(r'[\s,]+', jumps) if h]
                     self._set_text_without_completion(
                         self.proxy_jump_row,
-                        ",".join(self.connection.proxy_jump or []),
+                        ",".join(jumps or []),
                     )
                 except Exception:
                     self._set_text_without_completion(self.proxy_jump_row, "")
@@ -5519,6 +5592,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             connection_data['__changed_fields'] = self._changed_editor_fields(
                 connection_data
             )
+        else:
+            self._strip_unadopted_inherited_values(connection_data)
 
         # Create a separate local-only secret plan that never enters wire DTOs.
         passphrase_ops = []

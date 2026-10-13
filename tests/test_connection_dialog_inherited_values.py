@@ -255,3 +255,55 @@ def test_adopting_a_row_drops_only_the_inheritance_half():
     ConnectionDialog._on_inherited_row_edited(dialog, "port_row")
 
     assert row.get_tooltip_text() == "Valid port number"
+
+
+# --- saving a search-box target (#1320) --------------------------------------
+
+
+def _typed_target(data, transient="adhoc-1", is_editing=False, **attrs):
+    connection = types.SimpleNamespace(
+        transient_connection_id=transient, data=data, **attrs
+    )
+    return types.SimpleNamespace(connection=connection, is_editing=is_editing)
+
+
+def test_search_box_target_inherits_everything_it_did_not_type():
+    form = _typed_target({"hostname": "hi", "port": 22, "port_explicit": False})
+    assert ConnectionDialog._typed_target_directives(form) == frozenset()
+
+
+def test_typed_user_port_and_jump_are_authored():
+    form = _typed_target(
+        {"port": 2200, "port_explicit": True, "proxy_jump": ["bastion"]},
+        username="alice",
+    )
+    assert ConnectionDialog._typed_target_directives(form) == {
+        "user", "port", "proxyjump",
+    }
+
+
+@pytest.mark.parametrize("form", [
+    _typed_target({}, transient=None),
+    _typed_target({}, is_editing=True),
+])
+def test_only_unsaved_targets_being_saved_use_the_typed_directives(form):
+    assert ConnectionDialog._typed_target_directives(form) is None
+
+
+def test_a_new_connection_never_writes_values_still_shown_as_inherited():
+    dialog = types.SimpleNamespace(
+        _inherited_row_handlers={
+            "hostname_row": 1, "username_row": 2, "port_row": 3,
+            "proxy_jump_row": 4,
+        },
+        _INHERITED_ROW_FIELDS=ConnectionDialog._INHERITED_ROW_FIELDS,
+    )
+    data = {
+        "nickname": "hi", "hostname": "hi.site.net", "username": "root",
+        "port": 2022, "proxy_jump": ["jumpTest"], "proxy_command": "nc %h %p",
+    }
+    ConnectionDialog._strip_unadopted_inherited_values(dialog, data)
+    assert data == {
+        "nickname": "hi", "hostname": "hi", "username": "", "port": "",
+        "proxy_jump": [], "proxy_command": "nc %h %p",
+    }
