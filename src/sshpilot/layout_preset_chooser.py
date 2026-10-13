@@ -10,6 +10,8 @@ from gi.repository import Gtk, Pango
 from . import icon_utils
 from .layout_presets import STARTUP_BEHAVIOR_KEY, apply_preset, current_preset
 
+SKETCH_WIDTH, SKETCH_HEIGHT = 136, 96  # minimum width: the widest content
+
 # Group colours of the sidebar sketch: (dot colour, connection rows below it).
 _SKETCH_GROUPS = (('#ed333b', 1), ('#ff7800', 1), ('#9141ac', 0), ('#f6d32d', 0))
 
@@ -111,11 +113,12 @@ def _sketch(preset_id, terminal_beside_sidebar=False):
         frame.set_orientation(Gtk.Orientation.VERTICAL)
         frame.append(_header_sketch(_bar('layout-sketch-tab', 48, 7), center=True))
         frame.append(_terminal_sketch())
-    aspect = Gtk.AspectFrame(ratio=1.6, obey_child=False)
-    aspect.set_child(frame)
-    # The terminal fills the sketch; its vexpand must not stretch the card.
-    aspect.set_vexpand(False)
-    return aspect
+    # One size floor for every sketch, so swapping what a sketch shows
+    # never resizes the cards; vexpand off so the terminal cannot stretch them.
+    frame.set_size_request(SKETCH_WIDTH, SKETCH_HEIGHT)
+    frame.set_vexpand(False)
+    frame.set_hexpand(True)
+    return frame
 
 
 class LayoutPresetChooser(Gtk.Box):
