@@ -1428,19 +1428,25 @@ class PreferencesWindow(Adw.NavigationPage):
         # whether that pinned entry appears, not row chrome.
         self._sidebar_mode_dependent_rows = []
 
-        flat_rows_switch = Adw.SwitchRow()
-        flat_rows_switch.set_title(_("Flat Sidebar Rows"))
-        flat_rows_switch.set_subtitle(
-            _("Use flat list rows instead of cards in the connection sidebar")
+        # Row style: cards (default) or flat list rows. Stored as the
+        # ui.sidebar_flat_rows boolean.
+        self.sidebar_row_style_row = Adw.ComboRow()
+        self.sidebar_row_style_row.set_title(_("Row Style"))
+        self.sidebar_row_style_row.set_subtitle(
+            _("Choose how connection rows are drawn in the sidebar")
         )
-        flat_rows_switch.set_active(
-            bool(self.config.get_setting('ui.sidebar_flat_rows', False))
+        row_style_options = Gtk.StringList()
+        row_style_options.append(_("Cards"))
+        row_style_options.append(_("Flat"))
+        self.sidebar_row_style_row.set_model(row_style_options)
+        self.sidebar_row_style_row.set_selected(
+            1 if self.config.get_setting('ui.sidebar_flat_rows', False) else 0
         )
-        flat_rows_switch.connect(
-            'notify::active', self.on_sidebar_flat_rows_changed
+        self.sidebar_row_style_row.connect(
+            'notify::selected', self.on_sidebar_row_style_changed
         )
-        sidebar_group.add(flat_rows_switch)
-        self._sidebar_mode_dependent_rows.append(flat_rows_switch)
+        sidebar_group.add(self.sidebar_row_style_row)
+        self._sidebar_mode_dependent_rows.append(self.sidebar_row_style_row)
 
         show_local_terminal_switch = Adw.SwitchRow()
         show_local_terminal_switch.set_title(_("Local Terminal Row"))
@@ -6452,10 +6458,10 @@ class PreferencesWindow(Adw.NavigationPage):
                     exc_info=True,
                 )
 
-    def on_sidebar_flat_rows_changed(self, switch, *args):
-        """Persist flat vs card styling for sidebar connection rows."""
+    def on_sidebar_row_style_changed(self, combo_row, *args):
+        """Persist the Cards/Flat row style for sidebar connection rows."""
         try:
-            active = bool(switch.get_active())
+            active = combo_row.get_selected() == 1
             self.config.set_setting('ui.sidebar_flat_rows', active)
             if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
                 self.parent_window.update_sidebar_display()

@@ -241,6 +241,7 @@ def test_dark_mode_targets_the_dark_style(gui):
     ("accent color", "appearance"),
     ("group colors", "appearance"),
     ("compact sidebar", "sidebar"),
+    ("flat rows", "sidebar"),
     ("window size", "interface"),
 ])
 def test_settings_wording_opens_the_settings_page(gui, query, page):

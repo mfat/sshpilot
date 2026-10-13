@@ -86,6 +86,16 @@ def test_appearance_and_sidebar_have_their_own_pages(gui):
     ]
     assert set(group_titles) == {'Layout', 'Row Details', 'Row Buttons'}
 
+    config = gui.window.config
+    old_flat = config.get_setting('ui.sidebar_flat_rows', False)
+    try:
+        prefs.sidebar_row_style_row.set_selected(1)
+        assert config.get_setting('ui.sidebar_flat_rows') is True
+        prefs.sidebar_row_style_row.set_selected(0)
+        assert config.get_setting('ui.sidebar_flat_rows') is False
+    finally:
+        config.set_setting('ui.sidebar_flat_rows', old_flat)
+
 
 def test_group_preview_follows_group_settings_live(gui):
     """The preview is built from real sidebar rows and rebuilds on a settings change."""

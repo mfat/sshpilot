@@ -2497,7 +2497,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             False if compact
             else self.config.get_setting('ui.sidebar_show_group_icon', True)
         )
-        # Compact is always flat; otherwise honor the Flat Sidebar Rows toggle.
+        # Compact is always flat; otherwise honor the sidebar Row Style.
         flat_rows = True if compact else self.config.get_setting(
             'ui.sidebar_flat_rows', False
         )

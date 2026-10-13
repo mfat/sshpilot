@@ -200,7 +200,7 @@ _SETTINGS_PAGES = (
     )),
     ("sidebar", N_("Sidebar"), N_(
         "sidebar settings;sidebar mode;compact sidebar;connection rows;"
-        "row buttons;sidebar"
+        "row style;flat rows;card rows;row buttons;sidebar"
     )),
     ("terminal", N_("Terminal"), N_(
         "font;font size;color scheme;colour scheme;terminal theme;colors;"
