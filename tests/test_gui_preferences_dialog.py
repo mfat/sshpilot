@@ -57,7 +57,7 @@ def test_preferences_select_page_deep_link(gui):
 
 
 def test_appearance_and_sidebar_have_their_own_pages(gui):
-    """Theme/accent and the sidebar options live on dedicated pages, not Interface."""
+    """Theme, accent and group styling live on Appearance; sidebar options on Sidebar."""
     from gi.repository import Adw
 
     prefs = _open_preferences(gui, page_id='appearance')
@@ -75,6 +75,9 @@ def test_appearance_and_sidebar_have_their_own_pages(gui):
     sidebar = prefs.pages['sidebar']
     assert prefs.theme_row.get_ancestor(Adw.PreferencesPage) is appearance
     assert prefs.accent_color_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.group_color_display_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert prefs.group_display_toggle_row.get_ancestor(Adw.PreferencesPage) is appearance
+    assert 'groups' not in ids
     assert prefs.sidebar_mode_row.get_ancestor(Adw.PreferencesPage) is sidebar
 
     group_titles = [

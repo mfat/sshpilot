@@ -1095,7 +1095,7 @@ class PreferencesWindow(Adw.NavigationPage):
         return terminal_page
 
 
-    def _add_group_appearance_group(self, groups_page):
+    def _add_group_appearance_group(self, appearance_page):
         """Add the Group Appearance preferences group."""
         group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
 
@@ -1193,9 +1193,9 @@ class PreferencesWindow(Adw.NavigationPage):
         group_appearance_group.add(self.terminal_group_color_row)
 
 
-        groups_page.add(group_appearance_group)
+        appearance_page.add(group_appearance_group)
 
-    def _add_group_layout_group(self, groups_page):
+    def _add_group_layout_group(self, appearance_page):
         """Add the Group Layout preferences group and previews."""
         # Group display layout section (shown after appearance options)
         group_layout_group = Adw.PreferencesGroup(title=_("Group Layout"))
@@ -1329,18 +1329,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._update_group_display_preview(current_display_mode)
 
         group_layout_group.add(self.group_display_preview_row)
-        groups_page.add(group_layout_group)
-
-    def _build_groups_preferences_page(self):
-        """Build the Groups preferences page."""
-        groups_page = Adw.PreferencesPage()
-        groups_page.set_title(_("Groups"))
-        groups_page.set_icon_name("folder-open-symbolic")
-
-        self._add_group_appearance_group(groups_page)
-        self._add_group_layout_group(groups_page)
-        return groups_page
-
+        appearance_page.add(group_layout_group)
 
     def _add_interface_language_group(self, interface_page):
         """Add the Language preferences group."""
@@ -1887,6 +1876,8 @@ class PreferencesWindow(Adw.NavigationPage):
         appearance_page.set_title(_("Appearance"))
         appearance_page.set_icon_name("color-symbolic")
         self._add_appearance_groups(appearance_page)
+        self._add_group_appearance_group(appearance_page)
+        self._add_group_layout_group(appearance_page)
         return appearance_page
 
     def _build_sidebar_preferences_page(self):
@@ -2958,7 +2949,6 @@ class PreferencesWindow(Adw.NavigationPage):
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
             self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
             self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
-            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", self._build_groups_preferences_page)
             self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", self._build_ssh_settings_preferences_page)
             self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
             self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
