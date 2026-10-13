@@ -238,6 +238,10 @@ def test_dark_mode_targets_the_dark_style(gui):
     ("font", "terminal"),
     ("color scheme", "terminal"),
     ("keyring", "security-&-credentials"),
+    ("accent color", "appearance"),
+    ("group colors", "appearance"),
+    ("compact sidebar", "sidebar"),
+    ("window size", "interface"),
 ])
 def test_settings_wording_opens_the_settings_page(gui, query, page):
     result = _top(gui.window, query)

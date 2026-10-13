@@ -192,7 +192,15 @@ _EXTRA_COMMANDS = (
 # The page id is derived from the English title (PreferencesWindow._page_id).
 _SETTINGS_PAGES = (
     ("interface", N_("Interface"), N_(
-        "appearance;language;tabs;sidebar settings;start page;interface"
+        "language;tabs;start page;startup;header bar;tips;window size;interface"
+    )),
+    ("appearance", N_("Appearance"), N_(
+        "theme;accent color;accent colour;monospace font;group colors;"
+        "group colours;group layout;appearance"
+    )),
+    ("sidebar", N_("Sidebar"), N_(
+        "sidebar settings;sidebar mode;compact sidebar;connection rows;"
+        "row buttons;sidebar"
     )),
     ("terminal", N_("Terminal"), N_(
         "font;font size;color scheme;colour scheme;terminal theme;colors;"

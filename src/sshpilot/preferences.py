@@ -1543,7 +1543,13 @@ class PreferencesWindow(Adw.NavigationPage):
         remember_size_switch = Adw.SwitchRow()
         remember_size_switch.set_title(_("Remember Window Size"))
         remember_size_switch.set_subtitle(_("Restore window size on startup"))
-        remember_size_switch.set_active(True)
+        remember_size_switch.set_active(
+            bool(self.config.get_setting('ui.remember_window_size', True))
+        )
+        remember_size_switch.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('ui.remember_window_size', bool(r.get_active())),
+        )
 
         window_group.add(remember_size_switch)
         interface_page.add(window_group)
@@ -1843,7 +1849,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         interface_page.add(headerbar_group)
 
-        # Tips group at the bottom of the Interface page. Lets users
+        # Tips group, just above Window. Lets users
         # re-enable the tips banner after dismissing it with "Don't show again".
         tips_group = Adw.PreferencesGroup(title=_("Tips"))
         show_tips_switch = Adw.SwitchRow()
@@ -1866,8 +1872,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self._add_interface_language_group(interface_page)
         self._add_interface_startup_group(interface_page)
-        self._add_interface_window_group(interface_page)
         self._add_interface_headerbar_and_tips_groups(interface_page)
+        self._add_interface_window_group(interface_page)
         return interface_page
 
     def _build_appearance_preferences_page(self):
