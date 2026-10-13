@@ -1844,27 +1844,21 @@ class PreferencesWindow(Adw.Window):
         )
         sidebar_behavior_group.add(hide_on_startup_switch)
 
-        # When a terminal opens: do nothing / hide.
-        self._on_terminal_open_values = ['none', 'hide']
-        on_terminal_open_row = Adw.ComboRow()
-        on_terminal_open_row.set_title(_("When a Terminal Opens"))
-        on_terminal_open_row.set_subtitle(
-            _("What happens to the sidebar when any session opens, including local terminals"))
-        on_terminal_options = Gtk.StringList()
-        on_terminal_options.append(_("Do Nothing"))
-        on_terminal_options.append(_("Hide Sidebar"))
-        on_terminal_open_row.set_model(on_terminal_options)
+        hide_on_terminal_open_switch = Adw.SwitchRow()
+        hide_on_terminal_open_switch.set_title(
+            _("Hide Sidebar When a Terminal Tab Opens")
+        )
+        hide_on_terminal_open_switch.set_subtitle(
+            _("Including SSH sessions and local terminals")
+        )
         current_on_open = 'none'
         win = self.parent_window
         if win is not None and hasattr(win, '_sidebar_on_terminal_open'):
             current_on_open = win._sidebar_on_terminal_open()
-        if current_on_open not in self._on_terminal_open_values:
-            current_on_open = 'none'
-        on_terminal_open_row.set_selected(
-            self._on_terminal_open_values.index(current_on_open))
-        on_terminal_open_row.connect(
-            'notify::selected', self.on_sidebar_on_terminal_open_changed)
-        sidebar_behavior_group.add(on_terminal_open_row)
+        hide_on_terminal_open_switch.set_active(current_on_open == 'hide')
+        hide_on_terminal_open_switch.connect(
+            'notify::active', self.on_sidebar_on_terminal_open_changed)
+        sidebar_behavior_group.add(hide_on_terminal_open_switch)
 
         show_when_no_tabs_switch = Adw.SwitchRow()
         show_when_no_tabs_switch.set_title(_("Show When No Tab Is Open"))
@@ -1880,15 +1874,14 @@ class PreferencesWindow(Adw.Window):
 
         sidebar_page.add(sidebar_behavior_group)
 
-    def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
-        """Persist the merged 'when a terminal opens' behavior."""
+    def on_sidebar_on_terminal_open_changed(self, switch_row, _param):
+        """Persist whether the sidebar hides when a terminal tab opens."""
         try:
-            idx = combo_row.get_selected()
-            values = getattr(self, '_on_terminal_open_values', ['none', 'hide'])
-            action = values[idx] if 0 <= idx < len(values) else 'none'
+            hide = bool(switch_row.get_active())
+            action = 'hide' if hide else 'none'
             self.config.set_setting('ui.sidebar_on_terminal_open', action)
             # Keep the legacy booleans consistent for any older readers.
-            self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
+            self.config.set_setting('ui.sidebar_hide_on_terminal_open', hide)
             self.config.set_setting('ui.sidebar_minimize_on_connect', False)
         except Exception:
             logger.debug("sidebar on-terminal-open change failed", exc_info=True)
