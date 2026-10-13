@@ -2288,6 +2288,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             keep_open=lambda: bool(getattr(self, '_search_expanded_sidebar', False)),
             in_hot_zone=self._in_sidebar_toggle_zone,
         )
+        # The first start with the sidebar hidden explains the hover above.
+        from . import sidebar_peek_hint
+        sidebar_peek_hint.schedule(self)
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 

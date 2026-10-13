@@ -129,6 +129,9 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_hide_on_startup': False,
             'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
             'sidebar_show_when_no_tabs': False,
+            # Set once the first-start hover-reveal hint has been shown
+            # (sidebar_peek_hint.py).
+            'sidebar_peek_hint_shown': False,
             # What happens to the sidebar when a session opens:
             # 'none' | 'hide'. ('minimize' / icon strip is retired; migration
             # rewrites any persisted 'minimize' to 'none'.)

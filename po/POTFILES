@@ -81,6 +81,7 @@ src/sshpilot/plugins/registry_client.py
 src/sshpilot/port_utils.py
 src/sshpilot/layout_preset_chooser.py
 src/sshpilot/preferences.py
+src/sshpilot/sidebar_peek_hint.py
 src/sshpilot/sidebar_peek_preview.py
 src/sshpilot/rbw_setup.py
 src/sshpilot/scp_utils.py

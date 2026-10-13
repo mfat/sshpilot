@@ -154,29 +154,34 @@ def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
     def selected():
         return [k for k, card in chooser._cards.items() if card.get_active()]
 
+    def settle(condition, ms=3000):
+        # The sync is an idle; Settings builds its other pages in low-priority
+        # idles too, and one slow page can outlast a fixed short pump.
+        for _i in range(ms // 50):
+            if condition():
+                return True
+            gui.pump(50)
+        return condition()
+
     old = (config.get_setting('app-startup-behavior', 'welcome'),
            config.get_setting('ui.sidebar_hide_on_startup', False))
     try:
         chooser._cards['terminal'].set_active(True)
-        gui.pump(100)
+        assert settle(lambda: prefs.terminal_startup_radio.get_active()
+                      and prefs.hide_on_startup_switch.get_active())
         assert config.get_setting('app-startup-behavior') == 'terminal'
         assert config.get_setting('ui.sidebar_hide_on_startup') is True
-        assert prefs.terminal_startup_radio.get_active()
-        assert prefs.hide_on_startup_switch.get_active()
         assert selected() == ['terminal']
 
         prefs.hide_on_startup_switch.set_active(False)
-        gui.pump(100)
-        assert selected() == [], 'terminal with a visible sidebar is no preset'
+        assert settle(lambda: selected() == []), 'terminal with a visible sidebar is no preset'
 
         prefs.welcome_startup_radio.set_active(True)
-        gui.pump(100)
-        assert selected() == ['sidebar']
+        assert settle(lambda: selected() == ['sidebar'])
         assert not prefs.terminal_startup_radio.get_active()
 
         prefs.previous_session_startup_radio.set_active(True)
-        gui.pump(100)
-        assert selected() == []
+        assert settle(lambda: selected() == [])
     finally:
         config.set_setting('app-startup-behavior', old[0])
         config.set_setting('ui.sidebar_hide_on_startup', old[1])
