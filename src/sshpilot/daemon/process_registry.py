@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,6 +123,16 @@ def _create_time(pid: int) -> Optional[float]:
 def _pid_exists(pid: int) -> bool:
     """Whether any process holds ``pid`` — identity unknown."""
 
+    if sys.platform == "win32":
+        # os.kill(pid, 0) is not a probe on Windows: any signal other than the
+        # console CTRL events is TerminateProcess, and a dead PID raises a
+        # plain OSError that would read as "alive".
+        try:
+            import psutil
+
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

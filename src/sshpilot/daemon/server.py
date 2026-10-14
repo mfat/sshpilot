@@ -10,6 +10,7 @@ import secrets
 import selectors
 import socket
 import stat
+import sys
 import threading
 import time
 import traceback
@@ -72,6 +73,7 @@ from sshpilot.api.transport.terminal_frames import (
     TerminalFrameKind,
     encode_terminal_payload,
 )
+from sshpilot.api.transport import endpoint as transport_endpoint
 from sshpilot.api.transport.secret_frames import (
     SecretFrame,
     SecretFrameKind,
@@ -248,6 +250,8 @@ class _ClientConnection:
     terminal_continuity_lost: Set[SessionId] = field(default_factory=set)
     closed: bool = False
     pending_request_ids: Set[RequestId] = field(default_factory=set)
+    #: Windows TCP transport: validates the token preamble before any frame.
+    auth_gate: Optional[Any] = None
 
 
 @dataclass(frozen=True)
@@ -373,6 +377,7 @@ class DaemonServer:
         self._clients_by_token: Dict[int, _ClientConnection] = {}
         self._next_peer_token = 1
         self._socket_identity: Optional[Tuple[int, int]] = None
+        self._endpoint_token: Optional[str] = None
         self._stopping = threading.Event()
         self._ready = threading.Event()
         self._stopped = threading.Event()
@@ -577,40 +582,21 @@ class DaemonServer:
         self._lifecycle.set_resource_provider(self.collect_resource_counts)
         prepare_socket_path(self.socket_path)
         selector = selectors.DefaultSelector()
-        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        if transport_endpoint.USES_TCP_ENDPOINT:
+            listener, tcp_port = transport_endpoint.create_tcp_listener()
+        else:
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         gate_terminal_evidence = False
         self._readiness_manager = None
         try:
-            old_umask = os.umask(0o177)
-            try:
-                try:
-                    listener.bind(str(self.socket_path))
-                except OSError as exc:
-                    if exc.errno == errno.EADDRINUSE:
-                        raise DaemonAlreadyRunningError(
-                            "The daemon socket is already in use"
-                        ) from None
-                    raise
-            finally:
-                os.umask(old_umask)
-            initial = self.socket_path.lstat()
-            if (
-                stat.S_ISSOCK(initial.st_mode)
-                and not stat.S_ISLNK(initial.st_mode)
-                and (
-                    not hasattr(os, "getuid")
-                    or initial.st_uid == os.getuid()
-                )
-            ):
-                self._socket_identity = (initial.st_dev, initial.st_ino)
+            if transport_endpoint.USES_TCP_ENDPOINT:
+                # Listen before publishing so a client that reads the file
+                # can always connect.
+                listener.listen()
+                self._publish_tcp_endpoint(tcp_port)
             else:
-                raise SocketSecurityError("The daemon path changed during bind")
-            ensure_secure_socket_directory(self.socket_path)
-            os.chmod(self.socket_path, 0o600, follow_symlinks=False)
-            verified_identity = verify_bound_socket(self.socket_path)
-            if verified_identity != self._socket_identity:
-                raise SocketSecurityError("The daemon socket changed during bind")
-            listener.listen()
+                self._bind_unix_socket(listener)
+                listener.listen()
             listener.setblocking(False)
             # Bind proves single-instance ownership of this socket directory,
             # so it is now safe to own the durable child registry beside it.
@@ -648,7 +634,12 @@ class DaemonServer:
                     None,
                 )
                 if callable(launch_builder):
-                    from .pty_runner import PtySessionProcessRunner
+                    if sys.platform == "win32":
+                        from .conpty_runner import (
+                            ConPtySessionProcessRunner as PtySessionProcessRunner,
+                        )
+                    else:
+                        from .pty_runner import PtySessionProcessRunner
 
                     runner = PtySessionProcessRunner(
                         lambda spec: self._prepare_session_launch(
@@ -1145,6 +1136,52 @@ class DaemonServer:
             return self._key_service.client_can_interact(session_id, client_id)
         return False
 
+    def _bind_unix_socket(self, listener: socket.socket) -> None:
+        old_umask = os.umask(0o177)
+        try:
+            try:
+                listener.bind(str(self.socket_path))
+            except OSError as exc:
+                if exc.errno == errno.EADDRINUSE:
+                    raise DaemonAlreadyRunningError(
+                        "The daemon socket is already in use"
+                    ) from None
+                raise
+        finally:
+            os.umask(old_umask)
+        initial = self.socket_path.lstat()
+        if (
+            stat.S_ISSOCK(initial.st_mode)
+            and not stat.S_ISLNK(initial.st_mode)
+            and (
+                not hasattr(os, "getuid")
+                or initial.st_uid == os.getuid()
+            )
+        ):
+            self._socket_identity = (initial.st_dev, initial.st_ino)
+        else:
+            raise SocketSecurityError("The daemon path changed during bind")
+        ensure_secure_socket_directory(self.socket_path)
+        os.chmod(self.socket_path, 0o600, follow_symlinks=False)
+        verified_identity = verify_bound_socket(self.socket_path)
+        if verified_identity != self._socket_identity:
+            raise SocketSecurityError("The daemon socket changed during bind")
+
+    def _publish_tcp_endpoint(self, port: int) -> None:
+        """Windows: publish the loopback port and a fresh auth token."""
+
+        ensure_secure_socket_directory(self.socket_path)
+        self._endpoint_token = transport_endpoint.new_token()
+        self._socket_identity = transport_endpoint.publish_tcp_endpoint(
+            self.socket_path,
+            transport_endpoint.TcpEndpoint(
+                port=port, token=self._endpoint_token, pid=os.getpid()
+            ),
+        )
+        verified_identity = verify_bound_socket(self.socket_path)
+        if verified_identity != self._socket_identity:
+            raise SocketSecurityError("The daemon endpoint changed during publish")
+
     def _accept_client(self) -> None:
         listener = self._listener
         selector = self._selector
@@ -1158,6 +1195,8 @@ class DaemonServer:
         peer_token = self._next_peer_token
         self._next_peer_token += 1
         state = _ClientConnection(client_socket, token=peer_token)
+        if self._endpoint_token is not None:
+            state.auth_gate = transport_endpoint.PreambleGate(self._endpoint_token)
         with self._event_lock:
             self._clients[client_socket.fileno()] = state
             self._clients_by_token[peer_token] = state
@@ -1179,6 +1218,18 @@ class DaemonServer:
                 logger.debug("Client closed during a partial daemon frame")
             self._close_client(state)
             return
+        if state.auth_gate is not None:
+            verdict = state.auth_gate.feed(chunk)
+            if verdict is None:
+                return
+            if verdict is False:
+                logger.warning("Rejected a daemon client with a bad endpoint token")
+                self._close_client(state)
+                return
+            state.auth_gate = None
+            chunk = verdict
+            if not chunk:
+                return
         try:
             messages = state.decoder.feed(chunk)
         except FramingError as exc:

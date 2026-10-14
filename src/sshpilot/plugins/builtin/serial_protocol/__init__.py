@@ -9,7 +9,6 @@ tool and stays entirely within the terminal seam.
 from __future__ import annotations
 
 import glob
-import grp
 import os
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
@@ -98,8 +97,10 @@ def _access_denied_group(device: str) -> str:
     if os.access(device, os.R_OK | os.W_OK):
         return ""
     try:
+        import grp  # POSIX only
+
         return grp.getgrgid(os.stat(device).st_gid).gr_name
-    except (OSError, KeyError):
+    except (ImportError, OSError, KeyError):
         return ""
 
 

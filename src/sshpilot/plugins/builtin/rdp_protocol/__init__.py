@@ -202,6 +202,8 @@ def _args_file(arguments: Sequence[str]) -> Optional[str]:
     """
     if any(not arg or "\n" in arg or "\r" in arg for arg in arguments):
         return None
+    if not hasattr(os, "mkfifo"):  # Windows: no named FIFOs
+        return None
     directory = tempfile.mkdtemp(prefix="sshpilot-rdp-", dir=_args_fifo_directory())
     path = os.path.join(directory, "args")
     try:

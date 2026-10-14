@@ -18,6 +18,16 @@ sys.path.insert(0, PARENT)
 if os.path.isdir(SRC_DIR):
     sys.path.insert(0, SRC_DIR)
 
+# Windows: OpenSSH ships in System32\OpenSSH, which shells such as MSYS2 leave
+# off PATH. The GUI and the daemon (which inherits this environment) both
+# resolve plain "ssh", so make the built-in client findable.
+if sys.platform == "win32":
+    import shutil
+
+    _openssh = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "OpenSSH")
+    if shutil.which("ssh") is None and os.path.isfile(os.path.join(_openssh, "ssh.exe")):
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _openssh
+
 if len(sys.argv) > 1 and sys.argv[1] == '--daemon':
     from sshpilot.daemon.cli import main as daemon_main
 

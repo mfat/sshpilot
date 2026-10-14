@@ -14,7 +14,10 @@ from gettext import gettext as _, ngettext
 import weakref
 import subprocess
 import shutil
-import pwd
+try:
+    import pwd
+except ImportError:  # Windows
+    pwd = None
 from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
@@ -22,6 +25,7 @@ from .platform_utils import is_flatpak, is_macos
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
+    VTE_AVAILABLE,
     VTETerminalBackend,
     PyXtermTerminalBackend,
     PyXtermBridgeBackend,
@@ -865,6 +869,20 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"Failed to create PyXterm backend: {e}")
                 logger.warning("PyXterm backend creation failed, falling back to VTE")
 
+        if backend_name == "pyte" or not VTE_AVAILABLE:
+            # The pure-GTK emulator: the only option where GTK 4 has no VTE
+            # (Windows), and opt-in elsewhere.
+            try:
+                from .terminal_backend_pyte import PyteTerminalBackend
+            except ImportError:
+                if not VTE_AVAILABLE:
+                    raise
+                logger.warning("pyte is not installed, falling back to VTE")
+            else:
+                logger.info("Using pyte terminal backend")
+                self._backend_name = "pyte"
+                return PyteTerminalBackend(self)
+
         logger.debug("Using VTE terminal backend")
         self._backend_name = "vte"
         return VTETerminalBackend(self)
@@ -928,6 +946,8 @@ class TerminalWidget(Gtk.Box):
                 backend_name = "vte"
 
         backend_name = (backend_name or "vte").lower()
+        if backend_name == "vte" and not VTE_AVAILABLE:
+            backend_name = "pyte"
         current_name = self.get_backend_name()
 
         if current_name.lower() == backend_name.lower():
@@ -3582,6 +3602,12 @@ class TerminalWidget(Gtk.Box):
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
         logger.info("Setting up local shell terminal")
+        if getattr(self, '_backend_name', 'vte') == 'pyte':
+            self.emit(
+                'connection-failed',
+                _('Local terminals are not available with this terminal backend yet.'),
+            )
+            return
         try:
             # Hide connecting overlay immediately for local shell
             self._set_connecting_overlay_visible(False)

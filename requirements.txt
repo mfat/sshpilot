@@ -44,6 +44,12 @@ pykeepass>=4.0
 # System utilities
 psutil>=5.9.0
 
+# Windows only: ConPTY sessions and the built-in pyte terminal backend
+# (see docs/running-on-windows.md). pyte also enables the optional
+# "Built-in" backend on Linux/macOS.
+pyte>=0.8 ; sys_platform == "win32"
+pywinpty>=2.0 ; sys_platform == "win32"
+
 # Networking / TLS
 # Provides a CA bundle so HTTPS (the GitHub update check) can verify
 # certificates in frozen/relocated builds that ship no system CA store

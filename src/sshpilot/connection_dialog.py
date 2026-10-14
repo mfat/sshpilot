@@ -11,7 +11,7 @@ import types
 from typing import Optional, Dict, Any, Mapping
 
 try:
-    from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
+    from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 except (ImportError, AttributeError):  # pragma: no cover - used in tests without GTK
     class _DummyGIMeta(type):
         def __getattr__(cls, name):
@@ -31,7 +31,6 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GObject = _DummyGIModule
     Gdk = _DummyGIModule
     Pango = _DummyGIModule
-    PangoFT2 = _DummyGIModule
 
     class _DummyGLib(_DummyGIModule):
         @staticmethod

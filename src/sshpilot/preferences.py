@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _, ngettext
 
-from .platform_utils import is_macos
+from .platform_utils import is_macos, is_windows
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CHOICES
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
@@ -805,6 +805,9 @@ class PreferencesWindow(Adw.Window):
 
         # Set current backend
         current_backend = self.config.get_setting('terminal.backend', 'vte')
+        if not any(choice['id'] == current_backend for choice in self._backend_choice_data):
+            # e.g. the "vte" default on a system without VTE (Windows).
+            current_backend = self._backend_choice_data[0]['id']
         # Reset to VTE if pyxterm is configured on macOS (not supported)
         if is_macos() and current_backend and current_backend.lower() == 'pyxterm':
             current_backend = 'vte'
@@ -2876,6 +2879,9 @@ class PreferencesWindow(Adw.Window):
         )
         self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
         advanced_group.add(self.controlmaster_row)
+        if is_windows():
+            # OpenSSH for Windows cannot multiplex connections.
+            self.controlmaster_row.set_visible(False)
 
         # SSH verbosity (-v levels)
         self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
@@ -6498,7 +6504,7 @@ class PreferencesWindow(Adw.Window):
 
         # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
         # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
-        if current_backend == 'vte':
+        if current_backend in ('vte', 'pyte'):
             self.encoding_row.set_visible(False)
             logger.debug("Hiding encoding dropdown for VTE backend")
             return
@@ -6559,17 +6565,39 @@ class PreferencesWindow(Adw.Window):
         return _detect_pyxterm_backend()
 
     def _build_backend_choices(self):
-        choices = [
+        from .terminal_backends import VTE_AVAILABLE
+
+        choices = []
+        if VTE_AVAILABLE:
+            choices.append(
+                {
+                    'id': 'vte',
+                    'label': _('VTE (default)'),
+                    'description': _('Native GTK terminal'),
+                    'available': True,
+                    'error': None,
+                }
+            )
+        import importlib.util
+
+        pyte_available = importlib.util.find_spec('pyte') is not None
+        choices.append(
             {
-                'id': 'vte',
-                'label': _('VTE (default)'),
-                'description': _('Native GTK terminal'),
-                'available': True,
-                'error': None,
+                'id': 'pyte',
+                'label': (
+                    (_('Built-in') if VTE_AVAILABLE else _('Built-in (default)'))
+                    if pyte_available else _('Built-in (unavailable)')
+                ),
+                'description': (
+                    _('Portable terminal emulator drawn with GTK')
+                    if pyte_available else _('Requires the pyte Python package')
+                ),
+                'available': pyte_available,
+                'error': None if pyte_available else 'pyte is not installed',
             }
-        ]
-        # PyXterm.js is not supported on macOS (webkitgtk is Linux-only)
-        if not is_macos():
+        )
+        # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
+        if not is_macos() and not is_windows():
             pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
             if pyxterm_available:
                 choices.append(
@@ -6680,7 +6708,9 @@ class PreferencesWindow(Adw.Window):
     def _show_backend_change_info(self, backend_id, open_terminals, index):
         """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
-        backend_name = 'xterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
+        backend_name = {'pyxterm': 'xterm.js', 'pyte': _('Built-in')}.get(
+            backend_id.lower(), 'VTE'
+        )
         dialog = Adw.AlertDialog(
             heading=_("Terminal backend switched to {backend}").format(backend=backend_name),
             body=_("Only new terminal tabs will use the selected backend."),

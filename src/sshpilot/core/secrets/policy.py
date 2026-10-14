@@ -50,7 +50,8 @@ def normalize_backend_name(name: Optional[str]) -> str:
 def platform_default_order(*, platform: Optional[str] = None) -> List[str]:
     """Backend probe order for ``auto`` selection."""
     plat = (platform or sys.platform).lower()
-    if plat.startswith("darwin"):
+    if plat.startswith("darwin") or plat.startswith("win"):
+        # keyring maps to the Keychain / Windows Credential Manager.
         return [SecretBackendName.KEYRING.value]
     # Linux / other: prefer libsecret, then keyring.
     return [SecretBackendName.LIBSECRET.value, SecretBackendName.KEYRING.value]

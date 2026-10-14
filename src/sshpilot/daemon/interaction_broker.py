@@ -23,6 +23,7 @@ from time import monotonic
 from typing import Callable, Deque, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.transport import endpoint as transport_endpoint
 from sshpilot.api.events import (
     CoreEventCallback,
     EventPublisher,
@@ -211,11 +212,22 @@ class InteractionBroker:
         )
         os.chmod(self._private_dir, 0o700)
         self._askpass_socket_path = self._private_dir / "askpass.sock"
-        self._askpass_helper_path = self._private_dir / "askpass"
-        self._write_helper_launcher()
-        self._askpass_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._askpass_listener.bind(str(self._askpass_socket_path))
-        os.chmod(self._askpass_socket_path, 0o600, follow_symlinks=False)
+        if transport_endpoint.USES_TCP_ENDPOINT:
+            # Windows: OpenSSH runs the helper through cmd.exe, and the
+            # listener is loopback TCP. Each request still carries its
+            # per-launch broker token, which is the channel's authority.
+            transport_endpoint.restrict_to_current_user(self._private_dir)
+            self._askpass_helper_path = self._private_dir / "askpass.cmd"
+            self._write_helper_launcher()
+            self._askpass_listener, port = transport_endpoint.create_tcp_listener()
+            self._askpass_address = f"tcp:127.0.0.1:{port}"
+        else:
+            self._askpass_helper_path = self._private_dir / "askpass"
+            self._write_helper_launcher()
+            self._askpass_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._askpass_listener.bind(str(self._askpass_socket_path))
+            os.chmod(self._askpass_socket_path, 0o600, follow_symlinks=False)
+            self._askpass_address = str(self._askpass_socket_path)
         self._askpass_listener.listen(askpass_queue_limit)
         self._askpass_listener.settimeout(0.2)
         self._askpass_workers = tuple(
@@ -349,9 +361,7 @@ class InteractionBroker:
             environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
             environment["SSH_ASKPASS_REQUIRE"] = "force" if headless else "prefer"
             environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
-            environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(
-                self._askpass_socket_path
-            )
+            environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
             environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
@@ -447,7 +457,7 @@ class InteractionBroker:
         env["SSH_ASKPASS"] = str(self._askpass_helper_path)
         env["SSH_ASKPASS_REQUIRE"] = "force"
         env["DISPLAY"] = env.get("DISPLAY") or ":sshpilot-daemon"
-        env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(self._askpass_socket_path)
+        env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
         env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for operation scope={scope_id}"
@@ -1452,6 +1462,9 @@ class InteractionBroker:
         shutil.rmtree(self._private_dir, ignore_errors=True)
 
     def _write_helper_launcher(self) -> None:
+        if transport_endpoint.USES_TCP_ENDPOINT:
+            self._write_windows_helper_launcher()
+            return
         if getattr(sys, "frozen", False):
             # sys.executable is this application's own binary in a frozen
             # (PyInstaller) build, not a Python interpreter: a shebang of
@@ -1499,6 +1512,28 @@ class InteractionBroker:
         finally:
             os.close(descriptor)
 
+    def _write_windows_helper_launcher(self) -> None:
+        """Write ``askpass.cmd`` (and its Python helper) for OpenSSH for Windows.
+
+        Win32-OpenSSH starts ``SSH_ASKPASS`` with CreateProcess, which runs a
+        ``.cmd`` through cmd.exe but cannot honour a shebang. The helper source
+        is copied beside it (not imported) for the same reduced-environment
+        reason as the POSIX launcher.
+        """
+
+        if getattr(sys, "frozen", False):
+            command = f'@"{sys.executable}" --internal-askpass %*\r\n'
+        else:
+            helper_path = self._private_dir / "askpass_helper.py"
+            helper_source = Path(__file__).with_name("askpass_helper.py").read_bytes()
+            with open(helper_path, "xb") as handle:
+                handle.write(helper_source)
+            # -I: isolated mode, so nothing from the cwd or PYTHON* env vars
+            # is imported into the process that handles the secret.
+            command = f'@"{sys.executable}" -I "{helper_path}" %*\r\n'
+        with open(self._askpass_helper_path, "x", encoding="utf-8", newline="") as handle:
+            handle.write("@echo off\r\n" + command)
+
     def _askpass_accept_main(self) -> None:
         while True:
             with self._condition:
@@ -1527,6 +1562,9 @@ class InteractionBroker:
 
     @staticmethod
     def _same_user_peer(transport: socket.socket) -> bool:
+        if transport.family != getattr(socket, "AF_UNIX", None):
+            # Loopback TCP (Windows): the per-request broker token decides.
+            return True
         if not hasattr(socket, "SO_PEERCRED") or not hasattr(os, "getuid"):
             return True
         try:

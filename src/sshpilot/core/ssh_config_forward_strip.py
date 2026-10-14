@@ -55,7 +55,7 @@ def materialize_ssh_config_without_port_forwards(
     if destination_dir is None:
         root = Path(
             tempfile.mkdtemp(
-                prefix=f"sshpilot-fwd-cfg-{os.getuid()}-",
+                prefix=f"sshpilot-fwd-cfg-{os.getuid() if hasattr(os, 'getuid') else os.getpid()}-",
             )
         )
     else:

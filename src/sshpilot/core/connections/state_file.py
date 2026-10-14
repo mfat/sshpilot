@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import stat
 import tempfile
 import time
@@ -617,6 +618,8 @@ def _serialize_json(payload: Mapping[str, Any], label: str) -> bytes:
 
 def _fsync_parent(path: Path) -> None:
     """Make a completed same-directory rename or unlink durable."""
+    if sys.platform == "win32":
+        return  # Windows cannot open a directory to fsync it; NTFS journals the rename itself.
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
         flags |= os.O_DIRECTORY

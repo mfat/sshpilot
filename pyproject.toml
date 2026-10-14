@@ -30,6 +30,11 @@ dependencies = [
     # adapter reports unavailable if it (or its deps: lxml/pycryptodomex/argon2-cffi)
     # is missing, so the rest of the app is unaffected.
     "pykeepass>=4.0",
+    # Windows has no VTE/WebKitGTK for GTK 4: the daemon runs ssh.exe under
+    # ConPTY (pywinpty) and the built-in pyte backend renders it. pyte is
+    # optional elsewhere (terminal.backend = "pyte").
+    "pyte>=0.8; sys_platform == 'win32'",
+    "pywinpty>=2.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

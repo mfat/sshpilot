@@ -137,7 +137,8 @@ class SessionManager:
                 suffix=".tmp",
             )
             try:
-                os.fchmod(fd, 0o600)
+                if hasattr(os, "fchmod"):  # absent on Windows before 3.13
+                    os.fchmod(fd, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     json.dump(payload, handle, indent=2)
                     handle.write("\n")

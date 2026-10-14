@@ -130,6 +130,23 @@ AMBIGUOUS_HANDSHAKE_GRACE = 2.0
 AMBIGUOUS_HANDSHAKE_POLL = 0.1
 
 
+def detached_process_options() -> dict:
+    """Popen options that detach a background child from the caller.
+
+    Windows ignores ``start_new_session``. There the daemon gets its own
+    process group and a hidden console, which the console programs it starts
+    (ssh.exe, ssh-keygen.exe) inherit instead of each opening a window.
+    """
+
+    if sys.platform == "win32":
+        return {
+            "creationflags": (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            )
+        }
+    return {"start_new_session": True}
+
+
 @dataclass(frozen=True)
 class DaemonProcessHandle:
     """Proof that this launcher created one exact child process."""
@@ -286,8 +303,8 @@ class DaemonLauncher:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     close_fds=True,
-                    start_new_session=True,
                     env=_child_environment(self._environment),
+                    **detached_process_options(),
                 )
             except OSError as error:
                 raise DaemonLaunchError(

@@ -132,9 +132,18 @@ class SSHProcessManager:
             logger.warning("Cleanup timeout - forcing exit")
             os._exit(1)
 
-        # Set 5-second timeout for entire cleanup
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(5)
+        # Set 5-second timeout for entire cleanup. Windows has no SIGALRM, so
+        # a timer thread plays the watchdog there.
+        watchdog = None
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(5)
+        else:
+            import threading
+
+            watchdog = threading.Timer(5, timeout_handler, args=(None, None))
+            watchdog.daemon = True
+            watchdog.start()
 
         try:
             logger.info("Cleaning up all SSH processes...")
@@ -167,7 +176,10 @@ class SSHProcessManager:
 
             logger.info("SSH process cleanup completed")
         finally:
-            signal.alarm(0)  # Cancel timeout
+            if watchdog is not None:
+                watchdog.cancel()
+            else:
+                signal.alarm(0)  # Cancel timeout
 
 
 # Global process manager instance
