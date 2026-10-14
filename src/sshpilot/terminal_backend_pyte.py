@@ -23,6 +23,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango, PangoCairo  # noqa: E402
 
 from .terminal_model_common import (  # noqa: E402
+    SynchronizedOutput,
     default_builtin_model,
     MOUSE_LEFT,
     MOUSE_MIDDLE,
@@ -190,6 +191,8 @@ class PyteTerminalView(Gtk.DrawingArea):
         self._reported_grid: Optional[Tuple[int, int]] = None
         self._focused = False
         self._last_pointer = (0.0, 0.0)
+        self._sync_output = SynchronizedOutput()
+        self._sync_timer = 0
 
         self.vadjustment = Gtk.Adjustment(
             value=0, lower=0, upper=24, step_increment=1, page_increment=24, page_size=24
@@ -204,6 +207,11 @@ class PyteTerminalView(Gtk.DrawingArea):
     # ------------------------------------------------------------------ API
 
     def feed(self, data: bytes) -> None:
+        if not data:
+            return
+        data, reply = self._sync_output.filter(bytes(data))
+        if reply:
+            self._send(reply)
         if not data:
             return
         self.model.feed(data)
@@ -226,8 +234,26 @@ class PyteTerminalView(Gtk.DrawingArea):
             except Exception:
                 pass
         self._sync_adjustment()
-        self.queue_draw()
+        self._queue_output_draw()
         self.emit("contents-changed")
+
+    def _queue_output_draw(self) -> None:
+        """Repaint for new output, unless a synchronized update is open."""
+
+        if self._sync_output.active:
+            if not self._sync_timer:
+                delay = int(self._sync_output.remaining() * 1000) + 1
+                self._sync_timer = GLib.timeout_add(delay, self._on_sync_timeout)
+            return
+        if self._sync_timer:
+            GLib.source_remove(self._sync_timer)
+            self._sync_timer = 0
+        self.queue_draw()
+
+    def _on_sync_timeout(self) -> bool:
+        self._sync_timer = 0
+        self._queue_output_draw()
+        return GLib.SOURCE_REMOVE
 
     def get_window_title(self) -> str:
         return self.model.screen.title
@@ -909,6 +935,9 @@ class PyteTerminalBackend:
 
     def destroy(self) -> None:
         self.view.disable_grid_tracking()
+        if self.view._sync_timer:
+            GLib.source_remove(self.view._sync_timer)
+            self.view._sync_timer = 0
 
     def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
         settings = settings or {}

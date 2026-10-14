@@ -56,3 +56,29 @@ def test_daemon_sessions_pull_history_on_grow_only_without_conpty(model, platfor
     monkeypatch.setattr(terminal_backend_pyte.sys, "platform", platform)
     backend.prepare_pty_less_emulation()
     assert backend.view.model.pull_history_on_grow is pulls
+
+
+@pytest.mark.parametrize("model", ["pyte", "vterm"])
+def test_synchronized_update_holds_the_repaint(model, monkeypatch):
+    monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
+    view = PyteTerminalView()
+    draws = []
+    monkeypatch.setattr(view, "queue_draw", lambda: draws.append(1))
+    sent = []
+    monkeypatch.setattr(view, "_send", sent.append)
+
+    view.feed(b"\x1b[?2026h" + b"half-drawn")
+    assert draws == [] and view._sync_timer
+    view.feed(b"\x1b[?2026$p")
+    assert sent == [b"\x1b[?2026;1$y"]
+    view.feed(b" done\x1b[?2026l")
+    assert draws == [1] and not view._sync_timer
+    assert "half-drawn done" in view.model.row_text(view.model.history_length)
+
+    # An update that never ends is painted after the timeout.
+    view.feed(b"\x1b[?2026hstuck")
+    context = GLib.MainContext.default()
+    deadline = GLib.get_monotonic_time() + 2_000_000
+    while len(draws) < 2 and GLib.get_monotonic_time() < deadline:
+        context.iteration(False)
+    assert len(draws) == 2

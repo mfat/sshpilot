@@ -8,6 +8,8 @@ Nothing here imports pyte, GTK or libvterm.
 
 from __future__ import annotations
 
+import re
+import time
 from typing import Callable, List, Optional, Tuple
 
 #: DECSET modes, shifted the way pyte stores private modes. The libvterm model
@@ -34,6 +36,73 @@ def default_builtin_model() -> str:
     import sys
 
     return "vterm" if sys.platform == "win32" else "pyte"
+
+
+class SynchronizedOutput:
+    """Mode 2026: hold repaints while an application redraws.
+
+    Between ``CSI ? 2026 h`` and ``CSI ? 2026 l`` a TUI rewrites the screen
+    in pieces; painting in between shows it half-drawn. Neither pyte nor
+    libvterm 0.3.3 knows the mode, so the view tracks it from the byte
+    stream, as Neovim's terminal does. A redraw left open longer than
+    :attr:`TIMEOUT` is treated as finished, so a crashed app cannot freeze
+    the screen.
+
+    The DECRQM query ``CSI ? 2026 $ p`` is answered here and removed from
+    the stream; the models would otherwise report the mode as unknown and
+    applications would not use it.
+    """
+
+    TIMEOUT = 0.2
+    _SEQUENCE = re.compile(rb"\x1b\[\?2026(?:([hl])|\$p)")
+    _PREFIXES = tuple(b"\x1b[?2026$p"[:n] for n in range(1, 10)) + (b"\x1b[?2026",)
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._since: Optional[float] = None
+        self._tail = b""
+
+    @property
+    def active(self) -> bool:
+        if self._since is None:
+            return False
+        if self._clock() - self._since >= self.TIMEOUT:
+            self._since = None
+        return self._since is not None
+
+    def filter(self, data: bytes) -> Tuple[bytes, bytes]:
+        """``(data for the model, reply for the remote)``."""
+
+        if self._tail:
+            data, self._tail = self._tail + data, b""
+        if b"\x1b[?2026" not in data and not data.endswith(self._PREFIXES):
+            return data, b""
+        reply = b""
+        pieces = []
+        position = 0
+        for match in self._SEQUENCE.finditer(data):
+            action = match.group(1)
+            if action == b"h":
+                self._since = self._clock()
+            elif action == b"l":
+                self._since = None
+            else:
+                reply += b"\x1b[?2026;%d$y" % (1 if self.active else 2)
+                pieces.append(data[position:match.start()])
+                position = match.end()
+        pieces.append(data[position:])
+        data = b"".join(pieces)
+        start = data.rfind(b"\x1b")
+        if start >= 0 and data[start:] in self._PREFIXES:
+            data, self._tail = data[:start], data[start:]
+        return data, reply
+
+    def remaining(self) -> float:
+        """Seconds until an open redraw times out (0 when none is open)."""
+
+        if not self.active:
+            return 0.0
+        return max(0.0, self.TIMEOUT - (self._clock() - self._since))
 
 
 class LineIndexMixin:
