@@ -402,6 +402,104 @@ class VtermScreen:
 _ALT_SWITCH = re.compile(rb"\x1b\[\?(1049|1047|47)[hl]")
 
 
+# ---------------------------------------------------------------------------
+# CSI argument overflow guard
+
+#: libvterm 0.3.3 stores CSI arguments in ``long args[16]`` and bumps the
+#: index on every ``;`` or ``:`` without a bound, so a 16th separator writes
+#: past the array (a remotely triggerable crash). Neovim's fork raised the
+#: array to 32 but kept the unbounded index.
+_CSI_MAX_SEPARATORS = 15
+
+#: Bytes libvterm keeps parsing as CSI parameters: parameter bytes, DEL, and
+#: C0 controls other than CAN, SUB and ESC (which end or restart the CSI).
+_CSI_BODY = rb"(?:[\x30-\x3f\x7f]|[\x00-\x17\x19\x1c-\x1f])*"
+_CSI_RUN = re.compile(rb"\x1b\[(" + _CSI_BODY + rb")")
+_CSI_CONTINUE = re.compile(_CSI_BODY)
+_CSI_PARAM_BYTE = re.compile(rb"[\x30-\x3f]")
+#: A CSI with more separators than libvterm can hold (the slow path's trigger).
+_CSI_TOO_LONG = re.compile(
+    rb"\x1b\[(?:[\x30-\x39\x3c-\x3f\x7f\x00-\x17\x19\x1c-\x1f]*[;:]){%d}"
+    % (_CSI_MAX_SEPARATORS + 1)
+)
+
+
+class _CsiArgGuard:
+    """Drop CSI parameters past libvterm's 16-argument array, across feeds."""
+
+    def __init__(self) -> None:
+        #: Separators already seen in a CSI left open by the previous feed.
+        self._open: Optional[int] = None
+        #: The previous feed ended with a bare ESC (a CSI may start next).
+        self._esc = False
+
+    def filter(self, data: bytes) -> bytes:
+        if not data:
+            return data
+        out = []
+        position = 0
+        if self._esc:
+            self._esc = False
+            if data[:1] == b"[":
+                out.append(b"[")
+                position, self._open = 1, 0
+        if self._open is not None:
+            # Finish the CSI the previous feed left open.
+            match = _CSI_CONTINUE.match(data, position)
+            out.append(self._clip(match.group(0), self._open, match.end() == len(data)))
+            position = match.end()
+            if position == len(data):
+                return b"".join(out)
+        rest = data[position:] if position else data
+        if not _CSI_TOO_LONG.search(rest):
+            self._note_tail(rest)
+            if not out:
+                return rest
+            out.append(rest)
+            return b"".join(out)
+        position = 0
+        for match in _CSI_RUN.finditer(rest):
+            out.append(rest[position:match.start(1)])
+            out.append(self._clip(match.group(1), 0, match.end() == len(rest)))
+            position = match.end()
+        out.append(rest[position:])
+        if position < len(rest):
+            self._open = None
+            self._esc = rest.endswith(b"\x1b")
+        return b"".join(out)
+
+    def _clip(self, body: bytes, seen: int, open_at_end: bool) -> bytes:
+        separators = seen + body.count(b";") + body.count(b":")
+        self._open = separators if open_at_end else None
+        if separators <= _CSI_MAX_SEPARATORS:
+            return body
+        kept = []
+        count = seen
+        overflowed = count > _CSI_MAX_SEPARATORS
+        for byte in body:
+            char = bytes((byte,))
+            if byte in b";:":
+                count += 1
+                if count > _CSI_MAX_SEPARATORS:
+                    overflowed = True
+            if overflowed and _CSI_PARAM_BYTE.match(char):
+                continue
+            kept.append(char)
+        return b"".join(kept)
+
+    def _note_tail(self, data: bytes) -> None:
+        """Remember a CSI or ESC left open at the end of a fast-path feed."""
+        self._open = None
+        self._esc = data.endswith(b"\x1b")
+        start = data.rfind(b"\x1b[")
+        if start < 0:
+            return
+        match = _CSI_RUN.match(data, start)
+        if match.end() == len(data):
+            body = match.group(1)
+            self._open = body.count(b";") + body.count(b":")
+
+
 class _AltResize:
     """Works around libvterm 0.3.3 resizing the main screen while the
     alternate screen is shown.
@@ -475,6 +573,7 @@ class VtermTerminalModel(LineIndexMixin):
         self._set_row_buffer()
         self._resizing = False
         self._alt: Optional[_AltResize] = None
+        self._csi_guard = _CsiArgGuard()
         #: See ``EmulatorScreen.pull_history_on_grow``. When off, libvterm is
         #: refused every history row and adds blank rows at the bottom.
         self.pull_history_on_grow = True
@@ -622,7 +721,7 @@ class VtermTerminalModel(LineIndexMixin):
     # -- input -----------------------------------------------------------------
 
     def feed(self, data: bytes) -> None:
-        data = bytes(data)
+        data = self._csi_guard.filter(bytes(data))
         if not data:
             return
         write = self._lib.vterm_input_write
