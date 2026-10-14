@@ -245,6 +245,19 @@ alternate-screen code is only used when the remote stream reaches the
 emulator unrendered. That happens on Linux/macOS with the built-in backend,
 and with a ConPTY passthrough mode if one becomes available.
 
+**Growing under ConPTY.** After a resize conhost repaints its own viewport
+from the top row. If the model had pulled history back onto the screen on a
+grow (as xterm and VTE do), conhost would paint over those rows and they would
+drop out of the transcript: `seq 1000 1120`, shrink, grow lost 1084–1098.
+Both models therefore have a `pull_history_on_grow` flag.
+`PyteTerminalBackend.prepare_pty_less_emulation()`, which only daemon sessions
+call, turns it off when the daemon runs under ConPTY (Windows; the daemon is
+always local). The pyte screen then skips the pull and libvterm's
+`sb_popline` returns 0, so the new rows are added at the bottom. Raw streams
+(the POSIX daemon) keep the pull. Leftover: through ConPTY, libvterm still
+pushes 2–3 rows of a full-screen app into history on a shrink, because it
+never sees `?1049h`.
+
 **Packaging cost.**
 - *MSYS2:* `pacman -S mingw-w64-ucrt-x86_64-libvterm` installs
   `libvterm-0.dll` (80 KB). It imports only system DLLs (ucrtbase, msvcrt,

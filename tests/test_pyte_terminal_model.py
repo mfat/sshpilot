@@ -166,6 +166,47 @@ def test_shrinking_keeps_cursor_row_and_growing_restores_history(make_model):
     assert model.screen.cursor.y == 7
 
 
+def _conhost_repaint(model, rows) -> None:
+    # What conhost sends after a resize: its viewport, from the top row down.
+    model.feed(b"\x1b[H" + b"\x1b[K\r\n".join(rows) + b"\x1b[K\x1b[J")
+
+
+def _transcript(model):
+    rows = [model.row_text(row).rstrip() for row in range(model.total_rows)]
+    while rows and not rows[-1]:
+        rows.pop()
+    return rows
+
+
+def test_growing_under_conpty_keeps_history_in_place(make_model):
+    model = make_model(20, 6)
+    model.pull_history_on_grow = False
+    for number in range(1000, 1013):
+        model.feed(b"%d\r\n" % number)
+    model.feed(b"$ ")
+    expected = [str(number) for number in range(1000, 1013)] + ["$"]
+    model.resize(20, 3)
+    _conhost_repaint(model, [b"1011", b"1012", b"$ "])
+    assert model.history_length == 11
+    model.resize(20, 9)
+    assert model.history_length == 11
+    assert model.screen.cursor.y == 2
+    _conhost_repaint(model, [b"1011", b"1012", b"$ "])
+    assert _transcript(model) == expected
+
+
+def test_growing_with_pull_back_loses_rows_under_conpty(make_model):
+    # Why ConPTY sessions turn the pull off: conhost paints over pulled rows.
+    model = make_model(20, 6)
+    for number in range(1000, 1013):
+        model.feed(b"%d\r\n" % number)
+    model.feed(b"$ ")
+    model.resize(20, 3)
+    model.resize(20, 9)
+    _conhost_repaint(model, [b"1011", b"1012", b"$ "])
+    assert "1007" not in _transcript(model)
+
+
 def test_ed3_clears_scrollback_only(make_model):
     model = make_model(20, 5)
     _fill(model, 12)

@@ -43,3 +43,16 @@ def test_wheel_and_shift_page_keys_scroll_the_right_way(model, monkeypatch):
     assert view.scroll_offset == view.model.lines - 1
     view._on_key_pressed(None, page_down, 0, Gdk.ModifierType.SHIFT_MASK)
     assert view.scroll_offset == 0
+
+
+@pytest.mark.parametrize("platform, pulls", [("win32", False), ("linux", True), ("darwin", True)])
+@pytest.mark.parametrize("model", ["pyte", "vterm"])
+def test_daemon_sessions_pull_history_on_grow_only_without_conpty(model, platform, pulls, monkeypatch):
+    from sshpilot import terminal_backend_pyte
+
+    monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
+    backend = terminal_backend_pyte.PyteTerminalBackend(object())
+    assert backend.view.model.pull_history_on_grow
+    monkeypatch.setattr(terminal_backend_pyte.sys, "platform", platform)
+    backend.prepare_pty_less_emulation()
+    assert backend.view.model.pull_history_on_grow is pulls

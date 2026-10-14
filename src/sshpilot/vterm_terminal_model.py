@@ -475,6 +475,9 @@ class VtermTerminalModel(LineIndexMixin):
         self._set_row_buffer()
         self._resizing = False
         self._alt: Optional[_AltResize] = None
+        #: See ``EmulatorScreen.pull_history_on_grow``. When off, libvterm is
+        #: refused every history row and adds blank rows at the bottom.
+        self.pull_history_on_grow = True
         self.screen = VtermScreen(self, scrollback_limit)
 
         self._vt = lib.vterm_new(self._lines, self._columns)
@@ -590,7 +593,7 @@ class VtermTerminalModel(LineIndexMixin):
 
     def _on_sb_popline(self, cols, cells, _user) -> int:
         scrollback = self.screen.scrollback
-        if not scrollback:
+        if not scrollback or not self.pull_history_on_grow:
             return 0
         raw = scrollback.pop()
         if self._resizing and self.screen.alternate_active and self._alt is not None:

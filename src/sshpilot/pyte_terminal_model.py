@@ -66,6 +66,11 @@ class EmulatorScreen(pyte.Screen):
         #: Bumped whenever lines enter the scrollback, so a scrolled-back
         #: viewport can stay anchored on the same text.
         self.scrollback_pushes = 0
+        #: Growing pulls history back onto the screen (xterm, VTE). Off for a
+        #: stream already rendered by a terminal that repaints its own
+        #: top-anchored viewport after a resize (ConPTY), where the pulled
+        #: rows would be painted over and lost.
+        self.pull_history_on_grow = True
         super().__init__(columns, lines)
 
     # -- small helpers -------------------------------------------------------
@@ -171,7 +176,12 @@ class EmulatorScreen(pyte.Screen):
                 self.cursor.y -= excess
             for y in [y for y in self.buffer if y >= lines]:
                 self.buffer.pop(y, None)
-        elif lines > self.lines and not self.alternate_active and self.scrollback:
+        elif (
+            lines > self.lines
+            and self.pull_history_on_grow
+            and not self.alternate_active
+            and self.scrollback
+        ):
             # Growing: pull history back down, like xterm and VTE do.
             pulled = min(lines - self.lines, len(self.scrollback))
             self._shift_down(pulled)
@@ -262,6 +272,14 @@ class TerminalModel(LineIndexMixin):
             on_reply=on_reply,
         )
         self.stream = pyte.ByteStream(self.screen)
+
+    @property
+    def pull_history_on_grow(self) -> bool:
+        return self.screen.pull_history_on_grow
+
+    @pull_history_on_grow.setter
+    def pull_history_on_grow(self, value: bool) -> None:
+        self.screen.pull_history_on_grow = bool(value)
 
     # -- input -----------------------------------------------------------------
 

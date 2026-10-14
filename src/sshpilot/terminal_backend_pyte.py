@@ -13,6 +13,7 @@ import importlib.util
 import logging
 import os
 import re
+import sys
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 import gi
@@ -82,6 +83,17 @@ def create_terminal_model(preferred: Optional[str], columns: int, lines: int, on
             logger.warning("Terminal model %s unavailable (%s); using %s", name, errors[0], candidate)
         return candidate, model
     raise ImportError("No terminal emulator model available (" + "; ".join(errors) + ")")
+
+
+def daemon_output_is_rendered() -> bool:
+    """True when daemon session output was already rendered by ConPTY.
+
+    The daemon is always local (a Unix socket, or loopback TCP on Windows) and
+    ``daemon/server.py`` runs sessions under ConPTY on Windows. conhost then
+    sends repaints of its own screen rather than the remote's raw stream.
+    """
+
+    return sys.platform == "win32"
 
 
 def _any_model_importable() -> bool:
@@ -966,6 +978,18 @@ class PyteTerminalBackend:
         raise TerminalBackendCapabilityError(
             "The pyte backend renders daemon sessions only"
         )
+
+    def prepare_pty_less_emulation(self) -> None:
+        """Adapt the model to the daemon's stream (called on daemon paths only).
+
+        After a resize conhost repaints its viewport from the top, so rows
+        the model pulled back from the scrollback on a grow would be painted
+        over and drop out of the transcript. Under ConPTY the model leaves
+        history alone and adds the new rows at the bottom. A raw stream (the
+        POSIX daemon) keeps the xterm-like pull.
+        """
+
+        self.view.model.pull_history_on_grow = not daemon_output_is_rendered()
 
     def get_pty(self) -> Optional[Any]:
         return None
