@@ -44,6 +44,8 @@ def restrict_to_current_user(path: os.PathLike) -> bool:
         f"{_current_principal()}:F",
         "/grant:r",
         "*S-1-5-18:F",  # NT AUTHORITY\SYSTEM, locale-independent
+        "/remove:g",
+        "*S-1-3-4",  # OWNER RIGHTS: Python 3.13+ mkdtemp/mkdir(0o700) grant it, OpenSSH refuses it
     ]
     try:
         result = subprocess.run(
@@ -62,6 +64,52 @@ def restrict_to_current_user(path: os.PathLike) -> bool:
             os.fspath(path),
             result.returncode,
             (result.stderr or result.stdout).strip(),
+        )
+        return False
+    return True
+
+
+def restrict_directory_to_current_user(path: os.PathLike) -> bool:
+    """Make ``path`` (a directory) private, for everything created inside it.
+
+    The ACL grants the current user and SYSTEM full control, inherited by
+    files and subdirectories (``(OI)(CI)``), with no inherited entries from
+    the parent. OpenSSH for Windows refuses a config file other principals
+    can reach ("Bad owner or permissions"); a file in ``%TEMP%`` otherwise
+    inherits ``OWNER RIGHTS`` and is refused. Returns False after logging if
+    icacls fails.
+    """
+
+    if sys.platform != "win32":
+        return True
+    command = [
+        "icacls",
+        os.fspath(path),
+        "/inheritance:r",
+        "/grant:r",
+        f"{_current_principal()}:(OI)(CI)F",
+        "/grant:r",
+        "*S-1-5-18:(OI)(CI)F",  # NT AUTHORITY\SYSTEM, locale-independent
+        "/remove:g",
+        "*S-1-3-4",  # OWNER RIGHTS: Python 3.13+ mkdtemp/mkdir(0o700) grant it, OpenSSH refuses it
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not restrict directory ACL: %s", type(exc).__name__)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "icacls failed for %s (exit %s): %s",
+            os.fspath(path),
+            result.returncode,
+            (result.stderr or result.stdout).strip()[:200],
         )
         return False
     return True
