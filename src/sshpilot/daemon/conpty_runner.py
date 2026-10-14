@@ -1,7 +1,8 @@
 """Windows ConPTY session runner (the counterpart of ``pty_runner`` on POSIX).
 
 Each session gets its own pseudo console through pywinpty, which prefers the
-native ConPTY API. One reader thread per session forwards console output; a
+native ConPTY API, or through the ``ctypes`` binding in ``conpty_ctypes`` when
+``SSHPILOT_CONPTY_BACKEND=ctypes``. One reader thread per session forwards console output; a
 shared reaper thread notices process exit. The handle implements the same
 surface :class:`~sshpilot.daemon.session_runtime.SessionRuntime` uses on the
 POSIX runner: ``write``, ``resize``, ``terminate``, ``kill``, ``wait`` and
@@ -55,6 +56,29 @@ LaunchBuilder = Callable[
     [SessionLaunchSpec],
     tuple[Sequence[str], Mapping[str, str]],
 ]
+
+
+CONPTY_BACKEND_ENV = "SSHPILOT_CONPTY_BACKEND"
+
+
+def pty_factory_from_environment(environ=None):
+    """The pseudo-console factory ``SSHPILOT_CONPTY_BACKEND`` asks for.
+
+    ``pywinpty`` (the default) returns ``None``, which the runner turns into
+    ``winpty.PTY``. ``ctypes`` returns the direct binding in ``conpty_ctypes``.
+    """
+
+    environ = os.environ if environ is None else environ
+    backend = (environ.get(CONPTY_BACKEND_ENV) or "pywinpty").strip().lower()
+    if backend == "ctypes":
+        from .conpty_ctypes import CtypesPty, default_api
+
+        logger.info("ConPTY backend: ctypes (%s)", default_api().source)
+        return CtypesPty
+    if backend not in ("", "pywinpty", "winpty"):
+        logger.warning("Unknown %s=%r; using pywinpty", CONPTY_BACKEND_ENV, backend)
+    logger.info("ConPTY backend: pywinpty")
+    return None
 
 
 def conpty_available() -> bool:
@@ -220,8 +244,15 @@ class ConPtyProcessHandle:
         self._on_eof()
 
     def close(self) -> None:
-        # Dropping the PTY object closes the pseudo console and its pipes.
-        self._pty = _ClosedPty()
+        # Dropping a pywinpty PTY closes the pseudo console and its pipes; the
+        # ctypes one closes explicitly while the reader drains the output.
+        pty, self._pty = self._pty, _ClosedPty()
+        closer = getattr(pty, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception:
+                logger.debug("ConPTY close failed", exc_info=True)
 
     # -- internals ------------------------------------------------------------
 
@@ -361,6 +392,7 @@ class ConPtySessionProcessRunner:
         dimensions = spec.dimensions
         rows = int(dimensions.rows) if dimensions is not None else 24
         columns = int(dimensions.columns) if dimensions is not None else 80
+        pty = None
         try:
             executable = _resolve_executable(argv[0], env)
             pty = self._pty_factory(max(1, columns), max(1, rows))
@@ -381,6 +413,12 @@ class ConPtySessionProcessRunner:
                     raise
         except Exception:
             logger.debug("ConPTY launch failed", exc_info=True)
+            closer = getattr(pty, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:
+                    logger.debug("ConPTY close after a failed launch failed", exc_info=True)
             raise SshPilotError(
                 ErrorCode.PTY_ALLOCATION_FAILED,
                 "The daemon could not allocate the terminal process",

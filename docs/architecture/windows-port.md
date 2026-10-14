@@ -112,7 +112,175 @@ it).
 `ESC[?9001h` (win32-input-mode) and a full redraw. The terminal answers DA1
 and ignores 9001, so ConPTY keeps sending plain VT input.
 
-### 3. No VTE / WebKitGTK → a built-in pyte terminal
+### 2a. A ctypes ConPTY runner and the bundled conpty.dll (spike)
+
+**Why.** pywinpty 2.0.15 (MSYS2) links `CreatePseudoConsole` straight from
+`KERNEL32` and passes no flags. So the daemon is stuck with Windows 10's
+inbox conhost, which never forwards mouse modes or `?1049h` and strips the
+bracketed-paste markers from input. Its 1000-byte read buffer also needed the
+drain workaround in `_read_loop`.
+
+**What.** `daemon/conpty_ctypes.py` follows Microsoft's "Creating a
+Pseudoconsole session" recipe:
+1. two `CreatePipe` pairs;
+2. `CreatePseudoConsole(size, input_read, output_write, flags, &hpc)`;
+3. a `STARTUPINFOEXW` whose attribute list is sized and then initialised by
+   two `InitializeProcThreadAttributeList` calls, plus
+   `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE)`;
+4. `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT`. It also sets
+   `STARTF_USESTDHANDLES`, because the daemon's own stdio is redirected.
+
+After `CreateProcessW`, the binding closes the console's ends of the pipes.
+
+`CtypesPty` exposes the pywinpty 2.x surface (`spawn`, `read`, `write`,
+`set_size`, `isalive`, `get_exitstatus`, `iseof`, `pid`) with UTF-8 bytes.
+So `ConPtyProcessHandle` and the runner are unchanged: the same reader
+thread, reaper, EOF-before-exit order, incremental UTF-8 input decoder and
+psutil tree kill. `handle.close()` now also calls the PTY's `close()` when it
+has one, which pywinpty's `PTY` does not.
+
+**Close without deadlock.** Per session, a watcher thread waits on the process
+handle. Once the client has exited and the output has been quiet for 100 ms
+(capped at 0.5 s), it runs `ClosePseudoConsole` on its own thread. The
+session's reader keeps draining meanwhile. conhost flushes the last frame and
+exits, and the reader then gets `ERROR_BROKEN_PIPE`, which it reports as EOF.
+The reaper's 1 s EOF wait is therefore normally not needed.
+
+**Selection.**
+- `SSHPILOT_CONPTY_BACKEND=ctypes` picks the binding at the single
+  construction site in `server.py`. The default is still `pywinpty`. The
+  daemon logs `ConPTY backend: …`.
+- `SSHPILOT_CONPTY_DLL=<file or directory>` loads a bundled `conpty.dll`
+  through its `Conpty`-prefixed exports. `kernel32` forces the inbox console.
+- Without an override, a frozen build looks in `_MEIPASS` and next to the exe.
+  A source checkout uses kernel32.
+- If the DLL is missing or fails to load, the binding falls back to kernel32.
+  The log says which console is in use, and it warns if `OpenConsole.exe` is
+  not beside the DLL.
+- `SSHPILOT_CONPTY_FLAGS` passes `CreatePseudoConsole` flags (default 0).
+
+**The bundled console.** It comes from the `Microsoft.Windows.Console.ConPTY`
+NuGet package, version 1.25.260930003. The package is MIT licensed, published
+from microsoft/terminal under the verified `Microsoft.Terminal` owner, and both
+files are Authenticode-signed by Microsoft. For a dev run:
+1. Download it into the git-ignored `vendor/conpty/`.
+2. Copy `runtimes/win-x64/native/conpty.dll` and
+   `build/native/runtimes/x64/OpenConsole.exe` into one directory. conpty.dll
+   only finds OpenConsole.exe beside itself.
+3. Point `SSHPILOT_CONPTY_DLL` at that directory.
+
+Sizes: conpty.dll 117 KB, OpenConsole.exe 1.04 MB (x64). The binaries are not
+committed.
+
+**Comparison (Windows 10 19045, OpenSSH_for_Windows 9.5p1, OpenWrt host
+`Router`).** A harness drove `ConPtySessionProcessRunner` and recorded every
+output chunk. It ran three times: with pywinpty, with ctypes + kernel32, and
+with ctypes + conpty.dll. The router has no vim, so vim 9 ran under `wsl.exe`
+through the same runner. That is the same conhost path: a console client
+writing VT. pywinpty and ctypes + kernel32 produced the same streams, as
+expected with the same inbox conhost. Raw excerpts:
+
+- **Alternate screen (`?1049h`).** The remote ran
+  `printf 'A\e[?1049hB\e[?1000h\e[?1002h\e[?1006h\e[?2004hC\n'`.
+  - kernel32: `\e[25l\e[?2004h\n\e[HBC\e[K\r\n\e[K…`. conhost swallows
+    1049 and the mouse modes, then repaints its own alternate buffer.
+  - conpty.dll:
+    `A\e[?1049hB\e[?1000h\e[?1002h\e[?1006h\e[?2004hC\r\n`, verbatim.
+  - htop and vim show the same picture. Across a whole session, the only
+    `CSI ? … h/l` that kernel32 emits are `?25`, `?7`, `?2004` and `?1004`.
+    conpty.dll forwards `?1049h/l`, `?1006;1000h` (ncurses' combined form,
+    from htop and vim), `?1002h`, `?2004h` and `?1h`.
+- **Mouse.**
+  - Modes: see above. Through conpty.dll, both models switch on SGR
+    click/drag tracking when the recorded htop and vim streams are
+    replayed.
+  - Input reaching the remote: the remote ran
+    `timeout 6 cat > f; hexdump -C f`, and the harness wrote a paste, an SGR
+    click, an SGR wheel event and an X10 click.
+    - kernel32: `50 41 53 54 45 44 20 23 25 0a 5a 0a  |PASTED #%.Z.|`.
+      The SGR reports vanish entirely, and the X10 report loses `ESC [ M`.
+    - conpty.dll:
+      `1b 5b 32 30 30 7e 50 41 53 54 45 44 1b 5b 32 30 31 7e 1b 5b 3c 30 3b
+      31 30 3b 35 4d …  |.[200~PASTED.[201~.[<0;10;5M.[<0;10;5m.[<64;10;5M.[M #%.Z.|`.
+      Every byte arrives.
+  - vim (`set mouse=a ttymouse=sgr`): after an SGR click at row 3, column 3
+    and a wheel-down, `:echo line('.') col('.') &mouse` printed `1 1 a`
+    under kernel32 and `4 3 a` under conpty.dll.
+  - htop: an SGR wheel-down produced no output under kernel32. Under
+    conpty.dll, the process list redrew (1446 B).
+- **Bracketed paste.** In both cases the remote's `?2004h` reaches the
+  emulator. Only conpty.dll delivers `ESC[200~`/`ESC[201~` to the remote
+  (see the hexdump above).
+- **Resize inside htop and vim** (80x24 → 110x32 → 70x20 → 80x24): both
+  consoles repaint correctly.
+  - kernel32 redraws from its own buffer (`\e[H\e[K…`).
+  - conpty.dll starts every resize with `\e[6n` (a cursor-position query,
+    answered by both models). It then forwards the application's own
+    repaint (`\e[H\e[2J…` from vim, incremental updates from htop).
+  - In the real app, a `SetWindowPos` shrink/grow while htop ran, followed
+    by `q`, left a correct main screen.
+- **Stream size.** conpty.dll forwards the remote's bytes instead of
+  re-rendering them: 2.4 KB vs 3.4 KB for the probe, 20 KB vs 33 KB for htop.
+- **Start/stop sequences.** At start, conpty.dll sends
+  `\e[1t\e[c\e[?1004h\e[?9001h`. The terminal answers DA1, and 9001
+  (win32-input-mode) stays off, so input is plain VT. At close, it sends
+  `\e[?1004l\e[?9001l`.
+
+**Real app.** `SSHPILOT_CONPTY_BACKEND=ctypes`, conpty.dll and the vterm
+model, with an SSH session to Router:
+- the daemon logged
+  `ConPTY: using …\vendor\conpty\x64\conpty.dll`;
+- the login banner, typing, htop, a window resize and `exit` all worked;
+- the session went `running → exited → closed` with exit code 0;
+- no OpenConsole.exe was left behind.
+
+Mouse and wheel in the GUI could not be driven. GTK4 ignores posted
+`WM_*BUTTON*`/`WM_MOUSEWHEEL` messages, and real input would have taken over
+the desktop. The view-side SGR encoding was verified in the earlier live
+check (section 3a). The runner captures above prove that the rest of the path
+works.
+
+**Tests.** `tests/daemon/test_conpty_ctypes.py` covers:
+- DLL selection: override file, directory or `kernel32`; frozen paths;
+  fallback on a missing or broken DLL; the OpenConsole warning;
+- the two-call attribute-list setup and `STARTUPINFOEXW`, through a
+  recording fake;
+- real pipes and an attribute list, on Windows;
+- a real `cmd.exe` session through the runner, which must deliver output,
+  then EOF, then exit code 3. The kernel32 case always runs on Windows. The
+  bundled case runs when `SSHPILOT_CONPTY_DLL` is set.
+
+**Found on the way.** `shutil.which` under MSYS2 Python returns
+`C:\Windows\system32/cmd.exe` (MSYS2's `os.sep` is `/`). cmd.exe then parses
+the `/cmd.exe` in its own argv[0] as a switch. `CtypesPty.spawn` converts `/`
+to `\`. ssh.exe was never affected, and the pywinpty path still has the
+quirk.
+
+**Recommendation.**
+1. *Replace pywinpty with the ctypes runner: yes, after a short soak.*
+   - With kernel32 it behaves like pywinpty.
+   - It drops two MSYS2 packages (`python-pywinpty` and the undeclared
+     `winpty`) and pywinpty's 1000-byte read quirk.
+   - It is the only way to choose the console DLL or pass flags.
+   - Make `ctypes` the default on Windows, and keep `pywinpty` behind the
+     switch for one release.
+2. *Ship conpty.dll and OpenConsole.exe: yes, in frozen builds, next to the
+   exe.* They fix mouse, bracketed paste and the alternate screen on
+   Windows 10. They cost about 1.2 MB, are MIT licensed and signed by
+   Microsoft. Before shipping them:
+   - **pyte breaks on the forwarded stream.** vim's `CSI > 4 ; 2 m`
+     (modifyOtherKeys) raises `TypeError` from `select_graphic_rendition`
+     inside `view.feed`. This is the same bug noted in section 3a, now
+     reachable on Windows. Fix it, or make libvterm the Windows default
+     first. libvterm parsed every recorded stream without errors.
+   - **Recheck the grow and alt-screen decisions.** `pull_history_on_grow`
+     is off under ConPTY because conhost repaints from the top on a grow,
+     and libvterm's alt-resize workaround was moot because `?1049h` never
+     arrived. Both assumptions came from the inbox conhost and need
+     re-measuring with OpenConsole.
+   - **Ship the right architecture.** The package also carries x86 and
+     arm64 builds.
+
 
 **Obstacle.** Neither VTE nor WebKitGTK exists for GTK 4 on Windows, so both
 existing backends (VTE, xterm.js-in-WebKit) were unavailable. `Vte` was also
@@ -481,6 +649,7 @@ module-level code.
 - **Tests.**
   - New: `tests/api/test_transport_endpoint.py`,
     `tests/test_pyte_terminal_model.py`, `tests/daemon/test_conpty_runner.py`,
+    `tests/daemon/test_conpty_ctypes.py`,
     `tests/daemon/test_process_registry_windows.py`,
     `tests/test_platform_paths_windows.py`.
   - The rest of the suite still assumes POSIX (Unix sockets, `/home/...`
