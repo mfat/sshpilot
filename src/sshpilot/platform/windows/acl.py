@@ -115,6 +115,49 @@ def restrict_directory_to_current_user(path: os.PathLike) -> bool:
     return True
 
 
+def drop_owner_rights(path: os.PathLike) -> bool:
+    """Remove the OWNER RIGHTS entry Python gives a private directory.
+
+    On Windows, Python 3.13+ creates ``os.makedirs(..., mode=0o700)`` and
+    ``tempfile.mkdtemp()`` directories with a protected ACL of SYSTEM,
+    Administrators and OWNER RIGHTS. Everything inside inherits OWNER
+    RIGHTS, and OpenSSH for Windows then refuses any config file there
+    ("Bad owner or permissions", exit 255). Removing the entry, and granting
+    the current user explicitly, propagates to the existing children too.
+    """
+
+    if sys.platform != "win32" or not os.path.isdir(path):
+        return True
+    command = [
+        "icacls",
+        os.fspath(path),
+        "/remove:g",
+        "*S-1-3-4",  # OWNER RIGHTS
+        "/grant",
+        f"{_current_principal()}:(OI)(CI)F",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not adjust directory ACL: %s", type(exc).__name__)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "icacls failed for %s (exit %s): %s",
+            os.fspath(path),
+            result.returncode,
+            (result.stderr or result.stdout).strip()[:200],
+        )
+        return False
+    return True
+
+
 def chmod_private(path: os.PathLike, mode: int = 0o600) -> None:
     """``os.chmod`` on POSIX; owner-only ACL on Windows."""
 

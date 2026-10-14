@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+import sys
 import tempfile
 import threading
 from collections import OrderedDict
@@ -139,6 +140,11 @@ class TransientConnections:
     def _directory_locked(self) -> Path:
         if self._directory is None:
             self._directory = Path(tempfile.mkdtemp(prefix="sshpilot-adhoc-"))
+            if sys.platform == "win32":
+                # OpenSSH for Windows refuses configs under mkdtemp's ACL.
+                from sshpilot.platform.windows.acl import drop_owner_rights
+
+                drop_owner_rights(self._directory)
         self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         return self._directory
 
