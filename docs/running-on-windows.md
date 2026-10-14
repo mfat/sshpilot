@@ -12,14 +12,16 @@ How the port works, and why: [architecture/windows-port.md](architecture/windows
 | GTK runtime | distro / Homebrew | MSYS2 UCRT64 |
 | SSH client | OpenSSH | built-in `C:\Windows\System32\OpenSSH\ssh.exe` |
 | Daemon IPC | Unix socket, mode 0600 | loopback TCP plus a per-launch token in `%LOCALAPPDATA%\sshpilot\run\sshpilotd.json` |
-| Session terminal | POSIX PTY | ConPTY (via `pywinpty`) |
-| Terminal widget | VTE (or xterm.js) | built-in `pyte` backend drawn with GTK |
+| Session terminal | POSIX PTY | ConPTY through `ctypes`, with Microsoft's bundled console when fetched (below) |
+| Terminal widget | VTE (or xterm.js) | built-in backend drawn with GTK: libvterm (default) or pyte |
 | Connection multiplexing | optional ControlMaster | not available (Win32-OpenSSH has no ControlMaster) |
 | Secret storage (auto) | libsecret / Keychain | Windows Credential Manager (via `keyring`). KeePass (KDBX) is also available. |
 | Config directory | `~/.config/sshpilot` | `%APPDATA%\sshpilot` |
 
+Local shell tabs run PowerShell 7, Windows PowerShell, cmd or WSL (Preferences →
+Terminal → Local Shell).
+
 Not available yet on Windows:
-- local shell tabs
 - the xterm.js backend
 - the serial and RDP plugins
 
