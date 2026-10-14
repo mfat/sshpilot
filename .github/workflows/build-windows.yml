@@ -1,0 +1,168 @@
+name: Build Windows Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows x64 Build
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-python-pip
+            mingw-w64-x86_64-python-gobject
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-gtksourceview5
+            mingw-w64-x86_64-python-cairo
+            mingw-w64-x86_64-python-packaging
+            zip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install PyInstaller pyinstaller-hooks-contrib
+          pip install cryptography keyring psutil certifi pykeepass PyYAML
+
+      - name: Verify GTK installation
+        run: |
+          python -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print(f'GTK {Gtk.get_major_version()}.{Gtk.get_minor_version()}.{Gtk.get_micro_version()}')"
+          python -c "import gi; gi.require_version('Adw', '1'); from gi.repository import Adw; print(f'libadwaita {Adw.get_major_version()}.{Adw.get_minor_version()}.{Adw.get_micro_version()}')"
+
+      - name: Build with PyInstaller
+        env:
+          MSYS2_PREFIX: /mingw64
+        run: |
+          python -m PyInstaller --clean --noconfirm packaging/pyinstaller/sshpilot-windows.spec
+
+      - name: Verify build output
+        run: |
+          if [ ! -f "dist/SSHPilot/SSHPilot.exe" ]; then
+            echo "ERROR: SSHPilot.exe not found"
+            ls -R dist/
+            exit 1
+          fi
+          echo "Build successful!"
+          du -sh dist/SSHPilot/
+          ls -lh dist/SSHPilot/SSHPilot.exe
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(grep -o '__version__ = "[^"]*"' src/sshpilot/__init__.py | cut -d'"' -f2)
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +%Y%m%d)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $zipName = "sshPilot-Windows-$version-x64-portable.zip"
+          Compress-Archive -Path "dist\SSHPilot\*" -DestinationPath "dist\$zipName"
+          Write-Host "Created portable ZIP: dist\$zipName"
+          Write-Host "ZIP size: $((Get-Item "dist\$zipName").Length / 1MB) MB"
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $zipName = "sshPilot-Windows-$version-x64-portable.zip"
+          $hash = (Get-FileHash -Path "dist\$zipName" -Algorithm SHA256).Hash
+          "$hash  $zipName" | Out-File -FilePath "dist\$zipName.sha256" -Encoding ASCII
+          Write-Host "SHA256 checksum generated"
+          Get-Content "dist\$zipName.sha256"
+
+      - name: Upload portable ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.version.outputs.version }}-windows-x64-portable
+          path: |
+            dist/sshPilot-Windows-${{ steps.version.outputs.version }}-x64-portable.zip
+            dist/sshPilot-Windows-${{ steps.version.outputs.version }}-x64-portable.zip.sha256
+          retention-days: 90
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/sshPilot-Windows-${{ steps.version.outputs.version }}-x64-portable.zip
+            dist/sshPilot-Windows-${{ steps.version.outputs.version }}-x64-portable.zip.sha256
+          draft: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create build info
+        shell: pwsh
+        run: |
+          $info = @"
+          Build Information
+          =================
+          Version: ${{ steps.version.outputs.version }}
+          Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          Commit: ${{ github.sha }}
+          Runner: ${{ runner.os }} ${{ runner.arch }}
+          GTK4 Version: See verify step output
+          
+          Package Contents
+          ================
+          - SSHPilot.exe (main executable)
+          - GTK4 runtime DLLs
+          - libadwaita resources
+          - GtkSourceView syntax highlighting
+          - Python runtime
+          - All required dependencies
+          
+          Requirements
+          ============
+          - Windows 10 (1809+) or Windows 11
+          - OpenSSH client (built-in on Windows 10+)
+          - ~200MB disk space
+          
+          Known Limitations
+          =================
+          - VTE terminal not available (Linux/macOS only)
+          - Uses xterm.js terminal backend (if available)
+          - Some file permission features limited on Windows
+          "@
+          $info | Out-File -FilePath "dist/BUILD_INFO.txt" -Encoding UTF8
+          Write-Host "Build info created"
+
+      - name: Upload build info
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-info-${{ steps.version.outputs.version }}
+          path: dist/BUILD_INFO.txt
+          retention-days: 90
