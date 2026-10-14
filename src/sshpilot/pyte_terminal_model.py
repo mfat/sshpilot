@@ -12,8 +12,9 @@ parsing; this module adds what an interactive terminal needs on top of it:
 from __future__ import annotations
 
 import copy
+import re
 from collections import defaultdict, deque
-from typing import Callable, Deque, Dict, Optional
+from typing import Callable, Deque, Dict, List, Optional
 
 import pyte
 from pyte import modes as mo
@@ -250,6 +251,115 @@ class EmulatorScreen(pyte.Screen):
         return mo.DECTCEM in self.mode and not self.cursor.hidden
 
 
+# ---------------------------------------------------------------------------
+# CSI forms pyte 0.8 mis-parses
+
+#: CSIs pyte gets wrong: a ``<=>?`` leader, ``:`` sub-parameters,
+#: intermediate bytes, or an SGR underline colour (58). Everything else
+#: (plain SGR, cursor moves, erases) goes to pyte untouched.
+_UNUSUAL_CSI = re.compile(
+    rb"\x1b\[(?P<leader>[<=>?]?)(?P<params>[0-9;:]*)(?P<inter>[\x20-\x2f]*)(?P<final>[\x40-\x7e])"
+)
+_MAYBE_UNUSUAL = re.compile(
+    rb"\x1b\[(?:[<=>?]|[0-9;]*:|[0-9;:]*[\x20-\x2f]|(?:[0-9;]*;)?58[;:m])"
+)
+#: An ESC or a CSI that is still open at the end of a feed.
+_OPEN_CSI = re.compile(rb"\x1b(?:\[[<=>?]?[0-9;:]*[\x20-\x2f]*)?\Z")
+#: How much of an unfinished CSI is held back for the next feed.
+_MAX_HELD = 256
+
+#: Secondary DA reply, the same one libvterm sends.
+_DA2_REPLY = b"\x1b[>0;100;0c"
+
+
+def _sgr_params(params: bytes) -> Optional[bytes]:
+    """Plain ``;`` SGR parameters pyte understands, or ``None`` to drop."""
+
+    out: List[str] = []
+    fields = params.decode("ascii").split(";") if params else [""]
+    index = 0
+    while index < len(fields):
+        field = fields[index]
+        index += 1
+        if ":" in field:
+            sub = field.split(":")
+            head = sub[0]
+            if head in ("38", "48"):
+                rest = sub[2:]
+                if sub[1:2] == ["2"] and len(rest) >= 3:
+                    out.extend([head, "2"] + [value or "0" for value in rest[-3:]])
+                elif sub[1:2] == ["5"] and rest:
+                    out.extend([head, "5", rest[0] or "0"])
+            elif head == "4":
+                # Curly/dotted underline styles: plain underline, or off.
+                out.append("24" if sub[1:2] == ["0"] else "4")
+            elif head != "58":
+                out.append(head)
+            continue
+        if field == "58":
+            # Underline colour: pyte has none, and would read its R;G;B as SGR codes.
+            if index < len(fields) and fields[index] == "2":
+                index += 4
+            elif index < len(fields) and fields[index] == "5":
+                index += 2
+            continue
+        out.append(field)
+    if not out:
+        return None
+    return ";".join(out).encode("ascii")
+
+
+class _CsiNormalizer:
+    """Rewrite or drop the CSI forms pyte 0.8 mis-parses, across feeds.
+
+    pyte ignores ``>`` and ``=`` leaders (so vim's ``CSI > 4 ; 2 m`` turns on
+    underline), prints the rest of a CSI with ``=``, ``:`` or an
+    intermediate byte as text, and raises ``TypeError`` for a ``?`` leader
+    on most final bytes (``CSI ? 4 m``).
+    """
+
+    def __init__(self, on_reply: Optional[Callable[[bytes], None]] = None) -> None:
+        self._held = b""
+        self.on_reply = on_reply
+
+    def reset(self) -> None:
+        self._held = b""
+
+    def filter(self, data: bytes) -> bytes:
+        if self._held:
+            data, self._held = self._held + data, b""
+        tail = data.rfind(b"\x1b")
+        if tail >= 0 and len(data) - tail <= _MAX_HELD and _OPEN_CSI.match(data, tail):
+            data, self._held = data[:tail], data[tail:]
+        if not _MAYBE_UNUSUAL.search(data):
+            return data
+        return _UNUSUAL_CSI.sub(self._rewrite, data)
+
+    def _rewrite(self, match: "re.Match[bytes]") -> bytes:
+        leader, params, inter, final = match.group("leader", "params", "inter", "final")
+        if inter:
+            return b""  # DECSCUSR, DECSTR, DECRQM, ...: not supported by pyte
+        if leader == b"?":
+            if b":" in params:
+                return b""
+            if final in b"hl":
+                return match.group(0)
+            if final in b"JK":
+                return b"\x1b[" + params + final  # selective erase as plain erase
+            return b""
+        if leader:
+            if leader == b">" and final == b"c" and params in (b"", b"0"):
+                if self.on_reply is not None:
+                    self.on_reply(_DA2_REPLY)
+            return b""
+        if final == b"m":
+            sgr = _sgr_params(params)
+            return b"" if sgr is None else b"\x1b[" + sgr + b"m"
+        if b":" in params:
+            return b""
+        return match.group(0)
+
+
 class TerminalModel(LineIndexMixin):
     """Screen + byte stream + a combined scrollback/screen line index.
 
@@ -272,6 +382,7 @@ class TerminalModel(LineIndexMixin):
             on_reply=on_reply,
         )
         self.stream = pyte.ByteStream(self.screen)
+        self._normalizer = _CsiNormalizer(on_reply)
 
     @property
     def pull_history_on_grow(self) -> bool:
@@ -284,12 +395,15 @@ class TerminalModel(LineIndexMixin):
     # -- input -----------------------------------------------------------------
 
     def feed(self, data: bytes) -> None:
-        self.stream.feed(bytes(data))
+        data = self._normalizer.filter(bytes(data))
+        if data:
+            self.stream.feed(data)
 
     def resize(self, columns: int, lines: int) -> None:
         self.screen.resize(lines=lines, columns=columns)
 
     def reset(self, *, clear_scrollback: bool) -> None:
+        self._normalizer.reset()
         self.screen.reset()
         if clear_scrollback:
             self.screen.scrollback.clear()
