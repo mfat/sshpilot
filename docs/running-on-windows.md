@@ -1,7 +1,8 @@
 # Running sshPilot from source (Windows)
 
 Windows support is **experimental**. This page covers running from a source
-checkout on Windows 10 (1809+) or Windows 11. There is no installer yet.
+checkout on Windows 10 (1809+) or Windows 11. A packaged build is described in
+[packaging/windows](../packaging/windows/README.md).
 
 How the port works, and why: [architecture/windows-port.md](architecture/windows-port.md).
 
@@ -9,116 +10,126 @@ How the port works, and why: [architecture/windows-port.md](architecture/windows
 
 | Area | Linux / macOS | Windows |
 | --- | --- | --- |
-| GTK runtime | distro / Homebrew | MSYS2 UCRT64 |
+| GTK runtime | distro / Homebrew | gvsbuild GTK 4 with python.org Python (MSYS2 also works) |
 | SSH client | OpenSSH | built-in `C:\Windows\System32\OpenSSH\ssh.exe` |
 | Daemon IPC | Unix socket, mode 0600 | loopback TCP plus a per-launch token in `%LOCALAPPDATA%\sshpilot\run\sshpilotd.json` |
-| Session terminal | POSIX PTY | ConPTY through `ctypes`, with Microsoft's bundled console when fetched (below) |
+| Session terminal | POSIX PTY | ConPTY through `ctypes`, with Microsoft's bundled console |
 | Terminal widget | VTE (or xterm.js) | built-in backend drawn with GTK: libvterm (default) or pyte |
+| Local shell tabs | the login shell | PowerShell 7, Windows PowerShell, cmd or WSL (Preferences → Terminal → Local Shell) |
 | Connection multiplexing | optional ControlMaster | not available (Win32-OpenSSH has no ControlMaster) |
 | Secret storage (auto) | libsecret / Keychain | Windows Credential Manager (via `keyring`). KeePass (KDBX) is also available. |
+| Serial connections | picocom or screen | PuTTY's `plink` |
+| RDP connections | FreeRDP 3 | FreeRDP 3, or Windows' own Remote Desktop client |
 | Config directory | `~/.config/sshpilot` | `%APPDATA%\sshpilot` |
 
-Local shell tabs run PowerShell 7, Windows PowerShell, cmd or WSL (Preferences →
-Terminal → Local Shell).
+Not available on Windows: the xterm.js backend.
 
-Not available yet on Windows:
-- the xterm.js backend
-- the serial and RDP plugins
+## 1. Set up (python.org Python + gvsbuild GTK 4)
 
-## 1. Install MSYS2 and the GTK stack
+Install [Python 3.14 from python.org](https://www.python.org/downloads/windows/)
+(64-bit) and Git, then from PowerShell:
 
-Install [MSYS2](https://www.msys2.org/), open the **MSYS2 UCRT64** shell, and run:
-
-```bash
-pacman -Syu
+```powershell
+git clone https://github.com/mfat/sshpilot.git
 ```
 
-Reopen the UCRT64 shell if pacman asks you to, then install the packages:
-
-```bash
-pacman -S --needed \
-  mingw-w64-ucrt-x86_64-gtk4 \
-  mingw-w64-ucrt-x86_64-libadwaita \
-  mingw-w64-ucrt-x86_64-gtksourceview5 \
-  mingw-w64-ucrt-x86_64-python \
-  mingw-w64-ucrt-x86_64-python-gobject \
-  mingw-w64-ucrt-x86_64-python-cryptography \
-  mingw-w64-ucrt-x86_64-python-psutil \
-  mingw-w64-ucrt-x86_64-python-yaml \
-  mingw-w64-ucrt-x86_64-python-pywinpty \
-  mingw-w64-ucrt-x86_64-python-pip \
-  git
+```powershell
+cd sshpilot; powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
-`pywinpty` must come from MSYS2. The wheels on PyPI target the MSVC build of
-Python, and MSYS2's Python cannot load them.
+The setup script:
 
-## 2. Install the pure-Python dependencies
+1. creates `.venv-win` with `py -3.14`;
+2. downloads the pinned [gvsbuild](https://github.com/wingtk/gvsbuild) GTK 4
+   runtime (GTK, libadwaita, GtkSourceView, PyGObject), checks its SHA-256,
+   and unpacks it into `vendor\gtk` (`scripts\fetch-gtk.py`);
+3. downloads Microsoft's current console host (`conpty.dll` and
+   `OpenConsole.exe` from the `Microsoft.Windows.Console.ConPTY` NuGet
+   package), checks its hash and signatures, and puts it in `vendor\conpty`
+   (`scripts\fetch-conpty.py`). The console built into Windows 10 drops mouse
+   input, bracketed paste and the alternate screen;
+4. installs the PyGObject and pycairo wheels that match the runtime, then the
+   Python dependencies;
+5. builds the patched libvterm into `vendor\libvterm` when a C compiler is
+   available (`packaging\windows\libvterm\build.py`: `--compiler msvc` from a
+   Visual Studio developer prompt, or `--compiler gcc`). Without it the
+   terminal uses pyte.
 
-Still in the UCRT64 shell, create a venv that can see the MSYS2 packages:
+Optional: `.venv-win\Scripts\pip install pykeepass` for KeePass (KDBX) storage.
 
-```bash
-git clone https://github.com/mfat/sshpilot.git && cd sshpilot
-python -m venv --system-site-packages .venv
-source .venv/bin/activate
-pip install pyte keyring certifi
+## 2. Run
+
+```powershell
+powershell -File scripts\run-windows.ps1
 ```
 
-Optional: install `pykeepass` for KeePass (KDBX) storage.
+It puts `vendor\gtk\bin` on PATH and runs `run.py`. Add `--verbose` for debug
+logging. The app starts its background daemon automatically. To run the daemon
+on its own (handy for debugging):
 
-Optional: try the faster libvterm emulator (16–36× pyte's throughput on bulk
-output). pyte remains the default. Install it:
-
-```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-libvterm
+```powershell
+powershell -File scripts\run-windows.ps1 --daemon --verbose
 ```
 
-Then pick **libvterm** under Preferences → Terminal → Terminal Backend. It
-applies to new tabs. `SSHPILOT_TERMINAL_MODEL=vterm` overrides the setting
-for one run. If libvterm cannot load, the terminal falls back to pyte.
+Overrides, for testing:
+- `SSHPILOT_TERMINAL_MODEL=pyte` or `vterm` picks the emulator for one run
+  (Preferences → Terminal → Terminal Backend sets it persistently).
+- `SSHPILOT_CONPTY_DLL=kernel32` forces the console built into Windows;
+  `SSHPILOT_CONPTY_DLL=<directory>` points at another copy.
+- `SSHPILOT_CONPTY_BACKEND=pywinpty` brings back the previous pywinpty-based
+  runner (install `pywinpty` first).
+- `SSHPILOT_LIBVTERM=<path>` loads a specific `libvterm-0.dll`.
 
-Recommended: fetch Microsoft's current console host. The one built into
-Windows 10 drops mouse input, bracketed paste and the alternate screen. The
-script downloads the pinned `Microsoft.Windows.Console.ConPTY` package from
-nuget.org, checks its hash and signatures, and puts `conpty.dll` and
-`OpenConsole.exe` in `vendor/conpty/`, where the app finds them:
+Each launch is its own instance: sshPilot does not use a D-Bus session bus on
+Windows (a wedged `gdbus.exe` used to hang startup), so a second launch opens
+a second window on the same daemon.
 
-```bash
-python scripts/fetch-conpty.py
-```
+## Alternative: MSYS2
 
-Without it the app uses the console built into Windows. To force that, or to
-point at another copy, set `SSHPILOT_CONPTY_DLL=kernel32` or
-`SSHPILOT_CONPTY_DLL=<directory>`. `SSHPILOT_CONPTY_BACKEND=pywinpty` brings
-back the previous pywinpty-based runner. Details are in
-[the Windows port notes](architecture/windows-port.md#2a-a-ctypes-conpty-runner-and-the-bundled-conptydll-spike).
-
-## 3. Run
+The app also runs under MSYS2 UCRT64. Install [MSYS2](https://www.msys2.org/),
+open the **MSYS2 UCRT64** shell, run `pacman -Syu`, reopen the shell if asked,
+then:
 
 ```bash
-python run.py
+pacman -S --needed mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-libadwaita mingw-w64-ucrt-x86_64-gtksourceview5 mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-python-gobject mingw-w64-ucrt-x86_64-python-cryptography mingw-w64-ucrt-x86_64-python-psutil mingw-w64-ucrt-x86_64-python-yaml mingw-w64-ucrt-x86_64-python-pip git
 ```
-
-Add `--verbose` for debug logging. The app starts its background daemon
-automatically. To run the daemon on its own (handy for debugging), use:
 
 ```bash
-python run.py --daemon --verbose
+python -m venv --system-site-packages .venv-msys && .venv-msys/bin/python -m pip install pyte keyring certifi
 ```
 
-The compiled `sshpilot.gresource`, `.ui` and translation files are committed to
-the repository, so no build step is needed unless you edit them. In that case,
-run `scripts/build_gresource.sh` from the UCRT64 shell after installing
-`mingw-w64-ucrt-x86_64-blueprint-compiler` and `mingw-w64-ucrt-x86_64-gettext`.
+```bash
+.venv-msys/bin/python scripts/fetch-conpty.py
+```
+
+```bash
+.venv-msys/bin/python run.py
+```
+
+`scripts/run-windows.sh` does the venv step and runs the app. For libvterm,
+either build it (`pacman -S mingw-w64-ucrt-x86_64-gcc`, then
+`packaging/windows/libvterm/build.py`) or install the distro DLL
+(`mingw-w64-ucrt-x86_64-libvterm`). The distro DLL lacks the CSI bound, so the
+model filters CSI parameters in Python for it, at some cost in speed.
 
 ## Notes
 
 - **SSH keys:** keys generated by sshPilot get an owner-only ACL. OpenSSH for
   Windows refuses private keys that other users can read, and reports this as
   "UNPROTECTED PRIVATE KEY FILE".
+- **Config file permissions:** OpenSSH for Windows also refuses config files
+  other principals can reach ("Bad owner or permissions"). The daemon keeps the
+  files it writes owner-only.
 - **Password prompts:** password and passphrase prompts go through `SSH_ASKPASS`.
   The daemon writes an `askpass.cmd` launcher into a private temp directory for
-  each run.
+  each run. Without connection sharing every channel logs in on its own, so the
+  password dialog offers "Remember until SSH Pilot quits".
+- **ssh-agent:** OpenSSH's agent service is disabled by default. As
+  administrator: `Set-Service ssh-agent -StartupType Manual` and
+  `Start-Service ssh-agent`. 1Password's agent uses the same pipe.
 - **`ControlMaster` in `~/.ssh/config`:** if your config, copied from Linux or
   macOS, sets `ControlMaster`/`ControlPath`, OpenSSH for Windows rejects it.
   Remove those lines or guard them with `Match exec`.
+- **Resources:** the compiled `sshpilot.gresource`, `.ui` and translation files
+  are committed, so no build step is needed unless you edit them
+  (`scripts/build_gresource.sh` needs `blueprint-compiler` and `gettext`).

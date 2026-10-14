@@ -1,0 +1,380 @@
+# Tests that assume POSIX and fail on Windows (python.org Python).
+# On Windows, tests/conftest.py runs each listed test as a non-strict
+# xfail, and skips collecting each listed module (collect:). Remove an
+# entry when the test is made portable; an XPASS shows which can go.
+# Regenerate: COLUMNS=2000 pytest -rfE ... on Windows (windows-implementation-plan.md, 3.2).
+
+collect:tests/daemon/test_frozen_build_pty_e2e.py  # path separators
+collect:tests/daemon/test_interaction_openssh.py  # path separators
+collect:tests/daemon/test_password_auth_container.py  # path separators
+collect:tests/daemon/test_pty_runner_frozen.py  # path separators
+collect:tests/daemon/test_sftp_non_utf8_names.py  # platform default encoding
+collect:tests/daemon/test_sftp_resolve_ids.py  # path separators
+collect:tests/daemon/test_terminal_stream.py  # path separators
+collect:tests/integration/test_ssh_readiness_openssh.py  # path separators
+collect:tests/integration/test_temporary_openssh_fixture.py  # path separators
+collect:tests/test_protocol_suggestions.py  # POSIX-only API
+tests/api/test_daemon_client_keys.py::test_generate_key_capability_gated  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_generate_key_does_not_use_normal_transport_timeout  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_generate_key_sends_exact_payload  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_generate_pre_send_encoding_failure_is_not_mutation_ambiguous  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_generate_transport_close_after_send_is_mutation_ambiguous  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_list_keys_capability_gated  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_list_transport_close_is_not_mutation_ambiguous  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_read_public_key_capability_gated  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_keys.py::test_verify_key_passphrase_sends_secret_free_payload  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_allow_api_mismatch_connects_to_a_stale_daemon_for_recovery  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_connection_write_is_not_retried_after_ambiguous_transport_close  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_daemon_client_accepts_event_envelopes_without_confusing_correlation  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_daemon_client_rejects_non_monotonic_event_sequence  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_daemon_client_rejects_unknown_response_id  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_daemon_client_surfaces_unsolicited_protocol_rejection  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_default_client_still_rejects_a_stale_daemon  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_duplicate_response_closes_transport_after_first_correlation  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_group_place_rejected_when_daemon_api_implementation_is_older  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_non_recursive_remove_also_requires_a_current_daemon  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_daemon_client_protocol.py::test_recursive_remove_rejected_when_daemon_api_implementation_is_older  # assumes POSIX behaviour (reviewed by sample)
+tests/api/test_key_codec.py::test_generate_key_result_round_trip  # POSIX paths in fixtures
+tests/api/test_key_codec.py::test_key_list_from_wire_decodes_array_into_tuple  # POSIX paths in fixtures
+tests/api/test_key_codec.py::test_key_list_from_wire_encodes_tuple_as_array  # POSIX paths in fixtures
+tests/api/test_key_codec.py::test_key_list_round_trip  # POSIX paths in fixtures
+tests/api/test_key_codec.py::test_key_summary_round_trip  # POSIX paths in fixtures
+tests/api/test_key_models.py::test_generate_key_result_constructs  # POSIX paths in fixtures
+tests/api/test_key_models.py::test_key_list_constructs_with_tuple  # POSIX paths in fixtures
+tests/api/test_key_models.py::test_key_list_rejects_list_keys  # POSIX paths in fixtures
+tests/api/test_key_models.py::test_key_summary_constructs  # POSIX paths in fixtures
+tests/api/test_key_models.py::test_key_summary_has_no_key_content_fields  # POSIX paths in fixtures
+tests/api/test_key_models.py::test_repr_does_not_expose_paths  # POSIX paths in fixtures
+tests/architecture/test_asbru_i18n_boundary.py::test_asbru_backend_has_no_gettext_or_finished_summary  # platform default encoding
+tests/architecture/test_asbru_i18n_boundary.py::test_window_uses_presenter_for_every_asbru_message_field  # platform default encoding
+tests/architecture/test_frontend_closure.py::test_active_frontend_has_no_direct_backend_process_or_secret_ownership  # assumes POSIX behaviour (reviewed by sample)
+tests/architecture/test_frontend_closure.py::test_plugin_gap_identities_are_still_exactly_deferred  # assumes POSIX behaviour (reviewed by sample)
+tests/architecture/test_login_profile_i18n_boundary.py::test_dialogs_present_errors_and_previews_through_the_presenter  # platform default encoding
+tests/architecture/test_plugin_i18n_boundary.py::test_frontend_gettext_owners_are_in_potfiles  # path separators
+tests/core/test_connection_identity_salvage.py::test_a_refused_save_says_why_every_time[<lambda>-symbolic link]  # path separators
+tests/core/test_connection_identity_salvage.py::test_unreadable_state_file_is_logged_clearly_at_startup  # path separators
+tests/core/test_connection_identity_state_storage.py::test_intent_corruption_and_symlink_are_not_no_pending  # path separators
+tests/core/test_connection_identity_state_storage.py::test_v2_reader_writer_round_trip_and_deterministic_bytes  # POSIX file modes
+tests/core/test_connection_identity_state_storage.py::test_v2_symlink_is_rejected_for_read_and_write  # POSIX-only API
+tests/core/test_connection_repository.py::test_unsupported_canonical_state_is_kept_verbatim_before_salvage  # path separators
+tests/core/test_connection_repository_crud.py::test_exact_mode_and_existence_restoration  # POSIX file modes
+tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_delete  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_duplicate  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_rename  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_update  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_crud.py::test_ssh_create_rolls_back_when_state_write_fails  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_crud.py::test_symlink_swap_during_post_write_raises_ambiguity  # POSIX paths in fixtures
+tests/core/test_connection_repository_uuid_integration.py::test_create_intent_cleanup_failure_leaves_no_target_identity  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_uuid_integration.py::test_dangling_pending_intent_symlink_is_ignored_not_followed  # path separators
+tests/core/test_connection_repository_uuid_integration.py::test_delete_intent_cleanup_failure_restores_tombstone_and_ssh_state  # path separators
+tests/core/test_connection_repository_uuid_integration.py::test_duplicate_intent_cleanup_failure_restores_group_and_uuid_state  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_uuid_integration.py::test_sidecar_write_durability_failure_recovers_without_blocking  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_uuid_integration.py::test_split_intent_cleanup_failure_restores_original_config_and_state  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_uuid_integration.py::test_update_intent_cleanup_failure_restores_both_resources[False]  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_repository_uuid_integration.py::test_update_intent_cleanup_failure_restores_both_resources[True]  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_connection_state_file.py::test_existing_mode_is_preserved  # POSIX file modes
+tests/core/test_connection_state_file.py::test_read_refuses_symlink  # POSIX-only API
+tests/core/test_connection_state_file.py::test_symlink_error_does_not_contain_path  # POSIX-only API
+tests/core/test_connection_state_file.py::test_write_refuses_symlink  # POSIX-only API
+tests/core/test_connection_state_file.py::test_written_file_is_mode_0600_for_new_files  # POSIX file modes
+tests/core/test_dependency_boundary.py::test_daemon_imports_only_allowed_edges  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_known_hosts_file_io.py::test_new_write_creates_with_0644  # POSIX file modes
+tests/core/test_known_hosts_file_io.py::test_symlink_error_has_no_path  # POSIX-only API
+tests/core/test_known_hosts_file_io.py::test_write_converts_parent_fsync_errors  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_known_hosts_file_io.py::test_write_fsyncs_parent_directory  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_known_hosts_file_io.py::test_write_preserves_existing_mode  # POSIX file modes
+tests/core/test_known_hosts_file_io.py::test_write_refuses_symlink_destination  # POSIX-only API
+tests/core/test_ssh_config_loader.py::test_unreadable_include_raises  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_ssh_config_store.py::test_duplicate_skips_empty_authored_copy_alias[True]  # path separators
+tests/core/test_ssh_config_store.py::test_new_file_mode_0600_and_existing_mode_preserved  # POSIX file modes
+tests/core/test_ssh_config_store.py::test_no_path_in_public_errors  # path separators
+tests/core/test_ssh_config_store.py::test_parent_directory_fsync  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_ssh_config_store.py::test_parent_fsync_failure_is_reported_after_replacement  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_ssh_config_store.py::test_split_allows_recreating_removed_source_token[True]  # path separators
+tests/core/test_ssh_config_store.py::test_symlink_swap_detected_before_replacement  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_symlink_target_refused  # POSIX-only API
+tests/core/test_ssh_config_text_editor.py::test_daemon_resolves_normal_config_root  # path separators
+tests/core/test_ssh_config_text_editor.py::test_store_refuses_symlinked_root_and_reports_not_writable  # POSIX-only API
+tests/core/test_ssh_config_text_editor.py::test_store_save_writes_exact_text_and_updates_revision  # POSIX file modes
+tests/core/test_transient_connections.py::test_issue_1320_jump_host_sees_the_users_config  # assumes POSIX behaviour (reviewed by sample)
+tests/core/test_transient_connections.py::test_issue_1320_save_dialog_sees_what_the_target_inherited  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_connection_launch_provider.py::test_builtin_plugin_failure_survives_provider_and_session_runtime  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_connection_launch_provider.py::test_production_settings_view_is_not_called_as_a_function  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_connection_launch_provider.py::test_require_master_coexists_with_preference_multiplex  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_connection_launch_provider.py::test_require_master_overrides_authored_controlmaster_no  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_connection_launch_provider.py::test_require_master_places_multiplex_before_target_not_after_command  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_connection_launch_provider.py::test_terminal_shell_host_keeps_preference_multiplex  # path separators
+tests/daemon/test_connection_mutations.py::test_malformed_secret_bearing_mutation_is_rejected_without_logging_payload  # Unix sockets / fd passing
+tests/daemon/test_control_master_probing.py::test_an_unreadable_directory_raises_rather_than_reporting_none  # POSIX-only API
+tests/daemon/test_daemon_isolation.py::test_stale_socket_and_metadata_handled  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_daemon_isolation.py::test_user_daemon_socket_env_is_overridden  # path separators
+tests/daemon/test_daemon_lifecycle_policy.py::test_sweep_removes_stale_askpass_sockets  # Unix sockets / fd passing
+tests/daemon/test_event_forwarding.py::test_handshake_incomplete_peer_receives_no_runtime_events  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_client_id_must_match_handshake  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_duplicate_handshake_is_rejected  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_duplicate_request_id_is_rejected  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_malformed_client_metadata_is_safe[change0]  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_malformed_client_metadata_is_safe[change1]  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_malformed_client_metadata_is_safe[change2]  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_malformed_client_metadata_is_safe[change3]  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_ordinary_method_before_handshake_is_rejected  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_reveal_capability_requires_binary_secret_negotiation  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_successful_protocol_v1_handshake  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_unknown_method_before_handshake_is_still_handshake_required  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_unknown_method_uses_unsupported_method_error  # Unix sockets / fd passing
+tests/daemon/test_handshake.py::test_unsupported_protocol_version_is_rejected  # Unix sockets / fd passing
+tests/daemon/test_identity_service_phase.py::test_provider_agent_keys_use_fixed_socket_provider  # path separators
+tests/daemon/test_interaction_broker.py::test_cancelled_otp_prompt_is_not_replaced_by_openssh_retries  # POSIX file modes
+tests/daemon/test_interaction_broker.py::test_frozen_build_askpass_helper_dispatches_via_internal_flag  # POSIX file modes
+tests/daemon/test_interaction_broker.py::test_headless_launch_preserves_normal_environment_and_replaces_askpass  # path separators
+tests/daemon/test_interaction_broker.py::test_prepare_launch_brokers_interactions_without_saved_secret  # path separators
+tests/daemon/test_interaction_broker.py::test_prepare_launch_does_not_modify_pythonpath[/user/custom/modules]  # path separators
+tests/daemon/test_interaction_broker.py::test_prepare_launch_does_not_modify_pythonpath[None]  # path separators
+tests/daemon/test_key_dispatch.py::test_delete_dispatches_typed_request  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_different_scopes_have_distinct_command_keys  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_generate_rejected_during_drain  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_generate_rejects_extra_fields  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_generate_rejects_missing_fields  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_generate_returns_deferred_execution_with_wire_result  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_get_public_allowed_during_drain  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_get_public_command_key_matches_list_for_same_scope  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_get_public_rejects_extra_fields  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_get_public_rejects_missing_fields  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_get_public_returns_deferred_execution_with_wire_result  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_installed_service_advertises_read_and_write  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_allowed_during_drain  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_and_read_remain_available_during_drain  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_handler_is_registered  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_rejects_empty_params_with_malformed_scope  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_rejects_extra_fields  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_rejects_malformed_scope_value  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_list_returns_deferred_execution_with_wire_result  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_same_scope_operations_share_command_key  # POSIX paths in fixtures
+tests/daemon/test_key_dispatch.py::test_verify_passphrase_dispatch_is_secret_free  # POSIX paths in fixtures
+tests/daemon/test_key_service.py::test_delete_key_rejects_symlink_escape  # path separators
+tests/daemon/test_key_service.py::test_public_key_available_false_for_unsafe_files  # path separators
+tests/daemon/test_key_service.py::test_read_public_key_rejects_symlink_escape  # path separators
+tests/daemon/test_key_service.py::test_read_public_key_rejects_symlink_swapped_before_open  # path separators
+tests/daemon/test_key_service.py::test_read_public_key_rejects_symlink_within_root  # path separators
+tests/daemon/test_launcher.py::test_process_launch_uses_argv_no_shell_and_sanitized_environment  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher.py::test_unsafe_socket_target_is_refused_before_process_launch  # path separators
+tests/daemon/test_launcher_self_healing.py::test_a_socket_replaced_after_the_probe_is_never_unlinked  # Unix sockets / fd passing
+tests/daemon/test_launcher_self_healing.py::test_an_accepted_stop_is_given_time_to_drain_before_any_signal  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_an_unidentifiable_live_peer_is_neither_signalled_nor_unlinked  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_evict_socket_owner_escalates_to_sigkill  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_evict_socket_owner_terminates_the_holder_and_frees_the_path  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_eviction_never_signals_a_pid_that_no_longer_owns_the_socket  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_eviction_reconfirms_ownership_before_escalating_to_sigkill  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_loose_runtime_directory_mode_is_tightened  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_peer_process_id_identifies_the_process_holding_the_socket  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_remove_dead_socket_clears_an_orphan_but_spares_a_live_one  # Unix sockets / fd passing
+tests/daemon/test_launcher_self_healing.py::test_symlinked_runtime_directory_still_fails_closed  # POSIX-only API
+tests/daemon/test_lifecycle.py::test_handshake_timeout_closes_ambiguous_transport  # Unix sockets / fd passing
+tests/daemon/test_lifecycle.py::test_server_close_during_handshake_is_structured  # Unix sockets / fd passing
+tests/daemon/test_lifecycle_phase13_3.py::test_no_zombie_children_after_force_stop  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_native_scp_backend.py::test_native_backend_marks_modern_and_legacy_process_groups  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_native_ssh_command_runner.py::test_runner_returns_after_child_exit_when_pipe_write_end_stays_open  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_operation_mode_service.py::test_isolated_transition_seeds_secure_target_and_persists_mode  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_owned_process_registry.py::test_a_child_that_cannot_be_recorded_is_not_left_running  # POSIX-only API
+tests/daemon/test_owned_process_registry.py::test_an_unreadable_registry_file_raises_rather_than_reporting_empty  # POSIX-only API
+tests/daemon/test_owned_process_registry.py::test_the_registry_file_is_private  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_port_knock.py::test_a_dropped_port_counts_as_knocked_and_does_not_hang  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_a_backgrounded_command_returns_immediately[sleep 5 &]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_a_sandbox_with_no_way_out_still_runs_and_reports  # POSIX paths in fixtures
+tests/daemon/test_pre_connection_command.py::test_a_stdout_complaint_survives_a_non_zero_exit  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_a_stdout_complaint_survives_a_timeout  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_both_streams_reach_the_notice  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_output_is_still_captured  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_outside_a_sandbox_the_command_runs_here  # POSIX paths in fixtures
+tests/daemon/test_pre_connection_command.py::test_test_shows_what_a_hanging_command_printed_before_the_timeout  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_the_launch_and_test_paths_agree_about_output  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_pre_connection_command.py::test_the_login_shell_is_kept_in_both_cases  # POSIX paths in fixtures
+tests/daemon/test_pre_connection_command.py::test_the_probe_never_connects  # POSIX paths in fixtures
+tests/daemon/test_production_composition.py::test_production_overrides_service_always_injects_controlmaster_args  # no ControlMaster on Windows (by design)
+tests/daemon/test_pty_child.py::test_main_execs_ssh_with_explicit_argv  # POSIX-only API
+tests/daemon/test_pty_child.py::test_main_reports_launch_failed_when_exec_target_missing  # POSIX-only API
+tests/daemon/test_sftp_file_contract.py::test_local_authorized_keys_read_is_bounded_and_revisioned  # path separators
+tests/daemon/test_sftp_file_contract.py::test_local_concurrent_same_revision_replacements_serialize  # path separators
+tests/daemon/test_sftp_file_contract.py::test_local_replace_is_atomic_secure_and_backed_up  # path separators
+tests/daemon/test_sftp_session_death_stuck_tab.py::test_dead_connection_fails_service_and_signals_the_tab  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_shutdown_verification.py::test_a_daemon_that_releases_its_socket_but_lives_is_still_a_survivor  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_shutdown_verification.py::test_a_live_daemon_socket_blocks_termination  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_shutdown_verification.py::test_an_orphan_ignoring_sigterm_is_killed  # POSIX-only API
+tests/daemon/test_socket_identity_api.py::test_system_agent_listing_ignores_selected_provider  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_socket_key_api.py::test_encrypted_generation_and_verification_use_protected_interactions[ed25519-0]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_socket_key_api.py::test_encrypted_generation_and_verification_use_protected_interactions[rsa-1024]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_launch_parity.py::test_spawn_flags_match_the_pre_migration_call[copy-id]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_launch_parity.py::test_spawn_flags_match_the_pre_migration_call[privileged-read]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_launch_parity.py::test_spawn_flags_match_the_pre_migration_call[privileged-write]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_launch_parity.py::test_spawn_flags_match_the_pre_migration_call[scp]  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_readiness_runtime.py::test_capability_probe_is_cached_per_executable  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_readiness_runtime.py::test_loose_umask_directory_is_tightened  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_readiness_runtime.py::test_prepare_launch_engages_and_creates_private_file  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_readiness_runtime.py::test_resolve_diagnostics_root_creates_private_tree  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_ssh_readiness_runtime.py::test_resolve_diagnostics_root_rejects_symlinked_runtime  # path separators
+tests/daemon/test_transfer_runtime.py::test_recursive_upload_copies_directory_tree  # POSIX paths in fixtures
+tests/daemon/test_transfer_runtime.py::test_recursive_upload_rejects_symlink_root  # path separators
+tests/mcp/test_architecture.py::test_frontend_neutrality_detects_gi  # assumes POSIX behaviour (reviewed by sample)
+tests/mcp/test_architecture.py::test_recommend_tests_for_api_and_mcp_paths  # assumes POSIX behaviour (reviewed by sample)
+tests/mcp/test_architecture.py::test_review_public_api_reports_surface  # assumes POSIX behaviour (reviewed by sample)
+tests/mcp/test_execution.py::test_run_tests_smallest_suite  # assumes POSIX behaviour (reviewed by sample)
+tests/mcp/test_repo_intelligence.py::test_find_symbols_definitions  # assumes POSIX behaviour (reviewed by sample)
+tests/mcp/test_repo_intelligence.py::test_find_test_files  # path separators
+tests/mcp/test_repo_intelligence.py::test_iter_files_skips_artifacts_and_confines  # path separators
+tests/mcp/test_repo_intelligence.py::test_iter_text_within_skips_binary  # path separators
+tests/mcp/test_repo_intelligence.py::test_search_finds_matches  # path separators
+tests/mcp/test_repo_scope.py::test_resolve_rejects_symlink_escape  # POSIX-only API
+tests/test_accessibility_metadata.py::test_accessible_names_are_not_internal_identifiers  # platform default encoding
+tests/test_accessibility_metadata.py::test_accessible_names_never_embed_a_keyboard_shortcut  # platform default encoding
+tests/test_askpass_log_path.py::test_askpass_uses_runtime_dir  # assumes POSIX behaviour (reviewed by sample)
+tests/test_askpass_password.py::test_ask_main_app_cancel_is_none  # Unix sockets / fd passing
+tests/test_askpass_password.py::test_ask_main_app_preserves_empty_string_reply  # Unix sockets / fd passing
+tests/test_askpass_password.py::test_askpass_answers_password_from_session_ipc  # Unix sockets / fd passing
+tests/test_askpass_password.py::test_stage_session_password_prefers_runtime_dir  # POSIX file modes
+tests/test_askpass_utils.py::test_clear_passphrase_removes_legacy_alias  # assumes POSIX behaviour (reviewed by sample)
+tests/test_askpass_utils.py::test_lookup_passphrase_handles_home_relative_alias  # assumes POSIX behaviour (reviewed by sample)
+tests/test_askpass_utils.py::test_lookup_via_main_app_roundtrip  # Unix sockets / fd passing
+tests/test_askpass_utils.py::test_passphrase_autofills_across_different_home  # assumes POSIX behaviour (reviewed by sample)
+tests/test_askpass_utils.py::test_passphrase_legacy_absolute_entry_still_resolves  # assumes POSIX behaviour (reviewed by sample)
+tests/test_authorized_keys_service.py::test_local_load_propagates_unexpected_errors  # POSIX-only API
+tests/test_authorized_keys_service.py::test_local_save_backup_is_copy_not_rename  # POSIX file modes
+tests/test_authorized_keys_service.py::test_local_save_creates_ssh_dir_and_writes_file  # POSIX file modes
+tests/test_backup_archive.py::test_encrypted_roundtrip  # POSIX file modes
+tests/test_backup_edge_cases.py::test_bug4_replace_should_not_restore_dangling_include  # assumes POSIX behaviour (reviewed by sample)
+tests/test_backup_edge_cases.py::test_bug7_crossmode_absolute_include_stays_consistent  # path separators
+tests/test_backup_manager.py::test_passphrase_credential_rehomed_to_current_home  # assumes POSIX behaviour (reviewed by sample)
+tests/test_backup_manager.py::test_private_key_restore_rehomes_to_current_home  # assumes POSIX behaviour (reviewed by sample)
+tests/test_backup_manager.py::test_rebase_home_in_text_helper  # POSIX paths in fixtures
+tests/test_backup_manager.py::test_rebase_home_path_helper  # POSIX paths in fixtures
+tests/test_backup_manager.py::test_replace_restores_tree_rebased_and_maps_main  # POSIX paths in fixtures
+tests/test_backup_manager.py::test_spbk_private_key_roundtrip_is_opt_in  # POSIX file modes
+tests/test_backup_manager.py::test_spbk_restore_clamps_private_key_permissions  # POSIX file modes
+tests/test_bitwarden_setup.py::test_download_and_install_bw_binary  # assumes POSIX behaviour (reviewed by sample)
+tests/test_cleanup_process.py::test_cleanup_process_sends_sigterm_to_pgid  # POSIX-only API
+tests/test_complex_config_parsing.py::TestEdgeCases::test_identityfile_curly_brace_env_var_expanded  # path separators
+tests/test_complex_config_parsing.py::TestEdgeCases::test_identityfile_percent_d_token_expanded  # path separators
+tests/test_complex_config_parsing.py::TestEdgeCases::test_include_percent_token_expanded  # assumes POSIX behaviour (reviewed by sample)
+tests/test_config_cross_process.py::test_stale_frontend_tree_cannot_delete_daemon_setting  # POSIX-only API
+tests/test_config_upgrade.py::test_config_path_from_glib  # path separators
+tests/test_connection_identity_migration.py::test_no_active_uuid_imports_in_src  # platform default encoding
+tests/test_credential_manager.py::test_gathers_home_relative_and_legacy_passphrase  # path separators
+tests/test_daemon_only_architecture.py::test_core_and_daemon_do_not_import_widget_toolkits  # platform default encoding
+tests/test_easyenv_cli_config.py::test_the_config_is_the_clis_file_and_readable_by_it  # POSIX file modes
+tests/test_easyenv_plugin.py::test_a_good_token_is_saved_for_the_cli_and_the_list_shown  # POSIX file modes
+tests/test_easyenv_plugin.py::test_adding_this_computers_key_sends_the_public_half  # assumes POSIX behaviour (reviewed by sample)
+tests/test_easyenv_plugin.py::test_the_page_is_told_when_this_computers_key_is_not_on_the_profile  # assumes POSIX behaviour (reviewed by sample)
+tests/test_easyenv_plugin_e2e.py::test_ssh_itself_reads_the_proxy_command_back  # assumes POSIX behaviour (reviewed by sample)
+tests/test_effective_config_diff.py::test_default_config_path_excludes_system_defaults  # assumes POSIX behaviour (reviewed by sample)
+tests/test_effective_config_diff.py::test_explicit_root_with_display_flag_matches_default_mode  # assumes POSIX behaviour (reviewed by sample)
+tests/test_effective_config_diff.py::test_missing_user_config_reports_no_diff  # assumes POSIX behaviour (reviewed by sample)
+tests/test_effective_config_diff.py::test_user_level_global_additions_still_reported  # assumes POSIX behaviour (reviewed by sample)
+tests/test_file_manager_retry.py::test_refresh_falls_back_to_the_path_bar_when_the_pane_has_no_path  # assumes POSIX behaviour (reviewed by sample)
+tests/test_file_pane_activate_file.py::test_folder_still_navigates  # path separators
+tests/test_file_pane_activate_file.py::test_local_file_opens_in_default_app  # POSIX paths in fixtures
+tests/test_file_pane_activate_file.py::test_remote_folder_still_navigates  # path separators
+tests/test_file_pane_drag_drop.py::test_same_pane_local_drop_into_folder_moves  # POSIX paths in fixtures
+tests/test_file_pane_nautilus_parity.py::test_alt_down_opens_the_selected_folder  # POSIX paths in fixtures
+tests/test_flatpak_ssh_import.py::test_import_private_key_copies_companions_and_sets_mode  # POSIX file modes
+tests/test_gtk_bundle_pyinstaller.py::test_ensure_abi_symlink_when_only_versioned_present  # POSIX-only API
+tests/test_key_controller.py::test_a_key_present_in_both_stores_is_offered_once  # POSIX paths in fixtures
+tests/test_key_controller.py::test_an_unreadable_active_store_still_raises  # POSIX paths in fixtures
+tests/test_key_controller.py::test_an_unreadable_secondary_store_does_not_hide_the_active_one  # POSIX paths in fixtures
+tests/test_key_controller.py::test_bad_returned_generation_dto_does_not_poison_busy  # POSIX paths in fixtures
+tests/test_key_controller.py::test_busy_flag_reset_after_generate_error  # POSIX paths in fixtures
+tests/test_key_controller.py::test_busy_flag_reset_after_list_error  # POSIX paths in fixtures
+tests/test_key_controller.py::test_busy_flag_reset_after_read_error  # POSIX paths in fixtures
+tests/test_key_controller.py::test_default_mode_does_not_list_the_isolated_store  # POSIX paths in fixtures
+tests/test_key_controller.py::test_generate_key_request_fields  # POSIX paths in fixtures
+tests/test_key_controller.py::test_generate_refreshes_cached_list_without_duplicates  # POSIX paths in fixtures
+tests/test_key_controller.py::test_generate_request_carries_no_passphrase_field  # POSIX paths in fixtures
+tests/test_key_controller.py::test_invalid_generate_name_raises_and_leaves_controller_usable  # POSIX paths in fixtures
+tests/test_key_controller.py::test_invalid_generate_type_or_size_leaves_controller_usable  # POSIX paths in fixtures
+tests/test_key_controller.py::test_isolated_mode_offers_the_users_own_keys_too  # POSIX paths in fixtures
+tests/test_key_controller.py::test_list_keys_caches_and_exposes_read_only_snapshot  # POSIX paths in fixtures
+tests/test_key_controller.py::test_list_keys_sends_scope  # POSIX paths in fixtures
+tests/test_key_controller.py::test_overlapping_calls_are_rejected  # POSIX paths in fixtures
+tests/test_key_controller.py::test_read_public_key_sends_scope_and_id  # POSIX paths in fixtures
+tests/test_key_controller.py::test_reads_and_deletes_address_the_store_the_key_lives_in  # POSIX paths in fixtures
+tests/test_key_controller.py::test_snapshot_empty_before_first_load  # POSIX paths in fixtures
+tests/test_key_controller.py::test_store_sends_bytearray_only_through_secret_frame_and_clears_it  # POSIX paths in fixtures
+tests/test_key_controller.py::test_validation_failure_makes_no_client_call  # POSIX paths in fixtures
+tests/test_key_controller.py::test_verify_clears_secret_and_busy_state_on_transport_failures[subscribe]  # POSIX paths in fixtures
+tests/test_key_controller.py::test_verify_clears_secret_and_busy_state_on_transport_failures[verify]  # POSIX paths in fixtures
+tests/test_key_controller.py::test_verify_sends_bytearray_only_through_secret_frame_and_clears_it  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_daemon_failure_propagates_without_local_fallback  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_discover_keys_in_default_mode_uses_only_the_default_store  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_discover_keys_in_isolated_mode_includes_the_default_store  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_discover_keys_projects_daemon_summaries  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_duplicate_key_maps_to_file_exists_error  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_generate_key_emits_key_generated_signal  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_generate_key_none_comment_and_unencrypted_defaults  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_generate_key_rsa_defaults_to_historical_3072  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_generate_key_sends_daemon_request_and_returns_dto  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_generate_request_never_carries_passphrase  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_other_api_error_maps_to_runtime_error  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_read_public_key_returns_daemon_text  # POSIX paths in fixtures
+tests/test_key_manager_daemon.py::test_validation_failure_maps_to_value_error  # POSIX paths in fixtures
+tests/test_local_shell_exit_closes_tab.py::test_ssh_session_still_reports_a_nonzero_exit  # assumes POSIX behaviour (reviewed by sample)
+tests/test_local_shell_pty_handoff.py::test_receives_the_descriptor  # Unix sockets / fd passing
+tests/test_local_shell_pty_handoff.py::test_rejects_a_message_without_a_descriptor  # Unix sockets / fd passing
+tests/test_local_shell_pty_handoff.py::test_rejects_an_unexpected_payload_and_closes_the_fd  # Unix sockets / fd passing
+tests/test_macos_dylib_closure.py::test_absolute_build_machine_paths_are_rewritten  # POSIX paths in fixtures
+tests/test_macos_dylib_closure.py::test_nested_binaries_are_inspected_and_point_back_to_root  # assumes POSIX behaviour (reviewed by sample)
+tests/test_macos_dylib_closure.py::test_symlinks_are_not_inspected_twice  # POSIX-only API
+tests/test_non_ssh_persistence.py::test_clearing_an_rdp_password_keeps_the_ssh_one_and_survives_reload  # assumes POSIX behaviour (reviewed by sample)
+tests/test_non_ssh_persistence.py::test_password_stored_only_through_secret_provider  # assumes POSIX behaviour (reviewed by sample)
+tests/test_non_ssh_persistence.py::test_secret_provider_previous_identity_cleanup  # assumes POSIX behaviour (reviewed by sample)
+tests/test_packaging_systemd.py::test_daemon_launcher_exists_and_is_executable  # assumes POSIX behaviour (reviewed by sample)
+tests/test_parser_matches_ssh_g.py::TestParserMatchesSshG::test_rich_config_all_hosts_match  # assumes POSIX behaviour (reviewed by sample)
+tests/test_platform_utils.py::test_get_config_dir  # path separators
+tests/test_platform_utils.py::test_get_data_dir  # path separators
+tests/test_platform_utils.py::test_inject_flatpak_host_env_inserts_env_fd_after_host  # assumes POSIX behaviour (reviewed by sample)
+tests/test_platform_utils.py::test_inject_flatpak_host_env_skips_empty_and_existing  # assumes POSIX behaviour (reviewed by sample)
+tests/test_platform_utils.py::test_managed_bw_cli_path_flatpak_uses_host_data  # POSIX paths in fixtures
+tests/test_platform_utils.py::test_managed_bw_cli_path_uses_data_home  # path separators
+tests/test_platform_utils.py::test_resolve_bw_cli_path_flatpak_host_binary  # POSIX paths in fixtures
+tests/test_portal_docs_resolution.py::test_lookup_document_path_falls_back_to_host  # POSIX-only API
+tests/test_portal_docs_resolution.py::test_lookup_document_path_prefers_portal_mount  # POSIX-only API
+tests/test_portal_docs_resolution.py::test_open_with_default_app_falls_back_to_default_uri  # path separators
+tests/test_portal_docs_resolution.py::test_portal_path_to_host_entry_xattr_wins_over_gethostpaths  # POSIX paths in fixtures
+tests/test_portal_docs_resolution.py::test_portal_path_to_host_subpath_under_rootless_grant  # POSIX paths in fixtures
+tests/test_portal_docs_resolution.py::test_portal_path_to_host_walks_up_subpath  # POSIX paths in fixtures
+tests/test_portal_docs_resolution.py::test_resolve_falls_back_to_portal_mount  # POSIX-only API
+tests/test_properties_dialog_permissions.py::test_local_group_access_change_is_applied_with_chmod  # assumes POSIX behaviour (reviewed by sample)
+tests/test_protocol_suggestion_messages.py::test_real_catalogue_formats_translated_reason_without_touching_diagnostic  # assumes POSIX behaviour (reviewed by sample)
+tests/test_rdp_plugin.py::test_shared_folder_expands_home  # POSIX paths in fixtures
+tests/test_rdp_plugin.py::test_stored_password_travels_on_a_one_shot_fifo  # assumes POSIX behaviour (reviewed by sample)
+tests/test_secret_storage.py::test_active_backend_label_uses_describe  # secret backend selection differs on Windows
+tests/test_secret_storage.py::test_bitwarden_flatpak_forwards_password_via_env_fd  # assumes POSIX behaviour (reviewed by sample)
+tests/test_secret_storage.py::test_bitwarden_flatpak_login_forwards_password_via_env_fd  # assumes POSIX behaviour (reviewed by sample)
+tests/test_secret_storage.py::test_delete_clears_all_backends  # assumes POSIX behaviour (reviewed by sample)
+tests/test_secret_storage.py::test_master_password_stored_in_keyring_not_selected_vault  # secret backend selection differs on Windows
+tests/test_secret_storage.py::test_store_uses_primary_then_lookup  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_config_document.py::test_parse_file_matches_parse_text  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_config_safe_write.py::test_atomic_write_creates_file_with_requested_mode  # POSIX file modes
+tests/test_ssh_config_safe_write.py::test_atomic_write_makes_backup_and_keeps_perms  # POSIX file modes
+tests/test_ssh_config_safe_write.py::test_atomic_write_preserves_existing_mode_when_mode_none  # POSIX file modes
+tests/test_ssh_copy_id_operation_scope.py::test_deploy_failure_does_not_commit_remembered_secret  # POSIX paths in fixtures
+tests/test_ssh_copy_id_operation_scope.py::test_deploy_interaction_scope_is_public_operation_id  # POSIX paths in fixtures
+tests/test_ssh_copy_id_operation_scope.py::test_deploy_startup_failure_cleans_up_without_commit  # POSIX paths in fixtures
+tests/test_ssh_copy_id_operation_scope.py::test_deploy_success_commits_remembered_secret_before_cleanup  # POSIX paths in fixtures
+tests/test_ssh_copy_id_operation_scope.py::test_full_server_password_interaction_visible_to_owner_client  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_copy_id_operation_scope.py::test_real_broker_password_flow_reaches_deploy_operation  # POSIX paths in fixtures
+tests/test_ssh_multiplex.py::test_controlmaster_args_custom_persist  # no ControlMaster on Windows (by design)
+tests/test_ssh_multiplex.py::test_controlmaster_args_tokens  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_multiplex.py::test_expire_all_masters_stops_each_socket  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_multiplex.py::test_expire_all_masters_unlinks_stale_sockets  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_multiplex.py::test_socket_dir_creates_private_runtime_tree  # path separators
+tests/test_ssh_multiplex.py::test_socket_dir_falls_back_to_ssh  # path separators
+tests/test_ssh_multiplex.py::test_socket_dir_prefers_xdg_runtime  # path separators
+tests/test_ssh_multiplex.py::test_socket_dir_repairs_existing_loose_runtime_tree  # assumes POSIX behaviour (reviewed by sample)
+tests/test_ssh_process_manager.py::test_cleanup_all_clears_state  # path separators
+tests/test_ssh_process_manager.py::test_terminate_by_pid_returns_false_on_error  # POSIX-only API
+tests/test_ssh_process_manager.py::test_terminate_by_pid_sigkills_process_group  # POSIX-only API
+tests/test_terminal_backend_architecture.py::test_frontend_does_not_bypass_widget_input_routing  # platform default encoding
+tests/test_terminal_backend_architecture.py::test_frontend_does_not_reach_into_vte_backend  # platform default encoding
+tests/test_terminal_local_shell_env.py::test_agent_shell_gets_xterm_term_when_launched_from_tmux  # POSIX-only API
+tests/test_terminal_local_shell_env.py::test_direct_spawn_path_runs_env_through_sanitizer  # POSIX-only API
+tests/test_text_editor_path.py::test_collapses_path_under_home  # POSIX paths in fixtures
+tests/test_text_editor_ui_i18n.py::test_load_failure_translates_stable_reason_and_preserves_diagnostic  # POSIX file modes
+tests/test_transfer_error_messages.py::test_real_french_catalogue_formats_capability  # assumes POSIX behaviour (reviewed by sample)
