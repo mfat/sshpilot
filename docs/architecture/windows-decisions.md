@@ -22,7 +22,7 @@ for breaking either.
 |---|---|---|
 | 1. Runtime and packaging | **python.org (MSVC) Python + gvsbuild GTK 4**, frozen with PyInstaller, NSIS installer, SignPath signing, winget | PyPI's pywinpty is the only Python ConPTY binding that ships a modern ConPTY, and it only exists for MSVC Python. Gaphor ships exactly this stack today. |
 | 2. PTY | **Bundled ConPTY** (`conpty.dll` + `OpenConsole.exe` from Microsoft's NuGet package), through **pywinpty 3.x** | Measured on Windows 10 19045: the bundled ConPTY passes mouse modes, the alternate screen and paste markers through in both directions. The inbox one strips them. |
-| 3. Emulator core | **libvterm** as the Windows default, **pyte** as fallback; watch **libghostty-vt** | libvterm is 20–40× faster than pyte, is plain C that builds with MSVC, and the model already exists. libghostty-vt is the better long-term core but has no tagged release yet. |
+| 3. Emulator core | **libvterm** as the Windows default (built from source, patched), **pyte** as fallback; watch **libghostty-vt** | libvterm is 20–40× faster than pyte and the model already exists, but the stock 0.3.3 DLL we ship has a remotely triggerable crash, so it must be built from the ABI-compatible mirror with the CSI-args fix — as Emacs and Neovim both do. |
 | 4. Connection sharing | **Accept one login per channel for now**, reduce the cost through the agent and the broker, and track the Win32-OpenSSH ControlMaster PR | A daemon-held SSH library would be a second SSH engine. Upstream multiplexing is in review. |
 | 5. Local shells / IPC | Local shells as **daemon sessions** on the same ConPTY runner; **keep loopback TCP** | The daemon is always local on Windows, so no frontend PTY is needed. TCP + token is adequate. |
 
@@ -310,6 +310,31 @@ Leave `PSEUDOCONSOLE_PASSTHROUGH_MODE` off until measured. The bundled
 runtime already forwards what we need with flags 0. Passthrough changes
 which side owns the screen, and WezTerm does not use it either.
 
+### What Neovim's ConPTY host confirms (if the ctypes runner is ever used)
+
+Neovim's `src/nvim/os/pty_conpty_win.c` and `pty_proc_win.c` are the closest
+C analogue to our ctypes spike, and corroborate its design:
+
+- It loads `conpty.dll` and falls back to `kernel32.dll`
+  (`os_dyn_conpty_init`), the same order the spike uses — the same pattern as
+  WezTerm, Alacritty and node-pty.
+- It passes **flags 0** to `CreatePseudoConsole` and builds the
+  `STARTUPINFOEX` with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`, exactly what
+  `conpty_ctypes.py` does.
+- **It runs `ClosePseudoConsole` on a separate thread while the main loop
+  keeps draining output** until EOF (`pty_proc_close_console`: `uv_thread_create
+  (os_conpty_free)` then `uv_run(UV_RUN_ONCE)` until `did_eof`). This is the
+  Windows-10 close-hang mitigation, and our spike's docstring already
+  describes the same move — good independent confirmation that the reader must
+  stay live during close.
+- **Orphan-conhost guard:** if no output was ever read (`num_bytes == 0`) it
+  `TerminateProcess`es the child before closing, to avoid leaving an orphan
+  conhost when a session is closed immediately after opening. Worth adding to
+  `conpty_runner.py` regardless of which runner wins.
+- It uses **named pipes** for the ConPTY in/out handles, not anonymous pipes.
+  We do not need that for the daemon path, but it is the reference if the
+  async story ever changes.
+
 ---
 
 ## 3. Emulator core
@@ -320,7 +345,7 @@ forwarding the alternate screen, mouse and paste.
 | Core | Speed (1.5 MB, 80x24) | Packaging on B | Features | Risk |
 |---|---|---|---|---|
 | **pyte** 0.8.2 (pure Python) | 0.35 MB/s | none | no reflow, no OSC 8; `TypeError` on `CSI ? 4 m`; loses lines on alternate-screen resize (windows-port.md §3a) | upstream dormant (last release Nov 2023) |
-| **libvterm** 0.3.3 (C, ctypes) | 6.7–14.4 MB/s | one ~80 KB DLL; plain C99, builds with MSVC (Neovim vendors and builds it, [src/nvim/vterm](https://github.com/neovim/neovim/tree/master/src/nvim/vterm)) | alternate screen, mouse, paste, DA/DSR; reflow exists but is not wired; no DECSET 9; alternate-screen resize bug worked around (`_AltResize`) | upstream quiet; Neovim maintains its own fork |
+| **libvterm** 0.3.3 (C, ctypes) | 6.7–14.4 MB/s | one ~80 KB DLL; plain C99, builds with MSVC | alternate screen, mouse, paste, DA/DSR; reflow exists but is not wired; no DECSET 9; alternate-screen resize bug worked around (`_AltResize`); **the stock 0.3.3 DLL has a remotely triggerable crash, see below** | upstream dormant; Emacs and Neovim both build their own patched copy, not the distro DLL |
 | **libghostty-vt** (Zig, C API) | not measured; Ghostty's core | needs Zig to build a static or shared lib; MSVC builds now in Ghostty CI ([announcement](https://x.com/mitchellh/status/2036169542762897685)) | reflow, Kitty keyboard, OSC 8, modern xterm coverage | "not tagged with a version yet", "API signatures are still in flux" ([README](https://github.com/ghostty-org/ghostty)) |
 | **alacritty_terminal / wezterm-term** (Rust, via PyO3) | fast | we would write and own a binding crate, build with maturin per Python version, and ship a Rust toolchain in CI; no published Python binding exists | strong (reflow, modern sequences) | the binding and its API surface become ours to maintain |
 
@@ -340,20 +365,104 @@ Notes:
   That is evidence the C API is usable on Windows. Its own caveat stands:
   every engine update means reviewing the archive and the bindings together.
 
+### Lessons from the reference libvterm embedders
+
+Three local clones were traced against our model: emacs-libvterm
+(`vterm-module.c`, a C module that embeds libvterm and renders into an Emacs
+buffer), Neovim (`src/nvim/vterm/`, a vendored libvterm plus `terminal.c`),
+and libvtty (a standalone C emulator). The findings change the libvterm
+recommendation.
+
+1. **The stock 0.3.3 DLL crashes on a long CSI sequence (confirmed on this
+   machine).** `parser.c`'s `CSI_ARGS` state increments `argi` on every `;`
+   and writes `args[argi] = CSI_ARG_MISSING` with no bound; `CSI_ARGS_MAX` is
+   16. Feeding `ESC [ ;×17 m` through the MSYS2 `libvterm-0.dll` (0.3.3) into
+   `VtermTerminalModel` is an access violation (`rc=139`) — a write past the
+   `args[16]` array into the `VTermState`. It is **remotely triggerable**: any
+   SGR with ≥17 parameters, which a hostile or merely eccentric prompt, `tput`
+   or piped scrollback can send. pyte has no equivalent (it bounds args in
+   Python). Neovim hit this (its [#34012](https://github.com/neovim/neovim/pull/34012)
+   raised `CSI_ARGS_MAX` to 32 after a 16-arg crash); libvtty bounds to
+   `MAX_CSI_ES_PARAMS = 32` with counted arrays. **We ship this DLL today**,
+   so the opt-in vterm backend has a crash the pyte default does not.
+
+2. **Neither reference embedder uses a distro libvterm.** emacs-libvterm's
+   `CMakeLists.txt` prefers a system libvterm but otherwise `ExternalProject`-
+   builds a pinned mirror from source (`BUILD_COMMAND make CFLAGS=-fPIC
+   LDFLAGS=-static`); Neovim vendors the source outright. Both patch it. This
+   is direct support for building libvterm ourselves rather than shipping
+   MSYS2's `libvterm-0.dll`.
+
+3. **"Neovim's fork" is two different things; only one is ABI-compatible.**
+   - `github.com/neovim/libvterm` is a *mirror* of leonerd's upstream, still
+     VERSION 0.3.3, still `uint32_t chars[6]` in `VTermScreenCell` — the exact
+     layout our ctypes `_CELL` (40 bytes) and `_decode_cell` assume. It also
+     carries post-0.3.3 commits: `sb_pushline4` (an `sb_pushline` variant with
+     a `continuation` flag) and a `premove` callback, both needed for correct
+     reflow with scrollback.
+   - `neovim/src/nvim/vterm/` is Neovim's *internal* fork. Its
+     `VTermScreenCell` is `{ schar_T schar; ScreenPen pen; }` — the inline
+     `chars[6]` is replaced by an opaque `schar` index that only Neovim's own
+     `schar_get()` resolves, and `ScreenPen` gained `uri`, `dim`, `overline`,
+     `small`, `baseline`. **This layout is not binary-compatible with our
+     model, and Neovim does not ship it as a library.** Reading cells from it
+     would mean a different ctypes layout and an API Neovim does not export.
+   So "use Neovim's vterm" is not a drop-in. The usable source is the
+   **mirror**, built from source, with the `CSI_ARGS_MAX` fix applied.
+
+4. **Reflow needs the continuation flag stored with scrollback.** Our
+   `VtermTerminalModel` keeps `pull_history_on_grow` and leaves reflow off,
+   because upstream 0.3.3 exposes only `sb_pushline` (no continuation bit), so
+   a reflowed long line cannot be re-joined on the next resize.
+   emacs-libvterm enables reflow (`vterm_screen_enable_reflow`) and pairs it
+   with careful `sb_push`/`sb_pop` accounting (`height_resize`,
+   `sb_pending_by_height_decr`, `popped_by_height_incr`) to keep line metadata
+   aligned through height changes. The mirror's `sb_pushline4` is what lets a
+   Python model record the continuation flag per scrollback row and do the
+   same. Reflow is therefore reachable, but only on a built-from-source
+   mirror, not on the distro DLL.
+
+5. **Disable reflow on the alternate screen.** Neovim's
+   [#38812](https://github.com/neovim/neovim/pull/38812) sets `do_reflow =
+   reflow && bufidx == BUFIDX_PRIMARY`, because reflowing the alt buffer
+   corrupts a TUI's display. If we ever enable reflow, the same rule applies,
+   and it is independent of our `_AltResize` workaround (which addresses the
+   raw-resize bug, not reflow).
+
+6. **Run-coalescing and damage merge are already how we draw.** Both
+   emacs-libvterm (`compare_cells` + buffered runs in `refresh_lines`) and our
+   view coalesce equal-attribute cells before painting, and both set
+   `VTERM_DAMAGE_SCROLL`. No change needed; it confirms the approach.
+
 ### Recommendation
 
 **libvterm becomes the Windows default once the frozen build ships an
-MSVC-built `libvterm-0.dll`. pyte stays as the fallback. libghostty-vt is
-the planned successor.**
+MSVC-built, patched `libvterm-0.dll`. pyte stays as the fallback.
+libghostty-vt is the planned successor.**
 
-- Build libvterm from source in the Windows CI with `cl`. It is a dozen C
-  files with no dependencies. Pin the 0.3.3 tarball, or Neovim's vendored
-  copy, which carries fixes.
+- Build libvterm from source in the Windows CI with `cl`, from the
+  `github.com/neovim/libvterm` **mirror** (ABI-compatible with our model), not
+  the MSYS2 DLL and not Neovim's internal `src/nvim/vterm`. It is a dozen C
+  files with no dependencies.
+- Apply the `CSI_ARGS_MAX` fix (raise to 32 and bound `argi`) in that build.
+  This closes the crash in finding 1. Until the built-from-source DLL ships,
+  treat the opt-in vterm backend as not crash-safe, or add a cheap guard in
+  `VtermTerminalModel.feed` that caps the parameter count of a CSI before
+  handing it to libvterm.
+- Picking up the mirror's `sb_pushline4`/`premove` also unlocks
+  continuation-aware scrollback, which is the prerequisite for turning reflow
+  on (findings 4–5). That is follow-up work, not required for the default.
 - Re-evaluate libghostty-vt when it is tagged. A ctypes binding of its C API
   slots behind the same `TerminalModel` surface `vterm_terminal_model.py`
-  implements, and its build (Zig produces a C ABI DLL) fits Option B.
+  implements, and its build (Zig produces a C ABI DLL) fits Option B. Note its
+  cell model will differ from libvterm's, so the binding, not the view, is
+  where that is absorbed.
 - Do not take the PyO3 route. It adds a Rust toolchain and a binding we
   would own, for a core that libghostty-vt will offer through a C ABI anyway.
+- libvtty is not a candidate: it is POSIX-only (`forkpty`, `poll`, `ioctl`
+  `TIOCSWINSZ`, `SIGWINCH`) and ncurses-oriented, with no Windows path. It is
+  useful only as a reading reference for bounded CSI parsing and SGR/X10 mouse
+  drivers.
 
 ---
 
@@ -444,6 +553,15 @@ Even then, scope it to SFTP and Host Info, never terminals.
     windows-port.md §7.
   - It depends on the bundled ConPTY, because PowerShell and cmd behave far
     better under a modern ConPTY than the inbox one.
+  - Two concrete behaviours to copy from Neovim's local-shell host
+    (`pty_proc_win.c`), because a local shell exits and is re-spawned far more
+    often than an SSH session: close `ClosePseudoConsole` on a worker thread
+    while the reader keeps draining (the Windows-10 close hang), and
+    `TerminateProcess` a child that produced no output before closing (the
+    orphan-conhost guard). `conpty_runner.py`'s reaper already drains for up to
+    1 s; fold these two in when the shell path lands. No frontend libvterm
+    change is needed — the local shell is just another stream into the same
+    emulator model, so the section-3 crash fix protects it too.
 - **Daemon transport.** Keep loopback TCP with the token preamble.
   - Named pipes would add connect-time ACLs and a reliable peer pid, at the
     cost of a bridge thread per client into the socket selector loop
@@ -477,12 +595,21 @@ In order. Each step lists which current modules it **keeps**, **changes** or
      sessions.
    - Keep the ctypes spike (`daemon/conpty_ctypes.py`) unmerged as a
      documented fallback.
-3. **Build libvterm with MSVC in CI, and make it the Windows default.**
+3. **Build a patched libvterm with MSVC in CI, and make it the Windows
+   default.**
+   - New: a CI step that builds `libvterm-0.dll` from the
+     `github.com/neovim/libvterm` mirror with `cl`, with the `CSI_ARGS_MAX`
+     crash fix applied (section 3, findings 1–3). Pin the commit.
    - Change: `terminal_backends`/`TerminalWidget` default model on Windows;
      Preferences default.
+   - Interim, before that DLL ships: add a parameter-count guard to
+     `VtermTerminalModel.feed` so the opt-in backend cannot be crashed on the
+     stock 0.3.3 DLL. Add a regression test (`ESC [ ;×17 m`) to
+     `tests/test_pyte_terminal_model.py`.
    - Keep: `vterm_terminal_model.py`, `terminal_model_common.py`,
-     `pyte_terminal_model.py` (fallback); the tests in
-     `tests/test_pyte_terminal_model.py` run both.
+     `pyte_terminal_model.py` (fallback); the tests run both models.
+   - Later: pick up the mirror's `sb_pushline4`/`premove` for
+     continuation-aware scrollback, then enable reflow (primary buffer only).
 4. **Freeze, install, sign.**
    - New: `packaging/pyinstaller/sshpilot-windows.spec`. Reuse the ideas from
      `origin/cursor/windows-support-abbc`, not its MINGW64 paths.
@@ -530,3 +657,27 @@ transport.
   x64 only. Not a target yet.
 - How large is the frozen build really? Measure in step 4 before committing
   to a portable single-exe variant.
+- Does building libvterm from the mirror with `cl` produce a DLL whose
+  `VTermScreenCell` still matches our ctypes `_CELL` (it should — the mirror
+  keeps `chars[6]` — but `-mms-bitfields` vs MSVC bitfield packing of the
+  attrs word must be re-checked against `_decode_cell`)?
+
+## Reference implementations traced
+
+Local clones read for this update (data, not dependencies):
+
+- `emacs-libvterm` (`vterm-module.c`, `CMakeLists.txt`): a C module embedding
+  libvterm, building a pinned mirror from source; source of the reflow +
+  `sb_push`/`sb_pop` accounting and run-coalescing lessons.
+- `neovim` (`src/nvim/vterm/`, `src/nvim/os/pty_conpty_win.c`,
+  `pty_proc_win.c`): a vendored+patched libvterm and a ConPTY host; source of
+  the `CSI_ARGS_MAX` fix, the altscreen-reflow rule, the ABI divergence of the
+  internal fork, and the ConPTY close/orphan-guard patterns.
+- `neovim/libvterm` mirror and upstream 0.3.3 tarball: used to confirm the
+  crash exists in the shipped DLL and which source is ABI-compatible.
+- `libvtty`: a standalone POSIX/ncurses emulator; a reading reference for
+  bounded CSI parsing and mouse drivers, not a Windows candidate.
+
+The CSI crash was reproduced directly: feeding `ESC [ ;×17 m` through the
+installed MSYS2 `libvterm-0.dll` into `VtermTerminalModel` is an access
+violation; `;×16` survives.
