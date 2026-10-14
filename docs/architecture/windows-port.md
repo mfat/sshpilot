@@ -1,0 +1,278 @@
+# Windows port
+
+Status: **experimental, run-from-source only** (branch `windows`). The app
+starts on Windows 10/11 under MSYS2 UCRT64 and runs daemon-owned SSH sessions
+in an embedded terminal. User setup lives in
+[running-on-windows.md](../running-on-windows.md). This page records how the
+port works, what stood in the way, and why each piece is built the way it is.
+
+## Ground rules
+
+- **POSIX behaviour must not change.** Every change sits behind
+  `sys.platform == "win32"` / `platform_utils.is_windows()`, or behind a
+  factory that picks the existing implementation on Linux and macOS. The
+  Unix-socket transport, the POSIX PTY runner and VTE are untouched there.
+- **Native OpenSSH stays the SSH engine.** Windows ships OpenSSH for Windows
+  (`C:\Windows\System32\OpenSSH\ssh.exe`). The daemon drives it exactly as it
+  drives OpenSSH elsewhere; no Paramiko, no bundled ssh.
+- **The daemon architecture is kept, not bypassed.** The GUI remains a
+  client of the daemon. Windows gets its own *transport* and *PTY runner*
+  behind the same seams the POSIX code uses, not a separate code path.
+
+## Runtime picture
+
+```text
+GTK frontend (MSYS2 Python, GTK 4 + libadwaita)
+   │  DaemonClient ── loopback TCP + auth preamble ──┐
+   │  TerminalWidget → PyteTerminalBackend           │
+   ▼                                                 ▼
+                                        sshpilot daemon (same Python)
+                                          selector loop / dispatcher
+                                          ConPtySessionProcessRunner
+                                              │ ConPTY (pywinpty)
+                                              ▼
+                                           ssh.exe ── SSH_ASKPASS=askpass.cmd
+                                                          │ loopback TCP + broker token
+                                                          ▼
+                                                 daemon InteractionBroker
+```
+
+## Obstacles and decisions
+
+### 1. No `AF_UNIX` → loopback TCP with a token
+
+**Obstacle.** CPython on Windows has no `socket.AF_UNIX`; asyncio doesn't
+either. The daemon listener, the client connect, the stale-socket probes, the
+askpass listener and the askpass helper all failed with `AttributeError`.
+Socket-path resolution also failed earlier: there is no `XDG_RUNTIME_DIR` and
+no `os.getuid`. The POSIX security model (mode-0700 directory, mode-0600
+socket, `SO_PEERCRED`) has nothing to check on Windows.
+
+**Decision.** `api/transport/endpoint.py` owns endpoint creation and
+connection:
+
+- The daemon binds `127.0.0.1:0` with `SO_EXCLUSIVEADDRUSE`, listens, then
+  atomically publishes `{port, token, pid}` to
+  `%LOCALAPPDATA%\sshpilot\run\sshpilotd.json`. The token is
+  `secrets.token_urlsafe(32)`. The file is ACL-restricted to the current user
+  (and SYSTEM).
+- Every client must send `SSHPILOT-AUTH <token>\n` (fixed length) before any
+  framed byte. `PreambleGate` checks it incrementally in the non-blocking
+  selector loop with `hmac.compare_digest`, and rejects early on the first
+  mismatching byte. Bad clients are closed before dispatch.
+- The rest of the code still calls this file the "socket path", so
+  `daemon/lifecycle.py` keeps one vocabulary. On Windows, "stale socket" means
+  the endpoint file exists but nothing accepts on its port. The peer pid comes
+  from the file, and is used only after `identify_process` confirms it is
+  alive.
+
+**Why not named pipes?** They are the more native choice, but need pywin32 or
+a ctypes overlapped-I/O layer, and do not plug into the existing `selectors`
+loop. Loopback TCP keeps the framing, selector loop and blocking client
+threads byte-for-byte identical. The token plus the user-only file gives the
+same-user guarantee that file permissions give on POSIX.
+
+### 2. No POSIX PTY → ConPTY runner
+
+**Obstacle.** `daemon/pty_runner.py` is built on `os.openpty`, `fcntl`,
+`termios`, `select` over pipes, `setsid`/`login_tty` (`_pty_child.py`) and
+`killpg`.
+
+**Decision.** `daemon/conpty_runner.py` implements the same runner and handle
+surface `SessionRuntime` already consumes (`start`, `write`, `resize`,
+`terminate`, `kill`, `wait`, `poll_and_notify`):
+
+- **Process.** pywinpty's `PTY` (ConPTY backend) spawns `ssh.exe` directly
+  from the resolved executable path, with `subprocess.list2cmdline` quoting.
+- **Threads.** One reader thread per session forwards output. A shared reaper
+  thread notices exit and gives the reader up to 1 s to deliver the last frame
+  before declaring EOF, so EOF arrives before exit as on POSIX.
+- **Kill.** Kill and terminate end the process tree via psutil, so ProxyJump
+  and ProxyCommand children die too. Windows has no SIGTERM for console
+  programs.
+- **Selection.** `server.py` chooses the runner by platform at the single
+  construction site. `pty_runner.py` is never imported on Windows.
+
+**pywinpty API drift.** pywinpty 3.x (PyPI) reads and writes `str`; 2.x
+(the MSYS2 package) reads and writes UTF-8 `bytes`. The runner accepts both.
+It feeds input through an incremental UTF-8 decoder, so a multi-byte
+character split across frames is not corrupted. The MSYS2 `python-pywinpty`
+package also fails to declare its runtime dependency on `winpty`; the DLL load
+fails until `mingw-w64-ucrt-x86_64-winpty` is installed (the setup doc lists
+it).
+
+**ConPTY behaviour.** At start, ConPTY emits `ESC[c` (a DA1 query),
+`ESC[?9001h` (win32-input-mode) and a full redraw. The terminal answers DA1
+and ignores 9001, so ConPTY keeps sending plain VT input.
+
+### 3. No VTE / WebKitGTK → a built-in pyte terminal
+
+**Obstacle.** Neither VTE nor WebKitGTK exists for GTK 4 on Windows, so both
+existing backends (VTE, xterm.js-in-WebKit) were unavailable. `Vte` was also
+imported at module level across `main.py`, `terminal.py`,
+`terminal_backends.py` and `xterm_pty_bridge.py`.
+
+**Options considered.**
+- An external terminal only (Windows Terminal running ssh.exe) loses the
+  embedded experience the app is built around.
+- WebView2 hosting xterm.js has to live outside GTK's widget tree.
+- A pure-GTK renderer was chosen.
+
+**Decision.** The backend is split in two:
+
+- **`pyte_terminal_model.py`** is GTK-free and unit-tested. It holds a
+  `pyte.Screen` subclass that adds:
+  - scrollback that survives full-screen scrolling, shrinking resizes and
+    `ED 3`;
+  - pull-back of history when the window grows;
+  - the alternate screen (DECSET 47/1047/1049, with cursor save for 1049);
+  - DA/DSR replies routed to the remote;
+  - xterm key and mouse (SGR and legacy) encoding;
+  - selection text and search over scrollback plus screen.
+- **`terminal_backend_pyte.py`** is a `Gtk.DrawingArea` that draws with
+  Pango/cairo and implements the existing `BaseTerminalBackend` protocol:
+  - `commit` / `grid-size-changed` signals with VTE's shapes;
+  - `Gtk.IMMulticontext` input;
+  - a scrollbar bound to its own adjustment;
+  - selection, PRIMARY, bracketed paste;
+  - mouse reporting with Shift to bypass;
+  - alternate-scroll in full-screen apps.
+
+  `TerminalWidget` needed no changes in its daemon I/O path. The `commit`
+  payload is `bytes`, because legacy mouse reports are not valid UTF-8, and
+  `commit_payload_to_bytes` already passes `bytes` through.
+
+**Wiring.**
+- `terminal_backends.VTE_AVAILABLE` gates VTE.
+- `TerminalWidget._create_backend` picks `pyte` when VTE is missing or when
+  `terminal.backend = "pyte"` is set, so the backend can be tested on Linux
+  too.
+- Preferences lists it as "Built-in".
+
+**Windows input detail.** GDK on Windows reports AltGr as Ctrl+Alt. A
+Ctrl+Alt press that produces a printable non-letter is therefore sent as text.
+Otherwise AltGr+Q (`@` on a German layout) would become Ctrl+@ (NUL).
+
+**Limits.** pyte has no hyperlinks (OSC 8), no reflow on resize, no sixel,
+and no true-blink. Rendering is per-run Pango layouts, which is fine for
+interactive use but slower than VTE on bulk output.
+
+### 4. Askpass without a shebang
+
+**Obstacle.** The broker writes a `#!/bin/sh` (frozen build) or
+`#!python` launcher and points `SSH_ASKPASS` at it, but Windows ignores
+shebangs. The helper also connected over `AF_UNIX`.
+
+**Decision.**
+- On Windows the broker writes `askpass.cmd` beside a copy of
+  `askpass_helper.py`. Win32-OpenSSH starts `SSH_ASKPASS` with
+  CreateProcess, which runs `.cmd` through cmd.exe. The launcher runs the
+  helper as `python -I` (isolated mode: nothing from the cwd or `PYTHON*`).
+- The listener is loopback TCP, advertised as `tcp:127.0.0.1:PORT` in
+  `SSHPILOT_DAEMON_ASKPASS_SOCKET`. No extra preamble is needed: every
+  askpass request already carries its per-launch broker token, which was
+  always this channel's authority. `_same_user_peer` only applies to
+  `AF_UNIX`.
+- Verified end to end: a password prompt from `ssh.exe` reached the GTK
+  dialog and the session authenticated.
+
+### 5. ControlMaster does not exist
+
+**Obstacle.** OpenSSH for Windows has no connection multiplexing. A
+`ControlMaster` option makes launches fail. Host Info forced a master with
+`require_master=True`.
+
+**Decision.**
+- On Windows, `ssh_multiplex.controlmaster_args()` returns
+  `-o ControlMaster=no -o ControlPath=none`. Because OpenSSH takes the first
+  value given, a forced master or an authored Host block can no longer break
+  a launch.
+- `socket_dir()` points at an always-empty `%LOCALAPPDATA%\sshpilot\run\cm`,
+  so the existing master surveys and the shutdown sweep resolve it and find
+  nothing.
+- `expire_all_masters` is a no-op, and the preference switch is hidden.
+
+### 6. Atomic writes fsync the parent directory
+
+**Obstacle.** This is the bug that broke saving. The connection-state,
+`~/.ssh/config` and `known_hosts` writers fsync the parent directory after
+`os.replace` by `os.open()`-ing it. Windows refuses to open a directory that
+way (`PermissionError`). The connection repository then classified its own
+state file as unusable and disabled every save ("Connection state file is
+unusable … Permission was denied").
+
+**Decision.** The directory fsync is skipped on Windows in
+`state_file._fsync_parent`, `known_hosts/file_io.py` and
+`ssh_config_store.py`. NTFS journals the rename metadata itself, and
+`os.replace` is `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`. Fixing this took the
+Windows failures in `tests/daemon`, `tests/core` and `tests/api` from 484 to
+174.
+
+### 7. `os.kill(pid, 0)` is not a probe on Windows
+
+**Obstacle.** This is the bug behind having to quit twice. Python's
+`os.kill` on Windows calls `TerminateProcess` for every signal except the
+console CTRL events, so `os.kill(pid, 0)` kills a live process. On a dead
+pid it raises a plain `OSError`, which `process_registry._pid_exists` read as
+"alive". The quit path's "daemon identity gone" check therefore never became
+true, and quit waited out its 10 s timeout until a second click escalated.
+
+**Decision.** `_pid_exists` uses `psutil.pid_exists` on Windows. A regression
+test forbids `os.kill` there. The remaining `os.kill(pid, 0)` calls in
+`terminal.py` / `ssh_process_manager.py` belong to local-shell paths that
+cannot run on Windows today. Fix them before enabling local shells.
+
+### 8. Smaller incompatibilities
+
+| Problem | Fix |
+| --- | --- |
+| `import resource`, `pwd`, `grp` at module level | Made lazy or guarded (`main.py`, `terminal.py`, serial plugin) |
+| `require_version('PangoFT2')` (not in MSYS2's GTK) | Guarded; the font dialog falls back to `PangoCairo.FontMap` |
+| `ctypes.CDLL(None)` (inotify probe) raises `TypeError` on Windows | Caught; the monitor reports itself unavailable, as on macOS |
+| GUI used `GLib.get_user_config_dir()` (`%LOCALAPPDATA%`), daemon used `~/.config` | `platform/paths.py` is the single source: config in `%APPDATA%\sshpilot`, data/state/runtime in `%LOCALAPPDATA%\sshpilot` |
+| `fcntl.flock` file locks silently became a no-op | `platform/locking.py` uses `msvcrt.locking` |
+| `os.fchmod` (absent before Python 3.13), `os.uname`, `os.getuid`, `os.mkfifo` | Guarded per call site |
+| `chmod 0600` does nothing; OpenSSH rejects keys others can read ("UNPROTECTED PRIVATE KEY FILE") | `platform/windows/acl.py` uses `icacls` for owner-only (+SYSTEM) ACLs on generated keys and the endpoint file |
+| `start_new_session` ignored; console windows flashing | The daemon spawns with `CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW`; its console children inherit the hidden console |
+| `SIGALRM` watchdog at quit, `SIGKILL` references | `threading.Timer` / `getattr(signal, "SIGKILL", SIGTERM)` |
+| `sh -lc` for pre-connection commands | `cmd /d /s /c` on Windows |
+| Secret backend "auto" tried libsecret first | Windows uses `keyring` first (Credential Manager); KeePass stays available |
+| MSYS2 shells leave `System32\OpenSSH` off PATH | `run.py` appends it when `ssh` isn't found (inherited by the daemon) |
+
+### 9. A self-inflicted bug worth remembering
+
+While adding `detached_process_options()` to `daemon/launcher.py`, the new
+function went in between `@dataclass(frozen=True)` and
+`class DaemonProcessHandle`. That decorated the function and crashed the GUI
+on first daemon connect. It was only caught by actually launching the GUI;
+the headless tests passed around it. Launch the real app after touching
+module-level code.
+
+## What is not done
+
+- **Local shell tabs.** They need a frontend PTY. The action is disabled on
+  Windows, and `setup_local_shell` refuses with the pyte backend. A
+  ConPTY-backed local shell (cmd/PowerShell) is the natural follow-up.
+- **Packaging.** There is no installer, PyInstaller spec or Windows CI yet.
+  The unmerged `origin/cursor/windows-support-abbc` branch has a Windows spec
+  and MSYS2 workflow that may be reusable; its runtime claims predate this
+  work.
+- **Plugins.** RDP (FIFO arguments) and serial are not usable on Windows.
+  Docker and Kubernetes should work if their CLIs are on PATH; untested.
+- **Unverified on real hosts:** SFTP file manager, key-based auth with the
+  ACL fix, port forwards, Host Info without a master, AltGr input, and
+  full-screen apps (`vim`/`htop`) under resize.
+- **Cosmetic issues.**
+  - Startup diagnostics report `gtk4` / `libadwaita` as NOT FOUND, because
+    they look for Linux library names.
+  - At quit, open tabs log "daemon transport is closed" as errors.
+- **Tests.**
+  - New: `tests/api/test_transport_endpoint.py`,
+    `tests/test_pyte_terminal_model.py`, `tests/daemon/test_conpty_runner.py`,
+    `tests/daemon/test_process_registry_windows.py`,
+    `tests/test_platform_paths_windows.py`.
+  - The rest of the suite still assumes POSIX (Unix sockets, `/home/...`
+    paths, file modes); about 170 such tests fail on Windows.
+  - The baseline tree cannot even collect on Windows (the `CDLL(None)`
+    import error), so there is no before/after diff there.
+  - **The Linux suite has not yet been re-run against this branch.**

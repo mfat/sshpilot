@@ -3,6 +3,8 @@
 Windows support is **experimental**. This page covers running from a source
 checkout on Windows 10 (1809+) or Windows 11. There is no installer yet.
 
+How the port works, and why: [architecture/windows-port.md](architecture/windows-port.md).
+
 ## What is different on Windows
 
 | Area | Linux / macOS | Windows |

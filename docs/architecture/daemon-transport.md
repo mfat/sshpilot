@@ -7,8 +7,9 @@ and plugin-facing APIs according to negotiated capabilities. Frontends do not
 silently fall back to local SSH/SFTP or other backend implementations.
 
 Linux is the supported platform for this phase. Unix-socket primitives may be
-present elsewhere, but macOS lifecycle integration and Windows named pipes are
-explicitly deferred.
+present elsewhere, but macOS lifecycle integration is explicitly deferred. On
+Windows, where CPython has no `AF_UNIX`, the same framing runs over loopback
+TCP with a per-launch token; see [windows-port.md](windows-port.md).
 
 ```text
 DaemonClient
