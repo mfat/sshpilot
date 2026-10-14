@@ -772,7 +772,7 @@ class DaemonIdentityService:
         env = {
             key: value
             for key, value in self._environ.items()
-            if key in _BASE_ENV_ALLOWLIST
+            if (key.upper() if windows else key) in _BASE_ENV_ALLOWLIST
             or key.startswith("LC_")
             or (windows and key.upper() in WINDOWS_PROCESS_ENV)
         }

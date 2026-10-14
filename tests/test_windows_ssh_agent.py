@@ -43,7 +43,10 @@ def _base_env(environ):
 
 def test_windows_base_env_keeps_what_ssh_add_needs(monkeypatch):
     monkeypatch.setattr(daemon_identity.sys, "platform", "win32")
-    env = _base_env({"ProgramData": "C:\\ProgramData", "SystemRoot": "C:\\Windows", "BW_SESSION": "x"})
+    env = _base_env(
+        {"ProgramData": "C:\\ProgramData", "SystemRoot": "C:\\Windows", "Path": "C:\\bin", "BW_SESSION": "x"}
+    )
+    assert env["Path"] == "C:\\bin"
     assert env["ProgramData"] == "C:\\ProgramData"
     assert env["SystemRoot"] == "C:\\Windows"
     assert "BW_SESSION" not in env
@@ -51,6 +54,7 @@ def test_windows_base_env_keeps_what_ssh_add_needs(monkeypatch):
 
 def test_posix_base_env_is_unchanged(monkeypatch):
     monkeypatch.setattr(daemon_identity.sys, "platform", "linux")
-    env = _base_env({"PATH": "/usr/bin", "PROGRAMDATA": "x", "SYSTEMROOT": "y"})
+    env = _base_env({"PATH": "/usr/bin", "path": "/lower", "PROGRAMDATA": "x", "SYSTEMROOT": "y"})
     assert "PROGRAMDATA" not in env and "SYSTEMROOT" not in env
+    assert "path" not in env
     assert env["PATH"] == "/usr/bin"
