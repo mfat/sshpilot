@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import os
+import sys
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List, Tuple
@@ -64,6 +65,8 @@ def _serial_ports(_values: Dict[str, Any], _ctx: Any) -> List[Tuple[str, str]]:
     ``ttyUSB0`` can become ``ttyUSB1``, so they are offered as the value, with
     the tty they point at in the label.
     """
+    if sys.platform == "win32":
+        return [(port, port) for port in _windows_com_ports()]
     ports: List[Tuple[str, str]] = []
     covered = set()
     for path in sorted(glob.glob(os.path.join(_BY_ID, "*"))):
@@ -104,6 +107,79 @@ def _access_denied_group(device: str) -> str:
         return ""
 
 
+def _windows_com_ports() -> List[str]:
+    """COM port names from HKLM\\HARDWARE\\DEVICEMAP\\SERIALCOMM (Windows)."""
+    try:
+        import winreg  # noqa: PLC0415  (Windows only)
+    except ImportError:
+        return []
+    ports = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM") as key:
+            index = 0
+            while True:
+                try:
+                    _name, value, _kind = winreg.EnumValue(key, index)
+                except OSError:
+                    break
+                if isinstance(value, str) and value:
+                    ports.append(value)
+                index += 1
+    except OSError:
+        return []
+
+    def _number(port: str) -> int:
+        digits = "".join(ch for ch in port if ch.isdigit())
+        return int(digits) if digits else 0
+
+    return sorted(set(ports), key=_number)
+
+
+def _find_plink() -> str:
+    """PuTTY's ``plink.exe``: on PATH, or where the PuTTY installer puts it."""
+    found = shutil.which("plink")
+    if found:
+        return found
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if base:
+            candidate = os.path.join(base, "PuTTY", "plink.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    return ""
+
+
+#: plink -sercfg parity and flow letters.
+_PLINK_PARITY = {"none": "n", "even": "e", "odd": "o"}
+_PLINK_FLOW = {"none": "N", "soft": "X", "hard": "R"}
+
+
+def _plink_spawn(data, device: str, baud: str, flow: str, terminal_options: bool) -> SpawnSpec:
+    """Windows: open the COM port with ``plink -serial`` (no picocom or screen there)."""
+    plink = _find_plink()
+    if not plink:
+        raise BuiltinProtocolError(
+            PluginSessionFailureCode.SERIAL_PLINK_UNAVAILABLE,
+            "PuTTY's 'plink' is not installed. Install PuTTY to use serial "
+            "connections on Windows.",
+        )
+    if terminal_options:
+        # plink -serial has no line-ending maps, local echo or logging; refuse
+        # rather than quietly behave differently, as for 'screen'.
+        raise BuiltinProtocolError(
+            PluginSessionFailureCode.SERIAL_PLINK_TERMINAL_OPTIONS_UNSUPPORTED,
+            "plink cannot change line endings, echo locally or log. Turn those "
+            "options off to use this connection.",
+        )
+    settings = ",".join([
+        baud,
+        str(data.get("databits") or "8"),
+        _PLINK_PARITY.get(str(data.get("parity") or "none"), "n"),
+        str(data.get("stopbits") or "1"),
+        _PLINK_FLOW.get(flow, "N"),
+    ])
+    return SpawnSpec(argv=[plink, "-serial", device, "-sercfg", settings], env=dict(os.environ))
+
+
 class SerialProtocolBackend(ProtocolBackend):
     protocol_id = "serial"
     display_name = "Serial"
@@ -117,7 +193,8 @@ class SerialProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="device", label=_("Device"), kind="text", required=True,
-                      placeholder="/dev/ttyUSB0", suggest=_serial_ports),
+                      placeholder="COM3" if sys.platform == "win32" else "/dev/ttyUSB0",
+                      suggest=_serial_ports),
             FieldSpec(key="baud", label=_("Baud rate"), kind="text", default="115200",
                       placeholder="115200", suggest=_baud_rates),
             FieldSpec(key="flow", label=_("Flow control"), kind="choice", default="none",
@@ -179,6 +256,9 @@ class SerialProtocolBackend(ProtocolBackend):
         logfile = str(data.get("logfile") or "").strip()
         terminal_options = (send_newline != "cr" or bool(data.get("recv_add_cr"))
                             or bool(data.get("local_echo")) or bool(logfile))
+
+        if sys.platform == "win32":
+            return _plink_spawn(data, device, baud, flow, terminal_options)
 
         from .._flatpak import resolve_host_binary  # noqa: PLC0415
         group = _access_denied_group(device)

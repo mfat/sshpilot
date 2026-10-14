@@ -29,6 +29,9 @@ def fresh_registry(monkeypatch, tmp_path):
     # owned by a group its user is not in; that check has tests of its own.
     import sshpilot.plugins.builtin.serial_protocol as mod
     monkeypatch.setattr(mod, "_access_denied_group", lambda _device: "")
+    # These cover the picocom/screen path; Windows uses plink instead
+    # (tests/test_serial_plugin_windows.py).
+    monkeypatch.setattr(mod.sys, "platform", "linux")
 
 
 def _ctx():

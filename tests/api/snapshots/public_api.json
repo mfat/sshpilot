@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.82",
+  "api_implementation_version": "0.83",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -5731,7 +5731,9 @@
       "serial_screen_terminal_options_unsupported",
       "serial_device_access_denied",
       "rdp_client_unavailable",
-      "telnet_unavailable"
+      "telnet_unavailable",
+      "serial_plink_unavailable",
+      "serial_plink_terminal_options_unsupported"
     ],
     "RememberPolicy": [
       "do_not_store",
