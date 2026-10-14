@@ -5,6 +5,9 @@ starts on Windows 10/11 under MSYS2 UCRT64 and runs daemon-owned SSH sessions
 in an embedded terminal. User setup lives in
 [running-on-windows.md](../running-on-windows.md). This page records how the
 port works, what stood in the way, and why each piece is built the way it is.
+The proposed decisions for each layer (runtime stack, PTY, emulator core,
+connection sharing) and their roadmap are in
+[windows-decisions.md](windows-decisions.md).
 
 ## Ground rules
 
