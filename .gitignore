@@ -81,3 +81,5 @@ graphify-out/
 # Microsoft.Windows.Console.ConPTY NuGet download (conpty.dll + OpenConsole.exe,
 # see docs/architecture/windows-port.md). Never committed.
 /vendor/conpty/
+# Patched libvterm built by packaging/windows/libvterm/build.py. Never committed.
+/vendor/libvterm/

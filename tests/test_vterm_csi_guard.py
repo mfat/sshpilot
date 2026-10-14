@@ -98,3 +98,44 @@ def test_stock_libvterm_does_not_crash(chunked):
         pytest.skip("libvterm is not available")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok"
+
+
+def test_stock_dll_gets_the_python_guard(monkeypatch):
+    from sshpilot import vterm_terminal_model as vtm
+
+    class Lib:
+        pass
+
+    assert vtm.csi_args_bounded(Lib()) is False
+
+
+def test_abi_self_test_rejects_a_foreign_cell_layout():
+    import ctypes
+
+    from sshpilot import vterm_terminal_model as vtm
+
+    class ForeignLib:
+        def vterm_new(self, rows, cols):
+            return 1
+
+        def vterm_set_utf8(self, vt, on):
+            pass
+
+        def vterm_obtain_screen(self, vt):
+            return 2
+
+        def vterm_screen_reset(self, screen, hard):
+            pass
+
+        def vterm_input_write(self, vt, data, length):
+            return length
+
+        def vterm_screen_get_cell(self, screen, pos, buffer):
+            # Neovim's fork: an schar index where chars[6] would be.
+            ctypes.memmove(buffer, (b"\x07\x00\x00\x00" + b"\xff" * 36), 40)
+            return 1
+
+        def vterm_free(self, vt):
+            pass
+
+    assert "layout" in vtm._abi_self_test(ForeignLib())

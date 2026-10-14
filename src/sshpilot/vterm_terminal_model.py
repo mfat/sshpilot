@@ -146,6 +146,9 @@ def _candidate_paths() -> List[str]:
     override = os.environ.get("SSHPILOT_LIBVTERM")
     paths: List[str] = [override] if override else []
     directories = []
+    if sys.platform == "win32" and not getattr(sys, "frozen", False):
+        # A source checkout: the patched build from packaging/windows/libvterm.
+        directories.append(os.path.join(_source_checkout_root(), "vendor", "libvterm", _machine_arch()))
     if getattr(sys, "frozen", False):
         # PyInstaller one-dir/one-file: DLLs sit next to the exe or in _MEIPASS.
         directories.append(getattr(sys, "_MEIPASS", ""))
@@ -161,6 +164,65 @@ def _candidate_paths() -> List[str]:
         paths.append(found)
     paths.extend(names)  # last resort: the loader's own search path
     return paths
+
+
+def _source_checkout_root() -> str:
+    # src/sshpilot/vterm_terminal_model.py -> the checkout root
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+
+
+def _machine_arch() -> str:
+    machine = (os.environ.get("PROCESSOR_ARCHITEW6432")
+               or os.environ.get("PROCESSOR_ARCHITECTURE") or "").upper()
+    return {"ARM64": "arm64", "X86": "x86"}.get(machine, "x64")
+
+
+def csi_args_bounded(lib: ctypes.CDLL) -> bool:
+    """True for sshPilot's patched build, whose parser bounds CSI arguments."""
+
+    marker = getattr(lib, "sshpilot_vterm_csi_args_bounded", None)
+    if marker is None:
+        return False
+    marker.restype = ctypes.c_int
+    marker.argtypes = []
+    return marker() >= 16
+
+
+def _abi_self_test(lib: ctypes.CDLL) -> Optional[str]:
+    """Read back known cells; a reason string if the layout is not ours."""
+
+    vt = lib.vterm_new(1, 4)
+    if not vt:
+        return "vterm_new failed"
+    try:
+        lib.vterm_set_utf8(vt, 1)
+        screen = lib.vterm_obtain_screen(vt)
+        lib.vterm_screen_reset(screen, 1)
+        probe = "[1;3;4;7;9;38;2;10;20;30;48;5;196mA[0mé中".encode("utf-8")
+        lib.vterm_input_write(vt, probe, len(probe))
+        # Room past one cell, so a larger struct cannot write out of bounds.
+        buffer = ctypes.create_string_buffer(CELL_SIZE * 4)
+        cells = []
+        for column in range(3):
+            if not lib.vterm_screen_get_cell(screen, _VTermPos(0, column), buffer):
+                return f"vterm_screen_get_cell({column}) failed"
+            try:
+                cells.append(_decode_cell(buffer.raw[:CELL_SIZE]))
+            except (ValueError, IndexError, struct.error) as exc:
+                return f"cell layout differs: {exc}"
+        first, second, third = cells
+        expected = (
+            first.data == "A" and first.bold and first.italics and first.underscore
+            and first.reverse and first.strikethrough
+            and first.fg == "0a141e" and first.bg == _INDEXED[196]
+            and second.data == "é" and not second.bold and second.fg == "default"
+            and third.data == "中"
+        )
+        if not expected:
+            return f"cell layout differs: {cells!r}"
+        return None
+    finally:
+        lib.vterm_free(vt)
 
 
 def load_libvterm() -> ctypes.CDLL:
@@ -184,6 +246,10 @@ def load_libvterm() -> ctypes.CDLL:
             _declare(lib)
         except AttributeError as exc:  # not libvterm 0.3, or a stub
             errors.append(f"{path}: {exc}")
+            continue
+        problem = _abi_self_test(lib)
+        if problem is not None:
+            errors.append(f"{path}: {problem}")
             continue
         _LIB = lib
         return lib
@@ -573,7 +639,8 @@ class VtermTerminalModel(LineIndexMixin):
         self._set_row_buffer()
         self._resizing = False
         self._alt: Optional[_AltResize] = None
-        self._csi_guard = _CsiArgGuard()
+        # sshPilot's patched build bounds CSI arguments itself.
+        self._csi_guard = None if csi_args_bounded(self._lib) else _CsiArgGuard()
         #: See ``EmulatorScreen.pull_history_on_grow``. When off, libvterm is
         #: refused every history row and adds blank rows at the bottom.
         self.pull_history_on_grow = True
@@ -721,7 +788,9 @@ class VtermTerminalModel(LineIndexMixin):
     # -- input -----------------------------------------------------------------
 
     def feed(self, data: bytes) -> None:
-        data = self._csi_guard.filter(bytes(data))
+        data = bytes(data)
+        if self._csi_guard is not None:
+            data = self._csi_guard.filter(data)
         if not data:
             return
         write = self._lib.vterm_input_write
