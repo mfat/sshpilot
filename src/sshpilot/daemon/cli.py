@@ -225,6 +225,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # Also started as ``python -m sshpilot.daemon``, bypassing run.py.
+    from sshpilot.platform.windows.openssh import prefer_builtin_openssh
+
+    prefer_builtin_openssh()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command is None:

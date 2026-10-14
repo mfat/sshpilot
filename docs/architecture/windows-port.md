@@ -259,10 +259,25 @@ Windows.
   need: `SystemRoot`, `WINDIR`, `PROGRAMDATA`, `TEMP`, `USERPROFILE` and so on.
   Names are matched case-insensitively. The POSIX allowlist is unchanged.
 
+**A third problem: the wrong OpenSSH build.** Git for Windows (like MSYS2
+and Cygwin) ships its own MSYS-based OpenSSH, and its `usrin` commonly
+comes *before* `System32\OpenSSH` on PATH. A plain `ssh` or `ssh-add` then
+runs that copy. It has a different agent (a Unix-socket emulation that
+never sees the Windows service), different config and key locations, and
+cannot run `askpass.cmd`. On the development machine, `ssh-add -l` listed
+nothing until the built-in `ssh-add.exe` was used, and then listed the key.
+The GUI happened to work only because the MSYS2 shell drops the Windows PATH.
+At startup (`run.py` and the daemon's `main`), `prefer_builtin_openssh()` now
+moves `System32\OpenSSH` to the front of PATH, so every child the GUI or
+daemon starts comes from one build.
+
+Verified with the service running: the system agent is detected on the pipe,
+and the daemon's `ssh-add -l` (with its filtered environment) lists the loaded
+key.
+
 The agent service is disabled by default on Windows. Users enable it with
 `Set-Service ssh-agent -StartupType Manual` and `Start-Service ssh-agent` (as
-administrator). End-to-end agent use (list, add, remove keys) is still
-untested on a machine with the service running.
+administrator). Adding and removing keys through the UI is still untested.
 
 ### 9. Smaller incompatibilities
 
@@ -279,7 +294,7 @@ untested on a machine with the service running.
 | `SIGALRM` watchdog at quit, `SIGKILL` references | `threading.Timer` / `getattr(signal, "SIGKILL", SIGTERM)` |
 | `sh -lc` for pre-connection commands | `cmd /d /s /c` on Windows |
 | Secret backend "auto" tried libsecret first | Windows uses `keyring` first (Credential Manager); KeePass stays available |
-| MSYS2 shells leave `System32\OpenSSH` off PATH | `run.py` appends it when `ssh` isn't found (inherited by the daemon) |
+| Several OpenSSH builds on PATH (see section 8) | `platform/windows/openssh.prefer_builtin_openssh()` puts `System32\OpenSSH` first |
 
 ### 10. A self-inflicted bug worth remembering
 
