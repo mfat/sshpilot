@@ -56,12 +56,24 @@ plan takes the ctypes runner, because:
 pywinpty stays behind `SSHPILOT_CONPTY_BACKEND=pywinpty` for one release, and
 pywinpty 3.x stays the documented fallback if owning the binding goes badly.
 
+**Local shells: owned by the frontend, not the daemon.** windows-decisions.md
+§5 proposed running local shells as daemon sessions. That contradicts a
+boundary the repo already documents: frontend-closure-audit.md classifies
+the local shell tab as "legitimate frontend-only", owned by the terminal
+presentation, and on Linux and macOS local shells are frontend VTE spawns.
+Making them daemon sessions would add local-process RPCs to a daemon that
+otherwise only owns SSH Pilot state and remote operations, and Windows would
+behave differently from POSIX. So the frontend owns them on Windows too
+(phase 6). The ConPTY binding moves to `sshpilot.platform.windows`, which
+both the daemon and the frontend may import (`core/package_graph.py`). The
+cost is that a local shell does not survive a frontend restart, which is
+the same as on POSIX today.
+
 Everything else follows windows-decisions.md:
 - python.org Python with gvsbuild GTK 4 and PyInstaller;
 - a patched libvterm built from source as the Windows default emulator;
 - one login per channel, softened through the broker, until upstream
   ControlMaster ships;
-- local shells as daemon sessions;
 - loopback TCP for the daemon transport.
 
 ## Phase 0: make what is already shipped safe (now, on MSYS2)
@@ -90,7 +102,7 @@ today, and phase 1 makes pyte's known `TypeError` reachable on Windows.
 
 | Step | Work | Files | Done when |
 |---|---|---|---|
-| 1.1 | Merge `claude/ctypes-conpty-771129` and make `ctypes` the Windows default. Keep `pywinpty` behind the switch. | `daemon/conpty_ctypes.py`, `daemon/conpty_runner.py`, `daemon/server.py` | Daemon log names the backend and the DLL; existing ConPTY tests pass with both backends. |
+| 1.1 | Merge `claude/ctypes-conpty-771129` and make `ctypes` the Windows default. Keep `pywinpty` behind the switch. Move the binding from `daemon/conpty_ctypes.py` to `platform/windows/conpty.py` (stdlib-only, already allowed for the daemon by `core/package_graph.py`), so phase 6 can reuse it from the frontend without a second move. | `platform/windows/conpty.py`, `daemon/conpty_runner.py`, `daemon/server.py`, `core/package_graph.py` | Daemon log names the backend and the DLL; existing ConPTY tests pass with both backends; the package-graph test passes. |
 | 1.2 | A fetch script that downloads the pinned NuGet package from nuget.org into the git-ignored `vendor/conpty/`, checks its SHA-256 and **fails on a mismatch**, and lays out `conpty.dll` with `OpenConsole.exe` beside it. Source checkouts find it there automatically. | `scripts/fetch-conpty.py`, `docs/running-on-windows.md` | A fresh checkout gets the bundled ConPTY with one command. |
 | 1.3 | Fold in the reference hosts' behaviour: answer DA1 immediately; the orphan-conhost guard (terminate a child that produced no output before closing, as Neovim does); keep `ClosePseudoConsole` off the reader thread (the spike already does this). | `daemon/conpty_runner.py`, `daemon/conpty_ctypes.py` | Opening and closing a tab at once leaves no `OpenConsole.exe`; tests cover both. |
 | 1.4 | Focus events: send `ESC[I`/`ESC[O` while `?1004h` is set. The bundled host turns it on at start. | `terminal_backend_pyte.py`, `terminal_model_common.py` | Unit test, plus vim's `FocusGained` firing over ssh. |
@@ -104,14 +116,23 @@ today, and phase 1 makes pyte's known `TypeError` reachable on Windows.
   upstream or Neovim patch is the `CSI_ARGS_MAX` fix?
 - Does a `cl` build keep `VTermScreenCell` at 40 bytes, with the same
   attribute bitfield packing `_decode_cell` assumes? Do the same check for a
-  MinGW `gcc` build.
+  MinGW `gcc` build. Do not take Neovim's internal `src/nvim/vterm/`: its
+  cells hold an `schar_T` index instead of `chars[6]`, so it is not
+  ABI-compatible with our model (checked in the Neovim source).
+- Does the bundled ConPTY forward synchronized output (`?2026h`/`?2026l`)?
+- Does the window stay responsive while bulk output (a large `cat`) is fed
+  on the GTK main thread through libvterm? If not, measure Neovim's
+  approach: it repaints on a 10 ms timer and pauses reading while it
+  refreshes (`REFRESH_DELAY`, `read_pause_cb` in `terminal.c`/`channel.c`).
 
 | Step | Work | Files | Done when |
 |---|---|---|---|
 | 2.1 | A build script for `libvterm-0.dll` from the pinned mirror, with `CSI_ARGS_MAX = 32` and a bounded `argi`. It produces an MSVC build (for phase 3) and a MinGW build (for MSYS2 meanwhile). | `scripts/build-libvterm.py` or `packaging/windows/libvterm/` | The DLL builds reproducibly; the source hash is pinned. |
 | 2.2 | An ABI self-test at load: feed known attributes, read a cell back, and refuse a DLL whose layout differs, falling back to pyte with a logged reason. | `vterm_terminal_model.py`, tests | A deliberately mismatched layout falls back cleanly. |
 | 2.3 | Make libvterm the default on Windows (`DEFAULT_MODEL` per platform; Preferences shows "libvterm (default)"). Keep pyte as the fallback. POSIX defaults are unchanged. | `terminal_backend_pyte.py`, `preferences.py` | New Windows tabs use libvterm; the Preferences test covers the label. |
-| 2.4 | Later: the mirror's `sb_pushline4` for continuation-aware scrollback, then reflow on the primary screen only (Neovim #38812). | `vterm_terminal_model.py` | Long lines rejoin on widen; alternate-screen apps are unaffected. |
+| 2.4 | Synchronized output (mode 2026): hold repaints between `?2026h` and `?2026l`, with a timeout, as Neovim does. libvterm 0.3.3 and pyte ignore the mode, so the view tracks it. Without it, modern TUIs tear while they redraw. | `terminal_backend_pyte.py`, `terminal_model_common.py` | Unit test; a redraw inside a 2026 block paints once. |
+| 2.5 | Apply the gate's responsiveness result: coalesce output into frame-sized feeds, and pause reading if feeding falls behind. | `terminal_backend_pyte.py`, the daemon output path | A 10 MB `cat` keeps the window responsive. |
+| 2.6 | Later: the mirror's `sb_pushline4` for continuation-aware scrollback, then reflow on the primary screen only (Neovim #38812). | `vterm_terminal_model.py` | Long lines rejoin on widen; alternate-screen apps are unaffected. |
 
 ## Phase 3: move to python.org Python and gvsbuild GTK 4
 
@@ -159,9 +180,19 @@ Authenticator PAM, Duo)?
 
 ## Phase 6: local shell tabs (after phase 1)
 
+**Research gate.** Read `setup_local_shell`, the VTE and xterm.js spawn
+paths, and frontend-closure-audit.md, and list everything a local tab relies
+on today (child-exit signal, pid and pgid for "process running" checks, cwd
+tracking, plugin `open_local_command_terminal`). The frontend runner must
+cover each one or say why it does not apply on Windows.
+
+The built-in backend (pyte or libvterm) has no local shell on any platform
+today: `setup_local_shell` refuses it. So this phase fixes Linux and macOS
+for that backend too, not only Windows.
+
 | Step | Work | Files | Done when |
 |---|---|---|---|
-| 6.1 | Local shells as daemon sessions: the ConPTY runner spawns `pwsh.exe`, `powershell.exe`, `cmd.exe` or `wsl.exe`. | the local-shell action, `setup_local_shell`, the daemon launch provider | A local PowerShell tab works, survives a frontend restart, and closes cleanly. |
+| 6.1 | A frontend local-shell runner for the built-in backend, with the shape the daemon runner already has: bytes out, bytes in, resize, exit. On Windows it uses `platform/windows/conpty.py` (with the bundled ConPTY) to spawn `pwsh.exe`, `powershell.exe`, `cmd.exe` or `wsl.exe`. On POSIX it uses `os.openpty` and the shell from `$SHELL`. Output is read on a thread and handed to the GTK main loop. libvterm only parses. The runner owns the process, as in emacs-libvterm and Neovim. | a new GI-free runner module, `terminal.py` (`setup_local_shell`), `terminal_backend_pyte.py` (`spawn_async`) | A local PowerShell tab, and a local bash tab with the built-in backend on Linux, work and close cleanly. No daemon RPC is added. |
 | 6.2 | A shell picker in Preferences, with detection of installed shells. | `preferences.py` | Only installed shells are offered. |
 | 6.3 | Replace the remaining `os.kill(pid, 0)` calls with psutil (windows-port.md §7). | `terminal.py`, `ssh_process_manager.py` | The regression test forbidding `os.kill` covers them. |
 
@@ -203,13 +234,51 @@ Phase 0 ──┬── Phase 1 (daemon, ConPTY) ─────┬── Phase 
 Phase 7: any time
 ```
 
-- Phases 1, 2 and 5 touch different modules (the daemon's ConPTY runner,
-  the emulator models, the interaction broker), so they can run as parallel
-  sessions.
+- Phases 1, 2 and 5 can run as parallel sessions: the daemon's ConPTY
+  runner, the emulator models and the interaction broker. The exception is
+  the view, `terminal_backend_pyte.py`: steps 1.4, 1.5, 2.3–2.5 and 6.1 all
+  edit it, so those steps go one at a time.
 - Phase 3 can start its research gate and CI workflow during phases 1–2,
   but it switches the developer stack only after phases 1 and 2 have landed.
 - Phase 4 needs phase 3. The SignPath application should go in early,
   because it is the one step with an outside lead time.
+
+## Review of outside research (2026-10-15)
+
+`libvterm-local-shell-research.md`, written by another agent, traced
+emacs-libvterm, libvtty and Neovim against sshpilot. Each claim was checked
+against the source before it changed this plan.
+
+Confirmed, and used:
+- **The local shell is frontend-owned** (frontend-closure-audit.md). This
+  overturned phase 6's daemon-session design.
+- **libvterm only parses; the host owns the process.** emacs-libvterm starts
+  the shell from Elisp with `make-process :connection-type 'pty`. Neovim's
+  terminal is fed through byte callbacks. Phase 6.1 follows this.
+- **Neovim's ConPTY host** creates named pipes, loads `conpty.dll` and falls
+  back to `kernel32.dll`, and passes flags 0 (`os/pty_conpty_win.c`). This
+  matches the ctypes runner.
+- **Neovim repaints on a 10 ms timer, pauses reading while it refreshes, and
+  supports synchronized output (mode 2026)** (`terminal.c`, `channel.c`).
+  This became steps 2.4 and 2.5 and a phase 2 gate question.
+- **libvtty is a different library** (Bryan Christ's, formerly also named
+  libvterm, LGPL, POSIX-only). It is not a candidate.
+
+Rejected, because they are outdated or wrong:
+- *"Under ConPTY, keep `pull_history_on_grow=false` and expect no
+  `?1049h`."* That holds only for the inbox ConPTY. The bundled ConPTY
+  forwards `?1049h` and the mouse modes verbatim (windows-port.md §2a, on the
+  spike branch). Step 1.5 re-measures it instead.
+- *"Vendor libvterm like Neovim's `src/nvim/vterm/`."* Neovim's fork stores an
+  `schar_T` index in each cell instead of `chars[6]`, so our ctypes model
+  cannot read it. Phase 2 builds the `neovim/libvterm` mirror, which keeps
+  the upstream layout.
+- *"emacs-libvterm and libvtty have no Windows code."* Close, but
+  emacs-libvterm's header has a `_WIN32` export macro. No effect on the plan.
+- *"sshpilot's ConPTY runner is pywinpty."* True on `windows` today, but the
+  ctypes runner replaces it in step 1.1.
+- Its "missing evidence" list (WezTerm and Windows Terminal hosts, byte
+  traces) is already covered by windows-decisions.md §2 and the spike.
 
 ## What only the maintainer can do
 

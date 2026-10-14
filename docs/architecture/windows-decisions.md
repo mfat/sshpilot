@@ -24,7 +24,7 @@ for breaking either.
 | 2. PTY | **Bundled ConPTY** (`conpty.dll` + `OpenConsole.exe` from Microsoft's NuGet package), through **pywinpty 3.x** | Measured on Windows 10 19045: the bundled ConPTY passes mouse modes, the alternate screen and paste markers through in both directions. The inbox one strips them. |
 | 3. Emulator core | **libvterm** as the Windows default (built from source, patched), **pyte** as fallback; watch **libghostty-vt** | libvterm is 20–40× faster than pyte and the model already exists, but the stock 0.3.3 DLL we ship has a remotely triggerable crash, so it must be built from the ABI-compatible mirror with the CSI-args fix — as Emacs and Neovim both do. |
 | 4. Connection sharing | **Accept one login per channel for now**, reduce the cost through the agent and the broker, and track the Win32-OpenSSH ControlMaster PR | A daemon-held SSH library would be a second SSH engine. Upstream multiplexing is in review. |
-| 5. Local shells / IPC | Local shells as **daemon sessions** on the same ConPTY runner; **keep loopback TCP** | The daemon is always local on Windows, so no frontend PTY is needed. TCP + token is adequate. |
+| 5. Local shells / IPC | Local shells **in the frontend** on the shared ConPTY binding (revised; see windows-implementation-plan.md); **keep loopback TCP** | frontend-closure-audit.md assigns local shells to the frontend, as on POSIX. TCP + token is adequate. |
 
 The order to do them in is at the end ([Roadmap](#roadmap)).
 
@@ -543,6 +543,9 @@ Even then, scope it to SFTP and Host Info, never terminals.
 
 ## 5. Local shells and the daemon transport
 
+- **Superseded:** windows-implementation-plan.md keeps local shells in the
+  frontend, because frontend-closure-audit.md already assigns them there.
+  The original proposal follows.
 - **Local shells.** On Windows the daemon always runs on the same machine as
   the GUI. A local shell tab can therefore be an ordinary daemon session:
   `ConPtySessionProcessRunner` spawning `pwsh.exe`, `cmd.exe` or `wsl.exe`
