@@ -38,6 +38,37 @@ def default_builtin_model() -> str:
     return "vterm" if sys.platform == "win32" else "pyte"
 
 
+#: A Windows console host's own window title: the client executable's path,
+#: optionally "Administrator: " before and " - <command>" after it
+#: (``C:\Windows\System32\OpenSSH\ssh.exe``, ``C:\WINDOWS\system32\cmd.exe -
+#: exit``). ConPTY reports it as an OSC title before the shell sets its own.
+_CONSOLE_HOST_TITLE = re.compile(
+    r"^(?:Administrator:\s*)?[A-Za-z]:\\[^\x00-\x1f<>|\"*?]*\.(?:exe|com|bat|cmd)(?:\s+-\s+.*)?$",
+    re.IGNORECASE,
+)
+
+
+#: Plain-text links, the pattern the VTE backend registers with VTE.
+_URL = re.compile(
+    r'(?:https?|ftp)://[^\s<>"{}|\\^`\[\]]*[^\s<>"{}|\\^`\[\].,;:!?]'
+)
+
+
+def url_at(text: str, column: int) -> Optional[str]:
+    """The plain-text URL in ``text`` that covers ``column``, if any."""
+
+    for match in _URL.finditer(text):
+        if match.start() <= column < match.end():
+            return match.group(0)
+    return None
+
+
+def is_console_host_title(title: str) -> bool:
+    """True for a title the Windows console host made up, not the shell."""
+
+    return bool(title) and bool(_CONSOLE_HOST_TITLE.match(title.strip()))
+
+
 class SynchronizedOutput:
     """Mode 2026: hold repaints while an application redraws.
 

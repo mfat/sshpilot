@@ -26,6 +26,8 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango, PangoCairo  # noqa: E4
 
 from .terminal_model_common import (  # noqa: E402
     SynchronizedOutput,
+    is_console_host_title,
+    url_at,
     default_builtin_model,
     MOUSE_LEFT,
     MOUSE_MIDDLE,
@@ -195,6 +197,7 @@ class PyteTerminalView(Gtk.DrawingArea):
         self._last_pointer = (0.0, 0.0)
         self._sync_output = SynchronizedOutput()
         self._sync_timer = 0
+        self._shown_title = ""
 
         self.vadjustment = Gtk.Adjustment(
             value=0, lower=0, upper=24, step_increment=1, page_increment=24, page_size=24
@@ -228,7 +231,12 @@ class PyteTerminalView(Gtk.DrawingArea):
         self._seen_pushes = pushes
         if screen.title_changed:
             screen.title_changed = False
-            self.emit("window-title-changed")
+            title = screen.title or ""
+            # ConPTY reports the console host's own title (the client's
+            # executable path) before the shell sets one; never show it.
+            if not is_console_host_title(title) and title != self._shown_title:
+                self._shown_title = title
+                self.emit("window-title-changed")
         if screen.bell_rung:
             screen.bell_rung = False
             try:
@@ -258,7 +266,7 @@ class PyteTerminalView(Gtk.DrawingArea):
         return GLib.SOURCE_REMOVE
 
     def get_window_title(self) -> str:
-        return self.model.screen.title
+        return self._shown_title
 
     def get_row_count(self) -> int:
         return self.model.lines
@@ -1336,10 +1344,18 @@ class PyteTerminalBackend:
         return None
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
-        return None
+        # Neither model keeps OSC 8 targets per cell, so plain-text links are
+        # the only kind.
+        return self.plain_text_link_at(x, y)
 
     def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
-        return None
+        view = self.view
+        row, column = view._cell_at(x, y)
+        try:
+            text = view.model.row_text(row)
+        except Exception:
+            return None
+        return url_at(text, column)
 
     def set_pointer_over_link(self, over_link: bool) -> None:
         return None
@@ -1361,4 +1377,5 @@ class PyteTerminalBackend:
             "daemon_input",
             "daemon_resize",
             "save_output",
+            "hyperlinks",
         }

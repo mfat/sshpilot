@@ -82,3 +82,37 @@ def test_synchronized_update_holds_the_repaint(model, monkeypatch):
     while len(draws) < 2 and GLib.get_monotonic_time() < deadline:
         context.iteration(False)
     assert len(draws) == 2
+
+
+@pytest.mark.parametrize("model", ["pyte", "vterm"])
+def test_console_host_title_is_not_shown(model, monkeypatch):
+    monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
+    view = PyteTerminalView()
+    titles = []
+    view.connect("window-title-changed", lambda v: titles.append(v.get_window_title()))
+    view.feed(b"\x1b]0;C:\Windows\System32\OpenSSH\ssh.exe\x07")
+    assert titles == [] and view.get_window_title() == ""
+    view.feed(b"\x1b]0;root@router: ~\x07")
+    assert titles == ["root@router: ~"]
+
+
+@pytest.mark.parametrize("model", ["pyte", "vterm"])
+def test_plain_text_link_under_the_pointer(model, monkeypatch):
+    from types import SimpleNamespace
+
+    from sshpilot.terminal_backend_pyte import PyteTerminalBackend
+
+    monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
+    backend = PyteTerminalBackend(SimpleNamespace(config=None))
+    view = backend.view
+    view.model.resize(80, 5)
+    view.feed(b"docs at https://example.org/guide now\r\n")
+    assert backend.supports_feature("hyperlinks")
+    row = view.model.history_length  # first screen row
+    column = len("docs at ") + 4
+    x = (column + 0.5) * view._cell_w
+    y = 0.5 * view._cell_h
+    assert view._cell_at(x, y) == (row, column)
+    assert backend.hyperlink_at(x, y) == "https://example.org/guide"
+    assert backend.hyperlink_at(0.5 * view._cell_w, y) is None
+    backend.destroy()
