@@ -142,10 +142,20 @@ with open(sys.argv[1], "rb") as handle:
     project = tomllib.load(handle)["project"]
 
 skip = {"pygobject", "pycairo"}
-for dep in project["dependencies"]:
+deps = list(project.get("dependencies") or [])
+# Bundle the optional MCP extra so the in-app Streamable HTTP sidecar can
+# start without a host Python install (Preferences ▸ AI Assistants).
+deps.extend((project.get("optional-dependencies") or {}).get("mcp") or [])
+seen = set()
+for dep in deps:
     name = re.match(r"[A-Za-z0-9._-]+", dep)
-    if name and name.group(0).lower().replace("_", "-") not in skip:
-        print(dep)
+    if not name:
+        continue
+    key = name.group(0).lower().replace("_", "-")
+    if key in skip or key in seen:
+        continue
+    seen.add(key)
+    print(dep)
 PY
 "$PYTHON_BIN" -m pip install \
     --disable-pip-version-check \

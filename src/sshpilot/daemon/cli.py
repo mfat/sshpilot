@@ -373,6 +373,23 @@ def _production_core_services():
 
     overrides_service = _build_ssh_overrides_service()
 
+    def _known_connection_ids():
+        ids = []
+        for record in repository.list_records():
+            connection_id = getattr(record, "id", None)
+            if connection_id is None and isinstance(record, dict):
+                connection_id = record.get("id")
+            if connection_id:
+                ids.append(str(connection_id))
+        return ids
+
+    from sshpilot.core.assistant_access_service import AssistantAccessService
+
+    assistant_access_service = AssistantAccessService(
+        get_config_dir() / "config.json",
+        known_connection_ids=_known_connection_ids,
+    )
+
     def _build_identity_state_service():
         from sshpilot.core.identity_service import IdentityStateService
 
@@ -482,6 +499,7 @@ def _production_core_services():
         ),
         keys=key_service,
         ssh_overrides=overrides_service,
+        assistant_access=assistant_access_service,
         secrets=secrets_service,
         identity=identity_service,
         operations=operation_runtime,

@@ -254,4 +254,17 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
             cb['auto_hide_sidebar'] = False
             updated = True
 
+    assistant_defaults = get_default_config().get('assistant_access', {})
+    assistant_cfg = config.get('assistant_access')
+    if not isinstance(assistant_cfg, dict):
+        config['assistant_access'] = dict(assistant_defaults)
+        updated = True
+    else:
+        for key, default in assistant_defaults.items():
+            if key not in assistant_cfg:
+                assistant_cfg[key] = (
+                    list(default) if isinstance(default, list) else default
+                )
+                updated = True
+
     return config, updated

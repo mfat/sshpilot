@@ -254,6 +254,8 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: get_global_ssh_overrides status=implemented capability=ssh_overrides.read -->
 <!-- api-method-contract: update_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
 <!-- api-method-contract: reset_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
+<!-- api-method-contract: get_assistant_access status=daemon-only capability=assistant_access.read -->
+<!-- api-method-contract: set_assistant_access status=daemon-only capability=assistant_access.write -->
 <!-- api-method-contract: bitwarden_api_key_login status=daemon-only capability=secrets.operate -->
 <!-- api-method-contract: bitwarden_configure_server status=daemon-only capability=secrets.operate -->
 <!-- api-method-contract: bitwarden_lock status=daemon-only capability=secrets.operate -->
@@ -2119,6 +2121,58 @@ finally:
   service. Only the operation's owning client may cancel it; any other client
   gets `service_owner_required`.
 - **Parameters / return:** `OperationId`; returns `OperationSummary`.
+
+<!-- api-method: get_assistant_access -->
+## `get_assistant_access`
+
+- **Status / introduced:** Daemon-only through `DaemonClient` when the
+  assistant-access service is installed / Protocol v1
+- **Capability / purpose:** `assistant_access.read`; read the AI assistant MCP
+  master switch, allowlist, and operate/mutate/content ceiling.
+- **Parameters / return:** No parameters; returns `AssistantAccessSettings`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Read-only; no ordering constraints.
+- **Threading:** Safe from any thread.
+- **Side effects / security:** Loads the settings file; stale connection ids
+  are dropped from the allowlist when known ids are available.
+
+```python
+access = client.get_assistant_access()
+print(access.enabled, access.allowed_connection_ids)
+```
+
+<!-- api-method: set_assistant_access -->
+## `set_assistant_access`
+
+- **Status / introduced:** Daemon-only through `DaemonClient` when the
+  assistant-access service is installed / Protocol v1
+- **Capability / purpose:** `assistant_access.write`; replace the AI assistant
+  MCP access policy with optimistic concurrency.
+- **Parameters / return:** `UpdateAssistantAccessRequest`; returns
+  `AssistantAccessSettings`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `VALIDATION_FAILED` with `revision_conflict` when
+  `expected_revision` does not match.
+- **Cancellation / ordering:** Mutations are serialized per daemon.
+- **Threading:** Thread-safe via internal lock.
+- **Side effects / security:** Atomically persists the settings file. The
+  runtime MCP server treats this snapshot as the authorization ceiling.
+
+```python
+from sshpilot.api.models.settings import UpdateAssistantAccessRequest
+
+access = client.set_assistant_access(
+    UpdateAssistantAccessRequest(
+        enabled=True,
+        allowed_connection_ids=("host-a",),
+        operate=True,
+        mutate=False,
+        content=False,
+        expected_revision=access.revision,
+    )
+)
+```
 
 <!-- api-method: get_global_ssh_overrides -->
 ## `get_global_ssh_overrides`

@@ -129,23 +129,19 @@ entries are rewritten, not accumulated.
 
 ## What is being worked on
 
-- Nothing in progress; steps 1-5, the stdio round-trip, capability-driven tool
-  visibility, interaction dogfooding, and the dev-MCP correctness follow-ups
-  are complete.
+- Nothing in progress. Assistant MCP access includes Preferences allowlist
+  (D011), in-app localhost Streamable HTTP listener (D012), AI Activity panel,
+  `run_command` / `host_info`, and the `sshpilot-assistant` skill.
 
 ## What is next
 
-1. Runtime security review follow-up complete: audited the runtime MCP result
-   surface. `OperationSummary.result` was the free-form smuggling path because
-   broadcast output can be flattened into its dict after losing nested
-   `repr=False` markers; it is now daemon-declared `repr=False`, documented as
-   sensitive, and redacted wholesale unless content opt-in is enabled. Typed
-   DTO fields remain covered by the same marker.
-2. Integration/dogfooding follow-up: real-provider FIDO presence scenarios.
+1. Integration/dogfooding follow-up: real-provider FIDO presence scenarios.
    The sk-dummy authentication dogfood is complete
    (`test_runtime_fido_stdio.py`); a physical-key/provider round-trip is still
    needed to exercise the interactive `security_key_presence` notification.
    The daemon's own tests deliberately avoid requiring physical FIDO hardware.
+2. Optional: richer packaging smoke that asserts the AppImage can `import mcp`
+   and bind the HTTP sidecar without a host Python.
 
 ## Important issues for the next agent
 

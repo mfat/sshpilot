@@ -71,6 +71,7 @@ from sshpilot.api.models import (  # noqa: E402
     connection_store,
     host_info,
     login_profiles,
+    settings,
 )
 from sshpilot.api.transport import __all__ as TRANSPORT_EXPORTS  # noqa: E402
 from sshpilot.api.transport import envelopes  # noqa: E402
@@ -91,6 +92,7 @@ MODEL_MODULES = (
     connection_store,
     host_info,
     login_profiles,
+    settings,
     envelopes,
 )
 EXTRA_MODELS = (
@@ -127,6 +129,10 @@ IMPLEMENTED_MODELS = {
     "OperationMode",
     "SetOperationModeRequest",
     "OperationModeResult",
+    "AssistantAccessSettings",
+    "UpdateAssistantAccessRequest",
+    "GlobalSshOverrides",
+    "UpdateGlobalSshOverridesRequest",
     "CoreInfo",
     "DeleteConnectionPasswordRequest",
     "DeleteKeyPassphraseRequest",
@@ -241,6 +247,14 @@ RELATED_METHODS = {
     "UnsavedHostCheckResult": ("check_unsaved_host",),
     "SetOperationModeRequest": ("set_operation_mode",),
     "OperationModeResult": ("set_operation_mode", "get_operation_mode"),
+    "AssistantAccessSettings": ("get_assistant_access", "set_assistant_access"),
+    "UpdateAssistantAccessRequest": ("set_assistant_access",),
+    "GlobalSshOverrides": (
+        "get_global_ssh_overrides",
+        "update_global_ssh_overrides",
+        "reset_global_ssh_overrides",
+    ),
+    "UpdateGlobalSshOverridesRequest": ("update_global_ssh_overrides",),
     "CreateConnectionRequest": ("create_connection", "open_transient_connection"),
     "AsbruImportRequest": ("import_asbru",),
     "AsbruImportPreview": ("preview_asbru_import",),

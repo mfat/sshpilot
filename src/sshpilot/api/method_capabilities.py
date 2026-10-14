@@ -2,6 +2,10 @@
 from .capabilities import Capability
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
+    "get_assistant_access": Capability.ASSISTANT_ACCESS_READ,
+    "set_assistant_access": Capability.ASSISTANT_ACCESS_WRITE,
+    "list_assistant_activity": Capability.ASSISTANT_ACTIVITY_READ,
+    "record_assistant_activity": Capability.ASSISTANT_ACTIVITY_WRITE,
     "start_broadcast_command": Capability.BROADCAST_WRITE,
     "get_broadcast_command": Capability.BROADCAST_READ,
     "cancel_broadcast_command": Capability.BROADCAST_WRITE,

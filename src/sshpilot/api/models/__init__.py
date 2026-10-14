@@ -349,9 +349,17 @@ if TYPE_CHECKING:
         SetLoginProfileSecretRequest,
         UpdateLoginProfileRequest,
     )
+    from .assistant_activity import (
+        AssistantActivityEntry,
+        AssistantActivityList,
+        AssistantActivityState,
+        RecordAssistantActivityRequest,
+    )
     from .settings import (
         EDITABLE_FIELDS,
+        AssistantAccessSettings,
         GlobalSshOverrides,
+        UpdateAssistantAccessRequest,
         UpdateGlobalSshOverridesRequest,
     )
     from .transfers import (
@@ -472,6 +480,10 @@ __all__ = [
     "GenerateKeyRequest",
     "GenerateKeyResult",
     "GetPluginSecretRequest",
+    "AssistantAccessSettings",
+    "AssistantActivityEntry",
+    "AssistantActivityList",
+    "AssistantActivityState",
     "GlobalSshOverrides",
     "GroupId",
     "GroupProfileLink",
@@ -685,6 +697,8 @@ __all__ = [
     "UnsavedHostCheckResult",
     "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
+    "RecordAssistantActivityRequest",
+    "UpdateAssistantAccessRequest",
     "UpdateGlobalSshOverridesRequest",
     "UpdateIdentityConfigurationRequest",
     "UpdateIdentitySelectionRequest",
@@ -796,6 +810,11 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "GenerateKeyRequest": ("keys", "GenerateKeyRequest"),
     "GenerateKeyResult": ("keys", "GenerateKeyResult"),
     "GetPluginSecretRequest": ("connections", "GetPluginSecretRequest"),
+    "AssistantAccessSettings": ("settings", "AssistantAccessSettings"),
+    "AssistantActivityEntry": ("assistant_activity", "AssistantActivityEntry"),
+    "AssistantActivityList": ("assistant_activity", "AssistantActivityList"),
+    "AssistantActivityState": ("assistant_activity", "AssistantActivityState"),
+    "RecordAssistantActivityRequest": ("assistant_activity", "RecordAssistantActivityRequest"),
     "GlobalSshOverrides": ("settings", "GlobalSshOverrides"),
     "AssignLoginProfileRequest": ("login_profiles", "AssignLoginProfileRequest"),
     "ConnectionProfileLink": ("login_profiles", "ConnectionProfileLink"),
@@ -1017,6 +1036,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "UnsavedHostCheckResult": ("connections", "UnsavedHostCheckResult"),
     "UpdateConnectionMetadataRequest": ("connections", "UpdateConnectionMetadataRequest"),
     "UpdateConnectionRequest": ("connections", "UpdateConnectionRequest"),
+    "UpdateAssistantAccessRequest": ("settings", "UpdateAssistantAccessRequest"),
     "UpdateGlobalSshOverridesRequest": ("settings", "UpdateGlobalSshOverridesRequest"),
     "UpdateIdentityConfigurationRequest": ("identity", "UpdateIdentityConfigurationRequest"),
     "UpdateIdentitySelectionRequest": ("identity", "UpdateIdentitySelectionRequest"),

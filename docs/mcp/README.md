@@ -124,16 +124,35 @@ inferring success from the MCP transport result.
 ## Runtime server
 
 The runtime server connects only through `DaemonClient`; it never starts a
-parallel SSH/SFTP implementation. Start or use an existing daemon, then
-register `sshpilot.mcp.runtime` as a second stdio server.
+parallel SSH/SFTP implementation.
+
+### Preferred: in-app localhost HTTP (D012)
+
+1. Open **Preferences ▸ AI Assistants**.
+2. Enable AI assistants, allowlist servers, and turn on **Listen on localhost**.
+3. Copy the client config (URL + bearer token) into Cursor / Claude / Copilot.
+
+```json
+{
+  "mcpServers": {
+    "sshpilot-runtime": {
+      "url": "http://127.0.0.1:PORT/mcp",
+      "headers": { "Authorization": "Bearer TOKEN" }
+    }
+  }
+}
+```
+
+SSH Pilot starts a Streamable HTTP sidecar on `127.0.0.1` (port `0` = automatic).
+No separate `python -m` process is required; AppImage builds bundle the MCP SDK.
+
+### Contributor fallback: stdio
 
 For a source checkout using an explicit socket:
 
 ```bash
 ./sshpilot-daemon --socket /run/user/1000/sshpilot-mcp.sock
 ```
-
-Generic client configuration:
 
 ```json
 {
@@ -157,6 +176,10 @@ example. Omit `SSHPILOT_MCP_SOCKET` to use SSH Pilot's default daemon socket.
 
 ### Runtime policy
 
+User-facing access is controlled in **Preferences ▸ AI Assistants** (master
+switch, per-server allowlist, operate/mutate/content). That daemon policy is
+the ceiling. Environment flags can only tighten it (D011):
+
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `SSHPILOT_MCP_READ` | enabled | Inspect daemon and resource state |
@@ -168,13 +191,26 @@ example. Omit `SSHPILOT_MCP_SOCKET` to use SSH Pilot's default daemon socket.
 Permissions are cumulative: OPERATE requires READ, and MUTATE requires READ +
 OPERATE + MUTATE. Every MUTATE tool also requires `confirm=true` on that call.
 Daemon capabilities control whether a tool is available; they do not grant
-authorization.
+authorization. Call `assistant_status` first; `list_connections` returns only
+allowlisted servers. Composed tools `run_command` and `host_info` are the
+usual paths for remote commands and monitoring.
 
 Keep content disabled unless the task explicitly requires remote file contents
 or another daemon-declared sensitive field in model context. Passwords,
 passphrases, private keys, and raw secret frames are not ordinary MCP inputs;
 authentication continues through SSH Pilot's protected interaction path and a
-trusted frontend.
+trusted frontend. Nonces and password fields stay redacted even with content
+enabled.
+
+### Coding agents (Cursor / Claude / Copilot)
+
+1. Enable **AI Assistants** in SSH Pilot and check the servers to share.
+2. Install the optional extra: `pip install 'sshpilot[mcp]'`.
+3. Register `python -m sshpilot.mcp.runtime` as a stdio MCP server (examples
+   above). Cursor: `~/.cursor/mcp.json` or project `.mcp.json`. Claude Code:
+   `claude mcp add` / `.mcp.json`. VS Code Copilot: `mcp.json`.
+4. Install the skill from `skills/sshpilot-assistant/SKILL.md` (also under
+   `.agents/skills/sshpilot-assistant/`).
 
 ## Troubleshooting
 

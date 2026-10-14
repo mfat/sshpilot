@@ -5,6 +5,22 @@ notes remain separate.
 
 ## Unreleased
 
+- Assistant MCP localhost listener + activity (0.83): `AssistantAccessSettings`
+  gains `http_listen`, `http_port`, `http_token`, and runtime
+  `http_listening` / `http_bound_port` / `http_url`. New
+  `list_assistant_activity` / `record_assistant_activity` methods (capabilities
+  `assistant_activity.read` / `assistant_activity.write` /
+  `assistant_activity.events`) and `EventType.ASSISTANT_ACTIVITY` drive the AI
+  Activity panel. Models: `AssistantActivityEntry`, `AssistantActivityList`,
+  `RecordAssistantActivityRequest`. Protocol remains 1.0.
+- Assistant MCP access: `get_assistant_access` / `set_assistant_access`
+  (`assistant_access.get` / `assistant_access.update`, capabilities
+  `assistant_access.read` / `assistant_access.write`) expose the daemon-owned
+  master switch, connection allowlist, and operate/mutate/content ceiling used
+  by `sshpilot-mcp-runtime`. Models: `AssistantAccessSettings`,
+  `UpdateAssistantAccessRequest`. Defaults are off / empty allowlist. New
+  methods and models, so the API implementation version is 0.82; Protocol
+  remains 1.0.
 - `UnsavedHostCheckRequest` gains `target`, `(field, value)` pairs naming a
   target that has no host (serial's `device`, a container, a pod); it is sent
   as a JSON object and only when non-empty. `check_unsaved_host` now answers

@@ -2686,6 +2686,363 @@ class PreferencesWindow(Adw.Window):
         self._secrets_page_id = self._page_id("Security & Credentials")
         return security_page
 
+    def _build_assistant_access_preferences_page(self):
+        """Build the AI Assistants preferences page (MCP enable/allowlist)."""
+        page = Adw.PreferencesPage()
+        page.set_title(_("AI Assistants"))
+        page.set_icon_name("network-workgroup-symbolic")
+
+        access_group = Adw.PreferencesGroup()
+        access_group.set_title(_("Assistant MCP Access"))
+        access_group.set_description(
+            _(
+                "Let Claude, Cursor, Copilot, and other MCP clients use servers "
+                "you explicitly allow. Passwords and private keys never leave "
+                "SSH Pilot."
+            )
+        )
+
+        self.assistant_enabled_row = Adw.SwitchRow()
+        self.assistant_enabled_row.set_title(_("Enable AI assistants"))
+        self.assistant_enabled_row.set_subtitle(
+            _("Master switch. Off by default.")
+        )
+        access_group.add(self.assistant_enabled_row)
+
+        self.assistant_operate_row = Adw.SwitchRow()
+        self.assistant_operate_row.set_title(_("Allow operate"))
+        self.assistant_operate_row.set_subtitle(
+            _("Sessions, commands, RDP/mosh launch, forwards, and transfers")
+        )
+        access_group.add(self.assistant_operate_row)
+
+        self.assistant_mutate_row = Adw.SwitchRow()
+        self.assistant_mutate_row.set_title(_("Allow mutate"))
+        self.assistant_mutate_row.set_subtitle(
+            _("Remote writes/deletes and connection edits (still need confirm=true)")
+        )
+        access_group.add(self.assistant_mutate_row)
+
+        self.assistant_content_row = Adw.SwitchRow()
+        self.assistant_content_row.set_title(_("Allow content"))
+        self.assistant_content_row.set_subtitle(
+            _("Command output, host info, and remote file bytes in the model context")
+        )
+        access_group.add(self.assistant_content_row)
+        page.add(access_group)
+
+        listen_group = Adw.PreferencesGroup()
+        listen_group.set_title(_("Local MCP listener"))
+        listen_group.set_description(
+            _(
+                "SSH Pilot opens a localhost Streamable HTTP endpoint so Cursor, "
+                "Claude, and Copilot can connect without a separate Python process."
+            )
+        )
+        self.assistant_http_listen_row = Adw.SwitchRow()
+        self.assistant_http_listen_row.set_title(_("Listen on localhost"))
+        self.assistant_http_listen_row.set_subtitle(
+            _("Requires Enable AI assistants. Binds only to 127.0.0.1.")
+        )
+        listen_group.add(self.assistant_http_listen_row)
+
+        self.assistant_http_port_row = Adw.SpinRow.new_with_range(0, 65535, 1)
+        self.assistant_http_port_row.set_title(_("Port"))
+        self.assistant_http_port_row.set_subtitle(
+            _("0 chooses an automatic free port")
+        )
+        self.assistant_http_port_row.set_digits(0)
+        listen_group.add(self.assistant_http_port_row)
+
+        self.assistant_http_url_row = Adw.ActionRow()
+        self.assistant_http_url_row.set_title(_("Listening URL"))
+        self.assistant_http_url_row.set_subtitle(_("Not listening"))
+        self.assistant_http_url_row.set_activatable(False)
+        url_copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        url_copy.set_valign(Gtk.Align.CENTER)
+        url_copy.set_tooltip_text(_("Copy URL"))
+        url_copy.connect("clicked", self._on_assistant_copy_url)
+        self.assistant_http_url_row.add_suffix(url_copy)
+        listen_group.add(self.assistant_http_url_row)
+
+        self.assistant_http_token_row = Adw.PasswordEntryRow()
+        self.assistant_http_token_row.set_title(_("Bearer token"))
+        self.assistant_http_token_row.set_editable(False)
+        token_copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        token_copy.set_valign(Gtk.Align.CENTER)
+        token_copy.set_tooltip_text(_("Copy token"))
+        token_copy.connect("clicked", self._on_assistant_copy_token)
+        self.assistant_http_token_row.add_suffix(token_copy)
+        regen = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        regen.set_valign(Gtk.Align.CENTER)
+        regen.set_tooltip_text(_("Regenerate token"))
+        regen.connect("clicked", self._on_assistant_regenerate_token)
+        self.assistant_http_token_row.add_suffix(regen)
+        listen_group.add(self.assistant_http_token_row)
+        page.add(listen_group)
+
+        self.assistant_hosts_group = Adw.PreferencesGroup()
+        self.assistant_hosts_group.set_title(_("Allowed servers"))
+        self.assistant_hosts_group.set_description(
+            _("Only checked servers are visible to AI assistants.")
+        )
+        page.add(self.assistant_hosts_group)
+        self._assistant_host_rows = []
+
+        setup_group = Adw.PreferencesGroup()
+        setup_group.set_title(_("Client setup"))
+        setup_group.set_description(
+            _(
+                "Copy this into your AI client's MCP config. The listener must "
+                "be on; environment flags can only tighten access."
+            )
+        )
+        self.assistant_client_config_row = Adw.ActionRow()
+        self.assistant_client_config_row.set_title(_("Cursor / Claude config"))
+        self.assistant_client_config_row.set_subtitle(
+            _("Enable Listen on localhost, then copy")
+        )
+        self.assistant_client_config_row.set_activatable(False)
+        config_copy = Gtk.Button(label=_("Copy"))
+        config_copy.set_valign(Gtk.Align.CENTER)
+        config_copy.add_css_class("suggested-action")
+        config_copy.connect("clicked", self._on_assistant_copy_client_config)
+        self.assistant_client_config_row.add_suffix(config_copy)
+        setup_group.add(self.assistant_client_config_row)
+        tip_row = Adw.ActionRow()
+        tip_row.set_title(_("Docs"))
+        tip_row.set_subtitle(_("See docs/mcp/README.md for setup details"))
+        tip_row.set_activatable(False)
+        setup_group.add(tip_row)
+        page.add(setup_group)
+
+        self._assistant_access_suppress = False
+        for row in (
+            self.assistant_enabled_row,
+            self.assistant_operate_row,
+            self.assistant_mutate_row,
+            self.assistant_content_row,
+            self.assistant_http_listen_row,
+        ):
+            row.connect("notify::active", self._on_assistant_access_changed)
+        self.assistant_http_port_row.connect(
+            "notify::value", self._on_assistant_access_changed
+        )
+
+        self._load_assistant_access_page()
+        return page
+
+    def _assistant_access_client(self):
+        owner = getattr(self, "parent_window", None)
+        return getattr(owner, "client", None)
+
+    def _load_assistant_access_page(self) -> None:
+        client = self._assistant_access_client()
+        if client is None or not hasattr(self, "assistant_enabled_row"):
+            return
+        try:
+            from .api.capabilities import Capability
+
+            if not client.get_capabilities().supports(Capability.ASSISTANT_ACCESS_READ):
+                return
+            snapshot = client.get_assistant_access()
+        except Exception:
+            logger.debug("Assistant access settings unavailable", exc_info=True)
+            return
+
+        self._assistant_access_suppress = True
+        try:
+            self.assistant_enabled_row.set_active(bool(snapshot.enabled))
+            self.assistant_operate_row.set_active(bool(snapshot.operate))
+            self.assistant_mutate_row.set_active(bool(snapshot.mutate))
+            self.assistant_content_row.set_active(bool(snapshot.content))
+            if hasattr(self, "assistant_http_listen_row"):
+                self.assistant_http_listen_row.set_active(bool(snapshot.http_listen))
+                self.assistant_http_port_row.set_value(float(snapshot.http_port or 0))
+                self.assistant_http_token_row.set_text(str(snapshot.http_token or ""))
+                self._update_assistant_http_status_rows(snapshot)
+            self._rebuild_assistant_host_rows(snapshot.allowed_connection_ids)
+        finally:
+            self._assistant_access_suppress = False
+        self._assistant_access_revision = snapshot.revision
+
+    def _update_assistant_http_status_rows(self, snapshot) -> None:
+        if not hasattr(self, "assistant_http_url_row"):
+            return
+        if getattr(snapshot, "http_listening", False) and snapshot.http_url:
+            self.assistant_http_url_row.set_subtitle(str(snapshot.http_url))
+            self.assistant_client_config_row.set_subtitle(
+                _("Ready — copy into .cursor/mcp.json")
+            )
+        elif getattr(snapshot, "http_listen", False) and getattr(
+            snapshot, "enabled", False
+        ):
+            self.assistant_http_url_row.set_subtitle(_("Starting…"))
+            self.assistant_client_config_row.set_subtitle(
+                _("Waiting for localhost listener")
+            )
+        else:
+            self.assistant_http_url_row.set_subtitle(_("Not listening"))
+            self.assistant_client_config_row.set_subtitle(
+                _("Enable Listen on localhost, then copy")
+            )
+
+    def _assistant_clipboard_text(self, text: str) -> None:
+        display = self.get_display() if hasattr(self, "get_display") else None
+        if display is None:
+            display = Gdk.Display.get_default()
+        if display is None:
+            return
+        display.get_clipboard().set(str(text))
+
+    def _on_assistant_copy_url(self, *_args) -> None:
+        subtitle = self.assistant_http_url_row.get_subtitle() or ""
+        if subtitle.startswith("http"):
+            self._assistant_clipboard_text(subtitle)
+
+    def _on_assistant_copy_token(self, *_args) -> None:
+        token = self.assistant_http_token_row.get_text() or ""
+        if token:
+            self._assistant_clipboard_text(token)
+
+    def _on_assistant_regenerate_token(self, *_args) -> None:
+        self._save_assistant_access(regenerate_token=True)
+
+    def _on_assistant_copy_client_config(self, *_args) -> None:
+        url = self.assistant_http_url_row.get_subtitle() or ""
+        token = self.assistant_http_token_row.get_text() or ""
+        if not url.startswith("http") or not token:
+            return
+        import json
+
+        payload = {
+            "mcpServers": {
+                "sshpilot-runtime": {
+                    "url": url,
+                    "headers": {"Authorization": f"Bearer {token}"},
+                }
+            }
+        }
+        self._assistant_clipboard_text(json.dumps(payload, indent=2))
+
+    def _rebuild_assistant_host_rows(self, allowed_ids) -> None:
+        group = getattr(self, "assistant_hosts_group", None)
+        if group is None:
+            return
+        for row in getattr(self, "_assistant_host_rows", []):
+            group.remove(row)
+        self._assistant_host_rows = []
+        owner = getattr(self, "parent_window", None)
+        connections = []
+        if owner is not None:
+            getter = getattr(owner, "get_connections", None) or getattr(
+                owner, "connection_manager", None
+            )
+            try:
+                if callable(getter):
+                    connections = list(getter() or [])
+                elif getter is not None and hasattr(getter, "get_connections"):
+                    connections = list(getter.get_connections() or [])
+            except Exception:
+                connections = []
+            if not connections:
+                client = self._assistant_access_client()
+                if client is not None:
+                    try:
+                        connections = list(client.list_connections() or [])
+                    except Exception:
+                        connections = []
+        allowed = set(allowed_ids or ())
+        for conn in connections:
+            connection_id = str(getattr(conn, "id", "") or getattr(conn, "nickname", ""))
+            if not connection_id:
+                continue
+            nickname = str(
+                getattr(conn, "display_name", None)
+                or getattr(conn, "nickname", connection_id)
+            )
+            row = Adw.SwitchRow()
+            row.set_title(nickname)
+            host = getattr(conn, "hostname", None) or getattr(conn, "host", "")
+            protocol = getattr(conn, "protocol", "ssh")
+            row.set_subtitle(f"{protocol} · {host}" if host else str(protocol))
+            row.set_active(connection_id in allowed)
+            row._assistant_connection_id = connection_id  # type: ignore[attr-defined]
+            row.connect("notify::active", self._on_assistant_access_changed)
+            group.add(row)
+            self._assistant_host_rows.append(row)
+
+    def _on_assistant_access_changed(self, *_args) -> None:
+        if getattr(self, "_assistant_access_suppress", False):
+            return
+        self._save_assistant_access()
+
+    def _save_assistant_access(self, *, regenerate_token: bool = False) -> None:
+        client = self._assistant_access_client()
+        if client is None:
+            return
+        try:
+            from .api.models.settings import UpdateAssistantAccessRequest
+
+            allowed = [
+                row._assistant_connection_id  # type: ignore[attr-defined]
+                for row in getattr(self, "_assistant_host_rows", [])
+                if row.get_active()
+            ]
+            http_port = 0
+            http_listen = False
+            if hasattr(self, "assistant_http_listen_row"):
+                http_listen = bool(self.assistant_http_listen_row.get_active())
+                http_port = int(self.assistant_http_port_row.get_value())
+            snapshot = client.set_assistant_access(
+                UpdateAssistantAccessRequest(
+                    enabled=bool(self.assistant_enabled_row.get_active()),
+                    allowed_connection_ids=tuple(allowed),
+                    operate=bool(self.assistant_operate_row.get_active()),
+                    mutate=bool(self.assistant_mutate_row.get_active()),
+                    content=bool(self.assistant_content_row.get_active()),
+                    http_listen=http_listen,
+                    http_port=http_port,
+                    regenerate_token=regenerate_token,
+                    expected_revision=getattr(self, "_assistant_access_revision", None),
+                )
+            )
+            self._assistant_access_revision = snapshot.revision
+            self._assistant_access_suppress = True
+            try:
+                if hasattr(self, "assistant_http_token_row"):
+                    self.assistant_http_token_row.set_text(str(snapshot.http_token or ""))
+                    self._update_assistant_http_status_rows(snapshot)
+            finally:
+                self._assistant_access_suppress = False
+            # Status (bound port) may arrive shortly after the sidecar starts.
+            if http_listen and snapshot.enabled and not snapshot.http_listening:
+                GLib.timeout_add_seconds(1, self._reload_assistant_http_status)
+        except Exception:
+            logger.exception("Failed to save assistant access settings")
+            self._load_assistant_access_page()
+
+    def _reload_assistant_http_status(self) -> bool:
+        client = self._assistant_access_client()
+        if client is None:
+            return False
+        try:
+            snapshot = client.get_assistant_access()
+        except Exception:
+            return False
+        self._assistant_access_revision = snapshot.revision
+        self._assistant_access_suppress = True
+        try:
+            if hasattr(self, "assistant_http_token_row"):
+                self.assistant_http_token_row.set_text(str(snapshot.http_token or ""))
+                self._update_assistant_http_status_rows(snapshot)
+        finally:
+            self._assistant_access_suppress = False
+        return bool(
+            snapshot.enabled
+            and snapshot.http_listen
+            and not snapshot.http_listening
+        )
 
     def _ssh_override_page_values(self):
         """Return the nine SSH override field values for the page.
@@ -3110,6 +3467,7 @@ class PreferencesWindow(Adw.Window):
             self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
             self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", self._build_ssh_settings_preferences_page)
             self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
+            self.add_page_to_layout(N_("AI Assistants"), "network-workgroup-symbolic", self._build_assistant_access_preferences_page)
             self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
             self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", self._create_plugins_page)
             self.add_page_to_layout(N_("Command Snippets"), "camera-flash-symbolic", self._create_command_blocks_page)

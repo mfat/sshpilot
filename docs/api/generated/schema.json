@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.81",
+  "api_implementation_version": "0.83",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -169,6 +169,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "get_assistant_access": {
+      "capability": "assistant_access.read",
+      "status": "daemon-only"
+    },
     "get_broadcast_command": {
       "capability": "broadcast.read",
       "status": "schema-only"
@@ -309,6 +313,10 @@
       "capability": "identity.read",
       "status": "daemon-only"
     },
+    "list_assistant_activity": {
+      "capability": "assistant_activity.read",
+      "status": "daemon-only"
+    },
     "list_authorized_keys": {
       "capability": "identity.read",
       "status": "daemon-only"
@@ -413,6 +421,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "record_assistant_activity": {
+      "capability": "assistant_activity.write",
+      "status": "daemon-only"
+    },
     "release_interaction": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -475,6 +487,10 @@
     },
     "send_terminal_input": {
       "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "set_assistant_access": {
+      "capability": "assistant_access.write",
       "status": "daemon-only"
     },
     "set_connection_layout": {
@@ -655,6 +671,18 @@
     }
   },
   "daemon_method_contract": {
+    "assistant_access.get": {
+      "capability": "assistant_access.read"
+    },
+    "assistant_access.update": {
+      "capability": "assistant_access.write"
+    },
+    "assistant_activity.list": {
+      "capability": "assistant_activity.read"
+    },
+    "assistant_activity.record": {
+      "capability": "assistant_activity.write"
+    },
     "authorized_keys.fetch": {
       "capability": "identity.read"
     },
@@ -1323,6 +1351,11 @@
       "host_info.read",
       "ssh_overrides.read",
       "ssh_overrides.write",
+      "assistant_access.read",
+      "assistant_access.write",
+      "assistant_activity.read",
+      "assistant_activity.write",
+      "assistant_activity.events",
       "login_profiles.read",
       "login_profiles.write",
       "plugins",
@@ -1499,6 +1532,7 @@
       "operation.created",
       "operation.state_changed",
       "broadcast.output",
+      "assistant.activity",
       "daemon.state_changed",
       "error.occurred"
     ],
@@ -2144,6 +2178,95 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[LoginProfileId]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AssistantAccessSettings": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "enabled",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "allowed_connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "operate",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "mutate",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "content",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "http_listen",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "http_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "http_token",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "http_listening",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "http_bound_port",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": "",
+          "name": "http_url",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -4870,6 +4993,88 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "GlobalSshOverrides": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "connect_timeout",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "connection_attempts",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "server_alive_interval",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "server_alive_count_max",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "strict_host_key_checking",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "batch_mode",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "compression",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "verbosity",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "debug_enabled",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": true,
+          "name": "applies_immediately",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -10013,6 +10218,74 @@
       ],
       "status": "Implemented"
     },
+    "UpdateAssistantAccessRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "enabled",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "allowed_connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": true,
+          "name": "operate",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "mutate",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "content",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "http_listen",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "http_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": false,
+          "name": "regenerate_token",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "expected_revision",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "UpdateConnectionMetadataRequest": {
       "fields": [
         {
@@ -10089,6 +10362,25 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "UpdateGlobalSshOverridesRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "patch",
+          "required": true,
+          "sensitive": false,
+          "type": "Mapping[str, object]"
+        },
+        {
+          "default": null,
+          "name": "expected_revision",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
         }
       ],
       "status": "Implemented"

@@ -27,11 +27,24 @@ from sshpilot.mcp.runtime.server import RuntimeHandle, create_server
 pytestmark = pytest.mark.anyio
 
 
+class _Access:
+    revision = "testrev00001"
+    enabled = True
+    allowed_connection_ids = ("conn-1", "c1", "demo")
+    operate = True
+    mutate = True
+    content = True
+
+
 class FakeDaemonClient:
     """Minimal stand-in exposing the daemon-client surface the runtime uses."""
 
     def __init__(self) -> None:
         self.calls = []
+
+    def get_assistant_access(self):
+        self.calls.append("get_assistant_access")
+        return _Access()
 
     def get_capabilities(self):
         self.calls.append("get_capabilities")
@@ -43,7 +56,28 @@ class FakeDaemonClient:
 
     def list_sftp_services(self):
         self.calls.append("list_sftp_services")
-        return [{"service_id": "srv-1", "connection_id": "conn-1"}]
+
+        class _Svc:
+            id = "srv-1"
+            connection_id = "conn-1"
+
+        return [_Svc()]
+
+    def get_sftp_service(self, service_id):
+        self.calls.append(("get_sftp_service", service_id))
+
+        class _Svc:
+            id = service_id
+            connection_id = "conn-1"
+
+        return _Svc()
+
+    def list_connections(self):
+        class _Conn:
+            id = "conn-1"
+            nickname = "demo"
+
+        return [_Conn()]
 
 
 def _build_server(*, mutate: bool = True):
@@ -175,7 +209,9 @@ async def test_mutate_requires_confirm():
         )
         assert result.is_error
         assert "confirm" in result.content[0].text
-        assert client.calls == ["get_capabilities"]
+        assert "get_capabilities" in client.calls
+        assert ("get_sftp_service", "srv-1") in client.calls
+        assert "sftp_mkdir" not in client.calls
 
 
 async def test_mutate_refuses_when_disabled_even_with_confirm():
@@ -186,4 +222,5 @@ async def test_mutate_refuses_when_disabled_even_with_confirm():
         )
         assert result.is_error
         assert "not permitted" in result.content[0].text
-        assert client.calls == ["get_capabilities"]
+        assert "get_capabilities" in client.calls
+        assert "sftp_mkdir" not in client.calls

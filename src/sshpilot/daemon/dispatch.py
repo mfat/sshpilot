@@ -337,6 +337,10 @@ DAEMON_METHOD_CAPABILITIES = {
     "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
     "ssh_overrides.update": Capability.SSH_OVERRIDES_WRITE,
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
+    "assistant_access.get": Capability.ASSISTANT_ACCESS_READ,
+    "assistant_access.update": Capability.ASSISTANT_ACCESS_WRITE,
+    "assistant_activity.list": Capability.ASSISTANT_ACTIVITY_READ,
+    "assistant_activity.record": Capability.ASSISTANT_ACTIVITY_WRITE,
     "login_profiles.get": Capability.LOGIN_PROFILES_READ,
     "login_profiles.preview_assignment": Capability.LOGIN_PROFILES_READ,
     "login_profiles.create": Capability.LOGIN_PROFILES_WRITE,
@@ -439,6 +443,8 @@ DRAIN_REJECTED_METHODS = frozenset(
         "authorized_keys.remove",
         "ssh_overrides.update",
         "ssh_overrides.reset",
+        "assistant_access.update",
+        "assistant_activity.record",
         "login_profiles.create",
         "login_profiles.update",
         "login_profiles.delete",
@@ -693,6 +699,8 @@ class RequestDispatcher:
         diagnostics_provider: Optional[Callable[[], Any]] = None,
         pre_command_runner: Optional[Any] = None,
         ssh_overrides_service: Any = None,
+        assistant_access_service: Any = None,
+        assistant_activity_service: Any = None,
         login_profiles: Any = None,
         secrets_service: Any = None,
         identity_service: Any = None,
@@ -712,6 +720,8 @@ class RequestDispatcher:
         self._key_service = key_service
         self._lifecycle = lifecycle_controller
         self._ssh_overrides_service = ssh_overrides_service
+        self._assistant_access_service = assistant_access_service
+        self._assistant_activity_service = assistant_activity_service
         self._login_profiles = login_profiles
         self._secrets_service = secrets_service
         self._identity_service = identity_service
@@ -895,6 +905,10 @@ class RequestDispatcher:
             "ssh_overrides.get": self._handle_get_ssh_overrides,
             "ssh_overrides.update": self._handle_update_ssh_overrides,
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
+            "assistant_access.get": self._handle_get_assistant_access,
+            "assistant_access.update": self._handle_update_assistant_access,
+            "assistant_activity.list": self._handle_list_assistant_activity,
+            "assistant_activity.record": self._handle_record_assistant_activity,
             "login_profiles.get": self._handle_get_login_profiles,
             "login_profiles.preview_assignment": self._handle_preview_login_profile_assignment,
             "login_profiles.create": self._handle_create_login_profile,
@@ -1077,6 +1091,8 @@ class RequestDispatcher:
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
+                assistant_access=getattr(self, "_assistant_access_service", None) is not None,
+                assistant_activity=getattr(self, "_assistant_activity_service", None) is not None,
                 login_profiles=getattr(self, "_login_profiles", None) is not None,
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
@@ -3482,6 +3498,8 @@ class RequestDispatcher:
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
+                assistant_access=getattr(self, "_assistant_access_service", None) is not None,
+                assistant_activity=getattr(self, "_assistant_activity_service", None) is not None,
                 login_profiles=getattr(self, "_login_profiles", None) is not None,
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
@@ -3524,6 +3542,8 @@ class RequestDispatcher:
         known_hosts: bool = False,
         keys: bool = False,
         ssh_overrides: bool = False,
+        assistant_access: bool = False,
+        assistant_activity: bool = False,
         login_profiles: bool = False,
         secrets: bool = False,
         identity: bool = False,
@@ -3639,6 +3659,21 @@ class RequestDispatcher:
                 {
                     Capability.SSH_OVERRIDES_READ,
                     Capability.SSH_OVERRIDES_WRITE,
+                }
+            )
+        if assistant_access:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.ASSISTANT_ACCESS_READ,
+                    Capability.ASSISTANT_ACCESS_WRITE,
+                }
+            )
+        if assistant_activity:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.ASSISTANT_ACTIVITY_READ,
+                    Capability.ASSISTANT_ACTIVITY_WRITE,
+                    Capability.ASSISTANT_ACTIVITY_EVENTS,
                 }
             )
         if login_profiles:
@@ -3983,6 +4018,74 @@ class RequestDispatcher:
                 "SSH overrides are unavailable",
             )
         return self._ssh_overrides_service
+
+    def _required_assistant_access_service(self):
+        service = getattr(self, "_assistant_access_service", None)
+        if service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Assistant access settings are unavailable",
+            )
+        return service
+
+    def _handle_get_assistant_access(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import assistant_access_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_assistant_access_service()
+        return assistant_access_to_wire(service.get())
+
+    def _handle_update_assistant_access(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            assistant_access_to_wire,
+            update_assistant_access_request_from_wire,
+        )
+
+        typed_request = update_assistant_access_request_from_wire(request.params)
+        service = self._required_assistant_access_service()
+        return assistant_access_to_wire(service.update(typed_request))
+
+    def _required_assistant_activity_service(self):
+        service = getattr(self, "_assistant_activity_service", None)
+        if service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Assistant activity is unavailable",
+            )
+        return service
+
+    def _handle_list_assistant_activity(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import assistant_activity_list_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_assistant_activity_service()
+        return assistant_activity_list_to_wire(service.list())
+
+    def _handle_record_assistant_activity(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            assistant_activity_entry_to_wire,
+            record_assistant_activity_request_from_wire,
+        )
+
+        typed_request = record_assistant_activity_request_from_wire(request.params)
+        service = self._required_assistant_activity_service()
+        return assistant_activity_entry_to_wire(service.record(typed_request))
 
     # -- Secret backend management ----------------------------------------
 

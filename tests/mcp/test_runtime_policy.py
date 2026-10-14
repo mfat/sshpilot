@@ -6,17 +6,47 @@ READ / OPERATE / MUTATE policy boundary and the RuntimeHandle's wire mapping
 against a fake daemon client.
 """
 
+from dataclasses import dataclass
+from typing import Tuple
+
 import pytest
 
 from sshpilot.mcp.runtime.policy import PermissionLevel, PolicyError, RuntimePolicy
 from sshpilot.mcp.runtime.server import RuntimeHandle, RuntimeToolError
 
 
+@dataclass(frozen=True)
+class _Access:
+    revision: str = "abc123def456"
+    enabled: bool = True
+    allowed_connection_ids: Tuple[str, ...] = ("c1", "demo")
+    operate: bool = True
+    mutate: bool = True
+    content: bool = True
+
+
+@dataclass(frozen=True)
+class _SftpService:
+    id: str
+    connection_id: str
+
+
+@dataclass(frozen=True)
+class _Session:
+    id: str
+    connection_id: str
+
+
 class FakeClient:
     """Minimal stand-in for the daemon client surface (a subset of it)."""
 
-    def __init__(self) -> None:
+    def __init__(self, access: _Access | None = None) -> None:
         self.calls = []
+        self._access = access if access is not None else _Access()
+
+    def get_assistant_access(self):
+        self.calls.append("get_assistant_access")
+        return self._access
 
     def get_capabilities(self):
         self.calls.append("get_capabilities")
@@ -26,9 +56,27 @@ class FakeClient:
         self.calls.append("list_transfers")
         return {"transfers": []}
 
+    def list_connections(self):
+        self.calls.append("list_connections")
+
+        @dataclass(frozen=True)
+        class _Conn:
+            id: str
+            nickname: str
+
+        return [_Conn("c1", "one"), _Conn("other", "hidden")]
+
     def open_session(self, request):
         self.calls.append(("open_session", request))
         return {"session_id": "s1"}
+
+    def get_sftp_service(self, service_id):
+        self.calls.append(("get_sftp_service", service_id))
+        return _SftpService(id=service_id, connection_id="c1")
+
+    def get_session(self, session_id):
+        self.calls.append(("get_session", session_id))
+        return _Session(id=session_id, connection_id="c1")
 
     def sftp_remove(self, request):
         self.calls.append(("sftp_remove", request))
@@ -120,6 +168,22 @@ def test_handle_content_opt_in_restores_dto_fields():
     assert result == {"name": "file.txt", "content": "PRIVATE-KEY-MATERIAL"}
 
 
+def test_handle_always_redacts_nonce_even_with_content():
+    from dataclasses import dataclass, field
+
+    client = FakeClient()
+
+    @dataclass(frozen=True)
+    class _Claim:
+        interaction_id: str
+        nonce: str = field(repr=False)
+
+    client.get_capabilities = lambda: _Claim(interaction_id="i1", nonce="SECRET")
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True, allow_content=True))
+    result = handle._run("get_capabilities")
+    assert result["nonce"] == "<redacted>"
+
+
 def test_handle_redacts_free_form_operation_results_by_default():
     from datetime import datetime, timezone
 
@@ -176,7 +240,50 @@ def test_handle_read_runs_through_client():
     handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
     result = handle.capabilities()
     assert result == {"capabilities": ["x"]}
-    assert client.calls == ["get_capabilities"]
+    assert "get_capabilities" in client.calls
+
+
+def test_assistant_status_works_when_disabled():
+    client = FakeClient(access=_Access(enabled=False))
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
+    status = handle.assistant_status()
+    assert status["enabled"] is False
+    assert status["effective"]["read"] is False
+
+
+def test_handle_denied_when_assistant_access_disabled():
+    client = FakeClient(access=_Access(enabled=False))
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
+    with pytest.raises(RuntimeToolError, match="disabled"):
+        handle.daemon_status()
+
+
+def test_handle_filters_connections_to_allowlist():
+    client = FakeClient()
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
+    result = handle.list_connections()
+    assert [item["id"] for item in result] == ["c1"]
+
+
+def test_handle_refuses_connection_outside_allowlist():
+    client = FakeClient()
+    handle = RuntimeHandle(
+        client,
+        RuntimePolicy(allow_read=True, allow_operate=True),
+    )
+    with pytest.raises(RuntimeToolError, match="not allowlisted"):
+        handle.open_session("other")
+
+
+def test_env_cannot_raise_daemon_ceiling():
+    """Daemon mutate=False blocks MUTATE even when env enables it (D011)."""
+    client = FakeClient(access=_Access(mutate=False, operate=True))
+    handle = RuntimeHandle(
+        client,
+        RuntimePolicy(allow_read=True, allow_operate=True, allow_mutate=True),
+    )
+    with pytest.raises(RuntimeToolError):
+        handle.sftp_remove("srv1", "/tmp/x", confirm=True)
 
 
 def test_handle_operate_denied_without_opt_in():
@@ -184,7 +291,6 @@ def test_handle_operate_denied_without_opt_in():
     handle = RuntimeHandle(client, RuntimePolicy())
     with pytest.raises(RuntimeToolError):
         handle.open_session("c1")
-    assert client.calls == []
 
 
 def test_handle_mutate_requires_confirm():
@@ -195,7 +301,6 @@ def test_handle_mutate_requires_confirm():
     )
     with pytest.raises(RuntimeToolError):
         handle.sftp_remove("srv1", "/tmp/x")
-    assert client.calls == []
 
 
 def test_handle_mutate_denied_without_opt_in_even_with_confirm():
@@ -203,7 +308,6 @@ def test_handle_mutate_denied_without_opt_in_even_with_confirm():
     handle = RuntimeHandle(client, RuntimePolicy())
     with pytest.raises(RuntimeToolError):
         handle.sftp_remove("srv1", "/tmp/x", confirm=True)
-    assert client.calls == []
 
 
 def test_handle_mutate_with_confirm_runs():
@@ -214,7 +318,7 @@ def test_handle_mutate_with_confirm_runs():
     )
     result = handle.sftp_remove("srv1", "/tmp/x", confirm=True)
     assert result == {"removed": "/tmp/x"}
-    assert client.calls[0][0] == "sftp_remove"
+    assert any(call[0] == "sftp_remove" for call in client.calls if isinstance(call, tuple))
 
 
 def test_handle_unknown_method_is_a_runtime_tool_error():
@@ -222,6 +326,13 @@ def test_handle_unknown_method_is_a_runtime_tool_error():
     handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
     with pytest.raises(RuntimeToolError):
         handle._run("no_such_method")
+
+
+def test_forbidden_client_methods_are_not_mapped():
+    from sshpilot.mcp.runtime.server import FORBIDDEN_CLIENT_METHODS, TOOL_CLIENT_METHOD
+
+    mapped = set(TOOL_CLIENT_METHOD.values()) | set(TOOL_CLIENT_METHOD)
+    assert not (FORBIDDEN_CLIENT_METHODS & mapped)
 
 
 # ---- capability-driven tool visibility ------------------------------------

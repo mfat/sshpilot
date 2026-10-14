@@ -16,6 +16,7 @@ from .models.connection_store import ConnectionStoreSnapshot
 from .models.connections import ConnectionSummary
 from .models.interactions import InteractionRequest, InteractionSummary
 from .models.operations import ForwardSummary, OperationSummary, SftpServiceSummary
+from .models.assistant_activity import AssistantActivityEntry
 from .models.broadcast import BroadcastCommandOutput
 from .models.pre_command import PreConnectionCommandNotice
 from .models.login_profiles import LoginProfilesChangedEvent
@@ -64,6 +65,7 @@ class EventType(str, Enum):
     OPERATION_CREATED = "operation.created"
     OPERATION_STATE_CHANGED = "operation.state_changed"
     BROADCAST_OUTPUT = "broadcast.output"
+    ASSISTANT_ACTIVITY = "assistant.activity"
     DAEMON_STATE_CHANGED = "daemon.state_changed"
     ERROR_OCCURRED = "error.occurred"
 
@@ -137,6 +139,7 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.OPERATION_CREATED: OperationSummary,
     EventType.OPERATION_STATE_CHANGED: OperationSummary,
     EventType.BROADCAST_OUTPUT: BroadcastCommandOutput,
+    EventType.ASSISTANT_ACTIVITY: AssistantActivityEntry,
     EventType.DAEMON_STATE_CHANGED: DaemonStatus,
     EventType.PRE_CONNECTION_COMMAND: PreConnectionCommandNotice,
     EventType.LOGIN_PROFILES_CHANGED: LoginProfilesChangedEvent,
