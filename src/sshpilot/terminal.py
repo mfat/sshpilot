@@ -14,11 +14,22 @@ from gettext import gettext as _, ngettext
 import weakref
 import subprocess
 import shutil
-import pwd
 from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak, is_macos, is_windows
+
+# Import pwd with Windows fallback
+try:
+    import pwd
+except ImportError:
+    from .platform.windows_compat import getpwuid as _getpwuid_compat
+    
+    class pwd:
+        """Compatibility shim for Windows."""
+        @staticmethod
+        def getpwuid(uid):
+            return _getpwuid_compat(uid)
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,

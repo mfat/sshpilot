@@ -21,6 +21,9 @@ Design notes:
 - ``pause``/``resume`` stop and restart the fd watch so the kernel PTY buffer
   applies backpressure when xterm.js falls behind (see xterm.js flowcontrol guide).
 - Child exit is reported via ``GLib.child_watch_add`` on the real child pid.
+
+Note: This module requires VTE (GTK4 Virtual Terminal Emulator) which is not
+available on Windows. Windows builds should use alternative terminal backends.
 """
 from __future__ import annotations
 
@@ -31,8 +34,16 @@ from typing import Callable, Optional, Sequence
 
 import gi
 
-gi.require_version("Vte", "3.91")
-from gi.repository import GLib, Vte  # noqa: E402
+# VTE is not available on Windows
+try:
+    gi.require_version("Vte", "3.91")
+    from gi.repository import Vte  # noqa: E402
+    _VTE_AVAILABLE = True
+except (ValueError, ImportError):
+    _VTE_AVAILABLE = False
+    Vte = None
+
+from gi.repository import GLib  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +75,12 @@ class XtermPtyBridge:
         flush_ms: int = 16,
         read_size: int = 65536,
     ) -> None:
+        if not _VTE_AVAILABLE:
+            raise RuntimeError(
+                "VTE (Virtual Terminal Emulator) is not available on this platform. "
+                "This typically means you're on Windows, which doesn't support VTE. "
+                "Please use the xterm.js terminal backend instead."
+            )
         self._on_output = on_output
         self._on_exit = on_exit
         self._flush_ms = max(1, int(flush_ms))

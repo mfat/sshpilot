@@ -1,9 +1,12 @@
-"""Unix PTY process ownership and one shared non-blocking I/O loop."""
+"""Unix PTY process ownership and one shared non-blocking I/O loop.
+
+Note: This module uses Unix-specific PTY functionality and is not functional
+on Windows. Windows builds should use alternative terminal backends.
+"""
 
 from __future__ import annotations
 
 import errno
-import fcntl
 import logging
 import os
 import queue
@@ -13,13 +16,23 @@ import signal
 import struct
 import subprocess
 import sys
-import termios
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Deque, Mapping, Optional, Sequence
+
+# Unix-specific imports with Windows compatibility
+try:
+    import fcntl
+    import termios
+    _PTY_AVAILABLE = True
+except ImportError:
+    # Windows doesn't have fcntl/termios
+    _PTY_AVAILABLE = False
+    fcntl = None
+    termios = None
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.sessions import SessionExitInfo
@@ -72,6 +85,11 @@ class PtyIoManager:
         input_limit: int = DEFAULT_TERMINAL_INPUT_BYTES,
         read_chunk: int = DEFAULT_PTY_READ_CHUNK,
     ) -> None:
+        if not _PTY_AVAILABLE:
+            raise RuntimeError(
+                "PTY functionality is not available on this platform. "
+                "Windows users should use the xterm.js terminal backend."
+            )
         if input_limit < 1 or read_chunk < 1:
             raise ValueError("PTY I/O bounds must be positive")
         self._input_limit = input_limit

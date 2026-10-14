@@ -36,7 +36,13 @@ logger = logging.getLogger(__name__)
 import gi
 gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
-gi.require_version('Vte', '3.91')
+
+# VTE is not available on Windows - make it optional
+try:
+    gi.require_version('Vte', '3.91')
+    _VTE_AVAILABLE = True
+except (ValueError, ImportError):
+    _VTE_AVAILABLE = False
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 from .shortcut_utils import (
