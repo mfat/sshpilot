@@ -21,6 +21,7 @@ from .askpass_utils import (
     lookup_passphrase,
 )
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
+from .platform.windows.environment import WINDOWS_PROCESS_ENV
 
 
 def effective_username(connection) -> str:
@@ -168,31 +169,6 @@ def apply_forced_askpass_env(
 
 logger = logging.getLogger(__name__)
 
-# OpenSSH for Windows exits 255 with no output when these are missing.
-# ssh-add does the same without ProgramData; the C runtime needs SystemRoot.
-# Names are matched case-insensitively because Windows preserves whatever
-# case the process inherited.
-_WINDOWS_PROCESS_ENV = frozenset(
-    {
-        "SYSTEMROOT",
-        "WINDIR",
-        "SYSTEMDRIVE",
-        "PROGRAMDATA",
-        "PATHEXT",
-        "COMSPEC",
-        "TEMP",
-        "TMP",
-        "USERPROFILE",
-        "USERNAME",
-        "USERDOMAIN",
-        "HOMEDRIVE",
-        "HOMEPATH",
-        "APPDATA",
-        "LOCALAPPDATA",
-    }
-)
-
-
 @dataclass
 class SSHConnectionCommand:
     """Represents a prepared SSH connection command."""
@@ -260,12 +236,13 @@ def resolve_native_auth(
             "SSH_AUTH_SOCK",
         }
         windows = os.name == "nt"
+        # Windows environment names are case-insensitive; POSIX ones are not.
         env = {
             key: value
             for key, value in os.environ.items()
-            if key.upper() in allowed
+            if (key.upper() if windows else key) in allowed
             or key.startswith("LC_")
-            or (windows and key.upper() in _WINDOWS_PROCESS_ENV)
+            or (windows and key.upper() in WINDOWS_PROCESS_ENV)
         }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"

@@ -19,15 +19,16 @@ def _install_fake_builtin(monkeypatch, tmp_path):
 def test_builtin_moves_ahead_of_git_for_windows(monkeypatch, tmp_path):
     root, directory = _install_fake_builtin(monkeypatch, tmp_path)
     git = str(tmp_path / "Git" / "usr" / "bin")
-    env = {"SystemRoot": root, "PATH": os.pathsep.join([git, directory, "C:\\other"])}
+    other = str(tmp_path / "other")
+    env = {"SystemRoot": root, "PATH": os.pathsep.join([git, directory, other])}
     assert openssh.prefer_builtin_openssh(env) is True
-    assert env["PATH"].split(os.pathsep) == [directory, git, "C:\\other"]
+    assert env["PATH"].split(os.pathsep) == [directory, git, other]
     assert openssh.prefer_builtin_openssh(env) is False  # idempotent
 
 
 def test_builtin_added_when_missing_from_path(monkeypatch, tmp_path):
     root, directory = _install_fake_builtin(monkeypatch, tmp_path)
-    env = {"SystemRoot": root, "PATH": "C:\\other"}
+    env = {"SystemRoot": root, "PATH": str(tmp_path / "other")}
     assert openssh.prefer_builtin_openssh(env) is True
     assert env["PATH"].split(os.pathsep)[0] == directory
 

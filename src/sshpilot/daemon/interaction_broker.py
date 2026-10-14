@@ -166,17 +166,13 @@ def _operation_destination(argv: Sequence[str]) -> str:
     """The OpenSSH destination on an operation command line.
 
     Most launches put the host last. The Windows ssh-copy-id fallback is
-    ``ssh [options] -- host command``, and that command contains spaces, so
-    the host is the argument before it. Prompts must name the host.
+    ``ssh [options] -- host command``, so there the host is the argument
+    after ``--``. Prompts must name the host.
     """
 
-    if (
-        len(argv) >= 2
-        and any(char.isspace() for char in argv[-1])
-        and not any(char.isspace() for char in argv[-2])
-    ):
-        return argv[-2]
-    return argv[-1] if argv else ""
+    if len(argv) >= 3 and argv[-3] == "--":
+        return str(argv[-2])
+    return str(argv[-1]) if argv else ""
 
 
 class InteractionBroker:

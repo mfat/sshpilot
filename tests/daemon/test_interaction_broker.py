@@ -49,6 +49,8 @@ def test_operation_destination_is_the_host_before_a_remote_command():
         ["ssh.exe", "-o", "RequestTTY=no", "--", "root@192.168.8.1", "exec sh -c 'true'"]
     ) == "root@192.168.8.1"
     assert _operation_destination(["ssh-copy-id", "-i", "key.pub", "alice@host"]) == "alice@host"
+    # A remote path with a space is still the destination, not the argument before it.
+    assert _operation_destination(["scp", "/tmp/a.txt", "u@h:/my dir/"]) == "u@h:/my dir/"
 
 
 @pytest.fixture

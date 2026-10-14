@@ -55,6 +55,7 @@ from sshpilot.api.models.operations import (
     OperationKind,
     OperationSummary,
 )
+from sshpilot.platform.windows.environment import WINDOWS_PROCESS_ENV
 from sshpilot.authorized_keys_parser import (
     AuthorizedKeyEntry as ParsedKeyEntry,
 )
@@ -96,18 +97,6 @@ _SSH_ERROR_EXIT = 255
 
 _BASE_ENV_ALLOWLIST = frozenset(
     {"PATH", "HOME", "USER", "LOGNAME", "LANG", "SSH_AUTH_SOCK", "SSH_AGENT_PID"}
-)
-
-# Windows programs need these to run at all: OpenSSH for Windows reads its
-# system configuration from %PROGRAMDATA%\ssh (ssh-add exits 255 silently
-# without it), and the C runtime and Winsock expect SystemRoot and friends.
-# Windows environment names are case-insensitive, so they match upper-cased.
-_WINDOWS_ENV_ALLOWLIST = frozenset(
-    {
-        "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "PROGRAMDATA", "PATHEXT",
-        "COMSPEC", "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN",
-        "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
-    }
 )
 
 _REMOTE_COMMAND_TIMEOUT = 120.0
@@ -785,7 +774,7 @@ class DaemonIdentityService:
             for key, value in self._environ.items()
             if key in _BASE_ENV_ALLOWLIST
             or key.startswith("LC_")
-            or (windows and key.upper() in _WINDOWS_ENV_ALLOWLIST)
+            or (windows and key.upper() in WINDOWS_PROCESS_ENV)
         }
         env["TERM"] = "xterm-256color"
         return env

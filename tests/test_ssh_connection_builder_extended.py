@@ -366,6 +366,20 @@ def test_broker_env_keeps_windows_process_essentials(monkeypatch):
     assert "BW_SESSION" not in auth.env
 
 
+def test_broker_env_keeps_posix_names_case_sensitive(monkeypatch):
+    import os
+
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setenv("path", "/lowercase/bin")
+
+    auth = resolve_native_auth(
+        Connection({"host": "h", "hostname": "h"}),
+        interaction_policy="broker",
+    )
+
+    assert "path" not in auth.env
+
+
 def test_resolve_native_auth_key_mode_saved_passphrase_uses_askpass(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
     monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: 'pp')
