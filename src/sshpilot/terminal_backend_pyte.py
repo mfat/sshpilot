@@ -913,6 +913,10 @@ class PyteTerminalBackend:
             model_name = None
         self.view = PyteTerminalView(model_name)
         logger.info("Built-in terminal using the %s emulator model", self.view.model_name)
+        #: Most daemon output bytes fed per GTK dispatch, about one frame's
+        #: worth of parsing at 120 columns (libvterm ~20 ms per 64 KB, pyte
+        #: ~180 ms), so typing and repaints run between slices.
+        self.output_slice_bytes = 32 * 1024 if self.view.model_name == "vterm" else 8 * 1024
         self._scrollbar = Gtk.Scrollbar(
             orientation=Gtk.Orientation.VERTICAL, adjustment=self.view.vadjustment
         )

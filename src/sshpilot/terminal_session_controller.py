@@ -178,9 +178,14 @@ class DaemonTerminalSessionController:
         on_continuity_lost: Optional[Callable[[], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_state_changed: Optional[Callable[[], None]] = None,
+        output_slice_bytes: Optional[int] = None,
     ) -> None:
         self._client = client
         self._bridge = bridge
+        #: Most output bytes one GTK dispatch hands the display; ``None``
+        #: keeps the bridge default. Slower emulators ask for less, so input
+        #: and redraws run between slices.
+        self._output_slice_bytes = output_slice_bytes
         self._connection_id = connection_id
         self._view_id = view_id
         self._on_output = on_output
@@ -761,6 +766,11 @@ class DaemonTerminalSessionController:
             ),
             on_error=lambda error: self._handle_bound_error(generation, error),
             start_paused=paused,
+            **(
+                {"max_pending_bytes": self._output_slice_bytes}
+                if self._output_slice_bytes
+                else {}
+            ),
             recovery_sequence=(
                 self._tab_state.expected_sequence if paused else None
             ),
