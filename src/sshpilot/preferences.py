@@ -821,7 +821,40 @@ class PreferencesWindow(Adw.Window):
         self.backend_row.connect('notify::selected', self._on_backend_row_changed)
 
         backend_group.add(self.backend_row)
+        if is_windows():
+            self._add_windows_shell_row(backend_group)
         terminal_page.add(backend_group)
+
+    def _windows_shell_choices(self):
+        """``[(id, label)]`` for the local shell picker: Automatic, then installed shells."""
+        from .platform.windows.shells import AUTO, SHELL_LABELS, available_shells
+
+        return [(AUTO, _(SHELL_LABELS[AUTO]))] + [
+            (name, _(SHELL_LABELS[name])) for name in available_shells()
+        ]
+
+    def _add_windows_shell_row(self, group):
+        """Which shell a Windows local terminal tab runs (terminal.windows_shell)."""
+        self._windows_shell_choices_data = self._windows_shell_choices()
+        row = Adw.ComboRow()
+        row.set_title(_("Local Shell"))
+        row.set_subtitle(_("The shell new local terminal tabs run"))
+        model = Gtk.StringList()
+        for _id, label in self._windows_shell_choices_data:
+            model.append(label)
+        row.set_model(model)
+        current = (self.config.get_setting('terminal.windows_shell', 'auto') or 'auto').lower()
+        ids = [choice_id for choice_id, _label in self._windows_shell_choices_data]
+        row.set_selected(ids.index(current) if current in ids else 0)
+        row.connect('notify::selected', self._on_windows_shell_changed)
+        self.windows_shell_row = row
+        group.add(row)
+
+    def _on_windows_shell_changed(self, row, _param):
+        index = row.get_selected()
+        choices = getattr(self, '_windows_shell_choices_data', [])
+        if 0 <= index < len(choices):
+            self.config.set_setting('terminal.windows_shell', choices[index][0])
 
     def _add_terminal_input_groups(self, terminal_page):
         """Add Terminal keyboard and mouse behavior groups."""

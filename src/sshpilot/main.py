@@ -165,7 +165,7 @@ if not load_resources():
 from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
-from .platform_utils import is_macos, is_windows, get_data_dir, get_state_dir
+from .platform_utils import is_macos, get_data_dir, get_state_dir
 from .startup_info import print_startup_info
 
 
@@ -388,13 +388,6 @@ class SshPilotApplication(Adw.Application):
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
             # App-specific combo, not terminal-standard → disabled by default.
             self.create_action('new-split-view-tab', self.on_new_split_view_tab, [])
-        if is_windows():
-            # Local shells need a frontend pseudo terminal, which the pyte
-            # backend does not provide yet; only daemon SSH sessions render.
-            local_terminal = self.lookup_action('local-terminal')
-            if local_terminal is not None:
-                local_terminal.set_enabled(False)
-        
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
         # Use the "question" keyval, not "<Shift>slash": holding Shift turns

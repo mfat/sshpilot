@@ -14,7 +14,9 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
+import threading
+from collections import deque
+from typing import Any, Callable, Deque, Mapping, Optional, Sequence, Tuple
 
 import gi
 
@@ -917,6 +919,13 @@ class PyteTerminalBackend:
         #: worth of parsing at 120 columns (libvterm ~20 ms per 64 KB, pyte
         #: ~180 ms), so typing and repaints run between slices.
         self.output_slice_bytes = 32 * 1024 if self.view.model_name == "vterm" else 8 * 1024
+        # A local shell this backend spawned (spawn_async), if any.
+        self._local = None
+        self._local_handlers: list = []
+        self._local_lock = threading.Lock()
+        self._local_pending: Deque[bytes] = deque()
+        self._local_scheduled = False
+        self._local_exit_status: Optional[int] = None
         self._scrollbar = Gtk.Scrollbar(
             orientation=Gtk.Orientation.VERTICAL, adjustment=self.view.vadjustment
         )
@@ -938,6 +947,7 @@ class PyteTerminalBackend:
         self._initialized = True
 
     def destroy(self) -> None:
+        self._close_local()
         self.view.disable_grid_tracking()
         if self.view._sync_timer:
             GLib.source_remove(self.view._sync_timer)
@@ -1003,10 +1013,120 @@ class PyteTerminalBackend:
 
     # -- process ownership: the daemon owns the PTY ------------------------------
 
-    def spawn_async(self, *args, **kwargs) -> None:
-        raise TerminalBackendCapabilityError(
-            "The pyte backend renders daemon sessions only"
+    def spawn_async(
+        self,
+        argv=None,
+        env=None,
+        cwd=None,
+        flags=0,
+        child_setup=None,
+        callback=None,
+        user_data=None,
+        **_kwargs,
+    ) -> None:
+        """Run a local shell on a pseudo terminal this backend owns.
+
+        Local tabs belong to the frontend (frontend-closure-audit.md), as with
+        VTE: typed input goes straight to the process and its output straight
+        to the view; no daemon session is involved. ``callback`` gets VTE's
+        ``(terminal, pid, error, user_data)``.
+        """
+
+        from .local_shell_pty import LocalShellProcess
+
+        if self._local is not None:
+            raise TerminalBackendCapabilityError("This terminal already runs a local shell")
+        view = self.view
+        process = LocalShellProcess(
+            on_output=self._queue_local_output,
+            on_exit=lambda status: GLib.idle_add(self._on_local_exit, process, status),
         )
+        if daemon_output_is_rendered():
+            # ConPTY repaints its viewport after a resize, as for daemon
+            # sessions: pulling history back on a grow would be painted over.
+            view.model.pull_history_on_grow = False
+        try:
+            pid = process.start(
+                list(argv or ()),
+                env=env,
+                cwd=cwd,
+                columns=view.get_column_count(),
+                rows=view.get_row_count(),
+            )
+        except Exception as exc:  # noqa: BLE001 - reported through the callback
+            logger.warning("Local shell spawn failed: %s", exc)
+            error = exc  # ``exc`` is unbound once the except block ends
+            if callback is not None:
+                GLib.idle_add(lambda: (callback(view, -1, error, user_data), False)[1])
+            return
+        self._local = process
+        self._local_handlers = [
+            view.connect("commit", lambda _view, data, _length: process.write(
+                data if isinstance(data, bytes) else str(data).encode("utf-8")
+            )),
+            view.connect("grid-size-changed", lambda _view, columns, rows: process.resize(columns, rows)),
+        ]
+        logger.info("Local shell started on the built-in backend pid=%s", pid)
+        if callback is not None:
+            GLib.idle_add(lambda: (callback(view, pid, None, user_data), False)[1])
+
+    def _queue_local_output(self, data: bytes) -> None:
+        """Reader thread: queue output and wake the main loop once."""
+        with self._local_lock:
+            self._local_pending.append(data)
+            if self._local_scheduled:
+                return
+            self._local_scheduled = True
+        GLib.idle_add(self._drain_local_output)
+
+    def _drain_local_output(self) -> bool:
+        # One frame-sized slice per dispatch, like daemon output.
+        budget = self.output_slice_bytes
+        chunks = []
+        with self._local_lock:
+            while self._local_pending and budget > 0:
+                chunk = self._local_pending.popleft()
+                if len(chunk) > budget:
+                    self._local_pending.appendleft(chunk[budget:])
+                    chunk = chunk[:budget]
+                chunks.append(chunk)
+                budget -= len(chunk)
+            more = bool(self._local_pending)
+            if not more:
+                self._local_scheduled = False
+        if chunks:
+            self.view.feed(b"".join(chunks))
+        if not more and self._local_exit_status is not None:
+            self._emit_local_exit()
+        return more
+
+    def _on_local_exit(self, process, status: int) -> bool:
+        if process is not self._local:
+            return False
+        self._local_exit_status = int(status)
+        with self._local_lock:
+            pending = self._local_scheduled or bool(self._local_pending)
+        if not pending:
+            self._emit_local_exit()
+        return False
+
+    def _emit_local_exit(self) -> None:
+        status, self._local_exit_status = self._local_exit_status, None
+        if status is None:
+            return
+        for handler in self._local_handlers:
+            try:
+                self.view.disconnect(handler)
+            except Exception:
+                pass
+        self._local_handlers = []
+        logger.info("Local shell exited status=%s", status)
+        self.view.emit("child-exited", status)
+
+    def _close_local(self) -> None:
+        process, self._local = self._local, None
+        if process is not None:
+            process.close()
 
     def adopt_pty(self, master_fd: int, watch_pid: int) -> None:
         raise TerminalBackendCapabilityError(
@@ -1029,10 +1149,17 @@ class PyteTerminalBackend:
         return None
 
     def get_child_pid(self) -> Optional[int]:
+        if self._local is not None:
+            return self._local.pid
         return getattr(self.owner, "process_pid", None)
 
     def get_child_pgid(self) -> Optional[int]:
+        if self._local is not None:
+            return self._local.pgid
         return None
+
+    def local_shell_running(self) -> bool:
+        return self._local is not None and self._local.is_running()
 
     # -- signals -----------------------------------------------------------------
 

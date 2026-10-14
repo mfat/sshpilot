@@ -21,7 +21,7 @@ except ImportError:  # Windows
 from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak, is_macos, is_windows
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
@@ -172,6 +172,27 @@ def empty_copy_message(widget) -> str:
             "hold Shift while dragging to select text"
         )
     return _("Nothing selected to copy")
+
+
+def _terminate_process_tree_windows(pid) -> bool:
+    """End a local shell and its children on Windows (no process groups)."""
+    import psutil
+
+    try:
+        process = psutil.Process(int(pid))
+    except (psutil.NoSuchProcess, ValueError):
+        return True
+    try:
+        children = process.children(recursive=True)
+    except psutil.Error:
+        children = []
+    for member in [process, *children]:
+        try:
+            member.kill()
+        except psutil.Error:
+            pass
+    psutil.wait_procs([process, *children], timeout=2)
+    return True
 
 
 def sanitize_local_shell_env(env):
@@ -3604,12 +3625,6 @@ class TerminalWidget(Gtk.Box):
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
         logger.info("Setting up local shell terminal")
-        if getattr(self, '_backend_name', 'vte') == 'pyte':
-            self.emit(
-                'connection-failed',
-                _('Local terminals are not available with this terminal backend yet.'),
-            )
-            return
         try:
             # Hide connecting overlay immediately for local shell
             self._set_connecting_overlay_visible(False)
@@ -4197,6 +4212,9 @@ class TerminalWidget(Gtk.Box):
         env = sanitize_local_shell_env(
             get_identity_manager().apply_selected_to_env(os.environ.copy())
         )
+        if is_windows():
+            self._setup_local_shell_windows(env)
+            return
 
         # Determine the user's preferred shell
         shell = None
@@ -4307,6 +4325,29 @@ class TerminalWidget(Gtk.Box):
         self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
 
         logger.info("Local shell terminal setup initiated (direct spawn)")
+
+    def _setup_local_shell_windows(self, env):
+        """Start the configured Windows shell on the backend's pseudo console."""
+        from .platform.windows.shells import shell_command
+
+        choice = None
+        try:
+            choice = self.config.get_setting('terminal.windows_shell', 'auto')
+        except Exception:
+            logger.debug("Could not read terminal.windows_shell", exc_info=True)
+        command = shell_command(choice, env)
+        env.setdefault('TERM_PROGRAM', 'sshPilot')
+        self.backend.spawn_async(
+            argv=command,
+            env=env,
+            cwd=self._local_shell_start_dir(),
+            flags=0,
+            child_setup=None,
+            callback=self._on_spawn_complete,
+            user_data=(),
+        )
+        self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+        logger.info("Local shell terminal setup initiated (Windows: %s)", command[0])
 
     def _on_agent_spawn_complete(self, terminal, pid, error, user_data):
         """Callback when agent spawn completes"""
@@ -5287,6 +5328,11 @@ class TerminalWidget(Gtk.Box):
         """Get the PID of the terminal's child process"""
         # First try the stored PID
         if self.process_pid:
+            if is_windows():
+                # os.kill(pid, 0) would terminate it on Windows.
+                import psutil
+
+                return self.process_pid if psutil.pid_exists(self.process_pid) else None
             try:
                 # Verify the process still exists
                 os.kill(self.process_pid, 0)
@@ -5396,6 +5442,11 @@ class TerminalWidget(Gtk.Box):
         """Clean up a process by PID"""
         if not pid:
             return False
+
+        if is_windows():
+            # os.kill(pid, 0) is TerminateProcess on Windows, not a probe, and
+            # there are no process groups: end the tree through psutil.
+            return _terminate_process_tree_windows(pid)
 
         try:
             # Try to get process info from manager first
