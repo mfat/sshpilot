@@ -448,6 +448,14 @@ class DaemonServer:
                     exc.diagnostic_category,
                     exc.diagnostic_reason,
                 )
+            elif isinstance(exc, (DaemonAlreadyRunningError, SocketSecurityError)):
+                # These messages are curated and path-free, so they are safe
+                # to log and say why the daemon would not start.
+                logger.error(
+                    "Daemon startup failed type=%s reason=%s",
+                    type(exc).__name__,
+                    exc,
+                )
             else:
                 logger.error("Daemon startup failed type=%s", type(exc).__name__)
             frames = traceback.extract_tb(exc.__traceback__)

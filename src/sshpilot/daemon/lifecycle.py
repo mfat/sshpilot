@@ -186,13 +186,20 @@ def prepare_socket_path(path: Path, *, probe_timeout: float = 0.2) -> None:
     if _TCP:
         if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
             raise SocketSecurityError("Refusing to replace a non-file daemon endpoint")
-        accepting, _pid = probe_socket_owner(path, timeout=probe_timeout)
+        accepting, pid = probe_socket_owner(path, timeout=probe_timeout)
         if accepting:
+            logger.warning(
+                "Refusing to replace the daemon endpoint: a live peer answers "
+                "on it (pid=%s)",
+                pid if pid is not None else "unknown",
+            )
             raise DaemonAlreadyRunningError("The daemon is already running")
         try:
             path.unlink()
         except FileNotFoundError:
             pass
+        else:
+            logger.info("Removed a stale daemon endpoint left by an earlier daemon")
         return
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISSOCK(before.st_mode):
         raise SocketSecurityError("Refusing to replace a non-socket daemon path")
@@ -205,10 +212,17 @@ def prepare_socket_path(path: Path, *, probe_timeout: float = 0.2) -> None:
         probe.connect(str(path))
     except (ConnectionRefusedError, FileNotFoundError):
         pass
-    except OSError:
+    except OSError as exc:
         # An ambiguous live/path failure is not sufficient authority to unlink.
+        logger.warning(
+            "Refusing to replace the daemon socket: probe failed ambiguously "
+            "type=%s errno=%s",
+            type(exc).__name__,
+            getattr(exc, "errno", None),
+        )
         raise DaemonAlreadyRunningError("The daemon socket is already in use") from None
     else:
+        logger.warning("Refusing to replace the daemon socket: a live peer answers on it")
         raise DaemonAlreadyRunningError("The daemon is already running")
     finally:
         probe.close()
@@ -224,6 +238,7 @@ def prepare_socket_path(path: Path, *, probe_timeout: float = 0.2) -> None:
     ):
         raise SocketSecurityError("The daemon socket changed during stale-path recovery")
     path.unlink()
+    logger.info("Removed a stale daemon socket left by an earlier daemon")
 
 
 def verify_bound_socket(path: Path) -> Tuple[int, int]:
@@ -392,6 +407,51 @@ def probe_socket_owner(
         probe.close()
 
 
+#: Windows reports a refused loopback connect only after its SYN retries
+#: (about two seconds), so a short probe that times out proves nothing. A
+#: listening daemon completes a loopback connect in the kernel immediately, so
+#: an ambiguous probe is retried once with this budget for a definitive answer.
+_TCP_REFUSAL_SETTLE_TIMEOUT = 3.0
+
+#: Slack between the endpoint file's mtime and a process start time. The
+#: daemon always starts well before it publishes; a process that started
+#: after the file was written cannot be the publisher (the PID was recycled).
+_PUBLISH_CLOCK_TOLERANCE = 1.0
+
+
+def _published_owner_gone(path: Path, pid: Optional[int]) -> Optional[str]:
+    """Return why the endpoint's publishing process is provably gone, or None.
+
+    ``None`` means "not proven gone" (alive, unknown, or unreadable) and is the
+    fail-closed answer. A reason string is only returned on positive evidence:
+    the PID no longer exists, or the process holding it started after the
+    endpoint file was written and so cannot be the daemon that wrote it.
+    """
+
+    if pid is None or pid <= 1:
+        return None
+    if pid == os.getpid():
+        return None
+    identity = identify_process(pid)
+    if identity is None:
+        if _process_pid_exists(pid):
+            return None
+        return "owner process has exited"
+    try:
+        published_at = path.stat().st_mtime
+    except OSError:
+        return None
+    if identity.create_time > published_at + _PUBLISH_CLOCK_TOLERANCE:
+        return "owner pid was recycled by a newer process"
+    return None
+
+
+def _process_pid_exists(pid: int) -> bool:
+    from .process_registry import _pid_exists
+
+    return _pid_exists(pid)
+
+
 def _probe_tcp_endpoint(
     path: Path, *, timeout: float
 ) -> Tuple[bool, Optional[int]]:
@@ -399,20 +459,85 @@ def _probe_tcp_endpoint(
 
     The peer pid comes from the endpoint file and is only reported while that
     process is alive, so a stale file can never name a recycled pid as live.
+
+    An endpoint file outlives a daemon that crashed or was killed, so the
+    published pid is consulted first: a file whose publisher is provably gone
+    is stale whatever now answers on its port (nothing, or an unrelated
+    program that reused the port). Only then is the port probed, and a probe
+    that times out is retried long enough for Windows to report the refusal
+    instead of being mistaken for a live daemon.
     """
 
     published = _endpoint.read_tcp_endpoint(path)
     if published is None:
+        if path.exists():
+            logger.info(
+                "Daemon endpoint file is unreadable or malformed; treating it as stale"
+            )
         return False, None
-    try:
-        probe = _endpoint.connect_tcp(published, timeout=max(0.01, float(timeout)))
-    except (ConnectionRefusedError, ConnectionResetError, FileNotFoundError):
+    gone = _published_owner_gone(path, published.pid)
+    if gone is not None:
+        logger.info(
+            "Daemon endpoint is stale: %s (pid=%s port=%s)",
+            gone,
+            published.pid,
+            published.port,
+        )
         return False, None
-    except OSError:
-        return True, None
+    budgets = (max(0.01, float(timeout)),)
+    if float(timeout) < _TCP_REFUSAL_SETTLE_TIMEOUT:
+        budgets += (_TCP_REFUSAL_SETTLE_TIMEOUT,)
+    for attempt, budget in enumerate(budgets):
+        try:
+            probe = _endpoint.connect_tcp(published, timeout=budget)
+        except (ConnectionRefusedError, ConnectionResetError, FileNotFoundError):
+            logger.info(
+                "Daemon endpoint is stale: nothing accepts on its port "
+                "(pid=%s port=%s)",
+                published.pid,
+                published.port,
+            )
+            return False, None
+        except (socket.timeout, TimeoutError) as exc:
+            if attempt + 1 < len(budgets):
+                logger.debug(
+                    "Daemon endpoint probe timed out after %.2fs; waiting for a "
+                    "definitive answer (pid=%s port=%s)",
+                    budget,
+                    published.pid,
+                    published.port,
+                )
+                continue
+            logger.warning(
+                "Daemon endpoint probe still ambiguous after %.2fs "
+                "type=%s (pid=%s port=%s); treating it as live",
+                budget,
+                type(exc).__name__,
+                published.pid,
+                published.port,
+            )
+            return True, None
+        except OSError as exc:
+            # Ambiguous: never unlink on a guess.
+            logger.warning(
+                "Daemon endpoint probe failed ambiguously type=%s errno=%s "
+                "(pid=%s port=%s); treating it as live",
+                type(exc).__name__,
+                getattr(exc, "errno", None),
+                published.pid,
+                published.port,
+            )
+            return True, None
+        break
     probe.close()
     pid = published.pid
     if pid is None or pid <= 1 or identify_process(pid) is None:
+        logger.debug(
+            "Daemon endpoint accepts but its owner cannot be identified "
+            "(pid=%s port=%s)",
+            pid,
+            published.port,
+        )
         return True, None
     return True, pid
 
@@ -446,11 +571,17 @@ def remove_dead_socket(path: Path) -> bool:
         return True
     is_endpoint = stat.S_ISREG(info.st_mode) if _TCP else stat.S_ISSOCK(info.st_mode)
     if stat.S_ISLNK(info.st_mode) or not is_endpoint:
+        logger.warning("Not removing the daemon endpoint: it is not a regular endpoint")
         return False
     if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        logger.warning("Not removing the daemon endpoint: it has the wrong owner")
         return False
-    accepting, _pid = probe_socket_owner(path)
+    accepting, pid = probe_socket_owner(path)
     if accepting:
+        logger.info(
+            "Not removing the daemon endpoint: a peer still answers on it (pid=%s)",
+            pid if pid is not None else "unknown",
+        )
         return False
     try:
         after = path.lstat()
@@ -458,13 +589,20 @@ def remove_dead_socket(path: Path) -> bool:
         return True
     if (after.st_dev, after.st_ino) != (info.st_dev, info.st_ino):
         # Replaced between the probe and now — that is a live daemon's socket.
+        logger.info("Not removing the daemon endpoint: it was replaced while probing")
         return False
     try:
         path.unlink()
     except FileNotFoundError:
         return True
-    except OSError:
+    except OSError as exc:
+        logger.warning(
+            "Could not remove a dead daemon endpoint type=%s errno=%s",
+            type(exc).__name__,
+            getattr(exc, "errno", None),
+        )
         return False
+    logger.info("Removed a dead daemon endpoint")
     return True
 
 
@@ -550,7 +688,11 @@ def evict_socket_owner(
             ):
                 break
 
-    accepting, _pid = probe_socket_owner(path)
+    accepting, pid = probe_socket_owner(path)
     if accepting:
+        logger.warning(
+            "Daemon eviction incomplete: a peer still owns the endpoint (pid=%s)",
+            pid if pid is not None else "unknown",
+        )
         return False
     return remove_dead_socket(path)

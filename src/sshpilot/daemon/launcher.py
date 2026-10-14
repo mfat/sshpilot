@@ -307,6 +307,11 @@ class DaemonLauncher:
                     **detached_process_options(),
                 )
             except OSError as error:
+                logger.error(
+                    "Could not start the daemon process type=%s errno=%s",
+                    type(error).__name__,
+                    getattr(error, "errno", None),
+                )
                 raise DaemonLaunchError(
                     DaemonStartupFailure.PROCESS_EXITED
                 ) from error
@@ -316,9 +321,12 @@ class DaemonLauncher:
                 client = self._wait_until_ready(process)
             except BaseException as error:
                 self._stop_failed_child(process)
-                logger.debug(
-                    "Daemon launch attempt failed type=%s",
+                reason = getattr(error, "reason", None)
+                logger.warning(
+                    "Daemon launch attempt failed type=%s reason=%s exit_code=%s",
                     type(error).__name__,
+                    getattr(reason, "value", reason),
+                    process.poll(),
                 )
                 raise
             self._ensure_gtk_askpass_log_forwarder()
@@ -430,7 +438,11 @@ class DaemonLauncher:
             return error.reason
         except SshPilotError as error:
             if error.code is ErrorCode.DAEMON_UNAVAILABLE:
-                remove_dead_socket(self.socket_path)
+                if not remove_dead_socket(self.socket_path):
+                    logger.warning(
+                        "The daemon endpoint did not answer but could not be "
+                        "cleared; the new daemon may refuse to start"
+                    )
                 return None
             return self._classify_handshake_error(error).reason
 
