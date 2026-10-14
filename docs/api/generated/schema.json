@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.81",
+  "api_implementation_version": "0.82",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1284,6 +1284,7 @@
       "interactions.host_key",
       "interactions.password",
       "interactions.passphrase",
+      "interactions.session_secrets",
       "sftp",
       "sftp.read",
       "sftp.write",
@@ -1700,7 +1701,8 @@
       "do_not_store",
       "store_after_success",
       "replace_stored_after_success",
-      "delete_stored_secret"
+      "delete_stored_secret",
+      "remember_for_session"
     ],
     "RemoteFileType": [
       "regular",

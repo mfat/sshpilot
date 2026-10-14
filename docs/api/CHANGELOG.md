@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- `RememberPolicy` gains `remember_for_session`, guarded by the new
+  `interactions.session_secrets` capability: the daemon keeps an accepted
+  password or passphrase in memory until it exits and autofills later
+  prompts for the same connection or key, dropping it when a prompt repeats.
+  New enum value and capability, so the API implementation version is 0.82;
+  Protocol remains 1.0.
 - `UnsavedHostCheckRequest` gains `target`, `(field, value)` pairs naming a
   target that has no host (serial's `device`, a container, a pod); it is sent
   as a JSON object and only when non-empty. `check_unsaved_host` now answers

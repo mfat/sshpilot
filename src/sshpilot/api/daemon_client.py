@@ -3356,6 +3356,7 @@ class DaemonClient:
                     Capability.INTERACTIONS_HOST_KEY.value,
                     Capability.INTERACTIONS_PASSWORD.value,
                     Capability.INTERACTIONS_PASSPHRASE.value,
+                    Capability.INTERACTIONS_SESSION_SECRETS.value,
                 }
             ),
             frontend_type=self._frontend_type,

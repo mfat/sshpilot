@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
-from typing import Callable, Deque, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Callable, Deque, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.transport import endpoint as transport_endpoint
@@ -130,6 +130,8 @@ class _PendingRemember:
     # Set once this credential's loss has been reported, so the teardown
     # warning does not repeat what was already logged when it was queued.
     loss_reported: bool = False
+    # RememberPolicy.REMEMBER_FOR_SESSION: kept in daemon memory, not stored.
+    session_only: bool = False
 
     def clear(self) -> None:
         self.secret[:] = b"\0" * len(self.secret)
@@ -215,6 +217,10 @@ class InteractionBroker:
         self._completed: Deque[InteractionId] = deque()
         self._direct_scope_owners: Dict[SessionId, ClientId] = {}
         self._closed = False
+        #: RememberPolicy.REMEMBER_FOR_SESSION answers, by
+        #: ("password", connection id) or ("passphrase", key path). Memory
+        #: only; wiped when a repeated prompt proves one wrong and on close.
+        self._session_secrets: Dict[Tuple[str, str], bytearray] = {}
         self._askpass_contexts: Dict[str, _AskpassContext] = {}
         self._askpass_transports: set[socket.socket] = set()
         self._askpass_queue: queue.Queue[Optional[socket.socket]] = queue.Queue(
@@ -1424,6 +1430,9 @@ class InteractionBroker:
                 return
             self._closed = True
             self._direct_scope_owners.clear()
+            for value in self._session_secrets.values():
+                value[:] = b"\0" * len(value)
+            self._session_secrets.clear()
             contexts = tuple(self._askpass_contexts.values())
             self._askpass_contexts.clear()
             for context in contexts:
@@ -1761,6 +1770,11 @@ class InteractionBroker:
             confirmation_required = context.confirm_passphrase
             interaction_mode = context.interaction_mode
         stored: Optional[str] = None
+        session_key = self._session_secret_key(interaction_type, connection_id, key_path)
+        if not try_stored and attempt > 1:
+            # The secret offered for this prompt was refused: if it came from
+            # session memory it is wrong now (changed password, other key).
+            self._forget_session_secret(session_key)
         if try_stored:
             try:
                 if interaction_type is InteractionType.PASSWORD:
@@ -1783,6 +1797,8 @@ class InteractionBroker:
                     key_path,
                 )
                 stored = None
+            if not stored:
+                stored = self._session_secret(session_key)
             if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
                 logger.info(
                     "askpass passphrase: prompt=%r key=%s stored=%s lookup=%s "
@@ -1908,6 +1924,7 @@ class InteractionBroker:
         if result.remember_policy in {
             RememberPolicy.STORE_AFTER_SUCCESS,
             RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,
+            RememberPolicy.REMEMBER_FOR_SESSION,
         }:
             with self._condition:
                 current = self._askpass_contexts.get(token)
@@ -1944,10 +1961,60 @@ class InteractionBroker:
                             key=key_path,
                             secret=bytearray(secret),
                             loss_reported=current.commit_point_passed,
+                            session_only=(
+                                result.remember_policy
+                                is RememberPolicy.REMEMBER_FOR_SESSION
+                            ),
                         )
                     )
         result.clear()
         return secret
+
+    @staticmethod
+    def _session_secret_key(
+        interaction_type: InteractionType, connection_id, key_path: str
+    ) -> Optional[Tuple[str, str]]:
+        if interaction_type is InteractionType.PASSWORD:
+            return ("password", str(connection_id))
+        if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE and key_path:
+            return ("passphrase", key_path)
+        return None
+
+    def _remember_for_session(self, item: "_PendingRemember", connection_id) -> None:
+        key = self._session_secret_key(item.interaction_type, connection_id, item.key)
+        try:
+            if key is None:
+                return
+            with self._condition:
+                if self._closed:
+                    return
+                previous = self._session_secrets.pop(key, None)
+                if previous is not None:
+                    previous[:] = b"\0" * len(previous)
+                self._session_secrets[key] = bytearray(item.secret)
+            logger.info(
+                "Remembering a %s for this daemon session connection=%s",
+                item.interaction_type.value,
+                connection_id,
+            )
+        finally:
+            item.clear()
+
+    def _session_secret(self, key: Optional[Tuple[str, str]]) -> Optional[str]:
+        if key is None:
+            return None
+        with self._condition:
+            value = self._session_secrets.get(key)
+            return None if value is None else value.decode("utf-8", "replace")
+
+    def _forget_session_secret(self, key: Optional[Tuple[str, str]]) -> None:
+        if key is None:
+            return
+        with self._condition:
+            value = self._session_secrets.pop(key, None)
+        if value is not None:
+            value[:] = b"\0" * len(value)
+            logger.info("Dropped a session-remembered %s after a repeated prompt", key[0])
 
     def _store_authenticated_secrets(self, token: str) -> None:
         with self._condition:
@@ -1965,6 +2032,9 @@ class InteractionBroker:
             hostname = context.hostname
             username = context.username
         for item in pending:
+            if item.session_only:
+                self._remember_for_session(item, connection_id)
+                continue
             try:
                 value = item.secret.decode("utf-8")
                 stored = False
