@@ -6581,21 +6581,24 @@ class PreferencesWindow(Adw.Window):
         import importlib.util
 
         pyte_available = importlib.util.find_spec('pyte') is not None
-        choices.append(
-            {
-                'id': 'pyte',
-                'label': (
-                    (_('Built-in') if VTE_AVAILABLE else _('Built-in (default)'))
-                    if pyte_available else _('Built-in (unavailable)')
-                ),
-                'description': (
-                    _('Portable terminal emulator drawn with GTK')
-                    if pyte_available else _('Requires the pyte Python package')
-                ),
-                'available': pyte_available,
-                'error': None if pyte_available else 'pyte is not installed',
-            }
-        )
+        # Where VTE exists the built-in backend is opt-in: list it only once
+        # pyte is installed, so Linux/macOS Preferences are unchanged otherwise.
+        if pyte_available or not VTE_AVAILABLE:
+            choices.append(
+                {
+                    'id': 'pyte',
+                    'label': (
+                        (_('Built-in') if VTE_AVAILABLE else _('Built-in (default)'))
+                        if pyte_available else _('Built-in (unavailable)')
+                    ),
+                    'description': (
+                        _('Portable terminal emulator drawn with GTK')
+                        if pyte_available else _('Requires the pyte Python package')
+                    ),
+                    'available': pyte_available,
+                    'error': None if pyte_available else 'pyte is not installed',
+                }
+            )
         # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
         if not is_macos() and not is_windows():
             pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
