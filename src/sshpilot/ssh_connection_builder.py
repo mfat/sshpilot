@@ -168,6 +168,30 @@ def apply_forced_askpass_env(
 
 logger = logging.getLogger(__name__)
 
+# OpenSSH for Windows exits 255 with no output when these are missing.
+# ssh-add does the same without ProgramData; the C runtime needs SystemRoot.
+# Names are matched case-insensitively because Windows preserves whatever
+# case the process inherited.
+_WINDOWS_PROCESS_ENV = frozenset(
+    {
+        "SYSTEMROOT",
+        "WINDIR",
+        "SYSTEMDRIVE",
+        "PROGRAMDATA",
+        "PATHEXT",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "USERNAME",
+        "USERDOMAIN",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+    }
+)
+
 
 @dataclass
 class SSHConnectionCommand:
@@ -235,10 +259,13 @@ def resolve_native_auth(
             "LANG",
             "SSH_AUTH_SOCK",
         }
+        windows = os.name == "nt"
         env = {
             key: value
             for key, value in os.environ.items()
-            if key in allowed or key.startswith("LC_")
+            if key.upper() in allowed
+            or key.startswith("LC_")
+            or (windows and key.upper() in _WINDOWS_PROCESS_ENV)
         }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"

@@ -162,6 +162,23 @@ class _AskpassContext:
     commit_point_passed: bool = False
 
 
+def _operation_destination(argv: Sequence[str]) -> str:
+    """The OpenSSH destination on an operation command line.
+
+    Most launches put the host last. The Windows ssh-copy-id fallback is
+    ``ssh [options] -- host command``, and that command contains spaces, so
+    the host is the argument before it. Prompts must name the host.
+    """
+
+    if (
+        len(argv) >= 2
+        and any(char.isspace() for char in argv[-1])
+        and not any(char.isspace() for char in argv[-2])
+    ):
+        return argv[-2]
+    return argv[-1] if argv else ""
+
+
 class InteractionBroker:
     """Serialize typed interaction lifecycle and secret handoff."""
 
@@ -406,17 +423,16 @@ class InteractionBroker:
         if not isinstance(interaction_mode, ExecutionInteractionMode):
             raise TypeError("interaction_mode must be an ExecutionInteractionMode")
         env = dict(environment)
+        destination = _operation_destination(argv)
         if not hostname:
             # Headless operation callers (ssh-copy-id, ssh-add, remote
             # commands) do not always know the connection's display host; the
-            # launch target (``argv[-1]``) carries it. Deriving safe display
-            # metadata here keeps every typed prompt (password, passphrase,
-            # host-key) constructible for every headless operation — a
-            # PASSWORD prompt with an empty hostname would fail model
-            # validation and the askpass worker would silently drop it.
-            target_hostname, target_username = self._target_identity(
-                str(argv[-1])
-            )
+            # launch target carries it. Deriving safe display metadata here
+            # keeps every typed prompt (password, passphrase, host-key)
+            # constructible for every headless operation — a PASSWORD prompt
+            # with an empty hostname would fail model validation and the
+            # askpass worker would silently drop it.
+            target_hostname, target_username = self._target_identity(destination)
             hostname = target_hostname
             if target_username and not username:
                 username = target_username
@@ -429,7 +445,7 @@ class InteractionBroker:
             username=username,
             port=port,
             control_path="",
-            control_target=str(argv[-1]),
+            control_target=destination,
             control_argv=(),
             attempts={},
             stored_attempted=set(),
