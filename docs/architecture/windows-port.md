@@ -576,6 +576,25 @@ shebangs. The helper also connected over `AF_UNIX`.
   nothing.
 - `expire_all_masters` is a no-op, and the preference switch is hidden.
 
+**Logging in once per channel (implementation plan, phase 5).** Without a
+master, every tab, SFTP channel, forward and Host Info sample runs its own
+`ssh.exe` and authenticates again.
+- Keys in an agent (the OpenSSH agent service, 1Password) are silent.
+- 2FA hosts were thought to break SFTP and Host Info here. They do not: the
+  broker already turns keyboard-interactive challenges into `ChallengePrompt`
+  interactions, and headless channels force askpass (interaction-broker.md,
+  "Keyboard-interactive, confirmation and presence prompts"). Each channel
+  asks for its own code.
+- Passwords: the password dialog now offers "Remember until SSH Pilot quits"
+  (`RememberPolicy.remember_for_session`, capability
+  `interactions.session_secrets`). The daemon keeps the password in memory
+  and answers later channels and live Host Info samples with it, without
+  storing it.
+- Upstream: PowerShell/openssh-portable#863 adds ControlMaster over named
+  pipes. When a Win32-OpenSSH release ships it, `controlmaster_args` needs a
+  version probe and a pipe-style `ControlPath` instead of the unconditional
+  `ControlMaster=no`.
+
 ### 6. Atomic writes fsync the parent directory
 
 **Obstacle.** This is the bug that broke saving. The connection-state,
