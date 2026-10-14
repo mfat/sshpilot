@@ -448,6 +448,9 @@ module-level code.
 
 ## What is not done
 
+- **libvterm as the Windows default.** The libvterm model (section 3a) is
+  opt-in. Plan: use it day to day, then make it the default on Windows once
+  the frozen build ships `libvterm-0.dll`. pyte stays as the fallback.
 - **Local shell tabs.** They need a frontend PTY. The action is disabled on
   Windows, and `setup_local_shell` refuses with the pyte backend. A
   ConPTY-backed local shell (cmd/PowerShell) is the natural follow-up.
