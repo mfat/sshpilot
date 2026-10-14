@@ -14,11 +14,20 @@ try:
     import gi
     gi.require_version('Adw', '1')
     gi.require_version('Gtk', '4.0')
-    gi.require_version('Vte', '3.91')
-    from gi.repository import Adw, Gtk, Vte
+    from gi.repository import Adw, Gtk
     GTK_AVAILABLE = True
 except Exception:
     GTK_AVAILABLE = False
+
+# VTE is optional (Windows has none; the built-in backend draws instead), so a
+# missing VTE must not make GTK and libadwaita look missing too.
+try:
+    gi.require_version('Vte', '3.91')
+    from gi.repository import Vte
+    VTE_AVAILABLE = True
+except Exception:
+    Vte = None
+    VTE_AVAILABLE = False
 
 # Secret backends are daemon-owned. Storage diagnostics read metadata through the
 # daemon secrets API when a client/controller is reachable and otherwise report the
@@ -207,15 +216,15 @@ class StartupInfo:
         else:
             libs['libadwaita'] = {'available': False, 'version': None}
         
-        # VTE
-        if GTK_AVAILABLE:
+        # VTE (optional: the built-in terminal backend replaces it)
+        if VTE_AVAILABLE:
             try:
                 vte_version = f"{Vte.MAJOR_VERSION}.{Vte.MINOR_VERSION}.{Vte.MICRO_VERSION}"
                 libs['vte'] = {'available': True, 'version': vte_version}
             except Exception:
-                libs['vte'] = {'available': False, 'version': None}
+                libs['vte'] = {'available': False, 'version': None, 'optional': True}
         else:
-            libs['vte'] = {'available': False, 'version': None}
+            libs['vte'] = {'available': False, 'version': None, 'optional': True}
         
         # PyGObject
         try:
@@ -459,6 +468,8 @@ class StartupInfo:
                 version_str = f"version {lib_info['version']}" if lib_info['version'] else "version unknown"
                 status = self.CHECK_OK
                 print(f"  {status} {lib_name}: {version_str}")
+            elif lib_info.get('optional'):
+                print(f"  {self.CHECK_INFO} {lib_name}: not installed (the built-in terminal backend is used)")
             else:
                 status = self.CHECK_FAIL
                 print(f"  {status} {lib_name}: NOT FOUND")
@@ -573,6 +584,8 @@ class StartupInfo:
         for lib_name, lib_info in libs.items():
             if lib_info['available']:
                 logger.debug(f"{lib_name}: {lib_info['version']}")
+            elif lib_info.get('optional'):
+                logger.info(f"{lib_name}: not installed (optional)")
             else:
                 logger.warning(f"{lib_name}: NOT FOUND")
         
