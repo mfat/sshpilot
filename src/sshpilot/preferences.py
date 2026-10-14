@@ -812,11 +812,7 @@ class PreferencesWindow(Adw.Window):
         if is_macos() and current_backend and current_backend.lower() == 'pyxterm':
             current_backend = 'vte'
             self.config.set_setting('terminal.backend', 'vte')
-        current_index = 0
-        for i, choice in enumerate(self._backend_choice_data):
-            if choice['id'] == current_backend:
-                current_index = i
-                break
+        current_index = self._backend_choice_index(current_backend)
         self.backend_row.set_selected(current_index)
         self._backend_last_valid_index = current_index
         self._update_backend_row_subtitle(current_index)
@@ -6584,19 +6580,44 @@ class PreferencesWindow(Adw.Window):
         # Where VTE exists the built-in backend is opt-in: list it only once
         # pyte is installed, so Linux/macOS Preferences are unchanged otherwise.
         if pyte_available or not VTE_AVAILABLE:
+            # The built-in backend is listed once per emulator model
+            # (``terminal.builtin_model``); both entries share the 'pyte' id.
             choices.append(
                 {
                     'id': 'pyte',
+                    'model': 'pyte',
                     'label': (
-                        (_('Built-in') if VTE_AVAILABLE else _('Built-in (default)'))
-                        if pyte_available else _('Built-in (unavailable)')
+                        (_('pyte') if VTE_AVAILABLE else _('pyte (default)'))
+                        if pyte_available else _('pyte (unavailable)')
                     ),
                     'description': (
-                        _('Portable terminal emulator drawn with GTK')
+                        _('Pure-Python terminal emulator drawn with GTK')
                         if pyte_available else _('Requires the pyte Python package')
                     ),
                     'available': pyte_available,
                     'error': None if pyte_available else 'pyte is not installed',
+                }
+            )
+            try:
+                from .vterm_terminal_model import load_libvterm
+                load_libvterm()
+                vterm_error = None
+            except Exception as exc:  # noqa: BLE001
+                vterm_error = str(exc)
+            choices.append(
+                {
+                    'id': 'pyte',
+                    'model': 'vterm',
+                    'label': (
+                        _('libvterm') if vterm_error is None
+                        else _('libvterm (unavailable)')
+                    ),
+                    'description': (
+                        _('Native terminal emulator drawn with GTK, faster on bulk output')
+                        if vterm_error is None else _('Requires the libvterm library')
+                    ),
+                    'available': vterm_error is None,
+                    'error': vterm_error,
                 }
             )
         # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
@@ -6624,6 +6645,20 @@ class PreferencesWindow(Adw.Window):
                 )
         return choices
 
+    def _backend_choice_index(self, backend_id) -> int:
+        """Index of the choice for ``backend_id`` and the configured built-in model."""
+        backend_id = (backend_id or '').lower()
+        model = (self.config.get_setting('terminal.builtin_model', 'pyte') or 'pyte').lower()
+        fallback = None
+        for i, choice in enumerate(self._backend_choice_data):
+            if choice['id'] != backend_id:
+                continue
+            if choice.get('model') in (None, model):
+                return i
+            if fallback is None:
+                fallback = i
+        return fallback if fallback is not None else 0
+
     def _update_backend_row_subtitle(self, index: int):
         if not hasattr(self, 'backend_row'):
             return
@@ -6645,8 +6680,8 @@ class PreferencesWindow(Adw.Window):
         backend_id = option.get('id', 'vte')
         current_backend = self.config.get_setting('terminal.backend', 'vte')
 
-        # If backend hasn't actually changed, do nothing
-        if backend_id.lower() == current_backend.lower():
+        # If backend (and built-in emulator model) hasn't actually changed, do nothing
+        if index == self._backend_choice_index(current_backend):
             return
 
         # Check if there are any open terminal tabs
@@ -6711,7 +6746,8 @@ class PreferencesWindow(Adw.Window):
     def _show_backend_change_info(self, backend_id, open_terminals, index):
         """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
-        backend_name = {'pyxterm': 'xterm.js', 'pyte': _('Built-in')}.get(
+        model = self._backend_choice_data[index].get('model')
+        backend_name = {'pyxterm': 'xterm.js', 'pyte': 'libvterm' if model == 'vterm' else 'pyte'}.get(
             backend_id.lower(), 'VTE'
         )
         dialog = Adw.AlertDialog(
@@ -6725,6 +6761,9 @@ class PreferencesWindow(Adw.Window):
         """Apply the backend change (only affects new terminals, not existing ones)"""
         self._backend_last_valid_index = index
         self.config.set_setting('terminal.backend', backend_id)
+        model = self._backend_choice_data[index].get('model')
+        if model:
+            self.config.set_setting('terminal.builtin_model', model)
         self._update_backend_row_subtitle(index)
 
         if backend_id in ('pyxterm', 'pyxterm2'):

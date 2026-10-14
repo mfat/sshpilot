@@ -154,7 +154,8 @@ imported at module level across `main.py`, `terminal.py`,
 - `TerminalWidget._create_backend` picks `pyte` when VTE is missing or when
   `terminal.backend = "pyte"` is set, so the backend can be tested on Linux
   too.
-- Preferences lists it as "Built-in".
+- Preferences → Terminal → Backend lists it as "pyte" and "libvterm", one
+  entry per emulator model.
 
 **Windows input detail.** GDK on Windows reports AltGr as Ctrl+Alt. A
 Ctrl+Alt press that produces a printable non-letter is therefore sent as text.

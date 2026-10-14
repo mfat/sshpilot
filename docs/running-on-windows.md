@@ -64,16 +64,16 @@ pip install pyte keyring certifi
 
 Optional: install `pykeepass` for KeePass (KDBX) storage.
 
-Optional: try the faster libvterm emulator in the built-in terminal (20–40×
-pyte's throughput on bulk output). pyte remains the default.
+Optional: try the faster libvterm emulator (16–36× pyte's throughput on bulk
+output). pyte remains the default. Install it:
 
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-libvterm
-SSHPILOT_TERMINAL_MODEL=vterm python run.py
 ```
 
-The `terminal.builtin_model` setting (`"pyte"` or `"vterm"`) does the same
-persistently. If libvterm cannot load, the terminal falls back to pyte.
+Then pick **libvterm** under Preferences → Terminal → Terminal Backend. It
+applies to new tabs. `SSHPILOT_TERMINAL_MODEL=vterm` overrides the setting
+for one run. If libvterm cannot load, the terminal falls back to pyte.
 
 ## 3. Run
 
