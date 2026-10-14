@@ -309,6 +309,9 @@ class Win32:
             wintypes.BOOL,
             [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)],
         )
+        self.TerminateProcess = _bind(
+            k.TerminateProcess, wintypes.BOOL, [wintypes.HANDLE, wintypes.UINT]
+        )
 
 
 def _raise_last_error(what: str):
@@ -570,8 +573,28 @@ class CtypesPty:
         waiting on it; the watcher releases it once the client has exited.
         """
 
+        self._terminate_if_alive()
         if self._wait_console_closed(timeout):
             self._close_handle("_input_write")
+
+    def _terminate_if_alive(self) -> None:
+        """End a client still running when its console is closed.
+
+        A client closed before it finished attaching survives
+        ``ClosePseudoConsole`` together with its console host (measured with
+        cmd.exe and ssh.exe through conpty.dll 1.25). Neovim's ConPTY host
+        terminates such a child for the same reason.
+        """
+
+        terminate = getattr(self._win32, "TerminateProcess", None)
+        with self._lock:
+            process = self._process
+            if process is None or terminate is None:
+                return
+            if self._win32.WaitForSingleObject(process, 0) == WAIT_OBJECT_0:
+                return
+            if not terminate(process, 1):
+                logger.debug("TerminateProcess failed: %s", ctypes.get_last_error())
 
     def _close_after_exit(self) -> None:
         process = self._process

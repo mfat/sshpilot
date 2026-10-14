@@ -20,6 +20,7 @@ from sshpilot.platform.windows.conpty import (
     STARTF_USESTDHANDLES,
     STARTUPINFOEXW,
     AttributeList,
+    CtypesPty,
     build_startup_info,
     conpty_dll_candidates,
     conpty_flags,
@@ -283,3 +284,18 @@ def test_session_delivers_output_then_eof_then_exit(backend):
         assert pty.get_exitstatus() == 3 and not pty.isalive()
     finally:
         runner.close()
+
+
+@windows_only
+def test_closing_at_once_ends_the_client():
+    # A client closed before it finished attaching survived ClosePseudoConsole
+    # (with its console host) until close() began terminating it.
+    psutil = pytest.importorskip("psutil")
+    pty = CtypesPty(80, 24)
+    pty.spawn(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe"), " /q /k")
+    pid = pty.pid
+    pty.close()
+    deadline = time.monotonic() + 5
+    while psutil.pid_exists(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not psutil.pid_exists(pid)
