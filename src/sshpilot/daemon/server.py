@@ -642,10 +642,14 @@ class DaemonServer:
                     None,
                 )
                 if callable(launch_builder):
+                    runner_options = {}
                     if sys.platform == "win32":
                         from .conpty_runner import (
                             ConPtySessionProcessRunner as PtySessionProcessRunner,
+                            pty_factory_from_environment,
                         )
+
+                        runner_options["pty_factory"] = pty_factory_from_environment()
                     else:
                         from .pty_runner import PtySessionProcessRunner
 
@@ -653,7 +657,8 @@ class DaemonServer:
                         lambda spec: self._prepare_session_launch(
                             spec,
                             launch_builder,
-                        )
+                        ),
+                        **runner_options,
                     )
                     self._readiness_manager = self._build_readiness_manager()
                     self._session_runtime = SessionRuntime(

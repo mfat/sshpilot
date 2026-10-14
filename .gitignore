@@ -77,3 +77,7 @@ graphify-out/
 # Local agent terminal investigation artifacts
 .agent_terminal_investigation/
 
+
+# Microsoft.Windows.Console.ConPTY NuGet download (conpty.dll + OpenConsole.exe,
+# see docs/architecture/windows-port.md). Never committed.
+/vendor/conpty/

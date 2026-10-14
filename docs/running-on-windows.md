@@ -75,6 +75,20 @@ Then pick **libvterm** under Preferences → Terminal → Terminal Backend. It
 applies to new tabs. `SSHPILOT_TERMINAL_MODEL=vterm` overrides the setting
 for one run. If libvterm cannot load, the terminal falls back to pyte.
 
+Experimental: drive ConPTY through `ctypes` instead of pywinpty, optionally
+with Microsoft's newer console from the `Microsoft.Windows.Console.ConPTY`
+NuGet package. That console passes mouse, bracketed paste and the alternate
+screen through. Put `conpty.dll` and `OpenConsole.exe` in one directory, then:
+
+```bash
+SSHPILOT_CONPTY_BACKEND=ctypes SSHPILOT_CONPTY_DLL=/path/to/dir SSHPILOT_TERMINAL_MODEL=vterm python run.py
+```
+
+Without `SSHPILOT_CONPTY_DLL`, the ctypes backend uses the Windows inbox
+ConPTY. Use the libvterm model with the newer console, because pyte cannot
+parse everything it forwards yet. Details are in
+[the Windows port notes](architecture/windows-port.md#2a-a-ctypes-conpty-runner-and-the-bundled-conptydll-spike).
+
 ## 3. Run
 
 ```bash
