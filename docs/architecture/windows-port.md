@@ -707,9 +707,14 @@ module-level code.
 - **libvterm as the Windows default.** The libvterm model (section 3a) is
   opt-in. Plan: use it day to day, then make it the default on Windows once
   the frozen build ships `libvterm-0.dll`. pyte stays as the fallback.
-- **Local shell tabs.** They need a frontend PTY. The action is disabled on
-  Windows, and `setup_local_shell` refuses with the pyte backend. A
-  ConPTY-backed local shell (cmd/PowerShell) is the natural follow-up.
+- ~~**Local shell tabs.**~~ Done (implementation plan, phase 6).
+  `local_shell_pty.LocalShellProcess` gives the built-in backend its own
+  pseudo terminal: ConPTY with the bundled console on Windows, `pty.fork`
+  elsewhere, so the built-in backend has local tabs on Linux and macOS too.
+  The tab stays frontend-owned (frontend-closure-audit.md). Preferences →
+  Terminal → Local Shell picks Automatic (PowerShell 7, Windows PowerShell,
+  cmd) or WSL (`terminal.windows_shell`). Unlike a daemon session, a local
+  tab does not survive a frontend restart, the same as on POSIX.
 - **Packaging.** There is no installer, PyInstaller spec or Windows CI yet.
   The unmerged `origin/cursor/windows-support-abbc` branch has a Windows spec
   and MSYS2 workflow that may be reusable; its runtime claims predate this
