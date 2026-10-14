@@ -192,6 +192,27 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
     return environment
 
 
+#: The console-subsystem executable a frozen Windows build ships beside the
+#: windowed ``sshPilot.exe`` (packaging/windows/sshpilot-windows.spec).
+FROZEN_WINDOWS_CONSOLE_EXE = "sshpilot-cli.exe"
+
+
+def _frozen_console_executable() -> Optional[str]:
+    """The daemon's executable in a frozen Windows build.
+
+    The windowed GUI exe has no console: a daemon started from it could not
+    give its OpenSSH children the shared hidden console (each would open a
+    window), and askpass, which the daemon writes as ``<its exe>
+    --internal-askpass``, would have no stdout to answer OpenSSH on. The
+    console exe beside it serves both. Elsewhere, ``None``.
+    """
+
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return None
+    candidate = os.path.join(os.path.dirname(sys.executable), FROZEN_WINDOWS_CONSOLE_EXE)
+    return candidate if os.path.isfile(candidate) else None
+
+
 class DaemonLauncher:
     """Reuse a compatible daemon or make one bounded, race-safe launch attempt."""
 
@@ -220,7 +241,7 @@ class DaemonLauncher:
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self.probe_timeout = float(probe_timeout)
-        self.executable = executable or sys.executable
+        self.executable = executable or _frozen_console_executable() or sys.executable
         self._environment = environment
         self._popen = popen
         self._lock = threading.Lock()
