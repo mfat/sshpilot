@@ -284,6 +284,45 @@ quirk.
    - **Ship the right architecture.** The package also carries x86 and
      arm64 builds.
 
+**Adopted (windows-implementation-plan.md, phase 1).**
+- The binding lives in `sshpilot.platform.windows.conpty`, so the frontend
+  can host local shells with it too. `ctypes` is the default;
+  `SSHPILOT_CONPTY_BACKEND=pywinpty` keeps the old path for one release.
+- `scripts/fetch-conpty.py` downloads `Microsoft.Windows.Console.ConPTY`
+  1.25.260930003 from nuget.org into `vendor/conpty/`. It checks the
+  package's pinned SHA-256 (which matches the SHA-512 in nuget.org's catalog)
+  and the Microsoft Authenticode signature of both files. A source checkout
+  loads `vendor/conpty/<arch>/conpty.dll` automatically.
+- pyte's parse errors on the forwarded stream are fixed (section 3,
+  "CSI forms pyte mis-parses"), and libvterm's CSI overflow is guarded
+  (section 3a).
+
+**Phase 1 gate measurements** (Windows 10 19045, conpty.dll 1.25, harnesses
+driving `CtypesPty` directly):
+- *Late DA1 replies.* A child that switches to VT input mode, as ssh.exe
+  does, never received the terminal's DA1 answer. That held whether the
+  answer came at once, after 50 ms, 300 ms or 1 s, or never. OpenConsole
+  consumes it, so the daemon does not need to answer DA1 itself. (The
+  inbox console in this setup sends no DA1 query.)
+- *Growing the window.* `cmd.exe` printed 120 lines, and the window then
+  went 80x24 → 80x12 → 80x40 → 60x20 → 100x50. With
+  `pull_history_on_grow = True`, both models lost 3 lines under OpenConsole
+  (58 under the inbox console). With it off, both kept all 120. So
+  `prepare_pty_less_emulation` stays for every ConPTY session.
+- *Full-screen apps.* `wsl.exe` running `seq 1 40`, then vim or less, was
+  resized three times inside the app and then quit. `?1049h` reaches the
+  emulator. libvterm kept every line, and pyte lost one line after vim. The
+  `_AltResize` workaround is now live code on Windows.
+- *Closing at once.* Closing a session right after spawning left the client
+  and its console host running. `CtypesPty.close` now terminates a client
+  that is still alive, as Neovim's ConPTY host does.
+- *Focus events.* The bundled console sends `?1004h` at start. The view
+  already sends `ESC[I`/`ESC[O` while the mode is set, for both models.
+- *Still for the maintainer:* driving real mouse input in htop and vim (GTK4
+  ignores synthesized mouse events), and pasting into vim through the GUI.
+  The runner captures in this section cover the bytes on that path.
+
+### 3. No VTE / WebKitGTK → a built-in pyte terminal
 
 **Obstacle.** Neither VTE nor WebKitGTK exists for GTK 4 on Windows, so both
 existing backends (VTE, xterm.js-in-WebKit) were unavailable. `Vte` was also
@@ -335,6 +374,22 @@ Otherwise AltGr+Q (`@` on a German layout) would become Ctrl+@ (NUL).
 **Limits.** pyte has no hyperlinks (OSC 8), no reflow on resize, no sixel,
 and no true-blink. Rendering is per-run Pango layouts, which is fine for
 interactive use but slower than VTE on bulk output.
+
+**CSI forms pyte mis-parses.** pyte 0.8.2 has these parser gaps:
+- it ignores `>` and `=` leaders, so vim's `CSI > 4 ; 2 m` turned on
+  underline;
+- it prints the rest of a CSI that has `=`, `:` or an intermediate byte as
+  text (`CSI ! p` printed `p`; `CSI 38:2:… m` printed the colour);
+- it raises `TypeError` for a `?` leader on 21 final bytes (`CSI ? 4 m`);
+- it reads the R;G;B of an SGR 58 underline colour as SGR codes.
+
+`_CsiNormalizer` in `pyte_terminal_model.py` runs before pyte. It keeps
+private modes (`?…h/l`), turns `?J`/`?K` into plain erases, converts colon
+colours to the `;` form, drops underline colours and every other unusual
+CSI, and answers DA2 the way libvterm does. It holds an unfinished CSI back
+for the next feed. A sweep of every final byte under each leader and
+intermediate now neither raises nor prints anything
+(`tests/test_pyte_csi_normalizer.py`).
 
 ### 3a. libvterm as the emulator core (proof of concept)
 
@@ -444,6 +499,17 @@ never sees `?1049h`.
 - *Linux/macOS:* `libvterm.so.0` (Debian/Ubuntu `libvterm0`, 0.3.x since
   Debian 12 / Ubuntu 24.04) or Homebrew `libvterm` is found through
   `ctypes.util.find_library`.
+
+**CSI argument overflow.** libvterm 0.3.3 keeps CSI arguments in
+`long args[16]` and bumps the index on every `;` or `:` without a bound, so
+`ESC [ ;×17 m` writes past the array and crashes the process (reproduced:
+exit 139). Neovim's fork raised the array to 32 but kept the unbounded
+index. `_CsiArgGuard` filters input before `vterm_input_write`. It follows
+libvterm's own rules: a CSI continues through C0 controls and ends on CAN,
+SUB, ESC or a final byte. It drops parameters past the 16th, also when a
+sequence is split across feeds. Its fast path costs about a quarter of
+libvterm's SGR-heavy throughput (14 → 10.5 MB/s), and pays for itself until a
+patched DLL ships (`tests/test_vterm_csi_guard.py`).
 
 **Not done in the proof of concept.**
 - Reflow on resize: `vterm_screen_enable_reflow` exists, but continuation
