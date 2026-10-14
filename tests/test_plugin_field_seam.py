@@ -238,7 +238,7 @@ def test_editor_fields_reach_the_launch_command(protocol, registry, tmp_path, mo
         # (tests/test_serial_plugin_windows.py).
         import sshpilot.plugins.builtin.serial_protocol as serial_module
 
-        monkeypatch.setattr(serial_module.sys, "platform", "linux")
+        monkeypatch.setattr(serial_module, "_windows", lambda: False)
     backend = registry.get_or_none(protocol)
     assert backend is not None, f"{protocol} backend did not register"
     specs = backend.connection_fields()

@@ -15,7 +15,7 @@ from sshpilot.plugins.builtin.rdp_protocol import mstsc_settings
 def windows(monkeypatch, tmp_path):
     monkeypatch.setattr(registry_mod, "_registry", None)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
-    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setattr(mod, "_windows", lambda: True)
     monkeypatch.setattr(mod, "_resolve_client", lambda _choice, _env: None)
     monkeypatch.setattr(mod.tempfile, "gettempdir", lambda: str(tmp_path))
 

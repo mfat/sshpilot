@@ -118,6 +118,11 @@ def _resolve_client(choice: str, environment: Dict[str, str]) -> Optional[List[s
     return None
 
 
+def _windows() -> bool:
+    """Windows falls back to mstsc (tests patch this, not ``sys``)."""
+    return sys.platform == "win32"
+
+
 def _windows_mstsc() -> str:
     """Windows' built-in Remote Desktop client, used when FreeRDP 3 is absent."""
     root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
@@ -433,7 +438,7 @@ class RdpProtocolBackend(ProtocolBackend):
         env = dict(os.environ)
         choice = _text(data, "client") or "auto"
         client = _resolve_client(choice, env)
-        if client is None and sys.platform == "win32":
+        if client is None and _windows():
             mstsc = _windows_mstsc()
             if mstsc:
                 return _mstsc_spawn(connection, data, host, port, mstsc, env)

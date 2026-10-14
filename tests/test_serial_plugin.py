@@ -31,7 +31,7 @@ def fresh_registry(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_access_denied_group", lambda _device: "")
     # These cover the picocom/screen path; Windows uses plink instead
     # (tests/test_serial_plugin_windows.py).
-    monkeypatch.setattr(mod.sys, "platform", "linux")
+    monkeypatch.setattr(mod, "_windows", lambda: False)
 
 
 def _ctx():

@@ -65,7 +65,7 @@ def _serial_ports(_values: Dict[str, Any], _ctx: Any) -> List[Tuple[str, str]]:
     ``ttyUSB0`` can become ``ttyUSB1``, so they are offered as the value, with
     the tty they point at in the label.
     """
-    if sys.platform == "win32":
+    if _windows():
         return [(port, port) for port in _windows_com_ports()]
     ports: List[Tuple[str, str]] = []
     covered = set()
@@ -105,6 +105,11 @@ def _access_denied_group(device: str) -> str:
         return grp.getgrgid(os.stat(device).st_gid).gr_name
     except (ImportError, OSError, KeyError):
         return ""
+
+
+def _windows() -> bool:
+    """Windows opens COM ports with plink (tests patch this, not ``sys``)."""
+    return sys.platform == "win32"
 
 
 def _windows_com_ports() -> List[str]:
@@ -193,7 +198,7 @@ class SerialProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="device", label=_("Device"), kind="text", required=True,
-                      placeholder="COM3" if sys.platform == "win32" else "/dev/ttyUSB0",
+                      placeholder="COM3" if _windows() else "/dev/ttyUSB0",
                       suggest=_serial_ports),
             FieldSpec(key="baud", label=_("Baud rate"), kind="text", default="115200",
                       placeholder="115200", suggest=_baud_rates),
@@ -257,7 +262,7 @@ class SerialProtocolBackend(ProtocolBackend):
         terminal_options = (send_newline != "cr" or bool(data.get("recv_add_cr"))
                             or bool(data.get("local_echo")) or bool(logfile))
 
-        if sys.platform == "win32":
+        if _windows():
             return _plink_spawn(data, device, baud, flow, terminal_options)
 
         from .._flatpak import resolve_host_binary  # noqa: PLC0415

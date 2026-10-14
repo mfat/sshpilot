@@ -17,7 +17,7 @@ from sshpilot.plugins.builtin.serial_protocol import SerialProtocolBackend
 def windows(monkeypatch, tmp_path):
     monkeypatch.setattr(registry_mod, "_registry", None)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
-    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setattr(mod, "_windows", lambda: True)
 
 
 def _ctx():
