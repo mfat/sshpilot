@@ -22,9 +22,11 @@ if os.path.isdir(SRC_DIR):
 # copy that Git for Windows may have put first on PATH. The daemon inherits
 # this environment. See sshpilot/platform/windows/openssh.py.
 if sys.platform == "win32":
+    from sshpilot.platform.windows.environment import disable_dbus_autolaunch
     from sshpilot.platform.windows.openssh import prefer_builtin_openssh
 
     prefer_builtin_openssh()
+    disable_dbus_autolaunch()
 
 if len(sys.argv) > 1 and sys.argv[1] == '--daemon':
     from sshpilot.daemon.cli import main as daemon_main

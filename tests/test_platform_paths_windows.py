@@ -30,3 +30,18 @@ def test_posix_default_unchanged(monkeypatch, tmp_path):
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(paths, "get_home_dir", lambda: tmp_path)
     assert paths.get_config_dir() == tmp_path / ".config" / "sshpilot"
+
+
+def test_dbus_autolaunch_is_disabled_on_windows_only(monkeypatch):
+    from sshpilot.platform.windows import environment
+
+    monkeypatch.setattr(environment.sys, "platform", "win32")
+    env = {}
+    assert environment.disable_dbus_autolaunch(env)
+    assert env["DBUS_SESSION_BUS_ADDRESS"] == "disabled:"
+    kept = {"DBUS_SESSION_BUS_ADDRESS": "tcp:host=localhost,port=1"}
+    assert not environment.disable_dbus_autolaunch(kept)
+    assert kept["DBUS_SESSION_BUS_ADDRESS"].startswith("tcp:")
+    monkeypatch.setattr(environment.sys, "platform", "linux")
+    other = {}
+    assert not environment.disable_dbus_autolaunch(other) and other == {}

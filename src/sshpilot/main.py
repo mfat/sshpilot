@@ -2454,6 +2454,12 @@ def main():
     """Main entry point"""
     from .cli_connect import parse_sshpilot_cli
 
+    if sys.platform == "win32":
+        # Frozen builds start here, not in run.py.
+        from .platform.windows.environment import disable_dbus_autolaunch
+
+        disable_dbus_autolaunch()
+
     # Pre-parse so logging / isolated mode are configured before Gtk starts.
     # do_command_line parses again for single-instance handoff of ssh tokens.
     try:
