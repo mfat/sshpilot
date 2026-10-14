@@ -265,8 +265,31 @@ and with a ConPTY passthrough mode if one becomes available.
   flags would also have to be stored with the scrollback.
 - X10 mouse mode (DECSET 9), which libvterm does not implement.
 - An "Emulator" choice in Preferences.
-- A live GUI session over ConPTY with the libvterm model. The checks above
-  ran the real view's draw code offscreen.
+
+**Live GUI check (Windows 10 19045, ConPTY, OpenWrt host).** The real app ran
+with `SSHPILOT_TERMINAL_MODEL=vterm`, beside a pyte tab on the same host.
+Input went through the view's own key, IM, click, drag and scroll handlers,
+and the window was resized with `SetWindowPos`. Findings:
+- Same as pyte: typing, UTF-8 and wide characters, 16/256/truecolor SGR,
+  selection (drag, word, line), copy, search, OSC title, and busybox
+  vi/less and htop through shrink and grow. For vi and less the screens
+  matched pyte line for line, before and after quitting.
+- Bracketed paste: ConPTY passes `?2004h` through, and the view wraps the
+  paste. conhost then drops the markers on input, so the remote gets the
+  bare text.
+- Mouse: ConPTY does not forward `?1000h`/`?1006h`, so the models never
+  report the mouse. With the mode set locally, the view sends correct SGR
+  reports, but htop does not react. On this path, the mouse does not work
+  in full-screen apps with either model.
+- Wheel and Shift+PageUp/PageDown scrolled the wrong way, for both models.
+  Fixed in `PyteTerminalView.scroll_lines`.
+- Both models drop a screenful of scrollback when the window grows. A
+  shrink pushes the top rows into scrollback. A grow pulls them back onto
+  the screen, and conhost then repaints its top-anchored viewport over
+  them. libvterm also pushes rows from a full-screen app into scrollback
+  on a shrink, because it never sees `?1049h`.
+- Not model-specific: daemon output sometimes stalls mid-frame until the
+  next keystroke (seen in the login banner and in `seq 1 400`).
 
 ### 4. Askpass without a shebang
 

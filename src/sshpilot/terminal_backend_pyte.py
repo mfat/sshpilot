@@ -382,7 +382,8 @@ class PyteTerminalView(Gtk.DrawingArea):
             self.queue_draw()
 
     def scroll_lines(self, delta: int) -> None:
-        self.scroll_offset -= int(delta)
+        """Scroll ``delta`` lines back into the scrollback (negative: forward)."""
+        self.scroll_offset += int(delta)
         self._clamp_scroll()
         self._sync_adjustment()
         self.queue_draw()
