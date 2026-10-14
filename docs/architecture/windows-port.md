@@ -164,6 +164,110 @@ Otherwise AltGr+Q (`@` on a German layout) would become Ctrl+@ (NUL).
 and no true-blink. Rendering is per-run Pango layouts, which is fine for
 interactive use but slower than VTE on bulk output.
 
+### 3a. libvterm as the emulator core (proof of concept)
+
+**Why.** pyte parses at about 0.35 MB/s on the GTK main thread, its upstream
+is dormant, it raises `TypeError` on private-marker SGR (`CSI ? 4 m`, the
+XTQMODKEYS query vim 9 sends at startup), and it loses the main screen's
+bottom rows when the window is resized while a full-screen app runs.
+
+**What.** `vterm_terminal_model.VtermTerminalModel` binds libvterm 0.3.x with
+`ctypes` (no compiler, no cffi build step). It has the same surface the view
+uses from the pyte `TerminalModel`. That covers feed, resize, absolute-row
+`line()` cells with pyte's `Char` fields and colour names, the cursor,
+scrollback through `sb_pushline`/`sb_popline`/`sb_clear`, the alternate
+screen, the OSC 0/2 title, DA/DSR replies through the output callback, and
+the mouse/focus/paste/app-cursor flags. libvterm keeps DECCKM, bracketed
+paste and the SGR mouse encoding private, so the model asks libvterm to
+encode an Up key, a paste start or a wheel event and checks which form it
+chose. The model-independent parts (mode constants, text/selection/search,
+`encode_key`, `encode_mouse`) moved to `terminal_model_common.py`, and
+`pyte_terminal_model` re-exports them.
+
+Scrollback rows are stored as raw 40-byte `VTermScreenCell` runs. They are
+decoded only when drawn or searched, through a memo of distinct cells.
+Screen rows are cached until libvterm's damage callback (merged with
+`VTERM_DAMAGE_SCROLL` and flushed once per `feed`) invalidates them.
+
+**Switch.** `PyteTerminalView(model_name)` takes `"pyte"` (default) or
+`"vterm"`. The backend reads `terminal.builtin_model` from the config, and
+the `SSHPILOT_TERMINAL_MODEL` environment variable overrides it. If the
+requested model cannot load, the view falls back to the other one. The
+backend module raises `ImportError` only when neither model can load, so
+`TerminalWidget`'s fall-back-to-VTE path is unchanged. POSIX defaults are
+unchanged, because both models sit behind the opt-in built-in backend.
+
+**libvterm's own resize bug, and the workaround.** In libvterm 0.3.3, resizing
+while the alternate screen is shown resizes the hidden main screen, but:
+- the rows it pushes to scrollback are read from the *active* buffer, so
+  pager or editor lines land in history;
+- the cursor saved by DECSET 1049 is not moved when rows are pushed or
+  pulled;
+- the main screen is fitted around the alternate cursor, so the blank row
+  under the command line is dropped.
+
+`_AltResize` works around all three. `feed` splits the input at
+`CSI ? 1049/1047/47 h|l` and snapshots the main screen just before entering.
+During a resize it hands out the snapshot rows in place of the wrong ones and
+counts the net shift. On leaving, it sends a CUP, plus one LF for each row
+that overflowed, so the next prompt lands under the command line.
+
+**Results** (Windows 10 19045, MSYS2 Python 3.14, `scripts/bench_terminal_models.py`,
+1.5 MB fed in 4 KiB chunks into 80x24 with 10 000 lines of scrollback):
+
+| model | plain text | SGR-heavy | reading all 24 rows for a redraw |
+|---|---|---|---|
+| pyte | 0.35 MB/s | 0.37 MB/s | 0.2–0.3 ms |
+| libvterm | 6.7 MB/s | 14.4 MB/s | 2.9 ms cold, one row ≈ 0.12 ms |
+
+Plain text is slower than SGR-heavy text on libvterm because the Python
+`sb_pushline` callback runs once per scrolled line (about 5 µs). The parsing
+itself happens in C.
+
+`tests/test_pyte_terminal_model.py` runs every model test against both
+models through a `make_model` fixture. The alternate-screen resize tests are
+`xfail` for pyte.
+
+**Full-screen apps.** vim 9, GNU less and htop were recorded under a Linux
+PTY in WSL with 80x24 → larger → smaller resizes inside the alternate screen,
+then replayed into both models and drawn by `PyteTerminalView._draw`:
+- Frames inside the apps are pixel-identical between the models.
+- After quitting, libvterm keeps the whole transcript: `seq 1 40`, the
+  command, then the next prompt.
+- For vim and htop, pyte loses 8–10 lines: the end of the `seq` output, the
+  marker line and the command line. The next prompt follows line 32 or 34.
+
+Through **ConPTY** (the daemon's path on Windows 10) the picture is
+different: conhost keeps the alternate screen itself and never forwards
+`?1049h`. It repaints the main screen instead, and both models then show the
+same screens for vim, htop, busybox vi and busybox less. So on Windows 10 the
+alternate-screen code is only used when the remote stream reaches the
+emulator unrendered. That happens on Linux/macOS with the built-in backend,
+and with a ConPTY passthrough mode if one becomes available.
+
+**Packaging cost.**
+- *MSYS2:* `pacman -S mingw-w64-ucrt-x86_64-libvterm` installs
+  `libvterm-0.dll` (80 KB). It imports only system DLLs (ucrtbase, msvcrt,
+  kernel32, advapi32), with no MinGW runtime. It sits in `ucrt64/bin`, which
+  the loader finds as `sys.base_prefix/bin`, also from a
+  `--system-site-packages` venv. Python 3.8+ no longer searches `PATH` for
+  DLLs, so a bare-name `CDLL("libvterm-0.dll")` is only the last resort.
+- *Frozen build:* PyInstaller does not see a `ctypes` load from a list of
+  names. A Windows spec needs `binaries=[("<ucrt64>/bin/libvterm-0.dll", ".")]`.
+  The loader checks `sys._MEIPASS` and the exe's directory first.
+  `SSHPILOT_LIBVTERM=<path>` overrides every lookup.
+- *Linux/macOS:* `libvterm.so.0` (Debian/Ubuntu `libvterm0`, 0.3.x since
+  Debian 12 / Ubuntu 24.04) or Homebrew `libvterm` is found through
+  `ctypes.util.find_library`.
+
+**Not done in the proof of concept.**
+- Reflow on resize: `vterm_screen_enable_reflow` exists, but continuation
+  flags would also have to be stored with the scrollback.
+- X10 mouse mode (DECSET 9), which libvterm does not implement.
+- An "Emulator" choice in Preferences.
+- A live GUI session over ConPTY with the libvterm model. The checks above
+  ran the real view's draw code offscreen.
+
 ### 4. Askpass without a shebang
 
 **Obstacle.** The broker writes a `#!/bin/sh` (frozen build) or

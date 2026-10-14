@@ -9,7 +9,9 @@ bytes into pixels and key/mouse events back into bytes through the same
 
 from __future__ import annotations
 
+import importlib.util
 import logging
+import os
 import re
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
@@ -19,14 +21,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango, PangoCairo  # noqa: E402
 
-from .pyte_terminal_model import (  # noqa: E402
+from .terminal_model_common import (  # noqa: E402
     MOUSE_LEFT,
     MOUSE_MIDDLE,
     MOUSE_RIGHT,
     MOUSE_WHEEL_DOWN,
     MOUSE_WHEEL_UP,
     MODE_FOCUS_EVENTS,
-    TerminalModel,
     encode_key,
     encode_mouse,
 )
@@ -38,6 +39,67 @@ from .terminal_color_utils import get_contrast_color  # noqa: E402
 from .terminal_cursor import normalize_cursor_shape  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+#: Emulator models the view can draw: ``terminal.builtin_model`` in the
+#: config, overridden by this environment variable ("pyte" or "vterm").
+MODEL_ENV = "SSHPILOT_TERMINAL_MODEL"
+DEFAULT_MODEL = "pyte"
+
+
+def _pyte_model(columns: int, lines: int, on_reply):
+    from .pyte_terminal_model import TerminalModel
+
+    return TerminalModel(columns, lines, on_reply=on_reply)
+
+
+def _vterm_model(columns: int, lines: int, on_reply):
+    from .vterm_terminal_model import VtermTerminalModel
+
+    return VtermTerminalModel(columns, lines, on_reply=on_reply)
+
+
+_MODELS = {"pyte": _pyte_model, "vterm": _vterm_model}
+
+
+def create_terminal_model(preferred: Optional[str], columns: int, lines: int, on_reply):
+    """``(name, model)`` for ``preferred``, falling back to the other model.
+
+    Raises ``ImportError`` when neither pyte nor libvterm can be loaded.
+    """
+
+    name = (os.environ.get(MODEL_ENV) or preferred or DEFAULT_MODEL).strip().lower()
+    if name not in _MODELS:
+        logger.warning("Unknown terminal model %r, using %s", name, DEFAULT_MODEL)
+        name = DEFAULT_MODEL
+    errors = []
+    for candidate in [name] + [other for other in _MODELS if other != name]:
+        try:
+            model = _MODELS[candidate](columns, lines, on_reply)
+        except ImportError as exc:
+            errors.append(f"{candidate}: {exc}")
+            continue
+        if candidate != name:
+            logger.warning("Terminal model %s unavailable (%s); using %s", name, errors[0], candidate)
+        return candidate, model
+    raise ImportError("No terminal emulator model available (" + "; ".join(errors) + ")")
+
+
+def _any_model_importable() -> bool:
+    if importlib.util.find_spec("pyte") is not None:
+        return True
+    from .vterm_terminal_model import VtermUnavailable, load_libvterm
+
+    try:
+        load_libvterm()
+    except VtermUnavailable:
+        return False
+    return True
+
+
+if not _any_model_importable():
+    # Keeps TerminalWidget's "fall back to VTE" path working where neither
+    # emulator is installed.
+    raise ImportError("The built-in terminal needs pyte or libvterm")
 
 _DEFAULT_PALETTE = (
     "#000000", "#CC0000", "#4E9A06", "#C4A000",
@@ -82,7 +144,7 @@ class PyteTerminalView(Gtk.DrawingArea):
         "child-exited": (GObject.SignalFlags.RUN_LAST, None, (int,)),
     }
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: Optional[str] = None) -> None:
         super().__init__()
         self.set_focusable(True)
         self.set_can_focus(True)
@@ -90,7 +152,7 @@ class PyteTerminalView(Gtk.DrawingArea):
         self.set_vexpand(True)
         self.set_cursor_from_name("text")
 
-        self.model = TerminalModel(80, 24, on_reply=self._send)
+        self.model_name, self.model = create_terminal_model(model_name, 80, 24, self._send)
         self.scroll_offset = 0
         self._seen_pushes = 0
         self._font_desc = Pango.FontDescription.from_string("Monospace 12")
@@ -804,7 +866,13 @@ class PyteTerminalBackend:
 
     def __init__(self, owner: Any) -> None:
         self.owner = owner
-        self.view = PyteTerminalView()
+        config = getattr(owner, "config", None)
+        try:
+            model_name = config.get_setting("terminal.builtin_model", DEFAULT_MODEL) if config else None
+        except Exception:
+            model_name = None
+        self.view = PyteTerminalView(model_name)
+        logger.info("Built-in terminal using the %s emulator model", self.view.model_name)
         self._scrollbar = Gtk.Scrollbar(
             orientation=Gtk.Orientation.VERTICAL, adjustment=self.view.vadjustment
         )
