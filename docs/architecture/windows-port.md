@@ -66,10 +66,17 @@ connection:
   from the file, and is used only after `identify_process` confirms it is
   alive.
 
-**Why not named pipes?** They are the more native choice, but need pywin32 or
-a ctypes overlapped-I/O layer, and do not plug into the existing `selectors`
-loop. Loopback TCP keeps the framing, selector loop and blocking client
-threads byte-for-byte identical. The token plus the user-only file gives the
+**Why not named pipes?** They are the more native choice, and the stdlib can
+open them (`multiprocessing.connection` / `_winapi`), but they do not plug
+into the existing `selectors` loop, which only waits on sockets. Loopback TCP
+keeps the framing, selector loop and blocking client threads byte-for-byte
+identical. (Pipes remain a possible hardening; see "What is not done".)
+
+**Why not Windows' own AF_UNIX?** Windows 10 1803+ supports Unix sockets in
+the kernel, but CPython on Windows does not expose `socket.AF_UNIX` (checked
+on the python.org and MSYS2 builds of 3.14). If it ever does, only
+`api/transport/endpoint.py` and the Windows branches in `daemon/lifecycle.py`
+need to change. The token plus the user-only file gives the
 same-user guarantee that file permissions give on POSIX.
 
 ### 2. No POSIX PTY → ConPTY runner
@@ -222,7 +229,42 @@ test forbids `os.kill` there. The remaining `os.kill(pid, 0)` calls in
 `terminal.py` / `ssh_process_manager.py` belong to local-shell paths that
 cannot run on Windows today. Fix them before enabling local shells.
 
-### 8. Smaller incompatibilities
+### 8. The ssh-agent is a named pipe, and ssh-add needs `PROGRAMDATA`
+
+**Obstacle.** Two separate problems stopped the agent features working on
+Windows.
+
+- **Detection.** OpenSSH for Windows runs ssh-agent as a Windows service
+  listening on the fixed named pipe `\\.\pipe\openssh-ssh-agent`, and does
+  not set `SSH_AUTH_SOCK`. `ssh.exe` and `ssh-add.exe` use that pipe by
+  default. sshPilot decided "is there a system agent?" purely from
+  `SSH_AUTH_SOCK`, so on Windows the agent always looked absent (identity
+  state, provider list, plugin `is_agent_available()`).
+- **Environment.** The daemon runs `ssh-add` and `ssh-keygen` with an
+  allowlisted environment (`PATH`, `HOME`, `USER`, ...). Without
+  `PROGRAMDATA`, `ssh-add.exe` exits 255 with no output: OpenSSH for Windows
+  reads its system configuration from `%PROGRAMDATA%\ssh`. A greedy
+  minimisation of the full environment showed `PROGRAMDATA` is the one it
+  cannot run without.
+
+**Decision.**
+- `providers/system_agent.system_agent_socket()` is the one answer to "where is
+  the system agent". `SSH_AUTH_SOCK` wins everywhere. On Windows, the service
+  pipe counts when it exists. The core identity service and the system-agent
+  provider both use it. Nothing new is injected into child environments,
+  because OpenSSH finds the pipe by itself.
+- The pipe is detected by listing `\\.\pipe\`, never by opening it, since
+  opening a pipe consumes one of the server's instances.
+- On Windows the daemon's allowlist also keeps the variables Windows programs
+  need: `SystemRoot`, `WINDIR`, `PROGRAMDATA`, `TEMP`, `USERPROFILE` and so on.
+  Names are matched case-insensitively. The POSIX allowlist is unchanged.
+
+The agent service is disabled by default on Windows. Users enable it with
+`Set-Service ssh-agent -StartupType Manual` and `Start-Service ssh-agent` (as
+administrator). End-to-end agent use (list, add, remove keys) is still
+untested on a machine with the service running.
+
+### 9. Smaller incompatibilities
 
 | Problem | Fix |
 | --- | --- |
@@ -239,7 +281,7 @@ cannot run on Windows today. Fix them before enabling local shells.
 | Secret backend "auto" tried libsecret first | Windows uses `keyring` first (Credential Manager); KeePass stays available |
 | MSYS2 shells leave `System32\OpenSSH` off PATH | `run.py` appends it when `ssh` isn't found (inherited by the daemon) |
 
-### 9. A self-inflicted bug worth remembering
+### 10. A self-inflicted bug worth remembering
 
 While adding `detached_process_options()` to `daemon/launcher.py`, the new
 function went in between `@dataclass(frozen=True)` and
@@ -257,6 +299,17 @@ module-level code.
   The unmerged `origin/cursor/windows-support-abbc` branch has a Windows spec
   and MSYS2 workflow that may be reusable; its runtime claims predate this
   work.
+- **1Password agent on Windows.** The 1Password preset points at
+  `~/.1password/agent.sock`. On Windows, 1Password serves the same
+  `\\.\pipe\openssh-ssh-agent` pipe instead, so the preset needs a
+  Windows-specific socket.
+- **Named pipes for the daemon channel.** These are a possible hardening of the
+  loopback-TCP transport. Windows checks pipe ACLs at connect, so other users
+  could not even reach the endpoint. `GetNamedPipeClientProcessId` gives a
+  reliable peer pid. The stdlib can do it (`multiprocessing.connection` /
+  `_winapi`). The cost is that the selector loop only waits on sockets, so
+  each pipe client needs a bridge thread to a socketpair. Not urgent: TCP is
+  loopback-only and token-authenticated.
 - **Plugins.** RDP (FIFO arguments) and serial are not usable on Windows.
   Docker and Kubernetes should work if their CLIs are on PATH; untested.
 - **Unverified on real hosts:** SFTP file manager, key-based auth with the
