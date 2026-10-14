@@ -174,6 +174,21 @@ def empty_copy_message(widget) -> str:
     return _("Nothing selected to copy")
 
 
+def _app_is_quitting(widget) -> bool:
+    """True while the app quits (the tab, its window or its manager says so)."""
+    if getattr(widget, '_is_quitting', False):
+        return True
+    get_root = getattr(widget, 'get_root', None)
+    try:
+        root = get_root() if callable(get_root) else None
+    except Exception:
+        root = None
+    if getattr(root, '_is_quitting', False):
+        return True
+    window = getattr(getattr(widget, 'terminal_manager', None), 'window', None)
+    return bool(getattr(window, '_is_quitting', False))
+
+
 def _terminate_process_tree_windows(pid) -> bool:
     """End a local shell and its children on Windows (no process groups)."""
     import psutil
@@ -2042,6 +2057,11 @@ class TerminalWidget(Gtk.Box):
             from .api.errors import ErrorCode
 
             code = getattr(error, "code", None)
+            if code is ErrorCode.TRANSPORT_CLOSED and _app_is_quitting(self):
+                # Quitting stops the daemon before the tabs are torn down;
+                # each open tab then sees its transport close. Not a failure.
+                logger.debug("Daemon transport closed during quit: %s", error)
+                return
             if code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE:
                 logger.warning("Terminal input was not delivered due to backpressure")
                 self._show_toast(
