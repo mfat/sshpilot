@@ -1,4 +1,4 @@
-**SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS
+**SSH Pilot** is a user-friendly SSH and SFTP client for Linux, macOS, and Windows
 
 [![Latest release](https://img.shields.io/github/v/release/mfat/sshpilot)](https://github.com/mfat/sshpilot/releases/latest)
 [![License: GPL v3](https://img.shields.io/github/license/mfat/sshpilot)](LICENSE)
@@ -153,6 +153,16 @@ Works on macOS Homebrew and Linuxbrew. The formula is build-from-source; first i
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" height="24"/> macOS (aarch64 and x86-64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
+### <img src="https://upload.wikimedia.org/wikipedia/commons/5/5f/Windows_logo_-_2012.svg" height="24"/> Windows (x64)
+Download the portable ZIP from the [Releases](https://github.com/mfat/sshpilot/releases/) section, extract it, and run `SSHPilot.exe`.
+
+**Requirements**: Windows 10 (1809+) or Windows 11, OpenSSH client (built-in)
+
+**Note**: Windows builds are currently experimental. Some features like VTE terminal are not available. See [BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for more information.
+
+### For development on Windows:
+See detailed instructions in [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md)
+
 ### For development on macOS:
 ```bash
 brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5
@@ -177,6 +187,7 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 | RHEL / CentOS Stream | 10 |
 | Arch Linux | rolling |
 | macOS | 14 (Sonoma) |
+| Windows | 10 (1809+) |
 
 On any other Linux distribution, install the [Flatpak](#-flatpak) — it runs
 everywhere Flatpak does.
