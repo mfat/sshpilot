@@ -144,6 +144,16 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
+def pid_exists(pid: int) -> bool:
+    """Whether any process holds ``pid``, identity unknown.
+
+    ``True`` when that cannot be determined, so callers treat a PID as gone
+    only on positive evidence.
+    """
+
+    return _pid_exists(pid)
+
+
 def _is_zombie(pid: int) -> bool:
     """Whether ``pid`` has exited but not yet been waited for."""
 

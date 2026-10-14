@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from ..api.transport import endpoint as _endpoint
-from .process_registry import identify_process
+from .process_registry import identify_process, pid_exists
 
 #: Windows: the "socket path" is a JSON endpoint file (see api.transport.endpoint).
 _TCP = _endpoint.USES_TCP_ENDPOINT
@@ -194,6 +194,14 @@ def prepare_socket_path(path: Path, *, probe_timeout: float = 0.2) -> None:
                 pid if pid is not None else "unknown",
             )
             raise DaemonAlreadyRunningError("The daemon is already running")
+        try:
+            after = path.lstat()
+        except FileNotFoundError:
+            return
+        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+            raise SocketSecurityError(
+                "The daemon endpoint changed during stale-path recovery"
+            )
         try:
             path.unlink()
         except FileNotFoundError:
@@ -381,16 +389,19 @@ def _darwin_peer_is_this_user(sock: socket.socket) -> bool:
 
 
 def probe_socket_owner(
-    path: Path, *, timeout: float = 0.25
+    path: Path, *, timeout: float = 0.25, settle: bool = True
 ) -> Tuple[bool, Optional[int]]:
     """Return ``(accepting, peer_pid)`` for a daemon socket.
 
     ``accepting`` is True only when a process completed a connection, so a
     leftover socket *file* whose owner has died reports ``(False, None)``.
+
+    ``settle`` only matters for the Windows TCP endpoint; see
+    :func:`_probe_tcp_endpoint`.
     """
 
     if _TCP:
-        return _probe_tcp_endpoint(path, timeout=timeout)
+        return _probe_tcp_endpoint(path, timeout=timeout, settle=settle)
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     probe.settimeout(max(0.01, float(timeout)))
     try:
@@ -410,7 +421,7 @@ def probe_socket_owner(
 #: Windows reports a refused loopback connect only after its SYN retries
 #: (about two seconds), so a short probe that times out proves nothing. A
 #: listening daemon completes a loopback connect in the kernel immediately, so
-#: an ambiguous probe is retried once with this budget for a definitive answer.
+#: probes use at least this budget to get a definitive answer.
 _TCP_REFUSAL_SETTLE_TIMEOUT = 3.0
 
 #: Slack between the endpoint file's mtime and a process start time. The
@@ -434,7 +445,7 @@ def _published_owner_gone(path: Path, pid: Optional[int]) -> Optional[str]:
         return None
     identity = identify_process(pid)
     if identity is None:
-        if _process_pid_exists(pid):
+        if pid_exists(pid):
             return None
         return "owner process has exited"
     try:
@@ -446,14 +457,8 @@ def _published_owner_gone(path: Path, pid: Optional[int]) -> Optional[str]:
     return None
 
 
-def _process_pid_exists(pid: int) -> bool:
-    from .process_registry import _pid_exists
-
-    return _pid_exists(pid)
-
-
 def _probe_tcp_endpoint(
-    path: Path, *, timeout: float
+    path: Path, *, timeout: float, settle: bool = True
 ) -> Tuple[bool, Optional[int]]:
     """Windows counterpart of the Unix-socket probe.
 
@@ -463,9 +468,10 @@ def _probe_tcp_endpoint(
     An endpoint file outlives a daemon that crashed or was killed, so the
     published pid is consulted first: a file whose publisher is provably gone
     is stale whatever now answers on its port (nothing, or an unrelated
-    program that reused the port). Only then is the port probed, and a probe
-    that times out is retried long enough for Windows to report the refusal
-    instead of being mistaken for a live daemon.
+    program that reused the port). Only then is the port probed, with a
+    budget long enough for Windows to report a refusal instead of a timeout
+    being mistaken for a live daemon. ``settle=False`` keeps the caller's
+    short budget for tight poll loops, which settle once at their deadline.
     """
 
     published = _endpoint.read_tcp_endpoint(path)
@@ -484,51 +490,35 @@ def _probe_tcp_endpoint(
             published.port,
         )
         return False, None
-    budgets = (max(0.01, float(timeout)),)
-    if float(timeout) < _TCP_REFUSAL_SETTLE_TIMEOUT:
-        budgets += (_TCP_REFUSAL_SETTLE_TIMEOUT,)
-    for attempt, budget in enumerate(budgets):
-        try:
-            probe = _endpoint.connect_tcp(published, timeout=budget)
-        except (ConnectionRefusedError, ConnectionResetError, FileNotFoundError):
-            logger.info(
-                "Daemon endpoint is stale: nothing accepts on its port "
-                "(pid=%s port=%s)",
-                published.pid,
-                published.port,
-            )
-            return False, None
-        except (socket.timeout, TimeoutError) as exc:
-            if attempt + 1 < len(budgets):
-                logger.debug(
-                    "Daemon endpoint probe timed out after %.2fs; waiting for a "
-                    "definitive answer (pid=%s port=%s)",
-                    budget,
-                    published.pid,
-                    published.port,
-                )
-                continue
-            logger.warning(
-                "Daemon endpoint probe still ambiguous after %.2fs "
-                "type=%s (pid=%s port=%s); treating it as live",
-                budget,
-                type(exc).__name__,
-                published.pid,
-                published.port,
-            )
-            return True, None
-        except OSError as exc:
-            # Ambiguous: never unlink on a guess.
-            logger.warning(
-                "Daemon endpoint probe failed ambiguously type=%s errno=%s "
-                "(pid=%s port=%s); treating it as live",
-                type(exc).__name__,
-                getattr(exc, "errno", None),
-                published.pid,
-                published.port,
-            )
-            return True, None
-        break
+    # A listening daemon completes a loopback connect at once, so a longer
+    # budget costs nothing when it is alive and only lets Windows finish its
+    # SYN retries when it is not.
+    budget = max(0.01, float(timeout))
+    if settle:
+        budget = max(budget, _TCP_REFUSAL_SETTLE_TIMEOUT)
+    try:
+        probe = _endpoint.connect_tcp(published, timeout=budget)
+    except (ConnectionRefusedError, ConnectionResetError, FileNotFoundError):
+        logger.info(
+            "Daemon endpoint is stale: nothing accepts on its port "
+            "(pid=%s port=%s)",
+            published.pid,
+            published.port,
+        )
+        return False, None
+    except OSError as exc:
+        # Ambiguous (including a timeout): never unlink on a guess.
+        log = logger.warning if settle else logger.debug
+        log(
+            "Daemon endpoint probe ambiguous after %.2fs type=%s errno=%s "
+            "(pid=%s port=%s); treating it as live",
+            budget,
+            type(exc).__name__,
+            getattr(exc, "errno", None),
+            published.pid,
+            published.port,
+        )
+        return True, None
     probe.close()
     pid = published.pid
     if pid is None or pid <= 1 or identify_process(pid) is None:
@@ -549,11 +539,14 @@ def wait_until_socket_free(
 
     deadline = time.monotonic() + max(0.0, float(timeout))
     while True:
-        accepting, _pid = probe_socket_owner(path, timeout=0.1)
+        accepting, _pid = probe_socket_owner(path, timeout=0.1, settle=False)
         if not accepting:
             return True
         if time.monotonic() >= deadline:
-            return False
+            # Short polls cannot see a slow Windows refusal; settle once
+            # before reporting the endpoint as still held.
+            accepting, _pid = probe_socket_owner(path, timeout=0.1)
+            return not accepting
         time.sleep(poll_interval)
 
 

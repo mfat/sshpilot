@@ -12,13 +12,13 @@ import os
 import socket
 import subprocess
 import sys
-import time
 
 import pytest
 
 from sshpilot.api.transport import endpoint
 from sshpilot.daemon import DaemonAlreadyRunningError
 from sshpilot.daemon import lifecycle
+from sshpilot.daemon.process_registry import ProcessIdentity
 
 
 @pytest.fixture
@@ -86,17 +86,37 @@ def test_endpoint_of_dead_daemon_is_stale_even_if_port_was_reused(tmp_path, tcp_
         listener.close()
 
 
+def _fake_identity(monkeypatch, pid, create_time):
+    identity = ProcessIdentity(pid=pid, create_time=create_time)
+    monkeypatch.setattr(
+        lifecycle, "identify_process", lambda candidate: identity if candidate == pid else None
+    )
+
+
 def test_recycled_pid_does_not_make_endpoint_live(tmp_path, tcp_mode, monkeypatch):
-    pytest.importorskip("psutil")  # wall-clock start times
     path = tmp_path / "sshpilotd.json"
-    _publish(path, port=_unused_port(), pid=os.getppid())
-    old = time.time() - 3600
-    os.utime(path, (old, old))
-    monkeypatch.setattr(endpoint, "connect_tcp", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("recycled publisher must not need a port probe")
-    ))
-    # The parent process started after the (back-dated) publish.
+    _publish(path, port=_unused_port(), pid=4242)
+    published_at = path.stat().st_mtime
+    # Whoever holds pid 4242 now started well after the file was written.
+    _fake_identity(monkeypatch, 4242, published_at + 60)
+
+    def must_not_connect(*_args, **_kwargs):
+        raise AssertionError("a recycled publisher must not need a port probe")
+
+    monkeypatch.setattr(endpoint, "connect_tcp", must_not_connect)
     assert lifecycle.probe_socket_owner(path, timeout=0.2) == (False, None)
+
+
+def test_publisher_started_before_publish_is_not_called_recycled(tmp_path, tcp_mode, monkeypatch):
+    listener, port = endpoint.create_tcp_listener()
+    listener.listen()
+    try:
+        path = tmp_path / "sshpilotd.json"
+        _publish(path, port=port, pid=4242)
+        _fake_identity(monkeypatch, 4242, path.stat().st_mtime - 5)
+        assert lifecycle.probe_socket_owner(path, timeout=0.2) == (True, 4242)
+    finally:
+        listener.close()
 
 
 def test_slow_windows_refusal_is_not_mistaken_for_a_live_daemon(tmp_path, tcp_mode, monkeypatch):
@@ -106,7 +126,18 @@ def test_slow_windows_refusal_is_not_mistaken_for_a_live_daemon(tmp_path, tcp_mo
     calls = _windows_style_refusal(monkeypatch)
 
     assert lifecycle.probe_socket_owner(path, timeout=0.2) == (False, None)
-    assert calls == [0.2, lifecycle._TCP_REFUSAL_SETTLE_TIMEOUT]
+    assert calls == [lifecycle._TCP_REFUSAL_SETTLE_TIMEOUT]
+
+
+def test_poll_loops_keep_short_probes_and_settle_once_at_the_deadline(tmp_path, tcp_mode, monkeypatch):
+    path = tmp_path / "sshpilotd.json"
+    _publish(path, port=_unused_port(), pid=None)
+    calls = _windows_style_refusal(monkeypatch)
+
+    assert lifecycle.wait_until_socket_free(path, timeout=0.05, poll_interval=0.01) is True
+    assert calls[-1] == lifecycle._TCP_REFUSAL_SETTLE_TIMEOUT
+    assert all(budget == 0.1 for budget in calls[:-1])
+    assert calls.count(lifecycle._TCP_REFUSAL_SETTLE_TIMEOUT) == 1
 
 
 def test_prepare_replaces_stale_endpoint_from_crashed_daemon(tmp_path, tcp_mode, monkeypatch, caplog):
