@@ -37,6 +37,8 @@ import os
 import selectors
 import shlex
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -741,6 +743,11 @@ class PrivilegedFileService:
             return self._read_bounded_in_memory(
                 process, read_limit, connection_id, deadline
             )
+        if sys.platform == "win32":
+            # Windows selectors wait only on sockets, not pipes.
+            return self._read_bounded_threaded(
+                process, read_limit, connection_id, deadline
+            )
 
         selector = selectors.DefaultSelector()
         try:
@@ -787,6 +794,55 @@ class PrivilegedFileService:
                         err.extend(chunk)
         finally:
             selector.close()
+        self._wait_reap(process, deadline)
+        return bytes(out), bytes(err)
+
+    def _read_bounded_threaded(
+        self,
+        process: "subprocess.Popen",
+        read_limit: int,
+        connection_id: ConnectionId,
+        deadline: float,
+    ) -> tuple[bytes, bytes]:
+        """The selector loop's contract (deadline, bound, concurrent drain)
+        with one reader thread per pipe, for Windows."""
+        out = bytearray()
+        err = bytearray()
+        too_large = threading.Event()
+
+        def _pump(stream, buffer, limit):
+            try:
+                while True:
+                    chunk = stream.read(_READ_CHUNK_BYTES)
+                    if not chunk:
+                        return
+                    buffer.extend(chunk)
+                    if limit is not None and len(buffer) > limit:
+                        too_large.set()
+                        return
+            except (OSError, ValueError):
+                return
+
+        readers = [
+            threading.Thread(target=_pump, args=(process.stdout, out, read_limit), daemon=True),
+            threading.Thread(target=_pump, args=(process.stderr, err, None), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        for reader in readers:
+            while reader.is_alive() and not too_large.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._terminate_process(process)
+                    raise subprocess.TimeoutExpired("ssh", self._command_timeout)
+                reader.join(timeout=min(0.1, remaining))
+            if too_large.is_set():
+                self._terminate_process(process)
+                raise SshPilotError(
+                    ErrorCode.FILE_CONTENT_TOO_LARGE,
+                    "The remote file is too large",
+                    connection_id=connection_id,
+                )
         self._wait_reap(process, deadline)
         return bytes(out), bytes(err)
 
