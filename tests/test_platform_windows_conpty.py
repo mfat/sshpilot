@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import pytest
 
 from sshpilot.api.models.terminal import TerminalDimensions
-from sshpilot.daemon import conpty_ctypes
-from sshpilot.daemon.conpty_ctypes import (
+from sshpilot.platform.windows import conpty as conpty_ctypes
+from sshpilot.platform.windows.conpty import (
     HPCON,
     PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
     STARTF_USESTDHANDLES,
@@ -36,8 +36,14 @@ windows_only = pytest.mark.skipif(sys.platform != "win32", reason="needs kernel3
 # -- DLL selection ---------------------------------------------------------------
 
 
-def test_candidates_default_to_none_from_a_source_checkout():
-    assert conpty_dll_candidates({}, frozen=False) == []
+def test_candidates_of_a_source_checkout_are_vendor_conpty(monkeypatch):
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")
+    monkeypatch.delenv("PROCESSOR_ARCHITEW6432", raising=False)
+    (candidate,) = conpty_dll_candidates({}, frozen=False)
+    parts = os.path.normpath(candidate).split(os.sep)
+    assert parts[-4:] == ["vendor", "conpty", "x64", "conpty.dll"]
+    root = os.sep.join(parts[:-4])
+    assert os.path.isfile(os.path.join(root, "scripts", "fetch-conpty.py"))
 
 
 def test_candidates_of_a_frozen_build_are_meipass_then_exe_dir(tmp_path):
@@ -134,16 +140,12 @@ def test_flags_come_from_the_environment():
     assert conpty_flags({"SSHPILOT_CONPTY_FLAGS": "nope"}) == 0
 
 
-def test_backend_switch_defaults_to_pywinpty(monkeypatch):
-    assert pty_factory_from_environment({}) is None
-    assert pty_factory_from_environment({"SSHPILOT_CONPTY_BACKEND": "pywinpty"}) is None
-    assert pty_factory_from_environment({"SSHPILOT_CONPTY_BACKEND": "bogus"}) is None
+def test_backend_switch_defaults_to_ctypes(monkeypatch):
     fake_api = SimpleNamespace(source="kernel32")
     monkeypatch.setattr(conpty_ctypes, "default_api", lambda: fake_api)
-    assert (
-        pty_factory_from_environment({"SSHPILOT_CONPTY_BACKEND": "ctypes"})
-        is conpty_ctypes.CtypesPty
-    )
+    for environ in ({}, {"SSHPILOT_CONPTY_BACKEND": "ctypes"}, {"SSHPILOT_CONPTY_BACKEND": "bogus"}):
+        assert pty_factory_from_environment(environ) is conpty_ctypes.CtypesPty
+    assert pty_factory_from_environment({"SSHPILOT_CONPTY_BACKEND": "pywinpty"}) is None
 
 
 # -- Attribute list and startup info ---------------------------------------------

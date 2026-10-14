@@ -149,8 +149,8 @@ def conpty_dll_candidates(
 
     ``SSHPILOT_CONPTY_DLL`` names a DLL (or the directory holding it) and
     replaces every other place; ``kernel32`` forces the inbox ConPTY. A frozen
-    build looks next to the exe and in ``_MEIPASS``. A source checkout finds
-    nothing by default, so it keeps the inbox ConPTY unless told otherwise.
+    build looks next to the exe and in ``_MEIPASS``. A source checkout looks
+    in ``vendor/conpty/<arch>``, where ``scripts/fetch-conpty.py`` puts it.
     """
 
     environ = os.environ if environ is None else environ
@@ -164,7 +164,8 @@ def conpty_dll_candidates(
     if frozen is None:
         frozen = bool(getattr(sys, "frozen", False))
     if not frozen:
-        return []
+        checkout = os.path.join(_source_checkout_root(), "vendor", "conpty", _machine_arch())
+        return [os.path.join(checkout, "conpty.dll")]
     meipass = getattr(sys, "_MEIPASS", "") if meipass is None else meipass
     executable = sys.executable if executable is None else executable
     directories = [meipass, os.path.dirname(executable)]
@@ -175,6 +176,17 @@ def conpty_dll_candidates(
             if path not in candidates:
                 candidates.append(path)
     return candidates
+
+
+def _source_checkout_root() -> str:
+    # src/sshpilot/platform/windows/conpty.py -> the checkout root
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
+
+
+def _machine_arch() -> str:
+    machine = (os.environ.get("PROCESSOR_ARCHITEW6432")
+               or os.environ.get("PROCESSOR_ARCHITECTURE") or "").upper()
+    return {"ARM64": "arm64", "X86": "x86"}.get(machine, "x64")
 
 
 def load_conpty_api(

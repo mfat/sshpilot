@@ -1,8 +1,9 @@
 """Windows ConPTY session runner (the counterpart of ``pty_runner`` on POSIX).
 
-Each session gets its own pseudo console through pywinpty, which prefers the
-native ConPTY API, or through the ``ctypes`` binding in ``conpty_ctypes`` when
-``SSHPILOT_CONPTY_BACKEND=ctypes``. One reader thread per session forwards console output; a
+Each session gets its own pseudo console through the ``ctypes`` binding in
+``sshpilot.platform.windows.conpty`` (which loads Microsoft's bundled
+``conpty.dll`` when present), or through pywinpty when
+``SSHPILOT_CONPTY_BACKEND=pywinpty``. One reader thread per session forwards console output; a
 shared reaper thread notices process exit. The handle implements the same
 surface :class:`~sshpilot.daemon.session_runtime.SessionRuntime` uses on the
 POSIX runner: ``write``, ``resize``, ``terminate``, ``kill``, ``wait`` and
@@ -64,19 +65,21 @@ CONPTY_BACKEND_ENV = "SSHPILOT_CONPTY_BACKEND"
 def pty_factory_from_environment(environ=None):
     """The pseudo-console factory ``SSHPILOT_CONPTY_BACKEND`` asks for.
 
-    ``pywinpty`` (the default) returns ``None``, which the runner turns into
-    ``winpty.PTY``. ``ctypes`` returns the direct binding in ``conpty_ctypes``.
+    ``ctypes`` (the default) returns the direct binding in
+    ``sshpilot.platform.windows.conpty``, which can load the bundled
+    ``conpty.dll``. ``pywinpty`` returns ``None``, which the runner turns into
+    ``winpty.PTY`` (kept for one release as a fallback).
     """
 
     environ = os.environ if environ is None else environ
-    backend = (environ.get(CONPTY_BACKEND_ENV) or "pywinpty").strip().lower()
-    if backend == "ctypes":
-        from .conpty_ctypes import CtypesPty, default_api
+    backend = (environ.get(CONPTY_BACKEND_ENV) or "ctypes").strip().lower()
+    if backend not in ("pywinpty", "winpty"):
+        if backend != "ctypes":
+            logger.warning("Unknown %s=%r; using ctypes", CONPTY_BACKEND_ENV, backend)
+        from sshpilot.platform.windows.conpty import CtypesPty, default_api
 
         logger.info("ConPTY backend: ctypes (%s)", default_api().source)
         return CtypesPty
-    if backend not in ("", "pywinpty", "winpty"):
-        logger.warning("Unknown %s=%r; using pywinpty", CONPTY_BACKEND_ENV, backend)
     logger.info("ConPTY backend: pywinpty")
     return None
 
