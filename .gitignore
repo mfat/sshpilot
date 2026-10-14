@@ -73,3 +73,7 @@ po/*.pot
 
 # graphify knowledge-graph output (regenerable; ~50MB)
 graphify-out/
+
+# Local agent terminal investigation artifacts
+.agent_terminal_investigation/
+
