@@ -260,7 +260,7 @@ Windows.
   Names are matched case-insensitively. The POSIX allowlist is unchanged.
 
 **A third problem: the wrong OpenSSH build.** Git for Windows (like MSYS2
-and Cygwin) ships its own MSYS-based OpenSSH, and its `usrin` commonly
+and Cygwin) ships its own MSYS-based OpenSSH, and its `usr\bin` commonly
 comes *before* `System32\OpenSSH` on PATH. A plain `ssh` or `ssh-add` then
 runs that copy. It has a different agent (a Unix-socket emulation that
 never sees the Windows service), different config and key locations, and
