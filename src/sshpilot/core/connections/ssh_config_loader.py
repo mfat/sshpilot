@@ -32,6 +32,7 @@ from ...ssh_config_document import (
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
+    split_include_args,
 )
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
@@ -168,7 +169,7 @@ def _resolve_config_files(
             if not lowered.startswith("include "):
                 continue
             try:
-                patterns = shlex.split(line[len("include "):])
+                patterns = split_include_args(line[len("include "):])
             except ValueError:
                 raise _config_error(
                     "SSH configuration contains an invalid Include header"

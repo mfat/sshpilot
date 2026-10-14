@@ -100,10 +100,10 @@ def load_config(tmp_path, main_text, conf_d_files=None):
     conf_d.mkdir(exist_ok=True)
 
     for filename, content in (conf_d_files or {}).items():
-        (conf_d / filename).write_text(content)
+        (conf_d / filename).write_text(content, encoding="utf-8")
 
     main_cfg = tmp_path / "config"
-    main_cfg.write_text(main_text)
+    main_cfg.write_text(main_text, encoding="utf-8")
 
     loaded = _load(main_cfg)
     return loaded, main_cfg, conf_d
