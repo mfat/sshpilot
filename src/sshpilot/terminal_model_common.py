@@ -23,6 +23,19 @@ MODE_BRACKETED_PASTE = 2004 << 5
 MODE_FOCUS_EVENTS = 1004 << 5
 
 
+def default_builtin_model() -> str:
+    """The built-in backend's emulator model when the config names none.
+
+    libvterm on Windows, where the built-in backend is the only terminal and
+    the bundled ConPTY forwards full-screen streams pyte handles badly; pyte
+    elsewhere, where the built-in backend is opt-in.
+    """
+
+    import sys
+
+    return "vterm" if sys.platform == "win32" else "pyte"
+
+
 class LineIndexMixin:
     """Text access over absolute rows (scrollback first, then the screen).
 

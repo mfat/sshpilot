@@ -6582,12 +6582,17 @@ class PreferencesWindow(Adw.Window):
         if pyte_available or not VTE_AVAILABLE:
             # The built-in backend is listed once per emulator model
             # (``terminal.builtin_model``); both entries share the 'pyte' id.
-            choices.append(
+            from .terminal_model_common import default_builtin_model
+            # "(default)" marks the model a fresh install uses where the
+            # built-in backend is the only one (no VTE): libvterm on Windows.
+            default_model = None if VTE_AVAILABLE else default_builtin_model()
+            builtin = []
+            builtin.append(
                 {
                     'id': 'pyte',
                     'model': 'pyte',
                     'label': (
-                        (_('pyte') if VTE_AVAILABLE else _('pyte (default)'))
+                        (_('pyte (default)') if default_model == 'pyte' else _('pyte'))
                         if pyte_available else _('pyte (unavailable)')
                     ),
                     'description': (
@@ -6604,13 +6609,13 @@ class PreferencesWindow(Adw.Window):
                 vterm_error = None
             except Exception as exc:  # noqa: BLE001
                 vterm_error = str(exc)
-            choices.append(
+            builtin.append(
                 {
                     'id': 'pyte',
                     'model': 'vterm',
                     'label': (
-                        _('libvterm') if vterm_error is None
-                        else _('libvterm (unavailable)')
+                        (_('libvterm (default)') if default_model == 'vterm' else _('libvterm'))
+                        if vterm_error is None else _('libvterm (unavailable)')
                     ),
                     'description': (
                         _('Native terminal emulator drawn with GTK, faster on bulk output')
@@ -6620,6 +6625,9 @@ class PreferencesWindow(Adw.Window):
                     'error': vterm_error,
                 }
             )
+            if default_model == 'vterm':
+                builtin.reverse()  # the default first
+            choices.extend(builtin)
         # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
         if not is_macos() and not is_windows():
             pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
@@ -6648,7 +6656,9 @@ class PreferencesWindow(Adw.Window):
     def _backend_choice_index(self, backend_id) -> int:
         """Index of the choice for ``backend_id`` and the configured built-in model."""
         backend_id = (backend_id or '').lower()
-        model = (self.config.get_setting('terminal.builtin_model', 'pyte') or 'pyte').lower()
+        from .terminal_model_common import default_builtin_model
+        default = default_builtin_model()
+        model = (self.config.get_setting('terminal.builtin_model', default) or default).lower()
         fallback = None
         for i, choice in enumerate(self._backend_choice_data):
             if choice['id'] != backend_id:

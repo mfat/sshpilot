@@ -23,6 +23,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango, PangoCairo  # noqa: E402
 
 from .terminal_model_common import (  # noqa: E402
+    default_builtin_model,
     MOUSE_LEFT,
     MOUSE_MIDDLE,
     MOUSE_RIGHT,
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 #: Emulator models the view can draw: ``terminal.builtin_model`` in the
 #: config, overridden by this environment variable ("pyte" or "vterm").
 MODEL_ENV = "SSHPILOT_TERMINAL_MODEL"
-DEFAULT_MODEL = "pyte"
+DEFAULT_MODEL = default_builtin_model()
 
 
 def _pyte_model(columns: int, lines: int, on_reply):

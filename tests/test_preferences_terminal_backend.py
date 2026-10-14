@@ -64,3 +64,19 @@ def test_unavailable_libvterm_reverts_the_selection():
 
     row.set_selected.assert_called_once_with(1)
     assert prefs._settings['terminal.builtin_model'] == 'pyte'
+
+
+def test_builtin_model_defaults_to_libvterm_only_on_windows(monkeypatch):
+    from sshpilot.terminal_model_common import default_builtin_model
+
+    monkeypatch.setattr("sys.platform", "win32")
+    assert default_builtin_model() == "vterm"
+    monkeypatch.setattr("sys.platform", "linux")
+    assert default_builtin_model() == "pyte"
+
+
+def test_missing_model_setting_uses_the_platform_default(monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    prefs = _prefs(backend='pyte')
+    prefs._settings.pop('terminal.builtin_model')
+    assert preferences.PreferencesWindow._backend_choice_index(prefs, 'pyte') == 2
