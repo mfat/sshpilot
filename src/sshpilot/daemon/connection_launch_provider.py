@@ -1018,12 +1018,32 @@ class DaemonConnectionLaunchProvider:
 
         executable = _resolve_ssh_copy_id(environment.get("PATH"))
         if executable is None:
+            # Windows OpenSSH has no ssh-copy-id: run its install script
+            # over plain ssh instead.
+            from ..platform.windows import copy_id as windows_copy_id
+
+            ssh_executable = windows_copy_id.resolve_ssh(environment.get("PATH"))
+            if ssh_executable is not None:
+                try:
+                    public_key = windows_copy_id.read_public_key(public_key_path)
+                except (OSError, ValueError) as exc:
+                    raise SshPilotError(
+                        ErrorCode.INVALID_REQUEST,
+                        f"The public key could not be read: {exc}",
+                        connection_id=connection_id,
+                    ) from exc
+                argv = windows_copy_id.ssh_argv_from_copy_id(
+                    argv, ssh_executable, public_key, force=force
+                )
+                _log_copy_id_program(ssh_executable, target, fallback=True)
+                return tuple(argv), environment
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_CAPABILITY,
                 "ssh-copy-id is not installed",
                 connection_id=connection_id,
             )
         argv[0] = executable
+        _log_copy_id_program(executable, target, fallback=False)
         return tuple(argv), environment
 
     def describe_target(self, protocol: str, data: Any) -> str:
@@ -1104,6 +1124,18 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection.id,
             )
         return (executable, *argv[1:]), environment
+
+
+def _log_copy_id_program(program: str, target: str, *, fallback: bool) -> None:
+    """Which program will deploy the key. The argv is not logged: the Windows
+    fallback carries the public key inside the remote command."""
+
+    logger.info(
+        "public-key deployment program=%s target=%s via=%s",
+        os.path.basename(program) or program,
+        target,
+        "ssh" if fallback else "ssh-copy-id",
+    )
 
 
 def _resolve_ssh_copy_id(path: Optional[str]) -> Optional[str]:

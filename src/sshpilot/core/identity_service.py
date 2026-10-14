@@ -83,7 +83,12 @@ def _default_ssh_copy_id_available() -> bool:
     flatpak_path = "/app/bin/ssh-copy-id"
     if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
         return True
-    return shutil.which("ssh-copy-id") is not None
+    if shutil.which("ssh-copy-id") is not None:
+        return True
+    # Windows OpenSSH has no ssh-copy-id; the daemon deploys over plain ssh.
+    from ..platform.windows.copy_id import resolve_ssh
+
+    return resolve_ssh() is not None
 
 
 class IdentityStateService:

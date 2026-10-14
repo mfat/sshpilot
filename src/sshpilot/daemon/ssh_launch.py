@@ -68,6 +68,13 @@ from .process_registry import (
 logger = logging.getLogger(__name__)
 
 
+def _launch_prepared_message(kind: str, argv: Sequence[str]) -> str:
+    """Program and argument count only — argv itself can carry a key or command."""
+
+    program = os.path.basename(str(argv[0])) if argv else ""
+    return f"launch prepared kind={kind} program={program} argc={len(argv)}"
+
+
 #: A launch scope is the public identity a frontend binds its interaction
 #: presenter to, so it is never a private random string. Callers pass the
 #: resource id the frontend already knows (TransferId, OperationId, service
@@ -536,7 +543,7 @@ class LaunchScope:
             interaction_mode=interaction_mode,
             **options,
         )
-        logger.debug("launch prepared kind=%s", intent.kind.value)
+        logger.debug("%s", _launch_prepared_message(intent.kind.value, argv))
         self._launcher._run_pre_connection_command(
             policy,
             intent,
@@ -748,7 +755,7 @@ class SshLauncher:
                 from .ssh_readiness import insert_ssh_diagnostics_options
 
                 argv = insert_ssh_diagnostics_options(argv, diagnostics_path)
-        logger.debug("launch prepared kind=%s", intent.kind.value)
+        logger.debug("%s", _launch_prepared_message(intent.kind.value, argv))
         self._run_pre_connection_command(
             policy,
             intent,

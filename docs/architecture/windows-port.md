@@ -295,6 +295,7 @@ administrator). Adding and removing keys through the UI is still untested.
 | `sh -lc` for pre-connection commands | `cmd /d /s /c` on Windows |
 | Secret backend "auto" tried libsecret first | Windows uses `keyring` first (Credential Manager); KeePass stays available |
 | Several OpenSSH builds on PATH (see section 8) | `platform/windows/openssh.prefer_builtin_openssh()` puts `System32\OpenSSH` first |
+| Windows OpenSSH has no `ssh-copy-id` (Git for Windows' copy is a shell script `shutil.which` cannot resolve, and it would run the MSYS `ssh`), so key deployment reported "unavailable" | `platform/windows/copy_id.py` runs `ssh-copy-id`'s own remote install script (including the OpenWrt/Dropbear path) over the built-in `ssh`, with the key embedded in the command |
 
 ### 10. A self-inflicted bug worth remembering
 
