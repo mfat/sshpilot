@@ -278,7 +278,6 @@ never sees `?1049h`.
 - Reflow on resize: `vterm_screen_enable_reflow` exists, but continuation
   flags would also have to be stored with the scrollback.
 - X10 mouse mode (DECSET 9), which libvterm does not implement.
-- An "Emulator" choice in Preferences.
 
 **Live GUI check (Windows 10 19045, ConPTY, OpenWrt host).** The real app ran
 with `SSHPILOT_TERMINAL_MODEL=vterm`, beside a pyte tab on the same host.
