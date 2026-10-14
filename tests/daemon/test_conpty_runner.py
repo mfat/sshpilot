@@ -28,7 +28,7 @@ class FakePty:
         self.spawned = (appname, cmdline, cwd, env)
         return True
 
-    def read(self, blocking=False):
+    def read(self, length=1000, blocking=False):
         item = self._output.get()
         if item is None:
             raise EOFError
@@ -105,5 +105,77 @@ def test_runner_streams_output_and_reports_exit(monkeypatch):
         assert eof.is_set()
         assert b"".join(output) == b"hello\r\n"
         assert exit_info["info"].exit_code == 3
+    finally:
+        runner.close()
+
+
+class StallingPty(FakePty):
+    """pywinpty 2.x read semantics seen on Windows 10 ConPTY.
+
+    A read returns at most 1000 characters. A blocking read waits for the
+    console to write *again*, even when the last write is not fully read; a
+    non-blocking read returns whatever is buffered.
+    """
+
+    def __init__(self, cols, rows):
+        super().__init__(cols, rows)
+        self._buffer = ""
+        self._wrote = threading.Condition()
+        self._writes = 0
+        self._seen = 0
+
+    def read(self, length=1000, blocking=False):
+        with self._wrote:
+            if blocking:
+                while self._writes == self._seen:
+                    self._wrote.wait()
+                self._seen = self._writes
+            if not self._alive and not self._buffer:
+                raise EOFError
+            chunk = self._buffer[: min(length, 1000)]
+            self._buffer = self._buffer[len(chunk):]
+            return chunk
+
+    def emit(self, text):
+        with self._wrote:
+            self._buffer += text
+            self._writes += 1
+            self._wrote.notify_all()
+
+    def exit(self, code):
+        with self._wrote:
+            self.exit_code = code
+            self._alive = False
+            self._writes += 1
+            self._wrote.notify_all()
+
+
+def test_runner_delivers_output_left_after_a_full_read(monkeypatch):
+    """Output past one full read arrives without waiting for more output."""
+
+    monkeypatch.setattr(
+        "sshpilot.daemon.conpty_runner._resolve_executable",
+        lambda command, env: "C:/Windows/System32/OpenSSH/ssh.exe",
+    )
+    runner = ConPtySessionProcessRunner(
+        lambda spec: (["ssh", "host"], {"PATH": os.defpath}),
+        pty_factory=StallingPty,
+    )
+    frame = "".join(f"{n}\r\n" for n in range(1, 401))  # seq 1 400
+    received = []
+    complete = threading.Event()
+
+    def on_output(data):
+        received.append(data)
+        if len(b"".join(received)) == len(frame):
+            complete.set()
+
+    try:
+        runner.start(_spec(), lambda info: None, on_output, lambda: None)
+        pty = FakePty.instances[-1]
+        pty.emit(frame)
+        assert complete.wait(5), f"stalled after {len(b''.join(received))} bytes"
+        assert b"".join(received) == frame.encode()
+        pty.exit(0)
     finally:
         runner.close()

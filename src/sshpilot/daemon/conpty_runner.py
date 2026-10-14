@@ -46,6 +46,8 @@ _REAP_INTERVAL = 0.05
 # After the process exits, how long the reaper waits for the reader to drain
 # the console's final output before declaring EOF itself.
 _EOF_DRAIN_TIMEOUT = 1.0
+# Upper bound on one console read (bytes on pywinpty 2.x, characters on 3.x).
+_READ_CHUNK = 64 * 1024
 
 TerminalOutputCallback = Callable[[bytes], None]
 TerminalEofCallback = Callable[[], None]
@@ -227,16 +229,20 @@ class ConPtyProcessHandle:
         pty = self._pty
         while True:
             try:
-                text = pty.read(blocking=True)
+                text = pty.read(_READ_CHUNK, blocking=True)
             except Exception:
                 break
             if text:
-                if isinstance(text, str):
-                    text = text.encode("utf-8", "replace")
-                try:
-                    self._on_output(bytes(text))
-                except Exception:
-                    logger.exception("ConPTY output callback failed")
+                # pywinpty 2.x's blocking read waits for *new* console output:
+                # bytes left in the pipe after a full-size read stay there
+                # until the console writes again, which an idle shell only
+                # does after the next keystroke. Drain them without blocking.
+                while text:
+                    self._deliver(text)
+                    try:
+                        text = pty.read(_READ_CHUNK, blocking=False)
+                    except Exception:
+                        break  # the blocking read reports EOF next
                 continue
             try:
                 if pty.iseof() or not pty.isalive():
@@ -245,6 +251,14 @@ class ConPtyProcessHandle:
                 break
             time.sleep(0.01)
         self.notify_eof()
+
+    def _deliver(self, text) -> None:
+        if isinstance(text, str):
+            text = text.encode("utf-8", "replace")
+        try:
+            self._on_output(bytes(text))
+        except Exception:
+            logger.exception("ConPTY output callback failed")
 
     def _notify_exit(self, info: SessionExitInfo) -> None:
         with self._lock:
