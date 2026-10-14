@@ -7,14 +7,16 @@ always delegates SSH construction/authentication to ConnectionLaunchProvider.
 from __future__ import annotations
 
 import logging
+import queue
 import selectors
+import sys
 import subprocess
 import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.broadcast import (
@@ -37,6 +39,11 @@ logger = logging.getLogger(__name__)
 
 _CHUNK_BYTES = 16_384
 _TERMINATION_GRACE = 1.0
+
+
+def _pipes_need_threads() -> bool:
+    """Windows selectors cannot wait on pipes (tests patch this, not ``sys``)."""
+    return sys.platform == "win32"
 
 
 class NativeSshCommandRunner:
@@ -70,6 +77,10 @@ class NativeSshCommandRunner:
                 process.stdin.close()
             except (BrokenPipeError, OSError):
                 pass
+        if _pipes_need_threads():
+            # selectors only wait on sockets on Windows: registering a pipe
+            # fails, so read each pipe on its own thread instead.
+            return self._run_threaded(process, policy, cancel_event, on_process, on_output)
         selector = selectors.DefaultSelector()
         retained = {"stdout": bytearray(), "stderr": bytearray()}
         truncated = False
@@ -114,6 +125,88 @@ class NativeSshCommandRunner:
             exit_code = process.wait()
         finally:
             selector.close()
+            if process.poll() is None:
+                self._stop(process)
+            process.wait()
+            if on_process:
+                on_process(None)
+        return (
+            exit_code,
+            retained["stdout"].decode("utf-8", "replace"),
+            retained["stderr"].decode("utf-8", "replace"),
+            truncated,
+            timed_out,
+        )
+
+    def _run_threaded(self, process, policy, cancel_event, on_process, on_output):
+        """The Windows variant of :meth:`run`'s select loop."""
+        chunks: "queue.Queue[Tuple[str, bytes]]" = queue.Queue()
+
+        def _pump(name, pipe):
+            try:
+                while True:
+                    chunk = pipe.read(_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    chunks.put((name, chunk))
+            except (OSError, ValueError):
+                pass
+
+        pipes = [(name, getattr(process, name)) for name in ("stdout", "stderr")]
+        readers = [
+            threading.Thread(target=_pump, args=(name, pipe), daemon=True,
+                             name=f"sshpilot-broadcast-{name}")
+            for name, pipe in pipes
+            if pipe is not None
+        ]
+        for reader in readers:
+            reader.start()
+        retained = {"stdout": bytearray(), "stderr": bytearray()}
+        truncated = False
+        timed_out = False
+        started = time.monotonic()
+
+        def _take(chunk_name, chunk, truncated):
+            if on_output:
+                on_output(chunk_name, chunk.decode("utf-8", "replace"))
+            room = policy.output_limit_bytes - sum(len(value) for value in retained.values())
+            if room > 0:
+                retained[chunk_name].extend(chunk[:room])
+            return truncated or len(chunk) > max(room, 0)
+
+        try:
+            while process.poll() is None:
+                if cancel_event.is_set():
+                    self._stop(process)
+                    raise OperationCancelled()
+                if policy.timeout_seconds is not None and time.monotonic() - started >= float(
+                    policy.timeout_seconds
+                ):
+                    timed_out = True
+                    self._stop(process)
+                try:
+                    name, chunk = chunks.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                truncated = _take(name, chunk, truncated)
+            # After exit, collect what the readers still deliver, briefly: a
+            # pipe inherited by a lingering grandchild may never reach EOF.
+            for reader in readers:
+                reader.join(timeout=0.5)
+            while True:
+                try:
+                    name, chunk = chunks.get_nowait()
+                except queue.Empty:
+                    break
+                truncated = _take(name, chunk, truncated)
+            for _name, pipe in pipes:
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
+            exit_code = process.wait()
+        finally:
             if process.poll() is None:
                 self._stop(process)
             process.wait()
