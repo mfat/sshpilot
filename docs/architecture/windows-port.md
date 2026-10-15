@@ -9,7 +9,9 @@ and open work are at the end. User setup lives in
 port works, what stood in the way, and why each piece is built the way it is.
 The proposed decisions for each layer (runtime stack, PTY, emulator core,
 connection sharing) and their roadmap are in
-[windows-decisions.md](windows-decisions.md).
+[windows-decisions.md](windows-decisions.md). The checklist for keeping
+Windows working while developing on Linux is
+[development/windows-compatibility.md](../development/windows-compatibility.md).
 
 ## Ground rules
 
