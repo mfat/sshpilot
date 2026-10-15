@@ -233,10 +233,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command is None and sys.platform == "win32":
         # The daemon launches every OpenSSH child; OpenSSH for Windows refuses
-        # config files under a directory Python created with mode 0o700.
-        from sshpilot.platform.windows.acl import drop_owner_rights
+        # keys and configs under a directory Python created with mode 0o700
+        # (OWNER RIGHTS). Earlier versions created both of these that way.
+        from sshpilot.platform.windows.acl import repair_owner_rights
 
-        drop_owner_rights(get_config_dir())
+        for directory in (get_config_dir(), get_ssh_dir()):
+            repair_owner_rights(directory)
     if args.command is None:
         from .server import DaemonServer
 

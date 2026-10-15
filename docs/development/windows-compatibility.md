@@ -177,7 +177,10 @@ for Windows exits with code 255 and prints nothing. See
   writes inside inherits it, and OpenSSH refuses it ("Bad permissions. Try
   removing permissions for user: OWNER RIGHTS"). Create directories that hold
   keys or `authorized_keys` with `platform.fs.makedirs_private()`. App-private
-  directories that OpenSSH never reads may keep `mode=0o700`.
+  directories that OpenSSH never reads may keep `mode=0o700`. At startup the
+  daemon runs `platform.windows.acl.repair_owner_rights()` on the config
+  directory and `~/.ssh`, which removes the entry left by earlier versions
+  (it reads the ACL directly and starts `icacls` only when the entry is there).
 - File locks go through `platform/locking.py`, not `fcntl.flock`.
 - A file that is open cannot be deleted or replaced on Windows. Close it
   first.

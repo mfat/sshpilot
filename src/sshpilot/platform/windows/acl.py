@@ -165,3 +165,93 @@ def chmod_private(path: os.PathLike, mode: int = 0o600) -> None:
         restrict_to_current_user(path)
     else:
         os.chmod(path, mode)
+
+
+_OWNER_RIGHTS_SID = "S-1-3-4"
+
+
+def has_owner_rights_entry(path: os.PathLike) -> "bool | None":
+    """Whether ``path``'s DACL has an allow entry for OWNER RIGHTS.
+
+    Read through the Win32 security API, so no ``icacls`` process starts.
+    ``None`` when the ACL could not be read (or off Windows).
+    """
+
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+    ]
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.GetAce.restype = wintypes.BOOL
+    advapi32.ConvertStringSidToSidW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
+    advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    advapi32.EqualSid.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    class _AclHeader(ctypes.Structure):
+        _fields_ = [
+            ("AclRevision", ctypes.c_ubyte), ("Sbz1", ctypes.c_ubyte),
+            ("AclSize", ctypes.c_ushort), ("AceCount", ctypes.c_ushort),
+            ("Sbz2", ctypes.c_ushort),
+        ]
+
+    se_file_object = 1
+    dacl_security_information = 0x4
+    access_allowed_ace_type = 0
+    dacl = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    owner_rights = ctypes.c_void_p()
+    status = advapi32.GetNamedSecurityInfoW(
+        os.fspath(path), se_file_object, dacl_security_information,
+        None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor),
+    )
+    if status != 0:
+        return None
+    try:
+        if not dacl.value:
+            return False  # a NULL DACL grants everyone; nothing to remove
+        if not advapi32.ConvertStringSidToSidW(_OWNER_RIGHTS_SID, ctypes.byref(owner_rights)):
+            return None
+        header = _AclHeader.from_address(dacl.value)
+        for index in range(header.AceCount):
+            ace = ctypes.c_void_p()
+            if not advapi32.GetAce(dacl, index, ctypes.byref(ace)):
+                return None
+            ace_type = ctypes.c_ubyte.from_address(ace.value).value
+            if ace_type != access_allowed_ace_type:
+                continue
+            # ACCESS_ALLOWED_ACE: 4-byte header, 4-byte mask, then the SID.
+            if advapi32.EqualSid(ace.value + 8, owner_rights):
+                return True
+        return False
+    finally:
+        if owner_rights.value:
+            kernel32.LocalFree(owner_rights)
+        kernel32.LocalFree(descriptor)
+
+
+def repair_owner_rights(path: os.PathLike) -> bool:
+    """Drop OWNER RIGHTS from ``path`` when it is there.
+
+    For directories an earlier run (or another Python tool) created with
+    ``mode=0o700``: OpenSSH for Windows refuses keys and configs inside them.
+    Starts ``icacls`` only when the entry is present, or when the ACL could
+    not be read. A missing directory or a non-Windows host is left alone.
+    """
+
+    if sys.platform != "win32" or not os.path.isdir(path):
+        return True
+    if has_owner_rights_entry(path) is False:
+        return True
+    return drop_owner_rights(path)
