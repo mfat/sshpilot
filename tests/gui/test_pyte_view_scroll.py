@@ -10,7 +10,7 @@ Gtk, _Adw, _Gio, GLib = requires_gui()
 
 from gi.repository import Gdk  # noqa: E402
 
-from sshpilot.terminal_backend_pyte import PyteTerminalView  # noqa: E402
+from sshpilot.terminal_backend_pyte import _PAD_X, _PAD_Y, PyteTerminalView  # noqa: E402
 
 pytestmark = pytest.mark.gui
 
@@ -110,9 +110,10 @@ def test_plain_text_link_under_the_pointer(model, monkeypatch):
     assert backend.supports_feature("hyperlinks")
     row = view.model.history_length  # first screen row
     column = len("docs at ") + 4
-    x = (column + 0.5) * view._cell_w
-    y = 0.5 * view._cell_h
+    # Pointer coordinates include the view's padding around the text grid.
+    x = _PAD_X + (column + 0.5) * view._cell_w
+    y = _PAD_Y + 0.5 * view._cell_h
     assert view._cell_at(x, y) == (row, column)
     assert backend.hyperlink_at(x, y) == "https://example.org/guide"
-    assert backend.hyperlink_at(0.5 * view._cell_w, y) is None
+    assert backend.hyperlink_at(_PAD_X + 0.5 * view._cell_w, y) is None
     backend.destroy()
