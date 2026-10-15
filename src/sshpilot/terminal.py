@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
 from .platform_utils import is_flatpak, is_macos, is_windows
-from .platform.process import pid_alive
+from .platform.process import kill_process_tree, pid_alive
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
@@ -192,23 +192,7 @@ def _app_is_quitting(widget) -> bool:
 
 def _terminate_process_tree_windows(pid) -> bool:
     """End a local shell and its children on Windows (no process groups)."""
-    import psutil
-
-    try:
-        process = psutil.Process(int(pid))
-    except (psutil.NoSuchProcess, ValueError):
-        return True
-    try:
-        children = process.children(recursive=True)
-    except psutil.Error:
-        children = []
-    for member in [process, *children]:
-        try:
-            member.kill()
-        except psutil.Error:
-            pass
-    psutil.wait_procs([process, *children], timeout=2)
-    return True
+    return kill_process_tree(pid, wait_timeout=2)
 
 
 def sanitize_local_shell_env(env):

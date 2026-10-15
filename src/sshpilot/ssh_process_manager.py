@@ -17,7 +17,7 @@ import time
 import weakref
 import logging
 
-from .platform.process import pid_alive
+from .platform.process import kill_process_tree, pid_alive
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +111,7 @@ class SSHProcessManager:
     def _terminate_process_by_pid(self, pid):
         """Terminate a process by PID"""
         if sys.platform == "win32":
-            try:
-                import psutil
-
-                process = psutil.Process(pid)
-                for member in [*process.children(recursive=True), process]:
-                    try:
-                        member.kill()
-                    except psutil.Error:
-                        pass
-                return True
-            except Exception:
-                return False
+            return kill_process_tree(pid)
         try:
             # Always try process group first
             pgid = os.getpgid(pid)

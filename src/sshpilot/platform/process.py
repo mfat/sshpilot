@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import Any, Dict, TypeVar, Union
+from typing import Any, Dict, Optional, TypeVar, Union
 
 _T = TypeVar("_T")
 
@@ -56,6 +56,50 @@ def pid_alive(pid: int, *, on_error: _T) -> Union[bool, _T]:
         return False
     except OSError:
         return on_error
+    return True
+
+
+def kill_process_tree(pid: int, *, wait_timeout: Optional[float] = None) -> bool:
+    """Kill *pid* and all its descendants at once, through psutil.
+
+    For Windows, which has no process groups to signal; POSIX callers keep
+    their own ``killpg`` sequences. Children are killed before the parent,
+    and one member that cannot be killed does not stop the rest.
+
+    With *wait_timeout*, waits up to that long for the members to exit.
+    Returns ``True`` when the tree was killed or was already gone, ``False``
+    when the process could not be inspected (access denied, a bad pid).
+    Without psutil, only *pid* itself is terminated.
+    """
+    try:
+        import psutil
+    except ImportError:
+        try:
+            os.kill(int(pid), 9)  # TerminateProcess on Windows
+        except (OSError, ValueError):
+            return False
+        return True
+    try:
+        parent = psutil.Process(int(pid))
+    except psutil.NoSuchProcess:
+        return True
+    except (psutil.Error, ValueError):
+        return False
+    try:
+        children = parent.children(recursive=True)
+    except psutil.Error:
+        children = []
+    members = [*children, parent]
+    for member in members:
+        try:
+            member.kill()
+        except psutil.Error:
+            pass
+    if wait_timeout:
+        try:
+            psutil.wait_procs(members, timeout=wait_timeout)
+        except psutil.Error:
+            pass
     return True
 
 

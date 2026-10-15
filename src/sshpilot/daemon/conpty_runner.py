@@ -28,6 +28,7 @@ from typing import Callable, Mapping, Optional, Sequence
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.sessions import SessionExitInfo
 from sshpilot.api.models.terminal import TerminalDimensions
+from sshpilot.platform.process import kill_process_tree
 
 from .process_registry import (
     KIND_SESSION,
@@ -106,24 +107,7 @@ def _environment_block(environment: Mapping[str, str]) -> str:
 def _terminate_tree(pid: int) -> None:
     """Kill ``pid`` and its descendants (ProxyCommand/ProxyJump helpers)."""
 
-    try:
-        import psutil
-    except ImportError:
-        try:
-            os.kill(pid, 9)
-        except OSError:
-            pass
-        return
-    try:
-        parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
-    except psutil.Error:
-        return
-    for process in (*children, parent):
-        try:
-            process.kill()
-        except psutil.Error:
-            continue
+    kill_process_tree(pid)
 
 
 class ConPtyProcessHandle:

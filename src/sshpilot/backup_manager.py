@@ -22,6 +22,7 @@ from .platform.paths import get_config_dir, get_ssh_dir, known_hosts_path_for
 from .core.settings import CONFIG_VERSION
 from .platform.locking import settings_transaction_lock
 from .platform.detect import is_flatpak
+from .platform.windows.acl import chmod_private
 
 if TYPE_CHECKING:
     from .config import Config
@@ -1068,7 +1069,8 @@ class BackupManager:
                     f.write(base64.b64decode(raw.encode('ascii')))
                 private_mode = int(item.get('mode') or 0o600) & 0o777
                 # Private keys must never be restored with group/other access.
-                os.chmod(path, (private_mode & 0o600) or 0o600)
+                # On Windows OpenSSH checks the ACL, not mode bits.
+                chmod_private(path, (private_mode & 0o600) or 0o600)
 
                 # The matching .pub: also never overwrite an existing file.
                 public_path = _rebase_home_path(

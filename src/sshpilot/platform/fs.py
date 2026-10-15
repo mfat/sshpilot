@@ -6,6 +6,23 @@ import sys
 from typing import Optional
 
 
+def makedirs_private(path: "os.PathLike[str] | str") -> None:
+    """``os.makedirs(path, mode=0o700, exist_ok=True)``, safe for OpenSSH.
+
+    For directories holding files OpenSSH for Windows checks (private keys,
+    ``authorized_keys``). Since Python 3.13, ``mkdir(mode=0o700)`` on Windows
+    gives the new directory a protected ACL with an ``OWNER RIGHTS`` entry;
+    files Python writes inside inherit it, and OpenSSH then refuses them
+    ("Bad permissions. Try removing permissions for user: OWNER RIGHTS").
+    Windows therefore creates the directory without a mode, so it inherits
+    the user profile's owner-only ACL.
+    """
+    if sys.platform == "win32":
+        os.makedirs(path, exist_ok=True)
+    else:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+
+
 def fsync_directory(directory: "os.PathLike[str] | str") -> None:
     """Make a completed rename or unlink inside *directory* durable.
 

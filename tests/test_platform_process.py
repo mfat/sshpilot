@@ -86,3 +86,87 @@ def test_windows_cmd_command_line_keeps_inner_quotes(monkeypatch):
 def test_windows_cmd_command_line_defaults_to_cmd(monkeypatch):
     monkeypatch.delenv("COMSPEC", raising=False)
     assert process.windows_cmd_command_line("dir") == '"cmd.exe" /d /s /c "dir"'
+
+
+class _FakePsutilError(Exception):
+    pass
+
+
+class _FakeNoSuchProcess(_FakePsutilError):
+    pass
+
+
+class _FakeAccessDenied(_FakePsutilError):
+    pass
+
+
+def _fake_psutil(tree, *, kill_fails=(), lookup_error=None, waited=None):
+    """psutil stand-in: *tree* maps a pid to its descendants."""
+    killed = []
+
+    class Proc:
+        def __init__(self, pid):
+            if lookup_error is not None:
+                raise lookup_error
+            if pid not in tree and not any(pid in kids for kids in tree.values()):
+                raise _FakeNoSuchProcess()
+            self.pid = pid
+
+        def children(self, recursive=False):
+            return [Proc(child) for child in tree.get(self.pid, ())]
+
+        def kill(self):
+            if self.pid in kill_fails:
+                raise _FakeAccessDenied()
+            killed.append(self.pid)
+
+    def wait_procs(procs, timeout=None):
+        if waited is not None:
+            waited.append((sorted(p.pid for p in procs), timeout))
+        return [], []
+
+    module = types.SimpleNamespace(
+        Process=Proc,
+        Error=_FakePsutilError,
+        NoSuchProcess=_FakeNoSuchProcess,
+        wait_procs=wait_procs,
+    )
+    return module, killed
+
+
+def test_kill_process_tree_kills_children_before_parent(monkeypatch):
+    psutil, killed = _fake_psutil({10: (11, 12)})
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    assert process.kill_process_tree(10) is True
+    assert killed == [11, 12, 10]
+
+
+def test_kill_process_tree_continues_past_a_member_it_cannot_kill(monkeypatch):
+    psutil, killed = _fake_psutil({10: (11, 12)}, kill_fails={11})
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    assert process.kill_process_tree(10) is True
+    assert killed == [12, 10]
+
+
+def test_kill_process_tree_gone_pid_is_success(monkeypatch):
+    psutil, killed = _fake_psutil({})
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    assert process.kill_process_tree(10) is True
+    assert killed == []
+
+
+def test_kill_process_tree_uninspectable_pid_is_failure(monkeypatch):
+    psutil, killed = _fake_psutil({10: ()}, lookup_error=_FakeAccessDenied())
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    assert process.kill_process_tree(10) is False
+    assert killed == []
+
+
+def test_kill_process_tree_waits_only_when_asked(monkeypatch):
+    waited = []
+    psutil, _ = _fake_psutil({10: (11,)}, waited=waited)
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    process.kill_process_tree(10)
+    assert waited == []
+    process.kill_process_tree(10, wait_timeout=2)
+    assert waited == [([10, 11], 2)]

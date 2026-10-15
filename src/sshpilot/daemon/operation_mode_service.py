@@ -23,6 +23,7 @@ from sshpilot.core.settings.store import (
     settings_transaction_lock,
 )
 from sshpilot.core.settings.defaults import CONFIG_VERSION, get_default_config
+from sshpilot.platform.fs import makedirs_private
 from sshpilot.core.settings.migration import ensure_config_defaults
 
 logger = logging.getLogger(__name__)
@@ -345,7 +346,7 @@ class OperationModeService:
         self, request: SetOperationModeRequest, target: Path
     ) -> tuple[bool, bool]:
         parent = target.parent
-        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        makedirs_private(parent)
         if request.mode is OperationMode.ISOLATED:
             os.chmod(parent, 0o700)
         if target.is_symlink():

@@ -38,7 +38,7 @@ from ...ssh_config_document import (
     is_concrete_host_block,
 )
 from ...ssh_config_formatter import merged_block_lines
-from ...platform.fs import fsync_directory
+from ...platform.fs import fsync_directory, makedirs_private
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, generate_duplicate_nickname
 from .ssh_config_loader import (
@@ -120,7 +120,7 @@ def _atomic_write_text(
         raise _store_error("Refusing to write through a symbolic link")
 
     try:
-        os.makedirs(directory, mode=0o700, exist_ok=True)
+        makedirs_private(directory)
     except OSError as exc:
         raise _store_error("The connection configuration could not be saved") from exc
 

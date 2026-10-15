@@ -51,6 +51,8 @@ that rule and do affect Linux. Treat them as product decisions:
 | Shell for user commands | `sh -lc` | `cmd /d /s /c` | `platform/process.windows_cmd_command_line()` |
 | Is a pid alive? | `os.kill(pid, 0)` | `psutil.pid_exists` | `platform/process.pid_alive()` |
 | Directory fsync | `os.fsync` on the directory | skipped | `platform/fs.fsync_directory()` |
+| Kill a process tree | `killpg` (each caller its own sequence) | psutil, children first | `platform/process.kill_process_tree()` |
+| Directory for keys / `authorized_keys` | `makedirs(mode=0o700)` | `makedirs()` (inherit the profile ACL) | `platform/fs.makedirs_private()` |
 | Platform checks | | | `platform/detect.py` (`is_windows`, `is_macos`, `is_flatpak`), GLib-free |
 | External terminal | desktop default / Terminal.app | Windows Terminal, PowerShell, cmd | `system_terminal.py` |
 
@@ -79,8 +81,9 @@ imports it. The same applies to `Vte`. Use
   alive, the terminal tab as gone, orphan cleanup leaves it alone with
   `None`). The architecture test rejects `os.kill(x, 0)` anywhere else.
 - `os.killpg`, `os.getpgid`, `os.setsid`, `os.fork`, `SIGKILL`, `SIGHUP`,
-  `SIGALRM` and `SIGCHLD` are POSIX only. To end a process and its children,
-  use psutil on Windows (see `conpty_runner`). Write
+  `SIGALRM` and `SIGCHLD` are POSIX only. To end a process and its children
+  on Windows, use `platform.process.kill_process_tree()`; POSIX callers keep
+  their own `killpg` sequences, which differ on purpose. Write
   `getattr(signal, "SIGKILL", signal.SIGTERM)` when you need a hard kill
   signal, and use `threading.Timer` instead of `signal.alarm`.
 - `start_new_session=True` is ignored on Windows. Use
@@ -167,7 +170,14 @@ for Windows exits with code 255 and prints nothing. See
   convert.
 - `chmod` does nothing useful on Windows, and OpenSSH rejects keys and config
   files that others can read. Use `platform/windows/acl.py` for files that
-  must be private.
+  must be private: `chmod_private()` for a private key or `authorized_keys`
+  that Python writes (keys made by `ssh-keygen` already carry a good ACL).
+- Since Python 3.13, `mkdir(mode=0o700)` / `makedirs(mode=0o700)` on Windows
+  gives the directory an ACL with an `OWNER RIGHTS` entry. A key Python then
+  writes inside inherits it, and OpenSSH refuses it ("Bad permissions. Try
+  removing permissions for user: OWNER RIGHTS"). Create directories that hold
+  keys or `authorized_keys` with `platform.fs.makedirs_private()`. App-private
+  directories that OpenSSH never reads may keep `mode=0o700`.
 - File locks go through `platform/locking.py`, not `fcntl.flock`.
 - A file that is open cannot be deleted or replaced on Windows. Close it
   first.

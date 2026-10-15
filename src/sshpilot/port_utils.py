@@ -10,6 +10,8 @@ import logging
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Any
 from gettext import gettext as _
 
+from .platform.process import hidden_console_kwargs
+
 # Try to import psutil, fallback to subprocess methods if not available
 try:
     import psutil
@@ -271,7 +273,8 @@ class PortChecker:
         try:
             # Try netstat command first
             result = subprocess.run(['netstat', '-tlnp'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10,
+                                  **hidden_console_kwargs())
             
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):

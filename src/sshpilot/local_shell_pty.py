@@ -27,6 +27,8 @@ import sys
 import threading
 from typing import Callable, Mapping, Optional, Sequence
 
+from .platform.process import kill_process_tree
+
 logger = logging.getLogger(__name__)
 
 OutputCallback = Callable[[bytes], None]
@@ -283,12 +285,8 @@ class _ConPtyImpl(_Impl):
 
     def terminate(self) -> None:
         try:
-            import psutil
-
-            process = psutil.Process(int(self._pty.pid))
-            for child in process.children(recursive=True):
-                child.kill()
-            process.kill()
+            if not kill_process_tree(int(self._pty.pid)):
+                logger.debug("Local shell terminate could not inspect pid %s", self._pty.pid)
         except Exception:
             logger.debug("Local shell terminate failed", exc_info=True)
 
