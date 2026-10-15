@@ -406,8 +406,13 @@ def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch)
         close_managed_handlers()
 
 
-def _exited_child_launcher(tmp_path, monkeypatch, *, owner_alive, connects):
-    """A launcher whose child has exited, facing a scripted socket state."""
+def _exited_child_launcher(
+    tmp_path, monkeypatch, *, owner_alive, connects, not_ready=ErrorCode.DAEMON_UNAVAILABLE
+):
+    """A launcher whose child has exited, facing a scripted socket state.
+
+    ``_connect`` fails with ``not_ready`` until attempt ``connects``.
+    """
     import sshpilot.daemon.launcher as launcher_module
 
     class _ExitedProcess:
@@ -423,17 +428,19 @@ def _exited_child_launcher(tmp_path, monkeypatch, *, owner_alive, connects):
     monkeypatch.setattr(
         launcher_module,
         "probe_socket_owner",
-        lambda _p, **_kw: (owner_alive, 4242 if owner_alive else None),
+        lambda _p, **kw: (probes.append(kw), (owner_alive, 4242 if owner_alive else None))[1],
     )
     attempts = []
+    probes = []
 
     def _connect(_timeout):
         attempts.append(1)
         if len(attempts) < connects:
-            raise SshPilotError(ErrorCode.DAEMON_UNAVAILABLE, "not ready yet")
+            raise SshPilotError(not_ready, "not ready yet")
         return "client"
 
     launcher._connect = _connect
+    launcher.probes = probes
     return launcher, _ExitedProcess(), attempts
 
 
@@ -457,6 +464,48 @@ def test_an_exited_child_with_no_live_socket_owner_still_fails_fast(tmp_path, mo
         launcher._wait_until_ready(process)
     assert caught.value.reason is DaemonStartupFailure.PROCESS_EXITED
     assert time.monotonic() - started < 1
+
+
+def test_a_lost_race_waits_out_a_winner_that_accepts_but_does_not_serve_yet(
+    tmp_path, monkeypatch
+):
+    """The winner has bound its socket: connects complete, handshakes fail."""
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path,
+        monkeypatch,
+        owner_alive=True,
+        connects=6,
+        not_ready=ErrorCode.TRANSPORT_CLOSED,
+    )
+
+    assert launcher._wait_until_ready(process) == "client"
+    assert len(attempts) == 6
+
+
+def test_a_lost_race_against_an_incompatible_winner_fails_at_once(tmp_path, monkeypatch):
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path,
+        monkeypatch,
+        owner_alive=True,
+        connects=99,
+        not_ready=ErrorCode.API_VERSION_MISMATCH,
+    )
+
+    with pytest.raises(DaemonLaunchError) as caught:
+        launcher._wait_until_ready(process)
+    assert caught.value.reason is DaemonStartupFailure.API_VERSION_MISMATCH
+    assert len(attempts) == 1
+
+
+def test_a_lost_race_probes_without_the_windows_refusal_settle(tmp_path, monkeypatch):
+    """A crashed child must fail on the short probe, not a ~3 s settle."""
+    launcher, process, _attempts = _exited_child_launcher(
+        tmp_path, monkeypatch, owner_alive=False, connects=99
+    )
+
+    with pytest.raises(DaemonLaunchError):
+        launcher._wait_until_ready(process)
+    assert launcher.probes and all(kw.get("settle") is False for kw in launcher.probes)
 
 
 def test_early_process_exit_is_bounded_and_classified(tmp_path):

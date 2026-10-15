@@ -726,27 +726,37 @@ class DaemonLauncher:
                 ) from error
             saw_socket = saw_socket or socket_exists
 
-            if socket_exists:
+            # Once our child has exited, a daemon can only be one that another
+            # launch started at the same moment (two app launches, each
+            # starting the daemon early): ours lost the socket to it.
+            exited = process.poll() is not None
+            if socket_exists or exited:
                 try:
                     return self._connect(min(self.probe_timeout, remaining))
                 except SshPilotError as error:
                     if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
-                        raise self._classify_handshake_error(error) from error
+                        failure = self._classify_handshake_error(error)
+                        if (
+                            not exited
+                            or failure.reason in PROVEN_INCOMPATIBLE_FAILURES
+                        ):
+                            raise failure from error
+                        # Connected, but the winner is not serving yet: the
+                        # same ambiguity _await_ambiguous_peer waits out.
+                        # Keep waiting for it until the deadline.
+                        saw_socket = True
+                        threading.Event().wait(min(self.poll_interval, remaining))
+                        continue
 
-            if process.poll() is not None:
-                # A racing launcher may have won even though this child exited.
-                try:
-                    return self._connect(min(self.probe_timeout, remaining))
-                except SshPilotError as error:
-                    if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
-                        raise self._classify_handshake_error(error) from error
-                # Our child lost the socket to a daemon that another launch
-                # started at the same moment (two app launches, each starting
-                # the daemon early) and that one is still coming up: wait for
-                # it until the deadline instead of reporting a failure. A
-                # crashed child leaves no live owner and still fails fast.
+            if exited:
+                # The winner may still be binding its socket: wait for it
+                # until the deadline instead of reporting a failure. A crashed
+                # child leaves no live owner and still fails fast; a short,
+                # unsettled probe keeps that fast on Windows too.
                 accepting, _peer_pid = probe_socket_owner(
-                    self.socket_path, timeout=min(self.probe_timeout, remaining)
+                    self.socket_path,
+                    timeout=min(self.probe_timeout, remaining),
+                    settle=False,
                 )
                 if not accepting:
                     raise DaemonLaunchError(DaemonStartupFailure.PROCESS_EXITED)
