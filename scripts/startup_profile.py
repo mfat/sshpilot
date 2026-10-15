@@ -4,8 +4,10 @@
 Two reports:
 
 ``imports`` (default)
-    Import time and dataclass count per module for the GUI entry
-    (``sshpilot.main`` + ``sshpilot.window``, after GTK/Adwaita) and for the
+    Import time and dataclass count per module for the GUI entry (what
+    run.py imports before GTK, GTK/Adwaita, then ``sshpilot.main`` and
+    ``sshpilot.window``; the API client stack the early daemon start imports
+    on its own thread is not included) and for the
     daemon (``sshpilot.daemon.server``). Each target is imported in a fresh
     interpreter run with ``-X importtime``; ``dataclasses._process_class`` is
     wrapped to count and time dataclass creation per defining module.
@@ -40,11 +42,16 @@ SRC = ROOT / "src"
 
 TARGETS = {
     "gui": (
+        "_mark('gtk')\n"
+        # What run.py imports before GTK (early daemon start, CLI pre-parse).
+        "import sshpilot.startup_timing\n"
+        "import sshpilot.daemon_prelaunch\n"
+        "import sshpilot.cli_connect\n"
+        "import sshpilot.i18n\n"
         "import gi\n"
         "gi.require_version('Gtk', '4.0')\n"
         "gi.require_version('Adw', '1')\n"
         "from gi.repository import Gtk, Adw\n"
-        "_mark('gtk')\n"
         "import sshpilot.main\n"
         "import sshpilot.window\n"
     ),

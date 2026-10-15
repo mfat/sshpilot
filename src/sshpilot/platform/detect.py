@@ -10,17 +10,20 @@ must follow the real interpreter, not a patched answer.
 from __future__ import annotations
 
 import os
-import platform
+import sys
+
+# ``sys.platform`` rather than ``platform.system()``: on Windows the latter
+# runs a WMI query the first time (~35 ms during GUI startup).
 
 
 def is_macos() -> bool:
     """Return True if running on macOS."""
-    return platform.system() == "Darwin"
+    return sys.platform == "darwin"
 
 
 def is_windows() -> bool:
     """Return True if running on Windows."""
-    return platform.system() == "Windows"
+    return sys.platform == "win32"
 
 
 def is_flatpak() -> bool:

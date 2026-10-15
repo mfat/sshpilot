@@ -466,6 +466,7 @@ class SshPilotApplication(Adw.Application):
         GLib.idle_add(lambda: (self._schedule_startup_diagnostics(), False)[1])
 
         logger.info("sshPilot application initialized")
+        startup_timing.mark("app_initialized")
 
     def do_startup(self):
         """Install the native macOS menubar once the application is registered.
@@ -480,6 +481,7 @@ class SshPilotApplication(Adw.Application):
         explicitly), then the menubar is installed exactly once. Non-macOS
         builds never call ``install_menubar``.
         """
+        startup_timing.mark("app_startup_begun")
         Adw.Application.do_startup(self)
 
         # The saved light/dark choice has to be set before on_activate builds
@@ -613,6 +615,7 @@ class SshPilotApplication(Adw.Application):
 
     def on_activate(self, app):
         """Handle application activation"""
+        startup_timing.mark("app_activated")
         self._load_app_style()
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
@@ -2506,6 +2509,7 @@ def main():
     # running copy; without a distinct application id GApplication would just
     # hand the launch off to that copy. Same shape as SSHPILOT_SSH_DIR: an
     # environment hook the app reads, no extra production surface.
+    startup_timing.mark("main_entered")
     app = SshPilotApplication(
         verbose=verbose,
         quiet=opts.quiet,

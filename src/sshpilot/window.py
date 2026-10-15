@@ -52,11 +52,9 @@ from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
 from .dialog_focus import capture_toplevels, mark_new_dialog_default_visible
-from .key_manager import KeyManager
 from sshpilot.api.models.keys import KeyStoreScope
 from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
 from sshpilot.api.models.pre_command import PRE_COMMAND_METADATA_KEYS
-from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
     get_connection_host,
@@ -133,6 +131,21 @@ from .plugins.api import Capability as PluginCapability
 from .api.capabilities import Capability as ApiCapability
 from .plugins.registry import capabilities_for
 logger = logging.getLogger(__name__)
+
+
+def _new_key_manager(client, scope):
+    # key_manager loads the whole API client stack; it is first needed once
+    # the daemon confirms its operation mode, not to build the window.
+    from .key_manager import KeyManager
+
+    return KeyManager(client, scope)
+
+
+def check_for_updates_async(*args, **kwargs):
+    # update_checker imports urllib; the check itself runs after startup.
+    from .update_checker import check_for_updates_async as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def _describe_daemon_start_failure(reason: str) -> str:
@@ -576,7 +589,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # semantic mode; never construct a DEFAULT manager during a delayed
         # isolated-mode status response.
         self.key_manager = (
-            KeyManager(self.client, self._key_scope)
+            _new_key_manager(self.client, self._key_scope)
             if self._confirmed_operation_mode is not None
             else None
         )
@@ -797,7 +810,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         exc_info=True,
                     )
         if self.client is not None:
-            self.key_manager = KeyManager(self.client, self._key_scope)
+            self.key_manager = _new_key_manager(self.client, self._key_scope)
 
     def _build_secrets_controller(self):
         """Build the daemon-backed secrets controller for the frontend.

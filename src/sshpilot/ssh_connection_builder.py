@@ -15,13 +15,29 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
-from .askpass_utils import (
-    get_ssh_env_with_askpass,
-    ensure_key_in_agent,
-    lookup_passphrase,
-)
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
+
+
+# askpass_utils pulls in secret storage and GLib; it is only needed to build
+# a real SSH command, not to import this module (the CLI pre-parse does that
+# before GTK loads). These stay module attributes, so tests can patch them.
+def get_ssh_env_with_askpass(*args, **kwargs):
+    from .askpass_utils import get_ssh_env_with_askpass as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def ensure_key_in_agent(*args, **kwargs):
+    from .askpass_utils import ensure_key_in_agent as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def lookup_passphrase(*args, **kwargs):
+    from .askpass_utils import lookup_passphrase as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def effective_username(connection) -> str:
