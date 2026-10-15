@@ -238,6 +238,7 @@ class DaemonLauncher:
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
         verbose: Optional[bool] = None,
         quiet: Optional[bool] = None,
+        before_spawn: Optional[Callable[[], object]] = None,
     ) -> None:
         if startup_timeout is None:
             startup_timeout = (
@@ -254,6 +255,10 @@ class DaemonLauncher:
         self.executable = executable or _frozen_console_executable() or sys.executable
         self._environment = environment
         self._popen = popen
+        # Runs just before a daemon is spawned (and its environment copied):
+        # the early start uses it to wait until this process has exported
+        # everything the daemon inherits, without delaying the probe.
+        self._before_spawn = before_spawn
         self._lock = threading.Lock()
         if verbose is None:
             env = environment if environment is not None else os.environ
@@ -352,6 +357,8 @@ class DaemonLauncher:
                     *(("--verbose",) if self._verbose else ()),
                     *(("--quiet",) if self._quiet else ()),
                 )
+            if self._before_spawn is not None:
+                self._before_spawn()
             # Begin verbose forwarding before the child exists so startup
             # failures still contribute their daemon diagnostics.
             self._ensure_daemon_log_forwarder()
@@ -740,7 +747,16 @@ class DaemonLauncher:
                 except SshPilotError as error:
                     if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
                         raise self._classify_handshake_error(error) from error
-                raise DaemonLaunchError(DaemonStartupFailure.PROCESS_EXITED)
+                # Our child lost the socket to a daemon that another launch
+                # started at the same moment (two app launches, each starting
+                # the daemon early) and that one is still coming up: wait for
+                # it until the deadline instead of reporting a failure. A
+                # crashed child leaves no live owner and still fails fast.
+                accepting, _peer_pid = probe_socket_owner(
+                    self.socket_path, timeout=min(self.probe_timeout, remaining)
+                )
+                if not accepting:
+                    raise DaemonLaunchError(DaemonStartupFailure.PROCESS_EXITED)
 
             threading.Event().wait(min(self.poll_interval, remaining))
 

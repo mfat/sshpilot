@@ -406,6 +406,59 @@ def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch)
         close_managed_handlers()
 
 
+def _exited_child_launcher(tmp_path, monkeypatch, *, owner_alive, connects):
+    """A launcher whose child has exited, facing a scripted socket state."""
+    import sshpilot.daemon.launcher as launcher_module
+
+    class _ExitedProcess:
+        def poll(self):
+            return 1
+
+    launcher = DaemonLauncher(
+        socket_path=tmp_path / "runtime" / "sshpilotd.sock",
+        startup_timeout=5,
+        poll_interval=0.01,
+    )
+    monkeypatch.setattr(launcher_module, "validate_client_socket_path", lambda _p: True)
+    monkeypatch.setattr(
+        launcher_module,
+        "probe_socket_owner",
+        lambda _p, **_kw: (owner_alive, 4242 if owner_alive else None),
+    )
+    attempts = []
+
+    def _connect(_timeout):
+        attempts.append(1)
+        if len(attempts) < connects:
+            raise SshPilotError(ErrorCode.DAEMON_UNAVAILABLE, "not ready yet")
+        return "client"
+
+    launcher._connect = _connect
+    return launcher, _ExitedProcess(), attempts
+
+
+def test_a_child_that_lost_the_launch_race_waits_for_the_winner(tmp_path, monkeypatch):
+    """Two launches each started a daemon; ours lost the socket and exited."""
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path, monkeypatch, owner_alive=True, connects=6
+    )
+
+    assert launcher._wait_until_ready(process) == "client"
+    assert len(attempts) == 6
+
+
+def test_an_exited_child_with_no_live_socket_owner_still_fails_fast(tmp_path, monkeypatch):
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path, monkeypatch, owner_alive=False, connects=99
+    )
+
+    started = time.monotonic()
+    with pytest.raises(DaemonLaunchError) as caught:
+        launcher._wait_until_ready(process)
+    assert caught.value.reason is DaemonStartupFailure.PROCESS_EXITED
+    assert time.monotonic() - started < 1
+
+
 def test_early_process_exit_is_bounded_and_classified(tmp_path):
     class _ExitedProcess:
         def poll(self):
