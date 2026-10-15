@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import ntpath
 import os
 import shlex
 import shutil
@@ -265,7 +266,8 @@ def _open_windows_terminal(
     launch_environment: Dict[str, str],
 ) -> bool:
     new_console = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
-    name = os.path.basename(terminal_command[0]).lower()
+    # ntpath splits on both separators; it is os.path on Windows anyway.
+    name = ntpath.basename(terminal_command[0]).lower()
     if not name.endswith('.exe'):
         name += '.exe'
 

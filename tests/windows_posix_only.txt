@@ -47,8 +47,6 @@ tests/api/test_key_models.py::test_key_summary_has_no_key_content_fields  # POSI
 tests/api/test_key_models.py::test_repr_does_not_expose_paths  # POSIX paths in fixtures
 tests/architecture/test_asbru_i18n_boundary.py::test_asbru_backend_has_no_gettext_or_finished_summary  # platform default encoding
 tests/architecture/test_asbru_i18n_boundary.py::test_window_uses_presenter_for_every_asbru_message_field  # platform default encoding
-tests/architecture/test_frontend_closure.py::test_active_frontend_has_no_direct_backend_process_or_secret_ownership  # assumes POSIX behaviour (reviewed by sample)
-tests/architecture/test_frontend_closure.py::test_plugin_gap_identities_are_still_exactly_deferred  # assumes POSIX behaviour (reviewed by sample)
 tests/architecture/test_login_profile_i18n_boundary.py::test_dialogs_present_errors_and_previews_through_the_presenter  # platform default encoding
 tests/architecture/test_plugin_i18n_boundary.py::test_frontend_gettext_owners_are_in_potfiles  # path separators
 tests/core/test_connection_identity_salvage.py::test_a_refused_save_says_why_every_time[<lambda>-symbolic link]  # path separators
@@ -77,7 +75,6 @@ tests/core/test_connection_state_file.py::test_read_refuses_symlink  # POSIX-onl
 tests/core/test_connection_state_file.py::test_symlink_error_does_not_contain_path  # POSIX-only API
 tests/core/test_connection_state_file.py::test_write_refuses_symlink  # POSIX-only API
 tests/core/test_connection_state_file.py::test_written_file_is_mode_0600_for_new_files  # POSIX file modes
-tests/core/test_dependency_boundary.py::test_daemon_imports_only_allowed_edges  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_known_hosts_file_io.py::test_new_write_creates_with_0644  # POSIX file modes
 tests/core/test_known_hosts_file_io.py::test_symlink_error_has_no_path  # POSIX-only API
 tests/core/test_known_hosts_file_io.py::test_write_converts_parent_fsync_errors  # assumes POSIX behaviour (reviewed by sample)
@@ -193,7 +190,6 @@ tests/daemon/test_pty_child.py::test_main_reports_launch_failed_when_exec_target
 tests/daemon/test_sftp_file_contract.py::test_local_authorized_keys_read_is_bounded_and_revisioned  # path separators
 tests/daemon/test_sftp_file_contract.py::test_local_concurrent_same_revision_replacements_serialize  # path separators
 tests/daemon/test_sftp_file_contract.py::test_local_replace_is_atomic_secure_and_backed_up  # path separators
-tests/daemon/test_sftp_session_death_stuck_tab.py::test_dead_connection_fails_service_and_signals_the_tab  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_shutdown_verification.py::test_a_daemon_that_releases_its_socket_but_lives_is_still_a_survivor  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_shutdown_verification.py::test_a_live_daemon_socket_blocks_termination  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_shutdown_verification.py::test_an_orphan_ignoring_sigterm_is_killed  # POSIX-only API

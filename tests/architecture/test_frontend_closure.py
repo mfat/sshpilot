@@ -50,6 +50,7 @@ FRONTEND_LOCAL_SUBPROCESS = frozenset(
         "platform_utils.py",
         "port_utils.py",
         "startup_info.py",
+        "system_terminal.py",
         "wol.py",
         "sshpilot_agent.py",
         "terminal.py",
@@ -63,7 +64,14 @@ KNOWN_PLUGIN_GAPS = ()
 # command stream implementation remains process-owning.
 PLUGIN_API_BACKEND_IDENTITIES = frozenset()
 PLUGIN_API_LOCAL_FUNCTIONS = frozenset(
-    {"run_local_command", "run_local_command_stream", "_spawn_local_stream"}
+    {
+        "run_local_command",
+        "_run_local_command",
+        "run_local_command_stream",
+        "_spawn_local_stream",
+        # Quotes an argv for the local shell (list2cmdline on Windows).
+        "local_command_line",
+    }
 )
 
 # Stable inventory of the supported PluginContext/facade surface.  This is
@@ -524,7 +532,8 @@ def test_plugin_gap_identities_are_still_exactly_deferred():
         assert function in names
     observed = _plugin_backend_functions(tree)
     assert observed == (
-        PLUGIN_API_BACKEND_IDENTITIES | {"run_local_command"} | {"_spawn_local_stream"}
+        PLUGIN_API_BACKEND_IDENTITIES
+        | {"_run_local_command", "_spawn_local_stream", "local_command_line"}
     )
     assert not PLUGIN_API_BACKEND_IDENTITIES & PLUGIN_API_LOCAL_FUNCTIONS
 

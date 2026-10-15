@@ -56,6 +56,10 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     # uses, tagged with the migration that will remove it.
     ("daemon/connection_launch_provider.py", "sshpilot.ssh_connection_builder"): "M7",
     ("daemon/connection_launch_provider.py", "sshpilot.plugins"): "M8",
+    # The pre-connection step asks the protocol registry whether a backend
+    # opts out (pre_connect = False, a local serial console). Lazy, read-only;
+    # the same M8 edge as the launch provider.
+    ("daemon/ssh_launch.py", "sshpilot.plugins"): "M8",
     ("daemon/connection_secret_provider.py", "sshpilot.credential_model"): "M5",
     ("daemon/connection_secret_provider.py", "sshpilot.secret_storage"): "M5",
     ("daemon/connection_secret_provider.py", "sshpilot.askpass_utils"): "M5",

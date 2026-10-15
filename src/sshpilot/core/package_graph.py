@@ -55,6 +55,7 @@ ALLOWED_EDGES = {
         "sshpilot.platform.windows",  # GI-free Windows ACL helpers
         "sshpilot.platform.process",  # GI-free process helpers
         "sshpilot.platform.detect",  # GI-free platform detection
+        "sshpilot.platform.fs",  # GI-free private dirs and directory fsync
         # Daemon may import selected top-level headless helpers; GTK and
         # GObject adapters are forbidden. Registered GObject-adapter debt is
         # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
