@@ -36,13 +36,9 @@ _clamp_thirdparty_loggers()
 # Module logger — used for any non-class-attached logging below.
 logger = logging.getLogger(__name__)
 
-import gi
-gi.require_version('Adw', '1')
-gi.require_version('Gtk', '4.0')
-try:
-    gi.require_version('Vte', '3.91')
-except ValueError:  # Windows: no VTE; the pyte backend is used instead
-    pass
+from .gi_versions import require_gui_versions
+
+require_gui_versions()
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 
@@ -2518,7 +2514,12 @@ def main():
         fatal_warnings=opts.fatal_warnings,
         application_id=os.environ.get('SSHPILOT_APP_ID') or None,
     )
-    return app.run(sys.argv)
+    status = app.run(sys.argv)
+    # A secondary instance hands its command line to the running window and
+    # returns here without a window of its own: close the daemon client the
+    # early start opened for it. (In the primary the window took it.)
+    daemon_prelaunch.discard()
+    return status
 
 if __name__ == '__main__':
     main()

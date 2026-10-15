@@ -31,9 +31,10 @@ class _FakeLauncher:
     early_outcome: object = None
     instances: list = []
 
-    def __init__(self, *, verbose=False, quiet=False) -> None:
+    def __init__(self, *, verbose=False, quiet=False, before_spawn=None) -> None:
         self.verbose = verbose
         self.quiet = quiet
+        self.before_spawn = before_spawn
         self.calls: list[str] = []
         _FakeLauncher.instances.append(self)
 
@@ -56,7 +57,7 @@ def _fresh_prelaunch(monkeypatch):
     monkeypatch.delenv("SSHPILOT_DAEMON_VERBOSE", raising=False)
     monkeypatch.delenv("SSHPILOT_DAEMON_QUIET", raising=False)
     monkeypatch.setattr("sshpilot.daemon.launcher.DaemonLauncher", _FakeLauncher)
-    monkeypatch.setattr("sshpilot.i18n.apply_language", lambda code=None: "")
+    monkeypatch.setattr(daemon_prelaunch, "_export_language", lambda: None)
     _FakeLauncher.instances = []
     _FakeLauncher.early_outcome = _Result("early")
     yield
@@ -166,3 +167,64 @@ def test_discard_closes_an_untaken_client():
     result = daemon_prelaunch._state.result
     daemon_prelaunch.discard()
     assert result.client.closed is True
+    # Nothing is handed over afterwards.
+    assert daemon_prelaunch.take() is None
+
+
+def test_discard_after_take_leaves_the_client_alone():
+    daemon_prelaunch.start()
+    _started_launcher()
+    taken = daemon_prelaunch.take()
+    daemon_prelaunch.discard()
+    assert taken.client.closed is False
+
+
+def test_discard_never_blocks_and_the_worker_closes_its_late_client():
+    gate = threading.Event()
+    late = _Result("late")
+
+    class _Slow(_FakeLauncher):
+        def connect_or_start_without_eviction(self):
+            gate.wait(5)
+            return late
+
+    import sshpilot.daemon.launcher as launcher_module
+
+    launcher_module.DaemonLauncher = _Slow
+    daemon_prelaunch.start()
+    daemon_prelaunch.discard()  # a secondary instance exiting mid-attempt
+    gate.set()
+    assert daemon_prelaunch._state.done.wait(5)
+    assert late.client.closed is True
+    assert daemon_prelaunch.take() is None
+
+
+def test_spawn_waits_for_the_exported_environment(monkeypatch):
+    """The worker starts at once; only the spawn waits for the language."""
+    exported = threading.Event()
+    release = threading.Event()
+    order = []
+
+    def _export_language():
+        exported.set()
+        release.wait(5)
+        order.append("language exported")
+
+    class _Spawning(_FakeLauncher):
+        def connect_or_start_without_eviction(self):
+            order.append("probe")
+            self.before_spawn()
+            order.append("spawn")
+            return _Result("spawned")
+
+    import sshpilot.daemon.launcher as launcher_module
+
+    monkeypatch.setattr(daemon_prelaunch, "_export_language", _export_language)
+    launcher_module.DaemonLauncher = _Spawning
+    starter = threading.Thread(target=daemon_prelaunch.start)
+    starter.start()
+    assert exported.wait(5)
+    release.set()
+    starter.join(5)
+    assert daemon_prelaunch.take().client.name == "spawned"
+    assert order.index("language exported") < order.index("spawn")

@@ -14,9 +14,15 @@ out to be a secondary instance that only hands its command line to a running
 window. When eviction would be needed, :func:`take` returns ``None`` and the
 window's ordinary ``connect_or_start`` does it, exactly as before. Any other
 failure is re-raised from :func:`take`, so daemon-unavailable handling is the
-same as without the early start.
+same as without the early start. Two launches that both start the daemon are
+settled by the launcher's ready-wait, which waits for whichever daemon won the
+socket. A secondary instance closes the client it opened through
+:func:`discard` when ``main()`` returns.
 
-GTK-free; the launcher itself is imported on the worker thread.
+The worker thread starts first; only the spawn itself waits until this
+process has exported the environment the daemon inherits (verbosity, and the
+interface language, which reads the config directory through GLib and
+therefore comes after the gi version pins).
 """
 from __future__ import annotations
 
@@ -44,6 +50,9 @@ class _Prelaunch:
         self.result = None
         self.error: Optional[BaseException] = None
         self.done = threading.Event()
+        #: Set once the environment a spawned daemon inherits is final.
+        self.environment_ready = threading.Event()
+        #: Claimed by :func:`take` (handed over) or :func:`discard` (closed).
         self.taken = False
         self.thread = threading.Thread(
             target=self._run, name="sshpilot-daemon-prelaunch", daemon=True
@@ -53,12 +62,32 @@ class _Prelaunch:
         try:
             from .daemon.launcher import DaemonLauncher
 
-            self.launcher = DaemonLauncher(verbose=self.verbose, quiet=self.quiet)
+            self.launcher = DaemonLauncher(
+                verbose=self.verbose,
+                quiet=self.quiet,
+                before_spawn=self.environment_ready.wait,
+            )
             self.result = self.launcher.connect_or_start_without_eviction()
         except BaseException as error:  # handed to the selection that takes it
             self.error = error
         finally:
-            self.done.set()
+            with _lock:
+                self.done.set()
+                abandoned = self.taken
+                result = self.result if abandoned else None
+                if abandoned:
+                    self.result = None
+            # discard() ran while this attempt was still in flight.
+            _close_result(result)
+
+
+def _close_result(result) -> None:
+    if result is None:
+        return
+    try:
+        result.client.close()
+    except Exception:
+        logger.debug("Could not close the unused early daemon client", exc_info=True)
 
 
 def apply_verbosity_environment(verbose: bool, quiet: bool) -> None:
@@ -79,6 +108,24 @@ def apply_verbosity_environment(verbose: bool, quiet: bool) -> None:
         os.environ.pop("SSHPILOT_DAEMON_QUIET", None)
 
 
+def _export_language() -> None:
+    """Export the interface language, as importing ``sshpilot.main`` does.
+
+    ``i18n`` reads the config directory through ``platform_utils`` (GLib; on
+    Linux and Flatpak that is where the directory really comes from), so the
+    gi version pins go first: nothing on that chain may load GTK unpinned.
+    """
+    try:
+        from .gi_versions import require_gui_versions
+
+        require_gui_versions()
+        from .i18n import apply_language
+
+        apply_language()
+    except Exception:
+        logger.debug("Could not apply the language preference", exc_info=True)
+
+
 def start(*, verbose: bool = False, quiet: bool = False) -> bool:
     """Begin locating/starting the daemon in the background (idempotent)."""
     global _state
@@ -90,17 +137,14 @@ def start(*, verbose: bool = False, quiet: bool = False) -> bool:
         verbose = bool(verbose) and not quiet
         quiet = bool(quiet) and not verbose
         apply_verbosity_environment(verbose, quiet)
-        # A daemon started from here inherits this environment, so export the
-        # interface language now, as importing ``sshpilot.main`` would have
-        # done before the window-time launch (``_init_gettext``).
-        try:
-            from .i18n import apply_language
-
-            apply_language()
-        except Exception:
-            logger.debug("Could not apply the language preference", exc_info=True)
-        _state = _Prelaunch(verbose, quiet)
-        _state.thread.start()
+        state = _state = _Prelaunch(verbose, quiet)
+    # The worker imports the launcher and probes for a resident daemon while
+    # this thread finishes the environment; only a spawn waits for it.
+    state.thread.start()
+    try:
+        _export_language()
+    finally:
+        state.environment_ready.set()
     return True
 
 
@@ -136,41 +180,68 @@ def launcher():
     return state.launcher
 
 
+def ready(launcher=None) -> bool:
+    """Whether :func:`take` would hand over a connected client without blocking.
+
+    True only for a finished, successful early start that nobody has taken
+    and that belongs to ``launcher`` (when given), so the caller can attach
+    the client on the GTK thread before the window's first frame.
+    """
+    state = _state
+    if state is None or not state.done.is_set():
+        return False
+    with _lock:
+        return (
+            not state.taken
+            and state.error is None
+            and state.result is not None
+            and (launcher is None or launcher is state.launcher)
+        )
+
+
 def take(launcher=None):
     """Hand over the early result once: a ``DaemonLaunchResult`` or ``None``.
 
     ``None`` means the caller must run ``connect_or_start`` itself: nothing was
-    started early, the result was already taken, the caller uses a different
-    launcher, or a resident daemon needs replacing. An error from the early
-    attempt is raised here, as ``connect_or_start`` would have raised it.
+    started early, the result was already taken or discarded, the caller uses
+    a different launcher, or a resident daemon needs replacing. An error from
+    the early attempt is raised here, as ``connect_or_start`` would have
+    raised it. Blocks until the early attempt finishes (call it off the GTK
+    thread unless :func:`ready` said otherwise).
     """
     state = _state
     if state is None:
         return None
+    state.done.wait()
     with _lock:
         if state.taken:
             return None
-        state.done.wait()
         if launcher is not None and launcher is not state.launcher:
             return None
         state.taken = True
-    if state.error is not None:
         error, state.error = state.error, None
+        result, state.result = state.result, None
+    if error is not None:
         raise error
-    result, state.result = state.result, None
     return result
 
 
 def discard() -> None:
-    """Close an early client nobody took (tests, or an aborted startup)."""
-    global _state
-    with _lock:
-        state, _state = _state, None
+    """Close an early client nobody took; never blocks.
+
+    ``main()`` calls this when the application returns, which is how a
+    secondary instance (it handed its command line to a running window)
+    releases the connection it opened. An attempt still in flight closes its
+    own client when it finishes.
+    """
+    state = _state
     if state is None:
         return
-    state.done.wait()
-    if not state.taken and state.result is not None:
-        try:
-            state.result.client.close()
-        except Exception:
-            pass
+    with _lock:
+        if state.taken:
+            return
+        state.taken = True
+        if not state.done.is_set():
+            return
+        result, state.result = state.result, None
+    _close_result(result)
