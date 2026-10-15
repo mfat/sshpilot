@@ -1959,10 +1959,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._update_accessible_identity()
         self._refresh_row_tooltip()
 
+        # update_status() also applies the group colour.
         self.update_status()
-        self._update_forwarding_indicators()
+        self._update_forwarding_indicators(refresh_tooltip=False)
         self._setup_drag_source()
-        self._apply_group_color_style()
 
     def _update_accessible_identity(self) -> None:
         """Publish the connection's name/target as the row's a11y identity."""
@@ -2433,7 +2433,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             pass
         self.indicator_box.set_visible(False)
 
-    def _update_forwarding_indicators(self):
+    def _update_forwarding_indicators(self, refresh_tooltip: bool = True):
         try:
             try:
                 while self.indicator_box.get_first_child():
@@ -2482,7 +2482,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         finally:
             # Keep the composed row tooltip in sync when rules arrive
             # asynchronously via the window's sidebar attach path.
-            self._refresh_row_tooltip()
+            if refresh_tooltip:
+                self._refresh_row_tooltip()
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:

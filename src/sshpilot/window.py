@@ -290,6 +290,9 @@ _format_connection_host_display = format_connection_host_display
 # fight.
 _ROW_ACTIONS_MIN_WIDTH = 230
 
+# Connections whose forwarding rules one sidebar bridge request fetches.
+_SIDEBAR_FORWARDING_FETCH_CHUNK = 16
+
 
 def _accelerator_label(accel: str) -> str:
     """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
@@ -883,12 +886,57 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .api.client_factory import select_client
         app = self.get_application()
         launcher = getattr(app, '_api_daemon_launcher', None) if app else None
+        if self._apply_ready_early_client(launcher):
+            return
         self._api_client_selection_request = self.client_bridge.submit(
             lambda: select_client(launcher=launcher),
-            on_success=self._apply_client_selection,
+            on_success=self._apply_startup_client_selection,
             on_error=self._handle_client_selection_error,
             on_discard=lambda selection: selection.client.close(),
+            # Ahead of the frame clock: a selection that completes while the
+            # window is being presented reaches the first frame.
+            priority=GLib.PRIORITY_HIGH_IDLE,
         )
+
+    def _apply_ready_early_client(self, launcher) -> bool:
+        """Attach the entry point's early daemon client now, when it is ready.
+
+        The early start (``daemon_prelaunch``) often has a connected client
+        before the window is built. Taking it here, on the GTK thread and
+        before the window is first presented, lets the first frame already
+        show the populated sidebar; the bridge round trip would deliver it
+        only after that frame. Anything short of a finished, successful early
+        start goes through the asynchronous selection as before.
+        """
+        from . import daemon_prelaunch
+        if not daemon_prelaunch.ready(launcher):
+            return False
+        from .api.client_factory import select_client
+        try:
+            selection = select_client(launcher=launcher)
+        except Exception:
+            logger.debug("Early daemon client hand-over failed", exc_info=True)
+            return False
+        self._apply_startup_client_selection(selection)
+        return True
+
+    def _apply_startup_client_selection(self, selection) -> None:
+        """Attach a selected client; the first one also builds the rows now.
+
+        Attaching installs the store snapshot and queues its projection reset
+        on an idle callback, which runs only after the next frame. For the
+        first client the rows are built at once instead, so that frame
+        already shows them; the queued reset then skips its rebuild (see
+        ``on_projection_reset``) and only does the startup focus. Later
+        selections (retry, reconnect) rebuild through the reset as usual.
+        """
+        self._apply_client_selection(selection)
+        if self.client is None or getattr(self, '_client_rows_built', False):
+            return
+        self._client_rows_built = True
+        self.rebuild_connection_list()
+        self._attach_rows_generation = self._sidebar_store_generation()
+        self._mark_sidebar_populated()
 
     def _apply_client_selection(self, selection) -> None:
         startup_timing.mark("daemon_client_received")
@@ -2656,6 +2704,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pending = set()
             self._forwarding_rules_pending = pending
         generation = self._sidebar_store_generation()
+        batch = []
         for connection in connections:
             if not self._sidebar_connection_uses_ssh(connection):
                 continue
@@ -2668,84 +2717,172 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if key in pending:
                 continue
             pending.add(key)
+            batch.append((connection, key))
+        # One bridge request per chunk instead of one per connection: a single
+        # main-thread callback applies a whole chunk, and other daemon calls
+        # can still run between chunks on the bridge's one worker.
+        for start in range(0, len(batch), _SIDEBAR_FORWARDING_FETCH_CHUNK):
             self._submit_sidebar_forwarding_fetch(
-                client, bridge, connection, key, generation, cache, pending
+                client,
+                bridge,
+                batch[start:start + _SIDEBAR_FORWARDING_FETCH_CHUNK],
+                generation,
+                cache,
+                pending,
             )
+
+    def _schedule_sidebar_forwarding_refresh(self) -> None:
+        """Fetch missing forwarding rules once the sidebar has been painted.
+
+        A rebuild attaches the rules it already has at once; fetching the
+        rest waits for a low-priority idle callback, so the daemon calls and
+        their callbacks never compete with building or painting the rows.
+        Several rebuilds before it runs share one fetch.
+        """
+        if getattr(self, '_sidebar_forwarding_refresh_scheduled', False):
+            return
+        self._sidebar_forwarding_refresh_scheduled = True
+
+        def _run():
+            self._sidebar_forwarding_refresh_scheduled = False
+            try:
+                connections = self.connection_manager.get_connections()
+            except Exception:
+                return GLib.SOURCE_REMOVE
+            self._refresh_sidebar_forwarding_rules(connections)
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(_run, priority=GLib.PRIORITY_LOW)
 
     def _submit_sidebar_forwarding_fetch(
-        self, client, bridge, connection, key, generation, cache, pending
+        self, client, bridge, batch, generation, cache, pending
     ) -> None:
-        def on_success(details):
-            pending.discard(key)
+        """Fetch the editor details of ``batch`` ((connection, key) pairs).
+
+        The request resolves to one ``(details, error)`` per entry, so one
+        connection's failure leaves the others' rules intact.
+        """
+
+        def fetch():
+            results = []
+            for connection, _key in batch:
+                try:
+                    results.append((
+                        client.get_connection_editor(connection_id_for(connection)),
+                        None,
+                    ))
+                except Exception as error:
+                    results.append((None, error))
+            return results
+
+        def refetch_if_stale() -> bool:
             current_generation = self._sidebar_store_generation()
-            if current_generation != generation:
-                logger.debug(
-                    "Discarding stale forwarding rules for %s (generation %s -> %s)",
-                    key,
-                    generation,
-                    current_generation,
-                )
-                self._refresh_sidebar_forwarding_rules([connection])
-                return
-            try:
-                from .api.models.connections import (
-                    ForwardingRule,
-                    forwarding_rule_to_dict,
-                )
-                from .forwarding_only_ui import apply_forwarding_only_flag
-
-                raw = getattr(details, 'forwarding_rules', None) or ()
-                rules = tuple(
-                    forwarding_rule_to_dict(rule)
-                    for rule in raw
-                    if isinstance(rule, (ForwardingRule, dict))
-                )
-                cache[key] = (generation, rules)
-                self._apply_sidebar_forwarding_rules(connection, rules)
-                apply_forwarding_only_flag(
-                    connection, getattr(details, 'extra_ssh_config', None) or ''
-                )
-            except Exception:
-                logger.debug(
-                    "Failed to cache forwarding rules for %s", key, exc_info=True
-                )
-
-        def on_error(error):
-            pending.discard(key)
-            if self._sidebar_store_generation() != generation:
-                self._refresh_sidebar_forwarding_rules([connection])
-
-        try:
-            bridge.submit(
-                lambda: client.get_connection_editor(connection_id_for(connection)),
-                on_success=on_success,
-                on_error=on_error,
-            )
-        except Exception:
-            pending.discard(key)
+            if current_generation == generation:
+                return False
             logger.debug(
-                "Failed to submit forwarding-rule fetch for %s", key, exc_info=True
+                "Discarding stale forwarding rules for %d connection(s) "
+                "(generation %s -> %s)",
+                len(batch),
+                generation,
+                current_generation,
+            )
+            self._refresh_sidebar_forwarding_rules(
+                [connection for connection, _key in batch]
+            )
+            return True
+
+        def on_success(results):
+            for _connection, key in batch:
+                pending.discard(key)
+            if refetch_if_stale():
+                return
+            from .api.models.connections import (
+                ForwardingRule,
+                forwarding_rule_to_dict,
+            )
+            from .forwarding_only_ui import apply_forwarding_only_flag
+
+            updates = []
+            for (connection, key), (details, error) in zip(batch, results):
+                if error is not None:
+                    logger.debug(
+                        "Failed to fetch forwarding rules for %s: %s",
+                        key,
+                        type(error).__name__,
+                    )
+                    continue
+                try:
+                    raw = getattr(details, 'forwarding_rules', None) or ()
+                    rules = tuple(
+                        forwarding_rule_to_dict(rule)
+                        for rule in raw
+                        if isinstance(rule, (ForwardingRule, dict))
+                    )
+                    cache[key] = (generation, rules)
+                    apply_forwarding_only_flag(
+                        connection, getattr(details, 'extra_ssh_config', None) or ''
+                    )
+                    updates.append((connection, rules))
+                except Exception:
+                    logger.debug(
+                        "Failed to cache forwarding rules for %s", key, exc_info=True
+                    )
+            self._apply_sidebar_forwarding_rules(updates)
+
+        def on_error(_error):
+            for _connection, key in batch:
+                pending.discard(key)
+            refetch_if_stale()
+
+        try:
+            bridge.submit(fetch, on_success=on_success, on_error=on_error)
+        except Exception:
+            for _connection, key in batch:
+                pending.discard(key)
+            logger.debug(
+                "Failed to submit forwarding-rule fetch for %d connection(s)",
+                len(batch),
+                exc_info=True,
             )
 
-    def _apply_sidebar_forwarding_rules(self, connection, rules) -> None:
+    def _apply_sidebar_forwarding_rules(self, updates) -> None:
+        """Attach fetched rules ((connection, rules) pairs) and refresh rows.
+
+        Rows are found by connection key, since a rebuild may have replaced
+        the connection objects the fetch started with.
+        """
+        if not updates:
+            return
+        by_key = {}
+        for connection, rules in updates:
+            key = self._sidebar_connection_key(connection)
+            if key is not None:
+                by_key[key] = rules
         try:
-            object.__setattr__(connection, 'forwarding_rules', rules)
-        except Exception:
-            pass
-        try:
-            target = self._sidebar_connection_key(connection)
             for conn, rows in list(getattr(self, 'connection_rows', {}).items()):
-                if self._sidebar_connection_key(conn) != target:
+                key = self._sidebar_connection_key(conn)
+                if key not in by_key:
                     continue
+                rules = by_key[key]
+                # Most hosts have no rules, and a row built without any
+                # already shows the right (absent) indicator.
+                had_rules = bool(getattr(conn, 'forwarding_rules', None))
                 try:
                     object.__setattr__(conn, 'forwarding_rules', rules)
                 except Exception:
                     pass
+                if not rules and not had_rules:
+                    continue
                 for row in (rows if isinstance(rows, list) else [rows]):
                     if hasattr(row, '_update_forwarding_indicators'):
                         row._update_forwarding_indicators()
         except Exception:
             logger.debug("Failed to refresh sidebar forwarding rows", exc_info=True)
+        for connection, rules in updates:
+            try:
+                object.__setattr__(connection, 'forwarding_rules', rules)
+            except Exception:
+                pass
 
     def _on_sidebar_width_dragged(self, width: int) -> None:
         """Persist a sidebar width the user dragged the paned divider to."""
@@ -4172,7 +4309,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     conn, 'tags', effective_tags([], getattr(conn, 'protocol', None))
                 )
         self._attach_sidebar_forwarding_rules(connections)
-        self._refresh_sidebar_forwarding_rules(connections)
+        self._schedule_sidebar_forwarding_refresh()
         connections_dict = {conn.nickname: conn for conn in connections}
         connections_dict.update(
             {
@@ -4417,9 +4554,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # A connection can appear under multiple groups, so keep a list of rows
         self.connection_rows.setdefault(connection, []).append(row)
 
-        # Apply current hide-hosts setting to new row
-        if hasattr(row, 'apply_hide_hosts'):
-            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+        # Apply current hide-hosts setting to new row. The row was built
+        # before it had a window, so it already shows hosts; only hiding
+        # them needs another pass.
+        hide_hosts = getattr(self, '_hide_hosts', False)
+        if hide_hosts and hasattr(row, 'apply_hide_hosts'):
+            row.apply_hide_hosts(hide_hosts)
 
         return row
 
@@ -6743,6 +6883,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._projection_rebuild_mark = getattr(
             self, '_connection_list_rebuild_count', 0
         )
+        attach_generation = getattr(self, '_attach_rows_generation', None)
+        if attach_generation is not None:
+            self._attach_rows_generation = None
+            if attach_generation == self._sidebar_store_generation():
+                # The reset the first client attach queued: its rows are
+                # already built (_apply_startup_client_selection). No mark
+                # matches the rebuild count, so the idle callback only does
+                # the startup focus.
+                self._projection_rebuild_mark = None
         if getattr(self, '_projection_rebuild_pending', False):
             return
         self._projection_rebuild_pending = True
@@ -6771,18 +6920,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 GLib.idle_add(lambda: (app.quit(), False)[1])
             return GLib.SOURCE_REMOVE
 
-        clock = self.get_frame_clock()
-        if clock is None:
-            _after_paint()
-            return
         handler = []
 
         def _on_paint(frame_clock):
             frame_clock.disconnect(handler[0])
             _after_paint()
 
-        handler.append(clock.connect("after-paint", _on_paint))
-        self.queue_draw()
+        def _hook_frame_clock(*_args):
+            if handler:
+                # Rows built before the first present: wait for realization.
+                self.disconnect(handler.pop())
+            clock = self.get_frame_clock()
+            if clock is None:
+                _after_paint()
+                return
+            handler.append(clock.connect("after-paint", _on_paint))
+            self.queue_draw()
+
+        if self.get_frame_clock() is None and not self.get_realized():
+            handler.append(self.connect("realize", _hook_frame_clock))
+            return
+        _hook_frame_clock()
 
     def _flush_projection_rebuild(self):
         """Run the one sidebar rebuild owed to the latest projection resets."""

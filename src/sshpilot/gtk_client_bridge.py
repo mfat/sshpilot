@@ -128,13 +128,21 @@ class GtkClientBridge:
         on_success: Callable[[T], None],
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]] = None,
+        priority: Optional[int] = None,
     ) -> GtkClientRequest:
+        """Run ``operation`` on the worker; deliver its outcome on GTK's thread.
+
+        ``priority`` is the main-loop priority of the delivery (default: the
+        dispatcher's own, an idle callback). A request whose outcome must
+        reach the UI before the next frame passes ``GLib.PRIORITY_HIGH_IDLE``.
+        """
         return self._submit_on(
             self._executor,
             operation,
             on_success=on_success,
             on_error=on_error,
             on_discard=on_discard,
+            priority=priority,
         )
 
     def submit_interaction(
@@ -183,6 +191,7 @@ class GtkClientBridge:
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]],
         slot: Optional[threading.BoundedSemaphore] = None,
+        priority: Optional[int] = None,
     ) -> GtkClientRequest:
         request = GtkClientRequest()
         if slot is not None and not slot.acquire(blocking=False):
@@ -212,6 +221,7 @@ class GtkClientBridge:
                 on_success,
                 on_error,
                 on_discard,
+                priority,
             )
         )
         return request
@@ -223,16 +233,23 @@ class GtkClientBridge:
         on_success: Callable[[T], None],
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]],
+        priority: Optional[int] = None,
     ) -> None:
         with self._lock:
             self._requests.pop(future, None)
             closed = self._closed
 
+        def dispatch(callback, *args):
+            if priority is None:
+                self._dispatcher(callback, *args)
+            else:
+                self._dispatcher(callback, *args, priority=priority)
+
         try:
             result = future.result()
         except BaseException as error:
             if not closed and not request.cancelled:
-                self._dispatcher(self._deliver_error, request, on_error, error)
+                dispatch(self._deliver_error, request, on_error, error)
             else:
                 self._finish_request(request)
             return
@@ -242,7 +259,7 @@ class GtkClientBridge:
             if on_discard is not None:
                 on_discard(result)
             return
-        self._dispatcher(
+        dispatch(
             self._deliver_success,
             request,
             on_success,
