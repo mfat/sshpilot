@@ -17,6 +17,9 @@ moves):
 * An exported ``sshpilot_vterm_csi_args_bounded()`` returning the bound, so
   the model can tell a patched build from a distro DLL and skip its Python
   guard.
+* An exported ``sshpilot_vterm_screen_get_row()`` that copies a whole screen
+  row of cells in one call, so a redraw costs one ctypes call per row rather
+  than one per cell. The model falls back to per-cell reads without it.
 
     python packaging/windows/libvterm/build.py               # gcc (MSYS2 UCRT64)
     python packaging/windows/libvterm/build.py --compiler msvc  # cl (VS dev shell)
@@ -70,6 +73,7 @@ PATCHES = [
         "src/vterm.c",
         '#include "vterm_internal.h"\n',
         '''#include "vterm_internal.h"
+#include <string.h>
 
 /* sshPilot: marks a build whose CSI parser bounds its argument index. */
 #ifdef _WIN32
@@ -78,6 +82,26 @@ __declspec(dllexport)
 int sshpilot_vterm_csi_args_bounded(void)
 {
   return CSI_ARGS_MAX;
+}
+
+/* sshPilot: reads cells [0, cols) of a screen row in one call. The buffer is
+ * zeroed first, so unused chars[] slots and attribute bits compare equal.
+ * Returns the number of cells read. */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+int sshpilot_vterm_screen_get_row(const VTermScreen *screen, int row,
+                                  VTermScreenCell *cells, int cols)
+{
+  VTermPos pos;
+  if(cols <= 0)
+    return 0;
+  memset(cells, 0, sizeof(VTermScreenCell) * (size_t)cols);
+  pos.row = row;
+  for(pos.col = 0; pos.col < cols; pos.col++)
+    if(!vterm_screen_get_cell(screen, pos, &cells[pos.col]))
+      break;
+  return pos.col;
 }
 ''',
     ),
@@ -113,7 +137,7 @@ def patch(source: Path) -> None:
 def exported_functions(source: Path) -> list[str]:
     header = (source / "include" / "vterm.h").read_text(encoding="utf-8")
     names = re.findall(r"^[A-Za-z_][\w \*]*?\b(vterm_\w+)\s*\(", header, re.M)
-    return sorted(set(names)) + ["sshpilot_vterm_csi_args_bounded"]
+    return sorted(set(names)) + ["sshpilot_vterm_csi_args_bounded", "sshpilot_vterm_screen_get_row"]
 
 
 def build_gcc(source: Path, output: Path, compiler: str) -> None:
@@ -169,7 +193,7 @@ def main(argv=None) -> int:
         else:
             build_gcc(source, output, args.cc)
         shutil.copy2(output, dest / DLL_NAME)
-        (dest / "SOURCE").write_text(f"{REPOSITORY} {COMMIT} (+ sshPilot CSI bound)\n", encoding="utf-8")
+        (dest / "SOURCE").write_text(f"{REPOSITORY} {COMMIT} (+ sshPilot CSI bound, row reads)\n", encoding="utf-8")
     print(dest / DLL_NAME)
     return 0
 

@@ -681,8 +681,14 @@ class VtermTerminalModel(LineIndexMixin):
         # Screen rows are cached as decoded lines until libvterm reports them
         # damaged. Raw calls skip ctypes' per-argument conversion: a redraw
         # reads every cell of every uncached row.
-        self._get_cell = ctypes.CDLL(lib._name, handle=lib._handle).vterm_screen_get_cell
+        raw_lib = ctypes.CDLL(lib._name, handle=lib._handle)
+        self._get_cell = raw_lib.vterm_screen_get_cell
         self._get_cell.restype = ctypes.c_int
+        # sshPilot's patched build reads a whole row per call; stock builds
+        # are read cell by cell.
+        self._get_row = getattr(raw_lib, "sshpilot_vterm_screen_get_row", None)
+        if self._get_row is not None:
+            self._get_row.restype = ctypes.c_int
         self._screen_ptr = ctypes.c_void_p(self._screen)
         self._pos = _VTermPos()
 
@@ -885,6 +891,13 @@ class VtermTerminalModel(LineIndexMixin):
     def _screen_row_raw(self, y: int) -> bytes:
         if not (0 <= y < self._lines):
             return b""
+        if self._get_row is not None:
+            # Zeroes the buffer itself, like the per-cell path below.
+            self._get_row(self._screen_ptr, y, self._row_buffer, self._columns)
+            return self._row_buffer.raw
+        return self._screen_row_raw_per_cell(y)
+
+    def _screen_row_raw_per_cell(self, y: int) -> bytes:
         buffer = self._row_buffer
         # Zeroed so unused trailing chars[] slots compare equal in the cache.
         ctypes.memset(buffer, 0, len(buffer))

@@ -109,8 +109,9 @@ python -m venv --system-site-packages .venv-msys && .venv-msys/bin/python -m pip
 `scripts/run-windows.sh` does the venv step and runs the app. For libvterm,
 either build it (`pacman -S mingw-w64-ucrt-x86_64-gcc`, then
 `packaging/windows/libvterm/build.py`) or install the distro DLL
-(`mingw-w64-ucrt-x86_64-libvterm`). The distro DLL lacks the CSI bound, so the
-model filters CSI parameters in Python for it, at some cost in speed.
+(`mingw-w64-ucrt-x86_64-libvterm`). The distro DLL lacks the CSI bound and the
+batched row reads, so the model filters CSI parameters in Python and reads
+the screen cell by cell, at some cost in speed.
 
 ## Notes
 

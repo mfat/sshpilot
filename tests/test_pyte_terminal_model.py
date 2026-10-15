@@ -271,6 +271,15 @@ def test_encode_mouse_sgr_and_legacy():
     assert encode_mouse(0, 300, 2, action="press", sgr=False) is None
 
 
+def test_libvterm_row_reads_match_per_cell_reads():
+    model = _vterm_model(12, 3)
+    if model._get_row is None:
+        pytest.skip("libvterm build without sshpilot_vterm_screen_get_row")
+    model.feed("\x1b[1;31mred\x1b[0m 中😀 e\u0301\x1b[7mrev\r\n\x1b[48;5;236mbg".encode("utf-8"))
+    for y in range(3):
+        assert model._screen_row_raw(y) == model._screen_row_raw_per_cell(y)
+
+
 def test_libvterm_lookup_prefers_override_then_frozen_bundle(monkeypatch, tmp_path):
     import sys
 

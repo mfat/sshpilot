@@ -135,6 +135,9 @@ _NAMED_COLORS = {
 }
 _HEX_COLOR = re.compile(r"^[0-9a-fA-F]{6}$")
 _SEARCH_HIT = (0xF5 / 255, 0xA6 / 255, 0x23 / 255)
+#: Drawn for a column a line does not store, indexed like pyte's ``Char``
+#: (data fg bg bold italics underscore strikethrough reverse blink).
+_BLANK_CHAR = (" ", "default", "default", False, False, False, False, False, False)
 
 Rgb = Tuple[float, float, float]
 
@@ -483,20 +486,6 @@ class PyteTerminalView(Gtk.DrawingArea):
             )
         return self._fg if foreground else self._bg
 
-    def _cell_selected(self, row: int, column: int) -> bool:
-        if self._selection is None:
-            return False
-        (r0, c0), (r1, c1) = sorted(self._selection)
-        if row < r0 or row > r1:
-            return False
-        if r0 == r1:
-            return c0 <= column <= c1
-        if row == r0:
-            return column >= c0
-        if row == r1:
-            return column <= c1
-        return True
-
     def _draw(self, _area, cr, width: int, height: int) -> None:
         self._update_metrics()
         cr.set_source_rgb(*self._bg)
@@ -523,47 +512,72 @@ class PyteTerminalView(Gtk.DrawingArea):
             return fonts[key]
 
         search_hit = self._search_hit if self._search_highlight else None
+        draw_run = self._draw_run
         for screen_row in range(model.lines):
             row = top + screen_row
             if row >= model.total_rows:
                 break
-            line = model.line(row)
+            get = model.line(row).get
             y = screen_row * cell_h
+            selected_span = self._selected_span(row, columns)
+            hit_span = (
+                (max(0, search_hit[1]), min(columns, search_hit[2]))
+                if search_hit is not None and search_hit[0] == row
+                else None
+            )
+            # Selection and the search hit change the style of whole column
+            # spans, so they only split the row into segments; within one,
+            # a run ends where the cell attributes change.
+            edges = {columns}
+            for span in (selected_span, hit_span):
+                if span is not None:
+                    edges.update(edge for edge in span if 0 < edge < columns)
             column = 0
-            while column < columns:
-                char = line.get(column)
-                key = self._style_key(char, row, column, search_hit)
-                run_start = column
-                text_parts = []
-                while column < columns:
-                    char = line.get(column)
-                    if self._style_key(char, row, column, search_hit) != key:
-                        break
-                    data = char.data if char is not None else " "
-                    text_parts.append(data)
+            for segment_end in sorted(edges):
+                selected = selected_span is not None and selected_span[0] <= column < selected_span[1]
+                hit = hit_span is not None and hit_span[0] <= column < hit_span[1]
+                while column < segment_end:
+                    char = get(column, _BLANK_CHAR)
+                    style = char[1:8]
+                    run_start = column
                     column += 1
-                    if data and len(data.encode("utf-16-le")) > 2:
-                        break  # astral glyphs: keep runs short to limit drift
-                self._draw_run(cr, layout, font_for, key, run_start, column, y, "".join(text_parts))
+                    data = char[0]
+                    text_parts = [data]
+                    # Astral glyphs and combining sequences: keep runs short
+                    # to limit drift. Equal cells after this one pass the
+                    # same test, so only a new cell object is checked.
+                    if len(data) < 2 and data <= "\uffff":
+                        previous = char
+                        while column < segment_end:
+                            char = get(column, _BLANK_CHAR)
+                            if char is not previous:
+                                if char[1:8] != style:
+                                    break
+                                data = char[0]
+                                if len(data) > 1 or data > "\uffff":
+                                    text_parts.append(data)
+                                    column += 1
+                                    break
+                                previous = char
+                            text_parts.append(previous[0])
+                            column += 1
+                    fg, bg, bold, italic, underline, strike, reverse = style
+                    key = (fg, bg, bold, italic, underline, strike, reverse != selected, hit)
+                    draw_run(cr, layout, font_for, key, run_start, column, y, "".join(text_parts))
 
         self._draw_cursor(cr, top, font_for, layout)
 
-    def _style_key(self, char, row: int, column: int, search_hit) -> tuple:
-        if char is None:
-            fg, bg, bold, italic, underline, strike, reverse = (
-                "default", "default", False, False, False, False, False,
-            )
-        else:
-            fg, bg = char.fg, char.bg
-            bold, italic = char.bold, char.italics
-            underline, strike, reverse = char.underscore, char.strikethrough, char.reverse
-        selected = self._cell_selected(row, column)
-        hit = bool(
-            search_hit is not None
-            and search_hit[0] == row
-            and search_hit[1] <= column < search_hit[2]
-        )
-        return (fg, bg, bold, italic, underline, strike, reverse != selected, hit)
+    def _selected_span(self, row: int, columns: int) -> Optional[Tuple[int, int]]:
+        """The selected columns of ``row`` as ``[start, end)``, or ``None``."""
+        if self._selection is None:
+            return None
+        (r0, c0), (r1, c1) = sorted(self._selection)
+        if row < r0 or row > r1:
+            return None
+        start = c0 if row == r0 else 0
+        end = c1 + 1 if row == r1 else columns
+        start, end = max(0, start), min(columns, end)
+        return (start, end) if start < end else None
 
     def _draw_run(self, cr, layout, font_for, key, start: int, end: int, y: float, text: str) -> None:
         fg_name, bg_name, bold, italic, underline, strike, reverse, hit = key
