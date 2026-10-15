@@ -36,9 +36,8 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
-from sshpilot.api.client import SshPilotClient
 from sshpilot.sftp.server_limits import parse_remote_software_version
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -109,6 +108,10 @@ from .operation_runtime import OperationCancelled
 from .session_runtime import SessionLaunchSpec
 
 from .process_registry import KIND_SFTP, forget_owned_process, record_owned_process_or_abandon
+
+
+if TYPE_CHECKING:  # annotations only; the client API imports every model
+    from sshpilot.api.client import SshPilotClient
 
 logger = logging.getLogger(__name__)
 

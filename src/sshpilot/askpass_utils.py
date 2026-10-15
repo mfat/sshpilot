@@ -13,13 +13,23 @@ import threading
 from gettext import gettext as _
 from typing import List
 
-# SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
-# credential export). secret_storage is GTK-free and safe to import in the askpass subprocess.
-from .secret_storage import (
-    normalize_key_path_for_storage as _normalize_key_path_for_storage,
-    key_path_lookup_candidates as _get_key_path_lookup_candidates,
-)
 from .logging_support import sanitize_log_text
+
+
+# SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
+# credential export). secret_storage is GTK-free and safe to import in the askpass subprocess,
+# but it loads platform_utils (GLib) and the backend registry, which only the secret helpers
+# below need -- not the log/prompt helpers the daemon's interaction broker imports at startup.
+def _normalize_key_path_for_storage(key_path):
+    from .secret_storage import normalize_key_path_for_storage
+
+    return normalize_key_path_for_storage(key_path)
+
+
+def _get_key_path_lookup_candidates(key_path):
+    from .secret_storage import key_path_lookup_candidates
+
+    return key_path_lookup_candidates(key_path)
 
 # libsecret / keyring are imported lazily (and only for a diagnostic log line
 # here) — the real passphrase lookups delegate to secret_storage. Keeping these
@@ -34,7 +44,7 @@ def _keyring_available() -> bool:
     return _get_keyring() is not None
 
 try:
-    from .platform_utils import is_macos
+    from .platform.detect import is_macos  # GLib-free (platform_utils re-exports it)
 except ImportError:
     try:
         from platform_utils import is_macos
