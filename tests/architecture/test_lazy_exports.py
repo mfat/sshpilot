@@ -1,6 +1,7 @@
 """Keep PEP 562 lazy package exports in sync with ``__all__``.
 
-``sshpilot.api``, ``sshpilot.api.models``, and ``sshpilot.daemon`` defer
+``sshpilot.api``, ``sshpilot.api.models``, ``sshpilot.api.transport`` and
+``sshpilot.daemon`` defer
 heavy submodule imports via ``_LAZY_EXPORTS`` + ``__getattr__``. Every public
 name must be either eagerly bound at import time or listed in the lazy map —
 otherwise ``from pkg import Name`` fails at runtime after a casual ``__all__``
@@ -20,6 +21,7 @@ SOURCE = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 _LAZY_MODULES = (
     ("sshpilot.api", SOURCE / "api" / "__init__.py"),
     ("sshpilot.api.models", SOURCE / "api" / "models" / "__init__.py"),
+    ("sshpilot.api.transport", SOURCE / "api" / "transport" / "__init__.py"),
     ("sshpilot.daemon", SOURCE / "daemon" / "__init__.py"),
 )
 
