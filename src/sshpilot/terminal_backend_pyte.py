@@ -826,18 +826,21 @@ class PyteTerminalView(Gtk.DrawingArea):
 
     def _on_drag_end(self, gesture, offset_x: float, offset_y: float) -> None:
         if self._mouse_button_down is not None:
+            ok, start_x, start_y = gesture.get_start_point()
+            if not ok:
+                # Cancelled because the click gesture claimed the press for
+                # mouse reporting; its "released" reports the button-up.
+                return
             # The click gesture gives up once the pointer moves, so a drag's
             # button release is reported from here instead.
-            ok, start_x, start_y = gesture.get_start_point()
-            if ok:
-                state = gesture.get_current_event_state()
-                self._report_mouse(
-                    self._mouse_button_down,
-                    start_x + offset_x,
-                    start_y + offset_y,
-                    "release",
-                    state,
-                )
+            state = gesture.get_current_event_state()
+            self._report_mouse(
+                self._mouse_button_down,
+                start_x + offset_x,
+                start_y + offset_y,
+                "release",
+                state,
+            )
             self._mouse_button_down = None
             return
         if self._selection is not None:
