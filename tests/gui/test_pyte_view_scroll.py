@@ -90,7 +90,7 @@ def test_console_host_title_is_not_shown(model, monkeypatch):
     view = PyteTerminalView()
     titles = []
     view.connect("window-title-changed", lambda v: titles.append(v.get_window_title()))
-    view.feed(b"\x1b]0;C:\Windows\System32\OpenSSH\ssh.exe\x07")
+    view.feed(b"\x1b]0;" + rb"C:\Windows\System32\OpenSSH\ssh.exe" + b"\x07")
     assert titles == [] and view.get_window_title() == ""
     view.feed(b"\x1b]0;root@router: ~\x07")
     assert titles == ["root@router: ~"]
