@@ -631,7 +631,9 @@ def print_startup_info(isolated: bool = False, verbose: bool = False, config=Non
         confirmed_mode=confirmed_mode,
     )
 
-    if verbose:
+    # A windowed build (sshPilot.exe on Windows) has no console: sys.stdout is
+    # None, so log the summary instead of dumping to nowhere.
+    if verbose and sys.stdout is not None:
         info.print_info()
         return
 
