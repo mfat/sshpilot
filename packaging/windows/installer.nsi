@@ -58,9 +58,41 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
     Sleep 1500
 !macroend
 
+!macro CheckFileFree FILE BUSY
+  ; Windows refuses write access to a running exe or a loaded DLL. FileOpen
+  ; "a" would create a missing file, so only test files that exist.
+  IfFileExists "${FILE}" 0 +5
+    ClearErrors
+    FileOpen $0 "${FILE}" a
+    IfErrors ${BUSY}
+    FileClose $0
+!macroend
+
+!macro EnsureNotRunning
+  ; Files in use would be skipped silently, leaving old and new files mixed,
+  ; and an open window restarts the daemon. Stop the daemon, then wait for the
+  ; user to close sshPilot; a silent run fails instead (exit code 2).
+  !define _ENR_ID ${__LINE__}
+  retry_${_ENR_ID}:
+    !insertmacro StopDaemon
+    !insertmacro CheckFileFree "$INSTDIR\sshPilot.exe" busy_${_ENR_ID}
+    !insertmacro CheckFileFree "$INSTDIR\sshpilot-cli.exe" busy_${_ENR_ID}
+    !insertmacro CheckFileFree "$INSTDIR\_internal\OpenConsole.exe" busy_${_ENR_ID}
+    Goto free_${_ENR_ID}
+  busy_${_ENR_ID}:
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
+      "${APP_NAME} is running. Close it, then click Retry." \
+      /SD IDCANCEL IDRETRY retry_${_ENR_ID}
+    DetailPrint "${APP_NAME} is running; close it and run setup again."
+    SetErrorLevel 2
+    Abort
+  free_${_ENR_ID}:
+  !undef _ENR_ID
+!macroend
+
 Section "sshPilot" SecMain
   SectionIn RO
-  !insertmacro StopDaemon
+  !insertmacro EnsureNotRunning
   SetOutPath "$INSTDIR"
   ; Replace the previous version completely: stale files must not linger.
   RMDir /r "$INSTDIR\_internal"
@@ -85,7 +117,7 @@ Section "sshPilot" SecMain
 SectionEnd
 
 Section "Uninstall"
-  !insertmacro StopDaemon
+  !insertmacro EnsureNotRunning
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   RMDir /r "$INSTDIR\_internal"
   Delete "$INSTDIR\sshPilot.exe"
