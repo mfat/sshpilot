@@ -88,6 +88,20 @@ print(json.dumps({{
 """
 
 
+def _ensure_bytecode() -> None:
+    """Precompile the measured tree.
+
+    With ``PYTHONDONTWRITEBYTECODE`` set (some shells and CI set it), a tree
+    without cached bytecode recompiles every module on every launch, which
+    adds ~0.45 s and makes one checkout look slower than another for no
+    reason of its own.
+    """
+    import compileall
+
+    compileall.compile_dir(str(SRC), quiet=1)
+    compileall.compile_file(str(ROOT / "run.py"), quiet=1)
+
+
 def _child_env() -> dict:
     env = dict(os.environ)
     gtk_bin = ROOT / "vendor" / "gtk" / "bin"
@@ -141,6 +155,7 @@ def _best_of(name: str, repeat: int) -> dict:
 
 
 def report_imports(args) -> None:
+    _ensure_bytecode()
     results = {}
     for name in args.targets:
         data = _best_of(name, args.repeat)
@@ -319,6 +334,7 @@ def _summarise(label: str, runs: list[dict]) -> dict:
 
 
 def report_launch(args) -> None:
+    _ensure_bytecode()
     root = Path(args.sandbox) if args.sandbox else (
         Path(tempfile.gettempdir()) / "sshpilot-startup-profile"
     )
