@@ -823,11 +823,16 @@ class SshPilotApplication(Adw.Application):
 
         launcher = getattr(self, "_api_daemon_launcher", None)
         if launcher is None:
+            # The launcher that started the daemon before GTK loaded, if any.
+            from . import daemon_prelaunch
+
+            launcher = daemon_prelaunch.launcher()
+        if launcher is None:
             launcher = DaemonLauncher(
                 verbose=bool(getattr(self, "verbose_override", False)),
                 quiet=bool(getattr(self, "quiet_override", False)),
             )
-            self._api_daemon_launcher = launcher
+        self._api_daemon_launcher = launcher
         helper = DaemonReconnectHelper(launcher=launcher)
         self._api_daemon_reconnect_helper = helper
         return helper
@@ -2491,6 +2496,12 @@ def main():
     GLib.set_application_name('SSH Pilot')
 
     verbose = opts.verbose or opts.diagnostics
+    # Start (or find) the daemon now, in parallel with the window build. The
+    # source and frozen entry (run.py) and the Meson launcher already did this
+    # before GTK was imported; this covers any other caller of main().
+    from . import daemon_prelaunch
+
+    daemon_prelaunch.start(verbose=verbose, quiet=opts.quiet)
     # GUI tests launch a second, throwaway instance alongside a developer's own
     # running copy; without a distinct application id GApplication would just
     # hand the launch off to that copy. Same shape as SSHPILOT_SSH_DIR: an

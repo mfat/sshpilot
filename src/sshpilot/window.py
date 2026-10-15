@@ -6782,7 +6782,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self, '_projection_rebuild_mark', 0
         ):
             self.rebuild_connection_list()
-        if self.client is not None:
+        if getattr(self, 'client', None) is not None:
             self._mark_sidebar_populated()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge

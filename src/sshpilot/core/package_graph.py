@@ -69,6 +69,7 @@ ALLOWED_EDGES = {
         "sshpilot.backup_archive",  # GI-free secret backup archive (daemon transfer)
         "sshpilot.backup_backends",  # GI-free secret backup destination adapters
         "sshpilot.logging_support",  # shared GTK-free policy and redaction
+        "sshpilot.startup_timing",  # stdlib-only startup milestones (launcher)
     ),
 }
 

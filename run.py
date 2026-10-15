@@ -66,6 +66,12 @@ if len(sys.argv) > 1 and sys.argv[1] == '--internal-native-askpass':
     prompt = sys.argv[2] if len(sys.argv) > 2 else ''
     sys.exit(run_askpass_and_write(prompt))
 
+# Locate or start the daemon on a background thread now, so it comes up
+# while GTK and the window load instead of after them.
+from sshpilot.daemon_prelaunch import start_from_argv
+
+start_from_argv(sys.argv[1:])
+
 from sshpilot.main import main
 
 if __name__ == '__main__':

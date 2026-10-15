@@ -197,6 +197,8 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("ssh_multiplex.py", "ensure_private_runtime_directory"),
         # App-side daemon bootstrap / launch errors (frontend-owned boundary).
         ("main.py", "DaemonLauncher"),
+        # Early start: locate/spawn the daemon before GTK loads.
+        ("daemon_prelaunch.py", "DaemonLauncher"),
         ("terminal_manager.py", "DaemonLauncher"),
         ("terminal_manager.py", "DaemonLaunchError"),
         ("terminal_manager.py", "DaemonStartupFailure"),

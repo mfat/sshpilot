@@ -12,12 +12,17 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Optional, Sequence
 
-from sshpilot.api.capabilities import Capability
-from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot import startup_timing
+
+if TYPE_CHECKING:
+    from sshpilot.api.daemon_client import DaemonClient
+
+# ``sshpilot.api.daemon_client`` (with the wire codec and every API model) is
+# imported where a client is first built, not here: the GUI's early start
+# (``sshpilot.daemon_prelaunch``) spawns a missing daemon before paying for it.
 
 from .lifecycle import (
     SocketSecurityError,
@@ -146,6 +151,10 @@ def detached_process_options() -> dict:
             )
         }
     return {"start_new_session": True}
+
+
+class _EvictionDeclined(Exception):
+    """A resident daemon would have to be replaced, and the caller declined."""
 
 
 @dataclass(frozen=True)
@@ -285,11 +294,38 @@ class DaemonLauncher:
         cleanly.
         """
 
+        result = self._connect_or_start(evict=True)
+        assert result is not None
+        return result
+
+    def connect_or_start_without_eviction(self) -> Optional[DaemonLaunchResult]:
+        """``connect_or_start`` that never stops a resident daemon.
+
+        Returns ``None`` where ``connect_or_start`` would evict a peer this
+        build cannot use. Safe to run before the process knows whether it is
+        the primary instance: a secondary that is about to hand off to a
+        running window must not replace the daemon that window is using.
+        """
+
+        return self._connect_or_start(evict=False)
+
+    def _connect_or_start(self, *, evict: bool) -> Optional[DaemonLaunchResult]:
         startup_timing.mark("daemon_connect_begun")
         with self._lock:
             self._prepare_socket_location()
 
-            client = self._connect_to_usable_peer()
+            if not evict and not os.path.lexists(self.socket_path):
+                # Early start: with no endpoint there is no daemon to probe,
+                # so launch now rather than first loading the client stack
+                # (DaemonClient, codec, API models) only to be told that the
+                # daemon is unavailable. The ready-wait below loads it while
+                # the daemon starts.
+                client = None
+            else:
+                try:
+                    client = self._connect_to_usable_peer(evict=evict)
+                except _EvictionDeclined:
+                    return None
             if client is not None:
                 self._ensure_gtk_askpass_log_forwarder()
                 self._ensure_daemon_log_forwarder()
@@ -414,11 +450,12 @@ class DaemonLauncher:
             return
         logger.info("Removed an unusable daemon socket endpoint before startup")
 
-    def _connect_to_usable_peer(self) -> Optional[DaemonClient]:
+    def _connect_to_usable_peer(self, *, evict: bool = True) -> Optional[DaemonClient]:
         """Return a client for a resident daemon, or ``None`` to launch one.
 
         Evicts (once) a peer that answers but cannot serve this build, so the
         caller falls through to launching a current daemon instead of failing.
+        With ``evict=False`` that case raises :class:`_EvictionDeclined`.
         """
 
         for attempt in (0, 1):
@@ -441,6 +478,8 @@ class DaemonLauncher:
 
             if attempt or reason not in EVICTABLE_FAILURES:
                 raise DaemonLaunchError(reason)
+            if not evict:
+                raise _EvictionDeclined(reason)
             logger.warning(
                 "Resident daemon cannot serve this build reason=%s; replacing it",
                 reason.value,
@@ -539,6 +578,7 @@ class DaemonLauncher:
         the signal path.
         """
 
+        from sshpilot.api.daemon_client import DaemonClient
         from sshpilot.api.models.daemon import StopDaemonRequest
 
         client: Optional[DaemonClient] = None
@@ -572,6 +612,9 @@ class DaemonLauncher:
         # ``timeout`` here is the launcher probe budget for socket connect only.
         # RPC waits must use DEFAULT_REQUEST_TIMEOUT — otherwise slow methods
         # like sftp.list falsely trip transport_timeout (~probe 0.25s).
+        from sshpilot.api.capabilities import Capability
+        from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
+
         client = DaemonClient(
             socket_path=self.socket_path,
             timeout=DEFAULT_REQUEST_TIMEOUT,
