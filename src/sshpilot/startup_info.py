@@ -36,6 +36,7 @@ except Exception:
 
 from . import __version__
 from .platform_utils import is_macos, is_flatpak, get_sshpass_path
+from .platform.process import hidden_console_kwargs
 
 
 logger = logging.getLogger(__name__)
@@ -252,7 +253,7 @@ class StartupInfo:
         if ssh_path:
             try:
                 import subprocess
-                result = subprocess.run(['ssh', '-V'], capture_output=True, text=True, timeout=2)
+                result = subprocess.run(['ssh', '-V'], capture_output=True, text=True, timeout=2, **hidden_console_kwargs())
                 # SSH outputs version to stderr
                 version_output = result.stderr.strip() if result.stderr else result.stdout.strip()
                 # Extract just the version number (e.g., "OpenSSH_8.9p1")
@@ -273,7 +274,7 @@ class StartupInfo:
             if self.verbose:
                 try:
                     import subprocess
-                    result = subprocess.run([sshpass_path, '-V'], capture_output=True, text=True, timeout=2)
+                    result = subprocess.run([sshpass_path, '-V'], capture_output=True, text=True, timeout=2, **hidden_console_kwargs())
                     version_output = result.stdout.strip() if result.stdout else result.stderr.strip()
                     # Extract version (e.g., "1.09")
                     version = version_output.split()[1] if len(version_output.split()) > 1 else 'unknown'

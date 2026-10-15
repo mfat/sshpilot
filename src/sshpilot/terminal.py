@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
 from .platform_utils import is_flatpak, is_macos, is_windows
+from .platform.process import pid_alive
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
@@ -5347,18 +5348,8 @@ class TerminalWidget(Gtk.Box):
     def _get_terminal_pid(self):
         """Get the PID of the terminal's child process"""
         # First try the stored PID
-        if self.process_pid:
-            if is_windows():
-                # os.kill(pid, 0) would terminate it on Windows.
-                import psutil
-
-                return self.process_pid if psutil.pid_exists(self.process_pid) else None
-            try:
-                # Verify the process still exists
-                os.kill(self.process_pid, 0)
-                return self.process_pid
-            except (ProcessLookupError, OSError):
-                pass
+        if self.process_pid and pid_alive(self.process_pid, on_error=False):
+            return self.process_pid
 
         return None
 
@@ -5501,16 +5492,15 @@ class TerminalWidget(Gtk.Box):
 
                 # Wait for clean termination (shorter timeout for faster cleanup)
                 for _ in range(2):  # Wait up to 0.2 seconds (reduced from 0.5 seconds)
-                    try:
-                        os.kill(pid, 0)
-                        time.sleep(0.1)
-                    except ProcessLookupError:
+                    if not pid_alive(pid, on_error=True):
                         logger.debug(f"Process {pid} terminated cleanly")
                         break
+                    time.sleep(0.1)
                 else:
                     # If still running, force kill
                     try:
-                        os.kill(pid, 0)  # Check if still exists
+                        if not pid_alive(pid, on_error=True):
+                            raise ProcessLookupError(pid)
                         logger.debug(f"Process {pid} still running, sending SIGKILL")
                         if pgid:
                             try:

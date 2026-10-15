@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import copy
 import os
-import sys
 import shlex
 import shutil
 import stat
@@ -39,6 +38,7 @@ from ...ssh_config_document import (
     is_concrete_host_block,
 )
 from ...ssh_config_formatter import merged_block_lines
+from ...platform.fs import fsync_directory
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, generate_duplicate_nickname
 from .ssh_config_loader import (
@@ -175,20 +175,11 @@ def _atomic_write_text(
             os.chmod(target, 0o600)
 
         # Parent-directory durability (the rename itself must be durable).
-        # Windows cannot open a directory to fsync it; NTFS journals the rename itself.
-        if sys.platform != "win32":
-            flags = os.O_RDONLY
-            if hasattr(os, "O_DIRECTORY"):
-                flags |= os.O_DIRECTORY
-            try:
-                dir_fd = os.open(str(directory), flags)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError as exc:
-                # The replacement may already have succeeded; report generically.
-                raise _store_error("The connection configuration could not be saved") from exc
+        try:
+            fsync_directory(directory)
+        except OSError as exc:
+            # The replacement may already have succeeded; report generically.
+            raise _store_error("The connection configuration could not be saved") from exc
     except CoreError:
         raise
     except OSError as exc:

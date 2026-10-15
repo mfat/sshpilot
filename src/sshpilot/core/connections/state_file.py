@@ -21,7 +21,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-import sys
 import stat
 import tempfile
 import time
@@ -31,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from ...api.models.connection_store import thaw_safe_metadata, validate_safe_metadata
+from ...platform.fs import fsync_directory
 from ..errors import CoreError, ErrorCode
 
 _MAX_STATE_BYTES = 16 * 1024 * 1024
@@ -618,23 +618,10 @@ def _serialize_json(payload: Mapping[str, Any], label: str) -> bytes:
 
 def _fsync_parent(path: Path) -> None:
     """Make a completed same-directory rename or unlink durable."""
-    if sys.platform == "win32":
-        return  # Windows cannot open a directory to fsync it; NTFS journals the rename itself.
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    dir_fd: Optional[int] = None
     try:
-        dir_fd = os.open(path.parent, flags)
-        os.fsync(dir_fd)
+        fsync_directory(path.parent)
     except OSError as exc:
         raise _core_error(exc) from exc
-    finally:
-        if dir_fd is not None:
-            try:
-                os.close(dir_fd)
-            except OSError:
-                pass
 
 
 def _atomic_write_bytes(

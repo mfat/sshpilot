@@ -88,7 +88,7 @@ from ..identity import Identity  # noqa: E402,F401
 
 def _windows() -> bool:
     """Whether local commands run under ``cmd.exe``; a seam for tests."""
-    from ..platform_utils import is_windows
+    from ..platform.detect import is_windows
     return is_windows()
 
 
@@ -102,11 +102,10 @@ def _local_shell_argv(command: str) -> "List[str] | str":
     ``"`` in *command* into ``\\"``, which ``cmd`` does not understand.
     ``/s`` strips exactly the outer pair of quotes added here.
     """
-    import os
     import shutil
     if _windows():
-        comspec = (os.environ.get("COMSPEC") or "cmd.exe").strip('"')
-        return f'"{comspec}" /d /s /c "{command}"'
+        from ..platform.process import windows_cmd_command_line
+        return windows_cmd_command_line(command)
     return [shutil.which("sh") or "/bin/sh", "-lc", command]
 
 
@@ -128,6 +127,14 @@ def _text_kwargs() -> Dict[str, Any]:
     if _windows():
         return {"encoding": "utf-8", "errors": "replace"}
     return {}
+
+
+def _spawn_kwargs() -> Dict[str, Any]:
+    """Output decoding plus a hidden console: these commands run from the
+    GUI process, and in the windowed build each ``cmd`` would otherwise
+    flash a console window."""
+    from ..platform.process import hidden_console_kwargs
+    return {**_text_kwargs(), **hidden_console_kwargs()}
 
 
 class ProtocolBackend(abc.ABC):
@@ -998,7 +1005,7 @@ class PluginContext:
         try:
             result = subprocess.run(
                 argv, env=os.environ.copy(), capture_output=True, text=True,
-                timeout=timeout, check=False, input=input, **_text_kwargs())
+                timeout=timeout, check=False, input=input, **_spawn_kwargs())
             logger.debug(
                 "run_local_command exit=%s stdout=%dB stderr=%dB",
                 result.returncode,
@@ -1169,7 +1176,7 @@ class PluginContext:
         proc = subprocess.Popen(
             argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-            text=True, bufsize=1, **_text_kwargs(),
+            text=True, bufsize=1, **_spawn_kwargs(),
         )
         if input_text is not None and proc.stdin is not None:
             try:

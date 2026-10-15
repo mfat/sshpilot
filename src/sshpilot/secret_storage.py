@@ -68,6 +68,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+from .platform.process import hidden_console_kwargs
+
 logger = logging.getLogger(__name__)
 
 
@@ -705,6 +707,7 @@ class PassBackend(SecretBackend):
             env=os.environ.copy(),
             check=False,
             timeout=self._TIMEOUT,
+            **hidden_console_kwargs(),
         )
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
@@ -926,6 +929,7 @@ class BitwardenBackend(SecretBackend):
         argv, pass_fds = self._bw_command(args, env)
         # Only pass ``pass_fds`` when needed so non-Flatpak spawns are untouched.
         spawn_kwargs = {"pass_fds": pass_fds} if pass_fds else {}
+        spawn_kwargs.update(hidden_console_kwargs())
         started = time.monotonic()
         try:
             result = subprocess.run(
@@ -1729,6 +1733,7 @@ class RbwBackend(SecretBackend):
                 argv, env, keys=("PINENTRY_USER_DATA",),
             )
         spawn_kwargs = {"pass_fds": pass_fds} if pass_fds else {}
+        spawn_kwargs.update(hidden_console_kwargs())
         try:
             return subprocess.run(
                 argv,

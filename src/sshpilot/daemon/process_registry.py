@@ -25,11 +25,12 @@ import hashlib
 import json
 import logging
 import os
-import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
+
+from sshpilot.platform.process import pid_alive
 
 logger = logging.getLogger(__name__)
 
@@ -123,25 +124,8 @@ def _create_time(pid: int) -> Optional[float]:
 def _pid_exists(pid: int) -> bool:
     """Whether any process holds ``pid`` — identity unknown."""
 
-    if sys.platform == "win32":
-        # os.kill(pid, 0) is not a probe on Windows: any signal other than the
-        # console CTRL events is TerminateProcess, and a dead PID raises a
-        # plain OSError that would read as "alive".
-        try:
-            import psutil
-
-            return bool(psutil.pid_exists(pid))
-        except Exception:
-            return True
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return True
-    return True
+    # Unknown reads as alive: callers forget a PID only on positive evidence.
+    return pid_alive(pid, on_error=True)
 
 
 def pid_exists(pid: int) -> bool:

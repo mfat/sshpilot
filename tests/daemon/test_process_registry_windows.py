@@ -17,7 +17,7 @@ from sshpilot.daemon import process_registry
 
 @pytest.mark.parametrize("exists", [True, False])
 def test_windows_pid_exists_uses_psutil_not_os_kill(monkeypatch, exists):
-    monkeypatch.setattr(process_registry.sys, "platform", "win32")
+    monkeypatch.setattr(__import__("sys"), "platform", "win32")
     fake_psutil = types.SimpleNamespace(pid_exists=lambda pid: exists)
     monkeypatch.setitem(__import__("sys").modules, "psutil", fake_psutil)
 

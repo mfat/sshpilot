@@ -333,7 +333,7 @@ def test_pass_backend_argv(monkeypatch):
         stdout = b'secretvalue\n'
         stderr = b''
 
-    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None, **kwargs):
         calls.append((list(argv), input))
         return _Result()
 
@@ -1045,7 +1045,7 @@ class FakeBw:
         return [a for a in args if a != '--nointeraction'], host_env
 
     def run(self, argv, input=None, capture_output=None, env=None, check=None,
-            timeout=None, pass_fds=()):
+            timeout=None, pass_fds=(), creationflags=0):
         cmd, host_env = self._bw_command(argv)
         merged = dict(env or {})
         merged.update(host_env)

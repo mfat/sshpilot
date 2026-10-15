@@ -48,7 +48,11 @@ that rule and do affect Linux. Treat them as product decisions:
 | Detached child | `start_new_session=True` | `CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` | `daemon/launcher.detached_process_options()` |
 | ssh-agent | `SSH_AUTH_SOCK` | named pipe `\\.\pipe\openssh-ssh-agent` | `providers/system_agent.system_agent_socket()` |
 | Serial / RDP plugins | picocom / FreeRDP | plink / mstsc | `_windows()` seam in each plugin |
-| Shell for user commands | `sh -lc` | `cmd /d /s /c` | `daemon/pre_connection_command._shell_argv` |
+| Shell for user commands | `sh -lc` | `cmd /d /s /c` | `platform/process.windows_cmd_command_line()` |
+| Is a pid alive? | `os.kill(pid, 0)` | `psutil.pid_exists` | `platform/process.pid_alive()` |
+| Directory fsync | `os.fsync` on the directory | skipped | `platform/fs.fsync_directory()` |
+| Platform checks | | | `platform/detect.py` (`is_windows`, `is_macos`, `is_flatpak`), GLib-free |
+| External terminal | desktop default / Terminal.app | Windows Terminal, PowerShell, cmd | `system_terminal.py` |
 
 ## Rules of thumb
 
@@ -58,7 +62,10 @@ that rule and do affect Linux. Treat them as product decisions:
 Windows. A module that Windows imports must not import them at the top. Import
 them inside the POSIX branch, or guard the import. Modules that only POSIX
 code imports may use them freely: `daemon/pty_runner.py` does, and
-`server.py` never imports it on Windows. The same applies to `Vte`. Use
+`server.py` never imports it on Windows.
+`tests/architecture/test_platform_portability.py` enforces this on every
+platform; add a file to its `POSIX_ONLY_FILES` only when Windows never
+imports it. The same applies to `Vte`. Use
 `terminal_backends.VTE_AVAILABLE`, and do not assume the terminal is a
 `Vte.Terminal`.
 
@@ -66,8 +73,11 @@ code imports may use them freely: `daemon/pty_runner.py` does, and
 
 - `os.kill(pid, 0)` **kills** the process on Windows: Python calls
   `TerminateProcess` for any signal other than the console CTRL events. To
-  check whether a pid is alive, use `psutil.pid_exists`, as
-  `daemon/process_registry._pid_exists` does.
+  check whether a pid is alive, use `platform.process.pid_alive(pid,
+  on_error=...)`. `on_error` is the answer when the probe itself fails;
+  callers differ on purpose (`process_registry` treats an unknown pid as
+  alive, the terminal tab as gone, orphan cleanup leaves it alone with
+  `None`). The architecture test rejects `os.kill(x, 0)` anywhere else.
 - `os.killpg`, `os.getpgid`, `os.setsid`, `os.fork`, `SIGKILL`, `SIGHUP`,
   `SIGALRM` and `SIGCHLD` are POSIX only. To end a process and its children,
   use psutil on Windows (see `conpty_runner`). Write
@@ -77,7 +87,11 @@ code imports may use them freely: `daemon/pty_runner.py` does, and
   `detached_process_options()` for background children.
 - A child started without `CREATE_NO_WINDOW` flashes a console window in the
   windowed (frozen) build. Children of the daemon inherit its hidden console.
-  Commands started directly from the GUI process do not.
+  Commands started directly from the GUI process do not: pass
+  `**platform.process.hidden_console_kwargs()` to `run` / `Popen` there. It
+  is empty on POSIX (it follows the real interpreter, not a patched
+  `sys.platform`). Never use it where a console window is the point, such as
+  the external terminal launch (`CREATE_NEW_CONSOLE`).
 - `GLib.unix_signal_add`, `GLib.unix_fd_add_full` and `Gio.UnixFDList` are
   POSIX only. Keep them on POSIX-only paths or behind a `try`.
 
@@ -127,8 +141,8 @@ for Windows exits with code 255 and prints nothing. See
 ### Shell commands and quoting
 
 - There is no `sh` on Windows (unless Git's happens to be on `PATH`). A user
-  command needs `%COMSPEC% /d /s /c "<command>"` there, passed as one string,
-  as in `pre_connection_command`.
+  command needs `%COMSPEC% /d /s /c "<command>"` there, passed as one string:
+  `platform.process.windows_cmd_command_line()`.
 - `shlex.quote` and `shlex.join` produce POSIX quoting. Use them for commands
   that run **on the remote host** or under `sh`. For a local Windows command
   line, use `subprocess.list2cmdline` or `local_shell_pty.windows_command_line`.
@@ -140,14 +154,17 @@ for Windows exits with code 255 and prints nothing. See
 
 - Get directories from `platform/paths.py` (`get_config_dir`, `get_data_dir`,
   `get_state_dir`, `get_runtime_dir`, `get_ssh_dir`). Do not hardcode
-  `~/.config`, `~/.local/share`, `XDG_*` or `/tmp`.
+  `~/.config`, `~/.local/share`, `XDG_*` or `/tmp`. The GLib-backed getters in
+  `platform_utils` hand off to these on Windows, where GLib would prefer
+  `%HOME%` over `%USERPROFILE%`.
 - Remote paths are always POSIX. Use `posixpath` (or `remote_path_utils`) for
   them, never `os.path`, which uses `\` on Windows.
 - `os.rename` fails on Windows when the target exists. Use `os.replace` when
   you mean to overwrite.
 - Windows cannot `os.open` a directory, so fsyncing the parent directory
-  after an atomic write must be skipped there (see
-  `core/connections/state_file._fsync_parent`).
+  after an atomic write must be skipped there. Use
+  `platform.fs.fsync_directory()`, which raises `OSError` for the caller to
+  convert.
 - `chmod` does nothing useful on Windows, and OpenSSH rejects keys and config
   files that others can read. Use `platform/windows/acl.py` for files that
   must be private.
@@ -194,9 +211,10 @@ ssh config and `known_hosts` writers.
   falling back to `cmd.exe`. This is passed as one string, not a list. A list
   goes through `list2cmdline`, which turns every `"` into `\"`, and `cmd`
   does not understand that. The daemon's pre-connection command
-  (`daemon/pre_connection_command._shell_argv`) does the same. Windows output
-  is decoded as UTF-8 with `errors="replace"`. The branch sits behind
-  `plugins.api._windows()`, which tests patch.
+  (`daemon/pre_connection_command._shell_argv`) does the same; both build the
+  line with `platform.process.windows_cmd_command_line()`. Windows output
+  is decoded as UTF-8 with `errors="replace"`, and the console is hidden.
+  The branch sits behind `plugins.api._windows()`, which tests patch.
 - The command string is shell syntax, so build it from an argv with
   `plugins.api.local_command_line()`. It uses `shlex.join` on POSIX and
   `subprocess.list2cmdline` on Windows. A command that relies on `sh`

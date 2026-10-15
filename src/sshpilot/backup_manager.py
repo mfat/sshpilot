@@ -21,14 +21,11 @@ from .api.models.secrets import (
 from .platform.paths import get_config_dir, get_ssh_dir, known_hosts_path_for
 from .core.settings import CONFIG_VERSION
 from .platform.locking import settings_transaction_lock
+from .platform.detect import is_flatpak
 
 if TYPE_CHECKING:
     from .config import Config
 
-
-def is_flatpak() -> bool:
-    """Return whether the current daemon/runtime is inside Flatpak."""
-    return os.environ.get("FLATPAK_ID") is not None or os.path.exists("/.flatpak-info")
 
 logger = logging.getLogger(__name__)
 

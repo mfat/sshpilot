@@ -250,6 +250,7 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("plugins/api.py", "subprocess"): "frontend",  # explicitly local plugin APIs
     # -- legitimate frontend-owned launches ------------------------------
     ("platform_utils.py", "subprocess"): "frontend",
+    ("system_terminal.py", "subprocess"): "frontend",  # opens the user's external terminal
     ("wol.py", "subprocess"): "frontend",
     ("port_utils.py", "subprocess"): "frontend",
     ("startup_info.py", "subprocess"): "frontend",

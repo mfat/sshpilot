@@ -414,3 +414,32 @@ def test_http_get_parses_response(monkeypatch):
 def test_http_rejects_non_http_scheme():
     with pytest.raises(ValueError):
         _ctx().http.get("file:///etc/passwd")
+
+
+def test_run_local_command_hides_the_console(monkeypatch):
+    # GUI-started commands must not flash a console in the windowed build.
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr(
+        "sshpilot.platform.process.hidden_console_kwargs",
+        lambda: {"creationflags": 0x1234})
+
+    def _fake_run(argv, **kwargs):
+        seen["kwargs"] = kwargs
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert _ctx().run_local_command("docker ps").ok
+    assert seen["kwargs"]["creationflags"] == 0x1234
+
+
+def test_run_local_command_stream_hides_the_console(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr(
+        "sshpilot.platform.process.hidden_console_kwargs",
+        lambda: {"creationflags": 0x1234})
+    _capture_stream_popen(monkeypatch, seen)
+
+    _ctx().run_local_command_stream("docker logs -f web", on_line=lambda _l: None).stop()
+    assert seen["kwargs"]["creationflags"] == 0x1234

@@ -121,11 +121,11 @@ from .shortcut_utils import (
     get_primary_modifier_label,
     latin_fallback_keyvals,
 )
-from .platform_utils import (
+from .platform_utils import is_windows
+from .system_terminal import (
     get_default_terminal_command,
     get_user_preferred_terminal,
     find_any_terminal,
-    is_windows,
     open_system_terminal,
 )
 from .plugins.api import Capability as PluginCapability

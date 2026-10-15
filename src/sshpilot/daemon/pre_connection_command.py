@@ -62,6 +62,7 @@ from sshpilot.api.models.pre_command import (
     parse_knock_sequence,
 )
 from sshpilot.logging_support import log_context
+from sshpilot.platform.process import windows_cmd_command_line
 
 from .port_knock import KnockResolutionError, knock as send_knock
 from .bootstrap_settings import (
@@ -496,8 +497,7 @@ class PreConnectionCommandRunner:
         # ``\"``, which ``cmd`` does not understand. ``/s`` strips exactly the
         # outer pair of quotes added here.
         if sys.platform == "win32":
-            comspec = (os.environ.get("COMSPEC") or "cmd.exe").strip('"')
-            return f'"{comspec}" /d /s /c "{command}"'
+            return windows_cmd_command_line(command)
         return [shutil.which("sh") or "/bin/sh", "-lc", command]
 
     def _execute(

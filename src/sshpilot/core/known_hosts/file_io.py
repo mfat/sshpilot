@@ -11,12 +11,12 @@ and filesystem paths are never logged or surfaced in errors.
 from __future__ import annotations
 
 import os
-import sys
 import stat
 import tempfile
 from pathlib import Path
 from typing import Optional
 
+from ...platform.fs import fsync_directory
 from ..errors import CoreError, ErrorCode
 
 
@@ -123,17 +123,7 @@ def atomic_write_known_hosts_bytes(path: Path, content: bytes) -> None:
     # Make the rename durable. The temporary file is already gone by this
     # point; the replacement may already have succeeded when this fails, so
     # callers must treat a raised CoreError here as "durability unknown".
-    if sys.platform == "win32":
-        return  # Windows cannot open a directory to fsync it; NTFS journals the rename itself.
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    dir_fd: Optional[int] = None
     try:
-        dir_fd = os.open(path.parent, flags)
-        os.fsync(dir_fd)
+        fsync_directory(path.parent)
     except OSError as exc:
         raise _core_error(exc) from exc
-    finally:
-        if dir_fd is not None:
-            os.close(dir_fd)

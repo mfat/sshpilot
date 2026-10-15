@@ -46,6 +46,7 @@ from gi.repository import Adw, GLib, Gtk
 
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .window_dialogs import parent_window
+from .platform.process import hidden_console_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,7 @@ def run_install(plan: InstallPlan) -> Tuple[bool, str]:
             result = subprocess.run(
                 list(plan.argv),
                 capture_output=True, text=True, timeout=_INSTALL_TIMEOUT, check=False,
+                **hidden_console_kwargs(),
             )
         except subprocess.TimeoutExpired:
             return False, _("Installation timed out.")

@@ -17,6 +17,8 @@ import time
 import weakref
 import logging
 
+from .platform.process import pid_alive
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,14 +87,12 @@ class SSHProcessManager:
 
                     # Double-check: make sure the process actually exists before trying to kill it
                     try:
-                        if sys.platform == "win32":
-                            # os.kill(pid, 0) is TerminateProcess there.
-                            import psutil
-
-                            if not psutil.pid_exists(pid):
-                                raise ProcessLookupError(pid)
-                        else:
-                            os.kill(pid, 0)  # Test if process exists
+                        # None: the probe failed, so neither kill nor forget it.
+                        alive = pid_alive(pid, on_error=None)
+                        if alive is None:
+                            raise OSError(f"cannot probe pid {pid}")
+                        if not alive:
+                            raise ProcessLookupError(pid)
                         orphaned_pids.append(pid)
                         logger.debug(f"Found orphaned process {pid} (age: {process_age:.1f}s)")
                     except ProcessLookupError:
