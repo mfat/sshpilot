@@ -2658,8 +2658,8 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Could not arm PTY auto-fill", exc_info=True)
 
         try:
-            # Get and store process group ID
-            self.process_pgid = os.getpgid(pid)
+            # Get and store process group ID (Windows has no process groups)
+            self.process_pgid = None if is_windows() else os.getpgid(pid)
             logger.debug(f"Process group ID: {self.process_pgid}")
 
             # Store shell PGID for job detection (this is the shell's process group)
