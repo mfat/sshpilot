@@ -146,6 +146,12 @@ def _parse_rgb(value: str, fallback: Rgb = (0.0, 0.0, 0.0)) -> Rgb:
     return fallback
 
 
+# Inner padding around the text grid, matching the CSS padding VTE gets on
+# Linux/macOS (terminal.py) so text clears the card's rounded corners.
+_PAD_X = 8
+_PAD_Y = 4
+
+
 class PyteTerminalView(Gtk.DrawingArea):
     """Draws a :class:`TerminalModel` and turns input into terminal bytes."""
 
@@ -408,8 +414,8 @@ class PyteTerminalView(Gtk.DrawingArea):
         width, height = self.get_width(), self.get_height()
         if width <= 0 or height <= 0:
             return
-        columns = max(2, int(width // self._cell_w))
-        rows = max(1, int(height // self._cell_h))
+        columns = max(2, int((width - 2 * _PAD_X) // self._cell_w))
+        rows = max(1, int((height - 2 * _PAD_Y) // self._cell_h))
         if (columns, rows) != (self.model.columns, self.model.lines):
             self.model.resize(columns, rows)
             self._clamp_scroll()
@@ -495,6 +501,7 @@ class PyteTerminalView(Gtk.DrawingArea):
         self._update_metrics()
         cr.set_source_rgb(*self._bg)
         cr.paint()
+        cr.translate(_PAD_X, _PAD_Y)
 
         model = self.model
         top = model.viewport_top(self.scroll_offset)
@@ -721,11 +728,13 @@ class PyteTerminalView(Gtk.DrawingArea):
         return True
 
     def _cell_at(self, x: float, y: float) -> Tuple[int, int]:
+        x, y = x - _PAD_X, y - _PAD_Y
         column = int(max(0, min(self.model.columns - 1, x // self._cell_w)))
         screen_row = int(max(0, min(self.model.lines - 1, y // self._cell_h)))
         return self.model.viewport_top(self.scroll_offset) + screen_row, column
 
     def _screen_cell_at(self, x: float, y: float) -> Tuple[int, int]:
+        x, y = x - _PAD_X, y - _PAD_Y
         column = int(max(0, min(self.model.columns - 1, x // self._cell_w)))
         screen_row = int(max(0, min(self.model.lines - 1, y // self._cell_h)))
         return screen_row, column
