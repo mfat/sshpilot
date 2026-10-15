@@ -1,0 +1,96 @@
+name: Windows (Nuitka, experimental)
+
+# An experimental Nuitka build of the Windows app folder, for comparison with
+# the PyInstaller build that ships (packaging/windows/nuitka/README.md).
+# Manual only: Actions → "Windows (Nuitka, experimental)" → Run workflow.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nuitka-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nuitka:
+    runs-on: windows-latest
+    # The build compiles ~900 generated C files with MSVC: 40 min on a
+    # 12-thread desktop, likely longer on a 4-core runner.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Cache GTK runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/GTK4_Gvsbuild_*.zip
+          key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
+
+      - name: Fetch GTK 4 and ConPTY
+        run: |
+          python scripts/fetch-gtk.py
+          python scripts/fetch-conpty.py
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build patched libvterm
+        run: python packaging/windows/libvterm/build.py --compiler msvc
+
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m venv .venv-win
+          $py = ".venv-win\Scripts\python.exe"
+          & $py -m pip install --upgrade pip
+          $wheels = Get-ChildItem vendor\gtk\wheels -Filter *.whl | Where-Object { $_.Name -match "^(pygobject|pycairo)-.*-cp314-" }
+          & $py -m pip install $wheels.FullName
+          & $py -m pip install --no-deps -e .
+          & $py -m pip install -r requirements.txt pyyaml pyinstaller Nuitka==4.3 ordered-set==4.1.0 zstandard==0.25.0
+
+      # The Nuitka build takes its GTK DLLs and share\ data from this one.
+      - name: Build the PyInstaller app folder
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+
+      # Nuitka keeps its MSVC object cache (clcache) and downloads (dependency
+      # walker) here. Rebuilding unchanged source locally got no clcache hits,
+      # so this mostly saves the downloads.
+      - name: Point Nuitka at a cache that survives the job
+        shell: bash
+        run: echo "NUITKA_CACHE_DIR=$RUNNER_TEMP/nuitka-cache" >> "$GITHUB_ENV"
+
+      # Objects depend on the Python and Nuitka versions as well as the source
+      # (the key layout follows Nuitka/Nuitka-Action's).
+      - name: Restore the Nuitka compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/nuitka-cache
+          key: nuitka-${{ runner.os }}-py3.14-nuitka4.3-${{ hashFiles('src/sshpilot/**/*.py', 'run.py', 'packaging/windows/nuitka/**', 'requirements.txt') }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-py3.14-nuitka4.3-
+
+      - name: Build the Nuitka app folder
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows\nuitka\build.ps1
+
+      - name: Upload the Nuitka app folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-windows-nuitka
+          path: build/nuitka/sshPilot.dist
+          # Otherwise dot-folders in the app folder are silently left out.
+          include-hidden-files: true
+
+      - name: Upload the compilation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuitka-compilation-report
+          path: build/nuitka/report.xml
+          if-no-files-found: ignore

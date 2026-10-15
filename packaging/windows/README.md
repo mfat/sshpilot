@@ -70,6 +70,12 @@ releases.
 powershell -ExecutionPolicy Bypass -File packaging\windows\sandbox-test.ps1
 ```
 
+## Nuitka (experimental)
+
+`nuitka\` builds the same app folder with Nuitka for comparison; the
+`Windows (Nuitka, experimental)` workflow runs it on manual dispatch. See
+`nuitka\README.md`.
+
 ## Signing and winget (maintainer setup)
 
 Unsigned installers trigger SmartScreen. The release job signs through
