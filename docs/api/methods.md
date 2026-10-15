@@ -1056,13 +1056,15 @@ client.delete_connection(DeleteConnectionRequest(connection_id))
 
 - **Status / introduced:** Implemented / API 0.84
 - **Capability / purpose:** `connections.write`; deletes several saved
-  connections as one change.
+  connections in one request.
 - **Parameters / return:** `DeleteConnectionsRequest` (unique, non-empty
   connection ids); returns `DeleteConnectionsResult` with the deleted ids.
 - **Errors:** `connection_not_found` when any id is unknown,
   `persistence_failed`, and transport/protocol errors. Every id is checked
-  before anything is written, and a failure restores every touched file, so
-  either all listed connections are deleted or none is.
+  before anything is written. When the request returns an error, the daemon
+  has restored every file it touched and no listed connection is deleted.
+  That holds for failures the daemon reports; a daemon that is killed
+  mid-request can leave a partial delete across Include files (see below).
 - **Events:** One `connection.deleted` per deleted connection, then a single
   `connection_store.changed`; none on failure.
 - **Cancellation / ordering / threading:** No automatic retry. SSH hosts
