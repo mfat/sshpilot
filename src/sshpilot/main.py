@@ -10,6 +10,10 @@ import faulthandler
 import logging
 import threading
 
+from . import startup_timing
+
+startup_timing.mark("process_start")
+
 
 def _clamp_thirdparty_loggers() -> None:
     """Pin chatty third-party loggers to WARNING.
@@ -41,6 +45,9 @@ except ValueError:  # Windows: no VTE; the pyte backend is used instead
     pass
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
+
+startup_timing.mark("gtk_imported")
+
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
     TOGGLE_FULLSCREEN_ACTION,
@@ -610,8 +617,10 @@ class SshPilotApplication(Adw.Application):
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
             from .window import MainWindow
+            startup_timing.mark("window_module_imported")
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
+            startup_timing.mark("window_presented")
 
             # The window UI is built and presented and plugins are bound, so
             # it is now safe for plugins to do live UI/terminal work.
@@ -1701,6 +1710,7 @@ class SshPilotApplication(Adw.Application):
         app_level = numeric_level
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
+        startup_timing.logging_ready()
 
     def _on_config_setting_changed(self, _config, key, value):
         if key != 'terminal.pass_through_mode':

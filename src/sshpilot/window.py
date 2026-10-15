@@ -112,6 +112,7 @@ from .window_dialogs import (
     show_ssh_password_dialog,
 )
 from . import shutdown
+from . import startup_timing
 from .search_utils import connection_matches
 from .tag_groups import effective_tags
 from .shortcut_utils import (
@@ -419,6 +420,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if app is not None:
                     setattr(app, 'loaded_plugins', loaded_plugins)
             self.loaded_plugins = loaded_plugins
+            startup_timing.mark("plugins_loaded")
         except Exception:
             logger.exception("Plugin loading failed")
             self.loaded_plugins = []
@@ -467,6 +469,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Set up window
         self.setup_window()
         self.setup_ui()
+        startup_timing.mark("window_ui_built")
         # Fullscreen is window state: exactly one controller per window owns the
         # saved chrome, the F11/Escape controllers and the top-edge exit
         # controls, so a closing terminal can never strand the window
@@ -551,6 +554,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.key_manager = None
             return
         self.connection_manager.attach_client(self.client)
+        startup_timing.mark(
+            "connection_snapshot_applied",
+            f"{len(self.connection_manager.connections)} connections",
+        )
         self.group_manager.attach_client(self.client)
         from .gtk.group_store import GroupMutationController
         if getattr(self, "_group_mutation_controller", None) is None:
@@ -871,6 +878,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _apply_client_selection(self, selection) -> None:
+        startup_timing.mark("daemon_client_received")
         if self._is_quitting:
             selection.client.close()
             return
@@ -6727,6 +6735,42 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._projection_rebuild_pending = True
         GLib.idle_add(self._flush_projection_rebuild)
 
+    def _mark_sidebar_populated(self):
+        """Record the first sidebar built from daemon data (startup timing)."""
+        if any(
+            item["name"] == "sidebar_rows_built"
+            for item in startup_timing.milestones()
+        ):
+            return
+        startup_timing.mark(
+            "sidebar_rows_built",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
+        )
+        if not startup_timing.profile_path():
+            return
+        # Profiling harness: wait for the populated sidebar to be painted,
+        # then hand the milestones over and quit.
+        def _after_paint(*_args):
+            startup_timing.mark("sidebar_painted")
+            startup_timing.write_profile()
+            app = self.get_application()
+            if app is not None:
+                GLib.idle_add(lambda: (app.quit(), False)[1])
+            return GLib.SOURCE_REMOVE
+
+        clock = self.get_frame_clock()
+        if clock is None:
+            _after_paint()
+            return
+        handler = []
+
+        def _on_paint(frame_clock):
+            frame_clock.disconnect(handler[0])
+            _after_paint()
+
+        handler.append(clock.connect("after-paint", _on_paint))
+        self.queue_draw()
+
     def _flush_projection_rebuild(self):
         """Run the one sidebar rebuild owed to the latest projection resets."""
         self._projection_rebuild_pending = False
@@ -6738,6 +6782,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self, '_projection_rebuild_mark', 0
         ):
             self.rebuild_connection_list()
+        if self.client is not None:
+            self._mark_sidebar_populated()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge
             # selection + connection store fetch), so this reset — not window

@@ -18,6 +18,10 @@ sys.path.insert(0, PARENT)
 if os.path.isdir(SRC_DIR):
     sys.path.insert(0, SRC_DIR)
 
+from sshpilot import startup_timing
+
+startup_timing.mark("process_start")
+
 # Windows: run the built-in OpenSSH (System32\OpenSSH) rather than an MSYS
 # copy that Git for Windows may have put first on PATH. The daemon inherits
 # this environment. See sshpilot/platform/windows/openssh.py.

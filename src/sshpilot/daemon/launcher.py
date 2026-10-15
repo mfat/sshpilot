@@ -17,6 +17,7 @@ from typing import Callable, Mapping, Optional, Sequence
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot import startup_timing
 
 from .lifecycle import (
     SocketSecurityError,
@@ -284,6 +285,7 @@ class DaemonLauncher:
         cleanly.
         """
 
+        startup_timing.mark("daemon_connect_begun")
         with self._lock:
             self._prepare_socket_location()
 
@@ -292,6 +294,7 @@ class DaemonLauncher:
                 self._ensure_gtk_askpass_log_forwarder()
                 self._ensure_daemon_log_forwarder()
                 self._synchronize_explicit_log_level(client)
+                startup_timing.mark("daemon_connect_returned", "existing daemon")
                 return DaemonLaunchResult(client=client, process=None)
 
             if getattr(sys, "frozen", False):
@@ -353,6 +356,7 @@ class DaemonLauncher:
             self._ensure_gtk_askpass_log_forwarder()
             self._ensure_daemon_log_forwarder()
             self._synchronize_explicit_log_level(client)
+            startup_timing.mark("daemon_connect_returned", "spawned daemon")
             return DaemonLaunchResult(client=client, process=handle)
 
     def _prepare_socket_location(self) -> None:
