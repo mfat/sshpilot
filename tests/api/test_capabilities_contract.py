@@ -14,7 +14,7 @@ def test_connection_service_only_declares_connection_operations():
         "save_ssh_config_text",
         "list_connections", "create_connection", "preview_asbru_import", "import_asbru",
         "duplicate_connection",
-        "delete_connection", "store_connection_password",
+        "delete_connection", "delete_connections", "store_connection_password",
         "set_session_connection_password",
         "clear_session_connection_password",
         "delete_connection_password",

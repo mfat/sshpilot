@@ -103,6 +103,8 @@ from sshpilot.api.transport.codec import (
     delete_connection_password_request_from_wire,
     delete_connection_request_from_wire,
     delete_connection_result_to_wire,
+    delete_connections_request_from_wire,
+    delete_connections_result_to_wire,
     delete_group_request_from_wire,
     detach_session_request_from_wire,
     forward_summary_to_wire,
@@ -212,6 +214,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.import_asbru": Capability.CONNECTIONS_WRITE,
     "connections.duplicate": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
+    "connections.delete_many": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
@@ -396,6 +399,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "connections.duplicate",
         "connections.update",
         "connections.delete",
+        "connections.delete_many",
         "connections.split",
         "connections.save_ssh_config_text",
         "groups.create",
@@ -487,6 +491,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.duplicate",
         "connections.update",
         "connections.delete",
+        "connections.delete_many",
         "connections.split",
         "connections.get_editor",
         "connections.get_effective_config",
@@ -768,6 +773,7 @@ class RequestDispatcher:
             "connections.duplicate": self._handle_duplicate_connection,
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
+            "connections.delete_many": self._handle_delete_connections,
             "connections.get_editor": self._handle_get_connection_editor,
             "connections.get_effective_config": self._handle_get_effective_config,
             "connections.check_unsaved_host": self._handle_check_unsaved_host,
@@ -1349,6 +1355,20 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=mutation.connection_id,
+        )
+
+    def _handle_delete_connections(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        mutation = delete_connections_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: delete_connections_result_to_wire(
+                self._connections.delete_connections(mutation)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_get_connection_editor(

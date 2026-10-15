@@ -25,9 +25,9 @@ import shlex
 import shutil
 import stat
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ...api.models.connections import SshConfigText
 from ...ssh_config_document import (
@@ -284,6 +284,14 @@ class PreparedSshMutation:
     target_text: str
     connection_id: str = ""
     remove_connection_id: Optional[str] = None
+    # Further aliases removed by a batch delete, besides remove_connection_id.
+    remove_connection_ids: Tuple[str, ...] = ()
+    # The loader view of the target taken while preparing.  It lets the
+    # identity intent reuse that parse; the pre-write recheck in ``commit``
+    # never trusts it and always loads again.
+    preview: Optional[LoadedSshConfiguration] = field(
+        default=None, compare=False, repr=False
+    )
 
     def commit(self, store: "SshConfigStore") -> SshConfigText:
         """Commit after rechecking the base revision and expected bytes."""
@@ -295,7 +303,7 @@ class PreparedSshMutation:
         # Re-evaluate the exact target source tree immediately before the
         # replacement.  This catches dependencies introduced only by the
         # prepared Include graph (which are absent from the base revision).
-        if store.preview_prepared(self).root_revision != self.target_revision:
+        if store.preview_prepared(self, reuse=False).root_revision != self.target_revision:
             raise _stale_error()
         _atomic_write_text(
             self.target_path,
@@ -484,6 +492,8 @@ class SshConfigStore:
         prepared.commit(self)
         if prepared.remove_connection_id is not None:
             self._generations.pop(prepared.remove_connection_id, None)
+        for removed in prepared.remove_connection_ids:
+            self._generations.pop(removed, None)
         if prepared.connection_id:
             self._generations[prepared.connection_id] = (
                 self._generations.get(prepared.connection_id, 0) + 1
@@ -495,16 +505,26 @@ class SshConfigStore:
             touched_path=str(prepared.target_path),
         )
 
-    def preview_prepared(self, prepared: PreparedSshMutation) -> LoadedSshConfiguration:
+    def preview_prepared(
+        self, prepared: PreparedSshMutation, *, reuse: bool = True
+    ) -> LoadedSshConfiguration:
         """Load a prepared config through the authoritative loader overlay.
 
         The overlay keeps the real source paths and resolves the target
         Include graph against the real filesystem.  This is important for
         absolute/parent-relative includes and for detecting dependencies that
         exist only in the proposed target document.
+
+        A full config parse is the expensive part of every mutation, so the
+        view taken while preparing is handed back when ``reuse`` is true.
+        Callers inside one locked mutation get the same answer either way;
+        ``commit`` passes ``reuse=False`` because its recheck exists to see
+        the filesystem as it is right before the write.
         """
         if type(prepared) is not PreparedSshMutation:
             raise TypeError("a PreparedSshMutation is required")
+        if reuse and prepared.preview is not None:
+            return self._overlay_generations(prepared.preview)
         return self._overlay_generations(
             load_ssh_configuration(
                 self._root_path,
@@ -520,16 +540,11 @@ class SshConfigStore:
 
     def _with_target_revision(self, prepared: PreparedSshMutation) -> PreparedSshMutation:
         """Fill a prepared mutation's revision from its target Include graph."""
-        preview = self.preview_prepared(prepared)
-        return PreparedSshMutation(
-            operation=prepared.operation,
-            base_revision=prepared.base_revision,
+        preview = self.preview_prepared(prepared, reuse=False)
+        return replace(
+            prepared,
             target_revision=preview.root_revision,
-            target_path=prepared.target_path,
-            expected_bytes=prepared.expected_bytes,
-            target_text=prepared.target_text,
-            connection_id=prepared.connection_id,
-            remove_connection_id=prepared.remove_connection_id,
+            preview=preview,
         )
 
     def _prepare_document_replacement(
@@ -542,6 +557,7 @@ class SshConfigStore:
         target_text: str,
         connection_id: str = "",
         remove_connection_id: Optional[str] = None,
+        remove_connection_ids: Tuple[str, ...] = (),
     ) -> PreparedSshMutation:
         if not self._revision_matches(expected_revision):
             raise _stale_error()
@@ -554,6 +570,7 @@ class SshConfigStore:
             target_text=target_text,
             connection_id=connection_id,
             remove_connection_id=remove_connection_id,
+            remove_connection_ids=remove_connection_ids,
         )
         return self._with_target_revision(provisional)
 
@@ -643,39 +660,57 @@ class SshConfigStore:
 
     def prepare_delete(self, connection_id: str) -> PreparedSshMutation:
         """Prepare deletion of one Host token without writing it."""
+        return self.prepare_delete_many((connection_id,))
+
+    def prepare_delete_many(self, connection_ids: Sequence[str]) -> PreparedSshMutation:
+        """Prepare deletion of several Host tokens as one document replacement.
+
+        Every alias must be declared in the same source file, so the whole
+        batch is a single atomic write. Aliases that share a ``Host`` line
+        lose only their own tokens; a block left with none is dropped.
+        """
+        ids = tuple(dict.fromkeys(str(item) for item in connection_ids))
+        if not ids:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, "No connections to delete")
         self._refuse_symlinked_root()
         config = self.load()
-        record = self._find(config, connection_id)
-        self._ensure_unique_managed_declaration(connection_id, allow_shared=True)
-        source = _source_of(record)
-        if not source:
-            raise _store_error("The connection has no recorded source file")
-        target = Path(source)
+        sources = set()
+        for connection_id in ids:
+            source = _source_of(self._find(config, connection_id))
+            if not source:
+                raise _store_error("The connection has no recorded source file")
+            sources.add(Path(source))
+        if len(sources) != 1:
+            raise _store_error("A batch delete must stay within one file")
+        self._ensure_unique_managed_declarations(ids, allow_shared=True)
+        target = sources.pop()
         expected = target.read_bytes()
         doc = SSHConfigDocument.parse_file(str(target))
-        modified = False
+        removing = set(ids)
+        found = set()
         nodes: List[Any] = []
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
                 and is_concrete_host_block(node)
-                and connection_id in node.tokens
+                and removing.intersection(node.tokens)
             ):
-                modified = True
-                remaining = [token for token in node.tokens if token != connection_id]
+                found.update(removing.intersection(node.tokens))
+                remaining = [token for token in node.tokens if token not in removing]
                 if remaining:
                     node.tokens = remaining
                     node.lines[0] = doc.render_lines([f"Host {shlex.join(remaining)}\n"])[0]
                     nodes.append(node)
                 continue
             nodes.append(node)
-        if not modified:
+        if found != removing:
             raise _not_found_error()
         doc.nodes = nodes
         return self._prepare_document_replacement(
             operation="delete", target=target,
             expected_revision=config.root_revision, expected_bytes=expected,
-            target_text=doc.text(), remove_connection_id=connection_id,
+            target_text=doc.text(), remove_connection_id=ids[0],
+            remove_connection_ids=ids[1:],
         )
 
     def prepare_duplicate(self, connection_id: str) -> PreparedSshMutation:
@@ -818,17 +853,30 @@ class SshConfigStore:
         self, connection_id: str, *, allow_shared: bool
     ) -> None:
         """Reject structured edits without unique Host declaration ownership."""
-        occurrences = self._concrete_host_blocks_for_alias(connection_id)
-        if len(occurrences) > 1:
-            raise CoreError(
-                ErrorCode.MUTATION_AMBIGUOUS,
-                "The connection is defined by multiple Host declarations",
-            )
-        if occurrences and not allow_shared and len(occurrences[0].tokens) > 1:
-            raise CoreError(
-                ErrorCode.MUTATION_AMBIGUOUS,
-                "The connection shares a Host declaration with other aliases",
-            )
+        self._ensure_unique_managed_declarations(
+            (connection_id,), allow_shared=allow_shared
+        )
+
+    def _ensure_unique_managed_declarations(
+        self, connection_ids: Sequence[str], *, allow_shared: bool
+    ) -> None:
+        """Check declaration ownership for several aliases in one tree scan."""
+        wanted = set(connection_ids)
+        occurrences: Dict[str, List[HostBlock]] = {alias: [] for alias in wanted}
+        for block in self._authored_concrete_host_blocks():
+            for alias in wanted.intersection(block.tokens):
+                occurrences[alias].append(block)
+        for blocks in occurrences.values():
+            if len(blocks) > 1:
+                raise CoreError(
+                    ErrorCode.MUTATION_AMBIGUOUS,
+                    "The connection is defined by multiple Host declarations",
+                )
+            if blocks and not allow_shared and len(blocks[0].tokens) > 1:
+                raise CoreError(
+                    ErrorCode.MUTATION_AMBIGUOUS,
+                    "The connection shares a Host declaration with other aliases",
+                )
 
     def _concrete_host_blocks_for_alias(self, alias: str) -> List[HostBlock]:
         """Find authored concrete declarations for *alias* in the Include graph."""

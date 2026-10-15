@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.83",
+  "api_implementation_version": "0.84",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -131,6 +131,10 @@
     },
     "delete_connection_password": {
       "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "delete_connections": {
+      "capability": "connections.write",
       "status": "implemented"
     },
     "delete_group": {
@@ -693,6 +697,9 @@
     },
     "connections.delete_group": {
       "capability": "connections.groups"
+    },
+    "connections.delete_many": {
+      "capability": "connections.write"
     },
     "connections.delete_passphrase": {
       "capability": "connections.secrets.write"
@@ -4146,6 +4153,30 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteConnectionsRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[ConnectionId, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteConnectionsResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[ConnectionId, ...]"
         }
       ],
       "status": "Implemented"

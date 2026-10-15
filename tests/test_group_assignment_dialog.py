@@ -14,12 +14,13 @@ track their RGBA. That lets the tests click through the real production
 code path (row selection, entry typing, Confirm) and assert on a recording
 fake daemon client, proving:
 
-* Move replaces the connection's group membership (assign_connection_to_group).
+* Move replaces the connection's group membership (an exclusive placement).
 * Copy adds a membership while preserving the existing one
-  (copy_connection_to_group).
+  (an additive placement).
 * Both support creating a brand-new group inline (create_group, then the
   assign/copy step reusing the returned group id).
-* Multiple selected connections are all moved/copied in one sequence.
+* Multiple selected connections are all moved/copied in one
+  move_connections request (one daemon commit).
 * Typing an existing group's name (instead of picking its row) reuses that
   group rather than creating a duplicate.
 """
@@ -194,8 +195,8 @@ def _patch_widgets(monkeypatch):
 class _RecordingGroupClient:
     """Fake daemon client mirroring the repository's real move/copy semantics.
 
-    ``memberships`` is maintained the way the real repository would: assign
-    replaces a connection's groups with a single one, copy only adds.
+    ``memberships`` is maintained the way the real repository would: an
+    exclusive placement replaces a connection's groups, an additive one adds.
     """
 
     def __init__(self):
@@ -203,16 +204,16 @@ class _RecordingGroupClient:
         self.memberships = {}
         self._next_group_id = 1
 
-    def assign_connection_to_group(self, connection_id, group_id=""):
-        self.calls.append(("assign_connection_to_group", connection_id, group_id))
-        self.memberships[connection_id] = {group_id} if group_id else set()
-        return True
-
-    def copy_connection_to_group(self, request):
-        self.calls.append(
-            ("copy_connection_to_group", request.connection_id, request.group_id)
-        )
-        self.memberships.setdefault(request.connection_id, set()).add(request.group_id)
+    def move_connections(self, request):
+        ids = tuple(request.connection_ids)
+        group_id = request.target_group_id
+        mode = request.mode.value
+        self.calls.append(("move_connections", ids, group_id, mode))
+        for connection_id in ids:
+            if mode == "additive":
+                self.memberships.setdefault(connection_id, set()).add(group_id)
+            else:
+                self.memberships[connection_id] = {group_id} if group_id else set()
         return True
 
     def create_group(self, name, parent_id="", color=""):
@@ -349,7 +350,7 @@ def test_move_to_existing_group_replaces_membership(monkeypatch):
 
     confirm.emit('clicked')
 
-    assert client.calls == [("assign_connection_to_group", "demo", "g1")]
+    assert client.calls == [("move_connections", ("demo",), "g1", "exclusive")]
     assert client.memberships['demo'] == {'g1'}, 'move must replace prior membership'
     assert dialog.closed
     assert host.rebuild_calls == 1
@@ -370,7 +371,7 @@ def test_copy_to_existing_group_preserves_membership(monkeypatch):
 
     confirm.emit('clicked')
 
-    assert client.calls == [("copy_connection_to_group", "demo", "g1")]
+    assert client.calls == [("move_connections", ("demo",), "g1", "additive")]
     assert client.memberships['demo'] == {'g0', 'g1'}, 'copy must keep prior membership'
     assert dialog.closed
 
@@ -392,7 +393,7 @@ def test_move_to_new_group_creates_then_assigns(monkeypatch):
 
     assert client.calls == [
         ("create_group", "Brand New Group", "", ""),
-        ("assign_connection_to_group", "demo", "new-group-1"),
+        ("move_connections", ("demo",), "new-group-1", "exclusive"),
     ]
     assert client.memberships['demo'] == {'new-group-1'}
     assert dialog.closed
@@ -414,7 +415,7 @@ def test_copy_to_new_group_creates_then_copies(monkeypatch):
 
     assert client.calls == [
         ("create_group", "Brand New Group", "", ""),
-        ("copy_connection_to_group", "demo", "new-group-1"),
+        ("move_connections", ("demo",), "new-group-1", "additive"),
     ]
     assert client.memberships['demo'] == {'g0', 'new-group-1'}
 
@@ -436,8 +437,7 @@ def test_move_multiple_selected_connections_between_groups(monkeypatch):
     confirm.emit('clicked')
 
     assert client.calls == [
-        ("assign_connection_to_group", "alpha", "g1"),
-        ("assign_connection_to_group", "beta", "g1"),
+        ("move_connections", ("alpha", "beta"), "g1", "exclusive"),
     ]
     assert client.memberships == {'alpha': {'g1'}, 'beta': {'g1'}}
     assert dialog.closed
@@ -458,6 +458,6 @@ def test_typing_an_existing_group_name_reuses_it_instead_of_creating_a_duplicate
 
     confirm.emit('clicked')
 
-    assert client.calls == [("assign_connection_to_group", "demo", "g1")]
+    assert client.calls == [("move_connections", ("demo",), "g1", "exclusive")]
     assert not any(call[0] == "create_group" for call in client.calls)
     assert dialog.closed

@@ -54,6 +54,8 @@ from ..api.models.connections import (
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteConnectionsRequest,
+    DeleteConnectionsResult,
     ForwardingRule,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
@@ -98,6 +100,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "import_asbru": Capability.CONNECTIONS_WRITE,
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
+    "delete_connections": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -1913,6 +1916,41 @@ class ConnectionApplicationService:
             connection_id=request.connection_id,
             deleted=True,
         )
+
+    def delete_connections(
+        self, request: DeleteConnectionsRequest
+    ) -> DeleteConnectionsResult:
+        """Delete every listed connection in one commit, or none of them."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if type(request) is not DeleteConnectionsRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A delete connections request is required",
+            )
+        for connection_id in request.connection_ids:
+            if self._repository.get_record(connection_id) is None:
+                raise SshPilotError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The requested connection does not exist",
+                    connection_id=connection_id,
+                )
+        try:
+            self._repository.delete_connections(request.connection_ids)
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Repository batch delete failed")
+            raise self._persistence_error() from error
+        for connection_id in request.connection_ids:
+            self._provider_call(
+                self._secret_provider,
+                "clear_session_connection_password",
+                connection_id,
+            )
+        return DeleteConnectionsResult(connection_ids=request.connection_ids)
 
     # ------------------------------------------------------------------
     # Events

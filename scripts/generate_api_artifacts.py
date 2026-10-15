@@ -248,6 +248,8 @@ RELATED_METHODS = {
     "AsbruImportMode": ("import_asbru",),
     "DeleteConnectionRequest": ("delete_connection",),
     "DeleteConnectionResult": ("delete_connection",),
+    "DeleteConnectionsRequest": ("delete_connections",),
+    "DeleteConnectionsResult": ("delete_connections",),
     "UpdateConnectionRequest": ("update_connection",),
     "OpenSessionRequest": ("open_session",),
     "ExternalTerminalLaunchSpec": ("prepare_external_terminal_launch",),

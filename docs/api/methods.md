@@ -59,6 +59,7 @@ direct core service compositions are test-only and are not client choices.
 | `duplicate_connection` | Implemented | `connections.write` |
 | `update_connection` | Implemented | `connections.write` |
 | `delete_connection` | Implemented | `connections.write` |
+| `delete_connections` | Implemented | `connections.write` |
 | `get_connection_editor` | Implemented | `connections.config.read` |
 | `set_operation_mode` | Daemon only | `operation.mode` |
 | `get_operation_mode` | Daemon only | `operation.mode` |
@@ -168,6 +169,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: import_asbru status=implemented capability=connections.write -->
 <!-- api-method-contract: duplicate_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: delete_connections status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: detach_sftp status=daemon-only capability=sftp.write -->
@@ -331,6 +333,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.duplicate` | `connections.write` | Implemented |
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
+| `connections.delete_many` | `connections.write` | Implemented; deletes every listed connection in one commit |
 | `connections.get_editor` | `connections.config.read` | Implemented |
 | `connections.get_ssh_config_text` | `connections.config.read` | Implemented |
 | `connections.save_ssh_config_text` | `connections.config.write` | Implemented |
@@ -467,6 +470,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.import_asbru capability=connections.write -->
 <!-- api-daemon-method: connections.duplicate capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
+<!-- api-daemon-method: connections.delete_many capability=connections.write -->
 <!-- api-daemon-method: connections.delete_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.delete_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.delete_plugin_secret capability=connections.secrets.write -->
@@ -1045,6 +1049,29 @@ client.split_connection(SplitConnectionRequest(
 
 ```python
 client.delete_connection(DeleteConnectionRequest(connection_id))
+```
+
+<!-- api-method: delete_connections -->
+## `delete_connections`
+
+- **Status / introduced:** Implemented / API 0.84
+- **Capability / purpose:** `connections.write`; deletes several saved
+  connections as one change.
+- **Parameters / return:** `DeleteConnectionsRequest` (unique, non-empty
+  connection ids); returns `DeleteConnectionsResult` with the deleted ids.
+- **Errors:** `connection_not_found` when any id is unknown,
+  `persistence_failed`, and transport/protocol errors. Every id is checked
+  before anything is written, and a failure restores every touched file, so
+  either all listed connections are deleted or none is.
+- **Events:** One `connection.deleted` per deleted connection, then a single
+  `connection_store.changed`; none on failure.
+- **Cancellation / ordering / threading:** No automatic retry. SSH hosts
+  declared in one file are removed with one atomic replacement of that file.
+- **Side effects / security:** Same deletion policy as `delete_connection`;
+  no secret value crosses the request or result.
+
+```python
+client.delete_connections(DeleteConnectionsRequest(connection_ids))
 ```
 
 <!-- api-method: store_connection_password -->

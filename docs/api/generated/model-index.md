@@ -1645,6 +1645,50 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: DeleteConnectionsRequest -->
+## `DeleteConnectionsRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Delete several connections in one commit; all of them or none.
+
+**Related methods:** `delete_connections`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_ids` | `tuple[ConnectionId, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": []
+}
+```
+
+<!-- api-model: DeleteConnectionsResult -->
+## `DeleteConnectionsResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `DeleteConnectionsResult` record.
+
+**Related methods:** `delete_connections`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_ids` | `tuple[ConnectionId, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": []
+}
+```
+
 <!-- api-model: DeleteGroupRequest -->
 ## `DeleteGroupRequest`
 

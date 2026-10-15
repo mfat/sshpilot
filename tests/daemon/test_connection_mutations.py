@@ -551,6 +551,46 @@ def test_daemon_move_and_copy_connection_between_groups(daemon_factory, tmp_path
     client.close()
 
 
+def test_daemon_batch_delete_is_all_or_nothing(daemon_factory, tmp_path):
+    """``connections.delete_many`` end to end: codec, dispatcher, client."""
+    from sshpilot.api.models import DeleteConnectionsRequest
+    from sshpilot.api.models.common import ConnectionId
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(tmp_path / "ssh_config"),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    for name in ("a", "b", "c"):
+        repo.create_connection(
+            {"nickname": name, "hostname": f"{name}.example", "protocol": "ssh"}
+        )
+    server, _manager = daemon_factory(manager=repo)
+    client = DaemonClient(socket_path=server.socket_path)
+
+    with pytest.raises(SshPilotError) as error:
+        client.delete_connections(
+            DeleteConnectionsRequest(
+                connection_ids=(ConnectionId("a"), ConnectionId("missing"))
+            )
+        )
+    assert error.value.code is ErrorCode.CONNECTION_NOT_FOUND
+    assert {c.id for c in client.get_connection_store_snapshot().connections} == {
+        "a", "b", "c",
+    }
+
+    result = client.delete_connections(
+        DeleteConnectionsRequest(connection_ids=(ConnectionId("a"), ConnectionId("c")))
+    )
+    assert result.connection_ids == ("a", "c")
+    assert [c.id for c in client.get_connection_store_snapshot().connections] == ["b"]
+
+    client.close()
+
+
 def test_daemon_drag_and_drop_move_between_groups(daemon_factory, tmp_path):
     """End-to-end proof for ``connections.move`` — the RPC drag-and-drop
     uses (via ``move_connections``), a separate code path from

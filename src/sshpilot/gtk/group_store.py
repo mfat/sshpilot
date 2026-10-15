@@ -26,43 +26,52 @@ def validate_group_id(value) -> str:
 
 def build_create_and_assign_steps(client, group_name, nicknames, *,
                                   is_copy=False, color=""):
-    """Build ``run_sequence`` steps that create a group then assign/copy.
+    """Build ``run_sequence`` steps that create a group then move/copy into it.
 
-    The created group ID is captured once, validated via
-    :func:`validate_group_id`, and reused for every assignment step.  Because
-    ``run_sequence`` only threads the previous step's return value (a bool for
-    assignment RPCs), the captured ID cannot be replaced by per-step results.
+    The created group ID is validated via :func:`validate_group_id` and
+    handed to one :func:`place_connections_in_group` step, so every
+    connection lands in the new group with a single daemon commit.
     """
-    created_group_id = [None]
 
     def _validate_create(_prev):
         gid = client.create_group(group_name, parent_id="", color=color or "")
-        normalized = validate_group_id(gid)
-        created_group_id[0] = normalized
-        return normalized
+        return validate_group_id(gid)
 
     steps = [_validate_create]
-    for nick in nicknames:
+    if nicknames:
         steps.append(
-            lambda _prev, n=nick: _apply_assignment(
-                client, n, created_group_id[0], is_copy=is_copy,
+            lambda group_id: place_connections_in_group(
+                client, nicknames, group_id, is_copy=is_copy,
             )
         )
     return steps
 
 
-def _apply_assignment(client, nick, group_id, *, is_copy):
-    if is_copy:
-        from sshpilot.api.models.connection_store import (
-            ConnectionId, CopyConnectionToGroupRequest, GroupId,
+def place_connections_in_group(client, nicknames, group_id, *, is_copy=False):
+    """Move (or, with ``is_copy``, add) connections to a group in one request.
+
+    A move leaves each connection in that group only, like
+    ``assign_connection_to_group``; a copy keeps its other groups, like
+    ``copy_connection_to_group``. Either way it is one daemon commit and one
+    store change however many connections are placed.
+    """
+    from sshpilot.api.models.connection_store import (
+        ConnectionId, ConnectionPlacementMode, GroupId, MoveConnectionsRequest,
+    )
+
+    return client.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=tuple(
+                ConnectionId(nick) for nick in dict.fromkeys(nicknames)
+            ),
+            target_group_id=GroupId(group_id),
+            mode=(
+                ConnectionPlacementMode.ADDITIVE
+                if is_copy
+                else ConnectionPlacementMode.EXCLUSIVE
+            ),
         )
-        return client.copy_connection_to_group(
-            CopyConnectionToGroupRequest(
-                connection_id=ConnectionId(nick),
-                group_id=GroupId(group_id),
-            )
-        )
-    return client.assign_connection_to_group(nick, group_id)
+    )
 
 
 class GroupPresentationStore:

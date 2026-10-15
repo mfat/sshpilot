@@ -64,6 +64,8 @@ must be non-negative. Timestamps default to aware UTC values.
 | `UpdateConnectionRequest` | Optional basic-metadata update fields | Implemented | `update_connection` |
 | `DeleteConnectionRequest` | Request-form deletion ID | Implemented | `delete_connection` |
 | `DeleteConnectionResult` | Deletion acknowledgement | Implemented | `delete_connection` |
+| `DeleteConnectionsRequest` | Batch deletion IDs, unique and non-empty | Implemented | `delete_connections` |
+| `DeleteConnectionsResult` | Batch deletion acknowledgement | Implemented | `delete_connections` |
 | `ConnectionValidationError` | Field/code/message validation item | Schema only | Future writes |
 | `ConnectionValidationResult` | Valid flag plus validation items | Schema only | Future validation |
 

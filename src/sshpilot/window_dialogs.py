@@ -3741,29 +3741,17 @@ class WindowConfigDialogsMixin:
                 self._simple_dialog(_("Error"), message)
 
             def _build_move_steps(nicknames, target_group_id):
-                """Build sequence steps to move/copy all nicknames to target_group_id."""
-                steps = []
-                if is_copy:
-                    from sshpilot.api.models.connection_store import (
-                        ConnectionId, CopyConnectionToGroupRequest, GroupId,
+                """One sequence step that moves/copies every nickname at once."""
+                if not nicknames:
+                    return []
+                from sshpilot.gtk.group_store import place_connections_in_group
+
+                return [
+                    lambda _prev: place_connections_in_group(
+                        controller.client, nicknames, target_group_id,
+                        is_copy=is_copy,
                     )
-                    for nick in nicknames:
-                        steps.append(
-                            lambda _prev, n=nick: controller.client.copy_connection_to_group(
-                                CopyConnectionToGroupRequest(
-                                    connection_id=ConnectionId(n),
-                                    group_id=GroupId(target_group_id),
-                                )
-                            )
-                        )
-                else:
-                    for nick in nicknames:
-                        steps.append(
-                            lambda _prev, n=nick: controller.client.assign_connection_to_group(
-                                n, target_group_id
-                            )
-                        )
-                return steps
+                ]
 
             def perform_move() -> bool:
                 group_name = create_group_entry.get_text().strip()

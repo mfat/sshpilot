@@ -42,6 +42,10 @@ class _Client:
         self.deleted.append(request)
         return SimpleNamespace(connection_id=request.connection_id, deleted=True)
 
+    def delete_connections(self, request):
+        self.deleted.append(request)
+        return SimpleNamespace(connection_ids=request.connection_ids)
+
     def update_connection_metadata(self, connection_id, metadata):
         self.metadata.append((connection_id, metadata))
         return True
@@ -87,6 +91,7 @@ class _ProjectionGroupManager:
 
 class _ProjectionWindow:
     on_projection_reset = MainWindow.on_projection_reset
+    _flush_projection_rebuild = MainWindow._flush_projection_rebuild
 
     def __init__(self):
         self.group_manager = _ProjectionGroupManager()
@@ -98,6 +103,11 @@ class _ProjectionWindow:
         self.focus_calls = 0
 
     def rebuild_connection_list(self):
+        # The real rebuild counts itself so pending idle rebuilds can tell
+        # they were overtaken.
+        self._connection_list_rebuild_count = (
+            getattr(self, '_connection_list_rebuild_count', 0) + 1
+        )
         self.rebuilds += 1
 
     def _focus_connection_list_first_row(self):
@@ -991,15 +1001,99 @@ def _basic_data(**overrides):
     return data
 
 
-def test_projection_reset_rebinds_groups_and_rebuilds_sidebar_once():
+def _capture_idle(monkeypatch):
+    import sshpilot.window as window_module
+
+    queued = []
+    monkeypatch.setattr(
+        window_module.GLib,
+        "idle_add",
+        lambda callback, *args: queued.append((callback, args)),
+    )
+
+    def run_all():
+        while queued:
+            callback, args = queued.pop(0)
+            callback(*args)
+
+    return queued, run_all
+
+
+def test_projection_reset_rebinds_groups_and_rebuilds_sidebar_once(monkeypatch):
+    queued, run_idle = _capture_idle(monkeypatch)
     window = _ProjectionWindow()
     connections = (SimpleNamespace(id="one"), SimpleNamespace(id="two"))
     manager = SimpleNamespace(connections=connections)
 
     window.on_projection_reset(manager, None)
 
+    # Groups follow the store at once; the row rebuild waits for idle.
     assert window.group_manager.bound == [connections]
+    assert window.rebuilds == 0
+    run_idle()
     assert window.rebuilds == 1
+
+
+def test_a_burst_of_projection_resets_rebuilds_the_sidebar_once(monkeypatch):
+    queued, run_idle = _capture_idle(monkeypatch)
+    window = _ProjectionWindow()
+    manager = SimpleNamespace(connections=())
+
+    for _ in range(30):
+        window.on_projection_reset(manager, None)
+
+    assert len(window.group_manager.bound) == 30
+    assert len(queued) == 1
+    run_idle()
+    assert window.rebuilds == 1
+
+    # The next reset after the flush schedules a fresh rebuild.
+    window.on_projection_reset(manager, None)
+    run_idle()
+    assert window.rebuilds == 2
+
+
+def test_projection_rebuild_is_skipped_when_a_later_rebuild_already_ran(monkeypatch):
+    queued, run_idle = _capture_idle(monkeypatch)
+    window = _ProjectionWindow()
+    manager = SimpleNamespace(connections=())
+
+    window.on_projection_reset(manager, None)
+    # A mutation's success callback rebuilds before the idle callback runs.
+    window.rebuild_connection_list()
+    run_idle()
+
+    assert window.rebuilds == 1
+
+
+def test_projection_reset_after_an_explicit_rebuild_still_rebuilds(monkeypatch):
+    queued, run_idle = _capture_idle(monkeypatch)
+    window = _ProjectionWindow()
+    manager = SimpleNamespace(connections=())
+
+    window.on_projection_reset(manager, None)
+    window.rebuild_connection_list()
+    # This reset carries newer state than the explicit rebuild showed.
+    window.on_projection_reset(manager, None)
+    run_idle()
+
+    assert window.rebuilds == 2
+
+
+def test_first_projection_reset_focuses_the_first_row_after_rebuilding(monkeypatch):
+    queued, run_idle = _capture_idle(monkeypatch)
+    window = _ProjectionWindow()
+    manager = SimpleNamespace(connections=())
+
+    window.on_projection_reset(manager, None)
+    assert window.focus_calls == 0
+    run_idle()
+    assert window.focus_calls == 1
+    assert window._initial_connection_list_focus_done is True
+
+    window.on_projection_reset(manager, None)
+    run_idle()
+    assert window.focus_calls == 1
 
 
 def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch():
@@ -1290,6 +1384,82 @@ def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():
     assert window.disconnected == [connection]
     assert window.connection_manager.reloads == 1
     assert window.rebuilds == 1
+
+
+def _two_connections():
+    return [
+        SimpleNamespace(nickname=name, protocol="ssh", connection_id=name, uuid=name)
+        for name in ("alpha", "beta")
+    ]
+
+
+def test_daemon_multi_delete_is_one_batch_request():
+    window = _MutationWindow()
+    connections = _two_connections()
+
+    window._delete_connections_via_client(connections, close_terminals=True)
+
+    assert len(window.client_bridge.calls) == 1
+    operation, success, _failure = window.client_bridge.calls[0]
+    result = operation()
+    (request,) = window.client.deleted
+    assert request.connection_ids == ("alpha", "beta")
+    assert window.disconnected == []
+
+    success(result)
+    assert window.disconnected == connections
+    assert window.connection_manager.reloads == 1
+    assert window.rebuilds == 1
+    assert window._deleting_connections_batch is False
+
+
+def test_daemon_multi_delete_falls_back_to_serial_without_batch_method():
+    window = _MutationWindow()
+    window.client.delete_connections = None
+    connections = _two_connections()
+
+    window._delete_connections_via_client(connections)
+
+    for _ in connections:
+        operation, success, _failure = window.client_bridge.calls[-1]
+        success(operation())
+    assert [request.connection_id for request in window.client.deleted] == [
+        "alpha", "beta",
+    ]
+    assert window.rebuilds == 1
+
+
+def test_daemon_multi_delete_falls_back_when_daemon_lacks_the_method():
+    window = _MutationWindow()
+    connections = _two_connections()
+
+    window._delete_connections_via_client(connections)
+    _operation, _success, failure = window.client_bridge.calls[0]
+    failure(SshPilotError(ErrorCode.UNSUPPORTED_METHOD, "no such method"))
+
+    assert window.errors == []
+    for _ in connections:
+        operation, success, _failure = window.client_bridge.calls[-1]
+        success(operation())
+    assert [request.connection_id for request in window.client.deleted] == [
+        "alpha", "beta",
+    ]
+    assert window.rebuilds == 1
+
+
+def test_daemon_multi_delete_failure_reports_and_changes_nothing():
+    window = _MutationWindow()
+    connections = _two_connections()
+
+    window._delete_connections_via_client(connections, close_terminals=True)
+    _operation, _success, failure = window.client_bridge.calls[0]
+    failure(SshPilotError(ErrorCode.CONNECTION_NOT_FOUND, "gone"))
+
+    assert len(window.client_bridge.calls) == 1
+    assert len(window.errors) == 1
+    assert window.disconnected == []
+    assert window.rebuilds == 0
+    assert window._deleting_connections_batch is False
 
 
 def test_daemon_group_move_failure_does_not_mutate_local_group_manager():
@@ -2605,3 +2775,74 @@ def test_a_failed_plugin_save_reports_from_the_main_loop():
 
     assert done == [False]
     assert ui == ["error_dialog"]
+
+
+class _RecordingController:
+    def __init__(self):
+        self.client = _GroupClient()
+        self.runs = []
+
+    def run(self, operation, *, on_success, on_error, refresh_after=True):
+        self.runs.append(operation)
+        on_success(operation())
+
+    def run_sequence(self, steps, *, on_success, on_error):
+        raise AssertionError("ungrouping must not run one step per connection")
+
+
+class _GroupClient:
+    def __init__(self):
+        self.calls = []
+
+    def move_connections(self, request):
+        self.calls.append(("move_connections", request))
+        return True
+
+    def assign_connection_to_group(self, connection_id, group_id):
+        self.calls.append(("assign_connection_to_group", connection_id, group_id))
+        return True
+
+
+def _ungroup_window(memberships):
+    controller = _RecordingController()
+    window = SimpleNamespace(
+        group_manager=SimpleNamespace(
+            controller=controller,
+            get_connection_groups=lambda nickname: list(memberships.get(nickname, [])),
+        ),
+        _context_menu_row=None,
+        rebuilds=0,
+    )
+    window.rebuild_connection_list = lambda: setattr(
+        window, "rebuilds", window.rebuilds + 1
+    )
+    window._simple_dialog = lambda *args: (_ for _ in ()).throw(AssertionError(args))
+    return window, controller
+
+
+def test_ungrouping_a_selection_is_one_move_request():
+    window, controller = _ungroup_window({"a": ["g1"], "b": ["g2", "g3"], "c": []})
+    selection = [SimpleNamespace(nickname=name) for name in ("a", "b", "c")]
+    window._get_target_connections = lambda prefer_context=False: selection
+
+    MainWindow.on_move_to_ungrouped_action(window, None)
+
+    assert len(controller.runs) == 1
+    ((name, request),) = controller.client.calls
+    assert name == "move_connections"
+    # "c" is already ungrouped and keeps its place.
+    assert request.connection_ids == ("a", "b")
+    assert request.target_group_id is None
+    assert request.mode.value == "exclusive"
+    assert window.rebuilds == 1
+
+
+def test_ungrouping_one_connection_keeps_the_single_assignment():
+    window, controller = _ungroup_window({"a": ["g1"]})
+    window._get_target_connections = (
+        lambda prefer_context=False: [SimpleNamespace(nickname="a")]
+    )
+
+    MainWindow.on_move_to_ungrouped_action(window, None)
+
+    assert controller.client.calls == [("assign_connection_to_group", "a", "")]

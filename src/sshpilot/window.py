@@ -346,6 +346,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._startup_tasks_scheduled = False
         self._startup_complete = False
         self._initial_connection_list_focus_done = False
+        # Coalesces projection-reset rebuilds; see on_projection_reset.
+        self._connection_list_rebuild_count = 0
+        self._projection_rebuild_mark = 0
+        self._projection_rebuild_pending = False
         self._start_tab_focus_idle_id = None
         self._pending_focus_operations = []
         if hasattr(self.config, 'connect'):
@@ -4083,6 +4087,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
+        self._connection_list_rebuild_count = (
+            getattr(self, '_connection_list_rebuild_count', 0) + 1
+        )
         reset_connection_list_drag_session(self)
         self._apply_connection_sort_to_projection()
 
@@ -6573,10 +6580,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         *,
         close_terminals=False,
     ) -> None:
-        """Delete daemon-owned connections serially without optimistic rows."""
+        """Delete daemon-owned connections without optimistic rows.
 
-        from .api import SshPilotError
-        from .api.models import DeleteConnectionRequest
+        Several connections go to the daemon as one ``delete_connections``
+        request: one SSH config write, one store change and one sidebar
+        rebuild, and either all of them are deleted or none is. A client or
+        daemon without that method deletes them one at a time instead.
+        """
+
+        from .api import ErrorCode, SshPilotError
+        from .api.models import DeleteConnectionRequest, DeleteConnectionsRequest
 
         bridge = getattr(self, 'client_bridge', None)
         if bridge is None:
@@ -6587,7 +6600,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     _("Connect to the SSH Pilot daemon and retry the deletion."),
                 )
             return
-        pending = iter(connection for connection in connections if connection)
+        targets = [connection for connection in connections if connection]
+        pending = iter(targets)
         self._deleting_connections_batch = True
 
         def _finish():
@@ -6601,6 +6615,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.warning(
                     "Post-delete connection refresh failed type=%s",
                     type(error).__name__,
+                )
+
+        def _failure(error):
+            self._deleting_connections_batch = False
+            if isinstance(error, SshPilotError):
+                logger.warning(
+                    "Daemon connection delete failed code=%s",
+                    error.code.value,
+                )
+            else:
+                logger.error(
+                    "Daemon connection delete failed type=%s",
+                    type(error).__name__,
+                )
+            if not self._is_quitting:
+                self._error_dialog(
+                    _("Failed to delete connection"),
+                    _(
+                        "The connection could not be deleted. "
+                        "No list changes were applied."
+                    ),
                 )
 
         def _delete_next():
@@ -6621,27 +6656,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self._disconnect_connection_terminals(connection)
                 _delete_next()
 
-            def _failure(error):
-                self._deleting_connections_batch = False
-                if isinstance(error, SshPilotError):
-                    logger.warning(
-                        "Daemon connection delete failed code=%s",
-                        error.code.value,
-                    )
-                else:
-                    logger.error(
-                        "Daemon connection delete failed type=%s",
-                        type(error).__name__,
-                    )
-                if not self._is_quitting:
-                    self._error_dialog(
-                        _("Failed to delete connection"),
-                        _(
-                            "The connection could not be deleted. "
-                            "No list changes were applied."
-                        ),
-                    )
-
             try:
                 bridge.submit(
                     lambda: self.client.delete_connection(request),
@@ -6651,7 +6665,41 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except RuntimeError:
                 _failure(RuntimeError("client bridge closed"))
 
-        _delete_next()
+        delete_many = getattr(self.client, 'delete_connections', None)
+        if len(targets) < 2 or not callable(delete_many):
+            _delete_next()
+            return
+
+        batch = DeleteConnectionsRequest(
+            connection_ids=tuple(
+                dict.fromkeys(connection_id_for(item) for item in targets)
+            )
+        )
+
+        def _batch_success(_result):
+            if close_terminals:
+                for connection in targets:
+                    self._disconnect_connection_terminals(connection)
+            _finish()
+
+        def _batch_failure(error):
+            if (
+                isinstance(error, SshPilotError)
+                and error.code is ErrorCode.UNSUPPORTED_METHOD
+            ):
+                logger.info("Daemon has no batch delete; deleting one at a time")
+                _delete_next()
+                return
+            _failure(error)
+
+        try:
+            bridge.submit(
+                lambda: delete_many(batch),
+                on_success=_batch_success,
+                on_error=_batch_failure,
+            )
+        except RuntimeError:
+            _failure(RuntimeError("client bridge closed"))
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
@@ -6661,9 +6709,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.rebuild_connection_list()
 
     def on_projection_reset(self, manager, _connection=None):
-        """Rebuild presentation state after an authoritative store refresh."""
+        """Rebuild presentation state after an authoritative store refresh.
+
+        Group bindings follow the store at once; the sidebar rebuild, which
+        tears down and recreates every row, waits for an idle callback. A
+        burst of resets -- one per store event, plus the refresh a group
+        mutation runs when it finishes -- then costs a single rebuild.
+        """
         self.group_manager.bind_connections(manager.connections)
-        self.rebuild_connection_list()
+        # A rebuild that runs after this reset, before the idle one, already
+        # shows this state; the idle callback then has nothing left to do.
+        self._projection_rebuild_mark = getattr(
+            self, '_connection_list_rebuild_count', 0
+        )
+        if getattr(self, '_projection_rebuild_pending', False):
+            return
+        self._projection_rebuild_pending = True
+        GLib.idle_add(self._flush_projection_rebuild)
+
+    def _flush_projection_rebuild(self):
+        """Run the one sidebar rebuild owed to the latest projection resets."""
+        self._projection_rebuild_pending = False
+        if getattr(self, '_connection_list_rebuild_count', 0) == getattr(
+            self, '_projection_rebuild_mark', 0
+        ):
+            self.rebuild_connection_list()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge
             # selection + connection store fetch), so this reset — not window
@@ -6686,6 +6756,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # keys off that same flag once the 500 ms timer has passed.
                 self._focus_connection_list_first_row()
             self._initial_connection_list_focus_done = True
+        return GLib.SOURCE_REMOVE
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
@@ -7545,40 +7616,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             context_row = getattr(self, '_context_menu_row', None)
             context_group_id = getattr(context_row, '_group_id', None)
 
-            steps = []
-            for connection in connections:
-                nickname = getattr(connection, 'nickname', None)
-                if not nickname:
-                    continue
+            from sshpilot.api.models.connection_store import (
+                ConnectionId, ConnectionPlacementMode, GroupId,
+                MoveConnectionsRequest, RemoveConnectionFromGroupRequest,
+            )
+
+            operation = None
+            nicknames = [
+                getattr(connection, 'nickname', None) for connection in connections
+            ]
+            nicknames = [nickname for nickname in nicknames if nickname]
+            if len(nicknames) == 1:
+                nickname = nicknames[0]
                 member_groups = self.group_manager.get_connection_groups(nickname)
                 if (
                     context_group_id
-                    and len(connections) == 1
                     and context_group_id in member_groups
                     and len(member_groups) > 1
                 ):
-                    from sshpilot.api.models.connection_store import (
-                        ConnectionId, GroupId, RemoveConnectionFromGroupRequest,
+                    request = RemoveConnectionFromGroupRequest(
+                        connection_id=ConnectionId(nickname),
+                        group_id=GroupId(context_group_id),
                     )
-                    steps.append(
-                        lambda _prev, n=nickname, gid=context_group_id: (
-                            controller.client.remove_connection_from_group(
-                                RemoveConnectionFromGroupRequest(
-                                    connection_id=ConnectionId(n),
-                                    group_id=GroupId(gid),
-                                )
-                            )
-                        )
+                    operation = lambda: (
+                        controller.client.remove_connection_from_group(request)
                     )
                 else:
-                    steps.append(
-                        lambda _prev, n=nickname: (
-                            controller.client.assign_connection_to_group(n, "")
-                        )
+                    operation = lambda: (
+                        controller.client.assign_connection_to_group(nickname, "")
                     )
-            if steps:
-                controller.run_sequence(
-                    steps,
+            else:
+                # One placement for the whole selection: one daemon commit and
+                # one sidebar rebuild. Connections already ungrouped are left
+                # where they are, as one-by-one ungrouping would leave them;
+                # the rest go to the end of the ungrouped list in order.
+                grouped = tuple(dict.fromkeys(
+                    nickname for nickname in nicknames
+                    if self.group_manager.get_connection_groups(nickname)
+                ))
+                if grouped:
+                    request = MoveConnectionsRequest(
+                        connection_ids=tuple(ConnectionId(n) for n in grouped),
+                        mode=ConnectionPlacementMode.EXCLUSIVE,
+                    )
+                    operation = lambda: controller.client.move_connections(request)
+            if operation is not None:
+                controller.run(
+                    operation,
                     on_success=lambda _r: self.rebuild_connection_list(),
                     on_error=lambda e: self._simple_dialog(
                         _("Error"),
