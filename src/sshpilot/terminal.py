@@ -2076,7 +2076,12 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
         logger.error(f"Daemon terminal error: {error}")
-        self._on_connection_failed(str(error))
+        from .terminal_session_controller import SessionFailureError
+
+        self._on_connection_failed(
+            str(error),
+            echo_to_terminal=not isinstance(error, SessionFailureError),
+        )
 
     def _daemon_terminal_dimensions(self):
         """Rows/cols from the active backend for daemon open/resize."""
@@ -5642,7 +5647,7 @@ class TerminalWidget(Gtk.Box):
                 self.emit('connection-lost')
             logger.debug(f"SSH session {self.session_id} disconnected")
 
-    def _on_connection_failed(self, error_message):
+    def _on_connection_failed(self, error_message, echo_to_terminal=True):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
 
@@ -5656,9 +5661,14 @@ class TerminalWidget(Gtk.Box):
         self._cancel_connect_grace()
 
         try:
-            # Show raw error in terminal
-            error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
-            if self.backend:
+            # Show raw error in terminal. Daemon session failures skip this:
+            # ssh already printed its diagnostic to the PTY and the banner
+            # carries the classified reason, so a third copy is only noise.
+            if echo_to_terminal and self.backend:
+                # A bare LF keeps the cursor column on a VT, so multi-line
+                # messages would staircase without the CR.
+                body = error_message.replace('\r\n', '\n').replace('\n', '\r\n')
+                error_msg = f"\r\n\x1b[31m{body}\x1b[0m\r\n"
                 self.backend.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False

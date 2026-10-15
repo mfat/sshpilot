@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 _RECOVERY_REPLAY_CHUNK_BYTES = 512 * 1024
 
 
+class SessionFailureError(SshPilotError):
+    """A daemon session failure surfaced to the tab.
+
+    The terminal shows these in its banner only: the session's own output
+    already holds the diagnostic, so echoing it into the terminal repeats it.
+    """
+
+
 def _session_failure_presentation(failure) -> tuple[ErrorCode, str]:
     if type(failure) is PluginSessionFailure:
         return failure.error_code, format_plugin_session_failure(failure)
@@ -46,6 +54,11 @@ def _session_failure_presentation(failure) -> tuple[ErrorCode, str]:
             failure, include_diagnostic=True
         )
     raise TypeError("unsupported session failure")
+
+
+def _session_failure_error(failure, session_id) -> SessionFailureError:
+    code, message = _session_failure_presentation(failure)
+    return SessionFailureError(code, message, session_id=session_id)
 
 
 class TerminalSessionState(str, Enum):
@@ -537,13 +550,8 @@ class DaemonTerminalSessionController:
             self._tab_state.state = TerminalSessionState.FAILED
             failure = getattr(summary, "failure", None)
             if failure is not None:
-                code, message = _session_failure_presentation(failure)
                 self._on_error(
-                    SshPilotError(
-                        code,
-                        message,
-                        session_id=summary.id,
-                    )
+                    _session_failure_error(failure, summary.id)
                 )
             else:
                 self._on_error(
@@ -639,13 +647,8 @@ class DaemonTerminalSessionController:
         if failure is None or self._session_failure_reported:
             return False
         self._session_failure_reported = True
-        code, message = _session_failure_presentation(failure)
         self._on_error(
-            SshPilotError(
-                code,
-                message,
-                session_id=self._tab_state.session_id,
-            )
+            _session_failure_error(failure, self._tab_state.session_id)
         )
         return True
 
@@ -1205,13 +1208,8 @@ class DaemonTerminalSessionController:
                 )
             )
             return
-        code, message = _session_failure_presentation(failure)
         self._finish_attach_error(
-            SshPilotError(
-                code,
-                message,
-                session_id=self._tab_state.session_id,
-            )
+            _session_failure_error(failure, self._tab_state.session_id)
         )
 
     def _finish_attach_error(self, error) -> None:
