@@ -303,3 +303,88 @@ def test_delete_connections_request_validates_ids():
         DeleteConnectionsRequest(connection_ids=())
     with pytest.raises(ValueError):
         DeleteConnectionsRequest(connection_ids=("a", "a"))
+
+
+class _FlakySessionSecrets:
+    """Session-password store whose clear fails for one connection."""
+
+    def __init__(self, failing_id):
+        self.failing_id = failing_id
+        self.cleared = []
+
+    def clear_session_connection_password(self, connection_id):
+        if connection_id == self.failing_id:
+            raise RuntimeError("secret backend unavailable")
+        self.cleared.append(connection_id)
+        return True
+
+
+def test_a_failed_session_password_clear_does_not_fail_a_committed_delete(tmp_path):
+    repo, _root, _state, _changes = _repo(tmp_path)
+    secrets = _FlakySessionSecrets("h1")
+    application = ConnectionApplicationService(
+        repo, client_name="test", secret_provider=secrets
+    )
+
+    result = application.delete_connections(
+        DeleteConnectionsRequest(connection_ids=("h0", "h1", "h2"))
+    )
+
+    # The hosts are gone, so the client must hear success, and every other
+    # session password is still dropped.
+    assert result.connection_ids == ("h0", "h1", "h2")
+    assert _ids(repo) == ["h3", "h4"]
+    assert secrets.cleared == ["h0", "h2"]
+
+
+def test_a_failed_session_password_clear_does_not_fail_a_single_delete(tmp_path):
+    from sshpilot.api.models import DeleteConnectionRequest
+
+    repo, _root, _state, _changes = _repo(tmp_path)
+    application = ConnectionApplicationService(
+        repo, client_name="test", secret_provider=_FlakySessionSecrets("h0")
+    )
+
+    result = application.delete_connection(DeleteConnectionRequest(connection_id="h0"))
+
+    assert result.deleted is True
+    assert "h0" not in _ids(repo)
+
+
+class _ProcessDied(BaseException):
+    """Stands in for the daemon being killed: no ``except Exception`` runs."""
+
+
+def test_a_crash_between_include_files_leaves_a_consistent_partial_delete(
+    tmp_path, monkeypatch
+):
+    # Documented limit: hosts in several Include files are committed file by
+    # file, so dying between two commits keeps the first file's deletions.
+    # What must hold is that the result is consistent, not corrupt.
+    fragment = tmp_path / "fragment.conf"
+    _write(fragment, "Host inc1\n    HostName inc1.example\n")
+    repo, root, state, _changes = _repo(
+        tmp_path, "Include fragment.conf\n\n" + FIVE_HOSTS
+    )
+    real_prepare = SshConfigStore.prepare_delete_many
+    calls = []
+
+    def die_on_second(self, ids):
+        calls.append(tuple(ids))
+        if len(calls) == 2:
+            raise _ProcessDied()
+        return real_prepare(self, ids)
+
+    monkeypatch.setattr(SshConfigStore, "prepare_delete_many", die_on_second)
+    with pytest.raises(_ProcessDied):
+        repo.delete_connections(["inc1", "h0"])
+    monkeypatch.undo()
+
+    assert "inc1" not in fragment.read_text()
+    assert "Host h0" in root.read_text()
+    assert not state.with_name(state.name + ".pending").exists()
+    restarted, _root, _state, _changes = _repo(tmp_path, ssh_text="")
+    assert set(_ids(restarted)) == {"h0", "h1", "h2", "h3", "h4"}
+    # The survivor is still fully usable: deleting it now succeeds.
+    restarted.delete_connections(["h0"])
+    assert "h0" not in _ids(restarted)

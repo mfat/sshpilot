@@ -1907,11 +1907,7 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository delete failed")
             raise self._persistence_error(request.connection_id) from error
-        self._provider_call(
-            self._secret_provider,
-            "clear_session_connection_password",
-            request.connection_id,
-        )
+        self._forget_session_passwords((request.connection_id,))
         return DeleteConnectionResult(
             connection_id=request.connection_id,
             deleted=True,
@@ -1944,13 +1940,30 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository batch delete failed")
             raise self._persistence_error() from error
-        for connection_id in request.connection_ids:
-            self._provider_call(
-                self._secret_provider,
-                "clear_session_connection_password",
-                connection_id,
-            )
+        self._forget_session_passwords(request.connection_ids)
         return DeleteConnectionsResult(connection_ids=request.connection_ids)
+
+    def _forget_session_passwords(self, connection_ids) -> None:
+        """Drop session-only passwords of connections that are now deleted.
+
+        Runs after the delete has committed, so a failure here must not turn
+        into an error: the client would report that nothing was deleted
+        when the connections are gone. Every id is tried; failures are
+        logged. A stale entry only lives in daemon memory until it exits.
+        """
+        for connection_id in connection_ids:
+            try:
+                self._provider_call(
+                    self._secret_provider,
+                    "clear_session_connection_password",
+                    connection_id,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not forget the session password of a deleted "
+                    "connection type=%s",
+                    type(error).__name__,
+                )
 
     # ------------------------------------------------------------------
     # Events

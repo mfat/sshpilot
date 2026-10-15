@@ -88,7 +88,7 @@ from .identity_state_v2 import (
 from .service import ConnectionService
 from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
-from .ssh_config_store import SshConfigStore, _atomic_write_text
+from .ssh_config_store import SshConfigStore, _atomic_write_text, _source_of
 from .transient import TransientConnections, is_transient_connection_id
 from .state_file import (
     ConnectionStateFileKind,
@@ -2292,9 +2292,18 @@ class ConnectionRepository:
         Every id is resolved and checked before anything is written, so an
         unknown id fails the whole batch with ``CONNECTION_NOT_FOUND``. SSH
         hosts go in one document replacement per declaring file (normally
-        just the one SSH config), each with its identity intent; non-SSH
-        connections follow and the state file is written once. A failure at
-        any step restores every captured file, so nothing is deleted.
+        just the one SSH config), each committed with its own identity
+        intent and state-file write; non-SSH connections follow with one
+        more state-file write. An exception at any step restores every
+        captured file, so nothing is deleted.
+
+        Hosts declared in one file are crash-safe as a unit, like a single
+        delete. Across several Include files they are not: if the process
+        dies between two files' commits, the files already committed stay
+        deleted and the rest stay present. Each committed file leaves the
+        SSH config and identity state consistent with each other, so the
+        result is a partial delete, never a corrupt one -- the same outcome
+        deleting them one by one would have at that point.
         Returns the internal ids that were removed, in request order.
         """
         with self._mutation_scope():
@@ -2319,7 +2328,9 @@ class ConnectionRepository:
                         "The connection does not exist",
                     )
                 if existing.protocol == "ssh":
-                    source = Path(existing.source) if existing.source else None
+                    # Same source rule the store uses to pick the file it writes.
+                    declared = _source_of(existing)
+                    source = Path(declared) if declared else None
                     ssh_by_source.setdefault(source, []).append(connection_id)
                 else:
                     non_ssh.append(connection_id)

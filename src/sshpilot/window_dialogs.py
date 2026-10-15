@@ -3764,11 +3764,10 @@ class WindowConfigDialogsMixin:
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        # Reuse the production step builder so the
-                        # create-group result is validated as a nonempty
-                        # string group ID and reused across every assignment
-                        # step (run_sequence only threads the previous step's
-                        # return value, which is a bool for assignment RPCs).
+                        # Reuse the production step builder: it validates the
+                        # create-group result as a nonempty string group ID,
+                        # and run_sequence threads that ID into the single
+                        # step that places every selected connection.
                         from sshpilot.gtk.group_store import (
                             build_create_and_assign_steps,
                         )

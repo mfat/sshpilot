@@ -1066,9 +1066,16 @@ client.delete_connection(DeleteConnectionRequest(connection_id))
 - **Events:** One `connection.deleted` per deleted connection, then a single
   `connection_store.changed`; none on failure.
 - **Cancellation / ordering / threading:** No automatic retry. SSH hosts
-  declared in one file are removed with one atomic replacement of that file.
+  declared in one file are removed with one atomic replacement of that file
+  and are crash-safe together. Hosts spread over several Include files are
+  committed one file at a time: if the daemon process dies between two of
+  those commits, the files already committed stay deleted. Each file's
+  commit keeps the SSH config and identity state consistent, so a fresh
+  snapshot shows exactly which connections remain.
 - **Side effects / security:** Same deletion policy as `delete_connection`;
-  no secret value crosses the request or result.
+  no secret value crosses the request or result. Session-only passwords of
+  the deleted connections are dropped after the commit; a failure there is
+  logged and does not turn a completed delete into an error.
 
 ```python
 client.delete_connections(DeleteConnectionsRequest(connection_ids))

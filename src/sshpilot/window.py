@@ -6730,6 +6730,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _flush_projection_rebuild(self):
         """Run the one sidebar rebuild owed to the latest projection resets."""
         self._projection_rebuild_pending = False
+        if getattr(self, '_is_quitting', False):
+            # The reset arrived while the window was closing; rebuilding or
+            # moving focus now would act on a window that is going away.
+            return GLib.SOURCE_REMOVE
         if getattr(self, '_connection_list_rebuild_count', 0) == getattr(
             self, '_projection_rebuild_mark', 0
         ):

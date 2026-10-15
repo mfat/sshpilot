@@ -10,9 +10,11 @@ notes remain separate.
   the new `DeleteConnectionsResult`. It deletes every listed connection in one
   commit, with one SSH config replacement per declaring file and one
   `connection_store.changed` event, or deletes nothing: an unknown id fails
-  the whole request with `connection_not_found`. Deleting several selected
-  connections in the sidebar uses it. New method and models, so the API
-  implementation version is 0.84; Protocol remains 1.0.
+  the whole request with `connection_not_found`. Hosts spread over several
+  Include files are committed file by file, so a daemon crash between those
+  commits can leave the earlier files' hosts deleted. Deleting several
+  selected connections in the sidebar uses it. New method and models, so the
+  API implementation version is 0.84; Protocol remains 1.0.
 - `PluginSessionFailureCode` gains `serial_plink_unavailable` and
   `serial_plink_terminal_options_unsupported` (no parameters): on Windows a
   serial connection opens its COM port with PuTTY's `plink -serial`, and

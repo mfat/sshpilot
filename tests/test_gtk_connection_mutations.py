@@ -2846,3 +2846,17 @@ def test_ungrouping_one_connection_keeps_the_single_assignment():
     MainWindow.on_move_to_ungrouped_action(window, None)
 
     assert controller.client.calls == [("assign_connection_to_group", "a", "")]
+
+
+def test_projection_rebuild_does_nothing_once_the_window_is_quitting(monkeypatch):
+    queued, run_idle = _capture_idle(monkeypatch)
+    window = _ProjectionWindow()
+    manager = SimpleNamespace(connections=())
+
+    window.on_projection_reset(manager, None)
+    window._is_quitting = True
+    run_idle()
+
+    assert window.rebuilds == 0
+    assert window.focus_calls == 0
+    assert window._projection_rebuild_pending is False
