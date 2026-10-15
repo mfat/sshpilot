@@ -1313,6 +1313,8 @@ def test_describe_docker_failure_parses_real_output():
         ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. "
          "Is the docker daemon running?", "daemon isn't running"),
         ("bash: docker: command not found", "isn't installed"),
+        ("'podman' is not recognized as an internal or external command,\r\n"
+         "operable program or batch file.", "Podman isn't installed"),
         ("dial unix /var/run/docker.sock: connect: permission denied",
          "sudo or the docker group"),
         ("ssh: Could not resolve hostname web: Name or service not known",
@@ -1462,3 +1464,127 @@ def test_parse_published_ports():
     assert parse_published_ports("") == []
     assert parse_published_ports(None) == []
     assert parse_published_ports("not ports at all") == []
+
+
+# --- local mode on Windows (cmd quoting) -------------------------------------
+
+def _local_runner(calls, stdout=""):
+    """A run_command shaped like the page's local runner (see
+    ``DockerConsolePage._run_command_for``)."""
+    from sshpilot.plugins import api as plugin_api
+
+    def run_local(_nickname, command, **_kwargs):
+        calls.append(command)
+        return FakeResult(stdout=stdout)
+
+    run_local.command_line = plugin_api.local_command_line
+    run_local.windows = plugin_api._windows()
+    return run_local
+
+
+def _exercise(client):
+    """Every command string the client builds, captured or returned."""
+    out = []
+    client.ps()
+    client.stats()
+    client.stats_one("my box")
+    client.images()
+    client.volumes()
+    client.volume_inspect("data vol")
+    client.networks()
+    client.network_inspect("net")
+    client.inspect("c1")
+    client.image_history("nginx:latest")
+    client.lifecycle("rm", "c 1", force=True)
+    client.compose("proj x", "restart")
+    client.read_file("/srv/my dc.yml")
+    client.create_container(
+        "nginx", name="web 1", ports=[(8080, 80)], envs=[("A", "b c")],
+        command=["sh", "-c", "echo hi"])
+    out += [
+        client.logs_follow_command("c 1"),
+        client.logs_follow_stream_command("c 1", timestamps=True),
+        client.exec_shell_command("c1", user="root", workdir="/my app"),
+        client.events_command(),
+        client.pull_command("nginx"),
+        client.compose_up_command("/srv/my dc.yml"),
+        client.compose_down_command("proj x"),
+    ]
+    return out
+
+
+@pytest.mark.parametrize("sudo", [
+    {}, {"use_sudo": True}, {"use_sudo": True, "sudo_password": "pw"}])
+def test_local_posix_commands_match_remote_byte_for_byte(monkeypatch, sudo):
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
+    remote_calls, local_calls = [], []
+
+    def remote(_nickname, command, **_kwargs):
+        remote_calls.append(command)
+        return FakeResult()
+
+    remote_client = DockerClient(remote, "srv", "docker", **sudo)
+    local_client = DockerClient(_local_runner(local_calls), "__local__",
+                                "docker", **sudo)
+    remote_out = _exercise(remote_client)
+    local_out = _exercise(local_client)
+    remote_client.detect_runtime()
+    local_client.detect_runtime()
+    assert local_calls == remote_calls
+    assert local_out == remote_out
+    # Spot-check the sh forms are the historical ones.
+    assert remote_calls[1] == f"{remote_client._captured_runtime()} stats --no-stream --format '{{{{json .}}}}'"
+    assert remote_calls[-1].startswith("sh -c 'command -v docker")
+
+
+def test_local_windows_commands_use_cmd_quoting(monkeypatch):
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    calls = []
+    client = DockerClient(_local_runner(calls), "__local__", "docker")
+    out = _exercise(client)
+    # No sh single quotes reach cmd, which would keep them literally.
+    assert not any("'" in c for c in calls + out)
+    assert calls[0] == (
+        'docker ps -a --format "{\\"ID\\":{{json .ID}},\\"Names\\":{{json .Names}},'
+        '\\"Image\\":{{json .Image}},\\"Status\\":{{json .Status}},'
+        '\\"Ports\\":{{json .Ports}}}"')
+    assert calls[1] == 'docker stats --no-stream --format "{{json .}}"'
+    assert calls[2] == 'docker stats --no-stream --format "{{json .}}" "my box"'
+    assert 'volume inspect "data vol" --format "{{json .}}"' in calls[5]
+    assert calls[12] == 'type "/srv/my dc.yml"'
+    assert calls[13] == ('docker run -d --name "web 1" -p 8080:80 -e "A=b c" '
+                         'nginx sh -c "echo hi"')
+    assert out[2] == ('docker exec -it -u root -w "/my app" c1 sh -c '
+                      '"command -v bash >/dev/null 2>&1 && exec bash || exec sh"')
+    assert out[3] == ('docker events --filter type=container '
+                      '--format "{{json .}}"')
+
+
+def test_local_windows_format_round_trips_through_msvcrt_parsing(monkeypatch):
+    """The quoted template parses back to the exact Go template (the MSVCRT
+    rules that docker.exe, a Go program, also follows)."""
+    import subprocess
+    from sshpilot.plugins.builtin.docker_manager import client as client_mod
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    calls = []
+    DockerClient(_local_runner(calls), "__local__", "docker").ps()
+    assert calls[0].endswith(subprocess.list2cmdline([client_mod._PS_FORMAT]))
+
+
+def test_local_windows_detect_runtime_uses_where(monkeypatch):
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    calls = []
+    client = DockerClient(_local_runner(calls, stdout="docker\r\n"),
+                          "__local__")
+    assert client.detect_runtime() == "docker"
+    assert calls == ["where docker >nul 2>&1 && echo docker || "
+                     "(where podman >nul 2>&1 && echo podman)"]
+
+
+def test_local_windows_json_output_parses(monkeypatch):
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    calls = []
+    client = DockerClient(
+        _local_runner(calls, stdout='{"ID":"a1","Names":"web"}\r\n'),
+        "__local__", "docker")
+    assert client.ps() == [{"ID": "a1", "Names": "web"}]

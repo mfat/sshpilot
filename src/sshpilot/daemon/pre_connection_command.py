@@ -455,7 +455,7 @@ class PreConnectionCommandRunner:
             return 0
 
     @staticmethod
-    def _shell_argv(command: str) -> list:
+    def _shell_argv(command: str) -> "list | str":
         """The argv that runs *command* where the user's tools actually are.
 
         Under Flatpak the daemon lives in the sandbox, and a port knock is the
@@ -489,8 +489,15 @@ class PreConnectionCommandRunner:
         # a bundle launched from Finder inherits a minimal PATH that does not
         # include Homebrew, so a non-login shell would not find the knock
         # helper at all.
+        #
+        # Windows has no ``sh``, so the command goes to ``%COMSPEC% /d /s /c``
+        # as a ready-made command line, not a list: ``subprocess`` would run
+        # ``list2cmdline`` over a list and turn every ``"`` in *command* into
+        # ``\"``, which ``cmd`` does not understand. ``/s`` strips exactly the
+        # outer pair of quotes added here.
         if sys.platform == "win32":
-            return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/s", "/c", command]
+            comspec = (os.environ.get("COMSPEC") or "cmd.exe").strip('"')
+            return f'"{comspec}" /d /s /c "{command}"'
         return [shutil.which("sh") or "/bin/sh", "-lc", command]
 
     def _execute(

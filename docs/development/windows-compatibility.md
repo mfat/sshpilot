@@ -115,13 +115,20 @@ for Windows exits with code 255 and prints nothing. See
   `MULTIPLEXING_SUPPORTED`, or go through `controlmaster_args()`. Do not
   assume that a second channel to a host can reuse a login. On Windows each
   tab, SFTP channel and forward authenticates on its own.
+- Quit never treats files in the socket directory as masters on Windows.
+  `daemon/control_masters.control_masters_possible()` is the seam: when it is
+  false, the default survey, the daemon's shutdown sweep and the quit
+  verification all see no masters, so a stray file in
+  `%LOCALAPPDATA%\sshPilot\run\cm` cannot block quitting. Tests patch it to
+  drive both branches.
 - `ssh-copy-id` does not exist on Windows. `platform/windows/copy_id.py`
   replaces it.
 
 ### Shell commands and quoting
 
 - There is no `sh` on Windows (unless Git's happens to be on `PATH`). A user
-  command needs `cmd /d /s /c` there, as in `pre_connection_command`.
+  command needs `%COMSPEC% /d /s /c "<command>"` there, passed as one string,
+  as in `pre_connection_command`.
 - `shlex.quote` and `shlex.join` produce POSIX quoting. Use them for commands
   that run **on the remote host** or under `sh`. For a local Windows command
   line, use `subprocess.list2cmdline` or `local_shell_pty.windows_command_line`.
@@ -182,10 +189,24 @@ ssh config and `known_hosts` writers.
   `_windows()` helper in the plugin, as the serial and RDP plugins do. Tests
   can then patch the helper instead of `sys.platform`.
 - `PluginContext.run_local_command` and `run_local_command_stream`
-  (`plugins/api.py`) always run `sh -lc`. On Windows this fails unless an
-  `sh` is on `PATH`. A plugin that needs a local command on Windows must not
-  depend on them until they get a `cmd` path (this affects the Docker
-  manager's local mode).
+  (`plugins/api.py`) run `sh -lc` on POSIX (through `flatpak-spawn --host`
+  under Flatpak). On Windows they run `%COMSPEC% /d /s /c "<command>"`,
+  falling back to `cmd.exe`. This is passed as one string, not a list. A list
+  goes through `list2cmdline`, which turns every `"` into `\"`, and `cmd`
+  does not understand that. The daemon's pre-connection command
+  (`daemon/pre_connection_command._shell_argv`) does the same. Windows output
+  is decoded as UTF-8 with `errors="replace"`. The branch sits behind
+  `plugins.api._windows()`, which tests patch.
+- The command string is shell syntax, so build it from an argv with
+  `plugins.api.local_command_line()`. It uses `shlex.join` on POSIX and
+  `subprocess.list2cmdline` on Windows. A command that relies on `sh`
+  features (pipes into `sh` builtins, `$(...)`, `2>/dev/null`) still needs
+  its own Windows form. The Docker manager's client quotes every argument
+  through the runner it is given. Its local runner carries
+  `local_command_line` and the `_windows()` result, so on Windows the
+  `--format` templates and names are double-quoted, runtime detection uses
+  `where`, and compose files are read with `type`. Remote commands and POSIX
+  local commands keep their `sh` quoting byte for byte.
 
 ## Before merging
 

@@ -180,15 +180,12 @@ tests/daemon/test_owned_process_registry.py::test_an_unreadable_registry_file_ra
 tests/daemon/test_owned_process_registry.py::test_the_registry_file_is_private  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_port_knock.py::test_a_dropped_port_counts_as_knocked_and_does_not_hang  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_pre_connection_command.py::test_a_backgrounded_command_returns_immediately[sleep 5 &]  # assumes POSIX behaviour (reviewed by sample)
-tests/daemon/test_pre_connection_command.py::test_a_sandbox_with_no_way_out_still_runs_and_reports  # POSIX paths in fixtures
 tests/daemon/test_pre_connection_command.py::test_a_stdout_complaint_survives_a_non_zero_exit  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_pre_connection_command.py::test_a_stdout_complaint_survives_a_timeout  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_pre_connection_command.py::test_both_streams_reach_the_notice  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_pre_connection_command.py::test_output_is_still_captured  # assumes POSIX behaviour (reviewed by sample)
-tests/daemon/test_pre_connection_command.py::test_outside_a_sandbox_the_command_runs_here  # POSIX paths in fixtures
 tests/daemon/test_pre_connection_command.py::test_test_shows_what_a_hanging_command_printed_before_the_timeout  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_pre_connection_command.py::test_the_launch_and_test_paths_agree_about_output  # assumes POSIX behaviour (reviewed by sample)
-tests/daemon/test_pre_connection_command.py::test_the_login_shell_is_kept_in_both_cases  # POSIX paths in fixtures
 tests/daemon/test_pre_connection_command.py::test_the_probe_never_connects  # POSIX paths in fixtures
 tests/daemon/test_production_composition.py::test_production_overrides_service_always_injects_controlmaster_args  # no ControlMaster on Windows (by design)
 tests/daemon/test_pty_child.py::test_main_execs_ssh_with_explicit_argv  # POSIX-only API

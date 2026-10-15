@@ -7,6 +7,11 @@ dependencies — the CLI gives structured data via stdlib :mod:`json`, works for
 both ``docker`` and ``podman``, and reuses the host's real ``~/.ssh/config`` /
 auth.
 
+Every argument is quoted through :meth:`DockerClient._q`. Remote commands (and
+local ones on POSIX) keep ``sh`` quoting. A local runner on Windows, where
+``run_local_command`` goes through ``cmd``, carries its own quoting (see
+``RunCommand`` below).
+
 This module is deliberately free of GTK and of any direct sshpilot imports: it
 takes an injected ``run_command`` callable, so it is unit-testable offline with a
 fake (no Docker, no SSH needed).
@@ -18,12 +23,16 @@ import json
 import logging
 import re
 import shlex
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
 # run_command(nickname, command, *, timeout=...) -> object with
-# .exit_code / .stdout / .stderr (the app's CommandResult).
+# .exit_code / .stdout / .stderr (the app's CommandResult). A runner may carry
+# two optional attributes for a local shell that is not ``sh``:
+# ``command_line(argv) -> str`` quotes an argv for that shell (the page sets
+# ``plugins.api.local_command_line``), and ``windows`` (bool) selects the
+# ``cmd`` forms of the few commands that are shell syntax, not an argv.
 RunCommand = Callable[..., Any]
 
 # One published-port entry in a `docker ps` Ports string, e.g.
@@ -41,6 +50,9 @@ _PS_FORMAT = (
     '{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},'
     '"Status":{{json .Status}},"Ports":{{json .Ports}}}'
 )
+
+# Generic one-object-per-line template for the other listings.
+_JSON_FORMAT = "{{json .}}"
 
 
 def parse_published_ports(ports: str) -> List[Tuple[int, int, str]]:
@@ -101,6 +113,13 @@ class DockerClient:
         # commands use ``sudo -p`` so the terminal can auto-type it.
         self.sudo_password = sudo_password
         self.timeout = timeout
+        self._command_line: Callable[[Sequence[str]], str] = (
+            getattr(run_command, "command_line", None) or shlex.join)
+        self._windows = bool(getattr(run_command, "windows", False))
+
+    def _q(self, arg: str) -> str:
+        """Quote one argument for the shell that runs the command."""
+        return self._command_line([arg])
 
     @property
     def _password_mode(self) -> bool:
@@ -127,14 +146,14 @@ class DockerClient:
         if not self.use_sudo:
             return self.runtime
         if self._password_mode:
-            return f"sudo -S -p '' {self.runtime}"
+            return f"sudo -S -p {self._q('')} {self.runtime}"
         return f"sudo -n {self.runtime}"
 
     def _interactive_runtime(self) -> str:
         if not self.use_sudo:
             return self.runtime
         if self._password_mode:
-            return f"sudo -p {shlex.quote(self.SUDO_PROMPT)} {self.runtime}"
+            return f"sudo -p {self._q(self.SUDO_PROMPT)} {self.runtime}"
         return f"sudo {self.runtime}"
 
     def _run(self, command: str, *, timeout: Optional[float] = None) -> Any:
@@ -231,10 +250,14 @@ class DockerClient:
         # feed a sudo password on stdin, and it is not a ``<runtime> …`` command.
         # Use ``sh -c`` (not ``sh -lc``): a login shell sources profiles that
         # often hang on non-interactive SSH and burn the full command timeout.
-        cmd = (
-            "sh -c 'command -v docker >/dev/null 2>&1 && echo docker || "
-            "(command -v podman >/dev/null 2>&1 && echo podman)'"
-        )
+        if self._windows:
+            cmd = ("where docker >nul 2>&1 && echo docker || "
+                   "(where podman >nul 2>&1 && echo podman)")
+        else:
+            cmd = (
+                "sh -c 'command -v docker >/dev/null 2>&1 && echo docker || "
+                "(command -v podman >/dev/null 2>&1 && echo podman)'"
+            )
         res = self._invoke(cmd, timeout=self.timeout)
         out = (getattr(res, "stdout", "") or "").strip().lower()
         if out.endswith("podman"):
@@ -250,41 +273,41 @@ class DockerClient:
     # -- queries ------------------------------------------------------
     def ps(self, all: bool = True) -> List[dict]:
         flag = "-a " if all else ""
-        return self._exec_json(f"ps {flag}--format '{_PS_FORMAT}'")
+        return self._exec_json(f"ps {flag}--format {self._q(_PS_FORMAT)}")
 
     def stats(self) -> List[dict]:
-        return self._exec_json("stats --no-stream --format '{{json .}}'")
+        return self._exec_json(f"stats --no-stream --format {self._q(_JSON_FORMAT)}")
 
     def stats_one(self, container_id: str) -> dict:
         """One-shot stats for a single container (empty dict on failure/empty)."""
         rows = self._exec_json(
-            f"stats --no-stream --format '{{{{json .}}}}' {shlex.quote(container_id)}")
+            f"stats --no-stream --format {self._q(_JSON_FORMAT)} {self._q(container_id)}")
         return rows[0] if rows else {}
 
     def images(self) -> List[dict]:
-        return self._exec_json("images --format '{{json .}}'")
+        return self._exec_json(f"images --format {self._q(_JSON_FORMAT)}")
 
     def volumes(self) -> List[dict]:
-        return self._exec_json("volume ls --format '{{json .}}'")
+        return self._exec_json(f"volume ls --format {self._q(_JSON_FORMAT)}")
 
     def volume_inspect(self, name: str) -> dict:
-        rows = self._exec_json(f"volume inspect {shlex.quote(name)} --format '{{{{json .}}}}'")
+        rows = self._exec_json(f"volume inspect {self._q(name)} --format {self._q(_JSON_FORMAT)}")
         return rows[0] if rows else {}
 
     def remove_volume(self, name: str, *, force: bool = False) -> Any:
         flag = " -f" if force else ""
-        return self._exec(f"volume rm{flag} {shlex.quote(name)}")
+        return self._exec(f"volume rm{flag} {self._q(name)}")
 
     def networks(self) -> List[dict]:
         """Available networks: ``[{Name, Driver, ...}, ...]``."""
-        return self._exec_json("network ls --format '{{json .}}'")
+        return self._exec_json(f"network ls --format {self._q(_JSON_FORMAT)}")
 
     def network_inspect(self, name: str) -> dict:
-        rows = self._exec_json(f"network inspect {shlex.quote(name)} --format '{{{{json .}}}}'")
+        rows = self._exec_json(f"network inspect {self._q(name)} --format {self._q(_JSON_FORMAT)}")
         return rows[0] if rows else {}
 
     def remove_network(self, name: str) -> Any:
-        return self._exec(f"network rm {shlex.quote(name)}")
+        return self._exec(f"network rm {self._q(name)}")
 
     def ping(self) -> Any:
         """Cheap access probe (``<runtime> ps -q``); returns the CommandResult so
@@ -296,7 +319,7 @@ class DockerClient:
                       timestamps: bool = False) -> str:
         """Return the last ``tail`` log lines (non-following) as text."""
         ts = "-t " if timestamps else ""
-        res = self._exec(f"logs {ts}--tail {int(tail)} {shlex.quote(container_id)}")
+        res = self._exec(f"logs {ts}--tail {int(tail)} {self._q(container_id)}")
         # docker writes container logs to both stdout and stderr; show both.
         return ((res.stdout or "") + (res.stderr or "")).rstrip("\n")
 
@@ -307,11 +330,11 @@ class DockerClient:
         if action not in self._LIFECYCLE:
             raise ValueError(f"unsupported action: {action!r}")
         flag = " -f" if (force and action == "rm") else ""
-        return self._exec(f"{action}{flag} {shlex.quote(container_id)}")
+        return self._exec(f"{action}{flag} {self._q(container_id)}")
 
     def remove_image(self, image_id: str, *, force: bool = False) -> Any:
         flag = " -f" if force else ""
-        return self._exec(f"rmi{flag} {shlex.quote(image_id)}")
+        return self._exec(f"rmi{flag} {self._q(image_id)}")
 
     def system_prune(self) -> Any:
         return self._exec("system prune -f")
@@ -329,7 +352,7 @@ class DockerClient:
             parts.append("-t")
         if tail:
             parts += ["--tail", str(int(tail))]
-        parts.append(shlex.quote(container_id))
+        parts.append(self._q(container_id))
         return " ".join(parts)
 
     def logs_follow_stream_command(self, container_id: str, *, tail: int = 100,
@@ -341,7 +364,7 @@ class DockerClient:
             parts.append("-t")
         if tail:
             parts += ["--tail", str(int(tail))]
-        parts.append(shlex.quote(container_id))
+        parts.append(self._q(container_id))
         return " ".join(parts)
 
     def exec_shell_command(self, container_id: str, *, user: Optional[str] = None,
@@ -352,14 +375,14 @@ class DockerClient:
         ``/bin/bash``/``/bin/sh``), so images whose shell lives elsewhere still
         work. A single ``exec`` is used so exiting bash with a non-zero status
         does not spuriously re-open sh."""
-        c = shlex.quote(container_id)
+        c = self._q(container_id)
         opts = ""
         if user:
-            opts += f"-u {shlex.quote(user)} "
+            opts += f"-u {self._q(user)} "
         if workdir:
-            opts += f"-w {shlex.quote(workdir)} "
+            opts += f"-w {self._q(workdir)} "
         # Resolved inside the container by its own PATH; prefer bash, else sh.
-        picker = shlex.quote("command -v bash >/dev/null 2>&1 && exec bash || exec sh")
+        picker = self._q("command -v bash >/dev/null 2>&1 && exec bash || exec sh")
         return f"{self._interactive_runtime()} exec -it {opts}{c} sh -c {picker}"
 
     def stats_stream_command(self) -> str:
@@ -372,27 +395,27 @@ class DockerClient:
         """
         return (
             f"{self._captured_runtime()} events "
-            "--filter type=container --format '{{json .}}'"
+            f"--filter type=container --format {self._q(_JSON_FORMAT)}"
         )
 
     # -- details / inspect -------------------------------------------
     def inspect(self, container_id: str) -> dict:
         """Full ``inspect`` of a container as a dict (empty on failure)."""
         rows = self._exec_json(
-            f"inspect {shlex.quote(container_id)} --format '{{{{json .}}}}'")
+            f"inspect {self._q(container_id)} --format {self._q(_JSON_FORMAT)}")
         return rows[0] if rows else {}
 
     # -- images ------------------------------------------------------
     def image_history(self, image: str) -> List[dict]:
         return self._exec_json(
-            f"history --no-trunc --format '{{{{json .}}}}' {shlex.quote(image)}")
+            f"history --no-trunc --format {self._q(_JSON_FORMAT)} {self._q(image)}")
 
     def image_prune(self) -> Any:
         return self._exec("image prune -f")
 
     def pull_command(self, ref: str) -> str:
         """Streamed `pull` (progress shown in a terminal tab)."""
-        return f"{self._interactive_runtime()} pull {shlex.quote(ref)}"
+        return f"{self._interactive_runtime()} pull {self._q(ref)}"
 
     # -- compose -----------------------------------------------------
     _COMPOSE_ACTIONS = {"stop", "start", "restart"}
@@ -447,13 +470,13 @@ class DockerClient:
         """Quick captured compose action on an existing project's containers."""
         if action not in self._COMPOSE_ACTIONS:
             raise ValueError(f"unsupported compose action: {action!r}")
-        return self._exec(f"compose -p {shlex.quote(project)} {action}")
+        return self._exec(f"compose -p {self._q(project)} {action}")
 
     def compose_ps(self, project: str) -> List[dict]:
         """Per-service breakdown of a compose project: ``[{Name, Service, State,
         Status, Ports}, ...]``. Degrades like :meth:`compose_ls` when ``--format``
         isn't supported (older Compose) — parsing the plain table instead."""
-        p = shlex.quote(project)
+        p = self._q(project)
         for args, is_json in ((f"compose -p {p} ps --format json", True),
                               (f"compose -p {p} ps", False)):
             res = self._exec(args)
@@ -470,24 +493,26 @@ class DockerClient:
     def compose_up_command(self, config_file: str) -> str:
         """Streamed `compose up -d` (deploy/redeploy) from the project's file."""
         return (f"{self._interactive_runtime()} compose "
-                f"-f {shlex.quote(config_file)} up -d")
+                f"-f {self._q(config_file)} up -d")
 
     def compose_down_command(self, project: str) -> str:
         """Streamed `compose down` (tear the stack down) by project name."""
         return (f"{self._interactive_runtime()} compose "
-                f"-p {shlex.quote(project)} down")
+                f"-p {self._q(project)} down")
 
     # -- misc --------------------------------------------------------
     def read_file(self, path: str) -> str:
-        """Read a host file (e.g. a compose file) via ``cat`` — NOT a docker
-        command, so it is not runtime-prefixed (sudo still honoured)."""
+        """Read a host file (e.g. a compose file) via ``cat`` (``type`` under
+        ``cmd``) — NOT a docker command, so it is not runtime-prefixed (sudo
+        still honoured)."""
         if self._password_mode:
-            prefix = "sudo -S -p '' "
+            prefix = f"sudo -S -p {self._q('')} "
         elif self.use_sudo:
             prefix = "sudo -n "
         else:
             prefix = ""
-        res = self._run(f"{prefix}cat {shlex.quote(path)}")
+        reader = "type" if self._windows else "cat"
+        res = self._run(f"{prefix}{reader} {self._q(path)}")
         if getattr(res, "exit_code", 1) != 0:
             raise DockerError((res.stderr or res.stdout or "read failed").strip())
         return res.stdout or ""
@@ -507,7 +532,7 @@ class DockerClient:
         values are shell-quoted.
 
         ``command`` is an argv: a list is used as-is, a string is ``shlex.split``;
-        either way every token is ``shlex.quote``d, so a value can never break out
+        either way every token is quoted (:meth:`_q`), so a value can never break out
         of its argument into the remote shell. (A malformed string raises
         ``ValueError`` from ``shlex.split`` — callers validate before calling.)
 
@@ -520,26 +545,26 @@ class DockerClient:
         if tty:
             parts.append("-t")
         if name:
-            parts += ["--name", shlex.quote(name)]
+            parts += ["--name", self._q(name)]
         if network and network != "bridge":
-            parts += ["--network", shlex.quote(network)]
+            parts += ["--network", self._q(network)]
         if user:
-            parts += ["--user", shlex.quote(user)]
+            parts += ["--user", self._q(user)]
         if memory:
-            parts += ["--memory", shlex.quote(memory)]
+            parts += ["--memory", self._q(memory)]
         if cpus:
-            parts += ["--cpus", shlex.quote(cpus)]
+            parts += ["--cpus", self._q(cpus)]
         for host, cont in (ports or []):
-            parts += ["-p", shlex.quote(f"{host}:{cont}")]
+            parts += ["-p", self._q(f"{host}:{cont}")]
         for src, dst in (volumes or []):
-            parts += ["-v", shlex.quote(f"{src}:{dst}")]
+            parts += ["-v", self._q(f"{src}:{dst}")]
         for key, value in (envs or []):
-            parts += ["-e", shlex.quote(f"{key}={value}")]
+            parts += ["-e", self._q(f"{key}={value}")]
         if restart and restart != "no":
-            parts += ["--restart", shlex.quote(restart)]
-        parts.append(shlex.quote(image))
+            parts += ["--restart", self._q(restart)]
+        parts.append(self._q(image))
         argv = shlex.split(command) if isinstance(command, str) else list(command or [])
-        parts += [shlex.quote(tok) for tok in argv]
+        parts += [self._q(tok) for tok in argv]
         return " ".join(parts)
 
     def create_container(self, image: str, **kwargs: Any) -> Any:

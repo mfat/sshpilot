@@ -22,6 +22,7 @@ import contextlib
 import io
 import logging
 import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -1127,9 +1128,13 @@ def test_an_unset_port_expands_to_the_ssh_default():
 # the same problem the same way (remmina_utils_get_flatpak_command).
 
 
-def _argv_for(monkeypatch, command, *, sandboxed, spawner="/usr/bin/flatpak-spawn"):
+def _argv_for(
+    monkeypatch, command, *, sandboxed, spawner="/usr/bin/flatpak-spawn",
+    platform="linux",
+):
     import sshpilot.daemon.pre_connection_command as mod
 
+    monkeypatch.setattr(mod.sys, "platform", platform)
     monkeypatch.setattr(
         mod.os.path, "exists", lambda p: sandboxed if p == "/.flatpak-info" else False
     )
@@ -1177,6 +1182,50 @@ def test_the_login_shell_is_kept_in_both_cases(monkeypatch):
     for sandboxed in (True, False):
         argv = _argv_for(monkeypatch, "knock host", sandboxed=sandboxed)
         assert "-lc" in argv
+
+
+def test_on_windows_the_command_goes_to_cmd_as_one_command_line(monkeypatch):
+    """A string, not a list: subprocess would run list2cmdline over a list and
+    turn every quote into \\", which cmd does not understand."""
+
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\system32\cmd.exe")
+    argv = _argv_for(
+        monkeypatch, 'knock "my host" 7000', sandboxed=False, platform="win32"
+    )
+
+    assert argv == (
+        r'"C:\Windows\system32\cmd.exe" /d /s /c "knock "my host" 7000"'
+    )
+
+
+def test_on_windows_a_missing_comspec_falls_back_to_cmd(monkeypatch):
+    monkeypatch.delenv("COMSPEC", raising=False)
+    argv = _argv_for(monkeypatch, "knock host", sandboxed=False, platform="win32")
+
+    assert argv == '"cmd.exe" /d /s /c "knock host"'
+
+
+def test_on_windows_a_quoted_comspec_is_not_quoted_twice(monkeypatch):
+    monkeypatch.setenv("COMSPEC", r'"C:\Windows\system32\cmd.exe"')
+    argv = _argv_for(monkeypatch, "knock host", sandboxed=False, platform="win32")
+
+    assert argv.startswith(r'"C:\Windows\system32\cmd.exe" /d')
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="needs the real cmd.exe")
+def test_a_quoted_command_survives_the_real_cmd():
+    """The bug: list2cmdline escaped the quotes and Python got a SyntaxError."""
+
+    command = (
+        subprocess.list2cmdline([sys.executable])
+        + """ -c "import sys; print('quoted ok'); sys.exit(3)\""""
+    )
+    runner, _ = _runner(command)
+
+    result = runner.test(command, timeout=30)
+
+    assert result.exit_code == 3, result.output
+    assert "quoted ok" in result.output
 
 
 # --- the knock stage ----------------------------------------------------------

@@ -60,6 +60,7 @@ def test_run_local_command_uses_local_shell(monkeypatch):
     seen = {}
 
     monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
 
     def _fake_run(argv, **kwargs):
         seen["argv"] = argv
@@ -78,6 +79,7 @@ def test_run_local_command_uses_flatpak_host(monkeypatch):
     seen = {}
 
     monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: True)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
     monkeypatch.setattr(
         "shutil.which",
         lambda name: "/usr/bin/flatpak-spawn" if name == "flatpak-spawn" else None,
@@ -91,6 +93,72 @@ def test_run_local_command_uses_flatpak_host(monkeypatch):
     assert _ctx().run_local_command("docker ps").ok
     assert seen["argv"] == [
         "/usr/bin/flatpak-spawn", "--host", "sh", "-lc", "docker ps"]
+
+
+def test_run_local_command_posix_argv_is_sh_lc(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
+    monkeypatch.setattr(
+        "shutil.which", lambda name: "/usr/bin/sh" if name == "sh" else None)
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert _ctx().run_local_command("docker ps").ok
+    assert seen["argv"] == ["/usr/bin/sh", "-lc", "docker ps"]
+    # POSIX keeps the locale's decoding.
+    assert "encoding" not in seen["kwargs"] and "errors" not in seen["kwargs"]
+
+
+def test_run_local_command_uses_cmd_on_windows(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\system32\cmd.exe")
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert _ctx().run_local_command("docker ps").ok
+    assert seen["argv"] == r'"C:\Windows\system32\cmd.exe" /d /s /c "docker ps"'
+    assert seen["kwargs"]["text"] is True
+    assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["errors"] == "replace"
+
+
+def test_run_local_command_windows_falls_back_to_cmd_exe(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    monkeypatch.delenv("COMSPEC", raising=False)
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert _ctx().run_local_command("ver").ok
+    assert seen["argv"] == '"cmd.exe" /d /s /c "ver"'
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="needs a real cmd.exe")
+def test_run_local_command_windows_keeps_inner_quotes(monkeypatch):
+    # subprocess must not list2cmdline the command: cmd reads \" literally.
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    from sshpilot.plugins.api import local_command_line
+    command = local_command_line(
+        [sys.executable, "-c", "import sys; print(sys.argv[1:])", "x y", "{{json .}}"])
+    result = _ctx().run_local_command(command)
+    assert result.ok, result.stderr
+    assert result.stdout.strip() == "['x y', '{{json .}}']"
 
 
 @pytest.mark.parametrize("failure,expected", [
@@ -117,6 +185,7 @@ def test_local_command_public_failure_contract_is_unchanged(monkeypatch, failure
 
 def test_local_command_public_nonzero_result_remains_raw(monkeypatch):
     monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs:
                         types.SimpleNamespace(returncode=127, stdout="", stderr="shell output\n"))
     result = _ctx().run_local_command("missing-tool")
@@ -164,6 +233,7 @@ def test_run_local_command_stream_uses_local_shell(monkeypatch):
     done = []
 
     monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
 
     class _FakeStdout:
         def __iter__(self):
@@ -206,6 +276,93 @@ def test_run_local_command_stream_uses_local_shell(monkeypatch):
     assert lines == ["local-line"]
     assert done == [0]
     handle.stop()
+
+
+def _capture_stream_popen(monkeypatch, seen):
+    class _FakeStdout:
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            pass
+
+    class _FakeProc:
+        def __init__(self, argv, **kwargs):
+            seen["argv"] = argv
+            seen["kwargs"] = kwargs
+            self.stdout = _FakeStdout()
+            self.stdin = None
+
+        def poll(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+
+
+def test_run_local_command_stream_posix_argv_is_sh_lc(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
+    monkeypatch.setattr(
+        "shutil.which", lambda name: "/usr/bin/sh" if name == "sh" else None)
+    _capture_stream_popen(monkeypatch, seen)
+
+    _ctx().run_local_command_stream("docker logs -f web", on_line=lambda _l: None).stop()
+    assert seen["argv"] == ["/usr/bin/sh", "-lc", "docker logs -f web"]
+    assert "encoding" not in seen["kwargs"] and "errors" not in seen["kwargs"]
+
+
+def test_run_local_command_stream_uses_cmd_on_windows(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\system32\cmd.exe")
+    _capture_stream_popen(monkeypatch, seen)
+
+    _ctx().run_local_command_stream("docker logs -f web", on_line=lambda _l: None).stop()
+    assert seen["argv"] == (
+        r'"C:\Windows\system32\cmd.exe" /d /s /c "docker logs -f web"')
+    assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["errors"] == "replace"
+
+
+# --- local command lines (builtin summaries) ----------------------------------------
+
+def test_local_command_line_posix_uses_shlex(monkeypatch):
+    from sshpilot.plugins.api import local_command_line
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: False)
+    assert local_command_line(["docker", "ps", "--format", "{{.Names}} x"]) == (
+        "docker ps --format '{{.Names}} x'")
+
+
+def test_local_command_line_windows_uses_list2cmdline(monkeypatch):
+    from sshpilot.plugins.api import local_command_line
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    assert local_command_line(["docker", "ps", "--format", "{{.Names}} x"]) == (
+        'docker ps --format "{{.Names}} x"')
+
+
+def test_summary_run_lines_passes_platform_command_line(monkeypatch):
+    from sshpilot.plugins.builtin import _summary
+    monkeypatch.setattr("sshpilot.plugins.api._windows", lambda: True)
+    seen = {}
+
+    class _Ctx:
+        def _run_local_command(self, command, timeout):
+            seen["command"] = command
+            return CommandResult(0, "a\n\nb\n", "")
+
+    assert _summary.run_lines(_Ctx(), ["podman", "ps", "-a"]) == ["a", "b"]
+    assert seen["command"] == "podman ps -a"
 
 
 # --- files facade ---------------------------------------------------------

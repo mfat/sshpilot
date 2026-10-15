@@ -167,6 +167,7 @@ def test_a_missing_directory_is_genuinely_empty(tmp_path):
 def test_an_unresolvable_directory_is_not_empty(monkeypatch):
     import sshpilot.daemon.control_masters as control_masters
 
+    monkeypatch.setattr(control_masters, "control_masters_possible", lambda: True)
     monkeypatch.setattr(control_masters, "control_master_directory", lambda: None)
     with pytest.raises(LookupError):
         survey_control_masters()

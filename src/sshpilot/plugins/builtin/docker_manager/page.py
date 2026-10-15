@@ -26,6 +26,7 @@ from gi.repository import GLib, Gtk, Adw, Gdk, GdkPixbuf  # noqa: E402
 
 _MARK_RESOURCE = "/io/github/mfat/sshpilot/icons/scalable/actions/docker-mark-ocean-blue.svg"
 
+from ... import api as plugin_api  # noqa: E402
 from .client import DockerClient  # noqa: E402
 from .dialogs import DockerConsoleSettingsDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
@@ -517,6 +518,10 @@ class DockerConsolePage(
         def run_local(_nickname: str, command: str, **kwargs):
             return self.ctx.run_local_command(command, **kwargs)
 
+        # run_local_command uses cmd on Windows: tell DockerClient how to
+        # quote for it (see client.RunCommand).
+        run_local.command_line = plugin_api.local_command_line
+        run_local.windows = plugin_api._windows()
         return run_local
 
     def _open_command_terminal(self, nick: str, cmd: str,
@@ -1314,10 +1319,16 @@ class DockerConsolePage(
         # Only auto-refresh the live views; images is manual. In-pane Follow
         # owns the Logs buffer when active (no snapshot poll).
         name = self._stack.get_visible_child_name()
-        if name == "containers":
-            self._refresh_containers()
-        elif name == "stats":
-            self._refresh_stats()
+        try:
+            if name == "containers":
+                self._refresh_containers()
+            elif name == "stats":
+                self._refresh_stats()
+        except Exception:  # noqa: BLE001
+            # e.g. the daemon stopped but the window stayed open (a refused
+            # quit), so settings reads raise. Skip this round; a later tick
+            # recovers once the daemon is back.
+            logger.debug("docker auto-refresh skipped", exc_info=True)
         return True  # keep ticking
 
     def _refresh_visible(self) -> None:
