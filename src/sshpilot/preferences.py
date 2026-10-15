@@ -7298,6 +7298,14 @@ class PreferencesWindow(Adw.Window):
                     ]
                 )
 
+            if is_windows():
+                common_terminals = [
+                    ("Windows Terminal", "wt.exe"),
+                    ("PowerShell", "pwsh.exe"),
+                    ("Windows PowerShell", "powershell.exe"),
+                    ("Command Prompt", "cmd.exe"),
+                ]
+
             # Prepare mapping for later lookup
             self.terminal_commands = {}
 

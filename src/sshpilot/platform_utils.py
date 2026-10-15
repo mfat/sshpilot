@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import platform
@@ -10,7 +11,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from gi.repository import GLib
 
@@ -544,9 +545,25 @@ def get_ssh_dir() -> str:
 
 
 
+# Windows terminals in preference order. Windows Terminal hosts a shell, so it
+# comes first; the shells themselves get a new console window of their own.
+WINDOWS_TERMINALS: Tuple[str, ...] = ('wt.exe', 'pwsh.exe', 'powershell.exe', 'cmd.exe')
+
+
+def _find_windows_terminal() -> Optional[List[str]]:
+    for term in WINDOWS_TERMINALS:
+        path = shutil.which(term)
+        if path:
+            return [path]
+    return None
+
+
 def get_default_terminal_command() -> Optional[List[str]]:
     """Get the default terminal command from the desktop environment."""
     try:
+        if is_windows():
+            return _find_windows_terminal()
+
         if is_macos():
             # Map bundle identifiers to display names in preference order.
             mac_terms = {
@@ -658,6 +675,14 @@ def get_user_preferred_terminal(config) -> Optional[List[str]]:
 
             return ['open', '-a', preferred_terminal]
 
+        if is_windows():
+            # `which` is not a Windows command; shutil.which honours PATHEXT.
+            path = shutil.which(preferred_terminal)
+            if path:
+                return [path]
+            logger.warning(f"Preferred terminal '{preferred_terminal}' not found, falling back to default terminal")
+            return None
+
         try:
             result = subprocess.run(['which', preferred_terminal], capture_output=True, text=True, timeout=2)
             if result.returncode == 0:
@@ -676,6 +701,8 @@ def get_user_preferred_terminal(config) -> Optional[List[str]]:
 
 def find_any_terminal() -> Optional[List[str]]:
     """Last-resort terminal discovery: probe common emulators, then xdg-terminal."""
+    if is_windows():
+        return _find_windows_terminal()
     for term in (
         'gnome-terminal', 'ptyxis', 'konsole', 'xterm', 'alacritty',
         'kitty', 'terminator', 'tilix', 'xfce4-terminal', 'xdg-terminal',
@@ -720,11 +747,88 @@ def _applescript_string(value: str) -> str:
     return '"' + escaped + '"'
 
 
+def _powershell_literal(value: str) -> str:
+    """Render *value* as a single-quoted PowerShell string (no expansion)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _powershell_encoded_args(
+    argv: Sequence[str], environment: Optional[Dict[str, str]]
+) -> List[str]:
+    """PowerShell arguments that run *argv* and keep the window open.
+
+    The script travels as -EncodedCommand (base64 UTF-16LE), so nothing in it
+    is reparsed by the Windows command-line splitter, wt.exe's `;` handling or
+    cmd.exe -- only PowerShell's own single-quote rules apply.
+    """
+    lines = [
+        f'$env:{name} = {_powershell_literal(value)}'
+        for name, value in (environment or {}).items()
+        if name.replace('_', '').isalnum()
+    ]
+    lines.append('& ' + ' '.join(_powershell_literal(arg) for arg in argv))
+    encoded = base64.b64encode('\n'.join(lines).encode('utf-16-le')).decode('ascii')
+    return ['-NoLogo', '-NoExit', '-EncodedCommand', encoded]
+
+
+# cmd.exe expands or reinterprets these even inside double quotes, so a
+# command containing them is refused rather than escaped.
+_CMD_METACHARS = frozenset('%!^&|<>"')
+
+
+def _cmd_keep_open_args(argv: Sequence[str]) -> Optional[List[str]]:
+    if any(_CMD_METACHARS.intersection(arg) for arg in argv):
+        logger.error("Refusing to open cmd.exe: command contains cmd metacharacters")
+        return None
+    return ['/k', subprocess.list2cmdline(list(argv))]
+
+
+def _open_windows_terminal(
+    terminal_command: List[str],
+    argv: Sequence[str],
+    environment: Optional[Dict[str, str]],
+    launch_environment: Dict[str, str],
+) -> bool:
+    new_console = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
+    name = os.path.basename(terminal_command[0]).lower()
+    if not name.endswith('.exe'):
+        name += '.exe'
+
+    if name == 'wt.exe':
+        shell = shutil.which('pwsh.exe') or shutil.which('powershell.exe')
+        if shell:
+            inner = [shell] + _powershell_encoded_args(argv, environment)
+        else:
+            cmd_args = _cmd_keep_open_args(argv)
+            if cmd_args is None:
+                return False
+            inner = [shutil.which('cmd.exe') or 'cmd.exe'] + cmd_args
+        cmd = terminal_command + ['new-tab', '--'] + inner
+        flags = 0
+    elif name in ('pwsh.exe', 'powershell.exe'):
+        cmd = terminal_command + _powershell_encoded_args(argv, environment)
+        flags = new_console
+    elif name == 'cmd.exe':
+        cmd_args = _cmd_keep_open_args(argv)
+        if cmd_args is None:
+            return False
+        cmd = terminal_command + cmd_args
+        flags = new_console
+    else:
+        cmd = terminal_command + list(argv)
+        flags = new_console
+
+    logger.info(f"Launching system terminal: {terminal_command[0]}")
+    subprocess.Popen(cmd, env=launch_environment, creationflags=flags)
+    return True
+
+
 def open_system_terminal(
     terminal_command: List[str],
     ssh_command: str,
     *,
     environment: Optional[Dict[str, str]] = None,
+    argv: Optional[Sequence[str]] = None,
 ) -> bool:
     """Launch a terminal emulator running *ssh_command*.
 
@@ -740,6 +844,9 @@ def open_system_terminal(
     escaping changes that. shlex.quote happens to single-quote newlines today,
     but that is a property of a helper two layers away, not a guarantee this
     function should rely on.
+
+    On Windows there is no bash to hand *ssh_command* to, so *argv* (the
+    unjoined command) is used when given; otherwise *ssh_command* is split.
     """
     if _CONTROL_CHARS.intersection(ssh_command):
         logger.error("Refusing to open a terminal: command contains control characters")
@@ -751,6 +858,14 @@ def open_system_terminal(
     if environment:
         launch_environment.update(environment)
     try:
+        if is_windows():
+            return _open_windows_terminal(
+                terminal_command,
+                tuple(argv) if argv is not None else tuple(shlex.split(ssh_command)),
+                environment,
+                launch_environment,
+            )
+
         if is_macos():
             app = None
             if terminal_command and terminal_command[0] == 'open':

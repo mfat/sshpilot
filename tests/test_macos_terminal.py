@@ -7,6 +7,11 @@ import pytest
 platform_utils = pytest.importorskip("sshpilot.platform_utils")
 
 
+@pytest.fixture(autouse=True)
+def _not_windows(monkeypatch):
+    monkeypatch.setattr(platform_utils, "is_windows", lambda: False)
+
+
 class DummyConfig:
     def __init__(self, settings=None):
         self.settings = settings or {}

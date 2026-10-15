@@ -125,6 +125,7 @@ from .platform_utils import (
     get_default_terminal_command,
     get_user_preferred_terminal,
     find_any_terminal,
+    is_windows,
     open_system_terminal,
 )
 from .plugins.api import Capability as PluginCapability
@@ -7698,6 +7699,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 terminal_command,
                 ssh_command,
                 environment=dict(spec.environment),
+                argv=tuple(spec.argv),
             ):
                 self._show_terminal_error_dialog()
         except Exception as error:
@@ -7765,7 +7767,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 transient_for=self,
                 modal=True,
                 heading=_("No Terminal Found"),
-                body=_("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
+                body=(
+                    _("Could not find a suitable terminal application. Please install Windows Terminal or PowerShell.")
+                    if is_windows() else
+                    _("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
+                )
             )
 
             dialog.add_response("ok", _("OK"))

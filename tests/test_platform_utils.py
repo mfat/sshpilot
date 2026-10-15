@@ -235,6 +235,7 @@ _HOSTILE = 'ssh \'srv"; touch /tmp/pwned; "\''
 def _launched_argv(monkeypatch, terminal_command, macos=False, command=_HOSTILE):
     seen = []
     monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(platform_utils, "is_windows", lambda: False)
     monkeypatch.setattr(
         platform_utils.subprocess, "Popen",
         lambda cmd, **kw: seen.append(cmd) or object(),
@@ -253,6 +254,7 @@ def test_control_characters_refuse_to_launch(monkeypatch, ctrl, macos):
     """
     launched = []
     monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(platform_utils, "is_windows", lambda: False)
     monkeypatch.setattr(
         platform_utils.subprocess, "Popen",
         lambda cmd, **kw: launched.append(cmd) or object(),
