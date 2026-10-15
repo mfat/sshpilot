@@ -226,6 +226,8 @@ def _stop_daemon(env: dict) -> None:
         if status.returncode == 2:
             return
         time.sleep(0.2)
+    # A daemon that is still there would turn the next "cold" run warm.
+    raise SystemExit("the sandbox daemon did not stop; refusing to time a cold start")
 
 
 def _start_daemon(env: dict) -> None:
@@ -278,6 +280,18 @@ def _launch_once(env: dict, out: Path, timeout: float) -> dict:
     return data
 
 
+def _check_mode(mode: str, run: dict) -> None:
+    """Fail a run whose daemon start does not match the mode it is filed under."""
+    expected = "spawned daemon" if mode == "cold" else "existing daemon"
+    detail = next(
+        (item["detail"] for item in run["milestones"]
+         if item["name"] == "daemon_connect_returned"),
+        None,
+    )
+    if detail is not None and detail != expected:
+        raise SystemExit(f"{mode} run reported {detail!r}; expected {expected!r}")
+
+
 def _summarise(label: str, runs: list[dict]) -> dict:
     names: list[str] = []
     for run in runs:
@@ -328,7 +342,9 @@ def report_launch(args) -> None:
             _stop_daemon(env)
             if mode == "warm":
                 _start_daemon(env)
-            runs.append(_launch_once(env, out, args.timeout))
+            run = _launch_once(env, out, args.timeout)
+            _check_mode(mode, run)
+            runs.append(run)
         results[mode] = {"summary": _summarise(mode, runs), "runs": runs}
     _stop_daemon(env)
     if args.json:
