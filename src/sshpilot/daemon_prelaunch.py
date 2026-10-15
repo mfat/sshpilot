@@ -19,10 +19,11 @@ settled by the launcher's ready-wait, which waits for whichever daemon won the
 socket. A secondary instance closes the client it opened through
 :func:`discard` when ``main()`` returns.
 
-The worker thread starts first; only the spawn itself waits until this
-process has exported the environment the daemon inherits (verbosity, and the
-interface language, which reads the config directory through GLib and
-therefore comes after the gi version pins).
+Before the worker starts, this process exports the environment the daemon
+inherits: verbosity, and the interface language, which reads the config
+directory through GLib and therefore comes after the gi version pins. (Starting
+the worker first and holding only the spawn back was measured ~125 ms slower on
+a warm start: the worker's client-stack import then competes with GTK's.)
 """
 from __future__ import annotations
 
@@ -50,8 +51,6 @@ class _Prelaunch:
         self.result = None
         self.error: Optional[BaseException] = None
         self.done = threading.Event()
-        #: Set once the environment a spawned daemon inherits is final.
-        self.environment_ready = threading.Event()
         #: Claimed by :func:`take` (handed over) or :func:`discard` (closed).
         self.taken = False
         self.thread = threading.Thread(
@@ -62,11 +61,7 @@ class _Prelaunch:
         try:
             from .daemon.launcher import DaemonLauncher
 
-            self.launcher = DaemonLauncher(
-                verbose=self.verbose,
-                quiet=self.quiet,
-                before_spawn=self.environment_ready.wait,
-            )
+            self.launcher = DaemonLauncher(verbose=self.verbose, quiet=self.quiet)
             self.result = self.launcher.connect_or_start_without_eviction()
         except BaseException as error:  # handed to the selection that takes it
             self.error = error
@@ -138,13 +133,11 @@ def start(*, verbose: bool = False, quiet: bool = False) -> bool:
         quiet = bool(quiet) and not verbose
         apply_verbosity_environment(verbose, quiet)
         state = _state = _Prelaunch(verbose, quiet)
-    # The worker imports the launcher and probes for a resident daemon while
-    # this thread finishes the environment; only a spawn waits for it.
+    # Outside the lock: pins gi and imports GLib. Runs on this thread, before
+    # the worker exists, so the environment is complete before any spawn and
+    # is never written while another thread reads it.
+    _export_language()
     state.thread.start()
-    try:
-        _export_language()
-    finally:
-        state.environment_ready.set()
     return True
 
 

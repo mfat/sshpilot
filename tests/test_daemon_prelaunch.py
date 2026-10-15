@@ -31,10 +31,9 @@ class _FakeLauncher:
     early_outcome: object = None
     instances: list = []
 
-    def __init__(self, *, verbose=False, quiet=False, before_spawn=None) -> None:
+    def __init__(self, *, verbose=False, quiet=False) -> None:
         self.verbose = verbose
         self.quiet = quiet
-        self.before_spawn = before_spawn
         self.calls: list[str] = []
         _FakeLauncher.instances.append(self)
 
@@ -199,32 +198,21 @@ def test_discard_never_blocks_and_the_worker_closes_its_late_client():
     assert daemon_prelaunch.take() is None
 
 
-def test_spawn_waits_for_the_exported_environment(monkeypatch):
-    """The worker starts at once; only the spawn waits for the language."""
-    exported = threading.Event()
-    release = threading.Event()
+def test_language_is_exported_before_the_worker_starts(monkeypatch):
+    """The daemon inherits the environment; it is complete before any spawn."""
     order = []
 
-    def _export_language():
-        exported.set()
-        release.wait(5)
-        order.append("language exported")
-
-    class _Spawning(_FakeLauncher):
+    class _Recording(_FakeLauncher):
         def connect_or_start_without_eviction(self):
-            order.append("probe")
-            self.before_spawn()
-            order.append("spawn")
+            order.append("worker")
             return _Result("spawned")
 
     import sshpilot.daemon.launcher as launcher_module
 
-    monkeypatch.setattr(daemon_prelaunch, "_export_language", _export_language)
-    launcher_module.DaemonLauncher = _Spawning
-    starter = threading.Thread(target=daemon_prelaunch.start)
-    starter.start()
-    assert exported.wait(5)
-    release.set()
-    starter.join(5)
+    monkeypatch.setattr(
+        daemon_prelaunch, "_export_language", lambda: order.append("language")
+    )
+    launcher_module.DaemonLauncher = _Recording
+    daemon_prelaunch.start()
     assert daemon_prelaunch.take().client.name == "spawned"
-    assert order.index("language exported") < order.index("spawn")
+    assert order == ["language", "worker"]
