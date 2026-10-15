@@ -56,6 +56,20 @@ Uninstalling removes the program but keeps settings and connections in
 `%APPDATA%\sshpilot` and `%LOCALAPPDATA%\sshpilot`. Silent install:
 `sshPilot-<version>-setup.exe /S`, optionally `/D=<directory>` (last).
 
+## Testing on a clean Windows
+
+`sandbox-test.ps1` runs the built installer in Windows Sandbox (Windows Pro
+or Enterprise; turn on the "Windows Sandbox" optional feature and restart):
+a fresh profile, no developer tools on PATH, and no GPU unless `-Gpu` is
+given. `sandbox-run.ps1` installs silently, launches the app and writes
+`build\windows\sandbox-results\report.txt`, then leaves sshPilot open to try
+by hand. The sandbox runs the host's Windows build, so it cannot test older
+releases.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\sandbox-test.ps1
+```
+
 ## Signing and winget (maintainer setup)
 
 Unsigned installers trigger SmartScreen. The release job signs through
