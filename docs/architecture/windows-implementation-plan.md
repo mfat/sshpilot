@@ -10,6 +10,20 @@ today.
 The ground rules from windows-port.md still hold. POSIX behaviour does not
 change, and native OpenSSH stays the SSH engine.
 
+## Status (October 2026)
+
+| Phase | State |
+|---|---|
+| 0. Make shipped code safe | Done: libvterm CSI guard, pyte CSI normaliser, Linux suite matches `main` |
+| 1. Modern ConPTY | Done: ctypes runner default, bundled console fetched and verified; gate measurements in windows-port.md §2a. Mouse via the GUI still needs a person |
+| 2. libvterm default | Done: patched build, ABI self-test, Windows default, synchronized output, output slicing. **2.6 reflow deliberately not done** (windows-port.md, "What is not done") |
+| 3. python.org + gvsbuild | Done: setup/run scripts, Windows CI, POSIX-only test list |
+| 4. Frozen build, installer | Done and verified locally; signing waits for a SignPath account |
+| 5. Auth without ControlMaster | Done: keyboard-interactive was already brokered; session-only remembered passwords (API 0.82) |
+| 6. Local shells | Done: frontend-owned, on Windows and for the built-in backend everywhere |
+| 7. Remaining gaps | Done, plus fixes found by live checks (ACLs, selectors, Include paths, D-Bus); open items in windows-port.md |
+| 8. Retire MSYS2 | Waits for the first shipped release |
+
 ## How to work through this plan
 
 The port so far was built one blocker at a time, and layer choices showed

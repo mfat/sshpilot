@@ -1,8 +1,10 @@
 # Windows port
 
-Status: **experimental, run-from-source only** (branch `windows`). The app
-starts on Windows 10/11 under MSYS2 UCRT64 and runs daemon-owned SSH sessions
-in an embedded terminal. User setup lives in
+Status: **experimental** (branch `windows`). The app runs on Windows 10/11
+from source (python.org Python + gvsbuild GTK 4, or MSYS2 UCRT64) and as a
+packaged build (packaging/windows), with daemon-owned SSH sessions in an
+embedded terminal. Sections 1-10 record how the port was built; the status
+and open work are at the end. User setup lives in
 [running-on-windows.md](../running-on-windows.md). This page records how the
 port works, what stood in the way, and why each piece is built the way it is.
 The proposed decisions for each layer (runtime stack, PTY, emulator core,
@@ -25,14 +27,14 @@ connection sharing) and their roadmap are in
 ## Runtime picture
 
 ```text
-GTK frontend (MSYS2 Python, GTK 4 + libadwaita)
+GTK frontend (python.org Python, gvsbuild GTK 4 + libadwaita)
    │  DaemonClient ── loopback TCP + auth preamble ──┐
-   │  TerminalWidget → PyteTerminalBackend           │
+   │  TerminalWidget → built-in backend (libvterm)   │
    ▼                                                 ▼
                                         sshpilot daemon (same Python)
                                           selector loop / dispatcher
                                           ConPtySessionProcessRunner
-                                              │ ConPTY (pywinpty)
+                                              │ ConPTY (ctypes, bundled conpty.dll)
                                               ▼
                                            ssh.exe ── SSH_ASKPASS=askpass.cmd
                                                           │ loopback TCP + broker token
@@ -702,51 +704,69 @@ on first daemon connect. It was only caught by actually launching the GUI;
 the headless tests passed around it. Launch the real app after touching
 module-level code.
 
+## Status after the implementation plan (October 2026)
+
+Done (details in windows-implementation-plan.md and the sections above):
+- Stack: python.org Python 3.14 + gvsbuild GTK 4 (`scripts/setup-windows.ps1`),
+  MSYS2 kept as an alternative; Windows CI (`.github/workflows/windows.yml`).
+- Terminal: ctypes ConPTY with Microsoft's bundled console (mouse, bracketed
+  paste, alternate screen pass through); patched libvterm is the Windows
+  default (pyte fallback, both guarded against malformed CSIs);
+  synchronized output; frame-sized output slices; plain-text links;
+  console-host titles hidden; local shell tabs (PowerShell, cmd, WSL).
+- SSH: SFTP, local port forwards and Host Info verified against a real host
+  (OpenWrt) from source and from the frozen build. Fixed on the way: the
+  Python 3.13+ `OWNER RIGHTS` ACL that made OpenSSH refuse every config file
+  the app writes; the selector loops that cannot wait on Windows pipes
+  (broadcast/Host Info, privileged file reads); `Include` paths with
+  backslashes.
+- Auth without ControlMaster: keyboard-interactive prompts reach the user on
+  every channel; "Remember until SSH Pilot quits" keeps a password in daemon
+  memory.
+- Plugins: serial through PuTTY's `plink`; RDP through `mstsc` when FreeRDP 3
+  is absent; 1Password on its Windows pipe.
+- Packaging: PyInstaller folder app (`sshPilot.exe` + console
+  `sshpilot-cli.exe`, 174 MiB) and a per-user NSIS installer (59 MiB),
+  installed, run and uninstalled on this machine (packaging/windows/README.md).
+- Startup no longer depends on an autolaunched D-Bus session bus.
+
 ## What is not done
 
-- **libvterm as the Windows default.** The libvterm model (section 3a) is
-  opt-in. Plan: use it day to day, then make it the default on Windows once
-  the frozen build ships `libvterm-0.dll`. pyte stays as the fallback.
-- ~~**Local shell tabs.**~~ Done (implementation plan, phase 6).
-  `local_shell_pty.LocalShellProcess` gives the built-in backend its own
-  pseudo terminal: ConPTY with the bundled console on Windows, `pty.fork`
-  elsewhere, so the built-in backend has local tabs on Linux and macOS too.
-  The tab stays frontend-owned (frontend-closure-audit.md). Preferences →
-  Terminal → Local Shell picks Automatic (PowerShell 7, Windows PowerShell,
-  cmd) or WSL (`terminal.windows_shell`). Unlike a daemon session, a local
-  tab does not survive a frontend restart, the same as on POSIX.
-- **Packaging.** There is no installer, PyInstaller spec or Windows CI yet.
-  The unmerged `origin/cursor/windows-support-abbc` branch has a Windows spec
-  and MSYS2 workflow that may be reusable; its runtime claims predate this
-  work.
-- **1Password agent on Windows.** The 1Password preset points at
-  `~/.1password/agent.sock`. On Windows, 1Password serves the same
-  `\\.\pipe\openssh-ssh-agent` pipe instead, so the preset needs a
-  Windows-specific socket.
-- **Named pipes for the daemon channel.** These are a possible hardening of the
-  loopback-TCP transport. Windows checks pipe ACLs at connect, so other users
-  could not even reach the endpoint. `GetNamedPipeClientProcessId` gives a
-  reliable peer pid. The stdlib can do it (`multiprocessing.connection` /
-  `_winapi`). The cost is that the selector loop only waits on sockets, so
-  each pipe client needs a bridge thread to a socketpair. Not urgent: TCP is
-  loopback-only and token-authenticated.
-- **Plugins.** RDP (FIFO arguments) and serial are not usable on Windows.
-  Docker and Kubernetes should work if their CLIs are on PATH; untested.
-- **Unverified on real hosts:** SFTP file manager, key-based auth with the
-  ACL fix, port forwards, Host Info without a master, AltGr input, and
-  full-screen apps (`vim`/`htop`) under resize.
-- **Cosmetic issues.**
-  - Startup diagnostics report `gtk4` / `libadwaita` as NOT FOUND, because
-    they look for Linux library names.
-  - At quit, open tabs log "daemon transport is closed" as errors.
-- **Tests.**
-  - New: `tests/api/test_transport_endpoint.py`,
-    `tests/test_pyte_terminal_model.py`, `tests/daemon/test_conpty_runner.py`,
-    `tests/daemon/test_conpty_ctypes.py`,
-    `tests/daemon/test_process_registry_windows.py`,
-    `tests/test_platform_paths_windows.py`.
-  - The rest of the suite still assumes POSIX (Unix sockets, `/home/...`
-    paths, file modes); about 170 such tests fail on Windows.
-  - The baseline tree cannot even collect on Windows (the `CDLL(None)`
-    import error), so there is no before/after diff there.
-  - **The Linux suite has not yet been re-run against this branch.**
+- **Signing and winget.** The package job signs through SignPath once the
+  maintainer has an account and sets the secrets; until then installers are
+  unsigned and SmartScreen warns. winget submission follows a signed release.
+- **Reflow on resize (plan step 2.6), deliberately not done.** Measured: the
+  bundled ConPTY does not reflow either (a 90-character line stays wrapped at
+  40 columns after widening to 100), and shells under it redraw with
+  absolute cursor positions computed against ConPTY's own, unreflowed buffer,
+  so emulator-side reflow would desynchronise the screen. libvterm's reflow
+  also rewraps on-screen rows only; scrollback would need a Python-side
+  rewrap keyed on `sb_pushline4`'s continuation flag (available in the
+  patched build). On Linux/macOS the built-in backend is opt-in and VTE
+  reflows. Revisit together with ConPTY passthrough mode.
+- **Retiring MSYS2 and pywinpty (plan phase 8).** Waits for the first shipped
+  Windows release: then remove the MSYS2 section, the
+  `SSHPILOT_CONPTY_BACKEND=pywinpty` switch and the pywinpty dependency.
+- **Needs the maintainer's machine or account:**
+  - mouse clicks and wheel in htop/vim through the GUI (GTK4 ignores
+    synthesized mouse input; the byte path is verified at the runner);
+  - AltGr input on a non-US layout;
+  - adding and removing agent keys through the UI (the OpenSSH agent service
+    is disabled by default and needs an administrator to start);
+  - a password prompt answered through the frozen build's askpass (the test
+    host uses key login);
+  - Docker and Kubernetes plugins with their CLIs installed (unit tests pass).
+- **Single instance.** Without a D-Bus session bus each launch is its own
+  primary instance (sharing the daemon). A daemon-backed "focus the existing
+  window" could restore single-instance behaviour.
+- **Named pipes for the daemon channel.** A possible hardening of the
+  loopback-TCP transport (connect-time ACLs, a reliable peer pid), at the
+  cost of a bridge thread per client into the socket selector loop. Not
+  urgent: TCP is loopback-only and token-authenticated.
+- **Tests that assume POSIX.** 364 tests (and 24 modules) are listed with a
+  reason in `tests/windows_posix_only.txt` and run as non-strict xfail on
+  Windows. About 130 of them were classified by sample, not one by one; a
+  few may hide real Windows bugs (for example a CRLF difference in
+  `test_parse_file_matches_parse_text`). Shrinking the list is ongoing work.
+- **Bundle size.** 23 MiB of the 174 MiB folder are GTK translations for
+  every language; trimming them to the app's own languages would help.
