@@ -883,11 +883,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _begin_daemon_client_selection(self) -> None:
         """Locate/start and validate the sole backend away from the GTK thread."""
-        from .api.client_factory import select_client
         app = self.get_application()
         launcher = getattr(app, '_api_daemon_launcher', None) if app else None
-        if self._apply_ready_early_client(launcher):
+        from . import daemon_prelaunch
+        if daemon_prelaunch.ready(launcher):
+            # Not here in __init__: attaching runs the snapshot RPC and builds
+            # the rows on this thread, and a slow daemon must not hold the
+            # window back from being presented. A high-priority idle still
+            # runs after present() but ahead of the first frame.
+            GLib.idle_add(
+                self._apply_ready_early_client,
+                launcher,
+                priority=GLib.PRIORITY_HIGH_IDLE,
+            )
             return
+        self._submit_client_selection(launcher)
+
+    def _submit_client_selection(self, launcher) -> None:
+        from .api.client_factory import select_client
         self._api_client_selection_request = self.client_bridge.submit(
             lambda: select_client(launcher=launcher),
             on_success=self._apply_startup_client_selection,
@@ -898,33 +911,38 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             priority=GLib.PRIORITY_HIGH_IDLE,
         )
 
-    def _apply_ready_early_client(self, launcher) -> bool:
-        """Attach the entry point's early daemon client now, when it is ready.
+    def _apply_ready_early_client(self, launcher):
+        """Attach the entry point's early daemon client before the first frame.
 
         The early start (``daemon_prelaunch``) often has a connected client
-        before the window is built. Taking it here, on the GTK thread and
-        before the window is first presented, lets the first frame already
-        show the populated sidebar; the bridge round trip would deliver it
-        only after that frame. Anything short of a finished, successful early
-        start goes through the asynchronous selection as before.
+        before the window is built. Taking it on the GTK thread, from an idle
+        callback that runs ahead of the frame clock, lets the first frame
+        already show the populated sidebar; the bridge round trip would
+        deliver it only after that frame. If the early client is gone by now
+        or cannot be handed over, the asynchronous selection runs instead.
         """
+        if getattr(self, '_is_quitting', False):
+            return GLib.SOURCE_REMOVE
         from . import daemon_prelaunch
-        if not daemon_prelaunch.ready(launcher):
-            return False
         from .api.client_factory import select_client
-        try:
-            selection = select_client(launcher=launcher)
-        except Exception:
-            logger.debug("Early daemon client hand-over failed", exc_info=True)
-            return False
-        self._apply_startup_client_selection(selection)
-        return True
+        selection = None
+        if daemon_prelaunch.ready(launcher):
+            try:
+                selection = select_client(launcher=launcher)
+            except Exception:
+                logger.debug("Early daemon client hand-over failed", exc_info=True)
+        if selection is None:
+            self._submit_client_selection(launcher)
+        else:
+            self._apply_startup_client_selection(selection)
+        return GLib.SOURCE_REMOVE
 
     def _apply_startup_client_selection(self, selection) -> None:
         """Attach a selected client; the first one also builds the rows now.
 
         Attaching installs the store snapshot and queues its projection reset
-        on an idle callback, which runs only after the next frame. For the
+        on an idle callback (the store dispatches its signals through
+        ``GLib.idle_add``), which runs only after the next frame. For the
         first client the rows are built at once instead, so that frame
         already shows them; the queued reset then skips its rebuild (see
         ``on_projection_reset``) and only does the startup focus. Later
@@ -936,7 +954,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._client_rows_built = True
         self.rebuild_connection_list()
         self._attach_rows_generation = self._sidebar_store_generation()
+        # The attach's reset is already queued at this priority, so this runs
+        # right after it: the skip covers that one reset and never a later
+        # one (a refresh at the same generation), even if the store dropped
+        # it for a newer attach.
+        GLib.idle_add(self._disarm_attach_rows_skip)
         self._mark_sidebar_populated()
+
+    def _disarm_attach_rows_skip(self):
+        self._attach_rows_generation = None
+        return GLib.SOURCE_REMOVE
 
     def _apply_client_selection(self, selection) -> None:
         startup_timing.mark("daemon_client_received")
