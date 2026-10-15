@@ -63,6 +63,9 @@ class RememberPolicy(str, Enum):
     STORE_AFTER_SUCCESS = "store_after_success"
     REPLACE_STORED_AFTER_SUCCESS = "replace_stored_after_success"
     DELETE_STORED_SECRET = "delete_stored_secret"
+    #: Keep the secret in daemon memory until the daemon exits, never in a
+    #: backend. Needs the ``interactions.session_secrets`` capability.
+    REMEMBER_FOR_SESSION = "remember_for_session"
 
 
 class SecretPromptKind(str, Enum):

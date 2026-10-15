@@ -252,7 +252,7 @@ handling is not defined until a transport codec exists.
 | `HostKeyStatus` | `unknown`, `changed`, `revoked` | Daemon implemented |
 | `HostKeyDecision` | `accept`, `reject` | Daemon implemented |
 | `SecretDecision` | `submit`, `cancel` | Daemon implemented |
-| `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret` | Daemon implemented |
+| `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret`, `remember_for_session` | Daemon implemented |
 | `SecretMessageCode` | Stable secret lifecycle/status presentation reasons | Daemon implemented; strict codec |
 | `SecretTransferMessageCode` | Stable backup/import presentation reasons | Daemon implemented; strict codec |
 | `SftpServiceState` | `created`, `starting`, `ready`, `closing`, `closed`, `failed` | Daemon implemented |

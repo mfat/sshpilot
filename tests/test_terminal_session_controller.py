@@ -843,3 +843,22 @@ def test_session_closed_event_with_wrong_payload_ignored(active_session):
 
     assert controller.state == TerminalSessionState.ACTIVE
     on_state_changed.assert_not_called()
+
+
+@pytest.mark.parametrize("slice_bytes", [None, 8 * 1024])
+def test_output_slice_size_reaches_the_bridge(mock_client, mock_bridge, connection_id, slice_bytes):
+    """A slower emulator asks the bridge for smaller output dispatches."""
+    controller = DaemonTerminalSessionController(
+        client=mock_client,
+        bridge=mock_bridge,
+        connection_id=connection_id,
+        view_id="test-view",
+        output_slice_bytes=slice_bytes,
+    )
+    controller._tab_state.session_id = SessionId("test-session")
+    controller._replace_output_binding(mock_client, paused=False)
+    kwargs = mock_bridge.bind_terminal.call_args.kwargs
+    if slice_bytes is None:
+        assert "max_pending_bytes" not in kwargs
+    else:
+        assert kwargs["max_pending_bytes"] == slice_bytes

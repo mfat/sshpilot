@@ -39,6 +39,7 @@ from ..api.models.identity import (
     UpdateIdentitySelectionRequest,
 )
 from ..providers.socket_agent import ONEPASSWORD_SOCKET, SocketAgentProvider
+from ..providers.system_agent import system_agent_socket
 from .settings import (
     SettingsFileError,
     compute_identity_revision,
@@ -82,7 +83,12 @@ def _default_ssh_copy_id_available() -> bool:
     flatpak_path = "/app/bin/ssh-copy-id"
     if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
         return True
-    return shutil.which("ssh-copy-id") is not None
+    if shutil.which("ssh-copy-id") is not None:
+        return True
+    # Windows OpenSSH has no ssh-copy-id; the daemon deploys over plain ssh.
+    from ..platform.windows.copy_id import resolve_ssh
+
+    return resolve_ssh() is not None
 
 
 class IdentityStateService:
@@ -313,13 +319,13 @@ class IdentityStateService:
         provider = self._resolve_socket_provider(semantic)
         if provider is not None:
             return provider.socket_path
-        return str(self._environ.get("SSH_AUTH_SOCK") or "")
+        return system_agent_socket(self._environ)
 
     def _provider_available(
         self, provider_id: str, semantic: Mapping[str, Any]
     ) -> bool:
         if provider_id == AUTO_PROVIDER:
-            return bool(self._environ.get("SSH_AUTH_SOCK"))
+            return bool(system_agent_socket(self._environ))
         if provider_id == ONEPASSWORD_PROVIDER:
             return _socket_exists(ONEPASSWORD_SOCKET)
         if provider_id == CUSTOM_PROVIDER:
@@ -336,7 +342,7 @@ class IdentityStateService:
     ) -> IdentityProviderDescriptor:
         available = self._provider_available(provider_id, semantic)
         if provider_id == AUTO_PROVIDER:
-            socket = str(self._environ.get("SSH_AUTH_SOCK") or "")
+            socket = system_agent_socket(self._environ)
             capabilities = ("ssh_auth_sock",)
             detail = "" if available else "agent-socket-env-missing"
             custom_required = False
@@ -380,7 +386,7 @@ class IdentityStateService:
         if socket_provider is not None:
             agent_available = _socket_exists(socket_provider.socket_path)
         else:
-            agent_available = bool(self._environ.get("SSH_AUTH_SOCK"))
+            agent_available = bool(system_agent_socket(self._environ))
         return IdentityState(
             provider=selected,
             custom_socket=semantic["custom_socket"],

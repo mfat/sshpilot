@@ -225,8 +225,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # Also started as ``python -m sshpilot.daemon``, bypassing run.py.
+    from sshpilot.platform.windows.openssh import prefer_builtin_openssh
+
+    prefer_builtin_openssh()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command is None and sys.platform == "win32":
+        # The daemon launches every OpenSSH child; OpenSSH for Windows refuses
+        # config files under a directory Python created with mode 0o700.
+        from sshpilot.platform.windows.acl import drop_owner_rights
+
+        drop_owner_rights(get_config_dir())
     if args.command is None:
         from .server import DaemonServer
 

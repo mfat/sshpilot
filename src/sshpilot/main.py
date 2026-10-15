@@ -7,7 +7,6 @@ import sys
 import os
 import gc
 import faulthandler
-import resource
 import logging
 import threading
 
@@ -36,7 +35,10 @@ logger = logging.getLogger(__name__)
 import gi
 gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
-gi.require_version('Vte', '3.91')
+try:
+    gi.require_version('Vte', '3.91')
+except ValueError:  # Windows: no VTE; the pyte backend is used instead
+    pass
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 from .shortcut_utils import (
@@ -386,7 +388,6 @@ class SshPilotApplication(Adw.Application):
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
             # App-specific combo, not terminal-standard → disabled by default.
             self.create_action('new-split-view-tab', self.on_new_split_view_tab, [])
-        
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
         # Use the "question" keyval, not "<Shift>slash": holding Shift turns
@@ -2250,6 +2251,8 @@ def _enable_crash_diagnostics():
             pass
     # Best-effort: ensure a core is produced even if the soft limit is 0.
     try:
+        import resource  # POSIX only
+
         _soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
         resource.setrlimit(
             resource.RLIMIT_CORE,
@@ -2450,6 +2453,12 @@ def _enable_fatal_gtk_warnings():
 def main():
     """Main entry point"""
     from .cli_connect import parse_sshpilot_cli
+
+    if sys.platform == "win32":
+        # Frozen builds start here, not in run.py.
+        from .platform.windows.environment import disable_dbus_autolaunch
+
+        disable_dbus_autolaunch()
 
     # Pre-parse so logging / isolated mode are configured before Gtk starts.
     # do_command_line parses again for single-instance handoff of ssh tokens.

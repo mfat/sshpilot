@@ -10,6 +10,7 @@ backwards compatibility (existing ``from .terminal import ...`` callers).
 """
 
 import os
+import sys
 import signal
 import threading
 import time
@@ -84,7 +85,14 @@ class SSHProcessManager:
 
                     # Double-check: make sure the process actually exists before trying to kill it
                     try:
-                        os.kill(pid, 0)  # Test if process exists
+                        if sys.platform == "win32":
+                            # os.kill(pid, 0) is TerminateProcess there.
+                            import psutil
+
+                            if not psutil.pid_exists(pid):
+                                raise ProcessLookupError(pid)
+                        else:
+                            os.kill(pid, 0)  # Test if process exists
                         orphaned_pids.append(pid)
                         logger.debug(f"Found orphaned process {pid} (age: {process_age:.1f}s)")
                     except ProcessLookupError:
@@ -102,6 +110,19 @@ class SSHProcessManager:
 
     def _terminate_process_by_pid(self, pid):
         """Terminate a process by PID"""
+        if sys.platform == "win32":
+            try:
+                import psutil
+
+                process = psutil.Process(pid)
+                for member in [*process.children(recursive=True), process]:
+                    try:
+                        member.kill()
+                    except psutil.Error:
+                        pass
+                return True
+            except Exception:
+                return False
         try:
             # Always try process group first
             pgid = os.getpgid(pid)
@@ -132,9 +153,18 @@ class SSHProcessManager:
             logger.warning("Cleanup timeout - forcing exit")
             os._exit(1)
 
-        # Set 5-second timeout for entire cleanup
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(5)
+        # Set 5-second timeout for entire cleanup. Windows has no SIGALRM, so
+        # a timer thread plays the watchdog there.
+        watchdog = None
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(5)
+        else:
+            import threading
+
+            watchdog = threading.Timer(5, timeout_handler, args=(None, None))
+            watchdog.daemon = True
+            watchdog.start()
 
         try:
             logger.info("Cleaning up all SSH processes...")
@@ -167,7 +197,10 @@ class SSHProcessManager:
 
             logger.info("SSH process cleanup completed")
         finally:
-            signal.alarm(0)  # Cancel timeout
+            if watchdog is not None:
+                watchdog.cancel()
+            else:
+                signal.alarm(0)  # Cancel timeout
 
 
 # Global process manager instance

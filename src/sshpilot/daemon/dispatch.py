@@ -3582,6 +3582,7 @@ class RequestDispatcher:
                     Capability.INTERACTIONS_HOST_KEY,
                     Capability.INTERACTIONS_PASSWORD,
                     Capability.INTERACTIONS_PASSPHRASE,
+                    Capability.INTERACTIONS_SESSION_SECRETS,
                 }
             )
         if sftp:

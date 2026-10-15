@@ -3325,12 +3325,13 @@ class DaemonClient:
             self._close_complete = True
 
     def _connect_and_handshake(self) -> None:
-        transport = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        transport.settimeout(self._connect_timeout)
+        from .transport import endpoint as transport_endpoint
+
         try:
-            transport.connect(str(self._socket_path))
+            transport = transport_endpoint.connect(
+                self._socket_path, timeout=self._connect_timeout
+            )
         except (OSError, socket.timeout):
-            transport.close()
             raise SshPilotError(
                 ErrorCode.DAEMON_UNAVAILABLE,
                 "The local sshPilot daemon is unavailable",
@@ -3355,6 +3356,7 @@ class DaemonClient:
                     Capability.INTERACTIONS_HOST_KEY.value,
                     Capability.INTERACTIONS_PASSWORD.value,
                     Capability.INTERACTIONS_PASSPHRASE.value,
+                    Capability.INTERACTIONS_SESSION_SECRETS.value,
                 }
             ),
             frontend_type=self._frontend_type,

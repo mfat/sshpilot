@@ -18,6 +18,7 @@ import glob
 import logging
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Set
@@ -55,12 +56,19 @@ def materialize_ssh_config_without_port_forwards(
     if destination_dir is None:
         root = Path(
             tempfile.mkdtemp(
-                prefix=f"sshpilot-fwd-cfg-{os.getuid()}-",
+                prefix=f"sshpilot-fwd-cfg-{os.getuid() if hasattr(os, 'getuid') else os.getpid()}-",
             )
         )
     else:
         root = Path(destination_dir)
         root.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        # OpenSSH for Windows refuses an included config that other
+        # principals can reach, and a %TEMP% directory hands its children
+        # OWNER RIGHTS: ssh then exits 255 before connecting.
+        from sshpilot.platform.windows.acl import restrict_directory_to_current_user
+
+        restrict_directory_to_current_user(root)
 
     mapping: Dict[str, str] = {}
     seen: Set[str] = set()

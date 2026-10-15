@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import List
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 # closes the master lingers this long before expiring (release() also tears it
 # down explicitly via ``ssh -O exit``).
 DEFAULT_PERSIST = "60"
+
+#: OpenSSH for Windows has no connection multiplexing (no Unix sockets), and a
+#: ControlMaster option makes its launches fail outright.
+MULTIPLEXING_SUPPORTED = sys.platform != "win32"
 
 
 def socket_dir() -> str:
@@ -37,7 +42,19 @@ def socket_dir() -> str:
     0700, tighten an existing owned dir created under a loose umask) instead
     of a bare ``makedirs``, which would be normalized by the umask to 0755/0775
     and block the next daemon launch with ``unsafe_socket``.
+
+    On Windows nothing is ever multiplexed; the directory exists only so the
+    master surveys and shutdown sweep resolve it, and it stays empty.
     """
+    if not MULTIPLEXING_SUPPORTED:
+        from sshpilot.platform.paths import get_runtime_dir
+
+        base = get_runtime_dir() / "cm"
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return str(base)
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     if runtime:
         root = os.path.join(runtime, "sshpilot")
@@ -63,7 +80,14 @@ def control_path() -> str:
 
 
 def controlmaster_args(persist: str = DEFAULT_PERSIST) -> List[str]:
-    """The ssh ``-o`` options that enable multiplexing on the shared socket."""
+    """The ssh ``-o`` options that enable multiplexing on the shared socket.
+
+    Where multiplexing is unsupported this pins it *off* instead, so a forced
+    master (Host Info) or a Host block carrying ``ControlMaster`` cannot break
+    the launch.
+    """
+    if not MULTIPLEXING_SUPPORTED:
+        return ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
     return [
         "-o", "ControlMaster=auto",
         "-o", f"ControlPath={control_path()}",
@@ -90,6 +114,9 @@ def expire_all_masters(
     unlinked here. Best-effort throughout; ``timeout`` bounds each individual
     ``ssh`` call so an unresponsive master cannot stall a quit.
     """
+    if not MULTIPLEXING_SUPPORTED:
+        return
+
     def _stop_all() -> None:
         try:
             entries = os.listdir(socket_dir())

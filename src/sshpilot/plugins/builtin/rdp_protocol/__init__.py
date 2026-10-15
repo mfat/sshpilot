@@ -118,6 +118,64 @@ def _resolve_client(choice: str, environment: Dict[str, str]) -> Optional[List[s
     return None
 
 
+def _windows() -> bool:
+    """Windows falls back to mstsc (tests patch this, not ``sys``)."""
+    return sys.platform == "win32"
+
+
+def _windows_mstsc() -> str:
+    """Windows' built-in Remote Desktop client, used when FreeRDP 3 is absent."""
+    root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    path = os.path.join(root, "System32", "mstsc.exe")
+    return path if os.path.isfile(path) else ""
+
+
+def mstsc_settings(data: Dict[str, Any], host: str, port: int) -> List[str]:
+    """``.rdp`` file lines for ``mstsc`` from the connection's options.
+
+    mstsc takes no user name or password on its command line; the file
+    carries the user, and mstsc asks for (or reuses) the password through
+    Windows' own credential prompt. Nothing secret is written.
+    """
+    address = _server_address(host, port)
+    lines = [f"full address:s:{address}"]
+    username = _text(data, "username")
+    domain = _text(data, "domain")
+    if username:
+        lines.append(f"username:s:{domain + chr(92) + username if domain else username}")
+    mode = _display_mode(data)
+    lines.append(f"screen mode id:i:{2 if mode == 'fullscreen' else 1}")
+    if mode == "fit":
+        lines.append("smart sizing:i:1")
+    if mode == "resize":
+        lines.append("dynamic resolution:i:1")
+    size = _text(data, "size")
+    if size and _SIZE_RE.match(size):
+        width, height = size.split("x")
+        lines += [f"desktopwidth:i:{width}", f"desktopheight:i:{height}"]
+    if data.get("multimon"):
+        lines.append("use multimon:i:1")
+    lines.append(f"redirectclipboard:i:{1 if data.get('clipboard', True) else 0}")
+    # audiomode 0: play on this computer; 2: do not play.
+    lines.append(f"audiomode:i:{0 if data.get('sound', True) else 2}")
+    if data.get("microphone"):
+        lines.append("audiocapturemode:i:1")
+    lines.append(f"redirectprinters:i:{1 if data.get('printer') else 0}")
+    return lines
+
+
+def _mstsc_spawn(connection: Any, data: Dict[str, Any], host: str, port: int,
+                 mstsc: str, env: Dict[str, str]) -> SpawnSpec:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(getattr(connection, "nickname", "") or host))
+    directory = os.path.join(tempfile.gettempdir(), "sshpilot-rdp")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{name or 'connection'}.rdp")
+    # .rdp files are UTF-16 with a byte-order mark, as mstsc writes them.
+    with open(path, "w", encoding="utf-16", newline="\r\n") as handle:
+        handle.write("\n".join(mstsc_settings(data, host, port)) + "\n")
+    return SpawnSpec(argv=[mstsc, path], env=env)
+
+
 def _stored_password(connection: Any, ctx: Any) -> str:
     """The connection's saved login password, or ``""``.
 
@@ -201,6 +259,8 @@ def _args_file(arguments: Sequence[str]) -> Optional[str]:
     at an empty line and has no escape for a newline inside one.
     """
     if any(not arg or "\n" in arg or "\r" in arg for arg in arguments):
+        return None
+    if not hasattr(os, "mkfifo"):  # Windows: no named FIFOs
         return None
     directory = tempfile.mkdtemp(prefix="sshpilot-rdp-", dir=_args_fifo_directory())
     path = os.path.join(directory, "args")
@@ -378,6 +438,10 @@ class RdpProtocolBackend(ProtocolBackend):
         env = dict(os.environ)
         choice = _text(data, "client") or "auto"
         client = _resolve_client(choice, env)
+        if client is None and _windows():
+            mstsc = _windows_mstsc()
+            if mstsc:
+                return _mstsc_spawn(connection, data, host, port, mstsc, env)
         if client is None:
             raise BuiltinProtocolError(
                 PluginSessionFailureCode.RDP_CLIENT_UNAVAILABLE,

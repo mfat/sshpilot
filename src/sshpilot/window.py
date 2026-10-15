@@ -31,7 +31,10 @@ try:
 except Exception:
     _HAS_VTE = False
 
-gi.require_version('PangoFT2', '1.0')
+try:
+    gi.require_version('PangoFT2', '1.0')
+except ValueError:  # not shipped by every GTK build (e.g. Windows)
+    pass
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import threading
 

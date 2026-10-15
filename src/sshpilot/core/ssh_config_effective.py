@@ -21,7 +21,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Optional, Set, Union
 
-from ..ssh_config_document import SSHConfigDocument
+from ..ssh_config_document import SSHConfigDocument, split_include_args
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ def discover_ssh_config_paths(
             line = raw_line.strip()
             if not line or line.startswith("#") or not line.lower().startswith("include "):
                 continue
-            for pattern in shlex.split(line[len("include "):]):
+            for pattern in split_include_args(line[len("include "):]):
                 expanded = os.path.expanduser(
                     os.path.expandvars(expand_ssh_tokens(pattern))
                 )

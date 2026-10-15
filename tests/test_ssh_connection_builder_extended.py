@@ -342,6 +342,44 @@ def test_noninteractive_daemon_auth_skips_secrets_and_allowlists_environment(
     assert "BW_SESSION" not in result.env
 
 
+def test_broker_env_keeps_windows_process_essentials(monkeypatch):
+    """OpenSSH for Windows exits 255 with no output when these are stripped."""
+    import os
+
+    import sshpilot.ssh_connection_builder as scb
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    monkeypatch.setenv("ProgramData", r"C:\ProgramData")
+    monkeypatch.setenv("Path", r"C:\Windows\System32")
+    monkeypatch.setenv("BW_SESSION", "secret-session")
+
+    auth = resolve_native_auth(
+        Connection({"host": "h", "hostname": "h"}),
+        interaction_policy="broker",
+    )
+
+    folded = {key.upper(): value for key, value in auth.env.items()}
+    assert folded["SYSTEMROOT"] == r"C:\Windows"
+    assert folded["PROGRAMDATA"] == r"C:\ProgramData"
+    assert folded["PATH"] == r"C:\Windows\System32"
+    assert "BW_SESSION" not in auth.env
+
+
+def test_broker_env_keeps_posix_names_case_sensitive(monkeypatch):
+    import os
+
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setenv("path", "/lowercase/bin")
+
+    auth = resolve_native_auth(
+        Connection({"host": "h", "hostname": "h"}),
+        interaction_policy="broker",
+    )
+
+    assert "path" not in auth.env
+
+
 def test_resolve_native_auth_key_mode_saved_passphrase_uses_askpass(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
     monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: 'pp')

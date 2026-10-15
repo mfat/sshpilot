@@ -426,11 +426,21 @@ def inject_flatpak_host_env(
 
 def get_config_dir() -> str:
     """Return the per-user configuration directory for sshPilot."""
+    if is_windows():
+        # GLib maps both config and data to %LOCALAPPDATA%; use the headless
+        # resolver so the frontend and the daemon agree on one directory.
+        from .platform import paths
+
+        return str(paths.get_config_dir())
     return os.path.join(GLib.get_user_config_dir(), APP_NAME)
 
 
 def get_data_dir() -> str:
     """Return the per-user data directory for sshPilot."""
+    if is_windows():
+        from .platform import paths
+
+        return str(paths.get_data_dir())
     return os.path.join(GLib.get_user_data_dir(), APP_NAME)
 
 
@@ -447,6 +457,10 @@ def get_state_dir() -> str:
     so Flatpak and other portal-mediated environments stay consistent with
     GLib's own resolution; otherwise resolves the spec by hand.
     """
+    if is_windows():
+        from .platform import paths
+
+        return str(paths.get_state_dir())
     if hasattr(GLib, "get_user_state_dir"):
         try:
             return os.path.join(GLib.get_user_state_dir(), APP_NAME)

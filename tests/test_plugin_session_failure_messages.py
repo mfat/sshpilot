@@ -76,6 +76,8 @@ _CASES = {
         "xfreerdp3",
     ),
     PluginSessionFailureCode.TELNET_UNAVAILABLE: ({"program": "telnet"}, "telnet"),
+    PluginSessionFailureCode.SERIAL_PLINK_UNAVAILABLE: ({}, "plink"),
+    PluginSessionFailureCode.SERIAL_PLINK_TERMINAL_OPTIONS_UNSUPPORTED: ({}, "line endings"),
 }
 
 

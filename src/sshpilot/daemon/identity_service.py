@@ -25,6 +25,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -54,6 +55,7 @@ from sshpilot.api.models.operations import (
     OperationKind,
     OperationSummary,
 )
+from sshpilot.platform.windows.environment import WINDOWS_PROCESS_ENV
 from sshpilot.authorized_keys_parser import (
     AuthorizedKeyEntry as ParsedKeyEntry,
 )
@@ -371,6 +373,7 @@ class DaemonIdentityService:
                 raise _identity_error(
                     _identity_launch_failure_code(error.code),
                     error.code,
+                    diagnostic=error.message,
                 ) from error
             try:
                 process = prepared.spawn(IO_MERGED_TEXT)
@@ -381,23 +384,26 @@ class DaemonIdentityService:
                     diagnostic=str(exc.os_error),
                 ) from exc
             handle.set_process(process)
-            last_line = ""
+            lines: List[str] = []
             try:
                 assert process.stdout is not None
                 for line in process.stdout:
                     text = line.rstrip("\r\n")
                     if text:
-                        last_line = text
+                        lines.append(text)
+                        logger.debug("public-key deployment output: %s", text)
                         handle.report(text)
                 returncode = process.wait()
             finally:
                 handle.clear_process()
             handle.raise_if_cancelled()
             if returncode != 0:
+                transcript = _deploy_transcript(lines)
                 raise _identity_error(
-                    _deploy_failure_code(last_line),
+                    _deploy_failure_code(transcript),
                     ErrorCode.REMOTE_COMMAND_FAILED,
-                    diagnostic=last_line,
+                    diagnostic=transcript,
+                    exit_code=returncode if type(returncode) is int else None,
                 )
             # The scope commits remembered secrets before tearing down.
             scope.authenticated()
@@ -762,10 +768,13 @@ class DaemonIdentityService:
         )
 
     def _base_env(self) -> Dict[str, str]:
+        windows = sys.platform == "win32"
         env = {
             key: value
             for key, value in self._environ.items()
-            if key in _BASE_ENV_ALLOWLIST or key.startswith("LC_")
+            if (key.upper() if windows else key) in _BASE_ENV_ALLOWLIST
+            or key.startswith("LC_")
+            or (windows and key.upper() in WINDOWS_PROCESS_ENV)
         }
         env["TERM"] = "xterm-256color"
         return env
@@ -849,19 +858,37 @@ def _identity_launch_failure_code(error_code: ErrorCode) -> IdentityFailureCode:
     }.get(error_code, IdentityFailureCode.LAUNCH_PREPARATION_UNAVAILABLE)
 
 
+def _deploy_transcript(lines: Sequence[str]) -> str:
+    """The tail of a deployment's output, bounded so a long dump stays a diagnostic."""
+
+    tail: List[str] = []
+    for line in list(lines)[-8:]:
+        text = str(line).replace("\x00", "").strip()
+        if not text:
+            continue
+        if len(text) > 500:
+            text = text[:500] + "…"
+        tail.append(text)
+    return "\n".join(tail)
+
+
 def _identity_error(
     code: IdentityFailureCode,
     error_code: ErrorCode,
     *,
     diagnostic: str = "",
+    exit_code: Optional[int] = None,
 ) -> SshPilotError:
+    details: Dict[str, object] = {
+        "identity_failure_code": code.value,
+        "diagnostic": diagnostic.replace("\x00", ""),
+    }
+    if type(exit_code) is int:
+        details["exit_code"] = exit_code
     return SshPilotError(
         error_code,
         code.value,
-        details={
-            "identity_failure_code": code.value,
-            "diagnostic": diagnostic.replace("\x00", ""),
-        },
+        details=details,
     )
 
 

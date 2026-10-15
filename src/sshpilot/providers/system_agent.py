@@ -15,7 +15,8 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from typing import Dict, List, Optional
+import sys
+from typing import Dict, List, Mapping, Optional
 
 from ..identity import Identity, IdentityProvider
 
@@ -25,12 +26,42 @@ logger = logging.getLogger(__name__)
 # socket ssh talks to; SSH_AGENT_PID is carried alongside for completeness.
 _AGENT_ENV_VARS = ("SSH_AUTH_SOCK", "SSH_AGENT_PID")
 
+#: OpenSSH for Windows runs ssh-agent as a service on this fixed named pipe and
+#: does not export SSH_AUTH_SOCK; ssh.exe and ssh-add.exe use it by default.
+WINDOWS_AGENT_PIPE = r"\\.\pipe\openssh-ssh-agent"
+_WINDOWS_PIPE_NAMESPACE = "\\\\.\\pipe\\"
+
+
+def _windows_agent_pipe_exists() -> bool:
+    # List the pipe namespace instead of opening the pipe: opening it would
+    # consume one of the agent's server instances.
+    try:
+        return "openssh-ssh-agent" in os.listdir(_WINDOWS_PIPE_NAMESPACE)
+    except OSError:
+        return False
+
+
+def system_agent_socket(environ: Optional[Mapping[str, str]] = None) -> str:
+    """The system agent's endpoint, or ``""`` when no agent is reachable.
+
+    ``SSH_AUTH_SOCK`` wins everywhere. On Windows, the OpenSSH agent service's
+    pipe counts as well, since OpenSSH finds it without the variable.
+    """
+
+    env = os.environ if environ is None else environ
+    socket = str(env.get("SSH_AUTH_SOCK") or "")
+    if socket:
+        return socket
+    if sys.platform == "win32" and _windows_agent_pipe_exists():
+        return WINDOWS_AGENT_PIPE
+    return ""
+
 
 class SystemAgentProvider(IdentityProvider):
     name = "system-agent"
 
     def is_available(self) -> bool:
-        return bool(os.environ.get("SSH_AUTH_SOCK"))
+        return bool(system_agent_socket())
 
     def apply_to_env(self, env: Dict[str, str]) -> Dict[str, str]:
         new_env = dict(env)

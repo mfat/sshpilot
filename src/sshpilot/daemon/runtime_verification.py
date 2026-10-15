@@ -304,7 +304,7 @@ def reap_orphaned_children(
                    poll_interval=poll_interval)
 
     for entry in registry.prune():
-        _signal_entry(entry, signal.SIGKILL)
+        _signal_entry(entry, getattr(signal, "SIGKILL", signal.SIGTERM))
     remaining = _wait_for_exit(
         registry,
         deadline=time.monotonic() + max(0.0, kill_timeout),

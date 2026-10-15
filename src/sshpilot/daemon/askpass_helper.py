@@ -48,12 +48,18 @@ def main() -> int:
     ).encode("utf-8")
     if len(request) > _MAX_REQUEST:
         return 1
+    if socket_path.startswith("tcp:"):
+        # Windows: the broker listens on loopback TCP ("tcp:127.0.0.1:PORT").
+        host, _, port = socket_path[4:].rpartition(":")
+        family, address = socket.AF_INET, (host, int(port))
+    else:
+        family, address = socket.AF_UNIX, socket_path
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as transport:
+        with socket.socket(family, socket.SOCK_STREAM) as transport:
             # Presence notifications may legitimately remain open while a user
             # locates and touches a hardware key.
             transport.settimeout(_HELPER_TIMEOUT_SECONDS)
-            transport.connect(socket_path)
+            transport.connect(address)
             transport.sendall(_LENGTH.pack(len(request)) + request)
             size = _LENGTH.unpack(_receive_exact(transport, _LENGTH.size))[0]
             if size > _MAX_RESPONSE:

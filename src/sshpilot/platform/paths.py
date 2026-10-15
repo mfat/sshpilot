@@ -6,9 +6,16 @@ CLI consumers should prefer these stdlib resolvers.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 APP_NAME = "sshpilot"
+
+
+def _windows_base(env_var: str, fallback: str) -> Path:
+    """``%APPDATA%`` / ``%LOCALAPPDATA%`` with a profile-relative fallback."""
+    value = os.environ.get(env_var)
+    return Path(value) if value else get_home_dir() / fallback
 
 
 def get_home_dir() -> Path:
@@ -41,17 +48,35 @@ def known_hosts_path_for(isolated: bool) -> Path:
 
 def get_config_dir() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) if xdg else get_home_dir() / ".config"
-    return base / APP_NAME
+    if xdg:
+        return Path(xdg) / APP_NAME
+    if sys.platform == "win32":
+        return _windows_base("APPDATA", "AppData/Roaming") / APP_NAME
+    return get_home_dir() / ".config" / APP_NAME
 
 
 def get_data_dir() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME")
-    base = Path(xdg) if xdg else get_home_dir() / ".local" / "share"
-    return base / APP_NAME
+    if xdg:
+        return Path(xdg) / APP_NAME
+    if sys.platform == "win32":
+        return _windows_base("LOCALAPPDATA", "AppData/Local") / APP_NAME
+    return get_home_dir() / ".local" / "share" / APP_NAME
 
 
 def get_state_dir() -> Path:
     xdg = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg) if xdg else get_home_dir() / ".local" / "state"
-    return base / APP_NAME
+    if xdg:
+        return Path(xdg) / APP_NAME
+    if sys.platform == "win32":
+        return _windows_base("LOCALAPPDATA", "AppData/Local") / APP_NAME / "state"
+    return get_home_dir() / ".local" / "state" / APP_NAME
+
+
+def get_runtime_dir() -> Path:
+    """Per-user directory for the daemon endpoint file on Windows.
+
+    POSIX keeps using ``XDG_RUNTIME_DIR`` via ``daemon.lifecycle``; this is
+    only consulted where Unix-domain sockets are unavailable.
+    """
+    return _windows_base("LOCALAPPDATA", "AppData/Local") / APP_NAME / "run"

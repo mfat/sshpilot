@@ -21,6 +21,7 @@ is always a single file.
 
 import re
 import shlex
+import sys
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
@@ -67,6 +68,57 @@ def split_host_tokens(remainder: str) -> List[str]:
         return shlex.split(remainder)
     except ValueError:
         return [t for t in remainder.split() if t]
+
+
+def _openssh_argv_split(text: str) -> List[str]:
+    """OpenSSH's ``argv_split`` (misc.c): how ssh itself splits arguments.
+
+    A backslash escapes only a quote, a backslash, or (outside quotes) a
+    space; any other backslash is kept, so ``C:\\Users\\me\\x`` survives.
+    """
+    args: List[str] = []
+    index, length = 0, len(text)
+    while index < length:
+        while index < length and text[index] in ' \t':
+            index += 1
+        if index >= length:
+            break
+        token: List[str] = []
+        quote = ''
+        while index < length:
+            char = text[index]
+            following = text[index + 1] if index + 1 < length else ''
+            if char == '\\':
+                if following in ('\'', '"', '\\') or (not quote and following == ' '):
+                    index += 1
+                    token.append(following)
+                else:
+                    token.append(char)
+            elif not quote and char in ' \t':
+                break
+            elif not quote and char in '"\'':
+                quote = char
+            elif quote and char == quote:
+                quote = ''
+            else:
+                token.append(char)
+            index += 1
+        if quote:
+            raise ValueError("unterminated quoted argument")
+        args.append(''.join(token))
+    return args
+
+
+def split_include_args(remainder: str) -> List[str]:
+    """Tokenize an ``Include`` line's argument the way ssh will read it.
+
+    On Windows paths carry backslashes, which ``shlex`` would strip
+    (``C:\\Users\\me\\x`` became ``C:Usersmex``), so OpenSSH's own rules
+    apply there. Elsewhere ``shlex.split`` is kept as it was.
+    """
+    if sys.platform == 'win32':
+        return _openssh_argv_split(remainder)
+    return shlex.split(remainder)
 
 
 _BLOCK_HEADERS = ('host', 'match', 'include')

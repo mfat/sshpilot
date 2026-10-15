@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _, ngettext
 
-from .platform_utils import is_macos
+from .platform_utils import is_macos, is_windows
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CHOICES
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
@@ -805,15 +805,14 @@ class PreferencesWindow(Adw.Window):
 
         # Set current backend
         current_backend = self.config.get_setting('terminal.backend', 'vte')
+        if not any(choice['id'] == current_backend for choice in self._backend_choice_data):
+            # e.g. the "vte" default on a system without VTE (Windows).
+            current_backend = self._backend_choice_data[0]['id']
         # Reset to VTE if pyxterm is configured on macOS (not supported)
         if is_macos() and current_backend and current_backend.lower() == 'pyxterm':
             current_backend = 'vte'
             self.config.set_setting('terminal.backend', 'vte')
-        current_index = 0
-        for i, choice in enumerate(self._backend_choice_data):
-            if choice['id'] == current_backend:
-                current_index = i
-                break
+        current_index = self._backend_choice_index(current_backend)
         self.backend_row.set_selected(current_index)
         self._backend_last_valid_index = current_index
         self._update_backend_row_subtitle(current_index)
@@ -822,7 +821,40 @@ class PreferencesWindow(Adw.Window):
         self.backend_row.connect('notify::selected', self._on_backend_row_changed)
 
         backend_group.add(self.backend_row)
+        if is_windows():
+            self._add_windows_shell_row(backend_group)
         terminal_page.add(backend_group)
+
+    def _windows_shell_choices(self):
+        """``[(id, label)]`` for the local shell picker: Automatic, then installed shells."""
+        from .platform.windows.shells import AUTO, SHELL_LABELS, available_shells
+
+        return [(AUTO, _(SHELL_LABELS[AUTO]))] + [
+            (name, _(SHELL_LABELS[name])) for name in available_shells()
+        ]
+
+    def _add_windows_shell_row(self, group):
+        """Which shell a Windows local terminal tab runs (terminal.windows_shell)."""
+        self._windows_shell_choices_data = self._windows_shell_choices()
+        row = Adw.ComboRow()
+        row.set_title(_("Local Shell"))
+        row.set_subtitle(_("The shell new local terminal tabs run"))
+        model = Gtk.StringList()
+        for _id, label in self._windows_shell_choices_data:
+            model.append(label)
+        row.set_model(model)
+        current = (self.config.get_setting('terminal.windows_shell', 'auto') or 'auto').lower()
+        ids = [choice_id for choice_id, _label in self._windows_shell_choices_data]
+        row.set_selected(ids.index(current) if current in ids else 0)
+        row.connect('notify::selected', self._on_windows_shell_changed)
+        self.windows_shell_row = row
+        group.add(row)
+
+    def _on_windows_shell_changed(self, row, _param):
+        index = row.get_selected()
+        choices = getattr(self, '_windows_shell_choices_data', [])
+        if 0 <= index < len(choices):
+            self.config.set_setting('terminal.windows_shell', choices[index][0])
 
     def _add_terminal_input_groups(self, terminal_page):
         """Add Terminal keyboard and mouse behavior groups."""
@@ -2876,6 +2908,9 @@ class PreferencesWindow(Adw.Window):
         )
         self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
         advanced_group.add(self.controlmaster_row)
+        if is_windows():
+            # OpenSSH for Windows cannot multiplex connections.
+            self.controlmaster_row.set_visible(False)
 
         # SSH verbosity (-v levels)
         self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
@@ -6498,7 +6533,7 @@ class PreferencesWindow(Adw.Window):
 
         # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
         # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
-        if current_backend == 'vte':
+        if current_backend in ('vte', 'pyte'):
             self.encoding_row.set_visible(False)
             logger.debug("Hiding encoding dropdown for VTE backend")
             return
@@ -6559,17 +6594,75 @@ class PreferencesWindow(Adw.Window):
         return _detect_pyxterm_backend()
 
     def _build_backend_choices(self):
-        choices = [
-            {
-                'id': 'vte',
-                'label': _('VTE (default)'),
-                'description': _('Native GTK terminal'),
-                'available': True,
-                'error': None,
-            }
-        ]
-        # PyXterm.js is not supported on macOS (webkitgtk is Linux-only)
-        if not is_macos():
+        from .terminal_backends import VTE_AVAILABLE
+
+        choices = []
+        if VTE_AVAILABLE:
+            choices.append(
+                {
+                    'id': 'vte',
+                    'label': _('VTE (default)'),
+                    'description': _('Native GTK terminal'),
+                    'available': True,
+                    'error': None,
+                }
+            )
+        import importlib.util
+
+        pyte_available = importlib.util.find_spec('pyte') is not None
+        # Where VTE exists the built-in backend is opt-in: list it only once
+        # pyte is installed, so Linux/macOS Preferences are unchanged otherwise.
+        if pyte_available or not VTE_AVAILABLE:
+            # The built-in backend is listed once per emulator model
+            # (``terminal.builtin_model``); both entries share the 'pyte' id.
+            from .terminal_model_common import default_builtin_model
+            # "(default)" marks the model a fresh install uses where the
+            # built-in backend is the only one (no VTE): libvterm on Windows.
+            default_model = None if VTE_AVAILABLE else default_builtin_model()
+            builtin = []
+            builtin.append(
+                {
+                    'id': 'pyte',
+                    'model': 'pyte',
+                    'label': (
+                        (_('pyte (default)') if default_model == 'pyte' else _('pyte'))
+                        if pyte_available else _('pyte (unavailable)')
+                    ),
+                    'description': (
+                        _('Pure-Python terminal emulator drawn with GTK')
+                        if pyte_available else _('Requires the pyte Python package')
+                    ),
+                    'available': pyte_available,
+                    'error': None if pyte_available else 'pyte is not installed',
+                }
+            )
+            try:
+                from .vterm_terminal_model import load_libvterm
+                load_libvterm()
+                vterm_error = None
+            except Exception as exc:  # noqa: BLE001
+                vterm_error = str(exc)
+            builtin.append(
+                {
+                    'id': 'pyte',
+                    'model': 'vterm',
+                    'label': (
+                        (_('libvterm (default)') if default_model == 'vterm' else _('libvterm'))
+                        if vterm_error is None else _('libvterm (unavailable)')
+                    ),
+                    'description': (
+                        _('Native terminal emulator drawn with GTK, faster on bulk output')
+                        if vterm_error is None else _('Requires the libvterm library')
+                    ),
+                    'available': vterm_error is None,
+                    'error': vterm_error,
+                }
+            )
+            if default_model == 'vterm':
+                builtin.reverse()  # the default first
+            choices.extend(builtin)
+        # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
+        if not is_macos() and not is_windows():
             pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
             if pyxterm_available:
                 choices.append(
@@ -6593,6 +6686,22 @@ class PreferencesWindow(Adw.Window):
                 )
         return choices
 
+    def _backend_choice_index(self, backend_id) -> int:
+        """Index of the choice for ``backend_id`` and the configured built-in model."""
+        backend_id = (backend_id or '').lower()
+        from .terminal_model_common import default_builtin_model
+        default = default_builtin_model()
+        model = (self.config.get_setting('terminal.builtin_model', default) or default).lower()
+        fallback = None
+        for i, choice in enumerate(self._backend_choice_data):
+            if choice['id'] != backend_id:
+                continue
+            if choice.get('model') in (None, model):
+                return i
+            if fallback is None:
+                fallback = i
+        return fallback if fallback is not None else 0
+
     def _update_backend_row_subtitle(self, index: int):
         if not hasattr(self, 'backend_row'):
             return
@@ -6614,8 +6723,8 @@ class PreferencesWindow(Adw.Window):
         backend_id = option.get('id', 'vte')
         current_backend = self.config.get_setting('terminal.backend', 'vte')
 
-        # If backend hasn't actually changed, do nothing
-        if backend_id.lower() == current_backend.lower():
+        # If backend (and built-in emulator model) hasn't actually changed, do nothing
+        if index == self._backend_choice_index(current_backend):
             return
 
         # Check if there are any open terminal tabs
@@ -6680,7 +6789,10 @@ class PreferencesWindow(Adw.Window):
     def _show_backend_change_info(self, backend_id, open_terminals, index):
         """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
-        backend_name = 'xterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
+        model = self._backend_choice_data[index].get('model')
+        backend_name = {'pyxterm': 'xterm.js', 'pyte': 'libvterm' if model == 'vterm' else 'pyte'}.get(
+            backend_id.lower(), 'VTE'
+        )
         dialog = Adw.AlertDialog(
             heading=_("Terminal backend switched to {backend}").format(backend=backend_name),
             body=_("Only new terminal tabs will use the selected backend."),
@@ -6692,6 +6804,9 @@ class PreferencesWindow(Adw.Window):
         """Apply the backend change (only affects new terminals, not existing ones)"""
         self._backend_last_valid_index = index
         self.config.set_setting('terminal.backend', backend_id)
+        model = self._backend_choice_data[index].get('model')
+        if model:
+            self.config.set_setting('terminal.builtin_model', model)
         self._update_backend_row_subtitle(index)
 
         if backend_id in ('pyxterm', 'pyxterm2'):

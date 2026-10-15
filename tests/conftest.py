@@ -67,6 +67,38 @@ def pytest_generate_tests(metafunc):
 _KNOWN_FAILING_NODEIDS: set[str] = set()
 
 
+def _load_windows_posix_only():
+    """``tests/windows_posix_only.txt`` on Windows: ``({nodeid: reason}, {path: reason})``.
+
+    These tests assume POSIX (Unix sockets, ``/home`` paths, file modes,
+    fork). They run as non-strict xfail on Windows so the Windows CI stays
+    meaningful; ``collect:`` entries are modules that cannot even be
+    imported there.
+    """
+    if sys.platform != "win32":
+        return {}, {}
+    listing = os.path.join(os.path.dirname(__file__), "windows_posix_only.txt")
+    nodes, modules = {}, {}
+    try:
+        lines = open(listing, encoding="utf-8").read().splitlines()
+    except OSError:
+        return nodes, modules
+    for line in lines:
+        entry, _, why = line.partition("#")
+        entry = entry.strip()
+        if not entry:
+            continue
+        why = why.strip() or "assumes POSIX"
+        if entry.startswith("collect:"):
+            modules[entry[len("collect:"):].replace("\\", "/")] = why
+        else:
+            nodes[entry] = why
+    return nodes, modules
+
+
+_WINDOWS_POSIX_ONLY, _WINDOWS_POSIX_ONLY_MODULES = _load_windows_posix_only()
+
+
 def pytest_ignore_collect(collection_path, config):
     """In GUI mode, collect only GUI test modules.
 
@@ -82,6 +114,10 @@ def pytest_ignore_collect(collection_path, config):
     * ``test_gui_*.py`` anywhere under ``tests/``
     * any ``test_*.py`` under ``tests/gui/`` (Phase 14 production GTK gates)
     """
+    if _WINDOWS_POSIX_ONLY_MODULES:
+        norm_path = str(collection_path).replace('\\', '/')
+        if any(norm_path.endswith('/' + module) for module in _WINDOWS_POSIX_ONLY_MODULES):
+            return True
     if os.environ.get('SSHPILOT_GUI_TESTS') != '1':
         return False
     path_str = str(collection_path)
@@ -103,6 +139,12 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.nodeid in _KNOWN_FAILING_NODEIDS:
             item.add_marker(xfail_marker)
+        why = _WINDOWS_POSIX_ONLY.get(item.nodeid)
+        if why is not None:
+            item.add_marker(pytest.mark.xfail(
+                reason=f"POSIX-only on Windows ({why}); tests/windows_posix_only.txt",
+                strict=False,
+            ))
 
 
 def _cleanup_integration_containers(label):

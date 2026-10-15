@@ -164,6 +164,12 @@ class PluginSessionFailureCode(str, Enum):
     SERIAL_DEVICE_ACCESS_DENIED = "serial_device_access_denied"
     RDP_CLIENT_UNAVAILABLE = "rdp_client_unavailable"
     TELNET_UNAVAILABLE = "telnet_unavailable"
+    #: Windows: PuTTY's plink, which opens COM ports, is not installed.
+    SERIAL_PLINK_UNAVAILABLE = "serial_plink_unavailable"
+    #: Windows: plink cannot change line endings, echo locally or log.
+    SERIAL_PLINK_TERMINAL_OPTIONS_UNSUPPORTED = (
+        "serial_plink_terminal_options_unsupported"
+    )
 
 
 _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS = {

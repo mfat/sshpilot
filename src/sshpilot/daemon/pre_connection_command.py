@@ -42,6 +42,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -488,6 +489,8 @@ class PreConnectionCommandRunner:
         # a bundle launched from Finder inherits a minimal PATH that does not
         # include Homebrew, so a non-login shell would not find the knock
         # helper at all.
+        if sys.platform == "win32":
+            return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/s", "/c", command]
         return [shutil.which("sh") or "/bin/sh", "-lc", command]
 
     def _execute(

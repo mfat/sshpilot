@@ -459,7 +459,7 @@ class OperationRuntime:
                 client=summary.owner_client_id,
                 connection=summary.connection_id,
             ):
-                logger.info("operation failed code=%s", error.code.value)
+                logger.info("operation failed %s", _format_operation_failure(error))
             if self.cancel_requested(operation_id):
                 self._finish_from_worker(
                     operation_id,
@@ -693,6 +693,32 @@ class OperationRuntime:
 
 
 _MAX_MESSAGE_LENGTH = 240
+
+
+def _format_operation_failure(error: SshPilotError) -> str:
+    """One log line: stable codes, exit status, and the child diagnostic.
+
+    The diagnostic is what ssh, ssh-copy-id, and the other children actually
+    printed. Without it a failure is only ``remote_command_failed`` and the
+    next run cannot be told apart from the last one.
+    """
+
+    parts = [f"code={error.code.value}"]
+    details = error.details
+    identity = details.get("identity_failure_code")
+    if isinstance(identity, str) and identity.strip():
+        parts.append(f"identity={identity.strip()}")
+    exit_code = details.get("exit_code")
+    if type(exit_code) is int:
+        parts.append(f"exit={exit_code}")
+    diagnostic = details.get("diagnostic")
+    if isinstance(diagnostic, str) and diagnostic.strip():
+        flat = diagnostic.replace("\r\n", "\n").replace("\r", "\n")
+        flat = " | ".join(line.strip() for line in flat.split("\n") if line.strip())
+        parts.append("diagnostic=" + _sanitize_message(flat))
+    elif type(exit_code) is int:
+        parts.append("diagnostic=(no output)")
+    return " ".join(parts)
 
 
 def _sanitize_message(message: str) -> str:

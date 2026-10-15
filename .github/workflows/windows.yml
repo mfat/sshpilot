@@ -1,0 +1,151 @@
+name: Windows
+
+# The Windows port on python.org Python + gvsbuild GTK 4
+# (docs/running-on-windows.md, docs/architecture/windows-implementation-plan.md).
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      # The GTK runtime is pinned by version and SHA-256 in fetch-gtk.py, so
+      # the script's contents are the cache key.
+      - name: Cache GTK runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/GTK4_Gvsbuild_*.zip
+          key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
+
+      - name: Fetch GTK 4 and ConPTY
+        run: |
+          python scripts/fetch-gtk.py
+          python scripts/fetch-conpty.py
+
+      - name: Visual Studio developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build patched libvterm
+        run: python packaging/windows/libvterm/build.py --compiler msvc
+
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          $wheels = Get-ChildItem vendor\gtk\wheels -Filter *.whl | Where-Object { $_.Name -match "^(pygobject|pycairo)-.*-cp314-" }
+          python -m pip install $wheels.FullName
+          python -m pip install --no-deps -e .
+          python -m pip install -r requirements.txt pyyaml
+          python -m pip install -r requirements-dev.txt
+
+      # Tests that assume POSIX (Unix sockets, /home paths, file modes) are
+      # listed in tests/windows_posix_only.txt and run as non-strict xfail.
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          python -m pytest -ra -m "not integration and not gui and not e2e and not stress and not property" -n 4 --dist=worksteal
+
+      - name: GUI tests
+        shell: pwsh
+        env:
+          SSHPILOT_GUI_TESTS: "1"
+        run: |
+          $env:PATH = "$PWD\vendor\gtk\bin;$env:PATH"
+          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_preferences_backend_choices.py
+
+  package:
+    # Builds the app folder and installer; signs when SignPath is configured
+    # (packaging/windows/README.md).
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # Step conditions cannot read secrets directly.
+      SIGNPATH_ENABLED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Cache GTK runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/GTK4_Gvsbuild_*.zip
+          key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
+
+      - name: Fetch GTK 4 and ConPTY
+        run: |
+          python scripts/fetch-gtk.py
+          python scripts/fetch-conpty.py
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build patched libvterm
+        run: python packaging/windows/libvterm/build.py --compiler msvc
+
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m venv .venv-win
+          $py = ".venv-win\Scripts\python.exe"
+          & $py -m pip install --upgrade pip
+          $wheels = Get-ChildItem vendor\gtk\wheels -Filter *.whl | Where-Object { $_.Name -match "^(pygobject|pycairo)-.*-cp314-" }
+          & $py -m pip install $wheels.FullName
+          & $py -m pip install --no-deps -e .
+          & $py -m pip install -r requirements.txt pyyaml pyinstaller
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Build app and installer
+        shell: pwsh
+        run: |
+          $env:PATH = "${env:ProgramFiles(x86)}\NSIS;$env:PATH"
+          powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
+
+      - name: Upload unsigned build
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-windows-unsigned
+          path: build/windows/sshPilot-*-setup.exe
+
+      - name: Sign with SignPath
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: build/windows/signed
+
+      - name: Upload signed build
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-windows
+          path: build/windows/signed

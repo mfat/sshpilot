@@ -14,8 +14,12 @@ CSS remain in Python.
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Pango, PangoFT2
+try:
+    gi.require_version('PangoFT2', '1.0')
+    from gi.repository import PangoFT2
+except (ValueError, ImportError):  # not shipped by every GTK build (e.g. Windows)
+    PangoFT2 = None
+from gi.repository import Gtk, Adw, Pango, PangoCairo
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/monospace_font_dialog.ui")
@@ -64,7 +68,10 @@ class MonospaceFontDialog(Adw.Window):
 
     def populate_fonts(self):
         # Get font map
-        fontmap = PangoFT2.FontMap.new()
+        if PangoFT2 is not None:
+            fontmap = PangoFT2.FontMap.new()
+        else:
+            fontmap = PangoCairo.FontMap.get_default()
         families = fontmap.list_families()
 
         monospace_families = []

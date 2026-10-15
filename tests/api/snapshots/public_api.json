@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.81",
+  "api_implementation_version": "0.83",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -49,6 +49,7 @@
     "interactions.password",
     "interactions.read",
     "interactions.respond",
+    "interactions.session_secrets",
     "keys.read",
     "keys.write",
     "known_hosts.read",
@@ -5319,6 +5320,7 @@
       "interactions.host_key",
       "interactions.password",
       "interactions.passphrase",
+      "interactions.session_secrets",
       "sftp",
       "sftp.read",
       "sftp.write",
@@ -5729,13 +5731,16 @@
       "serial_screen_terminal_options_unsupported",
       "serial_device_access_denied",
       "rdp_client_unavailable",
-      "telnet_unavailable"
+      "telnet_unavailable",
+      "serial_plink_unavailable",
+      "serial_plink_terminal_options_unsupported"
     ],
     "RememberPolicy": [
       "do_not_store",
       "store_after_success",
       "replace_stored_after_success",
-      "delete_stored_secret"
+      "delete_stored_secret",
+      "remember_for_session"
     ],
     "RemoteFileType": [
       "regular",

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
+from ...platform.windows.acl import chmod_private
 from ..errors import CoreError, ErrorCode
 from .utils import SKIPPED_FILENAMES, is_private_key
 
@@ -207,8 +209,10 @@ class KeyService:
         comment = spec.comment
         if not comment:
             try:
-                user = os.getenv("USER") or "user"
-                host = os.uname().nodename
+                user = os.getenv("USER") or os.getenv("USERNAME") or "user"
+                host = platform.node()
+                if not host:
+                    raise OSError("unknown host name")
                 comment = f"{user}@{host}"
             except OSError:
                 comment = "generated-by-sshpilot"
@@ -261,7 +265,8 @@ class KeyService:
         if completed.returncode != 0:
             raise CoreError(ErrorCode.KEY_INVALID, "ssh-keygen failed.")
         try:
-            os.chmod(key_path, 0o600)
+            # On Windows, OpenSSH checks the ACL rather than mode bits.
+            chmod_private(key_path)
             pub_path = f"{key_path}.pub"
             if os.path.exists(pub_path):
                 os.chmod(pub_path, 0o644)

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
+
+import pytest
 from pathlib import Path
 
 from sshpilot.core.ssh_config_forward_strip import (
@@ -116,3 +120,35 @@ def test_argv_config_helpers():
         "/new",
         "host",
     )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="OpenSSH for Windows ACL check")
+def test_windows_openssh_accepts_the_materialized_includes(tmp_path):
+    # Python 3.13+ mkdtemp grants OWNER RIGHTS, which OpenSSH for Windows
+    # refuses on an included config ("Bad owner or permissions", exit 255),
+    # so every daemon forward from a config with an Include failed.
+    import shutil
+    import subprocess
+
+    ssh = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "OpenSSH", "ssh.exe")
+    if not os.path.isfile(ssh):
+        pytest.skip("OpenSSH for Windows is not installed")
+    from sshpilot.platform.windows.acl import restrict_directory_to_current_user
+
+    source = tmp_path / "src"
+    source.mkdir()
+    restrict_directory_to_current_user(source)
+    inner = source / "inner.conf"
+    inner.write_text("Host probe\n  HostName 192.0.2.1\n  LocalForward 1234 localhost:22\n")
+    outer = source / "config"
+    outer.write_text("Include " + str(inner).replace(os.sep, "/") + "\n")
+
+    stripped = materialize_ssh_config_without_port_forwards(str(outer))
+    try:
+        result = subprocess.run([ssh, "-G", "-F", stripped, "probe"], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        lines = result.stdout.splitlines()
+        assert "hostname 192.0.2.1" in lines
+        assert not any(line.startswith("localforward") for line in lines)
+    finally:
+        shutil.rmtree(os.path.dirname(stripped), ignore_errors=True)

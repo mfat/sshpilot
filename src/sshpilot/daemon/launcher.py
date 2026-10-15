@@ -130,6 +130,23 @@ AMBIGUOUS_HANDSHAKE_GRACE = 2.0
 AMBIGUOUS_HANDSHAKE_POLL = 0.1
 
 
+def detached_process_options() -> dict:
+    """Popen options that detach a background child from the caller.
+
+    Windows ignores ``start_new_session``. There the daemon gets its own
+    process group and a hidden console, which the console programs it starts
+    (ssh.exe, ssh-keygen.exe) inherit instead of each opening a window.
+    """
+
+    if sys.platform == "win32":
+        return {
+            "creationflags": (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            )
+        }
+    return {"start_new_session": True}
+
+
 @dataclass(frozen=True)
 class DaemonProcessHandle:
     """Proof that this launcher created one exact child process."""
@@ -175,6 +192,27 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
     return environment
 
 
+#: The console-subsystem executable a frozen Windows build ships beside the
+#: windowed ``sshPilot.exe`` (packaging/windows/sshpilot-windows.spec).
+FROZEN_WINDOWS_CONSOLE_EXE = "sshpilot-cli.exe"
+
+
+def _frozen_console_executable() -> Optional[str]:
+    """The daemon's executable in a frozen Windows build.
+
+    The windowed GUI exe has no console: a daemon started from it could not
+    give its OpenSSH children the shared hidden console (each would open a
+    window), and askpass, which the daemon writes as ``<its exe>
+    --internal-askpass``, would have no stdout to answer OpenSSH on. The
+    console exe beside it serves both. Elsewhere, ``None``.
+    """
+
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return None
+    candidate = os.path.join(os.path.dirname(sys.executable), FROZEN_WINDOWS_CONSOLE_EXE)
+    return candidate if os.path.isfile(candidate) else None
+
+
 class DaemonLauncher:
     """Reuse a compatible daemon or make one bounded, race-safe launch attempt."""
 
@@ -203,7 +241,7 @@ class DaemonLauncher:
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self.probe_timeout = float(probe_timeout)
-        self.executable = executable or sys.executable
+        self.executable = executable or _frozen_console_executable() or sys.executable
         self._environment = environment
         self._popen = popen
         self._lock = threading.Lock()
@@ -286,10 +324,15 @@ class DaemonLauncher:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     close_fds=True,
-                    start_new_session=True,
                     env=_child_environment(self._environment),
+                    **detached_process_options(),
                 )
             except OSError as error:
+                logger.error(
+                    "Could not start the daemon process type=%s errno=%s",
+                    type(error).__name__,
+                    getattr(error, "errno", None),
+                )
                 raise DaemonLaunchError(
                     DaemonStartupFailure.PROCESS_EXITED
                 ) from error
@@ -299,9 +342,12 @@ class DaemonLauncher:
                 client = self._wait_until_ready(process)
             except BaseException as error:
                 self._stop_failed_child(process)
-                logger.debug(
-                    "Daemon launch attempt failed type=%s",
+                reason = getattr(error, "reason", None)
+                logger.warning(
+                    "Daemon launch attempt failed type=%s reason=%s exit_code=%s",
                     type(error).__name__,
+                    getattr(reason, "value", reason),
+                    process.poll(),
                 )
                 raise
             self._ensure_gtk_askpass_log_forwarder()
@@ -413,7 +459,11 @@ class DaemonLauncher:
             return error.reason
         except SshPilotError as error:
             if error.code is ErrorCode.DAEMON_UNAVAILABLE:
-                remove_dead_socket(self.socket_path)
+                if not remove_dead_socket(self.socket_path):
+                    logger.warning(
+                        "The daemon endpoint did not answer but could not be "
+                        "cleared; the new daemon may refuse to start"
+                    )
                 return None
             return self._classify_handshake_error(error).reason
 
