@@ -26,10 +26,15 @@ FIVE_HOSTS = "".join(
 )
 
 
-def _repo(tmp_path, ssh_text: str = FIVE_HOSTS):
+def _write(path: Path, text: str, newline: str = "\n") -> None:
+    """Write exact bytes, so a test means the same line endings everywhere."""
+    path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+
+
+def _repo(tmp_path, ssh_text: str = FIVE_HOSTS, *, newline: str = "\n"):
     root = tmp_path / "ssh_config"
     if ssh_text:
-        root.write_text(ssh_text)
+        _write(root, ssh_text, newline)
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
         state_path=tmp_path / "connections.json",
@@ -141,7 +146,10 @@ def test_batch_delete_mixes_ssh_and_non_ssh_connections(tmp_path):
 
 def test_batch_delete_across_included_files_is_one_event(tmp_path):
     fragment = tmp_path / "fragment.conf"
-    fragment.write_text("Host inc1\n    HostName inc1.example\n\nHost inc2\n    HostName inc2.example\n")
+    _write(
+        fragment,
+        "Host inc1\n    HostName inc1.example\n\nHost inc2\n    HostName inc2.example\n",
+    )
     repo, root, _state, changes = _repo(
         tmp_path, "Include fragment.conf\n\n" + FIVE_HOSTS
     )
@@ -169,17 +177,12 @@ def test_batch_delete_with_an_unknown_id_deletes_nothing(tmp_path):
     assert changes == []
 
 
-def test_batch_delete_rolls_back_every_file_when_the_state_write_fails(
-    tmp_path, monkeypatch
-):
-    repo, root, state, changes = _repo(tmp_path)
-    repo.create_connection(
-        {"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"}
-    )
-    changes.clear()
-    before_root = root.read_bytes()
-    before_state = state.read_bytes()
+# Rollback must restore the exact original bytes, CRLF line endings included:
+# a text-mode capture on Windows used to hand back LF.
+LINE_ENDINGS = pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 
+
+def _fail_state_writes(monkeypatch):
     def fail_write(*_args, **_kwargs):
         raise OSError("injected state write failure")
 
@@ -187,6 +190,21 @@ def test_batch_delete_rolls_back_every_file_when_the_state_write_fails(
         "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
+
+
+@LINE_ENDINGS
+def test_batch_delete_rolls_back_every_file_when_the_state_write_fails(
+    tmp_path, monkeypatch, newline
+):
+    repo, root, state, changes = _repo(tmp_path, newline=newline)
+    repo.create_connection(
+        {"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"}
+    )
+    changes.clear()
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+
+    _fail_state_writes(monkeypatch)
     with pytest.raises(OSError):
         repo.delete_connections(["h1", "h3", "tel"])
     monkeypatch.undo()
@@ -198,13 +216,14 @@ def test_batch_delete_rolls_back_every_file_when_the_state_write_fails(
     assert changes == []
 
 
+@LINE_ENDINGS
 def test_batch_delete_rolls_back_the_first_file_when_a_later_file_fails(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, newline
 ):
     fragment = tmp_path / "fragment.conf"
-    fragment.write_text("Host inc1\n    HostName inc1.example\n")
+    _write(fragment, "Host inc1\n    HostName inc1.example\n", newline)
     repo, root, _state, changes = _repo(
-        tmp_path, "Include fragment.conf\n\n" + FIVE_HOSTS
+        tmp_path, "Include fragment.conf\n\n" + FIVE_HOSTS, newline=newline
     )
     before = {path: path.read_bytes() for path in (root, fragment)}
     real_prepare = SshConfigStore.prepare_delete_many
@@ -224,6 +243,26 @@ def test_batch_delete_rolls_back_the_first_file_when_a_later_file_fails(
     assert len(prepared) == 2
     assert {path: path.read_bytes() for path in (root, fragment)} == before
     assert set(_ids(repo)) == {"inc1", "h0", "h1", "h2", "h3", "h4"}
+    assert changes == []
+
+
+@LINE_ENDINGS
+def test_single_delete_rollback_restores_the_exact_bytes(
+    tmp_path, monkeypatch, newline
+):
+    repo, root, state, changes = _repo(tmp_path, newline=newline)
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+    assert (b"\r\n" in before_root) == (newline == "\r\n")
+
+    _fail_state_writes(monkeypatch)
+    with pytest.raises(OSError):
+        repo.delete_connection("h2")
+    monkeypatch.undo()
+
+    assert root.read_bytes() == before_root
+    assert state.read_bytes() == before_state
+    assert "h2" in _ids(repo)
     assert changes == []
 
 

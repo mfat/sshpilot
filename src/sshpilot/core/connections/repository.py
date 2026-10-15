@@ -374,6 +374,15 @@ class ConnectionRepositoryProtocol(Protocol):
     ) -> "ConnectionStoreRestoreResult": ...
 
 
+# Transaction captures must hold a file's exact bytes. On Windows a plain
+# ``os.open`` is a text-mode descriptor whose reads turn CRLF into LF, so a
+# rollback would "restore" a CRLF config with LF endings and the post-write
+# check would mistake the daemon's own write for an external edit.
+_RAW_READ_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+)
+
+
 def _repository_error(message: str) -> CoreError:
     return CoreError(ErrorCode.CONNECTION_STATE_IO_ERROR, message)
 
@@ -1818,7 +1827,7 @@ class ConnectionRepository:
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "The mutation target is unsafe",
                 )
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = _RAW_READ_FLAGS
             try:
                 fd = os.open(path, flags)
             except OSError as exc:
@@ -1875,7 +1884,7 @@ class ConnectionRepository:
         if path not in captured:
             return
         try:
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = _RAW_READ_FLAGS
             fd = os.open(str(path), flags)
             try:
                 st = os.fstat(fd)

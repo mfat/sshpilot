@@ -56,11 +56,6 @@ tests/core/test_connection_identity_state_storage.py::test_v2_reader_writer_roun
 tests/core/test_connection_identity_state_storage.py::test_v2_symlink_is_rejected_for_read_and_write  # POSIX-only API
 tests/core/test_connection_repository.py::test_unsupported_canonical_state_is_kept_verbatim_before_salvage  # path separators
 tests/core/test_connection_repository_crud.py::test_exact_mode_and_existence_restoration  # POSIX file modes
-tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_delete  # assumes POSIX behaviour (reviewed by sample)
-tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_duplicate  # assumes POSIX behaviour (reviewed by sample)
-tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_rename  # assumes POSIX behaviour (reviewed by sample)
-tests/core/test_connection_repository_crud.py::test_rollback_after_state_failure_ssh_update  # assumes POSIX behaviour (reviewed by sample)
-tests/core/test_connection_repository_crud.py::test_ssh_create_rolls_back_when_state_write_fails  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_connection_repository_crud.py::test_symlink_swap_during_post_write_raises_ambiguity  # POSIX paths in fixtures
 tests/core/test_connection_repository_uuid_integration.py::test_create_intent_cleanup_failure_leaves_no_target_identity  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_connection_repository_uuid_integration.py::test_dangling_pending_intent_symlink_is_ignored_not_followed  # path separators
