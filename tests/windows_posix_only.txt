@@ -378,3 +378,6 @@ tests/test_terminal_local_shell_env.py::test_direct_spawn_path_runs_env_through_
 tests/test_text_editor_path.py::test_collapses_path_under_home  # POSIX paths in fixtures
 tests/test_text_editor_ui_i18n.py::test_load_failure_translates_stable_reason_and_preserves_diagnostic  # POSIX file modes
 tests/test_transfer_error_messages.py::test_real_french_catalogue_formats_capability  # assumes POSIX behaviour (reviewed by sample)
+tests/daemon/test_launcher_self_healing.py::test_orphaned_socket_file_does_not_block_startup  # Unix sockets / fd passing
+tests/daemon/test_launcher_self_healing.py::test_unusable_peer_is_evicted_and_startup_still_succeeds  # Unix sockets / fd passing
+tests/daemon/test_launcher.py::test_real_on_demand_process_is_ready_via_handshake_and_owned  # isolates HOME; Windows resolves ~ from USERPROFILE
