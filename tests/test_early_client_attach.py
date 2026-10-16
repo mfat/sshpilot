@@ -287,14 +287,15 @@ def _window_for_selection():
 
 
 def test_bridge_selection_is_delivered_ahead_of_the_frame_clock(monkeypatch):
-    import sshpilot.window as window_module
-
+    # No override: the bridge's own PRIORITY_DEFAULT is already ahead of the
+    # frame clock, and PRIORITY_HIGH_IDLE would now queue it behind other
+    # daemon results (test_gtk_client_bridge pins the bridge default).
     monkeypatch.setattr(daemon_prelaunch, "_state", None)
     window, submits = _window_for_selection()
 
     MainWindow._begin_daemon_client_selection(window)
 
-    assert submits[0]["priority"] == window_module.GLib.PRIORITY_HIGH_IDLE
+    assert "priority" not in submits[0]
     assert submits[0]["on_success"] == window._apply_startup_client_selection
 
 

@@ -67,7 +67,7 @@ jobs:
           SSHPILOT_GUI_TESTS: "1"
         run: |
           $env:PATH = "$PWD\vendor\gtk\bin;$env:PATH"
-          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_preferences_backend_choices.py
+          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_preferences_backend_choices.py tests/gui/test_gtk_client_bridge_dispatch.py
 
   package:
     # Builds the app folder and installer; signs when SignPath is configured

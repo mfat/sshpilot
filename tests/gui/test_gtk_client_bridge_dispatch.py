@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tests._gui_harness import requires_gui
@@ -59,6 +61,44 @@ def test_results_arrive_while_redraw_is_always_ready():
     assert results == ["opened"]
 
 
+def test_worker_result_wakes_a_loop_blocked_in_poll():
+    """A result from the worker must wake a main loop that is asleep.
+
+    The tests above pump with ``iteration(False)`` and never sleep in poll, so
+    they cannot tell a priority problem from a missing context wakeup. Here
+    the loop blocks in ``iteration(True)`` before the worker finishes; only
+    ``g_main_context_wakeup`` from ``idle_add`` can end that wait before the
+    guard timeout does.
+    """
+    timed_out = []
+
+    def _guard():
+        timed_out.append(True)
+        return False
+
+    guard = GLib.timeout_add(2000, _guard)
+    bridge = GtkClientBridge()
+    results = []
+    started = time.monotonic()
+    try:
+        bridge.submit(
+            lambda: time.sleep(0.2) or "opened",
+            on_success=results.append,
+            on_error=results.append,
+        )
+        context = GLib.MainContext.default()
+        while not results and not timed_out:
+            context.iteration(True)
+    finally:
+        if not timed_out:
+            GLib.source_remove(guard)
+        bridge.shutdown()
+
+    assert results == ["opened"]
+    assert not timed_out
+    assert time.monotonic() - started < 1.0
+
+
 def test_terminal_output_beyond_one_slice_is_drained():
     """The drain returns True to run again while more than a slice is spooled."""
     client = _TerminalClient()
@@ -66,12 +106,12 @@ def test_terminal_output_beyond_one_slice_is_drained():
     bridge = GtkClientBridge()
     session_id = SessionId("session-1")
     total = 3 * DEFAULT_GTK_TERMINAL_PENDING_BYTES + 123
-    bridge.bind_terminal(
-        client,
-        session_id,
-        on_output=lambda output: delivered.append(len(output.data)),
-    )
     try:
+        bridge.bind_terminal(
+            client,
+            session_id,
+            on_output=lambda output: delivered.append(len(output.data)),
+        )
         sequence = 0
         while sequence < total:
             data = b"x" * min(16 * 1024, total - sequence)

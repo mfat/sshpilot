@@ -27,6 +27,10 @@ def gtk_thread_idle(callback, *args, priority=GLib.PRIORITY_DEFAULT):
     the redraw source is always ready, and idle-priority callbacks never run:
     the session-open result that would attach the terminal and stop the
     spinner waited until something else stopped the animation.
+
+    ``PRIORITY_DEFAULT`` is the same priority as GDK event dispatch, so a long
+    burst of terminal output (drained 64 KiB per call) holds repaints back
+    until the spool is empty, where idle priority used to let frames through.
     """
     return GLib.idle_add(callback, *args, priority=priority)
 
@@ -147,8 +151,11 @@ class GtkClientBridge:
         """Run ``operation`` on the worker; deliver its outcome on GTK's thread.
 
         ``priority`` is the main-loop priority of the delivery (default: the
-        dispatcher's own, an idle callback). A request whose outcome must
-        reach the UI before the next frame passes ``GLib.PRIORITY_HIGH_IDLE``.
+        dispatcher's own; ``gtk_thread_idle`` uses ``GLib.PRIORITY_DEFAULT``,
+        ahead of GTK's layout and redraw, so an outcome already reaches the
+        next frame). Pass a larger number only for an outcome that may wait
+        behind painting; anything at ``GLib.PRIORITY_DEFAULT_IDLE`` can starve
+        while frames take longer than the frame interval.
         """
         return self._submit_on(
             self._executor,

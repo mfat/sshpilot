@@ -923,10 +923,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             lambda: select_client(launcher=launcher),
             on_success=self._apply_startup_client_selection,
             on_error=self._handle_client_selection_error,
+            # The bridge delivers at PRIORITY_DEFAULT, ahead of the frame
+            # clock: a selection that completes while the window is being
+            # presented reaches the first frame.
             on_discard=lambda selection: selection.client.close(),
-            # Ahead of the frame clock: a selection that completes while the
-            # window is being presented reaches the first frame.
-            priority=GLib.PRIORITY_HIGH_IDLE,
         )
 
     def _apply_ready_early_client(self, launcher):
