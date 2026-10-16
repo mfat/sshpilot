@@ -630,14 +630,9 @@ class SshPilotApplication(Adw.Application):
             startup_timing.mark("window_presented")
             frame_clock = self.window.get_frame_clock()
             if frame_clock is not None:
-                first_paint = []
-
-                def _on_first_paint(clock):
-                    clock.disconnect(first_paint[0])
-                    startup_timing.mark("window_first_painted")
-
-                first_paint.append(
-                    frame_clock.connect("after-paint", _on_first_paint)
+                frame_clock.connect(
+                    "after-paint",
+                    lambda *_args: startup_timing.mark("window_first_painted"),
                 )
 
             # The window UI is built and presented and plugins are bound, so
