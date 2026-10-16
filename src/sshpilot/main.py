@@ -40,6 +40,11 @@ from .gi_versions import require_gui_versions
 
 require_gui_versions()
 
+from . import daemon_prelaunch as _daemon_prelaunch
+
+# A running daemon may be connected to from here on (see daemon_prelaunch).
+_daemon_prelaunch.release_connect()
+
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 
 startup_timing.mark("gtk_imported")
@@ -615,11 +620,20 @@ class SshPilotApplication(Adw.Application):
         self._load_app_style()
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
+            from . import startup_preload
+
+            startup_preload.wait()
             from .window import MainWindow
             startup_timing.mark("window_module_imported")
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
             startup_timing.mark("window_presented")
+            frame_clock = self.window.get_frame_clock()
+            if frame_clock is not None:
+                frame_clock.connect(
+                    "after-paint",
+                    lambda *_args: startup_timing.mark("window_first_painted"),
+                )
 
             # The window UI is built and presented and plugins are bound, so
             # it is now safe for plugins to do live UI/terminal work.
@@ -2501,6 +2515,10 @@ def main():
     from . import daemon_prelaunch
 
     daemon_prelaunch.start(verbose=verbose, quiet=opts.quiet)
+    # Import the window's GTK-free dependencies off the GTK thread meanwhile.
+    from . import startup_preload
+
+    startup_preload.start()
     # GUI tests launch a second, throwaway instance alongside a developer's own
     # running copy; without a distinct application id GApplication would just
     # hand the launch off to that copy. Same shape as SSHPILOT_SSH_DIR: an

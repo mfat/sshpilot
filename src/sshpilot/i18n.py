@@ -17,9 +17,24 @@ import os
 import sys
 from typing import List, Optional, Tuple
 
-from .platform_utils import get_config_dir
-
 logger = logging.getLogger(__name__)
+
+
+def get_config_dir() -> str:
+    """``platform_utils.get_config_dir``, without GLib on Windows.
+
+    The language is exported before the daemon is spawned (see
+    ``daemon_prelaunch``). On Windows the config directory comes from the
+    headless resolver anyway, so reading it there need not import gi.
+    """
+    if sys.platform == "win32":
+        from .platform import paths
+
+        return str(paths.get_config_dir())
+    from .platform_utils import get_config_dir as _get_config_dir
+
+    return _get_config_dir()
+
 
 # Written by Meson at install time; absent in a setuptools/editable checkout,
 # where no catalogue is installed either.

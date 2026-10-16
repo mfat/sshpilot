@@ -271,14 +271,16 @@ def _start_daemon(env: dict) -> None:
     raise SystemExit("the sandbox daemon did not become ready")
 
 
-def _launch_once(env: dict, out: Path, timeout: float) -> dict:
+def _launch_once(env: dict, out: Path, timeout: float,
+                 cprofile: Path | None = None) -> dict:
     out.unlink(missing_ok=True)
     run_env = dict(env)
     run_env["SSHPILOT_STARTUP_PROFILE"] = str(out)
     run_env["SSHPILOT_STARTUP_LAUNCH_TIME"] = repr(time.time())
     start = time.perf_counter()
+    profiler = ["-m", "cProfile", "-o", str(cprofile)] if cprofile else []
     proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "run.py")],
+        [sys.executable, *profiler, str(ROOT / "run.py")],
         env=run_env, cwd=str(ROOT),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -354,11 +356,15 @@ def report_launch(args) -> None:
     results = {}
     for mode in modes:
         runs = []
-        for _ in range(args.runs):
+        for index in range(args.runs):
             _stop_daemon(env)
             if mode == "warm":
                 _start_daemon(env)
-            run = _launch_once(env, out, args.timeout)
+            cprofile = None
+            if args.cprofile:
+                Path(args.cprofile).mkdir(parents=True, exist_ok=True)
+                cprofile = Path(args.cprofile) / f"{mode}-{index}.prof"
+            run = _launch_once(env, out, args.timeout, cprofile)
             _check_mode(mode, run)
             runs.append(run)
         results[mode] = {"summary": _summarise(mode, runs), "runs": runs}
@@ -386,6 +392,9 @@ def main(argv=None) -> int:
     launch.add_argument("--sandbox", help="profile directory (default: temp dir)")
     launch.add_argument("--fresh-sandbox", action="store_true")
     launch.add_argument("--json", help="also write raw results here")
+    launch.add_argument("--cprofile", metavar="DIR",
+                        help="run each timed launch under cProfile and write "
+                             "<mode>-<n>.prof here (adds overhead to the timings)")
     args = parser.parse_args(argv)
     if args.command == "launch":
         report_launch(args)

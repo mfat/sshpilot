@@ -216,3 +216,32 @@ def test_language_is_exported_before_the_worker_starts(monkeypatch):
     daemon_prelaunch.start()
     assert daemon_prelaunch.take().client.name == "spawned"
     assert order == ["language", "worker"]
+
+
+def test_connecting_to_a_running_daemon_waits_for_the_release(monkeypatch, tmp_path):
+    """With an endpoint the worker holds back until the GUI releases it."""
+    endpoint = tmp_path / "sshpilotd.json"
+    endpoint.write_text("{}", encoding="utf-8")
+    released = threading.Event()
+    monkeypatch.setattr(daemon_prelaunch, "_connect_released", released)
+    monkeypatch.setattr(_FakeLauncher, "socket_path", endpoint, raising=False)
+
+    daemon_prelaunch.start()
+    assert not daemon_prelaunch._state.done.wait(0.2)
+    assert _FakeLauncher.instances[0].calls == []
+
+    daemon_prelaunch.release_connect()
+    assert daemon_prelaunch._state.done.wait(5)
+    assert _FakeLauncher.instances[0].calls == ["early"]
+
+
+def test_with_no_endpoint_the_daemon_is_started_at_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(daemon_prelaunch, "_connect_released", threading.Event())
+    monkeypatch.setattr(
+        _FakeLauncher, "socket_path", tmp_path / "missing.json", raising=False
+    )
+
+    daemon_prelaunch.start()
+
+    assert daemon_prelaunch._state.done.wait(5)
+    assert _FakeLauncher.instances[0].calls == ["early"]

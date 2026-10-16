@@ -19,18 +19,31 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Sequence
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 from .command_converter import SSH_OPTIONS_EXPECTING_ARGUMENT, parse_ssh_command
-from .connection_model import Connection
-from .ssh_connection_builder import SSHConnectionCommand
-from .ssh_connection_validator import SSHConnectionValidator
+
+if TYPE_CHECKING:
+    from .connection_model import Connection
+    from .ssh_connection_validator import SSHConnectionValidator
+
+# The connection model, command builder and validator are imported where they
+# are used: ``parse_sshpilot_cli`` runs before the daemon is spawned (see
+# ``daemon_prelaunch.start_from_argv``) and needs none of them.
 
 logger = logging.getLogger(__name__)
 
 # Connection.data flag: ephemeral from parser; may offer save-if-unsaved.
 CLI_CONNECT_FLAG = '__cli_connect'
-_INPUT_VALIDATOR = SSHConnectionValidator()
+
+
+@lru_cache(maxsize=1)
+def _input_validator() -> "SSHConnectionValidator":
+    from .ssh_connection_validator import SSHConnectionValidator
+
+    return SSHConnectionValidator()
+
 _HOST_ALIAS_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$')
 
 
@@ -106,7 +119,7 @@ def _validate_option_ports(ssh_argv: Sequence[str]) -> Optional[str]:
             )
 
         if raw_port is not None:
-            result = _INPUT_VALIDATOR.validate_port(raw_port, context='SSH')
+            result = _input_validator().validate_port(raw_port, context='SSH')
             if not result.is_valid:
                 return result.message
     return None
@@ -118,14 +131,14 @@ def _port_from_o_option(option: str) -> Optional[str]:
 
 
 def _validate_parsed_destination(parsed: dict) -> Optional[str]:
-    port_result = _INPUT_VALIDATOR.validate_port(
+    port_result = _input_validator().validate_port(
         str(parsed.get('port', 22)), context='SSH'
     )
     if not port_result.is_valid:
         return port_result.message
 
     host = str(parsed.get('hostname') or parsed.get('host') or '').strip()
-    host_result = _INPUT_VALIDATOR.validate_hostname(host)
+    host_result = _input_validator().validate_hostname(host)
     if host_result.is_valid:
         return None
 
@@ -303,6 +316,9 @@ def resolve_cli_connect(
     data[CLI_CONNECT_FLAG] = True
     # Remote command tokens from the converter stay in unparsed_args; keep them
     # on the connection for the save dialog. The live session uses ssh_argv.
+
+    from .connection_model import Connection
+    from .ssh_connection_builder import SSHConnectionCommand
 
     connection = Connection(data)
     try:

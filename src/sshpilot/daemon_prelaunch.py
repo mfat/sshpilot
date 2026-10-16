@@ -21,9 +21,15 @@ socket. A secondary instance closes the client it opened through
 
 Before the worker starts, this process exports the environment the daemon
 inherits: verbosity, and the interface language, which reads the config
-directory through GLib and therefore comes after the gi version pins. (Starting
-the worker first and holding only the spawn back was measured ~125 ms slower on
-a warm start: the worker's client-stack import then competes with GTK's.)
+directory through GLib (except on Windows) and therefore comes after the gi
+version pins.
+
+With no daemon endpoint the worker spawns the daemon at once, so the daemon's
+own start overlaps all of the GUI's (~300 ms sooner than when the spawn waited
+for gi). With one, it waits for :func:`release_connect`, which ``sshpilot.main``
+calls as it starts importing GTK: the connection loads the client stack
+(DaemonClient, codec, API models), and that Python work slows whatever the GUI
+thread imports beside it; next to the GTK import it costs the least.
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ import contextlib
 import io
 import logging
 import os
+import sys
 import threading
 from typing import Optional, Sequence
 
@@ -41,6 +48,9 @@ DISABLE_ENV = "SSHPILOT_NO_DAEMON_PRELAUNCH"
 
 _lock = threading.Lock()
 _state: Optional["_Prelaunch"] = None
+_connect_released = threading.Event()
+#: Longest a worker holds back its connection to a running daemon.
+_CONNECT_RELEASE_WAIT_SECONDS = 3.0
 
 
 class _Prelaunch:
@@ -62,6 +72,9 @@ class _Prelaunch:
             from .daemon.launcher import DaemonLauncher
 
             self.launcher = DaemonLauncher(verbose=self.verbose, quiet=self.quiet)
+            socket_path = getattr(self.launcher, "socket_path", None)
+            if socket_path is not None and os.path.lexists(socket_path):
+                _connect_released.wait(_CONNECT_RELEASE_WAIT_SECONDS)
             self.result = self.launcher.connect_or_start_without_eviction()
         except BaseException as error:  # handed to the selection that takes it
             self.error = error
@@ -111,14 +124,21 @@ def _export_language() -> None:
     gi version pins go first: nothing on that chain may load GTK unpinned.
     """
     try:
-        from .gi_versions import require_gui_versions
+        if sys.platform != "win32":
+            # Windows reads it without GLib (i18n.get_config_dir): no gi yet.
+            from .gi_versions import require_gui_versions
 
-        require_gui_versions()
+            require_gui_versions()
         from .i18n import apply_language
 
         apply_language()
     except Exception:
         logger.debug("Could not apply the language preference", exc_info=True)
+
+
+def release_connect() -> None:
+    """Let the worker connect to a running daemon (see the module doc)."""
+    _connect_released.set()
 
 
 def start(*, verbose: bool = False, quiet: bool = False) -> bool:
@@ -159,6 +179,11 @@ def start_from_argv(argv: Sequence[str]) -> bool:
     except Exception:
         logger.debug("Could not pre-parse the command line", exc_info=True)
         return False
+    # The GUI will open: let the GL driver load alongside the imports, too.
+    if sys.platform == "win32":
+        from .platform.windows import gl_warmup
+
+        gl_warmup.start()
     return start(verbose=opts.verbose or opts.diagnostics, quiet=opts.quiet)
 
 

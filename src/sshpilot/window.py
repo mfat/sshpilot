@@ -12,6 +12,7 @@ import logging
 import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
+import time
 import traceback
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
@@ -292,6 +293,19 @@ _ROW_ACTIONS_MIN_WIDTH = 230
 
 # Connections whose forwarding rules one sidebar bridge request fetches.
 _SIDEBAR_FORWARDING_FETCH_CHUNK = 16
+
+# A split sidebar rebuild (startup) builds the rows that fit the sidebar's
+# height first; this is the smallest row height it assumes (a compact row).
+_MIN_CONNECTION_ROW_HEIGHT = 28
+# Time each idle callback of a split rebuild spends adding the remaining rows.
+_DEFERRED_ROWS_SLICE_SECONDS = 0.02
+
+
+def _section_expanded(header) -> bool:
+    """Whether a Groups/Ungrouped section header (or no header) shows its rows."""
+    if header is None:
+        return True
+    return bool(getattr(header, '_expanded', True))
 
 
 def _accelerator_label(accel: str) -> str:
@@ -952,7 +966,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if self.client is None or getattr(self, '_client_rows_built', False):
             return
         self._client_rows_built = True
-        self.rebuild_connection_list()
+        # Only the rows that fit on screen before the frame; the rest follow.
+        self.rebuild_connection_list(
+            first_rows=self._initial_sidebar_row_budget()
+        )
         self._attach_rows_generation = self._sidebar_store_generation()
         # The attach's reset is already queued at this priority, so this runs
         # right after it: the skip covers that one reset and never a later
@@ -4270,8 +4287,106 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .command_palette import append_command_rows
         append_command_rows(self, query)
 
-    def rebuild_connection_list(self):
-        """Rebuild the connection list with groups"""
+    def rebuild_connection_list(self, first_rows: Optional[int] = None):
+        """Rebuild the connection list with groups.
+
+        With ``first_rows``, only that many visible connection rows are built
+        before returning; the rest are appended from idle callbacks after the
+        next frame (see :meth:`_build_remaining_connection_rows`). Each row
+        gets its final visibility as it is added, so the list looks the same
+        at every point it can be painted. Any later rebuild drops the rows
+        still pending; :meth:`complete_pending_connection_rows` builds them
+        at once.
+        """
+        self._cancel_pending_connection_rows()
+        steps = self._rebuild_connection_list_steps()
+        if first_rows is None:
+            for _visible in steps:
+                pass
+            return
+        built = 0
+        for visible in steps:
+            if visible:
+                built += 1
+                if built >= first_rows:
+                    break
+        else:
+            return
+        # _finish_rebuild does this for every row once the rest are built.
+        self._apply_sidebar_row_actions(force=True)
+        self._pending_connection_rows = steps
+        self._pending_connection_rows_source = GLib.idle_add(
+            self._build_remaining_connection_rows
+        )
+
+    def _build_remaining_connection_rows(self):
+        """Idle step of a split rebuild: add rows for about one frame's worth."""
+        steps = getattr(self, '_pending_connection_rows', None)
+        if steps is None:
+            return GLib.SOURCE_REMOVE
+        deadline = time.perf_counter() + _DEFERRED_ROWS_SLICE_SECONDS
+        try:
+            for _visible in steps:
+                if time.perf_counter() >= deadline:
+                    return GLib.SOURCE_CONTINUE
+        except Exception:
+            logger.exception("Building the remaining sidebar rows failed")
+        self._pending_connection_rows = None
+        self._pending_connection_rows_source = None
+        startup_timing.mark(
+            "sidebar_rows_completed",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
+        )
+        return GLib.SOURCE_REMOVE
+
+    def _take_pending_connection_rows(self):
+        """Detach a split rebuild's remaining steps (``None`` if there are none)."""
+        steps = getattr(self, '_pending_connection_rows', None)
+        source = getattr(self, '_pending_connection_rows_source', None)
+        self._pending_connection_rows = None
+        self._pending_connection_rows_source = None
+        if source is not None:
+            GLib.source_remove(source)
+        return steps
+
+    def _cancel_pending_connection_rows(self):
+        """Forget the rows a split rebuild has not built yet."""
+        steps = self._take_pending_connection_rows()
+        if steps is not None:
+            steps.close()
+
+    def complete_pending_connection_rows(self):
+        """Build the rows a split rebuild still has pending, right now."""
+        steps = self._take_pending_connection_rows()
+        if steps is None:
+            return
+        for _visible in steps:
+            pass
+        startup_timing.mark(
+            "sidebar_rows_completed",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
+        )
+
+    def _initial_sidebar_row_budget(self) -> int:
+        """How many connection rows fill the sidebar's visible height."""
+        height = 0
+        scrolled = getattr(self, 'connection_scrolled', None)
+        if scrolled is not None:
+            try:
+                height = scrolled.get_height()
+            except Exception:
+                height = 0
+        if height <= 0:
+            try:
+                height = self.get_height() or self.get_default_size()[1]
+            except Exception:
+                height = 0
+        if height <= 0:
+            height = 1200
+        return height // _MIN_CONNECTION_ROW_HEIGHT + 2
+
+    def _rebuild_connection_list_steps(self):
+        """Rebuild the list; yields after each connection row (its visibility)."""
         self._connection_list_rebuild_count = (
             getattr(self, '_connection_list_rebuild_count', 0) + 1
         )
@@ -4367,6 +4482,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
+                yield True
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -4378,6 +4494,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
+                yield True
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -4412,6 +4529,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             display_group_id=group_info.get('id'),
                         )
                         displayed_connections.add(conn.id)
+                        yield True
 
             matches = [
                 c for c in connections
@@ -4421,6 +4539,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
                 displayed_connections.add(conn.id)
+                yield True
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -4436,7 +4555,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.connection_list.append(groups_header)
 
         # Build the list with groups
-        group_rows = self._build_grouped_list(hierarchy, connections_dict, 0)
+        group_rows = yield from self._build_grouped_list_steps(
+            hierarchy, connections_dict, 0, _section_expanded(groups_header)
+        )
         if groups_header is not None:
             for group_row in group_rows:
                 groups_header.add_child_row(group_row)
@@ -4458,6 +4579,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     "ungrouped", _("Ungrouped"), self.config
                 )
                 self.connection_list.append(ungrouped_header)
+            ungrouped_visible = _section_expanded(ungrouped_header)
 
             # Root order is daemon-owned; render from the snapshot and append
             # any not-yet-projected ungrouped connections without local writes.
@@ -4471,6 +4593,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     row = self.add_connection_row(conn)
                     if row is not None and ungrouped_header is not None:
                         ungrouped_header.add_child_row(row)
+                        row.set_visible(ungrouped_visible)
+                    yield ungrouped_visible
                     seen.add(nick)
             for nick in ungrouped_nicks:
                 if nick in seen:
@@ -4480,16 +4604,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     row = self.add_connection_row(conn)
                     if row is not None and ungrouped_header is not None:
                         ungrouped_header.add_child_row(row)
+                        row.set_visible(ungrouped_visible)
+                    yield ungrouped_visible
             if ungrouped_header is not None:
                 ungrouped_header.apply_descendant_visibility()
 
 
         self._finish_rebuild(scroll_position, selected_connection_rows)
+
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 
         Returns the list of top-level GroupRows created at this level so the
         caller can register them as children for in-place expand/collapse.
+        """
+        steps = self._build_grouped_list_steps(hierarchy, connections_dict, level)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as done:
+                return done.value
+
+    def _build_grouped_list_steps(
+        self, hierarchy, connections_dict, level, parent_visible=True
+    ):
+        """:meth:`_build_grouped_list`, yielding after each connection row.
+
+        ``parent_visible`` is whether the enclosing section or group shows
+        its rows; every row is added with the visibility it ends up with.
         """
         created_rows = []
         for group_info in hierarchy:
@@ -4498,7 +4640,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             group_row.connect('group-toggled', self._on_group_toggled)
             if hasattr(group_row, "set_indentation"):
                 group_row.set_indentation(level)
+            group_row.set_visible(parent_visible)
             self.connection_list.append(group_row)
+            members_visible = parent_visible and bool(
+                group_info.get("expanded", True)
+            )
 
             # Build direct connection rows once, then let expand/collapse toggle
             # their visibility in place to avoid full-list flicker.
@@ -4512,19 +4658,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
                     if row is not None and hasattr(group_row, "add_member_row"):
                         group_row.add_member_row(row)
+                    if row is not None:
+                        row.set_visible(members_visible)
+                    yield members_visible
 
             # Recursively add child groups and register them directly so a
             # parent collapse hides nested subgroups in place.
             if group_info.get('children'):
-                child_group_rows = self._build_grouped_list(
-                    group_info['children'], connections_dict, level + 1
+                child_group_rows = yield from self._build_grouped_list_steps(
+                    group_info['children'], connections_dict, level + 1,
+                    members_visible,
                 )
                 if hasattr(group_row, "add_child_group_row"):
                     for child_row in child_group_rows:
                         group_row.add_child_group_row(child_row)
 
             if hasattr(group_row, "apply_descendant_visibility"):
-                group_row.apply_descendant_visibility(True)
+                group_row.apply_descendant_visibility(parent_visible)
 
             created_rows.append(group_row)
         return created_rows
@@ -7009,6 +7159,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")
+        self.complete_pending_connection_rows()
 
         # Save current scroll position before any UI changes
         scroll_position = None

@@ -90,6 +90,7 @@ class _EarlyWindow:
     on_projection_reset = MainWindow.on_projection_reset
     _flush_projection_rebuild = MainWindow._flush_projection_rebuild
     _sidebar_store_generation = MainWindow._sidebar_store_generation
+    _initial_sidebar_row_budget = MainWindow._initial_sidebar_row_budget
 
     def __init__(self, generation=5):
         self._is_quitting = False
@@ -118,7 +119,7 @@ class _EarlyWindow:
     def _submit_client_selection(self, launcher):
         self.submitted.append(launcher)
 
-    def rebuild_connection_list(self):
+    def rebuild_connection_list(self, first_rows=None):
         self._connection_list_rebuild_count = (
             getattr(self, '_connection_list_rebuild_count', 0) + 1
         )
