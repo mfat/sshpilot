@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import sys
 
 import pytest
 
@@ -561,9 +562,14 @@ def test_rbw_backend_unlock_installs_stable_pinentry_helper(monkeypatch, tmp_pat
     backend._bin = "/usr/bin/rbw"
     assert backend.unlock("sentinel-master") is True
     helper = cfg["pinentry"]
-    assert helper.endswith("rbw-pinentry")
+    if sys.platform == "win32":
+        assert helper.endswith("rbw-pinentry.cmd")
+        script = helper[: -len(".cmd")] + ".py"
+    else:
+        assert helper.endswith("rbw-pinentry")
+        script = helper
     assert os.path.isfile(helper)
-    with open(helper, encoding="utf-8") as fh:
+    with open(script, encoding="utf-8") as fh:
         assert "pinentry-gnome3" in fh.read()
     assert seen_unlock_env and seen_unlock_env[0].get("PINENTRY_USER_DATA")
     pin_leftovers = list((tmp_path / "bin").glob("rbw-pin-*"))

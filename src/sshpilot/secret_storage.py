@@ -1609,6 +1609,10 @@ _RBW_PINENTRY_HELPER = '''#!/usr/bin/env python3
 import os, sys
 FALLBACK = {fallback}
 path = os.environ.get("PINENTRY_USER_DATA") or ""
+out = sys.stdout.buffer
+def _say(line):
+    out.write(line)
+    out.flush()
 def _enc(data):
     out = bytearray()
     for b in data:
@@ -1618,9 +1622,13 @@ def _enc(data):
             out.append(b)
     return bytes(out)
 if not path or not os.path.isfile(path):
+    if os.name == "nt":
+        # os.exec* on Windows starts a new process and exits this one, so
+        # rbw-agent would see pinentry close before the child answers.
+        import subprocess
+        sys.exit(subprocess.call([FALLBACK, *sys.argv[1:]]))
     os.execvp(FALLBACK, [FALLBACK, *sys.argv[1:]])
-sys.stdout.write("OK Pleased to meet you\\n")
-sys.stdout.flush()
+_say(b"OK Pleased to meet you\\n")
 for raw in sys.stdin:
     cmd = raw.split(None, 1)[0] if raw.strip() else ""
     if cmd == "GETPIN":
@@ -1628,18 +1636,14 @@ for raw in sys.stdin:
             with open(path, "rb") as fh:
                 secret = fh.read()
         except Exception:
-            sys.stdout.write("ERR 83886179 canceled\\n")
-            sys.stdout.flush()
+            _say(b"ERR 83886179 canceled\\n")
             continue
-        sys.stdout.buffer.write(b"D " + _enc(secret) + b"\\nOK\\n")
-        sys.stdout.buffer.flush()
+        _say(b"D " + _enc(secret) + b"\\nOK\\n")
     elif cmd == "BYE":
-        sys.stdout.write("OK\\n")
-        sys.stdout.flush()
+        _say(b"OK\\n")
         break
     else:
-        sys.stdout.write("OK\\n")
-        sys.stdout.flush()
+        _say(b"OK\\n")
 '''
 
 
@@ -1846,7 +1850,9 @@ class RbwBackend(SecretBackend):
                 )
             return
         makedirs_private(dirname)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        # Without O_BINARY, Windows writes every "\n" as "\r\n".
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+        fd = os.open(path, flags, mode)
         try:
             os.write(fd, data)
         finally:
@@ -1862,6 +1868,47 @@ class RbwBackend(SecretBackend):
             )
             return result.returncode == 0
         return os.path.isfile(path) and os.access(path, os.X_OK)
+
+    def _pinentry_script_path(self) -> str:
+        """The Python source the Windows ``.cmd`` launcher runs."""
+        return os.path.join(self._pinentry_helper_dir(), "rbw-pinentry.py")
+
+    @staticmethod
+    def _windows_pinentry_launcher() -> bytes:
+        """``rbw-pinentry.cmd``: run the helper script with this install's Python.
+
+        A frozen build's ``sys.executable`` is the app, not an interpreter, so
+        the launcher goes through ``--internal-rbw-pinentry`` on the console
+        executable; the windowed one has no stdout to answer rbw-agent on.
+        """
+        if getattr(sys, "frozen", False):
+            from .platform.process import FROZEN_WINDOWS_CONSOLE_EXE
+
+            console = os.path.join(os.path.dirname(sys.executable), FROZEN_WINDOWS_CONSOLE_EXE)
+            exe = console if os.path.isfile(console) else sys.executable
+            arguments = "--internal-rbw-pinentry"
+        else:
+            exe = sys.executable
+            # -I: nothing from PYTHON* variables or the user site is imported
+            # into the process that handles the vault password.
+            arguments = "-I"
+        # cmd.exe expands %NAME% in a batch line, so a literal % is doubled.
+        exe = exe.replace("%", "%%")
+        return f'@echo off\r\n@"{exe}" {arguments} "%~dp0rbw-pinentry.py" %*\r\n'.encode("utf-8")
+
+    def _pinentry_helper_current(self, helper: str) -> bool:
+        """Whether the installed helper can run as it is."""
+        if not self._host_file_executable(helper):
+            return False
+        if sys.platform != "win32":
+            return True
+        if not os.path.isfile(self._pinentry_script_path()):
+            return False
+        try:
+            with open(helper, "rb") as handle:
+                return handle.read() == self._windows_pinentry_launcher()
+        except OSError:
+            return False
 
     def _using_our_pinentry_helper(self, current: str) -> bool:
         helper = self._pinentry_helper_path()
@@ -1880,7 +1927,7 @@ class RbwBackend(SecretBackend):
         """
         helper = self._pinentry_helper_path()
         current = self._pinentry_from_config()
-        if self._using_our_pinentry_helper(current) and self._host_file_executable(helper):
+        if self._using_our_pinentry_helper(current) and self._pinentry_helper_current(helper):
             return helper, False
         fallback = (
             "pinentry" if self._using_our_pinentry_helper(current) else (current or "pinentry")
@@ -1889,12 +1936,10 @@ class RbwBackend(SecretBackend):
         if sys.platform == "win32":
             # rbw-agent starts pinentry with CreateProcess. A shebang script
             # is not an executable; a .cmd launcher is.
-            py_path = os.path.join(self._pinentry_helper_dir(), "rbw-pinentry.py")
-            self._write_host_file(py_path, script, 0o700)
-            launcher = (
-                f'@echo off\r\n@"{sys.executable}" "%~dp0rbw-pinentry.py" %*\r\n'
-            ).encode("utf-8")
-            self._write_host_file(helper, launcher, 0o700)
+            self._write_host_file(self._pinentry_script_path(), script, 0o700)
+            self._write_host_file(helper, self._windows_pinentry_launcher(), 0o700)
+            if self._using_our_pinentry_helper(current):
+                return helper, False
         else:
             self._write_host_file(helper, script, 0o700)
         set_res = self._run("config", "set", "pinentry", helper)

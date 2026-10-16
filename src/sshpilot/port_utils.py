@@ -268,13 +268,19 @@ class PortChecker:
         return ports
     
     def _get_ports_via_windows_netstat(self) -> List[PortInfo]:
-        """Windows ``netstat -ano`` listing. ``-tlnp`` is a Linux flag set."""
+        """Windows ``netstat -ano`` listing. ``-tlnp`` is a Linux flag set.
+
+        The state column is translated (``ABHÖREN`` on German Windows), so a
+        listener is recognised by its foreign address instead: only a
+        listening socket has remote port 0.
+        """
         ports: List[PortInfo] = []
         try:
             result = subprocess.run(
                 ["netstat", "-ano"],
                 capture_output=True,
-                text=True,
+                encoding="oem",
+                errors="replace",
                 timeout=10,
                 **hidden_console_kwargs(),
             )
@@ -287,12 +293,13 @@ class PortChecker:
             parts = line.split()
             if len(parts) < 5 or parts[0].upper() != "TCP":
                 continue
-            if parts[3].upper() != "LISTENING":
+            if not parts[2].endswith(":0"):
                 continue
             addr_port = parts[1]
             if ":" not in addr_port:
                 continue
             addr, port_str = addr_port.rsplit(":", 1)
+            addr = addr.strip("[]")
             try:
                 port = int(port_str)
             except ValueError:

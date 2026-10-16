@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Callable, Mapping, Optional, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot import startup_timing
+from sshpilot.platform.process import FROZEN_WINDOWS_CONSOLE_EXE
 
 if TYPE_CHECKING:
     from sshpilot.api.daemon_client import DaemonClient
@@ -201,11 +202,6 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
         # resident daemon for minutes after the last client disconnected.
         environment.setdefault("SSHPILOT_PACKAGED", "1")
     return environment
-
-
-#: The console-subsystem executable a frozen Windows build ships beside the
-#: windowed ``sshPilot.exe`` (packaging/windows/sshpilot-windows.spec).
-FROZEN_WINDOWS_CONSOLE_EXE = "sshpilot-cli.exe"
 
 
 def _state_dir() -> str:

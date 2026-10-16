@@ -101,13 +101,14 @@ def _current_umask() -> int:
     return 0o022
 
 
-def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> None:
+def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> int:
     """Give a finished download its permissions and times before it replaces
-    *local_dst*.
+    *local_dst*, and return the mode it should end up with.
 
     ``mkstemp`` creates the temp ``0600``. A replaced file keeps its own mode;
     a new one gets the remote mode narrowed by the umask, as OpenSSH's
-    ``sftp get`` does. The remote mtime is kept.
+    ``sftp get`` does. The remote mtime is kept. On Windows the temp stays
+    writable; pass the returned mode to :func:`_finish_downloaded_file`.
     """
     try:
         mode = stat.S_IMODE(os.stat(local_dst).st_mode)
@@ -115,16 +116,28 @@ def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> None:
         remote_mode = getattr(attr, "st_mode", None)
         base = stat.S_IMODE(remote_mode) & 0o777 if remote_mode is not None else 0o666
         mode = base & ~_current_umask()
+    temp_mode = mode
     if sys.platform == "win32":
         # 0o444 sets FILE_ATTRIBUTE_READONLY. The temp then cannot be
         # deleted if the replace fails, and a read-only destination cannot
         # be replaced at all.
-        mode |= stat.S_IWRITE
-    os.chmod(temp_path, mode)
+        temp_mode |= stat.S_IWRITE
+    os.chmod(temp_path, temp_mode)
     mtime = getattr(attr, "st_mtime", None)
     if mtime is not None:
         atime = getattr(attr, "st_atime", None)
         os.utime(temp_path, (atime if atime is not None else mtime, mtime))
+    return mode
+
+
+def _finish_downloaded_file(temp_path: str, local_dst: str, mode: int) -> None:
+    """Move a finished download into place with the mode it was given."""
+    replace_local_file(temp_path, local_dst)
+    if sys.platform == "win32" and not mode & stat.S_IWRITE:
+        try:
+            os.chmod(local_dst, mode)
+        except OSError:
+            pass
 
 
 class _TransferSkipped(Exception):
@@ -1681,8 +1694,8 @@ class TransferRuntime:
                 tmp_file.write(data)
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
-            _apply_downloaded_metadata(temp_path, local_dst, attr)
-            replace_local_file(temp_path, local_dst)
+            mode = _apply_downloaded_metadata(temp_path, local_dst, attr)
+            _finish_downloaded_file(temp_path, local_dst, mode)
         except BaseException:
             self._cleanup_local_temp(record)
             raise
@@ -1731,8 +1744,8 @@ class TransferRuntime:
                     client.close_handle(handle)
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
-            _apply_downloaded_metadata(temp_path, local_dst, attr)
-            replace_local_file(temp_path, local_dst)
+            mode = _apply_downloaded_metadata(temp_path, local_dst, attr)
+            _finish_downloaded_file(temp_path, local_dst, mode)
         except BaseException:
             self._cleanup_local_temp(record)
             raise

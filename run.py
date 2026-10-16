@@ -60,6 +60,15 @@ if len(sys.argv) > 1 and sys.argv[1] == '--internal-askpass':
     sys.argv = sys.argv[1:]
     sys.exit(daemon_askpass_main())
 
+if len(sys.argv) > 2 and sys.argv[1] == '--internal-rbw-pinentry':
+    import runpy
+
+    # rbw-pinentry.cmd passes the helper script, then rbw-agent's arguments;
+    # the script reads those from sys.argv[1:].
+    sys.argv = sys.argv[2:]
+    runpy.run_path(sys.argv[0], run_name='__main__')
+    sys.exit(0)
+
 if len(sys.argv) > 1 and sys.argv[1] == '--internal-native-askpass':
     from sshpilot.askpass_utils import run_askpass_and_write
 

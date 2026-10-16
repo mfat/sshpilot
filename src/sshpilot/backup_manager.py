@@ -127,12 +127,20 @@ def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -
     raw = os.path.expanduser(str(path)) if str(path).startswith("~") else str(path)
     flavour = ntpath if _is_windows_style_path(raw) else posixpath
     normalized = flavour.normpath(raw)
+    # Windows paths are case-insensitive: ``c:\users\alice`` is the same
+    # home as a recorded ``C:\Users\alice``.
+    if _is_windows_style_path(str(source_home)):
+        def same(a: str, b: str) -> bool:
+            return a.lower() == b.lower()
+    else:
+        def same(a: str, b: str) -> bool:
+            return a == b
     for prefix, _separator in _home_prefixes(str(source_home)):
         root = prefix[:-1]
         for candidate in (raw, normalized):
-            if candidate == root:
+            if same(candidate, root):
                 return _join_rebased_home(str(target_home), "")
-            if candidate.startswith(prefix):
+            if same(candidate[:len(prefix)], prefix):
                 return _join_rebased_home(str(target_home), candidate[len(prefix):])
     return path
 

@@ -34,6 +34,7 @@ ALLOWED_EDGES = {
         "sshpilot.platform.locking",  # shared settings transaction lock
         "sshpilot.platform.windows",  # GI-free Windows ACL helpers
         "sshpilot.platform.fs",  # GI-free directory fsync
+        "sshpilot.platform.process",  # GI-free process helpers (hidden console)
         "sshpilot.ssh_config_document",  # GI-free lossless config document
         "sshpilot.ssh_config_formatter",  # GI-free managed-option registry
         "sshpilot.identity",  # GI-free identity-provider contract

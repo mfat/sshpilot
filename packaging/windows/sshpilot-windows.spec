@@ -4,9 +4,10 @@
 #
 # One Analysis of run.py, two executables in one folder:
 #   sshPilot.exe      windowed: the GUI
-#   sshpilot-cli.exe  console:  the daemon (--daemon) and askpass
-#                     (--internal-askpass). A windowed exe has no console to
-#                     hand OpenSSH's children, and no stdout for askpass.
+#   sshpilot-cli.exe  console:  the daemon (--daemon), askpass
+#                     (--internal-askpass) and rbw's pinentry
+#                     (--internal-rbw-pinentry). A windowed exe has no console
+#                     to hand OpenSSH's children, and no stdout for helpers.
 # Bundled beside them: the patched libvterm-0.dll, and Microsoft's conpty.dll
 # with its OpenConsole.exe (both from vendor/, see docs/running-on-windows.md).
 

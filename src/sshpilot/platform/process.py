@@ -12,6 +12,11 @@ from typing import Any, Dict, Optional, TypeVar, Union
 
 _T = TypeVar("_T")
 
+#: The console-subsystem executable a frozen Windows build ships beside the
+#: windowed ``sshPilot.exe`` (packaging/windows/sshpilot-windows.spec).
+FROZEN_WINDOWS_CONSOLE_EXE = "sshpilot-cli.exe"
+
+
 def hidden_console_kwargs() -> Dict[str, Any]:
     """``subprocess`` keyword arguments that keep a child's console hidden.
 

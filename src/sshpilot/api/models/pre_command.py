@@ -274,7 +274,11 @@ _CMD_UNSAFE = frozenset("&|<>^%!\" \t")
 
 
 def _quote_shell_token(value: str) -> str:
-    """Quote *value* for the shell that runs a pre-connection command."""
+    """Quote *value* for the shell that runs a pre-connection command.
+
+    On Windows this keeps spaces and ``&|<>^`` literal, but ``cmd /c`` still
+    expands ``%NAME%`` inside double quotes and has no escape for it there.
+    """
     if sys.platform != "win32":
         return shlex.quote(value)
     if not value:

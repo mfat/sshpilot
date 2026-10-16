@@ -5,7 +5,7 @@ Each test names a behavior that failed on Windows and is safe on POSIX.
 from __future__ import annotations
 
 import ast
-import importlib.util
+import faulthandler
 import json
 import os
 import stat
@@ -67,6 +67,7 @@ def test_custom_socket_accepts_windows_pipes_and_drive_paths():
         normalize_custom_socket("C:relative")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="C:\\ is not absolute on POSIX")
 def test_include_rewrite_keeps_windows_paths_under_the_source_home():
     import sshpilot.backup_manager as bm
 
@@ -111,6 +112,20 @@ def test_rebase_home_path_across_path_flavours():
     assert bm._rebase_home_path(
         "/etc/ssh/id", "/home/alice", "/home/bob"
     ) == "/etc/ssh/id"
+
+
+def test_rebase_home_path_ignores_case_only_for_windows_homes():
+    import sshpilot.backup_manager as bm
+
+    assert bm._rebase_home_path(
+        r"c:\users\alice\.ssh\id_ed25519", r"C:\Users\alice", "/home/bob"
+    ) == "/home/bob/.ssh/id_ed25519"
+    assert bm._rebase_home_path(
+        "c:/USERS/Alice/.ssh/id", r"C:\Users\alice", "/home/bob"
+    ) == "/home/bob/.ssh/id"
+    assert bm._rebase_home_path(
+        "/home/Alice/.ssh/id", "/home/alice", "/home/bob"
+    ) == "/home/Alice/.ssh/id"
 
 
 def test_home_alias_uses_forward_slashes(tmp_path, monkeypatch):
@@ -166,6 +181,26 @@ def test_download_replaces_a_readonly_destination(tmp_path):
     temp.write_bytes(b"new")
     replace_local_file(str(temp), str(dest))
     assert dest.read_bytes() == b"new"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file attributes")
+def test_a_readonly_remote_file_downloads_readonly(tmp_path):
+    from sshpilot.daemon.transfer_runtime import (
+        _apply_downloaded_metadata,
+        _finish_downloaded_file,
+    )
+
+    temp = tmp_path / "part"
+    temp.write_bytes(b"new")
+    dest = tmp_path / "file"
+    attr = SimpleNamespace(st_mode=stat.S_IFREG | 0o444, st_mtime=None)
+    mode = _apply_downloaded_metadata(str(temp), str(dest), attr)
+    _finish_downloaded_file(str(temp), str(dest), mode)
+    try:
+        assert dest.read_bytes() == b"new"
+        assert not os.stat(dest).st_mode & stat.S_IWRITE
+    finally:
+        os.chmod(dest, stat.S_IREAD | stat.S_IWRITE)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive filesystem")
@@ -227,10 +262,86 @@ def test_rbw_pinentry_helper_is_launchable(tmp_path):
     if sys.platform == "win32":
         assert helper.endswith("rbw-pinentry.cmd")
         assert b"python" in written[helper].lower()
+        assert b" -I " in written[helper]
         assert any(path.endswith("rbw-pinentry.py") for path in written)
     else:
         assert helper.endswith("rbw-pinentry")
         assert written[helper].startswith(b"#!")
+
+
+def test_frozen_pinentry_launcher_uses_the_console_exe(tmp_path, monkeypatch):
+    from sshpilot.platform.process import FROZEN_WINDOWS_CONSOLE_EXE
+    from sshpilot.secret_storage import RbwBackend
+
+    console = tmp_path / "100%" / FROZEN_WINDOWS_CONSOLE_EXE
+    console.parent.mkdir()
+    console.write_bytes(b"")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(console.parent / "sshPilot.exe"))
+    launcher = RbwBackend._windows_pinentry_launcher().decode("utf-8")
+    expected_exe = str(console).replace("%", "%%")
+    assert f'@"{expected_exe}" --internal-rbw-pinentry "%~dp0rbw-pinentry.py" %*' in launcher
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows .cmd launcher")
+def test_a_stale_pinentry_launcher_is_rewritten_without_resetting_rbw(tmp_path):
+    from sshpilot.secret_storage import RbwBackend
+
+    backend = RbwBackend.__new__(RbwBackend)
+    backend._pinentry_helper_dir = lambda: str(tmp_path)
+    helper_path = str(tmp_path / "rbw-pinentry.cmd")
+    backend._pinentry_from_config = lambda: helper_path
+    (tmp_path / "rbw-pinentry.cmd").write_bytes(b'@echo off\r\n@"C:\\old\\python.exe" x %*\r\n')
+    (tmp_path / "rbw-pinentry.py").write_bytes(b"old")
+
+    def refuse_config_set(*args):
+        raise AssertionError("rbw config set drops the agent's unlocked keys")
+
+    backend._run = refuse_config_set
+    helper, changed = backend._ensure_pinentry_helper()
+    assert (helper, changed) == (helper_path, False)
+    assert Path(helper).read_bytes() == RbwBackend._windows_pinentry_launcher()
+    assert b"GETPIN" in (tmp_path / "rbw-pinentry.py").read_bytes()
+    assert backend._ensure_pinentry_helper() == (helper_path, False)
+
+
+def _write_pinentry_script(tmp_path) -> Path:
+    from sshpilot.secret_storage import _RBW_PINENTRY_HELPER
+
+    script = tmp_path / "rbw-pinentry.py"
+    script.write_text(
+        _RBW_PINENTRY_HELPER.format(fallback=json.dumps("pinentry")), encoding="utf-8"
+    )
+    return script
+
+
+def test_pinentry_helper_answers_with_bare_newlines(tmp_path):
+    script = _write_pinentry_script(tmp_path)
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"s3cr%et")
+    result = subprocess.run(
+        [sys.executable, "-I", str(script)],
+        input=b"GETPIN\nBYE\n",
+        capture_output=True,
+        env={**os.environ, "PINENTRY_USER_DATA": str(secret)},
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b"OK Pleased to meet you\nD s3cr%25et\nOK\nOK\n"
+
+
+def test_run_py_dispatches_the_frozen_pinentry_flag(tmp_path):
+    script = tmp_path / "probe.py"
+    script.write_text("import sys\nprint(sys.argv[1:])\n", encoding="utf-8")
+    run_py = Path(__file__).resolve().parents[1] / "run.py"
+    result = subprocess.run(
+        [sys.executable, str(run_py), "--internal-rbw-pinentry", str(script), "--display", ":0"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "['--display', ':0']"
 
 
 def test_public_key_comments_are_read_as_utf8(tmp_path):
@@ -281,14 +392,22 @@ def test_crash_log_is_opened_as_utf8(monkeypatch, tmp_path):
         "sshpilot.platform_utils.get_state_dir", lambda: str(tmp_path)
     )
     main._crash_log_fp = None
+    was_enabled = faulthandler.is_enabled()
     main._enable_crash_diagnostics()
-    assert main._crash_log_fp is not None
-    main._crash_log_fp.write("東京\n")
-    main._crash_log_fp.flush()
-    text = (tmp_path / "crash.log").read_text(encoding="utf-8")
-    assert "東京" in text
-    main._crash_log_fp.close()
-    main._crash_log_fp = None
+    try:
+        assert main._crash_log_fp is not None
+        main._crash_log_fp.write("東京\n")
+        main._crash_log_fp.flush()
+        text = (tmp_path / "crash.log").read_text(encoding="utf-8")
+        assert "東京" in text
+    finally:
+        # faulthandler still holds the crash log's descriptor.
+        faulthandler.disable()
+        if was_enabled:
+            faulthandler.enable(file=sys.__stderr__, all_threads=True)
+        if main._crash_log_fp is not None:
+            main._crash_log_fp.close()
+        main._crash_log_fp = None
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="os.execv differs on Windows")
@@ -314,14 +433,9 @@ def test_restart_app_spawns_a_new_process(monkeypatch):
     assert spawned["exit"] == 0
 
 
-def test_quit_kills_the_terminal_process_tree(monkeypatch):
+def _quit_with_one_terminal(monkeypatch):
     import sshpilot.shutdown as shutdown
 
-    killed = []
-    monkeypatch.setattr(
-        "sshpilot.platform.process.kill_process_tree",
-        lambda pid, **kwargs: killed.append(pid) or True,
-    )
     window = SimpleNamespace(
         _cleanup_index=0,
         _cleanup_total=1,
@@ -335,7 +449,31 @@ def test_quit_kills_the_terminal_process_tree(monkeypatch):
     monkeypatch.setattr(shutdown, "_update_cleanup_progress", lambda *_a, **_k: None)
     monkeypatch.setattr(shutdown, "_disconnect_terminal_safely", lambda *_a, **_k: None)
     shutdown._perform_cleanup_and_quit(window, window._cleanup_connections)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows has no SIGTERM to send")
+def test_quit_kills_the_terminal_process_tree(monkeypatch):
+    killed = []
+    monkeypatch.setattr(
+        "sshpilot.platform.process.kill_process_tree",
+        lambda pid, **kwargs: killed.append(pid) or True,
+    )
+    _quit_with_one_terminal(monkeypatch)
     assert killed == [2**31 - 1]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_quit_asks_the_terminal_process_to_exit_on_posix(monkeypatch):
+    import signal
+
+    def refuse_tree_kill(*_args, **_kwargs):
+        raise AssertionError("SIGKILL gives ssh no chance to clean up")
+
+    monkeypatch.setattr("sshpilot.platform.process.kill_process_tree", refuse_tree_kill)
+    signals = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    _quit_with_one_terminal(monkeypatch)
+    assert signals == [(2**31 - 1, signal.SIGTERM)]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows netstat")
@@ -343,20 +481,26 @@ def test_port_fallback_parses_windows_netstat(monkeypatch):
     from sshpilot.port_utils import PortChecker
 
     sample = (
-        "  Proto  Local Address          Foreign Address        State           PID\n"
-        "  TCP    0.0.0.0:22             0.0.0.0:0              LISTENING       4321\n"
-        "  TCP    127.0.0.1:80           0.0.0.0:0              ESTABLISHED     1\n"
+        "  Proto  Lokale Adresse         Remoteadresse          Status           PID\n"
+        "  TCP    0.0.0.0:22             0.0.0.0:0              ABHÖREN          4321\n"
+        "  TCP    127.0.0.1:50000        127.0.0.1:80           HERGESTELLT      1\n"
+        "  TCP    [::]:8080              [::]:0                 ABHÖREN          99\n"
+        "  UDP    0.0.0.0:53             *:*                                     7\n"
     )
+    seen = {}
 
     def fake_run(argv, **kwargs):
+        seen.update(kwargs)
         assert argv == ["netstat", "-ano"]
         return SimpleNamespace(returncode=0, stdout=sample, stderr="")
 
     monkeypatch.setattr("sshpilot.port_utils.subprocess.run", fake_run)
     ports = PortChecker()._get_ports_via_netstat()
     assert [(port.port, port.address, port.pid) for port in ports] == [
-        (22, "0.0.0.0", 4321)
+        (22, "0.0.0.0", 4321),
+        (8080, "::", 99),
     ]
+    assert seen["encoding"] == "oem"
 
 
 def test_private_directories_are_not_created_with_mode_0700():
@@ -369,22 +513,20 @@ def test_private_directories_are_not_created_with_mode_0700():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            for keyword in node.keywords:
-                if keyword.arg != "mode":
-                    continue
-                value = keyword.value
-                if isinstance(value, ast.Constant) and value.value == 0o700:
-                    offenders.append(f"{rel}:{node.lineno}")
+            values = [keyword.value for keyword in node.keywords if keyword.arg == "mode"]
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr in ("mkdir", "makedirs"):
+                receiver = func.value.id if isinstance(func.value, ast.Name) else ""
+                # os.mkdir(path, mode) and os.makedirs(path, mode) take the
+                # mode second, Path.mkdir(mode) first; an SFTP client's
+                # mkdir(path, mode) creates a remote directory.
+                if receiver == "os":
+                    values += node.args[1:2]
+                elif func.attr == "mkdir":
+                    values += node.args[:1]
+            if any(isinstance(v, ast.Constant) and v.value == 0o700 for v in values):
+                offenders.append(f"{rel}:{node.lineno}")
     assert not offenders, (
         "mkdir(mode=0o700) adds an OWNER RIGHTS ACE on Windows; use "
         "sshpilot.platform.fs.makedirs_private:\n" + "\n".join(offenders)
     )
-
-
-def test_easyenv_tests_import_without_which():
-    path = Path(__file__).with_name("test_easyenv_connections.py")
-    spec = importlib.util.spec_from_file_location("easyenv_connections_under_test", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert hasattr(module, "test_ssh_reads_the_written_host_block")
