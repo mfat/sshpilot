@@ -38,6 +38,11 @@ ManifestDPIAware true
 ; 164x314 side panel of the welcome and finish pages.
 !define MUI_WELCOMEFINISHPAGE_BITMAP "${__FILEDIR__}\welcome.bmp"
 !define MUI_UNWELCOMEFINISHPAGE_BITMAP "${__FILEDIR__}\welcome.bmp"
+; 150x57 banner on the right of every inner page's header.
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "${__FILEDIR__}\header.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP "${__FILEDIR__}\header.bmp"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\sshPilot.exe"
 
 !insertmacro MUI_PAGE_WELCOME
