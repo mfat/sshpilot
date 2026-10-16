@@ -143,11 +143,10 @@ def test_a_split_rebuild_leaves_the_scroll_position_alone(monkeypatch):
     assert window._connection_rows_split is False
 
 
-def test_a_failed_slice_raises_and_reports_no_completion(monkeypatch):
-    from sshpilot import startup_timing
-
+def test_a_failed_slice_raises_then_schedules_one_recovery(monkeypatch):
     idle = _Idle(monkeypatch)
     completed = []
+    recovered = []
     window = _window([("a", True), ("b", True)])
     window._on_connection_rows_completed = lambda: completed.append(True)
 
@@ -157,6 +156,7 @@ def test_a_failed_slice_raises_and_reports_no_completion(monkeypatch):
 
     window._rebuild_connection_list_steps = steps
     window.rebuild_connection_list(first_rows=1)
+    window.rebuild_connection_list = lambda: recovered.append(True)
 
     import pytest
     with pytest.raises(RuntimeError):
@@ -164,6 +164,10 @@ def test_a_failed_slice_raises_and_reports_no_completion(monkeypatch):
     assert completed == []
     assert window._pending_connection_rows is None
     assert window._staged_connection_rows is None
+    assert window._connection_rows_recovery_pending
+    idle.run()
+    assert recovered == [True]
+    assert not window._connection_rows_recovery_pending
 
 
 def test_quitting_drops_the_pending_rows(monkeypatch):
@@ -222,6 +226,79 @@ class _Row:
 
     def set_visible(self, visible):
         self.visible = bool(visible)
+
+
+def test_group_toggle_finishes_deferred_hierarchy_wiring(monkeypatch):
+    idle = _Idle(monkeypatch)
+    window = _window([("group", True), ("child", True), ("later", True)])
+    window.connection_list = []
+    window.rebuild_connection_list(first_rows=1)
+    group = type("G", (), {
+        "apply_descendant_visibility": lambda self, visible: None,
+    })()
+
+    window._on_group_toggled(group, "group", True)
+
+    assert window.built == ["group", "child", "later"]
+    assert window.finished
+    assert idle.sources == {}
+
+
+def test_section_toggle_finishes_deferred_hierarchy_wiring(monkeypatch):
+    idle = _Idle(monkeypatch)
+    window = _window([("section", True), ("child", True)])
+    window.rebuild_connection_list(first_rows=1)
+
+    window._on_section_toggled(None, "groups", False)
+
+    assert window.built == ["section", "child"]
+    assert window.finished
+    assert idle.sources == {}
+
+
+def test_attaching_staged_rows_refreshes_runtime_presentation():
+    class _RefreshingRow(_Row):
+        def __init__(self, name):
+            super().__init__(name)
+            self.refreshed = []
+
+        def update_status(self):
+            self.refreshed.append("status")
+
+        def _update_forwarding_indicators(self):
+            self.refreshed.append("forwarding")
+
+        def apply_hide_hosts(self, hidden):
+            self.refreshed.append(("hide-hosts", hidden))
+
+    window = MainWindow.__new__(MainWindow)
+    row = _RefreshingRow("staged")
+    connection = object()
+    window.connection_list = []
+    window.connection_rows = {}
+    window._hide_hosts = True
+    window._staged_connection_rows = [(row, connection)]
+
+    window._attach_staged_connection_rows()
+
+    assert window.connection_list == [row]
+    assert window.connection_rows == {connection: [row]}
+    assert row.refreshed == [
+        "status", "forwarding", ("hide-hosts", True),
+    ]
+
+
+def test_completed_rows_reapply_preferences_changed_during_staging():
+    window = MainWindow.__new__(MainWindow)
+    window.connection_rows = {}
+    window._staged_sidebar_display_dirty = True
+    refreshed = []
+    window.update_sidebar_display = lambda: refreshed.append(True)
+
+    window._on_connection_rows_completed()
+
+    assert refreshed == [True]
+    assert not window._staged_sidebar_display_dirty
 
 
 def test_grouped_rows_get_their_final_visibility_as_they_are_added(monkeypatch):

@@ -2568,6 +2568,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
             return
+        if getattr(self, '_staged_connection_rows', None) is not None:
+            # Rows already built off-tree would otherwise keep whichever
+            # presentation settings were active when they were constructed.
+            self._staged_sidebar_display_dirty = True
 
         try:
             connections = self.connection_manager.get_connections()
@@ -4353,14 +4357,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     return GLib.SOURCE_CONTINUE
         except Exception:
             # Not a completed sidebar: drop what is pending and let the error
-            # surface, as it does from a rebuild that is not split.
+            # surface, as it does from a rebuild that is not split. Also make
+            # one later, synchronous attempt: the failure may have come from
+            # transient model state, and a stable partial sidebar is worse.
             self._take_pending_connection_rows()
             self._staged_connection_rows = None
             self._connection_rows_split = False
+            if (
+                not getattr(self, '_is_quitting', False)
+                and not getattr(self, '_connection_rows_recovery_pending', False)
+            ):
+                self._connection_rows_recovery_pending = True
+                GLib.idle_add(self._recover_failed_connection_rows)
             raise
         self._pending_connection_rows = None
         self._pending_connection_rows_source = None
         self._on_connection_rows_completed()
+        return GLib.SOURCE_REMOVE
+
+    def _recover_failed_connection_rows(self):
+        """Make one full rebuild attempt after a deferred slice failed."""
+        self._connection_rows_recovery_pending = False
+        if getattr(self, '_is_quitting', False):
+            return GLib.SOURCE_REMOVE
+        try:
+            self.rebuild_connection_list()
+        except Exception:
+            logger.exception("Sidebar recovery rebuild failed")
         return GLib.SOURCE_REMOVE
 
     def _take_pending_connection_rows(self):
@@ -4377,6 +4400,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Forget the rows a split rebuild has not attached yet."""
         steps = self._take_pending_connection_rows()
         self._staged_connection_rows = None
+        self._staged_sidebar_display_dirty = False
         if steps is not None:
             steps.close()
 
@@ -4408,10 +4432,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.connection_list.append(row)
             if connection is not None:
                 self.connection_rows.setdefault(connection, []).append(row)
-                # Built off the list: catch a status change from meanwhile.
+                # Built off the list: catch state and presentation changes
+                # that callbacks applied only to attached rows meanwhile.
                 update_status = getattr(row, 'update_status', None)
                 if callable(update_status):
                     update_status()
+                update_forwarding = getattr(row, '_update_forwarding_indicators', None)
+                if callable(update_forwarding):
+                    update_forwarding()
+                apply_hide_hosts = getattr(row, 'apply_hide_hosts', None)
+                if callable(apply_hide_hosts):
+                    apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
     def _initial_sidebar_row_budget(self) -> int:
         """How many connection rows fill the sidebar's visible height."""
@@ -4599,6 +4630,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         groups_header = None
         if hierarchy:
             groups_header = SectionHeaderRow("groups", _("Groups"), self.config)
+            groups_header.connect("section-toggled", self._on_section_toggled)
             self._append_list_row(groups_header)
 
         # Build the list with groups
@@ -4624,6 +4656,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hierarchy:
                 ungrouped_header = SectionHeaderRow(
                     "ungrouped", _("Ungrouped"), self.config
+                )
+                ungrouped_header.connect(
+                    "section-toggled", self._on_section_toggled
                 )
                 self._append_list_row(ungrouped_header)
             ungrouped_visible = _section_expanded(ungrouped_header)
@@ -4729,6 +4764,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
+        # A parent may not know about a child group until the recursive
+        # generator returns. Finish that wiring before applying the toggle.
+        self.complete_pending_connection_rows()
         if hasattr(group_row, "apply_descendant_visibility"):
             group_row.apply_descendant_visibility(True)
 
@@ -4737,6 +4775,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, "group_id") and row.group_id == group_id:
                 self._select_only_row(row)
                 break
+
+    def _on_section_toggled(self, _header, _section_id, _expanded):
+        """Finish deferred rows so a section toggle covers every child."""
+        self.complete_pending_connection_rows()
 
     def _add_local_terminal_row_if_visible(self, search_text: str = '') -> None:
         """Prepend the pinned local-terminal row when it matches the search."""
@@ -7161,6 +7203,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             "sidebar_rows_completed",
             f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
         )
+        if getattr(self, '_staged_sidebar_display_dirty', False):
+            self._staged_sidebar_display_dirty = False
+            self.update_sidebar_display()
         if getattr(self, '_profile_awaiting_rows', False) and any(
             item["name"] == "sidebar_painted"
             for item in startup_timing.milestones()
