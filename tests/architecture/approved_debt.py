@@ -60,6 +60,7 @@ APPROVED_DAEMON_DEBT = frozenset(
         (("credential_model.py", "sshpilot.secret_storage"), "M5"),
         (("daemon/cli.py", "sshpilot.platform_utils"), "M4"),
         (("daemon/connection_launch_provider.py", "sshpilot.plugins"), "M8"),
+        (("daemon/ssh_launch.py", "sshpilot.plugins"), "M8"),
         (("daemon/connection_launch_provider.py", "sshpilot.ssh_connection_builder"), "M7"),
         (("daemon/connection_secret_provider.py", "sshpilot.askpass_utils"), "M5"),
         (("daemon/connection_secret_provider.py", "sshpilot.credential_model"), "M5"),

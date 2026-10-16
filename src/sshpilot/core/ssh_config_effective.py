@@ -21,7 +21,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Optional, Set, Union
 
-from ..ssh_config_document import SSHConfigDocument
+from sshpilot.platform.process import hidden_console_kwargs
+
+from ..ssh_config_document import SSHConfigDocument, split_config_lines, split_include_args
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +110,8 @@ def discover_ssh_config_paths(
         if absolute in visited:
             return
         try:
-            with open(absolute, encoding="utf-8") as handle:
-                lines = handle.readlines()
+            with open(absolute, encoding="utf-8", newline="") as handle:
+                lines = split_config_lines(handle.read())
         except (OSError, UnicodeError) as exc:
             logger.warning("Cannot read SSH config include %s: %s", absolute, exc)
             if os.path.exists(absolute):
@@ -123,7 +125,7 @@ def discover_ssh_config_paths(
             line = raw_line.strip()
             if not line or line.startswith("#") or not line.lower().startswith("include "):
                 continue
-            for pattern in shlex.split(line[len("include "):]):
+            for pattern in split_include_args(line[len("include "):]):
                 expanded = os.path.expanduser(
                     os.path.expandvars(expand_ssh_tokens(pattern))
                 )
@@ -221,7 +223,12 @@ def get_effective_ssh_config(
     command.extend(["-G", host])
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, check=True, timeout=10
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            **hidden_console_kwargs(),
         )
     except Exception:
         return {}
@@ -256,7 +263,7 @@ def _effective_config_lines(config: Dict[str, Union[str, List[str]]]) -> List[st
 
 def _authored_directives(block_text: str) -> Set[str]:
     names: Set[str] = set()
-    for raw_line in block_text.splitlines():
+    for raw_line in split_config_lines(block_text):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue

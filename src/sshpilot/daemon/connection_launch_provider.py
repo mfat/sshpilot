@@ -20,11 +20,15 @@ import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..api.errors import ErrorCode, SshPilotError
+from ..api.models.common import validate_ssh_hostname
 from ..api.models.connections import ConnectionId
 from ..api.models.sessions import PluginSessionFailure
 from ..core.connections.models import ConnectionRecord
 
 logger = logging.getLogger(__name__)
+
+# Distinct hosts one launch may reach through ProxyJump, nested hops included.
+_MAX_JUMP_HOSTS = 16
 
 # Finder/Dock launches often inherit C/ASCII locales. Prefer a native UTF-8
 # locale that is present on the host: macOS ships en_US.UTF-8; Linux CI and
@@ -96,6 +100,14 @@ class _PluginSessionLaunchError(SshPilotError):
 
 def _string(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _proxy_jump_host(hop: str) -> str:
+    """The host of one ``[ssh://][user@]host[:port][/]`` ProxyJump hop."""
+    host = hop.strip().removeprefix("ssh://").rstrip("/").rpartition("@")[2]
+    if host.startswith("["):
+        return host[1:].partition("]")[0]
+    return host.partition(":")[0]
 
 
 class HeadlessConnectionView:
@@ -539,6 +551,43 @@ class DaemonConnectionLaunchProvider:
 
         return connection_forwarding_only(connection) is True
 
+    @staticmethod
+    def _refuse_shell_text_in_host_names(connection: HeadlessConnectionView) -> None:
+        """Fail a launch whose resolved HostName or ProxyJump holds shell text.
+
+        The builder checks the values the Host block itself authored. OpenSSH
+        may take them from elsewhere instead -- a wildcard block, a file below
+        an ``Include`` -- and then only ``ssh -G`` shows what it will hand to
+        the shell (see ``validate_ssh_hostname``). Each ProxyJump hop is
+        dialled by an ``ssh`` of its own that resolves the hop's alias from
+        the same file, so the chain is followed.
+        """
+        from ..core.ssh_config_effective import get_effective_ssh_config
+
+        config_file = connection._resolve_config_override_path()
+        pending = [connection.resolve_host_identifier() or connection.get_effective_host()]
+        seen: List[str] = []
+        try:
+            while pending:
+                host = pending.pop(0)
+                if not host or host in seen:
+                    continue
+                if len(seen) >= _MAX_JUMP_HOSTS:
+                    raise ValueError("ProxyJump names too many hosts")
+                seen.append(host)
+                effective = get_effective_ssh_config(host, config_file=config_file)
+                validate_ssh_hostname(effective.get("hostname"), "HostName")
+                for hop in _string(effective.get("proxyjump")).split(","):
+                    if hop:
+                        validate_ssh_hostname(hop, "ProxyJump")
+                        pending.append(_proxy_jump_host(hop))
+        except ValueError as error:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                str(error),
+                connection_id=connection.id,
+            ) from error
+
     def _prepare_ssh_launch(
         self,
         connection: HeadlessConnectionView,
@@ -554,6 +603,7 @@ class DaemonConnectionLaunchProvider:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
         app_config = self._get_app_config()
+        self._refuse_shell_text_in_host_names(connection)
         connection.resolved_identity_files = (
             connection.collect_identity_file_candidates()
         )
@@ -589,7 +639,16 @@ class DaemonConnectionLaunchProvider:
             target_override=target_override,
             force_tty=force_tty,
         )
-        prepared = build_ssh_connection(ctx)
+        try:
+            prepared = build_ssh_connection(ctx)
+        except ValueError as error:
+            # The builder refuses authored HostName/ProxyJump values that
+            # would reach a shell (see ``validate_ssh_hostname``).
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                str(error),
+                connection_id=connection.id,
+            ) from error
         connection._preload_keys_into_agent(app_config, credential_lookup=manager)
         argv = tuple(prepared.command or ())
         environment = dict(prepared.env or {})
@@ -940,19 +999,27 @@ class DaemonConnectionLaunchProvider:
             resolve_native_auth,
         )
 
+        self._refuse_shell_text_in_host_names(connection)
         try:
             effective_config = get_effective_ssh_config(
                 host_value, config_file=config_file
             )
         except Exception:
             effective_config = {}
-        argv = _build_base_ssh_command(
-            connection,
-            effective_config,
-            app_cfg,
-            "ssh-copy-id",
-            config_file=config_file,
-        )
+        try:
+            argv = _build_base_ssh_command(
+                connection,
+                effective_config,
+                app_cfg,
+                "ssh-copy-id",
+                config_file=config_file,
+            )
+        except ValueError as error:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                str(error),
+                connection_id=connection_id,
+            ) from error
         if force:
             argv.append("-f")
         argv.extend(["-i", public_key_path])
@@ -1018,12 +1085,32 @@ class DaemonConnectionLaunchProvider:
 
         executable = _resolve_ssh_copy_id(environment.get("PATH"))
         if executable is None:
+            # Windows OpenSSH has no ssh-copy-id: run its install script
+            # over plain ssh instead.
+            from ..platform.windows import copy_id as windows_copy_id
+
+            ssh_executable = windows_copy_id.resolve_ssh(environment.get("PATH"))
+            if ssh_executable is not None:
+                try:
+                    public_key = windows_copy_id.read_public_key(public_key_path)
+                except (OSError, ValueError) as exc:
+                    raise SshPilotError(
+                        ErrorCode.INVALID_REQUEST,
+                        f"The public key could not be read: {exc}",
+                        connection_id=connection_id,
+                    ) from exc
+                argv = windows_copy_id.ssh_argv_from_copy_id(
+                    argv, ssh_executable, public_key, force=force
+                )
+                _log_copy_id_program(ssh_executable, target, fallback=True)
+                return tuple(argv), environment
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_CAPABILITY,
                 "ssh-copy-id is not installed",
                 connection_id=connection_id,
             )
         argv[0] = executable
+        _log_copy_id_program(executable, target, fallback=False)
         return tuple(argv), environment
 
     def describe_target(self, protocol: str, data: Any) -> str:
@@ -1104,6 +1191,18 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection.id,
             )
         return (executable, *argv[1:]), environment
+
+
+def _log_copy_id_program(program: str, target: str, *, fallback: bool) -> None:
+    """Which program will deploy the key. The argv is not logged: the Windows
+    fallback carries the public key inside the remote command."""
+
+    logger.info(
+        "public-key deployment program=%s target=%s via=%s",
+        os.path.basename(program) or program,
+        target,
+        "ssh" if fallback else "ssh-copy-id",
+    )
 
 
 def _resolve_ssh_copy_id(path: Optional[str]) -> Optional[str]:

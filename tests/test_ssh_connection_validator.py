@@ -57,6 +57,16 @@ class TestHostname:
     def test_bracketed_ipv6(self):
         assert self.v.validate_hostname("[::1]").is_valid is True
 
+    def test_ipv6_zone_id(self):
+        assert self.v.validate_hostname("fe80::1%eth0").is_valid is True
+        assert self.v.validate_hostname("[fe80::1%eth0]").is_valid is True
+
+    def test_ipv6_zone_id_with_shell_text_rejected(self):
+        # ipaddress accepts any zone id; ssh puts the host name in a shell
+        # command for a jump host.
+        for value in ("::1%h\'$(id>x)\'", "[::1%`id`]", "::1%a;b"):
+            assert self.v.validate_hostname(value).is_valid is False
+
     def test_invalid_bracketed_address(self):
         assert self.v.validate_hostname("[not-an-ip]").is_valid is False
 

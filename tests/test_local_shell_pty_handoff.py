@@ -7,8 +7,10 @@ decides whether a handoff is attempted at all.
 """
 
 import array
+import json
 import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,17 +21,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 # --- the argv -------------------------------------------------------------
 
-def _flatpak_agent_command(tmp_path, monkeypatch, **kwargs):
+def _flatpak_agent_command(tmp_path, monkeypatch, agent_code="# agent\n", **kwargs):
     from sshpilot import agent_client
 
     agent = tmp_path / "sshpilot_agent.py"
-    agent.write_text("# agent\n")
+    agent.write_text(agent_code)
 
     client = agent_client.AgentClient()
     monkeypatch.setattr(agent_client, "is_flatpak", lambda: True)
     monkeypatch.setattr(agent_client.shutil, "which", lambda _n: "/usr/bin/flatpak-spawn")
-    monkeypatch.setattr(client, "find_agent", lambda: ("/usr/bin/python3", str(agent)))
-    return client.build_agent_command(rows=24, cols=80, cwd="/home/u", **kwargs)
+    monkeypatch.setattr(client, "find_agent", lambda: (sys.executable, str(agent)))
+    kwargs.setdefault("cwd", "/home/u")
+    return client.build_agent_command(rows=24, cols=80, **kwargs)
 
 
 def test_handoff_command_forwards_the_socket(tmp_path, monkeypatch):
@@ -47,6 +50,30 @@ def test_relay_command_has_no_socket(tmp_path, monkeypatch):
 
     assert not any(a.startswith("--forward-fd") for a in cmd)
     assert "--pty-socket" not in cmd[-1]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Flatpak host shell is POSIX bash")
+def test_working_directory_is_not_parsed_by_the_host_shell(tmp_path, monkeypatch):
+    """The folder name is data: it may come from a download or an archive."""
+    cwd = str(tmp_path / "$(touch pwned);`touch pwned` 'a' \"b\"")
+    cmd = _flatpak_agent_command(
+        tmp_path, monkeypatch, cwd=cwd,
+        agent_code="import json, sys; print(json.dumps(sys.argv[1:]))\n",
+    )
+    agent_b64 = next(
+        a for a in cmd if a.startswith("--env=SSHPILOT_AGENT=")
+    ).split("=", 2)[2]
+
+    # What flatpak-spawn --host does with it: exec the argv after its options.
+    result = subprocess.run(
+        cmd[cmd.index("bash"):],
+        env={**os.environ, "SSHPILOT_AGENT": agent_b64},
+        cwd=tmp_path, capture_output=True, text=True, check=True,
+    )
+
+    agent_argv = json.loads(result.stdout)
+    assert agent_argv[agent_argv.index("--cwd") + 1] == cwd
+    assert not (tmp_path / "pwned").exists()
 
 
 # --- the handover message -------------------------------------------------

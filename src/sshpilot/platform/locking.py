@@ -12,10 +12,42 @@ import threading
 from pathlib import Path
 from typing import Dict
 
+from .fs import makedirs_private
+
 try:  # pragma: no cover - exercised by cross-process tests on POSIX
     import fcntl
 except ImportError:  # pragma: no cover - Windows fallback
     fcntl = None
+
+try:  # pragma: no cover - Windows only
+    import msvcrt
+except ImportError:  # pragma: no cover - POSIX
+    msvcrt = None
+
+_CAN_LOCK = fcntl is not None or msvcrt is not None
+
+
+def _lock_fd(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return
+    # msvcrt locks a byte range; LK_LOCK gives up after ~10 s, so keep
+    # retrying to match flock's blocking semantics.
+    os.lseek(fd, 0, os.SEEK_SET)
+    while True:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            return
+        except OSError:
+            continue
+
+
+def _unlock_fd(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return
+    os.lseek(fd, 0, os.SEEK_SET)
+    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
 class CrossProcessRLock:
@@ -31,11 +63,11 @@ class CrossProcessRLock:
         if not acquired:
             return False
         depth = getattr(self._state, "depth", 0)
-        if depth == 0 and fcntl is not None:
-            self._lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if depth == 0 and _CAN_LOCK:
+            makedirs_private(self._lock_path.parent)
             fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                _lock_fd(fd)
             except Exception:
                 os.close(fd)
                 self._local.release()
@@ -49,10 +81,10 @@ class CrossProcessRLock:
         if depth <= 0:
             raise RuntimeError("settings transaction lock is not held")
         self._state.depth = depth - 1
-        if depth == 1 and fcntl is not None:
+        if depth == 1 and _CAN_LOCK:
             fd = self._state.fd
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                _unlock_fd(fd)
             finally:
                 os.close(fd)
                 del self._state.fd

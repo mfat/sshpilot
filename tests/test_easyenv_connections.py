@@ -1,5 +1,6 @@
 """A machine as an sshPilot connection."""
 
+import shutil
 import subprocess
 
 import pytest
@@ -142,8 +143,7 @@ def test_the_copied_command_is_the_dashboards():
         "ssh -J easyenv@ssh.easyenv.io dev@AbC123.box.easyenv.io"
 
 
-@pytest.mark.skipif(subprocess.run(["which", "ssh"], capture_output=True).returncode != 0,
-                    reason="no ssh client")
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="no ssh client")
 def test_ssh_reads_the_written_host_block(tmp_path):
     nickname = conn.nicknames("my dev", [machine()])["AbC123"]
     data = conn.connection_data(nickname, machine())

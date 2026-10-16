@@ -3,7 +3,18 @@
 import os
 import types
 
+import pytest
+
 import sshpilot.ssh_multiplex as mux
+
+
+@pytest.fixture(autouse=True)
+def _private_windows_runtime_dir(monkeypatch, tmp_path):
+    """On Windows ``socket_dir()`` ignores ``XDG_RUNTIME_DIR`` and uses
+    ``%LOCALAPPDATA%``. Point that at a temp dir so the fake sockets these
+    tests create never land in the real runtime directory, where the app's
+    quit check would find them."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
 
 
 def test_socket_dir_prefers_xdg_runtime(monkeypatch, tmp_path):

@@ -41,7 +41,7 @@ the optional WebKit 6.0 backend), `-y` (don't prompt). Set `SSHPILOT_DRYRUN=1` t
 print the package command without changing anything. Prefer to do it by hand, or
 on an unsupported distro? Follow the manual steps below.
 
-macOS: see [INSTALL-macos.md](INSTALL-macos.md).
+macOS: see [INSTALL-macos.md](INSTALL-macos.md). Windows (experimental): see [running-on-windows.md](running-on-windows.md).
 
 Supported/tested Python versions: **3.12** and **3.13** (CI matrix).
 

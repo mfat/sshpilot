@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import os
 
+from sshpilot.platform.fs import makedirs_private
+
 DEFAULT_SERVER = "https://api.easyenv.io"
 
 CONFIG_KEYS = ("server", "service_token", "default_account", "web_url")
@@ -77,7 +79,7 @@ def write_config(updates: dict, path: str | None = None) -> str:
     between a create and a chmod.
     """
     path = path or config_path()
-    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    makedirs_private(os.path.dirname(path))
     try:
         with open(path, encoding="utf-8") as handle:
             lines = handle.read().splitlines()

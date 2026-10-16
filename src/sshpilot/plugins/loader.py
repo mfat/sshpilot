@@ -36,7 +36,6 @@ import importlib
 import importlib.util
 import json
 import logging
-import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,9 +115,11 @@ class PluginInfo:
 
 
 def _user_plugin_dir() -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or os.path.join(
-        os.path.expanduser("~"), ".local", "share")
-    return Path(base) / "sshpilot" / "plugins"
+    # $XDG_DATA_HOME/sshpilot (default ~/.local/share) on POSIX,
+    # %LOCALAPPDATA%\sshpilot on Windows; stdlib only, no GLib.
+    from ..platform.paths import get_data_dir
+
+    return get_data_dir() / "plugins"
 
 
 def _read_manifest(directory: Path) -> Optional[dict]:

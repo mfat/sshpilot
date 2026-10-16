@@ -116,6 +116,8 @@ from ..models.connections import (
     DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteConnectionsRequest,
+    DeleteConnectionsResult,
     DeleteGroupRequest,
     ForwardingRule,
     GroupReference,
@@ -2809,6 +2811,44 @@ def delete_connection_result_from_wire(value: Any) -> DeleteConnectionResult:
     return DeleteConnectionResult(
         connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         deleted=_boolean(data["deleted"], "connection deleted result"),
+    )
+
+
+def delete_connections_request_to_wire(
+    request: DeleteConnectionsRequest,
+) -> Dict[str, Any]:
+    if type(request) is not DeleteConnectionsRequest:
+        raise TypeError("delete connections request is required")
+    return {"connection_ids": list(request.connection_ids)}
+
+
+def delete_connections_request_from_wire(value: Any) -> DeleteConnectionsRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_ids"},
+        context="delete connections request",
+    )
+    return DeleteConnectionsRequest(
+        connection_ids=_identifier_array(data["connection_ids"], "connection id")
+    )
+
+
+def delete_connections_result_to_wire(
+    result: DeleteConnectionsResult,
+) -> Dict[str, Any]:
+    if type(result) is not DeleteConnectionsResult:
+        raise TypeError("delete connections result is required")
+    return {"connection_ids": list(result.connection_ids)}
+
+
+def delete_connections_result_from_wire(value: Any) -> DeleteConnectionsResult:
+    data = _strict_fields(
+        value,
+        required={"connection_ids"},
+        context="delete connections result",
+    )
+    return DeleteConnectionsResult(
+        connection_ids=_identifier_array(data["connection_ids"], "connection id")
     )
 
 

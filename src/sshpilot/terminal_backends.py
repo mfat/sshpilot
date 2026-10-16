@@ -12,7 +12,10 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 import gi
 
 gi.require_version("Gtk", "4.0")
-gi.require_version("Vte", "3.91")
+try:
+    gi.require_version("Vte", "3.91")
+except ValueError:  # e.g. Windows, where no GTK4 VTE build exists
+    pass
 
 from gi.repository import GObject, Gtk
 from .terminal_color_utils import get_contrast_color
@@ -375,7 +378,15 @@ class BaseTerminalBackend(Protocol):
 
 from typing import TYPE_CHECKING
 
-from gi.repository import Gdk, GLib, Pango, Vte
+from gi.repository import Gdk, GLib, Pango
+
+try:
+    from gi.repository import Vte
+except ImportError:  # pragma: no cover - platform dependent
+    Vte = None
+
+#: Whether the VTE backend can be constructed on this system.
+VTE_AVAILABLE = Vte is not None
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from .terminal import TerminalWidget
@@ -415,7 +426,7 @@ def xterm_cursor_blink_enabled(blink: Any) -> bool:
     return nick == "on"
 
 
-class GridTrackingVteTerminal(Vte.Terminal):
+class GridTrackingVteTerminal(Vte.Terminal if Vte is not None else object):
     """VTE terminal that reports grid changes after GTK allocation."""
 
     __gtype_name__ = "SshPilotGridTrackingVteTerminal"
@@ -463,6 +474,8 @@ class VTETerminalBackend:
     """VTE based terminal backend."""
 
     def __init__(self, owner: "TerminalWidget") -> None:
+        if not VTE_AVAILABLE:
+            raise TerminalBackendCapabilityError("VTE is not available on this system")
         self.owner = owner
         self.vte = GridTrackingVteTerminal()
         self.widget = self.vte

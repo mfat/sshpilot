@@ -29,7 +29,19 @@ import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    runtime_checkable,
+)
 
 from ...api.models.connection_store import (
     ConnectionMetadataSummary,
@@ -76,7 +88,7 @@ from .identity_state_v2 import (
 from .service import ConnectionService
 from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
-from .ssh_config_store import SshConfigStore, _atomic_write_text
+from .ssh_config_store import SshConfigStore, _atomic_write_text, _source_of
 from .transient import TransientConnections, is_transient_connection_id
 from .state_file import (
     ConnectionStateFileKind,
@@ -279,6 +291,8 @@ class ConnectionRepositoryProtocol(Protocol):
 
     def delete_connection(self, connection_id: str) -> None: ...
 
+    def delete_connections(self, connection_ids: Sequence[str]) -> Tuple[str, ...]: ...
+
     def split_connection(
         self,
         connection_id: str,
@@ -358,6 +372,15 @@ class ConnectionRepositoryProtocol(Protocol):
     def restore_connection_store(
         self, section: Mapping[str, Any], *, mode: str = "merge"
     ) -> "ConnectionStoreRestoreResult": ...
+
+
+# Transaction captures must hold a file's exact bytes. On Windows a plain
+# ``os.open`` is a text-mode descriptor whose reads turn CRLF into LF, so a
+# rollback would "restore" a CRLF config with LF endings and the post-write
+# check would mistake the daemon's own write for an external edit.
+_RAW_READ_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+)
 
 
 def _repository_error(message: str) -> CoreError:
@@ -597,12 +620,12 @@ class ConnectionRepository:
                     intent = self._prepare_identity_intent_locked(
                         prepared, operation_label="raw_config_edit"
                     )
-                self._ssh_store.commit_prepared(prepared)
+                committed_write = self._ssh_store.commit_prepared(prepared)
                 result = self._ssh_store.get_text()
                 self._record_post_write_locked(
                     disk_before, self._ssh_store.root_path
                 )
-                ssh_config = self._ssh_store.load()
+                ssh_config = committed_write.config
                 if not self._identity_state_unavailable:
                     self._commit_identity_target_locked(
                         intent, ssh_config, disk_before
@@ -1752,7 +1775,12 @@ class ConnectionRepository:
         self._identity_state = candidate
         return candidate
 
-    def _capture_transaction_files_locked(self, ssh_target: Optional[Path] = None):
+    def _capture_transaction_files_locked(
+        self,
+        ssh_target: Optional[Path] = None,
+        *,
+        more_ssh_targets: Iterable[Path] = (),
+    ):
         """Capture pre-write state for every file the mutation will touch.
 
         Returns a dict mapping each ``Path`` to a tuple of:
@@ -1772,10 +1800,13 @@ class ConnectionRepository:
 
         Non-SSH mutations must not capture or restore the SSH root, so
         callers must only pass ``ssh_target`` for SSH mutations.
+        ``more_ssh_targets`` adds further files for a batch that writes
+        several SSH sources in one transaction.
         """
         paths = {self._state_path}
         if ssh_target is not None:
             paths.add(Path(ssh_target))
+        paths.update(Path(target) for target in more_ssh_targets)
         captured = {}
         for path in paths:
             path = Path(path)
@@ -1796,7 +1827,7 @@ class ConnectionRepository:
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "The mutation target is unsafe",
                 )
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = _RAW_READ_FLAGS
             try:
                 fd = os.open(path, flags)
             except OSError as exc:
@@ -1853,7 +1884,7 @@ class ConnectionRepository:
         if path not in captured:
             return
         try:
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = _RAW_READ_FLAGS
             fd = os.open(str(path), flags)
             try:
                 st = os.fstat(fd)
@@ -2062,7 +2093,7 @@ class ConnectionRepository:
                     self._record_post_write_locked(
                         disk_before, Path(result.touched_path)
                     ) if result.touched_path else None
-                    committed = self._ssh_store.load()
+                    committed = result.config
                     self._commit_identity_target_locked(intent, committed, disk_before)
                     created = self._service.get(result.connection_id)
                     if created is None:
@@ -2150,7 +2181,7 @@ class ConnectionRepository:
                         self._record_post_write_locked(
                             disk_before, Path(result.touched_path),
                         )
-                    committed = self._ssh_store.load()
+                    committed = result.config
                     self._commit_identity_target_locked(intent, committed, disk_before)
                     updated = self._service.get(new_id)
                     if updated is None:
@@ -2220,7 +2251,7 @@ class ConnectionRepository:
                         self._record_post_write_locked(
                             disk_before, Path(result.touched_path),
                         )
-                    committed = self._ssh_store.load()
+                    committed = result.config
                     self._commit_identity_target_locked(intent, committed, disk_before)
                     created = self._service.get(result.connection_id)
                     if created is None:
@@ -2253,23 +2284,63 @@ class ConnectionRepository:
             return self._service.get(created.id)
 
     def delete_connection(self, connection_id: str) -> None:
+        self.delete_connections((connection_id,))
+
+    def delete_connections(self, connection_ids: Sequence[str]) -> Tuple[str, ...]:
+        """Delete several connections in one transaction with one store event.
+
+        Every id is resolved and checked before anything is written, so an
+        unknown id fails the whole batch with ``CONNECTION_NOT_FOUND``. SSH
+        hosts go in one document replacement per declaring file (normally
+        just the one SSH config), each committed with its own identity
+        intent and state-file write; non-SSH connections follow with one
+        more state-file write. An exception at any step restores every
+        captured file, so nothing is deleted.
+
+        Hosts declared in one file are crash-safe as a unit, like a single
+        delete. Across several Include files they are not: if the process
+        dies between two files' commits, the files already committed stay
+        deleted and the rest stay present. Each committed file leaves the
+        SSH config and identity state consistent with each other, so the
+        result is a partial delete, never a corrupt one -- the same outcome
+        deleting them one by one would have at that point.
+        Returns the internal ids that were removed, in request order.
+        """
         with self._mutation_scope():
             before = self._begin()
-            connection_id = self._resolve_internal_id_locked(connection_id)
-            self._assert_not_unresolved_locked(connection_id)
-            existing = self._service.get(connection_id)
-            if existing is None:
+            resolved: List[str] = []
+            for raw in connection_ids:
+                connection_id = self._resolve_internal_id_locked(str(raw))
+                self._assert_not_unresolved_locked(connection_id)
+                if connection_id not in resolved:
+                    resolved.append(connection_id)
+            if not resolved:
                 raise CoreError(
-                    ErrorCode.CONNECTION_NOT_FOUND,
-                    "The connection does not exist",
+                    ErrorCode.VALIDATION_ERROR, "No connections to delete"
                 )
+            ssh_by_source: Dict[Optional[Path], List[str]] = {}
+            non_ssh: List[str] = []
+            for connection_id in resolved:
+                existing = self._service.get(connection_id)
+                if existing is None:
+                    raise CoreError(
+                        ErrorCode.CONNECTION_NOT_FOUND,
+                        "The connection does not exist",
+                    )
+                if existing.protocol == "ssh":
+                    # Same source rule the store uses to pick the file it writes.
+                    declared = _source_of(existing)
+                    source = Path(declared) if declared else None
+                    ssh_by_source.setdefault(source, []).append(connection_id)
+                else:
+                    non_ssh.append(connection_id)
             disk_before = self._capture_transaction_files_locked(
-                Path(existing.source) if existing.protocol == "ssh" and existing.source else None
+                more_ssh_targets=[path for path in ssh_by_source if path is not None]
             )
             try:
-                if existing.protocol == "ssh":
+                for ids in ssh_by_source.values():
                     self._sync_identity_placements_from_service_locked()
-                    prepared = self._ssh_store.prepare_delete(connection_id)
+                    prepared = self._ssh_store.prepare_delete_many(ids)
                     intent = self._prepare_identity_intent_locked(
                         prepared, operation_label="delete"
                     )
@@ -2278,21 +2349,22 @@ class ConnectionRepository:
                         self._record_post_write_locked(
                             disk_before, Path(result.touched_path),
                         )
-                    committed = self._ssh_store.load()
-                    self._commit_identity_target_locked(intent, committed, disk_before)
-                else:
+                    self._commit_identity_target_locked(
+                        intent, result.config, disk_before
+                    )
+                    self._finish_identity_intent_locked()
+                for connection_id in non_ssh:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
-                if existing.protocol != "ssh":
                     self._remove_persisted_root_id_locked(connection_id)
                     self._metadata.pop(connection_id, None)
+                if non_ssh:
                     self._persist_state_file_locked()
-                if existing.protocol == "ssh":
-                    self._finish_identity_intent_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
+            return tuple(resolved)
 
     def split_connection(
         self,
@@ -2339,7 +2411,7 @@ class ConnectionRepository:
                     self._record_post_write_locked(
                         disk_before, Path(result.touched_path),
                     )
-                committed = self._ssh_store.load()
+                committed = result.config
                 self._commit_identity_target_locked(intent, committed, disk_before)
                 result_id = result.connection_id
                 self._finish_identity_intent_locked()

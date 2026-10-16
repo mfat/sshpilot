@@ -394,6 +394,7 @@ def show_ssh_password_dialog(
     on_store: Optional[Any] = None,
     allow_store: Optional[bool] = None,
     on_dialog: Optional[Any] = None,
+    on_session_remember: Optional[Any] = None,
 ) -> Optional[str]:
     """Show the standard in-app SSH **password** dialog (blocking).
 
@@ -460,6 +461,7 @@ def show_ssh_password_dialog(
         on_store=on_store,
         allow_store=allow_store,
         on_dialog=on_dialog,
+        on_session_remember=on_session_remember,
     )
 
 
@@ -498,8 +500,13 @@ def _show_password_passphrase_dialog(
     on_store: Optional[Any] = None,
     allow_store: Optional[bool] = None,
     on_dialog: Optional[Any] = None,
+    on_session_remember: Optional[Any] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
+
+    ``on_session_remember`` adds a "Remember until SSH Pilot quits" checkbox;
+    it is called (with no arguments) when that box is ticked and the stored
+    "Remember" box is not. The daemon then keeps the secret in memory only.
 
     ``Adw.Dialog`` + header bar (Cancel / confirm) with a boxed-list password
     row and an optional Store checkbox below it — not a SwitchRow (which reads
@@ -617,6 +624,11 @@ def _show_password_passphrase_dialog(
             except Exception:
                 pass
         content.append(no_store_label)
+    session_checkbox = None
+    if on_session_remember is not None and prompt_type in ("password", "passphrase"):
+        session_checkbox = Gtk.CheckButton(label=_("Remember until SSH Pilot quits"))
+        session_checkbox.set_active(False)
+        content.append(session_checkbox)
 
     toolbar = Adw.ToolbarView()
     toolbar.add_top_bar(header)
@@ -645,6 +657,11 @@ def _show_password_passphrase_dialog(
                         # interaction path via ``on_store``. There is no GTK
                         # connection-manager fallback.
                         logger.debug("Password entered without a daemon store callback")
+                elif session_checkbox is not None and session_checkbox.get_active():
+                    try:
+                        on_session_remember()
+                    except Exception as e:
+                        logger.debug("Failed to run on_session_remember hook: %s", e)
             else:
                 password_result[0] = None
         else:
@@ -3724,29 +3741,17 @@ class WindowConfigDialogsMixin:
                 self._simple_dialog(_("Error"), message)
 
             def _build_move_steps(nicknames, target_group_id):
-                """Build sequence steps to move/copy all nicknames to target_group_id."""
-                steps = []
-                if is_copy:
-                    from sshpilot.api.models.connection_store import (
-                        ConnectionId, CopyConnectionToGroupRequest, GroupId,
+                """One sequence step that moves/copies every nickname at once."""
+                if not nicknames:
+                    return []
+                from sshpilot.gtk.group_store import place_connections_in_group
+
+                return [
+                    lambda _prev: place_connections_in_group(
+                        controller.client, nicknames, target_group_id,
+                        is_copy=is_copy,
                     )
-                    for nick in nicknames:
-                        steps.append(
-                            lambda _prev, n=nick: controller.client.copy_connection_to_group(
-                                CopyConnectionToGroupRequest(
-                                    connection_id=ConnectionId(n),
-                                    group_id=GroupId(target_group_id),
-                                )
-                            )
-                        )
-                else:
-                    for nick in nicknames:
-                        steps.append(
-                            lambda _prev, n=nick: controller.client.assign_connection_to_group(
-                                n, target_group_id
-                            )
-                        )
-                return steps
+                ]
 
             def perform_move() -> bool:
                 group_name = create_group_entry.get_text().strip()
@@ -3759,11 +3764,10 @@ class WindowConfigDialogsMixin:
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        # Reuse the production step builder so the
-                        # create-group result is validated as a nonempty
-                        # string group ID and reused across every assignment
-                        # step (run_sequence only threads the previous step's
-                        # return value, which is a bool for assignment RPCs).
+                        # Reuse the production step builder: it validates the
+                        # create-group result as a nonempty string group ID,
+                        # and run_sequence threads that ID into the single
+                        # step that places every selected connection.
                         from sshpilot.gtk.group_store import (
                             build_create_and_assign_steps,
                         )

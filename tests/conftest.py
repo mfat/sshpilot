@@ -1,6 +1,8 @@
 import argparse
 import os
+import shutil
 import sys
+import tempfile
 import types
 
 import pytest
@@ -16,6 +18,71 @@ import pytest
 # authorized_keys_window._RESTRICT_OPT_INS). A session fixture runs after that
 # and would leave those constants frozen in the developer's language.
 os.environ["LANGUAGE"] = "en"
+
+
+# Keep the suite out of the developer's real files. A test that saves a
+# Config() without isolating it otherwise writes into the real config.json:
+# patching GLib.get_user_config_dir is not enough, because platform/paths
+# ignores GLib on Windows and reads XDG_* first, then %APPDATA% /
+# %LOCALAPPDATA%, then the home directory. So all of those, home included, point
+# into a per-process sandbox before anything resolves a path. Moving home also
+# covers ~/.ssh and every expanduser("~/...") in the code, and keeps a test that
+# deletes an XDG_* variable inside the sandbox when it falls back to home.
+#
+# Set at conftest import for the same reason as LANGUAGE: modules imported
+# during collection may resolve paths at import time, and real GLib caches its
+# user directories on first use. Tests that set their own values with
+# monkeypatch still win; their teardown restores the sandbox, not the real dirs.
+_USER_DIR_VARS = (
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+)
+_WINDOWS_USER_DIR_VARS = ("APPDATA", "LOCALAPPDATA")
+# Path.home() reads USERPROFILE on Windows and HOME elsewhere; GLib reads HOME
+# on both.
+_HOME_VARS = ("HOME", "USERPROFILE") if sys.platform == "win32" else ("HOME",)
+
+
+def _real_user_dirs():
+    """Where sshPilot and OpenSSH keep the developer's files outside of tests."""
+    home = os.path.expanduser("~")
+    bases = [
+        os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"),
+        os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"),
+        os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state"),
+        os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache"),
+        os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming"),
+        os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"),
+    ]
+    dirs = [os.path.join(base, "sshpilot") for base in bases]
+    dirs.append(os.environ.get("SSHPILOT_SSH_DIR") or os.path.join(home, ".ssh"))
+    return tuple(dirs)
+
+
+REAL_USER_DIRS = _real_user_dirs()
+USER_DIRS_SANDBOX = tempfile.mkdtemp(prefix="sshpilot-test-user-dirs-")
+_SANDBOX_HOME = os.path.join(USER_DIRS_SANDBOX, "home")
+os.makedirs(_SANDBOX_HOME)
+for _var in _HOME_VARS:
+    os.environ[_var] = _SANDBOX_HOME
+for _var in _USER_DIR_VARS + (_WINDOWS_USER_DIR_VARS if sys.platform == "win32" else ()):
+    _dir = os.path.join(USER_DIRS_SANDBOX, _var.lower())
+    os.makedirs(_dir, exist_ok=True)
+    os.environ[_var] = _dir
+# An inherited override would keep pointing at the developer's own keys.
+os.environ.pop("SSHPILOT_SSH_DIR", None)
+
+
+def pytest_unconfigure(config):
+    shutil.rmtree(USER_DIRS_SANDBOX, ignore_errors=True)
+
+
+@pytest.fixture
+def user_dirs_sandbox():
+    """The sandbox root and the real directories it stands in for."""
+    return types.SimpleNamespace(root=USER_DIRS_SANDBOX, real_dirs=REAL_USER_DIRS)
 
 
 def _positive_int(value: str) -> int:
@@ -67,6 +134,38 @@ def pytest_generate_tests(metafunc):
 _KNOWN_FAILING_NODEIDS: set[str] = set()
 
 
+def _load_windows_posix_only():
+    """``tests/windows_posix_only.txt`` on Windows: ``({nodeid: reason}, {path: reason})``.
+
+    These tests assume POSIX (Unix sockets, ``/home`` paths, file modes,
+    fork). They run as non-strict xfail on Windows so the Windows CI stays
+    meaningful; ``collect:`` entries are modules that cannot even be
+    imported there.
+    """
+    if sys.platform != "win32":
+        return {}, {}
+    listing = os.path.join(os.path.dirname(__file__), "windows_posix_only.txt")
+    nodes, modules = {}, {}
+    try:
+        lines = open(listing, encoding="utf-8").read().splitlines()
+    except OSError:
+        return nodes, modules
+    for line in lines:
+        entry, _, why = line.partition("#")
+        entry = entry.strip()
+        if not entry:
+            continue
+        why = why.strip() or "assumes POSIX"
+        if entry.startswith("collect:"):
+            modules[entry[len("collect:"):].replace("\\", "/")] = why
+        else:
+            nodes[entry] = why
+    return nodes, modules
+
+
+_WINDOWS_POSIX_ONLY, _WINDOWS_POSIX_ONLY_MODULES = _load_windows_posix_only()
+
+
 def pytest_ignore_collect(collection_path, config):
     """In GUI mode, collect only GUI test modules.
 
@@ -82,6 +181,10 @@ def pytest_ignore_collect(collection_path, config):
     * ``test_gui_*.py`` anywhere under ``tests/``
     * any ``test_*.py`` under ``tests/gui/`` (Phase 14 production GTK gates)
     """
+    if _WINDOWS_POSIX_ONLY_MODULES:
+        norm_path = str(collection_path).replace('\\', '/')
+        if any(norm_path.endswith('/' + module) for module in _WINDOWS_POSIX_ONLY_MODULES):
+            return True
     if os.environ.get('SSHPILOT_GUI_TESTS') != '1':
         return False
     path_str = str(collection_path)
@@ -103,6 +206,12 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.nodeid in _KNOWN_FAILING_NODEIDS:
             item.add_marker(xfail_marker)
+        why = _WINDOWS_POSIX_ONLY.get(item.nodeid)
+        if why is not None:
+            item.add_marker(pytest.mark.xfail(
+                reason=f"POSIX-only on Windows ({why}); tests/windows_posix_only.txt",
+                strict=False,
+            ))
 
 
 def _cleanup_integration_containers(label):

@@ -6,9 +6,12 @@ Provides port information and availability checking functionality
 import os
 import socket
 import subprocess
+import sys
 import logging
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Any
 from gettext import gettext as _
+
+from .platform.process import hidden_console_kwargs
 
 # Try to import psutil, fallback to subprocess methods if not available
 try:
@@ -264,14 +267,62 @@ class PortChecker:
         
         return ports
     
+    def _get_ports_via_windows_netstat(self) -> List[PortInfo]:
+        """Windows ``netstat -ano`` listing. ``-tlnp`` is a Linux flag set.
+
+        The state column is translated (``ABHÖREN`` on German Windows), so a
+        listener is recognised by its foreign address instead: only a
+        listening socket has remote port 0.
+        """
+        ports: List[PortInfo] = []
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True,
+                encoding="oem",
+                errors="replace",
+                timeout=10,
+                **hidden_console_kwargs(),
+            )
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError) as exc:
+            logger.debug("netstat fallback failed: %s", exc)
+            return ports
+        if result.returncode != 0:
+            return ports
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 5 or parts[0].upper() != "TCP":
+                continue
+            if not parts[2].endswith(":0"):
+                continue
+            addr_port = parts[1]
+            if ":" not in addr_port:
+                continue
+            addr, port_str = addr_port.rsplit(":", 1)
+            addr = addr.strip("[]")
+            try:
+                port = int(port_str)
+            except ValueError:
+                continue
+            port_info = PortInfo(port=port, address=addr, protocol="tcp")
+            try:
+                port_info.pid = int(parts[4])
+            except ValueError:
+                pass
+            ports.append(port_info)
+        return ports
+
     def _get_ports_via_netstat(self) -> List[PortInfo]:
         """Fallback method using netstat command or /proc/net/tcp parsing"""
+        if sys.platform == "win32":
+            return self._get_ports_via_windows_netstat()
         ports = []
         
         try:
             # Try netstat command first
             result = subprocess.run(['netstat', '-tlnp'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10,
+                                  **hidden_console_kwargs())
             
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):

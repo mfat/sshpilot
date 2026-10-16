@@ -14,7 +14,12 @@ rendering here:
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from .ssh_config_document import HostBlock, _split_config_option, _split_keyword
+from .ssh_config_document import (
+    HostBlock,
+    _split_config_option,
+    _split_keyword,
+    split_config_lines,
+)
 
 SSH_UUID_MARKER = "# sshpilot:ConnectionUUID"
 
@@ -440,7 +445,7 @@ def merged_block_lines(old_block: Optional[HostBlock],
 
     has_extra_key = 'extra_ssh_config' in new_data
     remaining_extras: List[Tuple[Tuple[str, str], str]] = []
-    for line in str(new_data.get('extra_ssh_config') or '').splitlines():
+    for line in split_config_lines(str(new_data.get('extra_ssh_config') or '')):
         stripped_extra = line.strip()
         key, value = _split_config_option(stripped_extra)
         if key is not None:

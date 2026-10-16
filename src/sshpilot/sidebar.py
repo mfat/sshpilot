@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Adw
 
-from gettext import gettext as _, ngettext
+from .i18n import gettext as _, ngettext
 
 from .dnd_payload import (
     content_provider_for_payload,
@@ -976,6 +976,34 @@ def _drag_bar_geometry(width, height):
     return (bar_x, bar_y, bar_w, bar_h, cap_cx, cap_cy, cap_r)
 
 
+def _show_row_drop_indicator(row: Gtk.ListBoxRow, top: bool) -> None:
+    """Show the row's top or bottom :class:`DragIndicator`, creating it first.
+
+    Rows are built in bulk and only a handful are ever dropped on, so each
+    indicator is added to the row's vertical box the first time it is needed:
+    the top one before every other child, the bottom one after them.
+    """
+    attr = "drop_indicator_top" if top else "drop_indicator_bottom"
+    indicator = getattr(row, attr)
+    if indicator is None:
+        box = row.get_child()
+        if box is None:
+            return
+        indicator = DragIndicator()
+        if top:
+            box.prepend(indicator)
+        else:
+            box.append(indicator)
+        setattr(row, attr, indicator)
+    indicator.set_visible(True)
+
+
+def _hide_row_drop_indicators(row: Gtk.ListBoxRow) -> None:
+    for indicator in (row.drop_indicator_top, row.drop_indicator_bottom):
+        if indicator is not None:
+            indicator.set_visible(False)
+
+
 class DragIndicator(Gtk.Widget):
     """Custom widget showing the between-rows drop position.
 
@@ -1183,12 +1211,10 @@ class GroupRow(Gtk.ListBoxRow):
         self._member_rows = []
         self._child_group_rows = []
 
-        # Main container with drop indicators
+        # Main container; drop indicators are added on first use.
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        
-        # Drop indicator (top)
-        self.drop_indicator_top = DragIndicator()
-        main_box.append(self.drop_indicator_top)
+        self.drop_indicator_top = None
+        self.drop_indicator_bottom = None
 
         # Main content
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -1322,10 +1348,6 @@ class GroupRow(Gtk.ListBoxRow):
 
         main_box.append(content)
         main_box.append(self.drop_target_indicator)
-
-        # Drop indicator (bottom)
-        self.drop_indicator_bottom = DragIndicator()
-        main_box.append(self.drop_indicator_bottom)
 
         self.set_child(main_box)
         self.set_selectable(True)
@@ -1662,16 +1684,11 @@ class GroupRow(Gtk.ListBoxRow):
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
         self.hide_drop_indicators()
-        
-        if top:
-            self.drop_indicator_top.set_visible(True)
-        else:
-            self.drop_indicator_bottom.set_visible(True)
-    
+        _show_row_drop_indicator(self, top)
+
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
-        self.drop_indicator_top.set_visible(False)
-        self.drop_indicator_bottom.set_visible(False)
+        _hide_row_drop_indicators(self)
         self.show_group_highlight(False)
 
     def show_group_highlight(self, show: bool):
@@ -1794,13 +1811,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._content_margin_base = None
         self._content_spacing_base = 12
 
-        # Main container with drop indicators
+        # Main container; drop indicators are added on first use.
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        
-        # Drop indicator (top)
-        self.drop_indicator_top = DragIndicator()
-        main_box.append(self.drop_indicator_top)
-        
+        self.drop_indicator_top = None
+        self.drop_indicator_bottom = None
+
         # Content container
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self._content_box = content
@@ -1943,10 +1958,6 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         # Now add the content to main_box
         main_box.append(content)
-        
-        # Drop indicator (bottom)
-        self.drop_indicator_bottom = DragIndicator()
-        main_box.append(self.drop_indicator_bottom)
 
         # Set the main box as the child directly (no pulse overlay)
         self.set_child(main_box)
@@ -1959,10 +1970,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._update_accessible_identity()
         self._refresh_row_tooltip()
 
+        # update_status() also applies the group colour.
         self.update_status()
-        self._update_forwarding_indicators()
+        self._update_forwarding_indicators(refresh_tooltip=False)
         self._setup_drag_source()
-        self._apply_group_color_style()
 
     def _update_accessible_identity(self) -> None:
         """Publish the connection's name/target as the row's a11y identity."""
@@ -2140,17 +2151,12 @@ class ConnectionRow(Gtk.ListBoxRow):
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
         self.hide_drop_indicators()
-        
-        if top:
-            self.drop_indicator_top.set_visible(True)
-        else:
-            self.drop_indicator_bottom.set_visible(True)
-    
+        _show_row_drop_indicator(self, top)
+
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
-        self.drop_indicator_top.set_visible(False)
-        self.drop_indicator_bottom.set_visible(False)
-    
+        _hide_row_drop_indicators(self)
+
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
         try:
@@ -2164,8 +2170,9 @@ class ConnectionRow(Gtk.ListBoxRow):
             if not main_box:
                 return
 
-            top_indicator = main_box.get_first_child()
-            content = top_indicator.get_next_sibling() if top_indicator else None
+            content = main_box.get_first_child()
+            if isinstance(content, DragIndicator):
+                content = content.get_next_sibling()
             if not content:
                 return
             self._content_box = content
@@ -2433,7 +2440,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             pass
         self.indicator_box.set_visible(False)
 
-    def _update_forwarding_indicators(self):
+    def _update_forwarding_indicators(self, refresh_tooltip: bool = True):
         try:
             try:
                 while self.indicator_box.get_first_child():
@@ -2482,7 +2489,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         finally:
             # Keep the composed row tooltip in sync when rules arrive
             # asynchronously via the window's sidebar attach path.
-            self._refresh_row_tooltip()
+            if refresh_tooltip:
+                self._refresh_row_tooltip()
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
@@ -4820,8 +4828,14 @@ def _build_sidebar_header(window, sidebar_box):
     window.menu_button.set_can_focus(False)
     window.menu_button.set_icon_name('open-menu-symbolic')
     label_icon_button(window.menu_button, _('Main menu'), tooltip=_('Menu'))
-    window.menu_button.set_menu_model(window.create_menu())
-    window._install_main_menu_theme_selector()
+
+    def _build_main_menu(btn):
+        if btn.get_menu_model() is not None:
+            return
+        btn.set_menu_model(window.create_menu())
+        window._install_main_menu_theme_selector()
+
+    window.menu_button.set_create_popup_func(_build_main_menu)
 
     header_handle = Gtk.WindowHandle()
     header_handle.set_hexpand(True)

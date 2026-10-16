@@ -32,6 +32,8 @@ from ...ssh_config_document import (
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
+    split_config_lines,
+    split_include_args,
 )
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
@@ -129,12 +131,12 @@ def _resolve_config_files(
         override = overrides.get(path.resolve())
         if override is not None:
             try:
-                return override.decode("utf-8").splitlines(keepends=True)
+                return split_config_lines(override.decode("utf-8"))
             except UnicodeDecodeError:
                 unreadable.append(path)
                 return None
         try:
-            return path.read_text(encoding="utf-8").splitlines(keepends=True)
+            return split_config_lines(path.read_bytes().decode("utf-8"))
         except FileNotFoundError:
             return _MISSING  # missing include -> tolerated, treated as empty
         except (OSError, UnicodeError):
@@ -168,7 +170,7 @@ def _resolve_config_files(
             if not lowered.startswith("include "):
                 continue
             try:
-                patterns = shlex.split(line[len("include "):])
+                patterns = split_include_args(line[len("include "):])
             except ValueError:
                 raise _config_error(
                     "SSH configuration contains an invalid Include header"
@@ -793,6 +795,14 @@ def _static_identity_evidence(
     return evidence
 
 
+def _has_include_line(lines) -> bool:
+    return any(
+        _split_keyword(line.strip())[0] == "include"
+        for line in lines
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
 def load_ssh_configuration(
     root_path: Path,
     *,
@@ -927,12 +937,22 @@ def load_ssh_configuration(
 
         pending_tokens: List[str] = []
         pending_config: Dict[str, Any] = {}
+        # A Host block with no options is still a host: ``ssh name`` resolves
+        # it through the global blocks alone, and saving a connection that
+        # inherits everything (#1320) writes exactly such a block. One that
+        # pulls its options from an Include is different: those options are
+        # not visible here, so a record would misstate the host.
+        pending_has_include = False
+
+        def _flush_pending() -> None:
+            if pending_tokens and (pending_config or not pending_has_include):
+                flush_block(pending_tokens, pending_config, cfg_file)
 
         for node in doc.nodes:
             if isinstance(node, MatchBlock):
-                if pending_tokens and pending_config:
-                    flush_block(pending_tokens, pending_config, cfg_file)
+                _flush_pending()
                 pending_tokens, pending_config = [], {}
+                pending_has_include = False
                 block_lines = [line.rstrip("\r\n") for line in node.lines]
                 while block_lines and block_lines[-1].strip() == "":
                     block_lines.pop()
@@ -949,9 +969,9 @@ def load_ssh_configuration(
                 if not tokens:
                     _absorb_option_lines(node.lines[1:], pending_config)
                     continue
-                if pending_tokens and pending_config:
-                    flush_block(pending_tokens, pending_config, cfg_file)
+                _flush_pending()
                 pending_tokens, pending_config = tokens, {}
+                pending_has_include = _has_include_line(node.lines[1:])
                 _absorb_option_lines(node.lines[1:], pending_config)
                 continue
             # A RawSpan after a Host block holds directives that follow an
@@ -964,6 +984,7 @@ def load_ssh_configuration(
             # the keys this span introduced so they stay out of
             # ``extra_ssh_config`` and are never written back.
             before = set(pending_config)
+            pending_has_include = pending_has_include or _has_include_line(node.lines)
             _absorb_option_lines(node.lines, pending_config)
             introduced = {
                 key
@@ -978,8 +999,7 @@ def load_ssh_configuration(
                     introduced
                 )
 
-        if pending_tokens and pending_config:
-            flush_block(pending_tokens, pending_config, cfg_file)
+        _flush_pending()
 
     static_evidence = _static_identity_evidence(files, _content_overrides)
     for token in connection_order:

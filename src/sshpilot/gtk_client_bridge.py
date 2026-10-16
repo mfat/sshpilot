@@ -17,6 +17,24 @@ from .api.models.terminal import TerminalOutput
 
 logger = logging.getLogger(__name__)
 
+
+def gtk_thread_idle(callback, *args, priority=GLib.PRIORITY_DEFAULT):
+    """Queue ``callback`` on the GTK thread at default priority.
+
+    ``GLib.idle_add`` defaults to ``PRIORITY_DEFAULT_IDLE``, below GDK's redraw
+    priority. When a frame takes longer than the frame interval (the Cairo
+    renderer repainting a large window while the connecting spinner animates)
+    the redraw source is always ready, and idle-priority callbacks never run:
+    the session-open result that would attach the terminal and stop the
+    spinner waited until something else stopped the animation.
+
+    ``PRIORITY_DEFAULT`` is the same priority as GDK event dispatch, so a long
+    burst of terminal output (drained 64 KiB per call) holds repaints back
+    until the spool is empty, where idle priority used to let frames through.
+    """
+    return GLib.idle_add(callback, *args, priority=priority)
+
+
 T = TypeVar("T")
 # Maximum raw payload handed to GTK in one idle slice.  This is a latency
 # bound, not a permission to discard terminal data.
@@ -50,7 +68,7 @@ class GtkClientBridge:
     def __init__(
         self,
         *,
-        dispatcher: Callable[..., object] = GLib.idle_add,
+        dispatcher: Callable[..., object] = gtk_thread_idle,
         max_workers: int = 1,
         max_pending_terminal_inputs: int = DEFAULT_PENDING_TERMINAL_INPUTS,
     ) -> None:
@@ -128,13 +146,24 @@ class GtkClientBridge:
         on_success: Callable[[T], None],
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]] = None,
+        priority: Optional[int] = None,
     ) -> GtkClientRequest:
+        """Run ``operation`` on the worker; deliver its outcome on GTK's thread.
+
+        ``priority`` is the main-loop priority of the delivery (default: the
+        dispatcher's own; ``gtk_thread_idle`` uses ``GLib.PRIORITY_DEFAULT``,
+        ahead of GTK's layout and redraw, so an outcome already reaches the
+        next frame). Pass a larger number only for an outcome that may wait
+        behind painting; anything at ``GLib.PRIORITY_DEFAULT_IDLE`` can starve
+        while frames take longer than the frame interval.
+        """
         return self._submit_on(
             self._executor,
             operation,
             on_success=on_success,
             on_error=on_error,
             on_discard=on_discard,
+            priority=priority,
         )
 
     def submit_interaction(
@@ -183,6 +212,7 @@ class GtkClientBridge:
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]],
         slot: Optional[threading.BoundedSemaphore] = None,
+        priority: Optional[int] = None,
     ) -> GtkClientRequest:
         request = GtkClientRequest()
         if slot is not None and not slot.acquire(blocking=False):
@@ -212,6 +242,7 @@ class GtkClientBridge:
                 on_success,
                 on_error,
                 on_discard,
+                priority,
             )
         )
         return request
@@ -223,16 +254,23 @@ class GtkClientBridge:
         on_success: Callable[[T], None],
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]],
+        priority: Optional[int] = None,
     ) -> None:
         with self._lock:
             self._requests.pop(future, None)
             closed = self._closed
 
+        def dispatch(callback, *args):
+            if priority is None:
+                self._dispatcher(callback, *args)
+            else:
+                self._dispatcher(callback, *args, priority=priority)
+
         try:
             result = future.result()
         except BaseException as error:
             if not closed and not request.cancelled:
-                self._dispatcher(self._deliver_error, request, on_error, error)
+                dispatch(self._deliver_error, request, on_error, error)
             else:
                 self._finish_request(request)
             return
@@ -242,7 +280,7 @@ class GtkClientBridge:
             if on_discard is not None:
                 on_discard(result)
             return
-        self._dispatcher(
+        dispatch(
             self._deliver_success,
             request,
             on_success,

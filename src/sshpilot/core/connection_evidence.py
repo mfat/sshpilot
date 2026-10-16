@@ -131,17 +131,19 @@ def classify_connection_evidence(text: str) -> ConnectionEvidence:
     sessions so they expose identical connection-status semantics.
     """
 
-    normalized = visible_terminal_text(text).lower()
-    if not normalized:
+    visible = visible_terminal_text(text)
+    if not visible:
         return ConnectionEvidence("pending")
 
     evidence = ConnectionEvidence("pending")
-    for line in normalized.splitlines():
-        stripped = line.strip()
+    for line in visible.splitlines():
+        original = line.strip()
+        stripped = original.lower()
         if not stripped:
             continue
         if any(marker in stripped for marker in SSH_FAILURE_MARKERS):
-            evidence = ConnectionEvidence("failed", stripped)
+            # Keep ssh's own casing: this text is shown to the user verbatim.
+            evidence = ConnectionEvidence("failed", original)
             continue
         if any(marker in stripped for marker in SSH_SUCCESS_MARKERS):
             evidence = ConnectionEvidence("connected")

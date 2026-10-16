@@ -1,3 +1,24 @@
+sshpilot (6.3.2-1) unstable; urgency=medium
+
+  * Release v6.3.2.
+  * Experimental Windows port: run from source or install with the new
+    NSIS installer
+  * Local shell tabs on the built-in terminal backend, with ConPTY and
+    libvterm on Windows
+  * Faster startup: the daemon starts while the GUI loads and the
+    sidebar shows in the first frame
+  * Faster full-screen redraws and synchronized output support in the
+    built-in terminal
+  * Option to remember a password until SSH Pilot quits
+  * Save search-box connections with options inherited from Host *
+  * Security hardening: refuse shell text in HostName/ProxyJump, control
+    characters typed into terminals, and unsafe paths in SCP downloads
+    and backup restores
+  * Old config.json files are upgraded instead of reset to defaults
+  * Various fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 16 Oct 2026 11:40:39 +0000
+
 sshpilot (6.3.1-1) unstable; urgency=medium
 
   * Release v6.3.1.

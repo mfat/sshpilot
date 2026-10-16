@@ -72,14 +72,27 @@ class WelcomePage(Gtk.Overlay):
 
         self.set_child(self._build_minimal_view(current_shortcuts))
 
-        # Footer links pinned to the bottom-centre of the page
-        footer = self._build_footer()
-        footer.set_halign(Gtk.Align.CENTER)
-        footer.set_valign(Gtk.Align.END)
-        footer.set_margin_bottom(32)
-        self.add_overlay(footer)
+        # Reserve the footer's geometry but construct its buttons and the DnD
+        # controller after first paint; neither can affect the initial frame.
+        self._footer_home = Adw.Bin()
+        self._footer_home.set_halign(Gtk.Align.CENTER)
+        self._footer_home.set_valign(Gtk.Align.END)
+        self._footer_home.set_margin_bottom(32)
+        self._footer_home.set_size_request(-1, 34)
+        self.add_overlay(self._footer_home)
+        schedule = getattr(window, '_run_after_first_paint', None)
+        if callable(schedule):
+            schedule(self._finish_deferred_chrome)
+        else:
+            self._finish_deferred_chrome()
 
-        self._setup_drop_target()
+    def _finish_deferred_chrome(self) -> bool:
+        if self._closed:
+            return GLib.SOURCE_REMOVE
+        if self._footer_home.get_child() is None:
+            self._footer_home.set_child(self._build_footer())
+            self._setup_drop_target()
+        return GLib.SOURCE_REMOVE
 
     # --- Sidebar drag → connect ---
 
@@ -178,10 +191,23 @@ class WelcomePage(Gtk.Overlay):
         """
         img = Gtk.Image()
         img.set_pixel_size(size)
+        # Keep the search field in exactly the same first-frame position while
+        # the decorative resource is decoded after paint.
+        img.set_size_request(size, size)
         img.set_halign(Gtk.Align.CENTER)
         img.set_margin_bottom(20)
         # Decorative: the search field beside it carries the accessible name.
         img.set_accessible_role(Gtk.AccessibleRole.PRESENTATION)
+        schedule = getattr(self.window, '_run_after_first_paint', None)
+        if callable(schedule):
+            schedule(lambda: self._load_brand_mark(img, size))
+        else:
+            self._load_brand_mark(img, size)
+        return img
+
+    @staticmethod
+    def _load_brand_mark(img, size: int) -> bool:
+        """Decode the decorative brand resource outside the first-frame path."""
         try:
             # Rasterise at 2x so the mark stays crisp on HiDPI displays.
             pixbuf = GdkPixbuf.Pixbuf.new_from_resource_at_scale(
@@ -190,7 +216,7 @@ class WelcomePage(Gtk.Overlay):
         except Exception:
             logger.debug("Start page mark unavailable", exc_info=True)
             img.set_visible(False)
-        return img
+        return GLib.SOURCE_REMOVE
 
     # --- Main view ---
 

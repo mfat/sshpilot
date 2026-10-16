@@ -1,0 +1,15 @@
+# Nuitka package configuration for the experimental Windows build
+# (build.ps1 here; https://nuitka.net/user-documentation/nuitka-package-config.html).
+#
+# The GTK runtime lives in vendor/gtk/bin, outside the Python installation.
+# For pip-installed packages Nuitka drops DLL dependencies found outside it
+# unless the package allows them: gi for the GTK libraries
+# sshpilot_nuitka_plugin.py adds, sshpilot for libvterm and the pixbuf loader.
+
+- module-name: 'gi'
+  import-hacks:
+    - package-system-dlls: 'yes'
+
+- module-name: 'sshpilot'
+  import-hacks:
+    - package-system-dlls: 'yes'

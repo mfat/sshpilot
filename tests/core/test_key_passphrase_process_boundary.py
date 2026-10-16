@@ -13,9 +13,13 @@ from sshpilot.core.keys.service import KeyGenerateSpec, KeyService
 SENTINEL = "KEY_PASSPHRASE_SENTINEL_8F1C29"
 
 
-def _fake_successful_keygen(calls):
+def _fake_successful_keygen(calls, *, plaintext=False):
     def run(argv, **kwargs):
         argv = list(argv)
+        if "-y" in argv and "-P" in argv:
+            # The post-generation empty-passphrase probe: an encrypted key
+            # refuses it.
+            return SimpleNamespace(returncode=0 if plaintext else 1, stdout="", stderr="")
         calls.append((argv, kwargs))
         if "-f" in argv and "-y" not in argv:
             path = key_service_module.Path(argv[argv.index("-f") + 1])
@@ -84,6 +88,27 @@ def test_encrypted_generation_omits_secret_from_argv_and_environment(
     assert SENTINEL not in argv
     assert SENTINEL not in kwargs["env"].values()
     assert secret == bytearray()
+
+
+def test_encrypted_generation_that_produced_a_plaintext_key_removes_it(
+    tmp_path, monkeypatch
+):
+    # OpenSSH answers a failed askpass with an empty passphrase, so a broken
+    # prompt path would otherwise return an unencrypted key as "encrypted".
+    monkeypatch.setattr(
+        key_service_module.subprocess,
+        "run",
+        _fake_successful_keygen([], plaintext=True),
+    )
+
+    with pytest.raises(CoreError):
+        KeyService(tmp_path).generate_key(
+            KeyGenerateSpec(key_name="id_ed25519", encrypted=True),
+            prepare_launch=lambda argv: (tuple(argv), {}),
+        )
+
+    assert not (tmp_path / "id_ed25519").exists()
+    assert not (tmp_path / "id_ed25519.pub").exists()
 
 
 def test_passphrase_verification_omits_p_and_secret_environment(

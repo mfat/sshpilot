@@ -109,6 +109,22 @@ def test_ssh_create(tmp_path):
     assert snap.generation == 1
 
 
+def test_ssh_create_that_inherits_everything_is_saved(tmp_path):
+    """Issue #1320: a host typed in the search box and saved with every option
+    left to ``Host *`` writes a bare ``Host`` block. The save used to fail
+    because that block was never read back as a connection."""
+    repo, root, state = _repo(
+        tmp_path,
+        "Host *\n    HostName %h.example.net\n    Port 2022\n    User root\n",
+    )
+    created = repo.create_connection(
+        {"nickname": "hi", "hostname": "hi", "port": 22, "protocol": "ssh"}
+    )
+    assert created.id == "hi"
+    assert root.read_text().rstrip().endswith("Host hi")
+    assert [c.id for c in repo.snapshot().connections] == ["hi"]
+
+
 def test_ssh_create_rolls_back_when_state_write_fails(tmp_path, monkeypatch):
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     before_root = root.read_bytes()

@@ -1,10 +1,15 @@
-"""Tests for macOS external-terminal discovery (platform_utils)."""
+"""Tests for macOS external-terminal discovery (system_terminal)."""
 
 import subprocess
 
 import pytest
 
-platform_utils = pytest.importorskip("sshpilot.platform_utils")
+system_terminal = pytest.importorskip("sshpilot.system_terminal")
+
+
+@pytest.fixture(autouse=True)
+def _not_windows(monkeypatch):
+    monkeypatch.setattr(system_terminal, "is_windows", lambda: False)
 
 
 class DummyConfig:
@@ -16,19 +21,19 @@ class DummyConfig:
 
 
 def test_get_user_preferred_terminal_macos(monkeypatch):
-    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
+    monkeypatch.setattr(system_terminal, "is_macos", lambda: True)
     config = DummyConfig({"external-terminal": "iTerm"})
-    assert platform_utils.get_user_preferred_terminal(config) == ["open", "-a", "iTerm"]
+    assert system_terminal.get_user_preferred_terminal(config) == ["open", "-a", "iTerm"]
 
 
 def test_get_user_preferred_terminal_macos_with_command(monkeypatch):
-    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
+    monkeypatch.setattr(system_terminal, "is_macos", lambda: True)
     config = DummyConfig({"external-terminal": "open -a Ghostty"})
-    assert platform_utils.get_user_preferred_terminal(config) == ["open", "-a", "Ghostty"]
+    assert system_terminal.get_user_preferred_terminal(config) == ["open", "-a", "Ghostty"]
 
 
 def test_get_default_terminal_command_macos(monkeypatch):
-    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
+    monkeypatch.setattr(system_terminal, "is_macos", lambda: True)
 
     def fake_run(cmd, capture_output=False, text=False, timeout=None):
         class R:
@@ -47,11 +52,11 @@ def test_get_default_terminal_command_macos(monkeypatch):
         return r
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert platform_utils.get_default_terminal_command() == ["open", "-a", "Terminal"]
+    assert system_terminal.get_default_terminal_command() == ["open", "-a", "Terminal"]
 
 
 def test_get_default_terminal_command_iterm(monkeypatch):
-    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
+    monkeypatch.setattr(system_terminal, "is_macos", lambda: True)
 
     def fake_run(cmd, capture_output=False, text=False, timeout=None):
         class R:
@@ -76,4 +81,4 @@ def test_get_default_terminal_command_iterm(monkeypatch):
         return r
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert platform_utils.get_default_terminal_command() == ["open", "-a", "iTerm"]
+    assert system_terminal.get_default_terminal_command() == ["open", "-a", "iTerm"]

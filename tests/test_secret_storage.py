@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import sys
 
 import pytest
 
@@ -333,7 +334,7 @@ def test_pass_backend_argv(monkeypatch):
         stdout = b'secretvalue\n'
         stderr = b''
 
-    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None, **kwargs):
         calls.append((list(argv), input))
         return _Result()
 
@@ -561,9 +562,14 @@ def test_rbw_backend_unlock_installs_stable_pinentry_helper(monkeypatch, tmp_pat
     backend._bin = "/usr/bin/rbw"
     assert backend.unlock("sentinel-master") is True
     helper = cfg["pinentry"]
-    assert helper.endswith("rbw-pinentry")
+    if sys.platform == "win32":
+        assert helper.endswith("rbw-pinentry.cmd")
+        script = helper[: -len(".cmd")] + ".py"
+    else:
+        assert helper.endswith("rbw-pinentry")
+        script = helper
     assert os.path.isfile(helper)
-    with open(helper, encoding="utf-8") as fh:
+    with open(script, encoding="utf-8") as fh:
         assert "pinentry-gnome3" in fh.read()
     assert seen_unlock_env and seen_unlock_env[0].get("PINENTRY_USER_DATA")
     pin_leftovers = list((tmp_path / "bin").glob("rbw-pin-*"))
@@ -1045,7 +1051,7 @@ class FakeBw:
         return [a for a in args if a != '--nointeraction'], host_env
 
     def run(self, argv, input=None, capture_output=None, env=None, check=None,
-            timeout=None, pass_fds=()):
+            timeout=None, pass_fds=(), creationflags=0):
         cmd, host_env = self._bw_command(argv)
         merged = dict(env or {})
         merged.update(host_env)

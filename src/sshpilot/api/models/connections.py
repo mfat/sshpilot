@@ -845,6 +845,32 @@ class DeleteConnectionResult:
 
 
 @dataclass(frozen=True)
+class DeleteConnectionsRequest:
+    """Delete several connections in one commit; all of them or none."""
+
+    connection_ids: Tuple[ConnectionId, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.connection_ids) is not tuple or not self.connection_ids:
+            raise ValueError("connection ids must be a non-empty tuple")
+        for connection_id in self.connection_ids:
+            require_identifier(connection_id, "connection id")
+        if len(set(self.connection_ids)) != len(self.connection_ids):
+            raise ValueError("connection ids must be unique")
+
+
+@dataclass(frozen=True)
+class DeleteConnectionsResult:
+    connection_ids: Tuple[ConnectionId, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.connection_ids) is not tuple:
+            raise TypeError("deleted connection ids must be a tuple")
+        for connection_id in self.connection_ids:
+            require_identifier(connection_id, "connection id")
+
+
+@dataclass(frozen=True)
 class SplitConnectionRequest:
     """Split a connection out of a multi-host SSH config block.
 

@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional, Sequence
 from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.daemon import RestartDaemonRequest, StopDaemonRequest
-from sshpilot.logging_support import configure_daemon_logging
+from sshpilot.logging_support import configure_daemon_console_logging, configure_daemon_logging
 from sshpilot.api.transport.codec import (
     daemon_diagnostics_to_wire,
     daemon_status_to_wire,
@@ -78,16 +78,34 @@ def _configure_logging(verbose: bool, quiet: bool = False) -> None:
     a managed console handler for directly started daemons.
     """
 
+    # The level, the directory and the file handler fail independently; each
+    # failure degrades only its own part and is reported once handlers exist.
+    configured = "info"
+    settings_error: Optional[BaseException] = None
     try:
-        from sshpilot.platform_utils import get_state_dir
         from .bootstrap_settings import DaemonBootstrapSettings
 
-        log_dir = get_state_dir()
         configured = DaemonBootstrapSettings().get_setting("logging.level", "info")
-    except Exception:
-        return
+    except Exception as exc:
+        settings_error = exc
     effective = "warning" if quiet else "debug" if verbose else configured
-    configure_daemon_logging(log_dir, effective)
+
+    log = logging.getLogger(__name__)
+    try:
+        from sshpilot.platform_utils import get_state_dir
+
+        configure_daemon_logging(get_state_dir(), effective)
+    except Exception as exc:
+        configure_daemon_console_logging(effective)
+        log.warning(
+            "Daemon file logging unavailable type=%s; logging to stderr only",
+            type(exc).__name__,
+        )
+    if settings_error is not None:
+        log.warning(
+            "Daemon log level setting unavailable type=%s; using info",
+            type(settings_error).__name__,
+        )
 
 
 def _print_json(payload: Any) -> None:
@@ -180,7 +198,7 @@ def run_server(
     quiet: bool = False,
     serve_forever: Callable[..., None],
     shutdown: Callable[[], None],
-    startup_error: Optional[BaseException],
+    get_startup_error: Callable[[], Optional[BaseException]],
     restart_requested: Optional[Callable[[], bool]] = None,
 ) -> int:
     _configure_logging(verbose, quiet)
@@ -191,6 +209,9 @@ def run_server(
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
     serve_forever()
+    # Read after serve_forever returns: setup runs inside it and records its
+    # failure there, so a value captured before the call is always None.
+    startup_error = get_startup_error()
     if startup_error is not None:
         raise startup_error
     if restart_requested is not None and restart_requested():
@@ -225,8 +246,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # Also started as ``python -m sshpilot.daemon``, bypassing run.py.
+    from sshpilot.platform.windows.openssh import prefer_builtin_openssh
+
+    prefer_builtin_openssh()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command is None and sys.platform == "win32":
+        # The daemon launches every OpenSSH child; OpenSSH for Windows refuses
+        # keys and configs under a directory Python created with mode 0o700
+        # (OWNER RIGHTS). Earlier versions created both of these that way.
+        from sshpilot.platform.windows.acl import repair_owner_rights
+
+        for directory in (get_config_dir(), get_ssh_dir()):
+            repair_owner_rights(directory)
     if args.command is None:
         from .server import DaemonServer
 
@@ -269,7 +302,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             quiet=args.quiet,
             serve_forever=server.serve_forever,
             shutdown=_shutdown,
-            startup_error=server._startup_error,
+            get_startup_error=lambda: server._startup_error,
             restart_requested=lambda: bool(
                 server._lifecycle is not None and server._lifecycle.restart_requested
             ),
@@ -295,6 +328,24 @@ def _split_shared_workspace_once(isolated: bool) -> None:
         isolated_root=get_config_dir() / "ssh_config",
         non_ssh_to_isolated=isolated,
     )
+
+
+def _upgrade_config_file() -> None:
+    """Upgrade an older config.json before any service or frontend reads it.
+
+    The daemon owns this: the original is kept as a uniquely named backup
+    first, and the GTK frontend refuses to write until the file is current. A
+    file that cannot be upgraded is left as it is; the services that read it
+    report that themselves, so the daemon still starts.
+    """
+    from sshpilot.core.settings import SettingsFileError, migrate_settings_file
+
+    try:
+        migrate_settings_file(get_config_dir() / "config.json")
+    except SettingsFileError as exc:
+        logging.getLogger(__name__).warning(
+            "config.json left unchanged type=%s", type(exc).__name__
+        )
 
 
 def _production_core_services():
@@ -331,6 +382,7 @@ def _production_core_services():
             return get_config_dir()
         raise ValueError("unsupported key store scope")
 
+    _upgrade_config_file()
     settings = DaemonBootstrapSettings()
     isolated = settings.use_isolated_config
     # Existing installs have one sidecar holding both roots' identities.

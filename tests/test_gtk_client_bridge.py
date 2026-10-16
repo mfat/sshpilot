@@ -244,3 +244,77 @@ def test_terminal_binding_coalesces_output_and_suppresses_after_close():
         assert client.closed is True
     finally:
         bridge.shutdown()
+
+
+def test_bridge_delivers_at_the_requested_priority_only_when_asked():
+    dispatches = queue.Queue()
+    bridge = GtkClientBridge(
+        dispatcher=lambda callback, *args, **kwargs: dispatches.put(
+            (callback, args, kwargs)
+        )
+    )
+    results = []
+    try:
+        bridge.submit(
+            lambda: "plain",
+            on_success=results.append,
+            on_error=lambda error: (_ for _ in ()).throw(error),
+        )
+        bridge.submit(
+            lambda: "urgent",
+            on_success=results.append,
+            on_error=lambda error: (_ for _ in ()).throw(error),
+            priority=100,
+        )
+
+        def _failing():
+            raise RuntimeError("boom")
+
+        bridge.submit(
+            _failing,
+            on_success=results.append,
+            on_error=lambda error: results.append(str(error)),
+            priority=100,
+        )
+        for _ in range(3):
+            callback, args, kwargs = dispatches.get(timeout=2)
+            callback(*args)
+            results.append(kwargs)
+    finally:
+        bridge.shutdown()
+
+    assert results == ["plain", {}, "urgent", {"priority": 100}, "boom", {"priority": 100}]
+
+
+def test_default_dispatcher_queues_at_default_priority(monkeypatch):
+    """Daemon results must not queue at ``PRIORITY_DEFAULT_IDLE``.
+
+    That is below GDK's redraw priority: while a frame takes longer than the
+    frame interval (Cairo repainting a large window under the connecting
+    spinner) the redraw source is always ready and idle-priority results never
+    run. ``tests/gui/test_gtk_client_bridge_dispatch.py`` runs it on real GLib.
+    """
+    from sshpilot import gtk_client_bridge
+
+    calls = []
+    monkeypatch.setattr(
+        gtk_client_bridge.GLib,
+        "idle_add",
+        lambda callback, *args, **kwargs: calls.append((callback, args, kwargs)),
+    )
+
+    def callback(*_args):
+        return False
+
+    gtk_client_bridge.gtk_thread_idle(callback, "a")
+    gtk_client_bridge.gtk_thread_idle(callback, "b", priority=100)
+
+    assert calls == [
+        (callback, ("a",), {"priority": gtk_client_bridge.GLib.PRIORITY_DEFAULT}),
+        (callback, ("b",), {"priority": 100}),
+    ]
+    bridge = GtkClientBridge()
+    try:
+        assert bridge._dispatcher is gtk_client_bridge.gtk_thread_idle
+    finally:
+        bridge.shutdown()

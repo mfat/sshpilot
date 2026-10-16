@@ -1229,7 +1229,10 @@ class WindowActions:
     
     def _show_update_banner(self, version):
         """Show the update notification banner"""
-        if not self.update_banner:
+        ensure = getattr(self, '_ensure_update_banner', None)
+        if callable(ensure):
+            ensure()
+        if not getattr(self, 'update_banner', None):
             return
         
         title = _("SSH Pilot {version} is available!").format(version=version)
@@ -1319,8 +1322,6 @@ class WindowActions:
         while the update banner is still revealed, so the two never stack.
         """
         try:
-            if not getattr(self, 'tips_revealer', None):
-                return
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return
             # Cancel any pending reveal so repeated triggers don't stack.
@@ -1343,8 +1344,6 @@ class WindowActions:
         """Reveal a tip once the grace delay has elapsed (one-shot timeout)."""
         self._tips_banner_timeout_id = 0
         try:
-            if not getattr(self, 'tips_revealer', None):
-                return False
             # Re-check the opt-out in case the user disabled tips during the wait.
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return False
@@ -1363,14 +1362,17 @@ class WindowActions:
         rest. The update banner takes priority: if it is currently shown, the
         tip is suppressed so the two never stack.
         """
-        if not getattr(self, 'tips_revealer', None):
-            return
         if getattr(self, 'update_banner', None) is not None and self.update_banner.get_revealed():
             return
         if isinstance(tips, str):
             tips = [tips]
         tips = [t for t in (tips or []) if t]
         if not tips:
+            return
+        ensure = getattr(self, '_ensure_tips_banner', None)
+        if callable(ensure):
+            ensure()
+        if not getattr(self, 'tips_revealer', None):
             return
         self._terminal_tips = tips
         self._terminal_tip_index = random.randrange(len(tips))

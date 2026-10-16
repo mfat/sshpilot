@@ -8,12 +8,17 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import ntpath
 import os
+import posixpath
+import re
 import shlex
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple, List
+from .ssh_config_document import split_config_lines
 
+from .api.models.common import validate_ssh_host_alias
 from .api.models.secrets import (
     SecretTransferMessage,
     SecretTransferMessageCode,
@@ -21,14 +26,13 @@ from .api.models.secrets import (
 from .platform.paths import get_config_dir, get_ssh_dir, known_hosts_path_for
 from .core.settings import CONFIG_VERSION
 from .platform.locking import settings_transaction_lock
+from .platform.detect import is_flatpak
+from .platform.windows.acl import chmod_private
+from .ssh_config_document import split_include_args
 
 if TYPE_CHECKING:
     from .config import Config
 
-
-def is_flatpak() -> bool:
-    """Return whether the current daemon/runtime is inside Flatpak."""
-    return os.environ.get("FLATPAK_ID") is not None or os.path.exists("/.flatpak-info")
 
 logger = logging.getLogger(__name__)
 
@@ -94,22 +98,79 @@ def _current_home() -> str:
     return os.path.abspath(os.path.expanduser('~'))
 
 
+def _is_windows_style_path(text: str) -> bool:
+    """True when *text* is a Windows path, whatever OS is reading it."""
+    return bool(ntpath.splitdrive(text)[0]) or "\\" in text
+
+
+def _join_rebased_home(target_home: str, relative: str) -> str:
+    """Join *relative* onto *target_home* using the target's own separators."""
+    relative_posix = relative.replace("\\", "/").strip("/")
+    if _is_windows_style_path(target_home):
+        root = ntpath.normpath(target_home).rstrip("\\")
+        if not relative_posix:
+            return root
+        return root + "\\" + relative_posix.replace("/", "\\")
+    root = posixpath.normpath(target_home).rstrip("/")
+    if not relative_posix:
+        return root
+    return root + "/" + relative_posix
+
+
 def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -> str:
     """Map an absolute path that lived under the backup's *source* home onto the *current*
     home, so a key backed up as ``/home/alice/.ssh/id`` restores to ``/home/bob/.ssh/id``.
 
     Paths outside the source home (e.g. ``/etc/ssh/…``), or backups that predate the recorded
-    ``source_home``, are returned unchanged — no guessing."""
+    ``source_home``, are returned unchanged — no guessing. The source path is parsed in its
+    own flavour: ``os.path.abspath`` would turn ``/home/alice`` into ``C:\\home\\alice`` on
+    Windows and would fail to recognise ``C:\\Users\\alice`` on Linux."""
     if not path or not source_home:
         return path
-    ap = os.path.abspath(os.path.expanduser(str(path)))
-    sh = os.path.abspath(str(source_home))
-    if ap == sh:
-        return target_home
-    prefix = sh + os.sep
-    if ap.startswith(prefix):
-        return os.path.join(target_home, ap[len(prefix):])
+    raw = os.path.expanduser(str(path)) if str(path).startswith("~") else str(path)
+    flavour = ntpath if _is_windows_style_path(raw) else posixpath
+    normalized = flavour.normpath(raw)
+    # Windows paths are case-insensitive: ``c:\users\alice`` is the same
+    # home as a recorded ``C:\Users\alice``.
+    if _is_windows_style_path(str(source_home)):
+        def same(a: str, b: str) -> bool:
+            return a.lower() == b.lower()
+    else:
+        def same(a: str, b: str) -> bool:
+            return a == b
+    for prefix, _separator in _home_prefixes(str(source_home)):
+        root = prefix[:-1]
+        for candidate in (raw, normalized):
+            if same(candidate, root):
+                return _join_rebased_home(str(target_home), "")
+            if same(candidate[:len(prefix)], prefix):
+                return _join_rebased_home(str(target_home), candidate[len(prefix):])
     return path
+
+
+# Files in the SSH directory that OpenSSH reads as something other than a key or client config.
+# No path in a backup may name one: ``rc`` is run by sshd at login, ``authorized_keys`` grants
+# logins.
+_RESERVED_SSH_FILENAMES = frozenset({
+    'known_hosts', 'known_hosts2', 'authorized_keys', 'authorized_keys2', 'rc', 'environment',
+})
+
+# Every line a key file is made of: PEM/RFC4716 armour, a ``Name: value`` header (encrypted
+# PEM, PuTTY), base64, or a public-key line. ``=`` only as trailing padding and no bare ``\r``:
+# both separate a keyword from its argument in ssh_config, and a file restored into ``~/.ssh``
+# may match the user's own ``Include`` glob.
+_KEY_FILE_LINE = re.compile(
+    rb'(?:-{4,5} ?(?:BEGIN|END) [A-Z0-9 ]+ ?-{4,5}'
+    rb'|[A-Za-z0-9-]+: .*'
+    rb'|[A-Za-z0-9+/]*={0,2}'
+    rb'|(?:ssh|ecdsa|sk)-[a-z0-9@.-]+ [A-Za-z0-9+/]+={0,2}(?: .*)?'
+    rb')\r?')
+
+
+def _is_key_material(data: bytes) -> bool:
+    """True if *data* consists of key-file lines only, so that whatever else may read the file
+    (ssh via ``Include``, the app's own JSON loaders) finds nothing in it to act on."""
+    return all(_KEY_FILE_LINE.fullmatch(line) for line in data.split(b'\n'))
 
 
 # SSH directives whose argument is a path on the LOCAL filesystem — the only lines where a
@@ -122,6 +183,19 @@ _LOCAL_PATH_DIRECTIVES = frozenset({
 })
 
 
+def _home_prefixes(home: str) -> List[Tuple[str, str]]:
+    r"""``(prefix, separator)`` spellings of a home directory as a config spells it.
+
+    The backup may come from another OS, so *home* is parsed in its own flavour:
+    ``os.path.abspath("/home/alice")`` on Windows is ``C:\home\alice``, which a Linux
+    config never contains. A Windows home may appear with either separator."""
+    text = str(home)
+    if ntpath.splitdrive(text)[0] or "\\" in text:
+        text = ntpath.normpath(text).rstrip("\\")
+        return [(text + "\\", "\\"), (text.replace("\\", "/") + "/", "/")]
+    return [(posixpath.normpath(text).rstrip("/") + "/", "/")]
+
+
 def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str) -> str:
     """Rewrite home-prefixed absolute paths onto the current home, but ONLY on lines whose
     directive names a local-filesystem path (``IdentityFile``, ``ControlPath``, ``Include`` …).
@@ -131,18 +205,22 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
     rewrite per directive."""
     if not text or not source_home:
         return text
-    sh = os.path.abspath(str(source_home))
     th = os.path.abspath(str(target_home))
-    if sh == th:
+    # Keep the separator the line already uses after the home: OpenSSH for
+    # Windows reads ``C:/Users/bob/.ssh/id`` as well as backslashes.
+    rewrites = [
+        (needle, th.replace(os.sep, sep).rstrip(sep) + sep)
+        for needle, sep in _home_prefixes(str(source_home))
+    ]
+    rewrites = [(needle, repl) for needle, repl in rewrites if needle != repl]
+    if not rewrites:
         return text
-    needle = sh + os.sep
-    repl = th + os.sep
     out = []
-    for line in text.splitlines(keepends=True):
-        if needle in line and _ssh_keyword(line) in _LOCAL_PATH_DIRECTIVES:
-            out.append(line.replace(needle, repl))
-        else:
-            out.append(line)
+    for line in split_config_lines(text, keepends=True):
+        if _ssh_keyword(line) in _LOCAL_PATH_DIRECTIVES:
+            for needle, repl in rewrites:
+                line = line.replace(needle, repl)
+        out.append(line)
     return ''.join(out)
 
 
@@ -171,26 +249,54 @@ def _is_under(path: str, root: str) -> bool:
     return ap == rp or ap.startswith(rp + os.sep)
 
 
-def _ssh_keyword(line: str) -> str:
-    """The lowercase SSH directive keyword of a line, honoring ``Key value``, ``Key=value`` and
-    ``Key = value``. Blank/comment lines return ``''``."""
-    s = line.strip()
-    if not s or s.startswith('#'):
-        return ''
+def _strdelim(s: str) -> Tuple[Optional[str], str]:
+    """``(token, rest)`` the way OpenSSH's ``strdelim()`` cuts the keyword off a line: the token
+    ends at a blank or at ONE ``=``, or at the closing quote of a ``"quoted"`` part (``None`` if it
+    is never closed)."""
     for i, ch in enumerate(s):
+        if ch == '"':
+            end = s.find('"', i + 1)
+            if end < 0:
+                return None, ''
+            return s[:i] + s[i + 1:end], s[end + 1:].lstrip()
         if ch.isspace() or ch == '=':
-            return s[:i].lower()
-    return s.lower()
+            rest = s[i + 1:].lstrip()
+            if ch != '=' and rest.startswith('='):
+                rest = rest[1:].lstrip()
+            return s[:i], rest
+    return s, ''
+
+
+def _split_directive(line: str) -> Tuple[str, str]:
+    """``(lowercase keyword, argument text)`` of a line, honoring every spelling OpenSSH reads as
+    that keyword: ``Key value``, ``Key=value``, ``Key = value``, ``"Key" value``, ``=Key value``.
+    Blank/comment lines return ``('', '')``."""
+    s = line.split('\0', 1)[0].strip()      # OpenSSH reads a C string
+    keyword, rest = _strdelim(s)
+    if keyword == '':                       # it skips one empty leading token (`=`, `""`)
+        keyword, rest = _strdelim(rest)
+    if not keyword or keyword.startswith('#'):
+        return '', ''
+    return keyword.lower(), rest
+
+
+def _ssh_keyword(line: str) -> str:
+    """The lowercase SSH directive keyword of a line (see :func:`_split_directive`)."""
+    return _split_directive(line)[0]
 
 
 def _host_patterns(line: str) -> List[str]:
-    """Patterns from a ``Host a b c`` header line."""
-    s = line.strip()
-    rest = s[4:].lstrip(' =\t') if len(s) >= 4 else ''
+    """Patterns from a ``Host a b c`` header line. Like OpenSSH, stop at a token that starts a
+    ``# comment`` — what follows names no host."""
+    rest = _split_directive(line)[1]
     try:
-        return shlex.split(rest)
+        patterns = shlex.split(rest)
     except ValueError:
-        return rest.split()
+        patterns = rest.split()
+    for i, pattern in enumerate(patterns):
+        if pattern.startswith('#'):
+            return patterns[:i]
+    return patterns
 
 
 def _iter_config_stanzas(text: str):
@@ -202,7 +308,7 @@ def _iter_config_stanzas(text: str):
     cur_kind = 'global'
     cur_patterns: Optional[List[str]] = None
     buf: List[str] = []
-    for line in text.splitlines():
+    for line in split_config_lines(text):
         kw = _ssh_keyword(line)
         if kw in ('host', 'match'):
             if buf:
@@ -219,6 +325,31 @@ def _iter_config_stanzas(text: str):
 def _is_wildcard_pattern(pattern: str) -> bool:
     """A Host pattern that isn't a single concrete name (``*``/``?`` wildcards, ``!`` negation)."""
     return any(ch in pattern for ch in '*?!')
+
+
+def _importable_alias(pattern: str) -> Optional[str]:
+    """``pattern`` as a concrete Host alias that merge may write, else ``None``: a wildcard or
+    negation is a rule, not a host, and the rest is what the app refuses as an alias everywhere
+    else (empty, leading ``-``, control characters)."""
+    if _is_wildcard_pattern(pattern):
+        return None
+    try:
+        return validate_ssh_host_alias(pattern)
+    except ValueError:
+        return None
+
+
+_PLAIN_PATTERN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:@%+*?!")
+
+
+def _quote_pattern(pattern: str) -> str:
+    """A Host pattern written so that OpenSSH reads back exactly this ONE pattern: anything its
+    tokenizer could treat specially (blanks, quotes, backslash, a leading ``=`` or ``#``) goes
+    inside double quotes, with ``\\`` and ``"`` escaped."""
+    if all(ch in _PLAIN_PATTERN_CHARS for ch in pattern):
+        return pattern
+    return '"' + pattern.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def _owned_and_readable(path: str) -> bool:
@@ -294,9 +425,10 @@ def _select_new_host_blocks(imported_texts: List[str], existing_names: set
     Returns ``(new_block_text, dropped_nonhost, partial_collisions)``:
     - wildcard/negated ``Host`` stanzas, ``Match`` blocks and top-level globals are dropped
       (counted) — merge must never inject machine-wide SSH behavior from a backup;
+    - a wildcard next to a concrete name (``Host web *``) is dropped (counted) the same way and
+      the stanza is imported for the concrete name only;
     - a stanza whose names are all already present is skipped silently;
-    - a stanza where only SOME names collide is skipped and reported (an inherent ambiguity we
-      surface rather than guess)."""
+    - a stanza where only SOME names collide is imported for the new names and reported."""
     kept: List[str] = []
     dropped = 0
     collisions: List[List[str]] = []
@@ -309,25 +441,26 @@ def _select_new_host_blocks(imported_texts: List[str], existing_names: set
                 if has_content:
                     dropped += 1
                 continue
-            # Keep a stanza as long as it names at least one concrete host; only PURE
-            # wildcard/negation stanzas (Host *, Host prod-*, Host * !x) are global-ish and
-            # dropped. `Host prod !prod-db` keeps `prod`.
-            concrete = [p for p in patterns if not _is_wildcard_pattern(p)]
-            if not concrete:
+            # Import a stanza for the concrete hosts it names, and only for those. A negation can
+            # only narrow it (`Host prod !prod-db` keeps both); a wildcard widens it to hosts the
+            # backup does not define — alone (Host *, Host prod-*, Host * !x) or next to a
+            # concrete name (Host prod *) — so it is global-ish and never written.
+            concrete = [a for a in map(_importable_alias, patterns) if a]
+            negated = [p for p in patterns if p.startswith('!')]
+            if not concrete or len(concrete) + len(negated) < len(patterns):
                 dropped += 1
-                continue
             present = [p for p in concrete if p in existing_names]
             new_names = [p for p in concrete if p not in existing_names]
-            if not present:
-                kept.append('\n'.join(blk).rstrip())
-            elif new_names:
-                # Partial collision: import only the non-colliding names (rebuild the Host
-                # header, keep the body) instead of dropping the whole stanza — and still report
-                # the collision so the user knows some names were left to the existing hosts.
-                indent = blk[0][:len(blk[0]) - len(blk[0].lstrip())]
-                split_block = [f"{indent}Host {' '.join(new_names)}"] + list(blk[1:])
-                kept.append('\n'.join(split_block).rstrip())
-                collisions.append(patterns)
+            if new_names:
+                # Always rebuild the Host header from the names that were checked (keep the body),
+                # never copy it: shlex and OpenSSH do not tokenize alike (`x\<TAB>web`, `=web`),
+                # so the original text may name hosts this check did not see.
+                header = ' '.join(_quote_pattern(p) for p in new_names + negated)
+                kept.append('\n'.join([f"Host {header}"] + list(blk[1:])).rstrip())
+                if present:
+                    # Partial collision: only the non-colliding names are imported — report it
+                    # so the user knows some names were left to the existing hosts.
+                    collisions.append(patterns)
             # else: every concrete name already exists -> skip silently (a full duplicate,
             # e.g. re-importing your own backup, is not a reportable collision)
     return ('\n\n'.join(kept), dropped, collisions)
@@ -342,11 +475,11 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
       where the target root is not the home dir);
     - absolute includes OUTSIDE the source root were never bundled, so the line is commented out
       with a note instead of silently re-pointing at the target machine's system files."""
-    if _ssh_keyword(line) != 'include':
+    keyword, rest = _split_directive(line)
+    if keyword != 'include':
         return line
-    rest = line.strip()[len('include'):].lstrip(' =\t')
     try:
-        patterns = shlex.split(rest)
+        patterns = split_include_args(rest)
     except ValueError:
         patterns = rest.split()
     if not patterns:
@@ -358,7 +491,7 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
         if not os.path.isabs(pe):
             new_patterns.append(p)
         elif source_root and _is_under(pe, source_root):
-            new_patterns.append(os.path.relpath(pe, source_root))
+            new_patterns.append(os.path.relpath(pe, source_root).replace("\\", "/"))
         else:
             foreign = True
     indent = line[:len(line) - len(line.lstrip())]
@@ -371,7 +504,7 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
 def _rewrite_includes(text: str, source_root: Optional[str]) -> str:
     """Apply :func:`_rewrite_include_line` to every line of an imported config file."""
     return ''.join(_rewrite_include_line(line, source_root)
-                   for line in text.splitlines(keepends=True))
+                   for line in split_config_lines(text, keepends=True))
 
 
 class BackupManager:
@@ -1039,6 +1172,22 @@ class BackupManager:
         except Exception:
             return False
 
+    def _is_key_restore_target(self, path: str) -> bool:
+        """True if a backup may create a key file at *path*: inside a key store sshPilot manages
+        (``~/.ssh``; in isolated mode also the app config dir), symlinks resolved, and not under
+        a name OpenSSH or the app reserves for something else."""
+        roots = [get_ssh_dir()]
+        if self._current_isolated_mode():
+            roots.append(get_config_dir())
+        real = os.path.realpath(path)
+        # The client config (default and isolated main file) restores through its own path.
+        if os.path.basename(real).lower() in _RESERVED_SSH_FILENAMES | {'config', 'ssh_config'}:
+            return False
+        return any(
+            real != root and _is_under(real, root)
+            for root in (os.path.realpath(str(r)) for r in roots)
+        )
+
     def _restore_private_keys(self, manifest: Dict[str, Any]) -> Tuple[int, int]:
         """Restore private keys embedded in a backup to their original paths.
 
@@ -1047,6 +1196,10 @@ class BackupManager:
         import over destroying a key the user already has. Returns
         ``(written, skipped_existing)`` — ``written`` new keys placed, ``skipped_existing``
         left untouched because a file was already there.
+
+        The paths and bytes are backup data, so they only decide *which key* is restored: an
+        entry that points outside the key directories or is not key material is refused —
+        anywhere else a new file is a startup script, a plugin, an autostart entry.
         """
         written = 0
         skipped = 0
@@ -1066,23 +1219,33 @@ class BackupManager:
                     logger.info("Private key already exists; leaving it untouched: %s", path)
                     skipped += 1
                     continue
+                content = base64.b64decode(raw.encode('ascii'))
+                if not self._is_key_restore_target(path) or not _is_key_material(content):
+                    logger.warning("Skipping unsafe private key restore: %s", path)
+                    continue
                 os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
                 with open(path, 'wb') as f:
-                    f.write(base64.b64decode(raw.encode('ascii')))
+                    f.write(content)
                 private_mode = int(item.get('mode') or 0o600) & 0o777
                 # Private keys must never be restored with group/other access.
-                os.chmod(path, (private_mode & 0o600) or 0o600)
+                # On Windows OpenSSH checks the ACL, not mode bits.
+                chmod_private(path, (private_mode & 0o600) or 0o600)
 
-                # The matching .pub: also never overwrite an existing file.
-                public_path = _rebase_home_path(
-                    os.path.expanduser(str(item.get('public_path') or '')),
-                    source_home, target_home)
+                # The matching .pub: also never overwrite an existing file. It sits next to its
+                # key (where export read it), whatever the backup's 'public_path' says, and is
+                # never executable.
+                public_path = f"{path}.pub"
                 public_raw = item.get('public_content_b64')
-                if public_path and public_raw and not os.path.exists(public_path):
-                    os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
-                    with open(public_path, 'wb') as f:
-                        f.write(base64.b64decode(public_raw.encode('ascii')))
-                    os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
+                if public_raw and not os.path.exists(public_path):
+                    public_content = base64.b64decode(public_raw.encode('ascii'))
+                    if self._is_key_restore_target(public_path) \
+                            and _is_key_material(public_content):
+                        with open(public_path, 'wb') as f:
+                            f.write(public_content)
+                        public_mode = int(item.get('public_mode') or 0o644)
+                        os.chmod(public_path, (public_mode & 0o644) or 0o644)
+                    else:
+                        logger.warning("Skipping unsafe public key restore: %s", public_path)
                 written += 1
             except Exception:
                 logger.warning("Failed to restore a private key", exc_info=True)
@@ -1268,7 +1431,8 @@ class BackupManager:
                 dest = os.path.abspath(main_path)
             else:
                 dest = os.path.normpath(os.path.join(root, rel))
-                if not _is_under(dest, root):
+                if not _is_under(dest, root) \
+                        or os.path.basename(dest).lower() in _RESERVED_SSH_FILENAMES:
                     logger.warning("Skipping unsafe SSH config restore path: %s", rel)
                     continue
             text = _rewrite_includes(content or '', source_root)
@@ -1467,8 +1631,7 @@ class BackupManager:
             if kind == 'global':
                 return False
             if kind == 'match':
-                rest = block[0].strip()[len('match'):].strip().lower()
-                return rest != 'all'
+                return _split_directive(block[0])[1].lower() != 'all'
             return True
         return False
 
@@ -1478,7 +1641,7 @@ class BackupManager:
         """Return *text* with any sshPilot-managed fragment ``Include`` removed and a single
         unconditional (``Match all``-guarded) ``Include`` appended."""
         out: List[str] = []
-        for line in text.splitlines():
+        for line in split_config_lines(text):
             if _ssh_keyword(line) == 'include' and fragment_name in line.lower():
                 if out and out[-1].strip() == '# Added by sshPilot import':
                     out.pop()
@@ -1505,7 +1668,7 @@ class BackupManager:
         existing = ''
         if os.path.exists(main_path):
             try:
-                with open(main_path, encoding='utf-8') as f:
+                with open(main_path, encoding='utf-8', newline='') as f:
                     existing = f.read()
             except OSError:
                 existing = ''
@@ -1518,7 +1681,7 @@ class BackupManager:
             and not self._fragment_include_is_conditional(existing, fragment_name)
         ):
             return
-        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path))
+        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path)).replace("\\", "/")
         self._atomic_write_text(
             main_path,
             self._normalize_fragment_include(existing, fragment_name, rel),

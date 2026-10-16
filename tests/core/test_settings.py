@@ -68,13 +68,17 @@ def test_settings_round_trip(tmp_path):
     assert loaded["config_version"] == CONFIG_VERSION
 
 
-def test_obsolete_config_replaced(tmp_path):
+def test_obsolete_config_upgraded_in_memory_without_writing(tmp_path):
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"terminal": {"theme": "old"}}), encoding="utf-8")
+    before = path.read_bytes()
     loaded, migrated = load_settings(path)
     assert migrated is True
     assert loaded["config_version"] == CONFIG_VERSION
-    assert (tmp_path / "config.json.bak").exists() or True  # bak best-effort
+    assert loaded["terminal"]["theme"] == "old"
+    # The tolerant loader is read-only: no backup, no rewrite.
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.json"]
 
 
 def test_compose_ssh_overrides_verbosity_and_timeouts():

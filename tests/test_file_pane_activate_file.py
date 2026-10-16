@@ -1,5 +1,6 @@
 """Activating a row: folders navigate, local files open, remote files ask."""
 
+import os
 from types import SimpleNamespace
 
 
@@ -40,7 +41,7 @@ def test_local_file_opens_in_default_app(load_file_manager_window, monkeypatch):
     pane._on_list_activate(None, 1)
     pane._on_grid_activate(None, 1)
 
-    assert opened == [("/home/user/report.txt", "window")] * 2
+    assert opened == [(os.path.join("/home/user", "report.txt"), "window")] * 2
     assert pane.emitted == []
 
 
@@ -51,7 +52,7 @@ def test_folder_still_navigates(load_file_manager_window, monkeypatch):
 
     pane._on_list_activate(None, 0)
 
-    assert pane.emitted == [("path-changed", "/home/user/docs")]
+    assert pane.emitted == [("path-changed", os.path.join("/home/user", "docs"))]
     assert opened == []
 
 

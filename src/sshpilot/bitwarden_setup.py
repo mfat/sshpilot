@@ -33,6 +33,7 @@ import shlex
 import shutil
 import ssl
 import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -46,11 +47,22 @@ from gi.repository import Adw, GLib, Gtk
 
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .window_dialogs import parent_window
+from .platform.process import hidden_console_kwargs
 
 logger = logging.getLogger(__name__)
 
 _INSTALL_TIMEOUT = 600
-BW_CLI_DOWNLOAD = "https://bitwarden.com/download/?app=cli&platform=linux"
+def _bw_cli_download_platform() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+BW_CLI_DOWNLOAD = (
+    "https://bitwarden.com/download/?app=cli&platform=" + _bw_cli_download_platform()
+)
 BW_EU_SERVER = "https://vault.bitwarden.eu"
 # Bitwarden CLI two-step login ``--method`` values (Authenticator=0, Email=1, YubiKey=3).
 _BW_TWOFAMETHOD_VALUES = ("0", "1", "3")
@@ -272,6 +284,7 @@ def run_install(plan: InstallPlan) -> Tuple[bool, str]:
             result = subprocess.run(
                 list(plan.argv),
                 capture_output=True, text=True, timeout=_INSTALL_TIMEOUT, check=False,
+                **hidden_console_kwargs(),
             )
         except subprocess.TimeoutExpired:
             return False, _("Installation timed out.")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import datetime, timezone
 
@@ -101,6 +102,40 @@ def test_success_failure_and_safe_progress_events():
     finally:
         subscription.close()
         runtime.shutdown()
+
+
+def test_operation_failure_log_includes_exit_and_diagnostic(caplog):
+    runtime = OperationRuntime()
+    caplog.set_level(logging.INFO, logger="sshpilot.daemon.operation_runtime")
+    try:
+        failed = runtime.start_operation(
+            OperationKind.AUTHORIZED_KEY_REMOVAL,
+            lambda _handle: (_ for _ in ()).throw(
+                SshPilotError(
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                    "installation_failed",
+                    details={
+                        "identity_failure_code": "installation_failed",
+                        "diagnostic": (
+                            "ssh: connect to host router port 22: Connection refused\n"
+                            "password=secret must not appear"
+                        ),
+                        "exit_code": 255,
+                    },
+                )
+            ),
+        )
+        _wait_for_state(runtime, failed.operation_id, OperationState.FAILED)
+    finally:
+        runtime.shutdown()
+
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "code=remote_command_failed" in text
+    assert "identity=installation_failed" in text
+    assert "exit=255" in text
+    assert "Connection refused" in text
+    assert "password=secret" not in text
+    assert "password=<redacted>" in text
 
 
 def test_reentrant_created_callback_shutdown_cancels_without_starting_worker():

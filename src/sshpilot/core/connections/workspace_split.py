@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from ...platform.fs import makedirs_private
 from .identity_state_v2 import (
     ConnectionReference,
     IdentityStateV2,
@@ -78,7 +79,7 @@ def _record_split(config_dir) -> None:
     # A genuinely fresh install has no config directory yet: there is nothing
     # to split, but the result still has to be recorded or every start retries
     # and logs a failure.
-    marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    makedirs_private(marker.parent)
     tmp = marker.with_name(marker.name + ".tmp")
     tmp.write_text(f"{WORKSPACE_SPLIT_VERSION}\n", encoding="utf-8")
     os.replace(tmp, marker)

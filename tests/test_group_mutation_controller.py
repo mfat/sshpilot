@@ -95,6 +95,12 @@ class FakeClient:
             raise self._errors["copy_connection_to_group"]
         return self._results.get("copy_connection_to_group", True)
 
+    def move_connections(self, request):
+        self.calls.append(("move_connections", (request,), {}))
+        if "move_connections" in self._errors:
+            raise self._errors["move_connections"]
+        return self._results.get("move_connections", True)
+
     def remove_connection_from_group(self, request):
         self.calls.append(("remove_connection_from_group", (request,), {}))
         if "remove_connection_from_group" in self._errors:
@@ -857,12 +863,12 @@ class TestGroupManagerDelegation:
 # Commit 1: Sequence context propagation tests
 # ---------------------------------------------------------------------------
 
-
 class TestCreateAndAssignSequence:
-    """Tests for the create-new-group + assign connections workflow.
+    """Tests for the create-new-group + move/copy connections workflow.
 
-    The critical requirement: every assignment step must receive the original
-    created group ID, not the return value of the previous assignment (bool).
+    The created group ID is validated and passed to one ``move_connections``
+    request that places every connection, so moving N connections is one
+    daemon commit rather than N.
 
     These tests exercise the production ``build_create_and_assign_steps``
     helper directly — they do not reconstruct the workflow in a test double.
@@ -875,8 +881,18 @@ class TestCreateAndAssignSequence:
             client, group_name, nicknames, is_copy=is_copy, color=color,
         )
 
+    @staticmethod
+    def _placement(call):
+        name, (request,), _kwargs = call
+        assert name == "move_connections"
+        return (
+            tuple(request.connection_ids),
+            request.target_group_id,
+            request.mode.value,
+        )
+
     def test_create_and_move_two_connections(self):
-        """Create group, then move two connections to it."""
+        """Create group, then move both connections to it in one request."""
         client = FakeClient()
         client.set_result("create_group", "grp-new")
         ctrl = _make_controller(client=client)
@@ -888,28 +904,13 @@ class TestCreateAndAssignSequence:
             on_error=lambda e: results.append(("err", e)),
         )
         assert results == [("ok", True)]
-        # Both assignments must use the group ID returned by create_group.
-        assert client.calls[1] == ("assign_connection_to_group", ("c1", "grp-new"), {})
-        assert client.calls[2] == ("assign_connection_to_group", ("c2", "grp-new"), {})
-
-    def test_create_and_move_three_connections(self):
-        """Create group, then move three connections to it."""
-        client = FakeClient()
-        client.set_result("create_group", "grp-3")
-        ctrl = _make_controller(client=client)
-        steps = self._build_steps(client, "Prod", ["c1", "c2", "c3"])
-        results = []
-        ctrl.run_sequence(
-            steps,
-            on_success=lambda r: results.append(("ok", r)),
-            on_error=lambda e: results.append(("err", e)),
+        assert len(client.calls) == 2
+        assert self._placement(client.calls[1]) == (
+            ("c1", "c2"), "grp-new", "exclusive",
         )
-        assert results == [("ok", True)]
-        for i, nick in enumerate(["c1", "c2", "c3"], start=1):
-            assert client.calls[i][1] == (nick, "grp-3")
 
     def test_create_and_copy_two_connections(self):
-        """Create group, then copy two connections to it."""
+        """Create group, then add both connections to it, keeping other groups."""
         client = FakeClient()
         client.set_result("create_group", "grp-copy")
         ctrl = _make_controller(client=client)
@@ -923,14 +924,12 @@ class TestCreateAndAssignSequence:
             on_error=lambda e: results.append(("err", e)),
         )
         assert results == [("ok", True)]
-        # Both copy requests must use the created group ID.
-        for i in [1, 2]:
-            req = client.calls[i][1][0]
-            assert req.group_id == "grp-copy"
-            assert req.connection_id == client.calls[i][1][0].connection_id
+        assert self._placement(client.calls[1]) == (
+            ("c1", "c2"), "grp-copy", "additive",
+        )
 
-    def test_every_assignment_receives_created_group_id(self):
-        """Verify the closure captures the group ID correctly for 5 connections."""
+    def test_many_connections_are_one_request(self):
+        """Five connections still cost a single placement call."""
         client = FakeClient()
         client.set_result("create_group", "grp-many")
         ctrl = _make_controller(client=client)
@@ -941,40 +940,22 @@ class TestCreateAndAssignSequence:
             on_success=lambda r: None,
             on_error=lambda e: pytest.fail(str(e)),
         )
-        for i, nick in enumerate(nicks, start=1):
-            assert client.calls[i][1] == (nick, "grp-many")
+        assert [call[0] for call in client.calls] == [
+            "create_group", "move_connections",
+        ]
+        assert self._placement(client.calls[1])[0] == tuple(nicks)
 
-    def test_first_assignment_true_does_not_replace_context(self):
-        """Assignment returning True must not overwrite the group ID context."""
+    def test_duplicate_nicknames_are_placed_once(self):
         client = FakeClient()
-        client.set_result("create_group", "grp-ctx")
-        client.set_result("assign_connection_to_group", True)  # explicit True
+        client.set_result("create_group", "grp-dup")
         ctrl = _make_controller(client=client)
-        steps = self._build_steps(client, "Prod", ["c1", "c2"])
-        results = []
+        steps = self._build_steps(client, "Prod", ["c1", "c2", "c1"])
         ctrl.run_sequence(
             steps,
-            on_success=lambda r: results.append(r),
-            on_error=lambda e: results.append(("err", e)),
+            on_success=lambda r: None,
+            on_error=lambda e: pytest.fail(str(e)),
         )
-        assert results == [True]
-        assert client.calls[1][1] == ("c1", "grp-ctx")
-        assert client.calls[2][1] == ("c2", "grp-ctx")
-
-    def test_first_assignment_falsy_does_not_replace_context(self):
-        """Assignment returning a falsy value must not overwrite the context."""
-        client = FakeClient()
-        client.set_result("create_group", "grp-ctx2")
-        client.set_result("assign_connection_to_group", 0)  # falsy
-        ctrl = _make_controller(client=client)
-        steps = self._build_steps(client, "Prod", ["c1"])
-        results = []
-        ctrl.run_sequence(
-            steps,
-            on_success=lambda r: results.append(r),
-            on_error=lambda e: results.append(("err", e)),
-        )
-        assert client.calls[1][1] == ("c1", "grp-ctx2")
+        assert self._placement(client.calls[1])[0] == ("c1", "c2")
 
     def test_empty_create_result_aborts_before_assignment(self):
         """If create_group returns empty string, the sequence must abort."""
@@ -1055,7 +1036,7 @@ class TestCreateAndAssignSequence:
             on_error=lambda e: pytest.fail(str(e)),
         )
         # The stripped ID must be propagated to the assignment step.
-        assert client.calls[1][1] == ("c1", "grp-pad")
+        assert self._placement(client.calls[1])[1] == "grp-pad"
 
     def test_color_is_forwarded_to_create_group(self):
         """The color argument flows through to create_group."""

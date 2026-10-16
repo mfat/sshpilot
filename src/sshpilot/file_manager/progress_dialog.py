@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections
 import logging
 import os
+import posixpath
 import time
 from gettext import gettext as _, ngettext
 from typing import Optional
@@ -367,13 +368,17 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
     def _display_location(self, path: str, *, local: bool) -> str:
         """Folder the file lives in, with the home directory shortened to ~."""
-        location = path.rstrip("/") or path
-        if self.current_file and os.path.basename(location) == self.current_file:
-            location = os.path.dirname(location) or "/"
+        # Local paths use the OS separators (both on Windows); remote are POSIX.
+        paths = os.path if local else posixpath
+        seps = (os.sep + (os.altsep or "")) if local else "/"
+        location = path.rstrip(seps) or path
+        if self.current_file and paths.basename(location) == self.current_file:
+            location = paths.dirname(location) or "/"
         if local:
-            home = os.path.expanduser("~").rstrip("/")
-            if home and (location == home or location.startswith(home + "/")):
-                location = "~" + location[len(home):]
+            home = os.path.expanduser("~").rstrip(seps)
+            rest = location[len(home):]
+            if home and location.startswith(home) and (not rest or rest[0] in seps):
+                location = "~" + rest
         return safe_display_text(location)
 
     def set_paths(self, source: Optional[str] = None,

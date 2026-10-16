@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
+from ...platform.windows.acl import chmod_private
 from ..errors import CoreError, ErrorCode
 from .utils import SKIPPED_FILENAMES, is_private_key
 
@@ -207,8 +209,10 @@ class KeyService:
         comment = spec.comment
         if not comment:
             try:
-                user = os.getenv("USER") or "user"
-                host = os.uname().nodename
+                user = os.getenv("USER") or os.getenv("USERNAME") or "user"
+                host = platform.node()
+                if not host:
+                    raise OSError("unknown host name")
                 comment = f"{user}@{host}"
             except OSError:
                 comment = "generated-by-sshpilot"
@@ -260,8 +264,21 @@ class KeyService:
             ) from exc
         if completed.returncode != 0:
             raise CoreError(ErrorCode.KEY_INVALID, "ssh-keygen failed.")
+        if spec.encrypted and self._opens_without_passphrase(key_path):
+            # OpenSSH reads a failed askpass as an empty passphrase and writes
+            # the key in plaintext. Never hand that back as an encrypted key.
+            for path in (key_path, Path(f"{key_path}.pub")):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            raise CoreError(
+                ErrorCode.KEY_INVALID,
+                "No passphrase was set; the unencrypted key was removed.",
+            )
         try:
-            os.chmod(key_path, 0o600)
+            # On Windows, OpenSSH checks the ACL rather than mode bits.
+            chmod_private(key_path)
             pub_path = f"{key_path}.pub"
             if os.path.exists(pub_path):
                 os.chmod(pub_path, 0o644)
@@ -272,6 +289,22 @@ class KeyService:
                 type(perm_err).__name__,
             )
         return SSHKeyInfo(str(key_path))
+
+    @staticmethod
+    def _opens_without_passphrase(key_path: Path) -> bool:
+        """True when ``ssh-keygen -y`` reads *key_path* with an empty passphrase."""
+        try:
+            completed = subprocess.run(
+                ["ssh-keygen", "-y", "-P", "", "-f", str(key_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                timeout=_KEY_VERIFY_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return completed.returncode == 0
 
     def verify_key_passphrase(
         self,

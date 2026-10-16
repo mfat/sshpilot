@@ -172,6 +172,22 @@ def test_request_refuses_line_breaks_in_nickname_and_update():
         )
 
 
+@pytest.mark.parametrize("separator", ["\x85", "\u2028", "\u2029"])
+def test_request_and_formatter_refuse_unicode_line_breaks(separator):
+    injected = f"bob #{separator}ProxyCommand evil"
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(nickname="x", hostname="h", username=injected)
+    with pytest.raises(ValueError):
+        UpdateConnectionRequest(username=injected)
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(
+            nickname="x", hostname="h",
+            config_patch={"extra_ssh_config": f"Compression yes #{separator}x"},
+        )
+    with pytest.raises(ValueError):
+        format_ssh_config_entry({"nickname": "x", "hostname": "h", "username": injected})
+
+
 def test_formatter_refuses_line_breaks():
     with pytest.raises(ValueError):
         format_ssh_config_entry({"nickname": "x", "hostname": INJECTED})
@@ -278,3 +294,35 @@ def test_issue_1320_jump_host_sees_the_users_config(tmp_path):
     jump = _ssh_resolve(config, "jumpTest")
     assert jump["hostname"] == "jumptest.site.net"
     assert jump["port"] == "2022"
+
+
+def test_issue_1320_save_dialog_sees_what_the_target_inherited(tmp_path):
+    # Saving a search-box target shows the values its session used. They
+    # resolve through the target's own -F file, not the editor of a saved Host.
+    if shutil.which("ssh") is None:
+        pytest.skip("OpenSSH client not installed")
+    repo, _root = _repo(
+        tmp_path,
+        "Host *\n"
+        "    HostName %h.site.net\n"
+        "    Port 2022\n"
+        "    User root\n"
+        "    ProxyJump jumpTest\n",
+    )
+    service = _service(repo)
+    target = service.open_transient_connection(
+        CreateConnectionRequest(nickname="hi", hostname="hi", username="alice")
+    )
+
+    result = service.get_effective_config(target.id)
+
+    assert result.available
+    resolved = {}
+    for line in result.full:
+        key, _, value = line.partition(" ")
+        resolved.setdefault(key, value)
+    assert resolved["hostname"] == "hi.site.net"
+    assert resolved["port"] == "2022"
+    assert resolved["proxyjump"] == "jumpTest"
+    # What was typed wins over Host *, as it did for the session.
+    assert resolved["user"] == "alice"

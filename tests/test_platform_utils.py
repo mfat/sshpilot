@@ -1,8 +1,9 @@
 import os
+import sys
 
 import pytest
 
-from sshpilot import platform_utils
+from sshpilot import platform_utils, system_terminal
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +129,7 @@ def test_get_data_dir(monkeypatch, tmp_path):
 
 def test_get_ssh_dir_default(monkeypatch, tmp_path):
     monkeypatch.delenv("SSHPILOT_SSH_DIR", raising=False)
+    monkeypatch.setattr(platform_utils, "is_windows", lambda: False)
     monkeypatch.setattr(
         platform_utils.GLib,
         "get_home_dir",
@@ -136,6 +138,20 @@ def test_get_ssh_dir_default(monkeypatch, tmp_path):
     )
     expected = os.path.join(str(tmp_path), ".ssh")
     assert platform_utils.get_ssh_dir() == expected
+
+
+def test_get_ssh_dir_windows_follows_headless_resolver(monkeypatch, tmp_path):
+    # GLib would prefer %HOME%; OpenSSH for Windows and the daemon use the
+    # profile directory, so the frontend must agree with platform.paths.
+    from pathlib import Path
+    from sshpilot.platform import paths
+
+    monkeypatch.delenv("SSHPILOT_SSH_DIR", raising=False)
+    monkeypatch.setattr(platform_utils, "is_windows", lambda: True)
+    monkeypatch.setattr(
+        platform_utils.GLib, "get_home_dir", lambda: "ignored", raising=False)
+    monkeypatch.setattr(paths, "get_home_dir", lambda: Path(tmp_path))
+    assert platform_utils.get_ssh_dir() == str(Path(tmp_path) / ".ssh")
 
 
 def test_get_ssh_dir_override(monkeypatch, tmp_path):
@@ -159,7 +175,8 @@ def test_managed_bw_cli_path_uses_data_home(monkeypatch, tmp_path):
         raising=False,
     )
     path = platform_utils.get_managed_bw_cli_path()
-    assert path == os.path.join(str(tmp_path / "share"), "sshpilot", "bin", "bw")
+    filename = "bw.exe" if sys.platform == "win32" else "bw"
+    assert path == os.path.join(str(tmp_path / "share"), "sshpilot", "bin", filename)
 
 
 def test_managed_bw_cli_path_flatpak_uses_host_data(monkeypatch):
@@ -234,12 +251,13 @@ _HOSTILE = 'ssh \'srv"; touch /tmp/pwned; "\''
 
 def _launched_argv(monkeypatch, terminal_command, macos=False, command=_HOSTILE):
     seen = []
-    monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(system_terminal, "is_macos", lambda: macos)
+    monkeypatch.setattr(system_terminal, "is_windows", lambda: False)
     monkeypatch.setattr(
-        platform_utils.subprocess, "Popen",
+        system_terminal.subprocess, "Popen",
         lambda cmd, **kw: seen.append(cmd) or object(),
     )
-    assert platform_utils.open_system_terminal(terminal_command, command) is True
+    assert system_terminal.open_system_terminal(terminal_command, command) is True
     return seen[0]
 
 
@@ -252,15 +270,16 @@ def test_control_characters_refuse_to_launch(monkeypatch, ctrl, macos):
     escaping does not help -- the command must be refused instead.
     """
     launched = []
-    monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(system_terminal, "is_macos", lambda: macos)
+    monkeypatch.setattr(system_terminal, "is_windows", lambda: False)
     monkeypatch.setattr(
-        platform_utils.subprocess, "Popen",
+        system_terminal.subprocess, "Popen",
         lambda cmd, **kw: launched.append(cmd) or object(),
     )
     terminal = ["open", "-a", "Terminal"] if macos else ["/usr/bin/xterm"]
     hostile = f"ssh srv{ctrl}touch /tmp/pwned"
 
-    assert platform_utils.open_system_terminal(terminal, hostile) is False
+    assert system_terminal.open_system_terminal(terminal, hostile) is False
     assert launched == []
 
 
@@ -300,13 +319,13 @@ def test_macos_argv_terminals_do_not_interpolate(monkeypatch, app):
 
 
 def test_applescript_literal_escapes_quotes():
-    quoted = platform_utils._applescript_string('say "hi" \\ bye')
+    quoted = system_terminal._applescript_string('say "hi" \\ bye')
     assert quoted == '"say \\"hi\\" \\\\ bye"'
 
 
 def test_applescript_literal_escapes_line_breaks():
     """A raw newline inside an AppleScript string does not compile."""
-    quoted = platform_utils._applescript_string("one\ntwo\rthree")
+    quoted = system_terminal._applescript_string("one\ntwo\rthree")
     assert "\n" not in quoted and "\r" not in quoted
     assert quoted == '"one\\ntwo\\rthree"'
 

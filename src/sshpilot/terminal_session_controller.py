@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 _RECOVERY_REPLAY_CHUNK_BYTES = 512 * 1024
 
 
+class SessionFailureError(SshPilotError):
+    """A daemon session failure surfaced to the tab.
+
+    The terminal shows these in its banner only: the session's own output
+    already holds the diagnostic, so echoing it into the terminal repeats it.
+    """
+
+
 def _session_failure_presentation(failure) -> tuple[ErrorCode, str]:
     if type(failure) is PluginSessionFailure:
         return failure.error_code, format_plugin_session_failure(failure)
@@ -46,6 +54,11 @@ def _session_failure_presentation(failure) -> tuple[ErrorCode, str]:
             failure, include_diagnostic=True
         )
     raise TypeError("unsupported session failure")
+
+
+def _session_failure_error(failure, session_id) -> SessionFailureError:
+    code, message = _session_failure_presentation(failure)
+    return SessionFailureError(code, message, session_id=session_id)
 
 
 class TerminalSessionState(str, Enum):
@@ -178,9 +191,14 @@ class DaemonTerminalSessionController:
         on_continuity_lost: Optional[Callable[[], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_state_changed: Optional[Callable[[], None]] = None,
+        output_slice_bytes: Optional[int] = None,
     ) -> None:
         self._client = client
         self._bridge = bridge
+        #: Most output bytes one GTK dispatch hands the display; ``None``
+        #: keeps the bridge default. Slower emulators ask for less, so input
+        #: and redraws run between slices.
+        self._output_slice_bytes = output_slice_bytes
         self._connection_id = connection_id
         self._view_id = view_id
         self._on_output = on_output
@@ -532,13 +550,8 @@ class DaemonTerminalSessionController:
             self._tab_state.state = TerminalSessionState.FAILED
             failure = getattr(summary, "failure", None)
             if failure is not None:
-                code, message = _session_failure_presentation(failure)
                 self._on_error(
-                    SshPilotError(
-                        code,
-                        message,
-                        session_id=summary.id,
-                    )
+                    _session_failure_error(failure, summary.id)
                 )
             else:
                 self._on_error(
@@ -634,13 +647,8 @@ class DaemonTerminalSessionController:
         if failure is None or self._session_failure_reported:
             return False
         self._session_failure_reported = True
-        code, message = _session_failure_presentation(failure)
         self._on_error(
-            SshPilotError(
-                code,
-                message,
-                session_id=self._tab_state.session_id,
-            )
+            _session_failure_error(failure, self._tab_state.session_id)
         )
         return True
 
@@ -761,6 +769,11 @@ class DaemonTerminalSessionController:
             ),
             on_error=lambda error: self._handle_bound_error(generation, error),
             start_paused=paused,
+            **(
+                {"max_pending_bytes": self._output_slice_bytes}
+                if self._output_slice_bytes
+                else {}
+            ),
             recovery_sequence=(
                 self._tab_state.expected_sequence if paused else None
             ),
@@ -1195,13 +1208,8 @@ class DaemonTerminalSessionController:
                 )
             )
             return
-        code, message = _session_failure_presentation(failure)
         self._finish_attach_error(
-            SshPilotError(
-                code,
-                message,
-                session_id=self._tab_state.session_id,
-            )
+            _session_failure_error(failure, self._tab_state.session_id)
         )
 
     def _finish_attach_error(self, error) -> None:

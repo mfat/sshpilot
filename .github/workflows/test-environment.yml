@@ -110,7 +110,8 @@ jobs:
               .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 -m gui \
                 tests/gui/test_basic_app_functions.py \
                 "tests/gui/test_phase14_auth_dialogs.py::test_password_dialog_without_auth_helper" \
-                "tests/gui/test_phase14_terminal_integration.py::test_connect_via_terminal_manager_daemon_route"
+                "tests/gui/test_phase14_terminal_integration.py::test_connect_via_terminal_manager_daemon_route" \
+                tests/gui/test_gtk_client_bridge_dispatch.py
           '
 
   virtual-fido:

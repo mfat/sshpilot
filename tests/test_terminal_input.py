@@ -1,6 +1,12 @@
 """Helpers for daemon-backed terminal input encoding and mouse tracking."""
 
-from sshpilot.terminal_input import MouseTrackingState, commit_payload_to_bytes
+import pytest
+
+from sshpilot.terminal_input import (
+    MouseTrackingState,
+    commit_payload_to_bytes,
+    typed_command_line,
+)
 
 
 def test_ascii_commit_round_trips_as_utf8():
@@ -59,6 +65,20 @@ def test_bytes_payload_is_returned_unchanged():
     payload = b"\x1b[M\xe8("
     assert commit_payload_to_bytes(payload, len(payload)) == payload
     assert commit_payload_to_bytes(bytearray(payload)) == payload
+
+
+def test_typed_command_line_ends_with_enter():
+    assert typed_command_line("cd '/srv/a b;id'") == b"cd '/srv/a b;id'\n"
+    assert typed_command_line("cd /srv/caf\u00e9") == b"cd /srv/caf\xc3\xa9\n"
+
+
+@pytest.mark.parametrize(
+    "key", ["\x03", "\t", "\n", "\r", "\x15", "\x17", "\x1b", "\x7f"],
+)
+def test_typed_command_line_refuses_control_characters(key):
+    # Ctrl+U would erase the opening quote and leave ``id>pwned #'`` to run.
+    with pytest.raises(ValueError):
+        typed_command_line(f"cd '/srv/reports{key}id>pwned #'")
 
 
 def test_sgr_mouse_stays_ascii():

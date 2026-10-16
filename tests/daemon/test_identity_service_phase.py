@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import logging
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -85,6 +87,11 @@ def test_ssh_copy_id_launch_errors_use_stable_error_codes(
     assert _identity_launch_failure_code(error_code) is failure_code
 
 
+# A leading slash is absolute on POSIX and not on Windows. abspath leaves a
+# POSIX absolute path unchanged and gives Windows a drive-qualified one.
+_PRIVATE_KEY = os.path.abspath("/home/test/.ssh/id_ed25519")
+
+
 class _KeyService:
     def list_keys(self, _request):
         return KeyList(
@@ -92,8 +99,8 @@ class _KeyService:
                 KeySummary(
                     key_id="key:one",
                     name="id_ed25519",
-                    private_path="/home/test/.ssh/id_ed25519",
-                    public_path="/home/test/.ssh/id_ed25519.pub",
+                    private_path=_PRIVATE_KEY,
+                    public_path=_PRIVATE_KEY + ".pub",
                     public_key_available=True,
                 ),
             )
@@ -203,7 +210,10 @@ def test_provider_agent_keys_scope_to_named_provider_not_selection(tmp_path):
 
 
 def test_provider_agent_keys_use_fixed_socket_provider(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", "/home/test")
+    # expanduser follows HOME on POSIX and USERPROFILE on Windows.
+    home = os.path.abspath("/home/test")
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setenv("USERPROFILE", home)
     calls = []
 
     def popen(argv, **kwargs):
@@ -214,7 +224,9 @@ def test_provider_agent_keys_use_fixed_socket_provider(tmp_path, monkeypatch):
     result = service.list_provider_agent_keys("onepassword")
     assert result.keys == ()
     assert calls[0][0] == ["ssh-add", "-l"]
-    assert calls[0][1]["env"]["SSH_AUTH_SOCK"] == "/home/test/.1password/agent.sock"
+    assert calls[0][1]["env"]["SSH_AUTH_SOCK"] == os.path.expanduser(
+        "~/.1password/agent.sock"
+    )
     assert "SSH_AGENT_PID" not in calls[0][1]["env"]
 
 
@@ -252,8 +264,47 @@ def test_ssh_copy_id_deployment_registers_operation(tmp_path):
     assert calls
     assert calls[0][0][0] == "ssh-copy-id"
     assert "-i" in calls[0][0]
-    assert calls[0][1]["start_new_session"] is True
+    # Windows has no POSIX process groups, so the launcher omits the flag.
+    if os.name == "nt":
+        assert "start_new_session" not in calls[0][1]
+    else:
+        assert calls[0][1]["start_new_session"] is True
     service._operations.shutdown()
+
+
+def test_ssh_copy_id_failure_logs_exit_status_and_transcript(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+
+    def popen(argv, **kwargs):
+        return _Completed(
+            returncode=255,
+            stdout=(
+                "Permission denied (publickey)\n"
+                "ssh: disconnecting\n"
+            ),
+        )
+
+    service = _service(tmp_path, popen)
+    summary = service.deploy_key(
+        DeployKeyRequest("HostAlias", "key:one", KeyStoreScope.DEFAULT, force=True)
+    )
+    operation = None
+    for _ in range(100):
+        operation = service._operations.get_operation(summary.operation_id)
+        if operation.state.value == "failed":
+            break
+        time.sleep(0.01)
+    service._operations.shutdown()
+
+    assert operation is not None
+    assert operation.state.value == "failed"
+    assert operation.failure.code is IdentityFailureCode.AUTHENTICATION_FAILED
+    assert "Permission denied (publickey)" in operation.failure.diagnostic
+    assert "disconnecting" in operation.failure.diagnostic
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "exit=255" in text
+    assert "Permission denied (publickey)" in text
+    assert "disconnecting" in text
 
 
 def test_ssh_copy_id_pasted_public_key_uses_temp_file(tmp_path):

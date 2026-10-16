@@ -73,3 +73,17 @@ po/*.pot
 
 # graphify knowledge-graph output (regenerable; ~50MB)
 graphify-out/
+
+# Local agent terminal investigation artifacts
+.agent_terminal_investigation/
+
+
+# Microsoft.Windows.Console.ConPTY NuGet download (conpty.dll + OpenConsole.exe,
+# see docs/architecture/windows-port.md). Never committed.
+/vendor/conpty/
+# Patched libvterm built by packaging/windows/libvterm/build.py. Never committed.
+/vendor/libvterm/
+# gvsbuild GTK 4 runtime fetched by scripts/fetch-gtk.py. Never committed.
+/vendor/gtk/
+/vendor/GTK4_Gvsbuild_*.zip
+/vendor/*.part

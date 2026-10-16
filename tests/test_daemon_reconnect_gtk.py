@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from sshpilot.api.daemon_reconnect import DaemonReconnectResult
 from sshpilot.daemon.launcher import DaemonLaunchResult
 from sshpilot.daemon.reconnect import ReconnectDecision, ReconnectOutcome
@@ -759,7 +761,7 @@ def test_run_server_returns_restart_exit_code(monkeypatch):
     code = run_server(
         serve_forever=lambda: None,
         shutdown=lambda: None,
-        startup_error=None,
+        get_startup_error=lambda: None,
         restart_requested=lambda: True,
     )
     assert code == RESTART_EXIT_CODE
@@ -767,7 +769,68 @@ def test_run_server_returns_restart_exit_code(monkeypatch):
     code = run_server(
         serve_forever=lambda: None,
         shutdown=lambda: None,
-        startup_error=None,
+        get_startup_error=lambda: None,
         restart_requested=lambda: False,
     )
     assert code == 0
+
+
+def test_run_server_raises_error_recorded_during_serve_forever(monkeypatch):
+    """Setup runs inside serve_forever, so its failure must be read after it."""
+    from sshpilot.daemon.cli import run_server
+
+    monkeypatch.setattr("sshpilot.daemon.cli._configure_logging", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("sshpilot.daemon.cli.signal.signal", lambda *_args: None)
+    state = {"error": None, "cleaned_up": False, "restart_asked": False}
+    failure = RuntimeError("bind failed")
+
+    def serve_forever():
+        state["error"] = failure
+        state["cleaned_up"] = True
+
+    def restart_requested():
+        state["restart_asked"] = True
+        return True
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run_server(
+            serve_forever=serve_forever,
+            shutdown=lambda: None,
+            get_startup_error=lambda: state["error"],
+            restart_requested=restart_requested,
+        )
+    assert excinfo.value is failure
+    assert state["cleaned_up"]
+    # A failed start is never reported as a restart request.
+    assert not state["restart_asked"]
+
+
+def test_daemon_main_exits_nonzero_when_server_setup_fails(monkeypatch):
+    """The server-mode wiring in main() must surface a setup failure."""
+    import sshpilot.daemon.server as server_module
+    from sshpilot.daemon import cli
+
+    monkeypatch.setattr(cli, "_configure_logging", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(
+        "sshpilot.platform.windows.acl.repair_owner_rights",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    failure = RuntimeError("core factory failed")
+
+    class _FailingServer:
+        def __init__(self, *_args, **_kwargs):
+            self._startup_error = None
+            self._lifecycle = None
+
+        def serve_forever(self):
+            self._startup_error = failure
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(server_module, "DaemonServer", _FailingServer)
+    with pytest.raises(RuntimeError) as excinfo:
+        cli.main([])
+    assert excinfo.value is failure

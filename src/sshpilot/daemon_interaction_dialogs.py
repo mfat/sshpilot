@@ -641,6 +641,19 @@ class DaemonInteractionDialogs:
         else:
             confirmation_entry.grab_focus()
 
+    def _supports_session_secrets(self) -> bool:
+        """Whether the daemon keeps "remember until quit" answers in memory."""
+        try:
+            from .api.capabilities import Capability
+
+            return bool(
+                self._client.get_capabilities().supports(
+                    Capability.INTERACTIONS_SESSION_SECRETS
+                )
+            )
+        except Exception:
+            return False
+
     def _present_shared_password(
         self,
         summary: InteractionSummary,
@@ -662,6 +675,7 @@ class DaemonInteractionDialogs:
         # helper's parent_window escape hatch.
         present_for_modal_dialog(parent)
         remember = [False]
+        remember_session = [False]
         # Register a real handle, not None: this dialog blocks in a nested main
         # loop, and _dismiss()/close() skip None entries, so a None here left
         # the prompt on screen after its interaction expired or its owner went
@@ -680,6 +694,11 @@ class DaemonInteractionDialogs:
                 store_label=_("Remember password"),
                 on_store=lambda _password: remember.__setitem__(0, True),
                 on_dialog=self._dialog_handle_sink(summary.id),
+                on_session_remember=(
+                    (lambda: remember_session.__setitem__(0, True))
+                    if self._supports_session_secrets()
+                    else None
+                ),
             )
         finally:
             self._dialogs.pop(summary.id, None)
@@ -687,6 +706,8 @@ class DaemonInteractionDialogs:
             policy = (
                 RememberPolicy.STORE_AFTER_SUCCESS
                 if remember[0]
+                else RememberPolicy.REMEMBER_FOR_SESSION
+                if remember_session[0]
                 else RememberPolicy.DO_NOT_STORE
             )
             self._submit_secret(

@@ -169,6 +169,10 @@ class TerminalThemeChooser:
     Built-in schemes come first. When *on_new* is given, a "Custom" section
     follows with the user's themes (each with Edit and Delete) and a "New
     Theme" card. Call :meth:`set_themes` after the catalog changes.
+
+    With *collapsed_count*, only that many built-in schemes show up front; the
+    rest sit behind a "Show All" revealer, and the chooser drops its own
+    scroller so it can live inside a scrolling preferences page.
     """
 
     def __init__(
@@ -181,6 +185,7 @@ class TerminalThemeChooser:
         on_new: Optional[Callable[[], None]] = None,
         on_edit: Optional[Callable[[str], None]] = None,
         on_delete: Optional[Callable[[str], None]] = None,
+        collapsed_count: Optional[int] = None,
     ) -> None:
         _install_css()
         self._on_selected = on_selected
@@ -189,6 +194,8 @@ class TerminalThemeChooser:
         self._on_delete = on_delete
         self._buttons: dict[str, Gtk.Button] = {}
         self._checks: dict[str, Gtk.Image] = {}
+        self._collapsed_count = collapsed_count
+        self._more_keys: tuple[str, ...] = ()
 
         self.flow_box = Gtk.FlowBox()
         _configure_grid(self.flow_box)
@@ -203,16 +210,39 @@ class TerminalThemeChooser:
         self.custom_flow_box = Gtk.FlowBox()
         _configure_grid(self.custom_flow_box)
 
+        # Built-ins past *collapsed_count*; stays empty and hidden otherwise.
+        self.more_flow_box = Gtk.FlowBox()
+        _configure_grid(self.more_flow_box)
+        self.more_flow_box.set_margin_top(0)
+        self.more_revealer = Gtk.Revealer()
+        self.more_revealer.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_DOWN
+        )
+        self.more_revealer.set_child(self.more_flow_box)
+        self.more_button = Gtk.Button()
+        self.more_button.add_css_class("flat")
+        self.more_button.set_halign(Gtk.Align.CENTER)
+        self.more_button.connect("clicked", self._on_more_clicked)
+
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         content.append(self.flow_box)
+        content.append(self.more_revealer)
+        content.append(self.more_button)
         content.append(self.custom_heading)
         content.append(self.custom_flow_box)
 
-        self.scroller = Gtk.ScrolledWindow()
-        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scroller.set_min_content_width(570)
-        self.scroller.set_min_content_height(470)
-        self.scroller.set_child(content)
+        if collapsed_count is None:
+            self.scroller = Gtk.ScrolledWindow()
+            self.scroller.set_policy(
+                Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
+            )
+            self.scroller.set_min_content_width(570)
+            self.scroller.set_min_content_height(470)
+            self.scroller.set_child(content)
+            body: Gtk.Widget = self.scroller
+        else:
+            self.scroller = None
+            body = content
 
         self.container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         heading = Gtk.Label(label=_("Palette"))
@@ -222,7 +252,7 @@ class TerminalThemeChooser:
         heading.set_margin_start(12)
         heading.set_margin_end(12)
         self.container.append(heading)
-        self.container.append(self.scroller)
+        self.container.append(body)
         self.set_themes(themes, selected_key, custom_keys)
 
     @property
@@ -236,7 +266,7 @@ class TerminalThemeChooser:
         custom_keys: Sequence[str] = (),
     ) -> None:
         """Rebuild the cards from *themes*; *custom_keys* go in the Custom section."""
-        for grid in (self.flow_box, self.custom_flow_box):
+        for grid in (self.flow_box, self.more_flow_box, self.custom_flow_box):
             child = grid.get_child_at_index(0)
             while child is not None:
                 grid.remove(child)
@@ -244,8 +274,13 @@ class TerminalThemeChooser:
         self._buttons.clear()
         self._checks.clear()
 
-        for key in selectable_terminal_theme_keys(themes):
+        keys = selectable_terminal_theme_keys(themes)
+        split = len(keys) if self._collapsed_count is None else self._collapsed_count
+        for key in keys[:split]:
             self.flow_box.append(self._build_card(key, themes[key]))
+        self._more_keys = keys[split:]
+        for key in self._more_keys:
+            self.more_flow_box.append(self._build_card(key, themes[key]))
 
         custom = [key for key in custom_keys if key in themes]
         for key in custom:
@@ -256,6 +291,24 @@ class TerminalThemeChooser:
         self.custom_heading.set_visible(has_custom_section)
         self.custom_flow_box.set_visible(has_custom_section)
         self.set_selected(selected_key)
+        self._update_more_button()
+
+    def _update_more_button(self) -> None:
+        self.more_button.set_visible(bool(self._more_keys))
+        if self.more_revealer.get_reveal_child():
+            self.more_button.set_label(_("Show Fewer Schemes"))
+        else:
+            self.more_button.set_label(
+                _("Show All Schemes ({count} more)").format(
+                    count=len(self._more_keys)
+                )
+            )
+
+    def _on_more_clicked(self, _button: Gtk.Button) -> None:
+        self.more_revealer.set_reveal_child(
+            not self.more_revealer.get_reveal_child()
+        )
+        self._update_more_button()
 
     def _build_card(self, key: str, theme: Mapping[str, object]) -> Gtk.Button:
         name = str(theme.get("name") or key)

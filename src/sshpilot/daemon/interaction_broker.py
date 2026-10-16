@@ -20,9 +20,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
-from typing import Callable, Deque, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Callable, Deque, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.transport import endpoint as transport_endpoint
 from sshpilot.api.events import (
     CoreEventCallback,
     EventPublisher,
@@ -129,6 +130,8 @@ class _PendingRemember:
     # Set once this credential's loss has been reported, so the teardown
     # warning does not repeat what was already logged when it was queued.
     loss_reported: bool = False
+    # RememberPolicy.REMEMBER_FOR_SESSION: kept in daemon memory, not stored.
+    session_only: bool = False
 
     def clear(self) -> None:
         self.secret[:] = b"\0" * len(self.secret)
@@ -159,6 +162,19 @@ class _AskpassContext:
     # True once ``mark_authenticated`` has run for this session. Credentials
     # remembered after that point have missed their only commit and are lost.
     commit_point_passed: bool = False
+
+
+def _operation_destination(argv: Sequence[str]) -> str:
+    """The OpenSSH destination on an operation command line.
+
+    Most launches put the host last. The Windows ssh-copy-id fallback is
+    ``ssh [options] -- host command``, so there the host is the argument
+    after ``--``. Prompts must name the host.
+    """
+
+    if len(argv) >= 3 and argv[-3] == "--":
+        return str(argv[-2])
+    return str(argv[-1]) if argv else ""
 
 
 class InteractionBroker:
@@ -201,6 +217,10 @@ class InteractionBroker:
         self._completed: Deque[InteractionId] = deque()
         self._direct_scope_owners: Dict[SessionId, ClientId] = {}
         self._closed = False
+        #: RememberPolicy.REMEMBER_FOR_SESSION answers, by
+        #: ("password", connection id) or ("passphrase", key path). Memory
+        #: only; wiped when a repeated prompt proves one wrong and on close.
+        self._session_secrets: Dict[Tuple[str, str], bytearray] = {}
         self._askpass_contexts: Dict[str, _AskpassContext] = {}
         self._askpass_transports: set[socket.socket] = set()
         self._askpass_queue: queue.Queue[Optional[socket.socket]] = queue.Queue(
@@ -211,11 +231,26 @@ class InteractionBroker:
         )
         os.chmod(self._private_dir, 0o700)
         self._askpass_socket_path = self._private_dir / "askpass.sock"
-        self._askpass_helper_path = self._private_dir / "askpass"
-        self._write_helper_launcher()
-        self._askpass_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._askpass_listener.bind(str(self._askpass_socket_path))
-        os.chmod(self._askpass_socket_path, 0o600, follow_symlinks=False)
+        if transport_endpoint.USES_TCP_ENDPOINT:
+            # Windows: OpenSSH runs the helper through cmd.exe, and the
+            # listener is loopback TCP. Each request still carries its
+            # per-launch broker token, which is the channel's authority.
+            # The directory form: Python 3.13+ mkdtemp leaves only SYSTEM and
+            # Administrators inheritable, so a non-inherited user grant made
+            # askpass.cmd unrunnable (CreateProcessW error 5) and OpenSSH
+            # read every prompt as an empty answer.
+            transport_endpoint.restrict_directory_to_current_user(self._private_dir)
+            self._askpass_helper_path = self._private_dir / "askpass.cmd"
+            self._write_helper_launcher()
+            self._askpass_listener, port = transport_endpoint.create_tcp_listener()
+            self._askpass_address = f"tcp:127.0.0.1:{port}"
+        else:
+            self._askpass_helper_path = self._private_dir / "askpass"
+            self._write_helper_launcher()
+            self._askpass_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._askpass_listener.bind(str(self._askpass_socket_path))
+            os.chmod(self._askpass_socket_path, 0o600, follow_symlinks=False)
+            self._askpass_address = str(self._askpass_socket_path)
         self._askpass_listener.listen(askpass_queue_limit)
         self._askpass_listener.settimeout(0.2)
         self._askpass_workers = tuple(
@@ -349,9 +384,7 @@ class InteractionBroker:
             environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
             environment["SSH_ASKPASS_REQUIRE"] = "force" if headless else "prefer"
             environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
-            environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(
-                self._askpass_socket_path
-            )
+            environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
             environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
@@ -396,17 +429,16 @@ class InteractionBroker:
         if not isinstance(interaction_mode, ExecutionInteractionMode):
             raise TypeError("interaction_mode must be an ExecutionInteractionMode")
         env = dict(environment)
+        destination = _operation_destination(argv)
         if not hostname:
             # Headless operation callers (ssh-copy-id, ssh-add, remote
             # commands) do not always know the connection's display host; the
-            # launch target (``argv[-1]``) carries it. Deriving safe display
-            # metadata here keeps every typed prompt (password, passphrase,
-            # host-key) constructible for every headless operation — a
-            # PASSWORD prompt with an empty hostname would fail model
-            # validation and the askpass worker would silently drop it.
-            target_hostname, target_username = self._target_identity(
-                str(argv[-1])
-            )
+            # launch target carries it. Deriving safe display metadata here
+            # keeps every typed prompt (password, passphrase, host-key)
+            # constructible for every headless operation — a PASSWORD prompt
+            # with an empty hostname would fail model validation and the
+            # askpass worker would silently drop it.
+            target_hostname, target_username = self._target_identity(destination)
             hostname = target_hostname
             if target_username and not username:
                 username = target_username
@@ -419,7 +451,7 @@ class InteractionBroker:
             username=username,
             port=port,
             control_path="",
-            control_target=str(argv[-1]),
+            control_target=destination,
             control_argv=(),
             attempts={},
             stored_attempted=set(),
@@ -447,7 +479,7 @@ class InteractionBroker:
         env["SSH_ASKPASS"] = str(self._askpass_helper_path)
         env["SSH_ASKPASS_REQUIRE"] = "force"
         env["DISPLAY"] = env.get("DISPLAY") or ":sshpilot-daemon"
-        env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(self._askpass_socket_path)
+        env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
         env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for operation scope={scope_id}"
@@ -1402,6 +1434,9 @@ class InteractionBroker:
                 return
             self._closed = True
             self._direct_scope_owners.clear()
+            for value in self._session_secrets.values():
+                value[:] = b"\0" * len(value)
+            self._session_secrets.clear()
             contexts = tuple(self._askpass_contexts.values())
             self._askpass_contexts.clear()
             for context in contexts:
@@ -1452,6 +1487,9 @@ class InteractionBroker:
         shutil.rmtree(self._private_dir, ignore_errors=True)
 
     def _write_helper_launcher(self) -> None:
+        if transport_endpoint.USES_TCP_ENDPOINT:
+            self._write_windows_helper_launcher()
+            return
         if getattr(sys, "frozen", False):
             # sys.executable is this application's own binary in a frozen
             # (PyInstaller) build, not a Python interpreter: a shebang of
@@ -1499,6 +1537,28 @@ class InteractionBroker:
         finally:
             os.close(descriptor)
 
+    def _write_windows_helper_launcher(self) -> None:
+        """Write ``askpass.cmd`` (and its Python helper) for OpenSSH for Windows.
+
+        Win32-OpenSSH starts ``SSH_ASKPASS`` with CreateProcess, which runs a
+        ``.cmd`` through cmd.exe but cannot honour a shebang. The helper source
+        is copied beside it (not imported) for the same reduced-environment
+        reason as the POSIX launcher.
+        """
+
+        if getattr(sys, "frozen", False):
+            command = f'@"{sys.executable}" --internal-askpass %*\r\n'
+        else:
+            helper_path = self._private_dir / "askpass_helper.py"
+            helper_source = Path(__file__).with_name("askpass_helper.py").read_bytes()
+            with open(helper_path, "xb") as handle:
+                handle.write(helper_source)
+            # -I: isolated mode, so nothing from the cwd or PYTHON* env vars
+            # is imported into the process that handles the secret.
+            command = f'@"{sys.executable}" -I "{helper_path}" %*\r\n'
+        with open(self._askpass_helper_path, "x", encoding="utf-8", newline="") as handle:
+            handle.write("@echo off\r\n" + command)
+
     def _askpass_accept_main(self) -> None:
         while True:
             with self._condition:
@@ -1527,6 +1587,9 @@ class InteractionBroker:
 
     @staticmethod
     def _same_user_peer(transport: socket.socket) -> bool:
+        if transport.family != getattr(socket, "AF_UNIX", None):
+            # Loopback TCP (Windows): the per-request broker token decides.
+            return True
         if not hasattr(socket, "SO_PEERCRED") or not hasattr(os, "getuid"):
             return True
         try:
@@ -1711,6 +1774,11 @@ class InteractionBroker:
             confirmation_required = context.confirm_passphrase
             interaction_mode = context.interaction_mode
         stored: Optional[str] = None
+        session_key = self._session_secret_key(interaction_type, connection_id, key_path)
+        if not try_stored and attempt > 1:
+            # The secret offered for this prompt was refused: if it came from
+            # session memory it is wrong now (changed password, other key).
+            self._forget_session_secret(session_key)
         if try_stored:
             try:
                 if interaction_type is InteractionType.PASSWORD:
@@ -1733,6 +1801,8 @@ class InteractionBroker:
                     key_path,
                 )
                 stored = None
+            if not stored:
+                stored = self._session_secret(session_key)
             if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
                 logger.info(
                     "askpass passphrase: prompt=%r key=%s stored=%s lookup=%s "
@@ -1858,6 +1928,7 @@ class InteractionBroker:
         if result.remember_policy in {
             RememberPolicy.STORE_AFTER_SUCCESS,
             RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,
+            RememberPolicy.REMEMBER_FOR_SESSION,
         }:
             with self._condition:
                 current = self._askpass_contexts.get(token)
@@ -1894,10 +1965,60 @@ class InteractionBroker:
                             key=key_path,
                             secret=bytearray(secret),
                             loss_reported=current.commit_point_passed,
+                            session_only=(
+                                result.remember_policy
+                                is RememberPolicy.REMEMBER_FOR_SESSION
+                            ),
                         )
                     )
         result.clear()
         return secret
+
+    @staticmethod
+    def _session_secret_key(
+        interaction_type: InteractionType, connection_id, key_path: str
+    ) -> Optional[Tuple[str, str]]:
+        if interaction_type is InteractionType.PASSWORD:
+            return ("password", str(connection_id))
+        if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE and key_path:
+            return ("passphrase", key_path)
+        return None
+
+    def _remember_for_session(self, item: "_PendingRemember", connection_id) -> None:
+        key = self._session_secret_key(item.interaction_type, connection_id, item.key)
+        try:
+            if key is None:
+                return
+            with self._condition:
+                if self._closed:
+                    return
+                previous = self._session_secrets.pop(key, None)
+                if previous is not None:
+                    previous[:] = b"\0" * len(previous)
+                self._session_secrets[key] = bytearray(item.secret)
+            logger.info(
+                "Remembering a %s for this daemon session connection=%s",
+                item.interaction_type.value,
+                connection_id,
+            )
+        finally:
+            item.clear()
+
+    def _session_secret(self, key: Optional[Tuple[str, str]]) -> Optional[str]:
+        if key is None:
+            return None
+        with self._condition:
+            value = self._session_secrets.get(key)
+            return None if value is None else value.decode("utf-8", "replace")
+
+    def _forget_session_secret(self, key: Optional[Tuple[str, str]]) -> None:
+        if key is None:
+            return
+        with self._condition:
+            value = self._session_secrets.pop(key, None)
+        if value is not None:
+            value[:] = b"\0" * len(value)
+            logger.info("Dropped a session-remembered %s after a repeated prompt", key[0])
 
     def _store_authenticated_secrets(self, token: str) -> None:
         with self._condition:
@@ -1915,6 +2036,9 @@ class InteractionBroker:
             hostname = context.hostname
             username = context.username
         for item in pending:
+            if item.session_only:
+                self._remember_for_session(item, connection_id)
+                continue
             try:
                 value = item.secret.decode("utf-8")
                 stored = False

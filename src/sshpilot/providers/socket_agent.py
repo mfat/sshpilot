@@ -15,9 +15,11 @@ So these providers contribute their socket via :meth:`ssh_config_directives`
 from __future__ import annotations
 
 import os
+import sys
 from typing import Dict, List, Tuple
 
 from ..identity import Identity, IdentityProvider
+from .system_agent import WINDOWS_AGENT_PIPE
 
 
 class SocketAgentProvider(IdentityProvider):
@@ -51,10 +53,13 @@ class SocketAgentProvider(IdentityProvider):
         # Cheap and side-effect free: the agent is usable if its socket exists.
         if not self._expanded:
             return False
+        if _is_windows_pipe(self._expanded):
+            return _windows_pipe_exists(self._expanded)
         try:
             return os.path.exists(self._expanded)
         except Exception:
             return False
+
 
     def apply_to_env(self, env: Dict[str, str]) -> Dict[str, str]:
         # Config-driven (IdentityAgent), not env-driven — see module docstring.
@@ -62,6 +67,12 @@ class SocketAgentProvider(IdentityProvider):
 
     def ssh_config_directives(self) -> List[Tuple[str, str]]:
         if not self._socket_path:
+            return []
+        if _is_windows_pipe(self._socket_path) and (
+            self._socket_path.replace("/", "\\").lower() == WINDOWS_AGENT_PIPE.lower()
+        ):
+            # OpenSSH for Windows uses this pipe by default. Writing it would
+            # also need its backslashes doubled: ssh_config reads "\\" as "\".
             return []
         return [("IdentityAgent", self._socket_path)]
 
@@ -71,9 +82,31 @@ class SocketAgentProvider(IdentityProvider):
         return []
 
 
+_PIPE_NAMESPACE = "\\\\.\\pipe\\"  # \\.\pipe\
+_PIPE_PREFIXES = (_PIPE_NAMESPACE, "//./pipe/")
+
+
+def _is_windows_pipe(path: str) -> bool:
+    return sys.platform == "win32" and path.lower().startswith(_PIPE_PREFIXES)
+
+
+def _windows_pipe_exists(path: str) -> bool:
+    # List the pipe namespace instead of opening the pipe: opening it would
+    # consume one of the agent's server instances (see system_agent).
+    name = path.replace("/", "\\").rsplit("\\", 1)[-1].lower()
+    try:
+        return name in (entry.lower() for entry in os.listdir(_PIPE_NAMESPACE))
+    except OSError:
+        return False
+
+
 # -- built-in presets ---------------------------------------------------------
 ONEPASSWORD = "onepassword"
-ONEPASSWORD_SOCKET = "~/.1password/agent.sock"
+#: 1Password's agent socket. On Windows it serves the OpenSSH agent pipe
+#: instead (the OpenSSH agent service must be stopped for it to take over).
+ONEPASSWORD_SOCKET = (
+    WINDOWS_AGENT_PIPE if sys.platform == "win32" else "~/.1password/agent.sock"
+)
 
 
 def onepassword_provider() -> SocketAgentProvider:

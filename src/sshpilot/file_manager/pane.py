@@ -85,6 +85,15 @@ from .icon_levels import (
 )
 
 
+def _paths_for(is_remote: bool):
+    """``posixpath`` for a remote pane, ``os.path`` for a local one.
+
+    Remote paths are POSIX on every client; ``os.path`` on Windows would join
+    them with a backslash (``/home/u\\docs``) that the server does not know.
+    """
+    return posixpath if is_remote else os.path
+
+
 def _file_manager_window_cls():
     """Lazy access to ``FileManagerWindow`` to break the import cycle."""
     from ..file_manager_window import FileManagerWindow
@@ -2825,7 +2834,7 @@ class FilePane(Gtk.Box):
             # For current directory, use the base path as location
             location = base_path
         else:
-            location = os.path.join(base_path, entry.name)
+            location = _paths_for(self._is_remote).join(base_path, entry.name)
 
         entry_type = _("Folder") if entry.is_dir else _("File")
         if entry.is_dir:
@@ -3344,7 +3353,7 @@ class FilePane(Gtk.Box):
             return
 
         base_path = self._current_path or ""
-        target_path = os.path.join(base_path, entry.name)
+        target_path = _paths_for(self._is_remote).join(base_path, entry.name)
         if getattr(entry, "is_dir", False):
             self.emit("path-changed", target_path)
         elif self._is_remote:
@@ -3444,7 +3453,8 @@ class FilePane(Gtk.Box):
         if position is not None and 0 <= position < len(self._entries):
             drag_entries = self._entries_for_drag_at_position(position)
             entry = self._entries[position]
-            entry_path = os.path.join(self._current_path or "", entry.name)
+            join = _paths_for(self._is_remote).join
+            entry_path = join(self._current_path or "", entry.name)
             payload_dict = {
                 "pane_id": id(self),
                 "path": self._current_path,
@@ -3454,7 +3464,7 @@ class FilePane(Gtk.Box):
                 "entries": [
                     {
                         "entry_name": drag_entry.name,
-                        "entry_path": os.path.join(self._current_path or "", drag_entry.name),
+                        "entry_path": join(self._current_path or "", drag_entry.name),
                     }
                     for drag_entry in drag_entries
                 ],
@@ -3586,16 +3596,18 @@ class FilePane(Gtk.Box):
             position,
         )
 
+        source_paths = _paths_for(source_pane._is_remote)
+
         def _normalise_path(path: Optional[str]) -> Optional[str]:
             if not isinstance(path, str):
                 return None
             if path == "":
                 return ""
-            return os.path.normpath(path)
+            return source_paths.normpath(path)
 
         expected_source_path = source_path
         if expected_source_path is None and stored_entry_path:
-            expected_source_path = os.path.dirname(stored_entry_path)
+            expected_source_path = source_paths.dirname(stored_entry_path)
 
         current_source_path = getattr(source_pane, "_current_path", None)
         expected_source_path_norm = _normalise_path(expected_source_path)
@@ -3650,7 +3662,7 @@ class FilePane(Gtk.Box):
             if item_entry_path is not None and not isinstance(item_entry_path, str):
                 item_entry_path = None
 
-            current_entry_path = os.path.join(current_source_path or "", entry.name)
+            current_entry_path = source_paths.join(current_source_path or "", entry.name)
             item_entry_path_norm = _normalise_path(item_entry_path)
             current_entry_path_norm = _normalise_path(current_entry_path)
             if (
@@ -3669,7 +3681,7 @@ class FilePane(Gtk.Box):
             if item_entry_path is not None:
                 source_file_path = item_entry_path
             elif expected_source_path is not None:
-                source_file_path = os.path.join(expected_source_path, entry.name)
+                source_file_path = source_paths.join(expected_source_path, entry.name)
             else:
                 source_file_path = current_entry_path
 

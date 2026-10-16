@@ -100,10 +100,10 @@ def load_config(tmp_path, main_text, conf_d_files=None):
     conf_d.mkdir(exist_ok=True)
 
     for filename, content in (conf_d_files or {}).items():
-        (conf_d / filename).write_text(content)
+        (conf_d / filename).write_text(content, encoding="utf-8")
 
     main_cfg = tmp_path / "config"
-    main_cfg.write_text(main_text)
+    main_cfg.write_text(main_text, encoding="utf-8")
 
     loaded = _load(main_cfg)
     return loaded, main_cfg, conf_d
@@ -932,11 +932,12 @@ class TestEdgeCases:
     # Non-bugs confirmed against spec
     # -----------------------------------------------------------------------
 
-    def test_empty_host_block_is_silent_noop(self, tmp_path):
+    def test_empty_host_block_is_a_connection(self, tmp_path):
         """
-        An empty Host block has no options to display; the app discarding it
-        is correct UX behaviour (nothing to put in the connection list).
-        The subsequent host with options must not be affected.
+        An empty Host block is still a host: ``ssh ghost`` resolves it through
+        the global blocks alone, and saving a connection that inherits every
+        option writes exactly such a block (#1320). The subsequent host with
+        options must not be affected.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -946,7 +947,7 @@ class TestEdgeCases:
             "    HostName real.example.com\n"
         )
         loaded = _load(main)
-        assert _by_id(loaded, "ghost") is None
+        assert _by_id(loaded, "ghost") is not None
         assert _by_id(loaded, "real") is not None
 
     # -----------------------------------------------------------------------

@@ -18,6 +18,8 @@ override anyway. A record with no authorship evidence emits nothing.
 
 import asyncio
 
+import pytest
+
 from sshpilot.connection_model import Connection
 from sshpilot.core.connections.models import ConnectionRecord
 from sshpilot.daemon.connection_launch_provider import HeadlessConnectionView
@@ -368,6 +370,50 @@ def test_authored_proxy_jump_and_forward_agent_are_emitted():
     assert "ForwardAgent=yes" in argv
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"hostname": "10.0.0.5\\'$(id>/tmp/proof)\\'", "proxy_jump": ["bastion"]},
+        {"hostname": "10.0.0.5 -oProxyCommand=id", "proxy_jump": ["bastion"]},
+        {"hostname": "10.0.0.5", "proxy_jump": ["`id`@bastion"]},
+        # Both proxies authored: neither is re-emitted, OpenSSH reads the file.
+        {
+            "hostname": "10.0.0.5",
+            "proxy_jump": ["$(id>/tmp/proof)@bastion"],
+            "proxy_command": "none",
+        },
+    ],
+)
+def test_authored_names_with_shell_text_are_refused(fields):
+    # OpenSSH runs `ssh [-l user] -W '[%h]:%p' bastion` for ProxyJump through
+    # the shell, with HostName as %h, and checks these characters only in its
+    # destination argument -- the alias. An imported config never met the
+    # dialog's validator, so the launch has to refuse the value itself.
+    with pytest.raises(ValueError, match="a shell would run"):
+        _argv(
+            _config_connection(
+                **fields, authored=("hostname", "proxyjump", "proxycommand")
+            )
+        )
+
+
+def test_authored_hostname_keeps_tokens_and_ipv6_zone_ids():
+    # The rule is OpenSSH's own destination check, not the dialog's stricter
+    # hostname syntax: `%h` expansions and zone ids are valid HostName text.
+    for hostname in ("%h.example.com", "fe80::1%%eth0", "[2001:db8::1]"):
+        argv = _argv(
+            _config_connection(hostname=hostname, authored=("hostname",))
+        )
+        assert f"HostName={hostname}" in argv
+
+
+def test_authored_hostname_trailing_comment_is_dropped():
+    argv = _argv(
+        _config_connection(hostname="10.0.0.5  # db primary", authored=("hostname",))
+    )
+    assert "HostName=10.0.0.5" in argv
+
+
 def test_authored_forward_agent_no_is_emitted_so_a_global_yes_cannot_win():
     argv = _argv(
         _config_connection(
@@ -489,6 +535,17 @@ def test_authored_advanced_options_are_emitted():
     )
     assert "compression=no" in argv
     assert "stricthostkeychecking=yes" in argv
+
+
+def test_advanced_option_value_is_split_at_lf_only():
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            extra_ssh_config='tag "a\u2028ProxyCommand touch /tmp/x"',
+            authored=("hostname", "tag"),
+        )
+    )
+    assert not any(arg.startswith("ProxyCommand=") for arg in argv)
 
 
 def test_structural_and_accumulating_advanced_options_are_not_emitted():

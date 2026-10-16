@@ -21,6 +21,7 @@ import errno
 import logging
 import os
 import stat
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.platform.fs import replace_local_file
 from sshpilot.api.events import (
     CoreEvent,
     CoreEventCallback,
@@ -99,13 +101,14 @@ def _current_umask() -> int:
     return 0o022
 
 
-def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> None:
+def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> int:
     """Give a finished download its permissions and times before it replaces
-    *local_dst*.
+    *local_dst*, and return the mode it should end up with.
 
     ``mkstemp`` creates the temp ``0600``. A replaced file keeps its own mode;
     a new one gets the remote mode narrowed by the umask, as OpenSSH's
-    ``sftp get`` does. The remote mtime is kept.
+    ``sftp get`` does. The remote mtime is kept. On Windows the temp stays
+    writable; pass the returned mode to :func:`_finish_downloaded_file`.
     """
     try:
         mode = stat.S_IMODE(os.stat(local_dst).st_mode)
@@ -113,11 +116,28 @@ def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> None:
         remote_mode = getattr(attr, "st_mode", None)
         base = stat.S_IMODE(remote_mode) & 0o777 if remote_mode is not None else 0o666
         mode = base & ~_current_umask()
-    os.chmod(temp_path, mode)
+    temp_mode = mode
+    if sys.platform == "win32":
+        # 0o444 sets FILE_ATTRIBUTE_READONLY. The temp then cannot be
+        # deleted if the replace fails, and a read-only destination cannot
+        # be replaced at all.
+        temp_mode |= stat.S_IWRITE
+    os.chmod(temp_path, temp_mode)
     mtime = getattr(attr, "st_mtime", None)
     if mtime is not None:
         atime = getattr(attr, "st_atime", None)
         os.utime(temp_path, (atime if atime is not None else mtime, mtime))
+    return mode
+
+
+def _finish_downloaded_file(temp_path: str, local_dst: str, mode: int) -> None:
+    """Move a finished download into place with the mode it was given."""
+    replace_local_file(temp_path, local_dst)
+    if sys.platform == "win32" and not mode & stat.S_IWRITE:
+        try:
+            os.chmod(local_dst, mode)
+        except OSError:
+            pass
 
 
 class _TransferSkipped(Exception):
@@ -1473,8 +1493,9 @@ class TransferRuntime:
             nonlocal total
             for entry in listing:
                 self._check_cancel(record)
-                child_remote = self._join_remote(remote_dir, entry.filename)
-                child_local = os.path.join(local_dir, entry.filename)
+                name = self._listed_name(entry)
+                child_remote = self._join_remote(remote_dir, name)
+                child_local = os.path.join(local_dir, name)
                 if entry.is_dir() and not entry.is_symlink():
                     os.makedirs(child_local, exist_ok=True)
                     next_level.append((child_remote, child_local))
@@ -1540,6 +1561,25 @@ class TransferRuntime:
             completed += copied
             self._report_progress(record, completed)
         return completed
+
+    @staticmethod
+    def _listed_name(entry) -> str:
+        """Return a listed entry's name, refusing all but a single component.
+
+        The server picks these names and each one is joined onto a local
+        directory, so a separator, ``..`` or an absolute path would land the
+        download outside the destination the user chose. On Windows ``\\``
+        is a separator too, and ``:`` makes a drive path or a data stream.
+        """
+        name = entry.filename
+        unsafe = "/\x00\\:" if sys.platform == "win32" else "/\x00"
+        if not name or name in (".", "..") or any(c in name for c in unsafe):
+            raise _sftp_transfer_error(
+                SftpFailureCode.TRANSFER_FAILED,
+                ErrorCode.TRANSFER_IO_FAILED,
+                diagnostic="The server listed an unsafe file name",
+            )
+        return name
 
     @staticmethod
     def _join_remote(base: str, *parts: str) -> str:
@@ -1674,8 +1714,8 @@ class TransferRuntime:
                 tmp_file.write(data)
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
-            _apply_downloaded_metadata(temp_path, local_dst, attr)
-            os.replace(temp_path, local_dst)
+            mode = _apply_downloaded_metadata(temp_path, local_dst, attr)
+            _finish_downloaded_file(temp_path, local_dst, mode)
         except BaseException:
             self._cleanup_local_temp(record)
             raise
@@ -1724,8 +1764,8 @@ class TransferRuntime:
                     client.close_handle(handle)
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
-            _apply_downloaded_metadata(temp_path, local_dst, attr)
-            os.replace(temp_path, local_dst)
+            mode = _apply_downloaded_metadata(temp_path, local_dst, attr)
+            _finish_downloaded_file(temp_path, local_dst, mode)
         except BaseException:
             self._cleanup_local_temp(record)
             raise

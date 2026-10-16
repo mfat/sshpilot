@@ -11,7 +11,7 @@ import types
 from typing import Optional, Dict, Any, Mapping
 
 try:
-    from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
+    from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 except (ImportError, AttributeError):  # pragma: no cover - used in tests without GTK
     class _DummyGIMeta(type):
         def __getattr__(cls, name):
@@ -31,7 +31,6 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GObject = _DummyGIModule
     Gdk = _DummyGIModule
     Pango = _DummyGIModule
-    PangoFT2 = _DummyGIModule
 
     class _DummyGLib(_DummyGIModule):
         @staticmethod
@@ -1994,6 +1993,12 @@ class ConnectionDialog(
                 pass
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
+        # Saving a search-box target: fill in what its session used.
+        if self._typed_target_directives() is not None:
+            try:
+                self._load_inherited_values_async()
+            except Exception:
+                logger.debug("Could not start inherited-value lookup", exc_info=True)
         try:
             self.start_login_profile_load()
         except Exception:
@@ -2707,6 +2712,60 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if field in _FORWARD_AGENT_FIELDS:
                 adopted.update(_FORWARD_AGENT_FIELDS)
 
+    def _typed_target_directives(self):
+        """Directives an unsaved search-box target authored, or None.
+
+        The rows for everything else are filled in with what the session
+        used, resolved through the same -F file under the target's daemon id.
+        """
+        if self.is_editing:
+            return None
+        transient = getattr(self.connection, 'transient_connection_id', None)
+        if not (isinstance(transient, str) and transient.strip()):
+            return None
+        data = getattr(self.connection, 'data', None)
+        data = data if isinstance(data, dict) else {}
+
+        def typed(name):
+            value = getattr(self.connection, name, None) or data.get(name)
+            return bool(value.strip() if isinstance(value, str) else value)
+
+        authored = set()
+        if typed('username'):
+            authored.add('user')
+        if data.get('port_explicit'):
+            authored.add('port')
+        for field, directive in (
+            ('proxy_jump', 'proxyjump'),
+            ('proxy_command', 'proxycommand'),
+            ('pkcs11_provider', 'pkcs11provider'),
+            ('security_key_provider', 'securitykeyprovider'),
+            ('local_command', 'localcommand'),
+            ('remote_command', 'remotecommand'),
+        ):
+            if typed(field):
+                authored.add(directive)
+        return frozenset(authored)
+
+    # What ``ssh -G`` prints for a directive nothing set. Written into a
+    # Host block it would only restate the default, so it is not filled in.
+    _EFFECTIVE_UNSET_VALUES = {
+        'proxyjump': 'none',
+        'proxycommand': 'none',
+        'pkcs11provider': 'none',
+        'securitykeyprovider': 'internal',
+        'localcommand': 'none',
+        'remotecommand': 'none',
+    }
+
+    @classmethod
+    def _fillable_effective_value(cls, ssh_key, value):
+        """*value* as a save-dialog row should hold it, or '' for unset."""
+        value = str(value or '').strip()
+        if value.lower() == cls._EFFECTIVE_UNSET_VALUES.get(ssh_key):
+            return ''
+        return value
+
     def _load_inherited_values_async(self):
         """Fill unauthored rows with what OpenSSH resolves, styled as inherited.
 
@@ -2725,6 +2784,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         unrelated configuration RPCs.
         """
         authored = getattr(self.connection, 'authored_directives', None)
+        # Saving a search-box target fills in what its session used, as the
+        # user's own values: they just connected with them, and Save writes
+        # them into the new Host block.
+        fill_effective = False
+        if authored is None:
+            authored = self._typed_target_directives()
+            fill_effective = authored is not None
         if authored is None:
             return
         # Remember the text each row holds now: `ssh -G` runs off-thread, and a
@@ -2773,6 +2839,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 try:
                     if row.get_text() != text_at_schedule:
                         continue  # edited while the daemon was resolving
+                    if fill_effective:
+                        value = self._fillable_effective_value(ssh_key, value)
+                        if value and row_name == 'proxy_jump_row':
+                            self._set_text_without_completion(row, value)
+                        elif value:
+                            row.set_text(value)
+                        continue
                     self._show_inherited_value(row_name, row, value)
                 except Exception:
                     logger.debug(
@@ -3086,8 +3159,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 # filled in dimmed by _load_inherited_values_async; if that
                 # cannot run, empty still correctly means "inherit".
                 authored = getattr(self.connection, 'authored_directives', None)
+                data = getattr(self.connection, 'data', None)
+                # A target typed in the search box without a port inherits
+                # one, often from ``Host *`` (#1320); a 22 here would be
+                # written as this host's Port on save.
+                port_typed = not (
+                    isinstance(data, dict) and data.get('port_explicit') is False
+                )
                 try:
-                    if authored is not None and 'port' not in authored:
+                    if not port_typed or (
+                        authored is not None and 'port' not in authored
+                    ):
                         self.port_row.set_text("")
                     else:
                         self.port_row.set_text(
@@ -3097,11 +3179,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self.port_row.set_text("")
 
             # Load proxy settings (without triggering inline completion)
-            if hasattr(self.connection, 'proxy_jump'):
+            # A search-box target (``-J``) carries it only in ``data``.
+            jump_data = getattr(self.connection, 'data', None)
+            if hasattr(self.connection, 'proxy_jump') or (
+                isinstance(jump_data, dict) and jump_data.get('proxy_jump')
+            ):
                 try:
+                    jumps = getattr(self.connection, 'proxy_jump', None)
+                    if jumps is None:
+                        jumps = jump_data.get('proxy_jump')
+                    if isinstance(jumps, str):
+                        jumps = [h for h in re.split(r'[\s,]+', jumps) if h]
                     self._set_text_without_completion(
                         self.proxy_jump_row,
-                        ",".join(self.connection.proxy_jump or []),
+                        ",".join(jumps or []),
                     )
                 except Exception:
                     self._set_text_without_completion(self.proxy_jump_row, "")

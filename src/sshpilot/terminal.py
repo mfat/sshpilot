@@ -14,14 +14,19 @@ from gettext import gettext as _, ngettext
 import weakref
 import subprocess
 import shutil
-import pwd
+try:
+    import pwd
+except ImportError:  # Windows
+    pwd = None
 from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak, is_macos, is_windows
+from .platform.process import kill_process_tree, pid_alive
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
 from .terminal_backends import (
     BaseTerminalBackend,
+    VTE_AVAILABLE,
     VTETerminalBackend,
     PyXtermTerminalBackend,
     PyXtermBridgeBackend,
@@ -168,6 +173,26 @@ def empty_copy_message(widget) -> str:
             "hold Shift while dragging to select text"
         )
     return _("Nothing selected to copy")
+
+
+def _app_is_quitting(widget) -> bool:
+    """True while the app quits (the tab, its window or its manager says so)."""
+    if getattr(widget, '_is_quitting', False):
+        return True
+    get_root = getattr(widget, 'get_root', None)
+    try:
+        root = get_root() if callable(get_root) else None
+    except Exception:
+        root = None
+    if getattr(root, '_is_quitting', False):
+        return True
+    window = getattr(getattr(widget, 'terminal_manager', None), 'window', None)
+    return bool(getattr(window, '_is_quitting', False))
+
+
+def _terminate_process_tree_windows(pid) -> bool:
+    """End a local shell and its children on Windows (no process groups)."""
+    return kill_process_tree(pid, wait_timeout=2)
 
 
 def sanitize_local_shell_env(env):
@@ -865,6 +890,20 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"Failed to create PyXterm backend: {e}")
                 logger.warning("PyXterm backend creation failed, falling back to VTE")
 
+        if backend_name == "pyte" or not VTE_AVAILABLE:
+            # The pure-GTK emulator: the only option where GTK 4 has no VTE
+            # (Windows), and opt-in elsewhere.
+            try:
+                from .terminal_backend_pyte import PyteTerminalBackend
+            except ImportError:
+                if not VTE_AVAILABLE:
+                    raise
+                logger.warning("pyte is not installed, falling back to VTE")
+            else:
+                logger.info("Using pyte terminal backend")
+                self._backend_name = "pyte"
+                return PyteTerminalBackend(self)
+
         logger.debug("Using VTE terminal backend")
         self._backend_name = "vte"
         return VTETerminalBackend(self)
@@ -928,6 +967,8 @@ class TerminalWidget(Gtk.Box):
                 backend_name = "vte"
 
         backend_name = (backend_name or "vte").lower()
+        if backend_name == "vte" and not VTE_AVAILABLE:
+            backend_name = "pyte"
         current_name = self.get_backend_name()
 
         if current_name.lower() == backend_name.lower():
@@ -1623,6 +1664,7 @@ class TerminalWidget(Gtk.Box):
                 on_continuity_lost=self._on_daemon_continuity_lost,
                 on_error=self._on_daemon_error,
                 on_state_changed=self._update_daemon_connection_state,
+                output_slice_bytes=getattr(self.backend, "output_slice_bytes", None),
             )
 
             self._daemon_tab_state = self._daemon_controller.tab_state
@@ -1700,6 +1742,7 @@ class TerminalWidget(Gtk.Box):
                 on_continuity_lost=self._on_daemon_continuity_lost,
                 on_error=self._on_daemon_error,
                 on_state_changed=self._update_daemon_connection_state,
+                output_slice_bytes=getattr(self.backend, "output_slice_bytes", None),
             )
             self._daemon_tab_state = self._daemon_controller.tab_state
             self._daemon_tab_state.session_id = session_id
@@ -1999,6 +2042,11 @@ class TerminalWidget(Gtk.Box):
             from .api.errors import ErrorCode
 
             code = getattr(error, "code", None)
+            if code is ErrorCode.TRANSPORT_CLOSED and _app_is_quitting(self):
+                # Quitting stops the daemon before the tabs are torn down;
+                # each open tab then sees its transport close. Not a failure.
+                logger.debug("Daemon transport closed during quit: %s", error)
+                return
             if code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE:
                 logger.warning("Terminal input was not delivered due to backpressure")
                 self._show_toast(
@@ -2028,7 +2076,12 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
         logger.error(f"Daemon terminal error: {error}")
-        self._on_connection_failed(str(error))
+        from .terminal_session_controller import SessionFailureError
+
+        self._on_connection_failed(
+            str(error),
+            echo_to_terminal=not isinstance(error, SessionFailureError),
+        )
 
     def _daemon_terminal_dimensions(self):
         """Rows/cols from the active backend for daemon open/resize."""
@@ -2595,8 +2648,8 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Could not arm PTY auto-fill", exc_info=True)
 
         try:
-            # Get and store process group ID
-            self.process_pgid = os.getpgid(pid)
+            # Get and store process group ID (Windows has no process groups)
+            self.process_pgid = None if is_windows() else os.getpgid(pid)
             logger.debug(f"Process group ID: {self.process_pgid}")
 
             # Store shell PGID for job detection (this is the shell's process group)
@@ -4169,6 +4222,9 @@ class TerminalWidget(Gtk.Box):
         env = sanitize_local_shell_env(
             get_identity_manager().apply_selected_to_env(os.environ.copy())
         )
+        if is_windows():
+            self._setup_local_shell_windows(env)
+            return
 
         # Determine the user's preferred shell
         shell = None
@@ -4279,6 +4335,29 @@ class TerminalWidget(Gtk.Box):
         self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
 
         logger.info("Local shell terminal setup initiated (direct spawn)")
+
+    def _setup_local_shell_windows(self, env):
+        """Start the configured Windows shell on the backend's pseudo console."""
+        from .platform.windows.shells import shell_command
+
+        choice = None
+        try:
+            choice = self.config.get_setting('terminal.windows_shell', 'auto')
+        except Exception:
+            logger.debug("Could not read terminal.windows_shell", exc_info=True)
+        command = shell_command(choice, env)
+        env.setdefault('TERM_PROGRAM', 'sshPilot')
+        self.backend.spawn_async(
+            argv=command,
+            env=env,
+            cwd=self._local_shell_start_dir(),
+            flags=0,
+            child_setup=None,
+            callback=self._on_spawn_complete,
+            user_data=(),
+        )
+        self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+        logger.info("Local shell terminal setup initiated (Windows: %s)", command[0])
 
     def _on_agent_spawn_complete(self, terminal, pid, error, user_data):
         """Callback when agent spawn completes"""
@@ -5258,13 +5337,8 @@ class TerminalWidget(Gtk.Box):
     def _get_terminal_pid(self):
         """Get the PID of the terminal's child process"""
         # First try the stored PID
-        if self.process_pid:
-            try:
-                # Verify the process still exists
-                os.kill(self.process_pid, 0)
-                return self.process_pid
-            except (ProcessLookupError, OSError):
-                pass
+        if self.process_pid and pid_alive(self.process_pid, on_error=False):
+            return self.process_pid
 
         return None
 
@@ -5369,6 +5443,11 @@ class TerminalWidget(Gtk.Box):
         if not pid:
             return False
 
+        if is_windows():
+            # os.kill(pid, 0) is TerminateProcess on Windows, not a probe, and
+            # there are no process groups: end the tree through psutil.
+            return _terminate_process_tree_windows(pid)
+
         try:
             # Try to get process info from manager first
             pgid = None
@@ -5402,16 +5481,15 @@ class TerminalWidget(Gtk.Box):
 
                 # Wait for clean termination (shorter timeout for faster cleanup)
                 for _ in range(2):  # Wait up to 0.2 seconds (reduced from 0.5 seconds)
-                    try:
-                        os.kill(pid, 0)
-                        time.sleep(0.1)
-                    except ProcessLookupError:
+                    if not pid_alive(pid, on_error=True):
                         logger.debug(f"Process {pid} terminated cleanly")
                         break
+                    time.sleep(0.1)
                 else:
                     # If still running, force kill
                     try:
-                        os.kill(pid, 0)  # Check if still exists
+                        if not pid_alive(pid, on_error=True):
+                            raise ProcessLookupError(pid)
                         logger.debug(f"Process {pid} still running, sending SIGKILL")
                         if pgid:
                             try:
@@ -5569,7 +5647,7 @@ class TerminalWidget(Gtk.Box):
                 self.emit('connection-lost')
             logger.debug(f"SSH session {self.session_id} disconnected")
 
-    def _on_connection_failed(self, error_message):
+    def _on_connection_failed(self, error_message, echo_to_terminal=True):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
 
@@ -5583,9 +5661,14 @@ class TerminalWidget(Gtk.Box):
         self._cancel_connect_grace()
 
         try:
-            # Show raw error in terminal
-            error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
-            if self.backend:
+            # Show raw error in terminal. Daemon session failures skip this:
+            # ssh already printed its diagnostic to the PTY and the banner
+            # carries the classified reason, so a third copy is only noise.
+            if echo_to_terminal and self.backend:
+                # A bare LF keeps the cursor column on a VT, so multi-line
+                # messages would staircase without the CR.
+                body = error_message.replace('\r\n', '\n').replace('\n', '\r\n')
+                error_msg = f"\r\n\x1b[31m{body}\x1b[0m\r\n"
                 self.backend.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False

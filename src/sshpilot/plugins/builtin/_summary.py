@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import shlex
 from typing import Any, List, Optional, Sequence
 
+from ..api import local_command_line
 from .._command_failure import LocalCommandFailure, LocalCommandFailureReason
 
 
@@ -35,7 +35,7 @@ def run_lines(ctx: Any, argv: Sequence[str], timeout: float = 8) -> List[str]:
     Failures carry a stable reason and the tool's output separately. The
     connection editor owns wording; external diagnostics stay opaque.
     """
-    result = ctx._run_local_command(shlex.join(argv), timeout=timeout)
+    result = ctx._run_local_command(local_command_line(argv), timeout=timeout)
     if result.exit_code != 0:
         raise LocalCommandFailure(
             LocalCommandFailureReason.EXITED,

@@ -19,7 +19,7 @@ import abc
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,57 @@ from .host import ConnectionInfo, Events, SessionInfo  # noqa: E402,F401
 # Re-exported so plugins can type/inspect ctx.identities.list() results without
 # reaching into a private module. (identity.py imports nothing from plugins.)
 from ..identity import Identity  # noqa: E402,F401
+
+
+def _windows() -> bool:
+    """Whether local commands run under ``cmd.exe``; a seam for tests."""
+    from ..platform.detect import is_windows
+    return is_windows()
+
+
+def _local_shell_argv(command: str) -> "List[str] | str":
+    """The non-Flatpak argv for a plugin's local shell command.
+
+    POSIX keeps ``sh -lc`` (a login shell, so the user's profile and PATH
+    apply). Windows normally has no ``sh``, so the command goes to
+    ``%COMSPEC% /d /s /c``. That is a ready-made command line, not a list:
+    ``subprocess`` would run ``list2cmdline`` over a list and turn every
+    ``"`` in *command* into ``\\"``, which ``cmd`` does not understand.
+    ``/s`` strips exactly the outer pair of quotes added here.
+    """
+    import shutil
+    if _windows():
+        from ..platform.process import windows_cmd_command_line
+        return windows_cmd_command_line(command)
+    return [shutil.which("sh") or "/bin/sh", "-lc", command]
+
+
+def local_command_line(argv: Sequence[str]) -> str:
+    """*argv* quoted for the shell :meth:`PluginContext.run_local_command`
+    hands it to: ``sh`` quoting on POSIX, the MSVCRT convention on Windows
+    (``cmd /c`` passes the line on to the program unchanged)."""
+    import shlex
+    import subprocess
+    if _windows():
+        return subprocess.list2cmdline(list(argv))
+    return shlex.join(argv)
+
+
+def _text_kwargs() -> Dict[str, Any]:
+    """Decoding for local command output: UTF-8 on Windows, where the
+    locale code page would otherwise mangle or reject tool output; POSIX
+    keeps the locale default."""
+    if _windows():
+        return {"encoding": "utf-8", "errors": "replace"}
+    return {}
+
+
+def _spawn_kwargs() -> Dict[str, Any]:
+    """Output decoding plus a hidden console: these commands run from the
+    GUI process, and in the windowed build each ``cmd`` would otherwise
+    flash a console window."""
+    from ..platform.process import hidden_console_kwargs
+    return {**_text_kwargs(), **hidden_console_kwargs()}
 
 
 class ProtocolBackend(abc.ABC):
@@ -938,8 +989,7 @@ class PluginContext:
         if not command or not str(command).strip():
             logger.debug("run_local_command: empty command")
             raise LocalCommandFailure(LocalCommandFailureReason.EMPTY_COMMAND)
-        shell = shutil.which("sh") or "/bin/sh"
-        argv = [shell, "-lc", str(command)]
+        argv = _local_shell_argv(str(command))
         if is_flatpak():
             spawn = shutil.which("flatpak-spawn")
             if spawn is None:
@@ -955,7 +1005,7 @@ class PluginContext:
         try:
             result = subprocess.run(
                 argv, env=os.environ.copy(), capture_output=True, text=True,
-                timeout=timeout, check=False, input=input)
+                timeout=timeout, check=False, input=input, **_spawn_kwargs())
             logger.debug(
                 "run_local_command exit=%s stdout=%dB stderr=%dB",
                 result.returncode,
@@ -1087,8 +1137,7 @@ class PluginContext:
             logger.debug("run_local_command_stream: empty command")
             self._finish_local_stream_early(handle, on_done, -1)
             return handle
-        shell = shutil.which("sh") or "/bin/sh"
-        argv = [shell, "-lc", str(command)]
+        argv = _local_shell_argv(str(command))
         if is_flatpak():
             spawn = shutil.which("flatpak-spawn")
             if spawn is None:
@@ -1118,7 +1167,7 @@ class PluginContext:
             self.run_on_ui_thread(on_done, exit_code)
 
     def _spawn_local_stream(
-            self, handle: StreamHandle, argv: List[str], env: dict, *,
+            self, handle: StreamHandle, argv: "List[str] | str", env: dict, *,
             on_line: Callable[[str], None],
             on_done: Optional[Callable[[int], None]],
             input_text: Optional[str] = None,
@@ -1127,7 +1176,7 @@ class PluginContext:
         proc = subprocess.Popen(
             argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-            text=True, bufsize=1,
+            text=True, bufsize=1, **_spawn_kwargs(),
         )
         if input_text is not None and proc.stdin is not None:
             try:
@@ -1357,12 +1406,13 @@ class PluginContext:
 
     def _data_dir(self) -> str:
         import os
-        # Resolved from XDG_DATA_HOME directly (like the plugin loader's
-        # _user_plugin_dir), so it sits beside the installed plugins and needs
-        # no GTK/GLib at import time.
-        base = os.environ.get("XDG_DATA_HOME") or os.path.join(
-            os.path.expanduser("~"), ".local", "share")
-        path = os.path.join(base, "sshpilot", "plugin-data", self.plugin_id)
+
+        from ..platform.paths import get_data_dir
+
+        # The headless data dir (like the plugin loader's _user_plugin_dir),
+        # so it sits beside the installed plugins and needs no GTK/GLib at
+        # import time.
+        path = os.path.join(get_data_dir(), "plugin-data", self.plugin_id)
         os.makedirs(path, exist_ok=True)
         return path
 

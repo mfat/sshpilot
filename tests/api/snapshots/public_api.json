@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.81",
+  "api_implementation_version": "0.84",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -49,6 +49,7 @@
     "interactions.password",
     "interactions.read",
     "interactions.respond",
+    "interactions.session_secrets",
     "keys.read",
     "keys.write",
     "known_hosts.read",
@@ -226,6 +227,10 @@
     },
     "delete_connection_password": {
       "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "delete_connections": {
+      "capability": "connections.write",
       "status": "implemented"
     },
     "delete_group": {
@@ -786,6 +791,7 @@
     "create_login_profile",
     "delete_connection",
     "delete_connection_password",
+    "delete_connections",
     "delete_group",
     "delete_key",
     "delete_key_passphrase",
@@ -1285,6 +1291,16 @@
         }
       ],
       "return": "bool"
+    },
+    "delete_connections": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "DeleteConnectionsRequest"
+        }
+      ],
+      "return": "DeleteConnectionsResult"
     },
     "delete_group": {
       "parameters": [
@@ -2800,6 +2816,9 @@
     "connections.delete_group": {
       "capability": "connections.groups"
     },
+    "connections.delete_many": {
+      "capability": "connections.write"
+    },
     "connections.delete_passphrase": {
       "capability": "connections.secrets.write"
     },
@@ -3539,6 +3558,8 @@
     "DeleteConnectionPasswordRequest",
     "DeleteConnectionRequest",
     "DeleteConnectionResult",
+    "DeleteConnectionsRequest",
+    "DeleteConnectionsResult",
     "DeleteGroupRequest",
     "DeleteKeyPassphraseRequest",
     "DeleteKeyRequest",
@@ -4184,6 +4205,12 @@
     "DeleteConnectionResult": [
       "connection_id",
       "deleted"
+    ],
+    "DeleteConnectionsRequest": [
+      "connection_ids"
+    ],
+    "DeleteConnectionsResult": [
+      "connection_ids"
     ],
     "DeleteGroupRequest": [
       "group_id"
@@ -5319,6 +5346,7 @@
       "interactions.host_key",
       "interactions.password",
       "interactions.passphrase",
+      "interactions.session_secrets",
       "sftp",
       "sftp.read",
       "sftp.write",
@@ -5729,13 +5757,16 @@
       "serial_screen_terminal_options_unsupported",
       "serial_device_access_denied",
       "rdp_client_unavailable",
-      "telnet_unavailable"
+      "telnet_unavailable",
+      "serial_plink_unavailable",
+      "serial_plink_terminal_options_unsupported"
     ],
     "RememberPolicy": [
       "do_not_store",
       "store_after_success",
       "replace_stored_after_success",
-      "delete_stored_secret"
+      "delete_stored_secret",
+      "remember_for_session"
     ],
     "RemoteFileType": [
       "regular",

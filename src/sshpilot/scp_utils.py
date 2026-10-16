@@ -7,9 +7,10 @@ not own the production transfer lifecycle or GTK execution path.
 
 from __future__ import annotations
 
-import re
 from gettext import gettext as _
 from typing import Iterable, List, Optional, Tuple
+
+from .transfer_scp import escape_remote_source
 
 __all__ = [
     '_summarize_listing_error',
@@ -20,51 +21,13 @@ __all__ = [
 ]
 
 
-_REMOTE_SPEC_RE = re.compile(r"^[^@]+@(?:\[[^\]]+\]|[^:]+):.+$")
-
-
-def _strip_brackets(value: str) -> str:
-    if value.startswith('[') and value.endswith(']'):
-        return value[1:-1]
-    return value
-
-
-def _extract_host(target: str) -> str:
-    if '@' in target:
-        host = target.split('@', 1)[1]
-    else:
-        host = target
-    return _strip_brackets(host)
-
-
 def _normalize_remote_sources(target: str, sources: Iterable[str]) -> List[str]:
-    host = _extract_host(target)
-    host_variants = [host] if host else []
-    if host and ':' in host:
-        bracketed = f"[{host}]"
-        if bracketed not in host_variants:
-            host_variants.append(bracketed)
     normalized: List[str] = []
     for item in sources:
         path = (item or '').strip()
         if not path:
             continue
-        if path.startswith(f"{target}:"):
-            normalized.append(path)
-            continue
-        if host_variants:
-            matched_host_variant = False
-            for host_variant in host_variants:
-                if path.startswith(f"{host_variant}:"):
-                    normalized.append(path)
-                    matched_host_variant = True
-                    break
-            if matched_host_variant:
-                continue
-        if _REMOTE_SPEC_RE.match(path):
-            normalized.append(path)
-            continue
-        normalized.append(f"{target}:{path}")
+        normalized.append(f"{target}:{escape_remote_source(path)}")
     return normalized
 
 

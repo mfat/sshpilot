@@ -351,6 +351,34 @@ def test_unusable_peer_is_evicted_and_startup_still_succeeds(tmp_path):
         _reap(squatter)
 
 
+def test_early_start_leaves_an_unusable_peer_for_the_full_launch(tmp_path):
+    """The pre-GTK attempt may run in a secondary instance: it never evicts."""
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    socket_path.parent.mkdir(parents=True)
+    socket_path.touch()  # the peer's endpoint
+    launcher = DaemonLauncher(
+        socket_path=socket_path,
+        popen=lambda *args, **kwargs: pytest.fail("must not launch"),
+    )
+    launcher._prepare_socket_location = lambda: None
+    launcher._probe_peer_once = lambda: DaemonStartupFailure.HANDSHAKE_FAILED
+    launcher._await_ambiguous_peer = lambda: DaemonStartupFailure.HANDSHAKE_FAILED
+    evicted = []
+    launcher._evict_unusable_peer = lambda: evicted.append(True) or True
+
+    assert launcher.connect_or_start_without_eviction() is None
+    assert evicted == [], "the resident peer must be left running"
+
+    # The ordinary launch still replaces it.
+    launcher._probe_peer_once = iter(
+        [DaemonStartupFailure.HANDSHAKE_FAILED, None]
+    ).__next__
+    launcher._popen = lambda *args, **kwargs: pytest.skip("launch reached")
+    with pytest.raises(pytest.skip.Exception):
+        launcher.connect_or_start()
+    assert evicted == [True]
+
+
 def test_orphaned_socket_file_does_not_block_startup(tmp_path):
     _require_daemon_subprocess()
     socket_path = tmp_path / "runtime" / "sshpilotd.sock"
@@ -635,3 +663,20 @@ def test_an_unidentifiable_live_peer_is_neither_signalled_nor_unlinked(tmp_path)
     assert squatter.poll() is None, "the peer must be left alone"
     assert socket_path.exists(), "a live socket must never be unlinked"
     _reap(squatter)
+
+
+def test_early_start_launches_without_probing_when_no_endpoint_exists(tmp_path):
+    """No endpoint, no daemon: the early start spawns before loading a client."""
+    launcher = DaemonLauncher(socket_path=tmp_path / "runtime" / "sshpilotd.sock")
+    launcher._prepare_socket_location = lambda: None
+    launcher._probe_peer_once = lambda: pytest.fail("nothing to probe")
+    launched = []
+
+    def _popen(command, **kwargs):
+        launched.append(command)
+        raise OSError("stop here")
+
+    launcher._popen = _popen
+    with pytest.raises(DaemonLaunchError):
+        launcher.connect_or_start_without_eviction()
+    assert launched

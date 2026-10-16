@@ -114,6 +114,22 @@ class OwnedControlMaster:
         return f"ControlMaster pid={self.pid} on {self.path.name}"
 
 
+def control_masters_possible() -> bool:
+    """Whether this platform can have sshPilot ControlMasters at all.
+
+    On Windows sshPilot forces multiplexing off (``ControlPath=none``), so
+    nothing in the socket directory can be a master it asked for. Stray files
+    there are not live connections and must not hold up quit. Tests patch
+    this seam to drive either branch on any host.
+    """
+
+    try:
+        from sshpilot.ssh_multiplex import MULTIPLEXING_SUPPORTED
+    except Exception:
+        return True
+    return bool(MULTIPLEXING_SUPPORTED)
+
+
 def control_master_directory() -> Optional[Path]:
     """The directory sshPilot points ``ControlPath`` at, if it is resolvable.
 
@@ -316,8 +332,14 @@ def survey_control_masters(
     ``LookupError`` when it cannot even be resolved. Neither is reported as
     "no masters": an unreadable directory could be hiding any number of live
     connections.
+
+    With no explicit ``directory`` on a platform where sshPilot never
+    multiplexes (:func:`control_masters_possible`), there is nothing to
+    survey and the result is empty without touching the directory.
     """
 
+    if directory is None and not control_masters_possible():
+        return ()
     base = directory if directory is not None else control_master_directory()
     if base is None:
         raise LookupError("the ControlMaster directory could not be resolved")

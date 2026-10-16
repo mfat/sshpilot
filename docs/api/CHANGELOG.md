@@ -5,6 +5,30 @@ notes remain separate.
 
 ## Unreleased
 
+- `delete_connections` (`connections.delete_many`, capability
+  `connections.write`) takes the new `DeleteConnectionsRequest` and returns
+  the new `DeleteConnectionsResult`. It deletes every listed connection with
+  one SSH config replacement per declaring file and one
+  `connection_store.changed` event. An unknown id fails the whole request
+  with `connection_not_found`, and any reported failure restores every
+  touched file, so nothing is deleted. Hosts in one file are crash-safe
+  together; hosts spread over several Include files are committed file by
+  file, so a daemon killed between those commits can leave the earlier
+  files' hosts deleted. Deleting several selected connections in the sidebar
+  uses it. New method and models, so the API implementation version is 0.84;
+  Protocol remains 1.0.
+- `PluginSessionFailureCode` gains `serial_plink_unavailable` and
+  `serial_plink_terminal_options_unsupported` (no parameters): on Windows a
+  serial connection opens its COM port with PuTTY's `plink -serial`, and
+  these report plink missing or a line-ending, local-echo or log option it
+  cannot honour. New enum values, so the API implementation version is
+  0.83; Protocol remains 1.0.
+- `RememberPolicy` gains `remember_for_session`, guarded by the new
+  `interactions.session_secrets` capability: the daemon keeps an accepted
+  password or passphrase in memory until it exits and autofills later
+  prompts for the same connection or key, dropping it when a prompt repeats.
+  New enum value and capability, so the API implementation version is 0.82;
+  Protocol remains 1.0.
 - `UnsavedHostCheckRequest` gains `target`, `(field, value)` pairs naming a
   target that has no host (serial's `device`, a container, a pod); it is sent
   as a JSON object and only when non-empty. `check_unsaved_host` now answers

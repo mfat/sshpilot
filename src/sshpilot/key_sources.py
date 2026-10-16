@@ -72,7 +72,7 @@ class KeySourcesMixin:
     @staticmethod
     def _read_pub(pub_path):
         try:
-            with open(pub_path) as f:
+            with open(pub_path, encoding="utf-8") as f:
                 parts = f.read().split()
             return parts if len(parts) >= 2 else None
         except Exception:

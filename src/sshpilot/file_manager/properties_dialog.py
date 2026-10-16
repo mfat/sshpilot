@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import posixpath
+import shutil
 import threading
 from gettext import gettext as _
 from gettext import ngettext
@@ -319,9 +320,9 @@ class PropertiesDialog(Adw.Window):
             try:
                 path = self._local_path(self._entry)
                 if os.path.exists(path):
-                    stat = os.statvfs(path)
-                    free = stat.f_bavail * stat.f_frsize
-                    self._show_free_space(free)
+                    # disk_usage().free is statvfs's f_bavail * f_frsize on
+                    # POSIX; os.statvfs itself does not exist on Windows.
+                    self._show_free_space(shutil.disk_usage(path).free)
             except Exception:
                 pass
             return
@@ -1006,7 +1007,9 @@ class PropertiesDialog(Adw.Window):
             if not self._is_remote_file():
                 parent_dir = os.path.dirname(self._local_path(self._entry))
                 if os.path.exists(parent_dir):
-                    Gio.AppInfo.launch_default_for_uri(f"file://{parent_dir}", None)
+                    # Gio builds the URI: "file://" + a Windows path is not one.
+                    uri = Gio.File.new_for_path(parent_dir).get_uri()
+                    Gio.AppInfo.launch_default_for_uri(uri, None)
         except Exception:
             pass
 

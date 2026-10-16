@@ -11,15 +11,31 @@ An empty setting means "system default": leave the environment alone and let
 gettext read the user's locale, which is the behaviour every other GTK app has.
 """
 
+import gettext as _stdlib_gettext
 import json
 import logging
 import os
 import sys
 from typing import List, Optional, Tuple
 
-from .platform_utils import get_config_dir
-
 logger = logging.getLogger(__name__)
+
+
+def get_config_dir() -> str:
+    """``platform_utils.get_config_dir``, without GLib on Windows.
+
+    The language is exported before the daemon is spawned (see
+    ``daemon_prelaunch``). On Windows the config directory comes from the
+    headless resolver anyway, so reading it there need not import gi.
+    """
+    if sys.platform == "win32":
+        from .platform import paths
+
+        return str(paths.get_config_dir())
+    from .platform_utils import get_config_dir as _get_config_dir
+
+    return _get_config_dir()
+
 
 # Written by Meson at install time; absent in a setuptools/editable checkout,
 # where no catalogue is installed either.
@@ -64,6 +80,37 @@ def candidate_localedirs() -> List[str]:
     """
     dirs = [_BUILD_LOCALEDIR, _PACKAGE_LOCALEDIR, os.path.join(sys.prefix, 'share', 'locale')]
     return [d for d in dirs if d and os.path.isdir(d)]
+
+
+# The catalogue resolved by :func:`bind_translation`. The stdlib ``gettext()``
+# searches the locale directories for it on every call, which adds up for code
+# that builds many widgets; the language cannot change within a process (see
+# the module docstring), so resolving it once is enough.
+_translation: Optional[_stdlib_gettext.NullTranslations] = None
+
+
+def bind_translation(localedir: Optional[str]) -> None:
+    """Resolve the sshpilot catalogue once, after the text domain is bound."""
+    global _translation
+    _translation = _stdlib_gettext.translation('sshpilot', localedir, fallback=True)
+
+
+def gettext(message: str) -> str:
+    """``gettext.gettext`` through the catalogue :func:`bind_translation` resolved.
+
+    Before that has run it defers to the stdlib on every call, so a lookup made
+    too early is slow rather than stuck in the wrong language.
+    """
+    if _translation is None:
+        return _stdlib_gettext.gettext(message)
+    return _translation.gettext(message)
+
+
+def ngettext(singular: str, plural: str, n: int) -> str:
+    """``gettext.ngettext`` through the resolved catalogue; see :func:`gettext`."""
+    if _translation is None:
+        return _stdlib_gettext.ngettext(singular, plural, n)
+    return _translation.ngettext(singular, plural, n)
 
 
 def N_(message: str) -> str:

@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
+from sshpilot.platform.process import pid_alive
+
 logger = logging.getLogger(__name__)
 
 REGISTRY_FILE_PREFIX = "sshpilotd-processes"
@@ -122,15 +124,18 @@ def _create_time(pid: int) -> Optional[float]:
 def _pid_exists(pid: int) -> bool:
     """Whether any process holds ``pid`` — identity unknown."""
 
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return True
-    return True
+    # Unknown reads as alive: callers forget a PID only on positive evidence.
+    return pid_alive(pid, on_error=True)
+
+
+def pid_exists(pid: int) -> bool:
+    """Whether any process holds ``pid``, identity unknown.
+
+    ``True`` when that cannot be determined, so callers treat a PID as gone
+    only on positive evidence.
+    """
+
+    return _pid_exists(pid)
 
 
 def _is_zombie(pid: int) -> bool:

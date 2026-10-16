@@ -40,6 +40,7 @@ class Capability(str, Enum):
     INTERACTIONS_HOST_KEY = "interactions.host_key"
     INTERACTIONS_PASSWORD = "interactions.password"
     INTERACTIONS_PASSPHRASE = "interactions.passphrase"
+    INTERACTIONS_SESSION_SECRETS = "interactions.session_secrets"
     SFTP = "sftp"
     SFTP_READ = "sftp.read"
     SFTP_WRITE = "sftp.write"

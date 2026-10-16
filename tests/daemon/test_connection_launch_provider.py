@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -777,3 +778,77 @@ def test_remote_identity_rejects_an_unknown_connection():
 
     with pytest.raises(Exception):
         prov.remote_identity("missing")
+
+
+def _file_backed_provider(tmp_path, config_text, **data):
+    """A provider whose ``prod`` record was read from *config_text*.
+
+    ``prod`` authors no HostName, so the launch view resolves it the way
+    OpenSSH will: from the rest of the file, via ``ssh -G``.
+    """
+    config_path = tmp_path / "config"
+    config_path.write_text(config_text)
+    records = {
+        "prod": _record(
+            "prod",
+            hostname="",
+            source=str(config_path),
+            data={"__authored_directives": ["proxyjump"], **data},
+        )
+    }
+    return DaemonConnectionLaunchProvider(
+        lambda cid: records.get(cid), secret_provider=None, app_config=None
+    )
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="OpenSSH is required")
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        # Inherited: the record of ``Host prod`` never carries the value.
+        "Host prod\n    ProxyJump bastion\n"
+        "Host pro*\n    HostName 192.0.2.10\\'$(id>/tmp/proof)\\'\n",
+        # The jump user lands after ``-l`` on the same shell line.
+        "Host pro*\n    ProxyJump $(id>/tmp/proof)@bastion\n"
+        "Host prod\n    HostName 192.0.2.10\n",
+        # The ssh that OpenSSH starts for ``hop`` resolves ``Host hop`` itself.
+        "Host prod\n    ProxyJump ssh://root@[hop]:22/,bastion\n"
+        "Host hop\n    HostName 192.0.2.10\\'$(id>/tmp/proof)\\'\n"
+        "    ProxyJump bastion\n",
+    ],
+)
+def test_launch_refuses_shell_text_in_the_host_name_openssh_resolves(
+    tmp_path, config_text
+):
+    """OpenSSH runs ``ssh -W '[%h]:%p' bastion`` through the shell.
+
+    ``%h`` is the HostName, which it checks for shell text only when it is the
+    destination argument, and every launch names the alias there.
+    """
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    prov = _file_backed_provider(tmp_path, config_text)
+
+    for prepare in (
+        lambda: prov.prepare_terminal_launch("prod", interaction_policy="none"),
+        lambda: prov.prepare_scp_launch("prod"),
+        lambda: prov.prepare_copy_id_launch("prod", "/keys/id_new.pub"),
+    ):
+        with pytest.raises(SshPilotError) as raised:
+            prepare()
+        assert raised.value.code == ErrorCode.VALIDATION_FAILED
+        assert "a shell would run" in str(raised.value)
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="OpenSSH is required")
+def test_launch_follows_a_proxy_jump_loop_only_once(tmp_path):
+    prov = _file_backed_provider(
+        tmp_path,
+        "Host prod\n    ProxyJump hop\nHost hop\n    ProxyJump prod\n",
+    )
+
+    command, _environment = prov.prepare_terminal_launch(
+        "prod", interaction_policy="none"
+    )
+
+    assert command[-1] == "prod"

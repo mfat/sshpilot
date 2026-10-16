@@ -1,6 +1,7 @@
 """Minimal lifecycle coverage for TransferRuntime with a mocked SFTP client."""
 
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -1087,6 +1088,54 @@ def test_recursive_download_copies_directory_tree(tmp_path):
     assert summary.bytes_total == 7
     assert (local_dst / "a.txt").read_bytes() == b"aaa"
     assert (local_dst / "sub" / "b.txt").read_bytes() == b"bbbb"
+
+
+@pytest.mark.parametrize("is_dir", [False, True])
+@pytest.mark.parametrize(
+    "listed_name",
+    ["../escaped", "sub/../../escaped", "{outside}/escaped", "", ".."]
+    + (["..\escaped", "{outside}\escaped", "C:escaped", "f.txt:stream"]
+       if sys.platform == "win32" else []),
+)
+def test_recursive_download_refuses_listed_names_that_leave_the_destination(
+    tmp_path, listed_name, is_dir
+):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    listed_name = listed_name.format(outside=outside)
+
+    class _HostileListing(_RecursiveSftpClient):
+        def listdir_attr(self, path):
+            return [SimpleNamespace(
+                filename=listed_name,
+                st_size=3,
+                is_dir=lambda: is_dir,
+                is_symlink=lambda: False,
+            )]
+
+        def open_handle(self, path, flags, attr=None):
+            self.files[path] = b"bad"
+            return super().open_handle(path, flags, attr)
+
+    owner = ClientId("client:owner")
+    client = _HostileListing()
+    client.dirs.add("/home/user/docs")
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_dst = tmp_path / "chosen" / "docs-copy"
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, str(local_dst), "/home/user/docs", TransferDirection.DOWNLOAD,
+                      TransferConflictPolicy.OVERWRITE),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.FAILED
+    assert list(outside.iterdir()) == []
+    assert [p.name for p in (tmp_path / "chosen").iterdir()] == [local_dst.name]
+    assert list(local_dst.iterdir()) == []
 
 
 def test_recursive_download_renames_existing_files(tmp_path):

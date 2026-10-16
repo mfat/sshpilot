@@ -32,6 +32,9 @@ ALLOWED_EDGES = {
         "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # path helpers used by CLI
         "sshpilot.platform.locking",  # shared settings transaction lock
+        "sshpilot.platform.windows",  # GI-free Windows ACL helpers
+        "sshpilot.platform.fs",  # GI-free directory fsync
+        "sshpilot.platform.process",  # GI-free process helpers (hidden console)
         "sshpilot.ssh_config_document",  # GI-free lossless config document
         "sshpilot.ssh_config_formatter",  # GI-free managed-option registry
         "sshpilot.identity",  # GI-free identity-provider contract
@@ -41,6 +44,7 @@ ALLOWED_EDGES = {
         "sshpilot.api",
         "sshpilot.core",
         "sshpilot.runtime_identity",
+        "sshpilot.platform.windows",  # GI-free endpoint-file ACL (Windows)
     ),
     "daemon": (
         "sshpilot.daemon",
@@ -49,6 +53,10 @@ ALLOWED_EDGES = {
         "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # GI-free path helpers (headless composition)
         "sshpilot.platform.locking",  # shared settings transaction lock
+        "sshpilot.platform.windows",  # GI-free Windows ACL helpers
+        "sshpilot.platform.process",  # GI-free process helpers
+        "sshpilot.platform.detect",  # GI-free platform detection
+        "sshpilot.platform.fs",  # GI-free private dirs and directory fsync
         # Daemon may import selected top-level headless helpers; GTK and
         # GObject adapters are forbidden. Registered GObject-adapter debt is
         # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
@@ -62,6 +70,7 @@ ALLOWED_EDGES = {
         "sshpilot.backup_archive",  # GI-free secret backup archive (daemon transfer)
         "sshpilot.backup_backends",  # GI-free secret backup destination adapters
         "sshpilot.logging_support",  # shared GTK-free policy and redaction
+        "sshpilot.startup_timing",  # stdlib-only startup milestones (launcher)
     ),
 }
 

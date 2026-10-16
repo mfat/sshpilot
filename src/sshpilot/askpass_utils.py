@@ -13,13 +13,23 @@ import threading
 from gettext import gettext as _
 from typing import List
 
-# SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
-# credential export). secret_storage is GTK-free and safe to import in the askpass subprocess.
-from .secret_storage import (
-    normalize_key_path_for_storage as _normalize_key_path_for_storage,
-    key_path_lookup_candidates as _get_key_path_lookup_candidates,
-)
 from .logging_support import sanitize_log_text
+
+
+# SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
+# credential export). secret_storage is GTK-free and safe to import in the askpass subprocess,
+# but it loads platform_utils (GLib) and the backend registry, which only the secret helpers
+# below need -- not the log/prompt helpers the daemon's interaction broker imports at startup.
+def _normalize_key_path_for_storage(key_path):
+    from .secret_storage import normalize_key_path_for_storage
+
+    return normalize_key_path_for_storage(key_path)
+
+
+def _get_key_path_lookup_candidates(key_path):
+    from .secret_storage import key_path_lookup_candidates
+
+    return key_path_lookup_candidates(key_path)
 
 # libsecret / keyring are imported lazily (and only for a diagnostic log line
 # here) — the real passphrase lookups delegate to secret_storage. Keeping these
@@ -34,7 +44,7 @@ def _keyring_available() -> bool:
     return _get_keyring() is not None
 
 try:
-    from .platform_utils import is_macos
+    from .platform.detect import is_macos  # GLib-free (platform_utils re-exports it)
 except ImportError:
     try:
         from platform_utils import is_macos
@@ -412,11 +422,11 @@ def _read_app_setting(key: str, default):
     """
     import json
 
+    from .platform.paths import get_config_dir
+
     try:
-        config_dir = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".config"
-        )
-        config_file = os.path.join(config_dir, "sshpilot", "config.json")
+        # The same directory the app writes: %APPDATA%\sshpilot on Windows.
+        config_file = os.path.join(get_config_dir(), "config.json")
         with open(config_file, encoding="utf-8") as handle:
             data = json.load(handle)
         value = data.get(key, default)
@@ -1456,10 +1466,17 @@ def ensure_passphrase_askpass() -> str:
     _ASKPASS_DIR = tempfile.mkdtemp(prefix="sshpilot-askpass-")
     os.chmod(_ASKPASS_DIR, 0o700)
 
-    script_path = os.path.join(_ASKPASS_DIR, "askpass.sh")
+    # OpenSSH for Windows starts SSH_ASKPASS with CreateProcess: a shell
+    # script fails (error 193) and OpenSSH reads that as an empty answer, so
+    # Windows gets a .cmd launcher, as the daemon broker does.
+    windows = sys.platform == "win32"
+    script_path = os.path.join(_ASKPASS_DIR, "askpass.cmd" if windows else "askpass.sh")
     logger.debug(f"Generating askpass shell wrapper at {script_path}")
 
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False) and windows:
+        with open(script_path, "w", encoding="utf-8", newline="") as f:
+            f.write(f'@echo off\r\n@"{sys.executable}" --internal-native-askpass %*\r\n')
+    elif getattr(sys, "frozen", False):
         # sys.executable is this application's own binary in a frozen
         # (PyInstaller) build, not a Python interpreter — "exec sys.executable
         # helper.py" would just relaunch the GUI instead of running
@@ -1483,8 +1500,12 @@ def ensure_passphrase_askpass() -> str:
             f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
             f.write("sys.exit(run_askpass_and_write(prompt))\n")
         os.chmod(helper_path, 0o600)
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
+        if windows:
+            with open(script_path, "w", encoding="utf-8", newline="") as f:
+                f.write(f'@echo off\r\n@"{sys.executable}" "{helper_path}" %*\r\n')
+        else:
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
 
     script_mode = os.stat(script_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
     os.chmod(script_path, script_mode)

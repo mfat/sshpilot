@@ -82,6 +82,13 @@ class GuiApp:
 
         from sshpilot.main import SshPilotApplication
 
+        if sys.platform == "win32":
+            # As main() does: a wedged autolaunched gdbus.exe would block
+            # register() below forever.
+            from sshpilot.platform.windows.environment import disable_dbus_autolaunch
+
+            disable_dbus_autolaunch()
+
         # Unique application_id must be set at construction — set_application_id
         # after Adw.Application.__init__ does not always rebind the D-Bus path.
         self.app = SshPilotApplication(

@@ -170,7 +170,12 @@ def test_production_composition_survives_unsafe_legacy_metadata(
         "web"
     ]
     assert (config_dir / "connections.json").exists()
-    assert legacy_path.read_bytes() == legacy_before
+    # The version-less file is upgraded with its legacy content intact, and
+    # the exact original bytes are kept as a backup.
+    upgraded = json.loads(legacy_path.read_text(encoding="utf-8"))
+    assert upgraded["connections_meta"] == {"old-host": {"password": "secret"}}
+    backups = list(config_dir.glob("config.json.v0-*.bak"))
+    assert [backup.read_bytes() for backup in backups] == [legacy_before]
     assert repository.snapshot().metadata == ()
     assert "secret" not in caplog.text
 

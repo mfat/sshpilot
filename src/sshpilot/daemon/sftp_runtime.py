@@ -36,9 +36,8 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
-from sshpilot.api.client import SshPilotClient
 from sshpilot.sftp.server_limits import parse_remote_software_version
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -102,11 +101,17 @@ from sshpilot.api.sftp_identity import new_sftp_id
 from sshpilot.sftp import protocol as sftp_proto
 from sshpilot.sftp.client import OpenSSHSFTPClient
 from sshpilot.logging_support import log_context
+from sshpilot.platform.fs import makedirs_private
+from sshpilot.platform.windows.acl import chmod_private
 
 from .operation_runtime import OperationCancelled
 from .session_runtime import SessionLaunchSpec
 
 from .process_registry import KIND_SFTP, forget_owned_process, record_owned_process_or_abandon
+
+
+if TYPE_CHECKING:  # annotations only; the client API imports every model
+    from sshpilot.api.client import SshPilotClient
 
 logger = logging.getLogger(__name__)
 
@@ -1609,7 +1614,7 @@ class SftpServiceRuntime:
                 "The local authorized_keys file changed since it was read",
             )
         directory = os.path.dirname(path)
-        os.makedirs(directory, mode=0o700, exist_ok=True)
+        makedirs_private(directory)
         os.chmod(directory, 0o700)
         backup_path = None
         if request.backup and mode is not None:
@@ -1631,7 +1636,8 @@ class SftpServiceRuntime:
             finally:
                 os.close(fd)
             os.replace(temporary, path)
-            os.chmod(path, 0o600)
+            # sshd for Windows checks the ACL, not mode bits.
+            chmod_private(path)
         except OSError as exc:
             try:
                 os.unlink(temporary)

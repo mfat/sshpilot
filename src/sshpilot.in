@@ -10,6 +10,12 @@ _moduledir = '@MODULEDIR@'
 if _moduledir not in sys.path:
     sys.path.insert(1, _moduledir)
 
+# Locate or start the daemon on a background thread before GTK is imported,
+# so it comes up while the window loads.
+from sshpilot.daemon_prelaunch import start_from_argv
+
+start_from_argv(sys.argv[1:])
+
 from sshpilot.main import main
 
 sys.exit(main())

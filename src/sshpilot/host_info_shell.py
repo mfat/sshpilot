@@ -87,7 +87,7 @@ _CSS = """
   --unknown: #9a9996;
   --bar-track: rgba(0,0,0,.08);
   --shadow: 0 1px 2px rgba(0,0,0,.06);
-  font-family: "Cantarell", "Segoe UI", system-ui, sans-serif;
+  font-family: system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root {

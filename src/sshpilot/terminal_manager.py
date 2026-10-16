@@ -11,6 +11,7 @@ from gettext import gettext as _
 
 from .dialog_focus import mark_default_response_visible
 from .terminal import TerminalWidget
+from .terminal_input import typed_command_line
 
 logger = logging.getLogger(__name__)
 
@@ -1009,6 +1010,9 @@ class TerminalManager:
         logger.info("Show local terminal tab")
         try:
             effective_title = title or _("Terminal")
+            command_data = None
+            if command and str(command).strip():
+                command_data = typed_command_line(str(command).strip())
 
             class LocalConnection:
                 def __init__(self):
@@ -1030,12 +1034,10 @@ class TerminalManager:
             )
             if pty_prompt and pty_response is not None:
                 terminal_widget._pty_autofill = (pty_prompt, pty_response)
-            if command and str(command).strip():
-                command_text = str(command).strip()
+            if command_data:
 
                 def _run_command(*_args):
-                    data = (command_text + "\n").encode("utf-8")
-                    terminal_widget.feed_child_data(data)
+                    terminal_widget.feed_child_data(command_data)
 
                 terminal_widget.connect("connection-established", _run_command)
             # Add to the tab view *before* scheduling the shell spawn so the

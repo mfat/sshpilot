@@ -15,12 +15,31 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
-from .askpass_utils import (
-    get_ssh_env_with_askpass,
-    ensure_key_in_agent,
-    lookup_passphrase,
-)
+from .ssh_config_document import split_config_lines
+from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
+from .platform.windows.environment import WINDOWS_PROCESS_ENV
+
+
+# askpass_utils pulls in secret storage and GLib; it is only needed to build
+# a real SSH command, not to import this module (the CLI pre-parse does that
+# before GTK loads). These stay module attributes, so tests can patch them.
+def get_ssh_env_with_askpass(*args, **kwargs):
+    from .askpass_utils import get_ssh_env_with_askpass as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def ensure_key_in_agent(*args, **kwargs):
+    from .askpass_utils import ensure_key_in_agent as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def lookup_passphrase(*args, **kwargs):
+    from .askpass_utils import lookup_passphrase as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def effective_username(connection) -> str:
@@ -168,7 +187,6 @@ def apply_forced_askpass_env(
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class SSHConnectionCommand:
     """Represents a prepared SSH connection command."""
@@ -235,10 +253,14 @@ def resolve_native_auth(
             "LANG",
             "SSH_AUTH_SOCK",
         }
+        windows = os.name == "nt"
+        # Windows environment names are case-insensitive; POSIX ones are not.
         env = {
             key: value
             for key, value in os.environ.items()
-            if key in allowed or key.startswith("LC_")
+            if (key.upper() if windows else key) in allowed
+            or key.startswith("LC_")
+            or (windows and key.upper() in WINDOWS_PROCESS_ENV)
         }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
@@ -979,8 +1001,14 @@ def _authored_ssh_options(
             port = 0
         if 1 <= port <= 65535:
             kwargs['port'] = port
+    # A block from an imported or restored file reaches here without any
+    # request model's checks, and the -F file on argv carries the same
+    # values, so shell text in HostName or a ProxyJump hop fails the launch
+    # instead of being re-emitted (see ``validate_ssh_hostname``).
     if 'hostname' in authored and _text('hostname'):
-        _option('HostName', _text('hostname'))
+        # OpenSSH drops a trailing "# comment" from a config line.
+        hostname = re.sub(r'\s+#.*$', '', _text('hostname'))
+        _option('HostName', validate_ssh_hostname(hostname, 'HostName'))
 
     # ProxyJump and ProxyCommand may coexist in one block; OpenSSH applies
     # the first line in the file and ignores the second. When the block
@@ -993,6 +1021,8 @@ def _authored_ssh_options(
     if isinstance(raw_proxy_jump, str):
         raw_proxy_jump = [h for h in re.split(r'[\s,]+', raw_proxy_jump) if h]
     proxy_jump = [str(e).strip() for e in raw_proxy_jump if str(e).strip()]
+    for hop in proxy_jump:
+        validate_ssh_hostname(hop, 'ProxyJump')
     proxy_command = _text('proxy_command')
     both_proxies = (
         'proxyjump' in authored and proxy_jump
@@ -1104,7 +1134,7 @@ def _authored_extra_options(extra_ssh_config: str) -> List[str]:
 
     parsed: List[Tuple[str, str]] = []
     counts: Dict[str, int] = {}
-    for raw_line in extra_ssh_config.splitlines():
+    for raw_line in split_config_lines(extra_ssh_config):
         line = raw_line.strip()
         if not line or line.startswith('#'):
             continue

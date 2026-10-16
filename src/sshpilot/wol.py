@@ -10,6 +10,8 @@ import subprocess
 import platform
 from typing import Optional, Tuple
 
+from .platform.process import hidden_console_kwargs
+
 logger = logging.getLogger(__name__)
 
 # MAC: 6 hex bytes, optional separators : or -
@@ -228,6 +230,7 @@ def _read_arp_windows(ip: str) -> Optional[str]:
             capture_output=True,
             text=True,
             timeout=5,
+            **hidden_console_kwargs(),
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         logger.debug("arp -a failed: %s", e)

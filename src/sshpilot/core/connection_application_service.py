@@ -54,6 +54,8 @@ from ..api.models.connections import (
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteConnectionsRequest,
+    DeleteConnectionsResult,
     ForwardingRule,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
@@ -98,6 +100,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "import_asbru": Capability.CONNECTIONS_WRITE,
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
+    "delete_connections": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -1001,8 +1004,19 @@ class ConnectionApplicationService:
         """Resolve authored and effective OpenSSH configuration in the daemon."""
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
-        record = self._repository.get_editor_record(connection_id)
-        if record is None:
+        # An unsaved target (typed in the search box) resolves through the
+        # private -F file its session launched with: its own block, then the
+        # user's config under ``Host *``. That is what the save dialog shows
+        # as inherited, so it must be what the session actually used.
+        transient = is_transient_connection_id(connection_id)
+        record = (
+            self._repository.get_record(connection_id)
+            if transient
+            else self._repository.get_editor_record(connection_id)
+        )
+        if record is None or (transient and (
+            record.protocol != "ssh" or not record.source or not record.host
+        )):
             raise SshPilotError(
                 ErrorCode.CONNECTION_NOT_FOUND,
                 "The requested connection does not exist",
@@ -1012,40 +1026,49 @@ class ConnectionApplicationService:
         from .ssh_config_effective import collect_host_block_lines, diff_effective_config
 
         before_generation = self._repository.snapshot().generation
-        root = str(self._repository.root_config_path)
+        if transient:
+            # The launch passes this file with -F, so system-wide defaults
+            # never apply to the session and must not apply here either.
+            host = record.host
+            root = str(record.source)
+            include_system_defaults = False
+        else:
+            host = record.nickname
+            root = str(self._repository.root_config_path)
+            include_system_defaults = not self._repository.ssh_config_isolated
         logger.debug(
             "Effective-config resolve start: id=%s host=%s mode=%s root=%s "
             "root_file=%s generation=%s",
             connection_id,
-            record.nickname,
+            host,
             "isolated" if self._repository.ssh_config_isolated else "default",
             root,
             self._repository.root_config_path.is_file(),
             before_generation,
         )
-        own_lines = collect_host_block_lines(record.nickname, root)
+        own_lines = collect_host_block_lines(host, root)
         own_block = "\n".join(own_lines)
         if not own_block:
             own_block = format_ssh_config_entry(record.to_dict())
         logger.debug(
             "Effective-config authored block: id=%s host=%s own_lines=%d fallback=%s",
             connection_id,
-            record.nickname,
+            host,
             len(own_lines),
             not bool(own_lines),
         )
         try:
             result = diff_effective_config(
-                record.nickname,
+                host,
                 root,
                 own_block,
-                include_system_defaults_in_display=not self._repository.ssh_config_isolated,
+                include_system_defaults_in_display=include_system_defaults,
             )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
                 "changes=%d own=%d full=%d",
                 connection_id,
-                record.nickname,
+                host,
                 bool(result and result.get("has_diff")),
                 len(result.get("changes") or ()) if result else -1,
                 len(result.get("own") or ()) if result else -1,
@@ -1069,13 +1092,13 @@ class ConnectionApplicationService:
         if not result:
             return EffectiveConfigComparison(
                 connection_id=connection_id,
-                host=record.nickname,
+                host=host,
                 available=False,
                 generation=max(0, int(after_generation)),
             )
         return EffectiveConfigComparison(
             connection_id=connection_id,
-            host=record.nickname,
+            host=host,
             available=True,
             has_diff=bool(result.get("has_diff")),
             changes=tuple(dict(item) for item in (result.get("changes") or ())),
@@ -1884,15 +1907,63 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository delete failed")
             raise self._persistence_error(request.connection_id) from error
-        self._provider_call(
-            self._secret_provider,
-            "clear_session_connection_password",
-            request.connection_id,
-        )
+        self._forget_session_passwords((request.connection_id,))
         return DeleteConnectionResult(
             connection_id=request.connection_id,
             deleted=True,
         )
+
+    def delete_connections(
+        self, request: DeleteConnectionsRequest
+    ) -> DeleteConnectionsResult:
+        """Delete every listed connection in one commit, or none of them."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if type(request) is not DeleteConnectionsRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A delete connections request is required",
+            )
+        for connection_id in request.connection_ids:
+            if self._repository.get_record(connection_id) is None:
+                raise SshPilotError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The requested connection does not exist",
+                    connection_id=connection_id,
+                )
+        try:
+            self._repository.delete_connections(request.connection_ids)
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Repository batch delete failed")
+            raise self._persistence_error() from error
+        self._forget_session_passwords(request.connection_ids)
+        return DeleteConnectionsResult(connection_ids=request.connection_ids)
+
+    def _forget_session_passwords(self, connection_ids) -> None:
+        """Drop session-only passwords of connections that are now deleted.
+
+        Runs after the delete has committed, so a failure here must not turn
+        into an error: the client would report that nothing was deleted
+        when the connections are gone. Every id is tried; failures are
+        logged. A stale entry only lives in daemon memory until it exits.
+        """
+        for connection_id in connection_ids:
+            try:
+                self._provider_call(
+                    self._secret_provider,
+                    "clear_session_connection_password",
+                    connection_id,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not forget the session password of a deleted "
+                    "connection type=%s",
+                    type(error).__name__,
+                )
 
     # ------------------------------------------------------------------
     # Events

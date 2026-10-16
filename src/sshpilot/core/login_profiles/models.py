@@ -24,6 +24,8 @@ import secrets
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from ...ssh_config_document import split_config_lines
+
 # Connection metadata key holding the profile link. Its value is one of:
 #   {"mode": "explicit", "id": <profile id>, "applied": <fingerprint>, "rev": <id:revision>}
 #   {"mode": "inherit", "applied": <fingerprint>, "rev": <id:revision>}
@@ -296,11 +298,11 @@ EDITABLE_FIELDS = frozenset(
 
 def _merge_extra(connection_extra: str, profile_extra: str) -> str:
     """Profile extra directives replace same-keyword lines of the connection."""
-    profile_lines = [line for line in (profile_extra or "").splitlines() if line.strip()]
+    profile_lines = [line for line in split_config_lines(profile_extra or "") if line.strip()]
     owned = set(extra_keywords(profile_extra))
     kept = [
         line
-        for line in (connection_extra or "").splitlines()
+        for line in split_config_lines(connection_extra or "")
         if line.strip() and _extra_keyword(line) not in owned
     ]
     return "\n".join(kept + profile_lines)
@@ -364,7 +366,7 @@ def _norm_list(values: Any) -> List[str]:
 def extra_keywords(extra: str) -> Tuple[str, ...]:
     """Lowercased directive keywords of an extra-config block, in order."""
     keys: List[str] = []
-    for line in (extra or "").splitlines():
+    for line in split_config_lines(extra or ""):
         key = _extra_keyword(line)
         if key and key not in keys:
             keys.append(key)
@@ -393,7 +395,7 @@ def auth_projection(
     owned = {str(k).lower() for k in owned_keywords if str(k).strip()}
     extra_lines = sorted(
         " ".join(line.split())
-        for line in str(data.get("extra_ssh_config") or "").splitlines()
+        for line in split_config_lines(str(data.get("extra_ssh_config") or ""))
         if _extra_keyword(line) in owned
     )
 

@@ -67,5 +67,28 @@ Daemon shutdown closes the listener and all active helper transports, wakes
 waiters, bounds worker joins, clears pending secret buffers, and removes its
 private runtime directory.
 
-Unrestricted keyboard-interactive prompts and security-key PIN/touch
-interactions remain unsupported and fail safely.
+## Keyboard-interactive, confirmation and presence prompts
+
+Prompts that are neither a password nor a passphrase nor a host key are
+brokered too. A keyboard-interactive challenge (an OTP or verification code,
+for example) becomes a `keyboard_interactive` interaction with a
+`ChallengePrompt`. An OpenSSH confirmation becomes `confirmation`, and a
+security-key touch reminder becomes `security_key_presence`, which is passive
+and needs no answer. Headless channels (SFTP, forwards, one-shot commands)
+run with `SSH_ASKPASS_REQUIRE=force`, so these prompts reach the user there
+as well. Passive autofill-only operations (live Host Info samples, history
+reads) never raise a prompt.
+
+## Session-only secrets
+
+When the daemon advertises `interactions.session_secrets`, a password or
+passphrase answer may carry `RememberPolicy.remember_for_session`. It is
+queued with the askpass context, like a stored answer, and kept only after
+the session authenticates. It lives in daemon memory, keyed by connection id
+(password) or key path (passphrase), and is never handed to a secret
+backend. Later prompts for the same connection or key are answered from it,
+after any stored secret, including from autofill-only operations. A repeated
+prompt after it was offered proves it wrong, and it is wiped. Broker close
+wipes them all. This matters most where OpenSSH connection sharing is
+unavailable (OpenSSH for Windows), because every channel logs in on its own
+there.

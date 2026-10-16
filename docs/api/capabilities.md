@@ -69,6 +69,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: interactions.host_key -->
 <!-- api-daemon-runtime-capability: interactions.password -->
 <!-- api-daemon-runtime-capability: interactions.passphrase -->
+<!-- api-daemon-runtime-capability: interactions.session_secrets -->
 <!-- api-daemon-runtime-capability: sftp.read -->
 <!-- api-daemon-runtime-capability: sftp.write -->
 <!-- api-daemon-runtime-capability: sftp.events -->
@@ -99,7 +100,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | --- | --- | --- | --- | --- | --- | --- |
 | `connections.read` | Read saved connection DTO snapshots | Daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | `ConnectionRepository` / `ConnectionApplicationService` on daemon | v1 |
 | `connections.events` | Subscribe to live connection lifecycle events | Daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
-| `connections.write` | Create, duplicate, update, and delete saved connections | Daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | `ConnectionRepository` / `ConnectionApplicationService` on daemon | v1 |
+| `connections.write` | Create, duplicate, update, and delete saved connections | Daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`, `delete_connections`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete`, `connections.delete_many` | `connection.created`, `connection.updated`, `connection.deleted` | `ConnectionRepository` / `ConnectionApplicationService` on daemon | v1 |
 | `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
 | `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
 | `sessions.command` | Open a session that runs an explicit remote command inside the connection (for example `docker exec -it <container> sh` or `docker logs -f <container>`) instead of a plain interactive shell | Daemon: Implemented | `open_session` with `remote_command` | Session lifecycle events | `SessionRuntime`, `DaemonConnectionLaunchProvider` (argv `ssh <alias> <remote_command>`) | v1 / API 0.30 |
@@ -117,6 +118,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `interactions.host_key` | Strict unknown-host trust decisions | Daemon implemented | Typed host-key decisions | Interaction lifecycle events | Key scan plus exact session pinning | v1 / API 0.9 |
 | `interactions.password` | Typed login-password askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
 | `interactions.passphrase` | Typed private-key passphrase askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
+| `interactions.session_secrets` | `remember_for_session` on password/passphrase answers | Daemon implemented | Secret kept in daemon memory until exit | Interaction lifecycle events | Daemon askpass broker | v1 / API 0.82 |
 | `sftp` | Legacy broad SFTP identifier | Deprecated and never advertised | None | None | Replaced by narrow `sftp.*` capabilities | v1 |
 | `sftp.read` | List SFTP services and remote directories | Daemon: Implemented when SFTP runtime present | `list_sftp_services`, `get_sftp_service`, `sftp_list_directory` | None required | Daemon `SftpRuntime` | v1 / API 0.10 |
 | `sftp.write` | Open, attach, detach, and close SFTP services | Daemon: Implemented when SFTP runtime present | `open_sftp`, `attach_sftp`, `detach_sftp`, `close_sftp` | SFTP lifecycle events | Daemon `SftpRuntime` | v1 / API 0.10 |
@@ -296,6 +298,18 @@ and brokered without terminal prompt scraping.
 Private-key passphrases are associated with the exact key prompt and use the
 existing selected secret backend. Backend master-password unlock remains a
 separate local UI concern.
+
+<!-- api-capability: interactions.session_secrets -->
+## `interactions.session_secrets`
+
+A password or passphrase answer may carry `RememberPolicy.remember_for_session`.
+After the session authenticates, the daemon keeps that secret in memory only,
+never in a secret backend, and answers the same connection's (or key's) later
+askpass prompts with it until the daemon exits. A repeated prompt after it was
+offered proves it wrong, and it is dropped. Clients offer the choice only when
+the daemon advertises this capability; it matters most where connection
+sharing is unavailable (OpenSSH for Windows has no ControlMaster), so every
+tab, SFTP channel and Host Info sample logs in again.
 
 <!-- api-capability: sftp -->
 ## `sftp`

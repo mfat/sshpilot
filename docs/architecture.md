@@ -302,5 +302,6 @@ as an excuse to add a second production implementation.
 - [Core boundary](architecture/core-boundary.md)
 - [Frontend closure audit](architecture/frontend-closure-audit.md)
 - [Dependency direction](architecture/dependency-direction.md)
+- [Windows port](architecture/windows-port.md) (experimental)
 - [Headless core development](development/headless-core.md)
 - [API maintenance](api/maintenance.md)

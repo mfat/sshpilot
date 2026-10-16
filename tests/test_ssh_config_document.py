@@ -7,6 +7,7 @@ from sshpilot.ssh_config_document import (
     MatchBlock,
     RawSpan,
     SSHConfigDocument,
+    split_config_lines,
     split_host_tokens,
 )
 
@@ -113,3 +114,25 @@ def test_split_host_tokens_fallback():
 def test_node_types_are_exactly_three():
     doc = SSHConfigDocument.parse_text(FIXTURE)
     assert all(isinstance(n, (HostBlock, MatchBlock, RawSpan)) for n in doc.nodes)
+
+
+# Everything str.splitlines() breaks on that OpenSSH does not.
+NOT_LINE_BREAKS = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\r", "\x85", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("separator", NOT_LINE_BREAKS)
+def test_only_lf_ends_a_line(separator):
+    """OpenSSH ends a line at LF only; anything else stays inside the line."""
+    text = f"Host a\n    User bob #{separator}ProxyCommand touch /tmp/x\n"
+    doc = SSHConfigDocument.parse_text(text)
+    assert doc.text() == text
+    assert doc.host_blocks("a")[0].lines == [
+        "Host a\n",
+        f"    User bob #{separator}ProxyCommand touch /tmp/x\n",
+    ]
+
+
+def test_split_config_lines_mirrors_splitlines_for_lf_and_crlf():
+    for text in ("", "\n", "a", "a\n", "a\n\nb", "a\r\nb\r\n"):
+        assert split_config_lines(text) == text.splitlines()
+        assert split_config_lines(text, keepends=True) == text.splitlines(keepends=True)

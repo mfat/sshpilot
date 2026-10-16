@@ -12,14 +12,22 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Optional, Sequence
 
-from sshpilot.api.capabilities import Capability
-from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot import startup_timing
+from sshpilot.platform.process import FROZEN_WINDOWS_CONSOLE_EXE
+
+if TYPE_CHECKING:
+    from sshpilot.api.daemon_client import DaemonClient
+
+# ``sshpilot.api.daemon_client`` (with the wire codec and every API model) is
+# imported where a client is first built, not here: the GUI's early start
+# (``sshpilot.daemon_prelaunch``) spawns a missing daemon before paying for it.
 
 from .lifecycle import (
     SocketSecurityError,
+    endpoint_owner_gone,
     ensure_private_runtime_directory,
     evict_socket_owner,
     probe_socket_owner,
@@ -130,6 +138,27 @@ AMBIGUOUS_HANDSHAKE_GRACE = 2.0
 AMBIGUOUS_HANDSHAKE_POLL = 0.1
 
 
+def detached_process_options() -> dict:
+    """Popen options that detach a background child from the caller.
+
+    Windows ignores ``start_new_session``. There the daemon gets its own
+    process group and a hidden console, which the console programs it starts
+    (ssh.exe, ssh-keygen.exe) inherit instead of each opening a window.
+    """
+
+    if sys.platform == "win32":
+        return {
+            "creationflags": (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            )
+        }
+    return {"start_new_session": True}
+
+
+class _EvictionDeclined(Exception):
+    """A resident daemon would have to be replaced, and the caller declined."""
+
+
 @dataclass(frozen=True)
 class DaemonProcessHandle:
     """Proof that this launcher created one exact child process."""
@@ -175,6 +204,42 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
     return environment
 
 
+def _state_dir() -> str:
+    """The frontend state directory, without importing gi on Windows.
+
+    The early daemon start (``sshpilot.daemon_prelaunch``) runs this launcher
+    on a worker while the GUI thread imports GTK. ``platform_utils`` imports
+    ``gi.repository.GLib`` at module level, and PyGObject's importer is not
+    safe for two threads loading GLib at once: the GTK import then met a half
+    built GLib (``'gi.repository.GLib' object has no attribute 'Idle'``). On
+    Windows ``platform_utils.get_state_dir`` uses the headless resolver
+    anyway; elsewhere the GUI has imported GLib before the worker starts.
+    """
+    if sys.platform == "win32":
+        from sshpilot.platform.paths import get_state_dir as headless_state_dir
+
+        return str(headless_state_dir())
+    from sshpilot.platform_utils import get_state_dir
+
+    return get_state_dir()
+
+
+def _frozen_console_executable() -> Optional[str]:
+    """The daemon's executable in a frozen Windows build.
+
+    The windowed GUI exe has no console: a daemon started from it could not
+    give its OpenSSH children the shared hidden console (each would open a
+    window), and askpass, which the daemon writes as ``<its exe>
+    --internal-askpass``, would have no stdout to answer OpenSSH on. The
+    console exe beside it serves both. Elsewhere, ``None``.
+    """
+
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return None
+    candidate = os.path.join(os.path.dirname(sys.executable), FROZEN_WINDOWS_CONSOLE_EXE)
+    return candidate if os.path.isfile(candidate) else None
+
+
 class DaemonLauncher:
     """Reuse a compatible daemon or make one bounded, race-safe launch attempt."""
 
@@ -203,7 +268,7 @@ class DaemonLauncher:
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self.probe_timeout = float(probe_timeout)
-        self.executable = executable or sys.executable
+        self.executable = executable or _frozen_console_executable() or sys.executable
         self._environment = environment
         self._popen = popen
         self._lock = threading.Lock()
@@ -246,14 +311,44 @@ class DaemonLauncher:
         cleanly.
         """
 
+        result = self._connect_or_start(evict=True)
+        assert result is not None
+        return result
+
+    def connect_or_start_without_eviction(self) -> Optional[DaemonLaunchResult]:
+        """``connect_or_start`` that never stops a resident daemon.
+
+        Returns ``None`` where ``connect_or_start`` would evict a peer this
+        build cannot use. Safe to run before the process knows whether it is
+        the primary instance: a secondary that is about to hand off to a
+        running window must not replace the daemon that window is using.
+        """
+
+        return self._connect_or_start(evict=False)
+
+    def _connect_or_start(self, *, evict: bool) -> Optional[DaemonLaunchResult]:
+        startup_timing.mark("daemon_connect_begun")
         with self._lock:
             self._prepare_socket_location()
+            self.discard_dead_endpoint()
 
-            client = self._connect_to_usable_peer()
+            if not evict and not os.path.lexists(self.socket_path):
+                # Early start: with no endpoint there is no daemon to probe,
+                # so launch now rather than first loading the client stack
+                # (DaemonClient, codec, API models) only to be told that the
+                # daemon is unavailable. The ready-wait below loads it while
+                # the daemon starts.
+                client = None
+            else:
+                try:
+                    client = self._connect_to_usable_peer(evict=evict)
+                except _EvictionDeclined:
+                    return None
             if client is not None:
                 self._ensure_gtk_askpass_log_forwarder()
                 self._ensure_daemon_log_forwarder()
                 self._synchronize_explicit_log_level(client)
+                startup_timing.mark("daemon_connect_returned", "existing daemon")
                 return DaemonLaunchResult(client=client, process=None)
 
             if getattr(sys, "frozen", False):
@@ -286,10 +381,15 @@ class DaemonLauncher:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     close_fds=True,
-                    start_new_session=True,
                     env=_child_environment(self._environment),
+                    **detached_process_options(),
                 )
             except OSError as error:
+                logger.error(
+                    "Could not start the daemon process type=%s errno=%s",
+                    type(error).__name__,
+                    getattr(error, "errno", None),
+                )
                 raise DaemonLaunchError(
                     DaemonStartupFailure.PROCESS_EXITED
                 ) from error
@@ -299,15 +399,37 @@ class DaemonLauncher:
                 client = self._wait_until_ready(process)
             except BaseException as error:
                 self._stop_failed_child(process)
-                logger.debug(
-                    "Daemon launch attempt failed type=%s",
+                reason = getattr(error, "reason", None)
+                logger.warning(
+                    "Daemon launch attempt failed type=%s reason=%s exit_code=%s",
                     type(error).__name__,
+                    getattr(reason, "value", reason),
+                    process.poll(),
                 )
                 raise
             self._ensure_gtk_askpass_log_forwarder()
             self._ensure_daemon_log_forwarder()
             self._synchronize_explicit_log_level(client)
+            startup_timing.mark("daemon_connect_returned", "spawned daemon")
             return DaemonLaunchResult(client=client, process=handle)
+
+    def discard_dead_endpoint(self) -> None:
+        """Remove an endpoint left by a daemon that has provably exited.
+
+        A crashed daemon leaves its endpoint file behind. Connecting to it
+        first loads the whole client stack and waits on a dead port (~0.5 s
+        on Windows) before the publisher check finds it stale; checking the
+        publisher first lets a launch with nothing to connect to start the
+        daemon at once. Never connects, so a live daemon is not disturbed.
+        """
+
+        try:
+            if os.path.lexists(self.socket_path) and endpoint_owner_gone(
+                self.socket_path
+            ):
+                remove_dead_socket(self.socket_path)
+        except Exception:
+            logger.debug("Could not check the daemon endpoint", exc_info=True)
 
     def _prepare_socket_location(self) -> None:
         """Validate the socket location, repairing what is safely repairable.
@@ -364,11 +486,12 @@ class DaemonLauncher:
             return
         logger.info("Removed an unusable daemon socket endpoint before startup")
 
-    def _connect_to_usable_peer(self) -> Optional[DaemonClient]:
+    def _connect_to_usable_peer(self, *, evict: bool = True) -> Optional[DaemonClient]:
         """Return a client for a resident daemon, or ``None`` to launch one.
 
         Evicts (once) a peer that answers but cannot serve this build, so the
         caller falls through to launching a current daemon instead of failing.
+        With ``evict=False`` that case raises :class:`_EvictionDeclined`.
         """
 
         for attempt in (0, 1):
@@ -391,6 +514,8 @@ class DaemonLauncher:
 
             if attempt or reason not in EVICTABLE_FAILURES:
                 raise DaemonLaunchError(reason)
+            if not evict:
+                raise _EvictionDeclined(reason)
             logger.warning(
                 "Resident daemon cannot serve this build reason=%s; replacing it",
                 reason.value,
@@ -413,7 +538,11 @@ class DaemonLauncher:
             return error.reason
         except SshPilotError as error:
             if error.code is ErrorCode.DAEMON_UNAVAILABLE:
-                remove_dead_socket(self.socket_path)
+                if not remove_dead_socket(self.socket_path):
+                    logger.warning(
+                        "The daemon endpoint did not answer but could not be "
+                        "cleared; the new daemon may refuse to start"
+                    )
                 return None
             return self._classify_handshake_error(error).reason
 
@@ -485,6 +614,7 @@ class DaemonLauncher:
         the signal path.
         """
 
+        from sshpilot.api.daemon_client import DaemonClient
         from sshpilot.api.models.daemon import StopDaemonRequest
 
         client: Optional[DaemonClient] = None
@@ -518,6 +648,9 @@ class DaemonLauncher:
         # ``timeout`` here is the launcher probe budget for socket connect only.
         # RPC waits must use DEFAULT_REQUEST_TIMEOUT — otherwise slow methods
         # like sftp.list falsely trip transport_timeout (~probe 0.25s).
+        from sshpilot.api.capabilities import Capability
+        from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
+
         client = DaemonClient(
             socket_path=self.socket_path,
             timeout=DEFAULT_REQUEST_TIMEOUT,
@@ -573,10 +706,9 @@ class DaemonLauncher:
             return
         try:
             from sshpilot.logging_support import ensure_daemon_log_forwarder
-            from sshpilot.platform_utils import get_state_dir
 
             ensure_daemon_log_forwarder(
-                Path(get_state_dir()) / "daemon.log",
+                Path(_state_dir()) / "daemon.log",
                 enabled=True,
             )
         except Exception:
@@ -629,21 +761,40 @@ class DaemonLauncher:
                 ) from error
             saw_socket = saw_socket or socket_exists
 
-            if socket_exists:
+            # Once our child has exited, a daemon can only be one that another
+            # launch started at the same moment (two app launches, each
+            # starting the daemon early): ours lost the socket to it.
+            exited = process.poll() is not None
+            if socket_exists or exited:
                 try:
                     return self._connect(min(self.probe_timeout, remaining))
                 except SshPilotError as error:
                     if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
-                        raise self._classify_handshake_error(error) from error
+                        failure = self._classify_handshake_error(error)
+                        if (
+                            not exited
+                            or failure.reason in PROVEN_INCOMPATIBLE_FAILURES
+                        ):
+                            raise failure from error
+                        # Connected, but the winner is not serving yet: the
+                        # same ambiguity _await_ambiguous_peer waits out.
+                        # Keep waiting for it until the deadline.
+                        saw_socket = True
+                        threading.Event().wait(min(self.poll_interval, remaining))
+                        continue
 
-            if process.poll() is not None:
-                # A racing launcher may have won even though this child exited.
-                try:
-                    return self._connect(min(self.probe_timeout, remaining))
-                except SshPilotError as error:
-                    if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
-                        raise self._classify_handshake_error(error) from error
-                raise DaemonLaunchError(DaemonStartupFailure.PROCESS_EXITED)
+            if exited:
+                # The winner may still be binding its socket: wait for it
+                # until the deadline instead of reporting a failure. A crashed
+                # child leaves no live owner and still fails fast; a short,
+                # unsettled probe keeps that fast on Windows too.
+                accepting, _peer_pid = probe_socket_owner(
+                    self.socket_path,
+                    timeout=min(self.probe_timeout, remaining),
+                    settle=False,
+                )
+                if not accepting:
+                    raise DaemonLaunchError(DaemonStartupFailure.PROCESS_EXITED)
 
             threading.Event().wait(min(self.poll_interval, remaining))
 

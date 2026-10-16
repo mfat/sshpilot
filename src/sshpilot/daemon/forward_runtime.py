@@ -19,9 +19,8 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
-from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
     CoreEvent,
@@ -51,6 +50,10 @@ from sshpilot.logging_support import log_context
 from .session_runtime import SessionLaunchSpec
 
 from .process_registry import KIND_FORWARD, forget_owned_process, record_owned_process_or_abandon
+
+
+if TYPE_CHECKING:  # annotations only; the client API imports every model
+    from sshpilot.api.client import SshPilotClient
 
 logger = logging.getLogger(__name__)
 

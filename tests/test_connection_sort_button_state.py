@@ -108,6 +108,7 @@ def _window(daemon_order=("zulu", "alpha"), sort="name-desc"):
         "apply_connection_sort_preset",
         "begin_saving_sorted_view",
         "sorted_view_save_failed",
+        "_flush_projection_rebuild",
     ):
         setattr(window, name, getattr(MainWindow, name).__get__(window))
 
@@ -197,12 +198,18 @@ def test_menu_selection_applies_the_chosen_preset():
 
 
 @needs_window
-def test_projection_reset_keeps_the_sort():
+def test_projection_reset_keeps_the_sort(monkeypatch):
     # Issue #1312: opening a connection refreshes the projection, which used
     # to drop the sort back to manual order.
     window = _window(sort="name-asc")
+    idle = []
+    monkeypatch.setattr(
+        window_module.GLib, "idle_add", lambda callback, *args: idle.append(callback)
+    )
 
     MainWindow.on_projection_reset(window, SimpleNamespace(connections=[]))
+    for callback in idle:
+        callback()
 
     assert window._connection_sort_last == "name-asc"
     assert window.group_manager.bind_calls == 1

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import re
 from typing import Any, Dict, Mapping
 
@@ -50,8 +51,11 @@ CUSTOM_PROVIDER = "custom"
 _PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # Custom socket paths may be absolute paths or ``~``-relative; anything else
-# would be silently ignored by OpenSSH's agent lookup.
+# would be silently ignored by OpenSSH's agent lookup. Windows agents listen
+# on named pipes (``\\.\pipe\...``) or drive-letter paths, which do not start
+# with ``/`` or ``~``.
 _SOCKET_PATTERN = re.compile(r"^[~/][^\x00]*$")
+_NAMED_PIPE_PATTERN = re.compile(r"^(?:\\\\\.\\pipe\\|//\./pipe/).+", re.IGNORECASE)
 _MAX_SOCKET_LENGTH = 512
 
 
@@ -91,11 +95,20 @@ def normalize_custom_socket(value: Any) -> str:
         raise ValueError("custom_socket must not contain NUL")
     if len(normalized) > _MAX_SOCKET_LENGTH:
         raise ValueError("custom_socket is too long")
-    if not _SOCKET_PATTERN.match(normalized):
+    if not _is_custom_socket_path(normalized):
         raise ValueError(
             "custom_socket must be an absolute or ~-relative path"
         )
     return normalized
+
+
+def _is_custom_socket_path(value: str) -> bool:
+    """Whether OpenSSH can use *value* as an ``IdentityAgent`` target."""
+    if _SOCKET_PATTERN.match(value) or _NAMED_PIPE_PATTERN.match(value):
+        return True
+    # Drive-letter (``C:\...``, ``C:/...``) and UNC paths. ``ntpath.isabs``
+    # is also true for ``/tmp``, which the POSIX pattern already accepts.
+    return bool(ntpath.splitdrive(value)[0]) and ntpath.isabs(value)
 
 
 def normalize_identity_settings(identity: Mapping[str, Any]) -> Dict[str, Any]:

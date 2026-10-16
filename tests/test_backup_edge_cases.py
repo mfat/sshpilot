@@ -134,6 +134,20 @@ def test_bug5_concrete_host_with_negation_should_survive_merge():
 
 
 # ---------------------------------------------------------------------------
+# Splitting where OpenSSH does not and re-joining with LF would turn the tail of
+# a comment into a real directive in the file we write.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("sep", ["\x0c", "\r", "\x85", "\u2028"])
+def test_comment_tail_is_not_rewritten_as_a_directive(sep):
+    comment = f"    # note{sep}ProxyCommand touch /tmp/x"
+    text = f"Host a\n    HostName a.example\n{comment}\n"
+    new, _dropped, _coll = bm._select_new_host_blocks([text], existing_names=set())
+    assert comment in new.split("\n")
+    normalized = bm.BackupManager._normalize_fragment_include(None, text, "f.conf", "f.conf")
+    assert comment in normalized.split("\n")
+
+
+# ---------------------------------------------------------------------------
 # BUG 6 (data loss, MEDIUM): the export tree filter requires os.W_OK, so a
 # user's OWN but read-only (chmod 400 — a common hardening) config file is
 # silently excluded from the backup. The W_OK filter was meant to skip files we
@@ -191,3 +205,69 @@ def test_bug7_crossmode_absolute_include_stays_consistent(tmp_path, monkeypatch)
     frag_written = os.path.join(str(iso_root), "conf.d", "x.conf")
     assert os.path.abspath(frag_written) in {os.path.abspath(p) for p in resolved}, \
         f"restored fragment is orphaned; main resolves to {resolved}"
+
+
+# ---------------------------------------------------------------------------
+# A wildcard next to a concrete name makes the stanza machine-wide. Merge keeps
+# the concrete name and must leave the wildcard behind.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("header", ["Host web *", "Host * web", "Host web ?*", 'Host web "*"'])
+def test_wildcard_next_to_a_concrete_name_is_not_imported(header):
+    new, dropped, _coll = bm._select_new_host_blocks(
+        [f"{header}\n    ProxyCommand touch /tmp/x\n"], existing_names=set())
+    assert new.splitlines() == ["Host web", "    ProxyCommand touch /tmp/x"]
+    assert dropped == 1                           # reported like any other global rule
+
+
+def test_negation_next_to_a_concrete_name_is_kept():
+    new, dropped, _coll = bm._select_new_host_blocks(
+        ["Host prod !prod-db\n    HostName p.example\n"], existing_names=set())
+    assert new.splitlines()[0] == "Host prod !prod-db"
+    assert dropped == 0
+
+
+# The header that is written is rebuilt from the names that were checked, so that OpenSSH cannot
+# read a host out of it that the check did not see ("web" is the user's own host here).
+@pytest.mark.parametrize("header, expected", [
+    ("Host * # note", None),                      # a comment is not a concrete name
+    ("Host new # web", "Host new"),
+    ('Host web "x web"', 'Host "x web"'),         # one name with a space stays one name
+    ("Host web =web", 'Host "=web"'),             # `Host =web` would be `Host web` for ssh
+    ("Host new '\"web\"'", 'Host new "\\"web\\""'),   # literal quotes stay literal
+    ("Host x\\\tweb", 'Host "x\tweb"'),           # shlex: one token; ssh: `x\` and `web`
+    ("Host web\0x", None),                        # ssh stops reading the line at a NUL
+    ('Host " web"', None),                        # the loader strips tokens
+    ('Host new "" -oProxyCommand=x', "Host new"),     # never valid as an alias
+    ("  Host new", "Host new"),
+])
+def test_merged_header_is_rebuilt_from_the_checked_names(header, expected):
+    new, _dropped, _coll = bm._select_new_host_blocks(
+        [f"{header}\n    ProxyCommand touch /tmp/x\n"], existing_names={"web"})
+    assert (new.splitlines()[0] if new else None) == expected
+    if new:                                       # and reads back as the same names (idempotent)
+        again, _dropped, _coll = bm._select_new_host_blocks(
+            [new], existing_names={"web", *bm._host_patterns(new.splitlines()[0])})
+        assert again == ""
+
+
+# Every spelling OpenSSH accepts for the keyword has to end the stanza before it, or a wildcard
+# header rides along as an "option" of a concrete host.
+@pytest.mark.parametrize("header", [
+    '"Host" *', '"Host"*', 'Ho"st" *', '=Host *', ' = Host *', '""Host *', '"" Host *',
+    '"Match" all', '=Match all',
+])
+def test_disguised_header_in_a_stanza_body_is_still_a_header(header):
+    new, dropped, _coll = bm._select_new_host_blocks(
+        [f"Host new\n    HostName n.example\n{header}\n    ProxyCommand touch /tmp/x\n"],
+        existing_names=set())
+    assert new == "Host new\n    HostName n.example"
+    assert dropped == 1
+
+
+def test_split_directive_variants():
+    assert bm._split_directive("Host = a b") == ("host", "a b")
+    assert bm._split_directive("Host ==a") == ("host", "=a")     # only ONE `=` is a separator
+    assert bm._split_directive('"Include" x.conf') == ("include", "x.conf")
+    assert bm._split_directive("==Host *") == ("", "")           # ssh ignores these lines
+    assert bm._split_directive('"Host *') == ("", "")
+    assert bm._split_directive('"#" Host *') == ("", "")

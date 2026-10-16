@@ -18,6 +18,20 @@ sys.path.insert(0, PARENT)
 if os.path.isdir(SRC_DIR):
     sys.path.insert(0, SRC_DIR)
 
+from sshpilot import startup_timing
+
+startup_timing.mark("process_start")
+
+# Windows: run the built-in OpenSSH (System32\OpenSSH) rather than an MSYS
+# copy that Git for Windows may have put first on PATH. The daemon inherits
+# this environment. See sshpilot/platform/windows/openssh.py.
+if sys.platform == "win32":
+    from sshpilot.platform.windows.environment import disable_dbus_autolaunch
+    from sshpilot.platform.windows.openssh import prefer_builtin_openssh
+
+    prefer_builtin_openssh()
+    disable_dbus_autolaunch()
+
 if len(sys.argv) > 1 and sys.argv[1] == '--daemon':
     from sshpilot.daemon.cli import main as daemon_main
 
@@ -46,13 +60,28 @@ if len(sys.argv) > 1 and sys.argv[1] == '--internal-askpass':
     sys.argv = sys.argv[1:]
     sys.exit(daemon_askpass_main())
 
+if len(sys.argv) > 2 and sys.argv[1] == '--internal-rbw-pinentry':
+    import runpy
+
+    # rbw-pinentry.cmd passes the helper script, then rbw-agent's arguments;
+    # the script reads those from sys.argv[1:].
+    sys.argv = sys.argv[2:]
+    runpy.run_path(sys.argv[0], run_name='__main__')
+    sys.exit(0)
+
 if len(sys.argv) > 1 and sys.argv[1] == '--internal-native-askpass':
     from sshpilot.askpass_utils import run_askpass_and_write
 
     prompt = sys.argv[2] if len(sys.argv) > 2 else ''
     sys.exit(run_askpass_and_write(prompt))
 
+# Locate or start the daemon on a background thread now, so it comes up
+# while GTK and the window load instead of after them.
+from sshpilot.daemon_prelaunch import start_from_argv
+
+start_from_argv(sys.argv[1:])
+
 from sshpilot.main import main
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

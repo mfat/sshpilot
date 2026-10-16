@@ -162,6 +162,9 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.INTERACTIONS_HOST_KEY,
                 Capability.INTERACTIONS_PASSWORD,
                 Capability.INTERACTIONS_PASSPHRASE,
+                Capability.INTERACTIONS_SESSION_SECRETS,
+                Capability.LOGIN_PROFILES_READ,
+                Capability.LOGIN_PROFILES_WRITE,
                 Capability.SFTP_READ,
                 Capability.SFTP_WRITE,
                 Capability.SFTP_EVENTS,
@@ -344,7 +347,7 @@ def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monke
 
 
 def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch):
-    from sshpilot import platform_utils
+    from sshpilot.daemon import launcher as launcher_module
     from sshpilot.logging_support import (
         close_managed_handlers,
         configure_frontend_logging,
@@ -353,7 +356,7 @@ def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch)
 
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setattr(platform_utils, "get_state_dir", lambda: str(state))
+    monkeypatch.setattr(launcher_module, "_state_dir", lambda: str(state))
     close_managed_handlers()
     configure_frontend_logging(state, "debug")
 
@@ -401,6 +404,108 @@ def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch)
     finally:
         stop_daemon_log_forwarder()
         close_managed_handlers()
+
+
+def _exited_child_launcher(
+    tmp_path, monkeypatch, *, owner_alive, connects, not_ready=ErrorCode.DAEMON_UNAVAILABLE
+):
+    """A launcher whose child has exited, facing a scripted socket state.
+
+    ``_connect`` fails with ``not_ready`` until attempt ``connects``.
+    """
+    import sshpilot.daemon.launcher as launcher_module
+
+    class _ExitedProcess:
+        def poll(self):
+            return 1
+
+    launcher = DaemonLauncher(
+        socket_path=tmp_path / "runtime" / "sshpilotd.sock",
+        startup_timeout=5,
+        poll_interval=0.01,
+    )
+    monkeypatch.setattr(launcher_module, "validate_client_socket_path", lambda _p: True)
+    monkeypatch.setattr(
+        launcher_module,
+        "probe_socket_owner",
+        lambda _p, **kw: (probes.append(kw), (owner_alive, 4242 if owner_alive else None))[1],
+    )
+    attempts = []
+    probes = []
+
+    def _connect(_timeout):
+        attempts.append(1)
+        if len(attempts) < connects:
+            raise SshPilotError(not_ready, "not ready yet")
+        return "client"
+
+    launcher._connect = _connect
+    launcher.probes = probes
+    return launcher, _ExitedProcess(), attempts
+
+
+def test_a_child_that_lost_the_launch_race_waits_for_the_winner(tmp_path, monkeypatch):
+    """Two launches each started a daemon; ours lost the socket and exited."""
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path, monkeypatch, owner_alive=True, connects=6
+    )
+
+    assert launcher._wait_until_ready(process) == "client"
+    assert len(attempts) == 6
+
+
+def test_an_exited_child_with_no_live_socket_owner_still_fails_fast(tmp_path, monkeypatch):
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path, monkeypatch, owner_alive=False, connects=99
+    )
+
+    started = time.monotonic()
+    with pytest.raises(DaemonLaunchError) as caught:
+        launcher._wait_until_ready(process)
+    assert caught.value.reason is DaemonStartupFailure.PROCESS_EXITED
+    assert time.monotonic() - started < 1
+
+
+def test_a_lost_race_waits_out_a_winner_that_accepts_but_does_not_serve_yet(
+    tmp_path, monkeypatch
+):
+    """The winner has bound its socket: connects complete, handshakes fail."""
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path,
+        monkeypatch,
+        owner_alive=True,
+        connects=6,
+        not_ready=ErrorCode.TRANSPORT_CLOSED,
+    )
+
+    assert launcher._wait_until_ready(process) == "client"
+    assert len(attempts) == 6
+
+
+def test_a_lost_race_against_an_incompatible_winner_fails_at_once(tmp_path, monkeypatch):
+    launcher, process, attempts = _exited_child_launcher(
+        tmp_path,
+        monkeypatch,
+        owner_alive=True,
+        connects=99,
+        not_ready=ErrorCode.API_VERSION_MISMATCH,
+    )
+
+    with pytest.raises(DaemonLaunchError) as caught:
+        launcher._wait_until_ready(process)
+    assert caught.value.reason is DaemonStartupFailure.API_VERSION_MISMATCH
+    assert len(attempts) == 1
+
+
+def test_a_lost_race_probes_without_the_windows_refusal_settle(tmp_path, monkeypatch):
+    """A crashed child must fail on the short probe, not a ~3 s settle."""
+    launcher, process, _attempts = _exited_child_launcher(
+        tmp_path, monkeypatch, owner_alive=False, connects=99
+    )
+
+    with pytest.raises(DaemonLaunchError):
+        launcher._wait_until_ready(process)
+    assert launcher.probes and all(kw.get("settle") is False for kw in launcher.probes)
 
 
 def test_early_process_exit_is_bounded_and_classified(tmp_path):
@@ -452,7 +557,7 @@ def test_socket_readiness_timeout_is_bounded_and_stops_exact_child(tmp_path):
 def test_verbose_launcher_uses_shared_daemon_log_forwarder(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "sshpilot.platform_utils.get_state_dir",
+        "sshpilot.daemon.launcher._state_dir",
         lambda: str(tmp_path),
     )
     monkeypatch.setattr(

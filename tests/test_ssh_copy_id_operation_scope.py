@@ -355,9 +355,13 @@ def test_real_broker_password_flow_reaches_deploy_operation(tmp_path):
         calls.append((list(argv), dict(kwargs)))
         return _BlockingProcess()
 
-    service = _service(tmp_path, popen, broker=broker)
-    summary = service.deploy_key(_deploy_request())
+    service = None
     try:
+        # Inside the try: if the service or the deploy fails (it does on
+        # Windows, see windows_posix_only.txt), the broker's non-daemon
+        # threads must still be stopped or the test process never exits.
+        service = _service(tmp_path, popen, broker=broker)
+        summary = service.deploy_key(_deploy_request())
         assert _wait_until(lambda: bool(calls))
         token = calls[0][1]["env"]["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
         assert token
@@ -419,7 +423,8 @@ def test_real_broker_password_flow_reaches_deploy_operation(tmp_path):
     finally:
         release.set()
         broker.close()
-        service._operations.shutdown()
+        if service is not None:
+            service._operations.shutdown()
 
 
 def test_full_server_password_interaction_visible_to_owner_client(tmp_path):

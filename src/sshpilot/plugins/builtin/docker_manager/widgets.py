@@ -161,9 +161,13 @@ def describe_docker_failure(text: str) -> str:
     if ("cannot connect to the docker daemon" in low
             or "is the docker daemon running" in low):
         return _("Docker daemon isn't running on this host")
-    runtime_missing = re.search(r"\b(docker|podman)\b[^\n]*not found", low)
+    # sh: "docker: not found"; Windows cmd: "'docker' is not recognized as an
+    # internal or external command".
+    runtime_missing = re.search(
+        r"\b(docker|podman)\b[^\n]*(?:not found|is not recognized)", low)
     if (runtime_missing or "command not found" in low
-            or "executable file not found" in low):
+            or "executable file not found" in low
+            or "is not recognized as an internal or external command" in low):
         name = runtime_missing.group(1).capitalize() if runtime_missing else "Docker"
         return _("{runtime} isn't installed on this host").format(runtime=name)
     if "permission denied" in low and ("docker.sock" in low or "dial unix" in low):

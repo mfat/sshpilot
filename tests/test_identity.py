@@ -1,6 +1,7 @@
 """Tests for the SSH identity provider abstraction (sshpilot/identity.py and
 sshpilot/providers/)."""
 
+import sys
 import pytest
 
 import sshpilot.askpass_utils as askpass_utils
@@ -320,8 +321,10 @@ def test_onepassword_preset_directives(monkeypatch):
     mgr = IdentityManager()
     assert "onepassword" in mgr.registered_providers()
     mgr.set_selected("onepassword")
-    assert mgr.selected_config_directives() == [
+    # On Windows 1Password serves OpenSSH's default agent pipe: no directive.
+    expected = [] if sys.platform == "win32" else [
         ("IdentityAgent", "~/.1password/agent.sock")]
+    assert mgr.selected_config_directives() == expected
 
 
 def test_custom_provider_directives_from_env(monkeypatch):

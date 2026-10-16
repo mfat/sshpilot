@@ -828,3 +828,21 @@ def test_close_while_output_rebind_is_pending_suppresses_late_delivery():
         new_client.release_attach.set()
         binding.close()
         bridge.shutdown(wait=True)
+
+
+def test_transport_closed_during_quit_is_not_a_connection_failure():
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    failures = []
+    widget = SimpleNamespace(
+        _is_quitting=True,
+        _on_connection_failed=lambda message, **_k: failures.append(message),
+        _show_toast=lambda *_a, **_k: None,
+    )
+    error = SshPilotError(ErrorCode.TRANSPORT_CLOSED, "The daemon transport is closed", retryable=True)
+    TerminalWidget._on_daemon_error(widget, error)
+    assert failures == []
+
+    widget._is_quitting = False
+    TerminalWidget._on_daemon_error(widget, error)
+    assert failures  # outside quit it is still reported

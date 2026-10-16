@@ -18,6 +18,17 @@ class ClientSelection:
 
 
 def select_client(*, launcher: Optional[DaemonLauncher] = None) -> ClientSelection:
-    """Locate or launch the daemon; propagate every failure without fallback."""
-    launched = (launcher or DaemonLauncher()).connect_or_start()
+    """Locate or launch the daemon; propagate every failure without fallback.
+
+    The first selection takes over the daemon the entry point began locating
+    or starting before GTK loaded (``sshpilot.daemon_prelaunch``), when there
+    is one.
+    """
+    from sshpilot import daemon_prelaunch
+
+    launched = daemon_prelaunch.take(launcher)
+    if launched is None:
+        launched = (
+            launcher or daemon_prelaunch.launcher() or DaemonLauncher()
+        ).connect_or_start()
     return ClientSelection(client=launched.client, daemon_process=launched.process)

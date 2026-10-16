@@ -62,6 +62,7 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.INTERACTIONS_HOST_KEY,
             Capability.INTERACTIONS_PASSWORD,
             Capability.INTERACTIONS_PASSPHRASE,
+            Capability.INTERACTIONS_SESSION_SECRETS,
             Capability.SFTP_READ,
             Capability.SFTP_WRITE,
             Capability.SFTP_EVENTS,

@@ -231,8 +231,14 @@ def _assert_argv(protocol, case, argv):
 
 
 @pytest.mark.parametrize("protocol", sorted(CASES))
-def test_editor_fields_reach_the_launch_command(protocol, registry, tmp_path):
+def test_editor_fields_reach_the_launch_command(protocol, registry, tmp_path, monkeypatch):
     """A value typed into the editor is the value ``build_spawn`` reads."""
+    if protocol == "serial":
+        # The expected argv is picocom's; Windows uses plink instead
+        # (tests/test_serial_plugin_windows.py).
+        import sshpilot.plugins.builtin.serial_protocol as serial_module
+
+        monkeypatch.setattr(serial_module, "_windows", lambda: False)
     backend = registry.get_or_none(protocol)
     assert backend is not None, f"{protocol} backend did not register"
     specs = backend.connection_fields()

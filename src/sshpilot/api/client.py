@@ -26,6 +26,8 @@ from .models.connections import (
     DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteConnectionsRequest,
+    DeleteConnectionsResult,
     StoreConnectionPasswordRequest,
     SetSessionConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
@@ -303,6 +305,12 @@ class SshPilotClient(Protocol):
         ...
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
+        ...
+
+    def delete_connections(
+        self, request: DeleteConnectionsRequest
+    ) -> DeleteConnectionsResult:
+        """Delete every listed connection in one commit, or none of them."""
         ...
 
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:

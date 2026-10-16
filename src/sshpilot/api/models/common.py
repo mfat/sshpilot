@@ -31,7 +31,8 @@ def require_identifier(value: str, field_name: str) -> str:
 
 
 def has_control_characters(value: str, *, allow_newlines: bool = False) -> bool:
-    """True when *value* holds a C0 control character or DEL (tab is allowed).
+    """True when *value* holds a C0 control character, DEL or a Unicode line
+    break (NEL, U+2028, U+2029); tab is allowed.
 
     A line break in a value that lands on one ssh_config line starts a new
     directive -- ``HostName x\\n  ProxyCommand ...`` runs a local command --
@@ -41,7 +42,7 @@ def has_control_characters(value: str, *, allow_newlines: bool = False) -> bool:
         code = ord(char)
         if char == "\t" or (allow_newlines and char == "\n"):
             continue
-        if code < 0x20 or code == 0x7F:
+        if code < 0x20 or code == 0x7F or code in (0x85, 0x2028, 0x2029):
             return True
     return False
 
@@ -64,6 +65,29 @@ def validate_ssh_host_alias(value: str, field_name: str = "connection nickname")
         raise ValueError(f"{field_name} must not contain NUL")
     validate_single_line(normalized, field_name)
     return normalized
+
+
+def validate_ssh_hostname(value: str, field_name: str = "connection hostname") -> str:
+    """Reject shell text in a name OpenSSH substitutes into a shell command.
+
+    For ``ProxyJump`` OpenSSH runs ``ssh [-l user] -W '[%h]:%p' jump`` through
+    ``sh -c`` with the resolved ``HostName`` as ``%h``. Its own check for these
+    characters covers only the destination argument -- always the Host alias
+    here -- so a ``HostName`` or a jump user that comes from a config file (an
+    imported or restored one included) is never checked. This is OpenSSH's
+    ``valid_hostname()`` rule; it still admits ``%h``-style tokens and IPv6
+    zone ids.
+    """
+    if not isinstance(value, str):
+        return value
+    if value.startswith("-") or any(
+        char in "'`\"$\\;&<>|(){}" or char.isspace() for char in value
+    ):
+        raise ValueError(
+            f"{field_name} {value!r} contains characters a shell would run "
+            "as a command; edit the host name or jump host"
+        )
+    return validate_single_line(value, field_name)
 
 
 @dataclass(frozen=True)

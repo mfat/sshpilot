@@ -12,6 +12,7 @@ import logging
 import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
+import time
 import traceback
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
@@ -31,7 +32,10 @@ try:
 except Exception:
     _HAS_VTE = False
 
-gi.require_version('PangoFT2', '1.0')
+try:
+    gi.require_version('PangoFT2', '1.0')
+except ValueError:  # not shipped by every GTK build (e.g. Windows)
+    pass
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import threading
 
@@ -49,11 +53,9 @@ from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
 from .dialog_focus import capture_toplevels, mark_new_dialog_default_visible
-from .key_manager import KeyManager
 from sshpilot.api.models.keys import KeyStoreScope
 from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
 from sshpilot.api.models.pre_command import PRE_COMMAND_METADATA_KEYS
-from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
     get_connection_host,
@@ -109,6 +111,7 @@ from .window_dialogs import (
     show_ssh_password_dialog,
 )
 from . import shutdown
+from . import startup_timing
 from .search_utils import connection_matches
 from .tag_groups import effective_tags
 from .shortcut_utils import (
@@ -118,7 +121,8 @@ from .shortcut_utils import (
     get_primary_modifier_label,
     latin_fallback_keyvals,
 )
-from .platform_utils import (
+from .platform_utils import is_windows
+from .system_terminal import (
     get_default_terminal_command,
     get_user_preferred_terminal,
     find_any_terminal,
@@ -128,6 +132,21 @@ from .plugins.api import Capability as PluginCapability
 from .api.capabilities import Capability as ApiCapability
 from .plugins.registry import capabilities_for
 logger = logging.getLogger(__name__)
+
+
+def _new_key_manager(client, scope):
+    # key_manager loads the whole API client stack; it is first needed once
+    # the daemon confirms its operation mode, not to build the window.
+    from .key_manager import KeyManager
+
+    return KeyManager(client, scope)
+
+
+def check_for_updates_async(*args, **kwargs):
+    # update_checker imports urllib; the check itself runs after startup.
+    from .update_checker import check_for_updates_async as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def _describe_daemon_start_failure(reason: str) -> str:
@@ -272,6 +291,28 @@ _format_connection_host_display = format_connection_host_display
 # fight.
 _ROW_ACTIONS_MIN_WIDTH = 230
 
+# Connections whose forwarding rules one sidebar bridge request fetches.
+_SIDEBAR_FORWARDING_FETCH_CHUNK = 16
+
+# A split sidebar rebuild (startup) builds the rows that fit the sidebar's
+# height first; this is the smallest row height it assumes (a compact row).
+_MIN_CONNECTION_ROW_HEIGHT = 28
+# Time each idle callback of a split rebuild spends building the remaining
+# rows: well under a 60 Hz frame (16.7 ms), so a slice never delays one much.
+_DEFERRED_ROWS_SLICE_SECONDS = 0.008
+# Rows hidden under collapsed groups cost the same to build but fill no
+# height: the first part of a split rebuild stops at this many rows in all.
+_SPLIT_BUILD_HIDDEN_FACTOR = 2
+# Work deferred until the first frame runs anyway after this long without one.
+_FIRST_PAINT_FALLBACK_MS = 5000
+
+
+def _section_expanded(header) -> bool:
+    """Whether a Groups/Ungrouped section header (or no header) shows its rows."""
+    if header is None:
+        return True
+    return bool(getattr(header, '_expanded', True))
+
 
 def _accelerator_label(accel: str) -> str:
     """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
@@ -341,7 +382,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._config_changed_handler = None
         self._startup_tasks_scheduled = False
         self._startup_complete = False
+        self._first_window_painted = False
+        self._after_first_paint_callbacks = []
+        self._preferences_preload_source = 0
+        self._preferences_preload_attempted = False
+        self._first_paint_fallback_source = 0
         self._initial_connection_list_focus_done = False
+        # Coalesces projection-reset rebuilds; see on_projection_reset.
+        self._connection_list_rebuild_count = 0
+        self._projection_rebuild_mark = 0
+        self._projection_rebuild_pending = False
         self._start_tab_focus_idle_id = None
         self._pending_focus_operations = []
         if hasattr(self.config, 'connect'):
@@ -411,6 +461,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if app is not None:
                     setattr(app, 'loaded_plugins', loaded_plugins)
             self.loaded_plugins = loaded_plugins
+            startup_timing.mark("plugins_loaded")
         except Exception:
             logger.exception("Plugin loading failed")
             self.loaded_plugins = []
@@ -459,6 +510,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Set up window
         self.setup_window()
         self.setup_ui()
+        startup_timing.mark("window_ui_built")
         # Fullscreen is window state: exactly one controller per window owns the
         # saved chrome, the F11/Escape controllers and the top-edge exit
         # controls, so a closing terminal can never strand the window
@@ -543,6 +595,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.key_manager = None
             return
         self.connection_manager.attach_client(self.client)
+        startup_timing.mark(
+            "connection_snapshot_applied",
+            f"{len(self.connection_manager.connections)} connections",
+        )
         self.group_manager.attach_client(self.client)
         from .gtk.group_store import GroupMutationController
         if getattr(self, "_group_mutation_controller", None) is None:
@@ -561,7 +617,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # semantic mode; never construct a DEFAULT manager during a delayed
         # isolated-mode status response.
         self.key_manager = (
-            KeyManager(self.client, self._key_scope)
+            _new_key_manager(self.client, self._key_scope)
             if self._confirmed_operation_mode is not None
             else None
         )
@@ -782,7 +838,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         exc_info=True,
                     )
         if self.client is not None:
-            self.key_manager = KeyManager(self.client, self._key_scope)
+            self.key_manager = _new_key_manager(self.client, self._key_scope)
 
     def _build_secrets_controller(self):
         """Build the daemon-backed secrets controller for the frontend.
@@ -852,17 +908,93 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _begin_daemon_client_selection(self) -> None:
         """Locate/start and validate the sole backend away from the GTK thread."""
-        from .api.client_factory import select_client
         app = self.get_application()
         launcher = getattr(app, '_api_daemon_launcher', None) if app else None
+        from . import daemon_prelaunch
+        if daemon_prelaunch.ready(launcher):
+            # Not here in __init__: attaching runs the snapshot RPC and builds
+            # the rows on this thread, and a slow daemon must not hold the
+            # window back from being presented. A high-priority idle still
+            # runs after present() but ahead of the first frame.
+            GLib.idle_add(
+                self._apply_ready_early_client,
+                launcher,
+                priority=GLib.PRIORITY_HIGH_IDLE,
+            )
+            return
+        self._submit_client_selection(launcher)
+
+    def _submit_client_selection(self, launcher) -> None:
+        from .api.client_factory import select_client
         self._api_client_selection_request = self.client_bridge.submit(
             lambda: select_client(launcher=launcher),
-            on_success=self._apply_client_selection,
+            on_success=self._apply_startup_client_selection,
             on_error=self._handle_client_selection_error,
+            # The bridge delivers at PRIORITY_DEFAULT, ahead of the frame
+            # clock: a selection that completes while the window is being
+            # presented reaches the first frame.
             on_discard=lambda selection: selection.client.close(),
         )
 
+    def _apply_ready_early_client(self, launcher):
+        """Attach the entry point's early daemon client before the first frame.
+
+        The early start (``daemon_prelaunch``) often has a connected client
+        before the window is built. Taking it on the GTK thread, from an idle
+        callback that runs ahead of the frame clock, lets the first frame
+        already show the populated sidebar; the bridge round trip would
+        deliver it only after that frame. If the early client is gone by now
+        or cannot be handed over, the asynchronous selection runs instead.
+        """
+        if getattr(self, '_is_quitting', False):
+            return GLib.SOURCE_REMOVE
+        from . import daemon_prelaunch
+        from .api.client_factory import select_client
+        selection = None
+        if daemon_prelaunch.ready(launcher):
+            try:
+                selection = select_client(launcher=launcher)
+            except Exception:
+                logger.debug("Early daemon client hand-over failed", exc_info=True)
+        if selection is None:
+            self._submit_client_selection(launcher)
+        else:
+            self._apply_startup_client_selection(selection)
+        return GLib.SOURCE_REMOVE
+
+    def _apply_startup_client_selection(self, selection) -> None:
+        """Attach a selected client; the first one also builds the rows now.
+
+        Attaching installs the store snapshot and queues its projection reset
+        on an idle callback (the store dispatches its signals through
+        ``GLib.idle_add``), which runs only after the next frame. For the
+        first client the rows are built at once instead, so that frame
+        already shows them; the queued reset then skips its rebuild (see
+        ``on_projection_reset``) and only does the startup focus. Later
+        selections (retry, reconnect) rebuild through the reset as usual.
+        """
+        self._apply_client_selection(selection)
+        if self.client is None or getattr(self, '_client_rows_built', False):
+            return
+        self._client_rows_built = True
+        # Only the rows that fit on screen before the frame; the rest follow.
+        self.rebuild_connection_list(
+            first_rows=self._initial_sidebar_row_budget()
+        )
+        self._attach_rows_generation = self._sidebar_store_generation()
+        # The attach's reset is already queued at this priority, so this runs
+        # right after it: the skip covers that one reset and never a later
+        # one (a refresh at the same generation), even if the store dropped
+        # it for a newer attach.
+        GLib.idle_add(self._disarm_attach_rows_skip)
+        self._mark_sidebar_populated()
+
+    def _disarm_attach_rows_skip(self):
+        self._attach_rows_generation = None
+        return GLib.SOURCE_REMOVE
+
     def _apply_client_selection(self, selection) -> None:
+        startup_timing.mark("daemon_client_received")
         if self._is_quitting:
             selection.client.close()
             return
@@ -1245,8 +1377,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _preload_preferences_window(self) -> bool:
         """Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant."""
+        self._preferences_preload_source = 0
         if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
             return GLib.SOURCE_REMOVE
+        if getattr(self, '_pending_connection_rows', None) is not None:
+            # Don't stall the deferred sidebar rows; try again once they land.
+            self._schedule_preferences_preload()
+            return GLib.SOURCE_REMOVE
+        self._preferences_preload_attempted = True
         try:
             from .preferences import PreferencesWindow
             if getattr(self, '_preferences_window', None) is None:
@@ -1258,6 +1396,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
         except Exception as exc:
             logger.debug("Preloading preferences page skipped/failed: %s", exc)
+        return GLib.SOURCE_REMOVE
+
+    def _schedule_preferences_preload(self) -> bool:
+        """Warm Settings after the visible startup work has settled."""
+        if (
+            getattr(self, '_preferences_preload_source', 0)
+            or getattr(self, '_preferences_preload_attempted', False)
+            or getattr(self, '_preferences_window', None) is not None
+            or getattr(self, '_is_quitting', False)
+        ):
+            return GLib.SOURCE_REMOVE
+        self._preferences_preload_source = GLib.timeout_add(
+            250, self._preload_preferences_window
+        )
         return GLib.SOURCE_REMOVE
 
     def _check_previous_crash(self):
@@ -1533,11 +1685,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._pending_focus_operations.clear()
 
-        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
-        try:
-            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
-        except Exception as e:
-            logger.debug(f"Failed to schedule preferences preloading: {e}")
+        self._run_after_first_paint(self._start_post_paint_services)
+        return False  # Don't repeat
+
+    def _start_post_paint_services(self) -> bool:
+        """Start non-visual services only after the first frame was displayed."""
+        self._schedule_preferences_preload()
 
         # Check for updates if enabled in preferences. Tips share the update
         # banner's area, so when a startup check runs they wait for its result
@@ -2019,63 +2172,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
 
-    def setup_ui(self):
-        """Set up the user interface"""
-        # Outer skeleton (ToastOverlay -> main_box) is in the template; the split
-        # view, custom title bar, banners, sidebar, and tabs are appended below.
-        main_box = self.main_box
-
-        # Create update notification banner (hidden by default)
-        # Use overlay to position dismiss button on top of banner
-        banner_overlay = Gtk.Overlay()
-        banner_overlay.set_visible(False)  # Hidden by default
-
-        self.update_banner = Adw.Banner()
-        self.update_banner.set_revealed(False)
-        banner_overlay.set_child(self.update_banner)
-
-        # Create dismiss button with text, positioned at the left
-        dismiss_button = Gtk.Button()
-        dismiss_button.set_label(_('Dismiss'))
+    def _ensure_update_banner(self):
+        """Build the update banner only when an update is ready to display."""
+        if getattr(self, 'update_banner', None) is not None:
+            return self.update_banner
+        banner = Adw.Banner()
+        banner.set_revealed(False)
+        overlay = Gtk.Overlay()
+        overlay.set_child(banner)
+        dismiss_button = Gtk.Button(label=_('Dismiss'))
         dismiss_button.set_halign(Gtk.Align.START)
         dismiss_button.set_valign(Gtk.Align.CENTER)
         dismiss_button.set_margin_start(12)
         dismiss_button.connect('clicked', self._on_update_banner_dismiss)
-        banner_overlay.add_overlay(dismiss_button)
-
-        self.update_banner_container = banner_overlay
+        overlay.add_overlay(dismiss_button)
+        self.update_banner_container.append(overlay)
+        self.update_banner = banner
         self.update_banner_dismiss_button = dismiss_button
-        # Note: Update banner will be added to content area in setup_content_area()
-        # to ensure it appears below the header bar
+        return banner
 
-        # Create terminal tips banner (hidden by default). Shown in the same
-        # area as the update banner — below the header bar, above the content —
-        # instead of floating over the terminal where it would mask output.
-        # The update banner takes priority over tips (see show_terminal_tip and
-        # _show_update_banner).
-        # A Gtk.Revealer holding a single inline row: the extra buttons are real
-        # children of the banner body, so no Gtk.Overlay hack is needed to show
-        # them (Adw.Banner only exposes one action button). The revealer gives us
-        # the same slide-in/out animation Adw.Banner.set_revealed() provided.
+    def _ensure_tips_banner(self):
+        """Build terminal-tip controls only when a tip is ready to display."""
+        if getattr(self, 'tips_revealer', None) is not None:
+            return self.tips_revealer
         _ensure_tips_banner_css()
-        self.tips_revealer = Gtk.Revealer()
-        self.tips_revealer.add_css_class('tips-banner-revealer')
-        # SLIDE_DOWN slides the banner in from the top edge and collapses it back
-        # up on dismiss (matching Adw.Banner's feel).
-        self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        self.tips_revealer.set_transition_duration(250)
-        self.tips_revealer.set_reveal_child(False)
-        self._tips_paused_for_sidebar = False
-        self._tips_was_revealed_before_sidebar_anim = False
-        self._tips_saved_transition_duration = 250
-
-        # No outer margins: the accent background must span the full width like
-        # the previous Adw.Banner. Horizontal padding comes from the .tips-banner
-        # CSS instead, so there are no gaps on the sides.
+        revealer = Gtk.Revealer()
+        revealer.add_css_class('tips-banner-revealer')
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_transition_duration(250)
+        revealer.set_reveal_child(False)
         tips_body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tips_body.add_css_class('tips-banner')
-
-        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss".
         self.tips_next_button = Gtk.Button(label=_('Next tip'))
         self.tips_next_button.set_valign(Gtk.Align.CENTER)
         self.tips_next_button.connect('clicked', self._on_tips_banner_next)
@@ -2084,23 +2211,45 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
         tips_body.append(self.tips_next_button)
         tips_body.append(tips_dismiss_button)
-
-        # Tip text fills the middle.
         self.tips_label = Gtk.Label()
         self.tips_label.set_hexpand(True)
         self.tips_label.set_halign(Gtk.Align.CENTER)
         self.tips_label.set_wrap(True)
         self.tips_label.set_justify(Gtk.Justification.CENTER)
         tips_body.append(self.tips_label)
-
-        # Trailing button: "Don't show again".
         tips_dont_show_button = Gtk.Button(label=_('Don\'t show again'))
         tips_dont_show_button.set_valign(Gtk.Align.CENTER)
         tips_dont_show_button.connect('clicked', self._on_tips_banner_dont_show_again)
         tips_body.append(tips_dont_show_button)
+        revealer.set_child(tips_body)
+        self.tips_banner_container.append(revealer)
+        self.tips_revealer = revealer
+        return revealer
 
-        self.tips_revealer.set_child(tips_body)
-        self.tips_banner_container = self.tips_revealer
+    def setup_ui(self):
+        """Set up the user interface"""
+        # Outer skeleton (ToastOverlay -> main_box) is in the template; the split
+        # view, custom title bar, banners, sidebar, and tabs are appended below.
+        main_box = self.main_box
+
+        # Keep stable slots in the content hierarchy, but do not construct the
+        # hidden banners and their controls until they are actually displayed.
+        self.update_banner = None
+        self.update_banner_dismiss_button = None
+        self.update_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.update_banner_container.set_visible(False)
+        self.tips_revealer = None
+        self.tips_label = None
+        self.tips_next_button = None
+        self.tips_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.tips_banner_container.set_visible(False)
+        self._tips_paused_for_sidebar = False
+        self._tips_was_revealed_before_sidebar_anim = False
+        self._tips_saved_transition_duration = 250
 
         # macOS creates a real header bar for native fullscreen. It is attached
         # above the tab row only while fullscreen, giving the menu-bar spacer
@@ -2273,17 +2422,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
         self._search_popup = None
-        GLib.idle_add(
-            lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
-            priority=GLib.PRIORITY_LOW,
-        )
         # Resting the pointer on the header bar's sidebar toggle while the
         # sidebar is hidden floats it out in the same popup (see
         # sidebar_hover_reveal.py).
         from .sidebar_hover_reveal import SidebarHoverReveal
         self._sidebar_hover_reveal = SidebarHoverReveal(
             self._content_overlay,
-            popup_func=lambda: getattr(self, '_search_popup', None),
+            popup_func=self._ensure_search_popup,
             is_hidden=self._sidebar_hidden_by_toggle,
             keep_open=lambda: bool(getattr(self, '_search_expanded_sidebar', False)),
             in_hot_zone=self._in_sidebar_toggle_zone,
@@ -2304,10 +2449,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         main_box.append(self._global_overlay)
 
         self._omni_search = None
-        GLib.idle_add(
-            lambda: (self._ensure_omni_search(), GLib.SOURCE_REMOVE)[1],
-            priority=GLib.PRIORITY_LOW,
-        )
+        # The Start page's search field is built by the omni-search controller,
+        # so it must follow the first frame directly, not the startup timer.
+        self._run_after_first_paint(self._ensure_omni_search)
+        self._run_after_first_paint(self._ensure_search_popup)
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -2443,6 +2588,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
             return
+        if getattr(self, '_staged_connection_rows', None) is not None:
+            # Rows already built off-tree would otherwise keep whichever
+            # presentation settings were active when they were constructed.
+            self._staged_sidebar_display_dirty = True
 
         try:
             connections = self.connection_manager.get_connections()
@@ -2627,6 +2776,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pending = set()
             self._forwarding_rules_pending = pending
         generation = self._sidebar_store_generation()
+        batch = []
         for connection in connections:
             if not self._sidebar_connection_uses_ssh(connection):
                 continue
@@ -2639,84 +2789,172 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if key in pending:
                 continue
             pending.add(key)
+            batch.append((connection, key))
+        # One bridge request per chunk instead of one per connection: a single
+        # main-thread callback applies a whole chunk, and other daemon calls
+        # can still run between chunks on the bridge's one worker.
+        for start in range(0, len(batch), _SIDEBAR_FORWARDING_FETCH_CHUNK):
             self._submit_sidebar_forwarding_fetch(
-                client, bridge, connection, key, generation, cache, pending
+                client,
+                bridge,
+                batch[start:start + _SIDEBAR_FORWARDING_FETCH_CHUNK],
+                generation,
+                cache,
+                pending,
             )
+
+    def _schedule_sidebar_forwarding_refresh(self) -> None:
+        """Fetch missing forwarding rules once the sidebar has been painted.
+
+        A rebuild attaches the rules it already has at once; fetching the
+        rest waits for a low-priority idle callback, so the daemon calls and
+        their callbacks never compete with building or painting the rows.
+        Several rebuilds before it runs share one fetch.
+        """
+        if getattr(self, '_sidebar_forwarding_refresh_scheduled', False):
+            return
+        self._sidebar_forwarding_refresh_scheduled = True
+
+        def _run():
+            self._sidebar_forwarding_refresh_scheduled = False
+            try:
+                connections = self.connection_manager.get_connections()
+            except Exception:
+                return GLib.SOURCE_REMOVE
+            self._refresh_sidebar_forwarding_rules(connections)
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(_run, priority=GLib.PRIORITY_LOW)
 
     def _submit_sidebar_forwarding_fetch(
-        self, client, bridge, connection, key, generation, cache, pending
+        self, client, bridge, batch, generation, cache, pending
     ) -> None:
-        def on_success(details):
-            pending.discard(key)
+        """Fetch the editor details of ``batch`` ((connection, key) pairs).
+
+        The request resolves to one ``(details, error)`` per entry, so one
+        connection's failure leaves the others' rules intact.
+        """
+
+        def fetch():
+            results = []
+            for connection, _key in batch:
+                try:
+                    results.append((
+                        client.get_connection_editor(connection_id_for(connection)),
+                        None,
+                    ))
+                except Exception as error:
+                    results.append((None, error))
+            return results
+
+        def refetch_if_stale() -> bool:
             current_generation = self._sidebar_store_generation()
-            if current_generation != generation:
-                logger.debug(
-                    "Discarding stale forwarding rules for %s (generation %s -> %s)",
-                    key,
-                    generation,
-                    current_generation,
-                )
-                self._refresh_sidebar_forwarding_rules([connection])
-                return
-            try:
-                from .api.models.connections import (
-                    ForwardingRule,
-                    forwarding_rule_to_dict,
-                )
-                from .forwarding_only_ui import apply_forwarding_only_flag
-
-                raw = getattr(details, 'forwarding_rules', None) or ()
-                rules = tuple(
-                    forwarding_rule_to_dict(rule)
-                    for rule in raw
-                    if isinstance(rule, (ForwardingRule, dict))
-                )
-                cache[key] = (generation, rules)
-                self._apply_sidebar_forwarding_rules(connection, rules)
-                apply_forwarding_only_flag(
-                    connection, getattr(details, 'extra_ssh_config', None) or ''
-                )
-            except Exception:
-                logger.debug(
-                    "Failed to cache forwarding rules for %s", key, exc_info=True
-                )
-
-        def on_error(error):
-            pending.discard(key)
-            if self._sidebar_store_generation() != generation:
-                self._refresh_sidebar_forwarding_rules([connection])
-
-        try:
-            bridge.submit(
-                lambda: client.get_connection_editor(connection_id_for(connection)),
-                on_success=on_success,
-                on_error=on_error,
-            )
-        except Exception:
-            pending.discard(key)
+            if current_generation == generation:
+                return False
             logger.debug(
-                "Failed to submit forwarding-rule fetch for %s", key, exc_info=True
+                "Discarding stale forwarding rules for %d connection(s) "
+                "(generation %s -> %s)",
+                len(batch),
+                generation,
+                current_generation,
+            )
+            self._refresh_sidebar_forwarding_rules(
+                [connection for connection, _key in batch]
+            )
+            return True
+
+        def on_success(results):
+            for _connection, key in batch:
+                pending.discard(key)
+            if refetch_if_stale():
+                return
+            from .api.models.connections import (
+                ForwardingRule,
+                forwarding_rule_to_dict,
+            )
+            from .forwarding_only_ui import apply_forwarding_only_flag
+
+            updates = []
+            for (connection, key), (details, error) in zip(batch, results):
+                if error is not None:
+                    logger.debug(
+                        "Failed to fetch forwarding rules for %s: %s",
+                        key,
+                        type(error).__name__,
+                    )
+                    continue
+                try:
+                    raw = getattr(details, 'forwarding_rules', None) or ()
+                    rules = tuple(
+                        forwarding_rule_to_dict(rule)
+                        for rule in raw
+                        if isinstance(rule, (ForwardingRule, dict))
+                    )
+                    cache[key] = (generation, rules)
+                    apply_forwarding_only_flag(
+                        connection, getattr(details, 'extra_ssh_config', None) or ''
+                    )
+                    updates.append((connection, rules))
+                except Exception:
+                    logger.debug(
+                        "Failed to cache forwarding rules for %s", key, exc_info=True
+                    )
+            self._apply_sidebar_forwarding_rules(updates)
+
+        def on_error(_error):
+            for _connection, key in batch:
+                pending.discard(key)
+            refetch_if_stale()
+
+        try:
+            bridge.submit(fetch, on_success=on_success, on_error=on_error)
+        except Exception:
+            for _connection, key in batch:
+                pending.discard(key)
+            logger.debug(
+                "Failed to submit forwarding-rule fetch for %d connection(s)",
+                len(batch),
+                exc_info=True,
             )
 
-    def _apply_sidebar_forwarding_rules(self, connection, rules) -> None:
+    def _apply_sidebar_forwarding_rules(self, updates) -> None:
+        """Attach fetched rules ((connection, rules) pairs) and refresh rows.
+
+        Rows are found by connection key, since a rebuild may have replaced
+        the connection objects the fetch started with.
+        """
+        if not updates:
+            return
+        by_key = {}
+        for connection, rules in updates:
+            key = self._sidebar_connection_key(connection)
+            if key is not None:
+                by_key[key] = rules
         try:
-            object.__setattr__(connection, 'forwarding_rules', rules)
-        except Exception:
-            pass
-        try:
-            target = self._sidebar_connection_key(connection)
             for conn, rows in list(getattr(self, 'connection_rows', {}).items()):
-                if self._sidebar_connection_key(conn) != target:
+                key = self._sidebar_connection_key(conn)
+                if key not in by_key:
                     continue
+                rules = by_key[key]
+                # Most hosts have no rules, and a row built without any
+                # already shows the right (absent) indicator.
+                had_rules = bool(getattr(conn, 'forwarding_rules', None))
                 try:
                     object.__setattr__(conn, 'forwarding_rules', rules)
                 except Exception:
                     pass
+                if not rules and not had_rules:
+                    continue
                 for row in (rows if isinstance(rows, list) else [rows]):
                     if hasattr(row, '_update_forwarding_indicators'):
                         row._update_forwarding_indicators()
         except Exception:
             logger.debug("Failed to refresh sidebar forwarding rows", exc_info=True)
+        for connection, rules in updates:
+            try:
+                object.__setattr__(connection, 'forwarding_rules', rules)
+            except Exception:
+                pass
 
     def _on_sidebar_width_dragged(self, width: int) -> None:
         """Persist a sidebar width the user dragged the paned divider to."""
@@ -4045,6 +4283,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         Freshly-built rows reserve their row actions; a narrow sidebar sheds
         them. Then restore scroll and selection.
         """
+        self._attach_staged_connection_rows()
+        if getattr(self, '_connection_rows_split', False):
+            # Scroll was captured before the build began, and the user may
+            # have scrolled since: leave the scroll position alone.
+            self._connection_rows_split = False
+            scroll_position = None
         self._ungrouped_area_row = None
         # Command/settings results in the popup are parked until the welcome-page
         # omnisearch lands — re-enable by calling self._append_command_matches().
@@ -4077,8 +4321,172 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .command_palette import append_command_rows
         append_command_rows(self, query)
 
-    def rebuild_connection_list(self):
-        """Rebuild the connection list with groups"""
+    def rebuild_connection_list(self, first_rows: Optional[int] = None):
+        """Rebuild the connection list with groups.
+
+        With ``first_rows``, only about that many rows are added before
+        returning: ``first_rows`` visible ones, or twice as many in all when
+        most are hidden under collapsed groups. The rest are built from short
+        idle callbacks *off* the list and attached in one pass once the last
+        is built (see :meth:`_build_remaining_connection_rows`), so GTK lays
+        out and styles the list once rather than after every slice. Every
+        group and section has applied its final visibility by then, so a
+        header toggled meanwhile is honoured. Any later rebuild drops the
+        pending rows; :meth:`complete_pending_connection_rows` builds them at
+        once.
+        """
+        self._cancel_pending_connection_rows()
+        self._connection_rows_split = False
+        steps = self._rebuild_connection_list_steps()
+        if first_rows is None:
+            for _visible in steps:
+                pass
+            return
+        visible_rows = built_rows = 0
+        for visible in steps:
+            built_rows += 1
+            if visible:
+                visible_rows += 1
+            if (visible_rows >= first_rows
+                    or built_rows >= first_rows * _SPLIT_BUILD_HIDDEN_FACTOR):
+                break
+        else:
+            self._on_connection_rows_completed()
+            return
+        # _finish_rebuild does this for every row once the rest are attached.
+        self._apply_sidebar_row_actions(force=True)
+        self._connection_rows_split = True
+        self._staged_connection_rows = []
+        self._pending_connection_rows = steps
+        self._pending_connection_rows_source = GLib.idle_add(
+            self._build_remaining_connection_rows
+        )
+
+    def _build_remaining_connection_rows(self):
+        """Idle step of a split rebuild: build rows for a fraction of a frame."""
+        steps = getattr(self, '_pending_connection_rows', None)
+        if steps is None:
+            return GLib.SOURCE_REMOVE
+        if getattr(self, '_is_quitting', False):
+            self._cancel_pending_connection_rows()
+            return GLib.SOURCE_REMOVE
+        deadline = time.perf_counter() + _DEFERRED_ROWS_SLICE_SECONDS
+        try:
+            for _visible in steps:
+                if time.perf_counter() >= deadline:
+                    return GLib.SOURCE_CONTINUE
+        except Exception:
+            # Not a completed sidebar: drop what is pending and let the error
+            # surface, as it does from a rebuild that is not split. Also make
+            # one later, synchronous attempt: the failure may have come from
+            # transient model state, and a stable partial sidebar is worse.
+            self._take_pending_connection_rows()
+            self._staged_connection_rows = None
+            self._connection_rows_split = False
+            if (
+                not getattr(self, '_is_quitting', False)
+                and not getattr(self, '_connection_rows_recovery_pending', False)
+            ):
+                self._connection_rows_recovery_pending = True
+                GLib.idle_add(self._recover_failed_connection_rows)
+            raise
+        self._pending_connection_rows = None
+        self._pending_connection_rows_source = None
+        self._on_connection_rows_completed()
+        return GLib.SOURCE_REMOVE
+
+    def _recover_failed_connection_rows(self):
+        """Make one full rebuild attempt after a deferred slice failed."""
+        self._connection_rows_recovery_pending = False
+        if getattr(self, '_is_quitting', False):
+            return GLib.SOURCE_REMOVE
+        try:
+            self.rebuild_connection_list()
+        except Exception:
+            logger.exception("Sidebar recovery rebuild failed")
+        return GLib.SOURCE_REMOVE
+
+    def _take_pending_connection_rows(self):
+        """Detach a split rebuild's remaining steps (``None`` if there are none)."""
+        steps = getattr(self, '_pending_connection_rows', None)
+        source = getattr(self, '_pending_connection_rows_source', None)
+        self._pending_connection_rows = None
+        self._pending_connection_rows_source = None
+        if source is not None:
+            GLib.source_remove(source)
+        return steps
+
+    def _cancel_pending_connection_rows(self):
+        """Forget the rows a split rebuild has not attached yet."""
+        steps = self._take_pending_connection_rows()
+        self._staged_connection_rows = None
+        self._staged_sidebar_display_dirty = False
+        if steps is not None:
+            steps.close()
+
+    def complete_pending_connection_rows(self):
+        """Build and attach the rows a split rebuild still has pending, now."""
+        steps = self._take_pending_connection_rows()
+        if steps is None:
+            return
+        for _visible in steps:
+            pass
+        self._on_connection_rows_completed()
+
+    def _append_list_row(self, row, connection=None) -> None:
+        """Add a row to the list, or stage it while a split rebuild builds."""
+        staged = getattr(self, '_staged_connection_rows', None)
+        if staged is not None:
+            staged.append((row, connection))
+            return
+        self.connection_list.append(row)
+        if connection is not None:
+            # A connection can appear under multiple groups: keep every row.
+            self.connection_rows.setdefault(connection, []).append(row)
+
+    def _attach_staged_connection_rows(self) -> None:
+        """Attach a split rebuild's off-list rows in one pass, in order."""
+        staged = getattr(self, '_staged_connection_rows', None)
+        self._staged_connection_rows = None
+        for row, connection in staged or ():
+            self.connection_list.append(row)
+            if connection is not None:
+                self.connection_rows.setdefault(connection, []).append(row)
+                # Built off the list: catch state and presentation changes
+                # that callbacks applied only to attached rows meanwhile.
+                update_status = getattr(row, 'update_status', None)
+                if callable(update_status):
+                    update_status()
+                update_forwarding = getattr(row, '_update_forwarding_indicators', None)
+                if callable(update_forwarding):
+                    update_forwarding()
+                apply_hide_hosts = getattr(row, 'apply_hide_hosts', None)
+                if callable(apply_hide_hosts):
+                    apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
+    def _initial_sidebar_row_budget(self) -> int:
+        """How many connection rows fill the sidebar's visible height."""
+        height = 0
+        scrolled = getattr(self, 'connection_scrolled', None)
+        if scrolled is not None:
+            try:
+                height = scrolled.get_height()
+            except Exception:
+                height = 0
+        if height <= 0:
+            try:
+                height = self.get_height() or self.get_default_size()[1]
+            except Exception:
+                height = 0
+        if height <= 0:
+            height = 1200
+        return height // _MIN_CONNECTION_ROW_HEIGHT + 2
+
+    def _rebuild_connection_list_steps(self):
+        """Rebuild the list; yields after each connection row (its visibility)."""
+        self._connection_list_rebuild_count = (
+            getattr(self, '_connection_list_rebuild_count', 0) + 1
+        )
         reset_connection_list_drag_session(self)
         self._apply_connection_sort_to_projection()
 
@@ -4140,7 +4548,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     conn, 'tags', effective_tags([], getattr(conn, 'protocol', None))
                 )
         self._attach_sidebar_forwarding_rules(connections)
-        self._refresh_sidebar_forwarding_rules(connections)
+        self._schedule_sidebar_forwarding_refresh()
         connections_dict = {conn.nickname: conn for conn in connections}
         connections_dict.update(
             {
@@ -4171,6 +4579,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
+                yield True
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -4182,6 +4591,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
+                yield True
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -4205,7 +4615,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for group_info in matched_groups:
                 group_row = GroupRow(group_info, self.group_manager, connections_dict)
                 group_row.connect('group-toggled', self._on_group_toggled)
-                self.connection_list.append(group_row)
+                self._append_list_row(group_row)
+                yield True
 
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
@@ -4216,6 +4627,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             display_group_id=group_info.get('id'),
                         )
                         displayed_connections.add(conn.id)
+                        yield True
 
             matches = [
                 c for c in connections
@@ -4225,6 +4637,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
                 displayed_connections.add(conn.id)
+                yield True
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -4237,10 +4650,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         groups_header = None
         if hierarchy:
             groups_header = SectionHeaderRow("groups", _("Groups"), self.config)
-            self.connection_list.append(groups_header)
+            groups_header.connect("section-toggled", self._on_section_toggled)
+            self._append_list_row(groups_header)
 
         # Build the list with groups
-        group_rows = self._build_grouped_list(hierarchy, connections_dict, 0)
+        group_rows = yield from self._build_grouped_list_steps(
+            hierarchy, connections_dict, 0, _section_expanded(groups_header)
+        )
         if groups_header is not None:
             for group_row in group_rows:
                 groups_header.add_child_row(group_row)
@@ -4261,7 +4677,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 ungrouped_header = SectionHeaderRow(
                     "ungrouped", _("Ungrouped"), self.config
                 )
-                self.connection_list.append(ungrouped_header)
+                ungrouped_header.connect(
+                    "section-toggled", self._on_section_toggled
+                )
+                self._append_list_row(ungrouped_header)
+            ungrouped_visible = _section_expanded(ungrouped_header)
 
             # Root order is daemon-owned; render from the snapshot and append
             # any not-yet-projected ungrouped connections without local writes.
@@ -4275,6 +4695,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     row = self.add_connection_row(conn)
                     if row is not None and ungrouped_header is not None:
                         ungrouped_header.add_child_row(row)
+                        row.set_visible(ungrouped_visible)
+                    yield ungrouped_visible
                     seen.add(nick)
             for nick in ungrouped_nicks:
                 if nick in seen:
@@ -4284,16 +4706,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     row = self.add_connection_row(conn)
                     if row is not None and ungrouped_header is not None:
                         ungrouped_header.add_child_row(row)
+                        row.set_visible(ungrouped_visible)
+                    yield ungrouped_visible
             if ungrouped_header is not None:
                 ungrouped_header.apply_descendant_visibility()
 
 
         self._finish_rebuild(scroll_position, selected_connection_rows)
+
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 
         Returns the list of top-level GroupRows created at this level so the
         caller can register them as children for in-place expand/collapse.
+        """
+        steps = self._build_grouped_list_steps(hierarchy, connections_dict, level)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as done:
+                return done.value
+
+    def _build_grouped_list_steps(
+        self, hierarchy, connections_dict, level, parent_visible=True
+    ):
+        """:meth:`_build_grouped_list`, yielding after each connection row.
+
+        ``parent_visible`` is whether the enclosing section or group shows
+        its rows; every row is added with the visibility it ends up with.
         """
         created_rows = []
         for group_info in hierarchy:
@@ -4302,7 +4742,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             group_row.connect('group-toggled', self._on_group_toggled)
             if hasattr(group_row, "set_indentation"):
                 group_row.set_indentation(level)
-            self.connection_list.append(group_row)
+            group_row.set_visible(parent_visible)
+            self._append_list_row(group_row)
+            yield parent_visible
+            members_visible = parent_visible and bool(
+                group_info.get("expanded", True)
+            )
 
             # Build direct connection rows once, then let expand/collapse toggle
             # their visibility in place to avoid full-list flicker.
@@ -4316,25 +4761,32 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
                     if row is not None and hasattr(group_row, "add_member_row"):
                         group_row.add_member_row(row)
+                    if row is not None:
+                        row.set_visible(members_visible)
+                    yield members_visible
 
             # Recursively add child groups and register them directly so a
             # parent collapse hides nested subgroups in place.
             if group_info.get('children'):
-                child_group_rows = self._build_grouped_list(
-                    group_info['children'], connections_dict, level + 1
+                child_group_rows = yield from self._build_grouped_list_steps(
+                    group_info['children'], connections_dict, level + 1,
+                    members_visible,
                 )
                 if hasattr(group_row, "add_child_group_row"):
                     for child_row in child_group_rows:
                         group_row.add_child_group_row(child_row)
 
             if hasattr(group_row, "apply_descendant_visibility"):
-                group_row.apply_descendant_visibility(True)
+                group_row.apply_descendant_visibility(parent_visible)
 
             created_rows.append(group_row)
         return created_rows
 
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
+        # A parent may not know about a child group until the recursive
+        # generator returns. Finish that wiring before applying the toggle.
+        self.complete_pending_connection_rows()
         if hasattr(group_row, "apply_descendant_visibility"):
             group_row.apply_descendant_visibility(True)
 
@@ -4343,6 +4795,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, "group_id") and row.group_id == group_id:
                 self._select_only_row(row)
                 break
+
+    def _on_section_toggled(self, _header, _section_id, _expanded):
+        """Finish deferred rows so a section toggle covers every child."""
+        self.complete_pending_connection_rows()
 
     def _add_local_terminal_row_if_visible(self, search_text: str = '') -> None:
         """Prepend the pinned local-terminal row when it matches the search."""
@@ -4353,7 +4809,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if search_text and not local_terminal_row_matches(search_text):
             return
         row = LocalTerminalRow(self.config)
-        self.connection_list.append(row)
+        self._append_list_row(row)
 
     def add_connection_row(
         self,
@@ -4381,13 +4837,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
 
-        self.connection_list.append(row)
-        # A connection can appear under multiple groups, so keep a list of rows
-        self.connection_rows.setdefault(connection, []).append(row)
+        self._append_list_row(row, connection)
 
-        # Apply current hide-hosts setting to new row
-        if hasattr(row, 'apply_hide_hosts'):
-            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+        # Apply current hide-hosts setting to new row. The row was built
+        # before it had a window, so it already shows hosts; only hiding
+        # them needs another pass.
+        hide_hosts = getattr(self, '_hide_hosts', False)
+        if hide_hosts and hasattr(row, 'apply_hide_hosts'):
+            row.apply_hide_hosts(hide_hosts)
 
         return row
 
@@ -6569,10 +7026,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         *,
         close_terminals=False,
     ) -> None:
-        """Delete daemon-owned connections serially without optimistic rows."""
+        """Delete daemon-owned connections without optimistic rows.
 
-        from .api import SshPilotError
-        from .api.models import DeleteConnectionRequest
+        Several connections go to the daemon as one ``delete_connections``
+        request: one SSH config write, one store change and one sidebar
+        rebuild, and either all of them are deleted or none is. A client or
+        daemon without that method deletes them one at a time instead.
+        """
+
+        from .api import ErrorCode, SshPilotError
+        from .api.models import DeleteConnectionRequest, DeleteConnectionsRequest
 
         bridge = getattr(self, 'client_bridge', None)
         if bridge is None:
@@ -6583,7 +7046,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     _("Connect to the SSH Pilot daemon and retry the deletion."),
                 )
             return
-        pending = iter(connection for connection in connections if connection)
+        targets = [connection for connection in connections if connection]
+        pending = iter(targets)
         self._deleting_connections_batch = True
 
         def _finish():
@@ -6597,6 +7061,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.warning(
                     "Post-delete connection refresh failed type=%s",
                     type(error).__name__,
+                )
+
+        def _failure(error):
+            self._deleting_connections_batch = False
+            if isinstance(error, SshPilotError):
+                logger.warning(
+                    "Daemon connection delete failed code=%s",
+                    error.code.value,
+                )
+            else:
+                logger.error(
+                    "Daemon connection delete failed type=%s",
+                    type(error).__name__,
+                )
+            if not self._is_quitting:
+                self._error_dialog(
+                    _("Failed to delete connection"),
+                    _(
+                        "The connection could not be deleted. "
+                        "No list changes were applied."
+                    ),
                 )
 
         def _delete_next():
@@ -6617,27 +7102,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self._disconnect_connection_terminals(connection)
                 _delete_next()
 
-            def _failure(error):
-                self._deleting_connections_batch = False
-                if isinstance(error, SshPilotError):
-                    logger.warning(
-                        "Daemon connection delete failed code=%s",
-                        error.code.value,
-                    )
-                else:
-                    logger.error(
-                        "Daemon connection delete failed type=%s",
-                        type(error).__name__,
-                    )
-                if not self._is_quitting:
-                    self._error_dialog(
-                        _("Failed to delete connection"),
-                        _(
-                            "The connection could not be deleted. "
-                            "No list changes were applied."
-                        ),
-                    )
-
             try:
                 bridge.submit(
                     lambda: self.client.delete_connection(request),
@@ -6647,7 +7111,41 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except RuntimeError:
                 _failure(RuntimeError("client bridge closed"))
 
-        _delete_next()
+        delete_many = getattr(self.client, 'delete_connections', None)
+        if len(targets) < 2 or not callable(delete_many):
+            _delete_next()
+            return
+
+        batch = DeleteConnectionsRequest(
+            connection_ids=tuple(
+                dict.fromkeys(connection_id_for(item) for item in targets)
+            )
+        )
+
+        def _batch_success(_result):
+            if close_terminals:
+                for connection in targets:
+                    self._disconnect_connection_terminals(connection)
+            _finish()
+
+        def _batch_failure(error):
+            if (
+                isinstance(error, SshPilotError)
+                and error.code is ErrorCode.UNSUPPORTED_METHOD
+            ):
+                logger.info("Daemon has no batch delete; deleting one at a time")
+                _delete_next()
+                return
+            _failure(error)
+
+        try:
+            bridge.submit(
+                lambda: delete_many(batch),
+                on_success=_batch_success,
+                on_error=_batch_failure,
+            )
+        except RuntimeError:
+            _failure(RuntimeError("client bridge closed"))
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
@@ -6657,9 +7155,168 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.rebuild_connection_list()
 
     def on_projection_reset(self, manager, _connection=None):
-        """Rebuild presentation state after an authoritative store refresh."""
+        """Rebuild presentation state after an authoritative store refresh.
+
+        Group bindings follow the store at once; the sidebar rebuild, which
+        tears down and recreates every row, waits for an idle callback. A
+        burst of resets -- one per store event, plus the refresh a group
+        mutation runs when it finishes -- then costs a single rebuild.
+        """
         self.group_manager.bind_connections(manager.connections)
-        self.rebuild_connection_list()
+        # A rebuild that runs after this reset, before the idle one, already
+        # shows this state; the idle callback then has nothing left to do.
+        self._projection_rebuild_mark = getattr(
+            self, '_connection_list_rebuild_count', 0
+        )
+        attach_generation = getattr(self, '_attach_rows_generation', None)
+        if attach_generation is not None:
+            self._attach_rows_generation = None
+            if attach_generation == self._sidebar_store_generation():
+                # The reset the first client attach queued: its rows are
+                # already built (_apply_startup_client_selection). No mark
+                # matches the rebuild count, so the idle callback only does
+                # the startup focus.
+                self._projection_rebuild_mark = None
+        if getattr(self, '_projection_rebuild_pending', False):
+            return
+        self._projection_rebuild_pending = True
+        GLib.idle_add(self._flush_projection_rebuild)
+
+    def _mark_sidebar_populated(self):
+        """Record the first sidebar built from daemon data (startup timing)."""
+        if any(
+            item["name"] == "sidebar_rows_built"
+            for item in startup_timing.milestones()
+        ):
+            return
+        pending = getattr(self, '_staged_connection_rows', None) is not None
+        startup_timing.mark(
+            "sidebar_rows_built",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows"
+            + (" on screen, the rest pending" if pending else ""),
+        )
+        if not startup_timing.profile_path():
+            return
+        # Profiling harness: wait for the first screenful to be painted, then
+        # for the whole list, then hand the milestones over and quit.
+        self._profile_awaiting_rows = True
+        self._after_next_paint(self._profile_first_screen_painted)
+
+    def _profile_first_screen_painted(self):
+        startup_timing.mark("sidebar_painted")
+        if getattr(self, '_staged_connection_rows', None) is None:
+            self._profile_all_rows_painted()
+
+    def _profile_all_rows_painted(self):
+        if not getattr(self, '_profile_awaiting_rows', False):
+            return
+        self._profile_awaiting_rows = False
+        startup_timing.mark("sidebar_all_rows_painted")
+        startup_timing.write_profile()
+        app = self.get_application()
+        if app is not None:
+            GLib.idle_add(lambda: (app.quit(), False)[1])
+
+    def _on_connection_rows_completed(self):
+        """A split (or short) startup rebuild has every row in the list."""
+        startup_timing.mark(
+            "sidebar_rows_completed",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
+        )
+        if getattr(self, '_staged_sidebar_display_dirty', False):
+            self._staged_sidebar_display_dirty = False
+            self.update_sidebar_display()
+        if getattr(self, '_profile_awaiting_rows', False) and any(
+            item["name"] == "sidebar_painted"
+            for item in startup_timing.milestones()
+        ):
+            self._after_next_paint(self._profile_all_rows_painted)
+        self._run_after_first_paint(self._schedule_preferences_preload)
+
+    def _run_after_first_paint(self, callback) -> None:
+        """Run a one-shot callback at low priority after the first window frame."""
+        if getattr(self, '_first_window_painted', False):
+            GLib.idle_add(
+                lambda: (callback(), GLib.SOURCE_REMOVE)[1],
+                priority=GLib.PRIORITY_LOW,
+            )
+            return
+        callbacks = getattr(self, '_after_first_paint_callbacks', None)
+        if callbacks is None:
+            callbacks = []
+            self._after_first_paint_callbacks = callbacks
+        if callback not in callbacks:
+            callbacks.append(callback)
+        if not getattr(self, '_first_paint_fallback_source', 0):
+            # A window that never paints (e.g. started minimized) must still
+            # get its deferred startup work.
+            self._first_paint_fallback_source = GLib.timeout_add(
+                _FIRST_PAINT_FALLBACK_MS, self._on_first_paint_fallback
+            )
+
+    def _on_first_paint_fallback(self) -> bool:
+        self._first_paint_fallback_source = 0
+        if not getattr(self, '_first_window_painted', False):
+            logger.debug("No first frame after %d ms; releasing deferred startup work",
+                         _FIRST_PAINT_FALLBACK_MS)
+            self._release_after_first_paint_callbacks()
+        return GLib.SOURCE_REMOVE
+
+    def _on_first_window_painted(self) -> None:
+        """Mark first paint and release startup work that is invisible initially."""
+        startup_timing.mark("window_first_painted")
+        self._release_after_first_paint_callbacks()
+
+    def _release_after_first_paint_callbacks(self) -> None:
+        if getattr(self, '_first_window_painted', False):
+            return
+        self._first_window_painted = True
+        source = getattr(self, '_first_paint_fallback_source', 0)
+        if source:
+            GLib.source_remove(source)
+            self._first_paint_fallback_source = 0
+        callbacks = list(getattr(self, '_after_first_paint_callbacks', ()) or ())
+        self._after_first_paint_callbacks = []
+        for callback in callbacks:
+            self._run_after_first_paint(callback)
+
+    def _after_next_paint(self, callback):
+        """Call ``callback()`` once, after the window's next painted frame."""
+        handler = []
+
+        def _on_paint(frame_clock):
+            frame_clock.disconnect(handler.pop())
+            callback()
+
+        def _hook_frame_clock(*_args):
+            if handler:
+                # Rows built before the first present: wait for realization.
+                self.disconnect(handler.pop())
+            clock = self.get_frame_clock()
+            if clock is None:
+                callback()
+                return
+            handler.append(clock.connect("after-paint", _on_paint))
+            self.queue_draw()
+
+        if self.get_frame_clock() is None and not self.get_realized():
+            handler.append(self.connect("realize", _hook_frame_clock))
+            return
+        _hook_frame_clock()
+
+    def _flush_projection_rebuild(self):
+        """Run the one sidebar rebuild owed to the latest projection resets."""
+        self._projection_rebuild_pending = False
+        if getattr(self, '_is_quitting', False):
+            # The reset arrived while the window was closing; rebuilding or
+            # moving focus now would act on a window that is going away.
+            return GLib.SOURCE_REMOVE
+        if getattr(self, '_connection_list_rebuild_count', 0) == getattr(
+            self, '_projection_rebuild_mark', 0
+        ):
+            self.rebuild_connection_list()
+        if getattr(self, 'client', None) is not None:
+            self._mark_sidebar_populated()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge
             # selection + connection store fetch), so this reset — not window
@@ -6682,10 +7339,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # keys off that same flag once the 500 ms timer has passed.
                 self._focus_connection_list_first_row()
             self._initial_connection_list_focus_done = True
+        return GLib.SOURCE_REMOVE
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")
+        self.complete_pending_connection_rows()
 
         # Save current scroll position before any UI changes
         scroll_position = None
@@ -7541,40 +8200,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             context_row = getattr(self, '_context_menu_row', None)
             context_group_id = getattr(context_row, '_group_id', None)
 
-            steps = []
-            for connection in connections:
-                nickname = getattr(connection, 'nickname', None)
-                if not nickname:
-                    continue
+            from sshpilot.api.models.connection_store import (
+                ConnectionId, ConnectionPlacementMode, GroupId,
+                MoveConnectionsRequest, RemoveConnectionFromGroupRequest,
+            )
+
+            operation = None
+            nicknames = [
+                getattr(connection, 'nickname', None) for connection in connections
+            ]
+            nicknames = [nickname for nickname in nicknames if nickname]
+            if len(nicknames) == 1:
+                nickname = nicknames[0]
                 member_groups = self.group_manager.get_connection_groups(nickname)
                 if (
                     context_group_id
-                    and len(connections) == 1
                     and context_group_id in member_groups
                     and len(member_groups) > 1
                 ):
-                    from sshpilot.api.models.connection_store import (
-                        ConnectionId, GroupId, RemoveConnectionFromGroupRequest,
+                    request = RemoveConnectionFromGroupRequest(
+                        connection_id=ConnectionId(nickname),
+                        group_id=GroupId(context_group_id),
                     )
-                    steps.append(
-                        lambda _prev, n=nickname, gid=context_group_id: (
-                            controller.client.remove_connection_from_group(
-                                RemoveConnectionFromGroupRequest(
-                                    connection_id=ConnectionId(n),
-                                    group_id=GroupId(gid),
-                                )
-                            )
-                        )
+                    operation = lambda: (
+                        controller.client.remove_connection_from_group(request)
                     )
                 else:
-                    steps.append(
-                        lambda _prev, n=nickname: (
-                            controller.client.assign_connection_to_group(n, "")
-                        )
+                    operation = lambda: (
+                        controller.client.assign_connection_to_group(nickname, "")
                     )
-            if steps:
-                controller.run_sequence(
-                    steps,
+            else:
+                # One placement for the whole selection: one daemon commit and
+                # one sidebar rebuild. Connections already ungrouped are left
+                # where they are, as one-by-one ungrouping would leave them;
+                # the rest go to the end of the ungrouped list in order.
+                grouped = tuple(dict.fromkeys(
+                    nickname for nickname in nicknames
+                    if self.group_manager.get_connection_groups(nickname)
+                ))
+                if grouped:
+                    request = MoveConnectionsRequest(
+                        connection_ids=tuple(ConnectionId(n) for n in grouped),
+                        mode=ConnectionPlacementMode.EXCLUSIVE,
+                    )
+                    operation = lambda: controller.client.move_connections(request)
+            if operation is not None:
+                controller.run(
+                    operation,
                     on_success=lambda _r: self.rebuild_connection_list(),
                     on_error=lambda e: self._simple_dialog(
                         _("Error"),
@@ -7695,6 +8367,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 terminal_command,
                 ssh_command,
                 environment=dict(spec.environment),
+                argv=tuple(spec.argv),
             ):
                 self._show_terminal_error_dialog()
         except Exception as error:
@@ -7762,7 +8435,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 transient_for=self,
                 modal=True,
                 heading=_("No Terminal Found"),
-                body=_("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
+                body=(
+                    _("Could not find a suitable terminal application. Please install Windows Terminal or PowerShell.")
+                    if is_windows() else
+                    _("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
+                )
             )
 
             dialog.add_response("ok", _("OK"))

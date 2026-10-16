@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 from typing import Optional, Union
 
+from .api.models.common import has_control_characters
+
 CommitPayload = Union[str, bytes, bytearray, memoryview]
 
 # DECSET/DECRST mouse modes used by ncurses/xterm. 9 is X10, 1000+ are
@@ -87,6 +89,20 @@ def commit_payload_to_bytes(text: CommitPayload, size: Optional[int] = None) -> 
         if candidate is not None and len(candidate) < reported:
             return candidate + b"\x00" * (reported - len(candidate))
     return utf8
+
+
+def typed_command_line(command: str) -> bytes:
+    """*command* and the Enter that runs it, as bytes to type into a shell.
+
+    Typed bytes are keystrokes: the tty and the shell's line editor act on
+    control characters before the shell parses any quoting. Ctrl+U or Ctrl+C
+    discards an opening quote typed earlier and Tab completion can close it,
+    so whatever follows in a ``shlex.quote``d file name runs as a command.
+    No quoting can carry them, so they are refused rather than escaped.
+    """
+    if "\t" in command or has_control_characters(command):
+        raise ValueError("refusing to type control characters into a shell")
+    return (command + "\n").encode("utf-8")
 
 
 def sgr_reports_to_legacy(payload: bytes) -> bytes:

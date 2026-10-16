@@ -7,9 +7,12 @@ import sys
 import os
 import gc
 import faulthandler
-import resource
 import logging
 import threading
+
+from . import startup_timing
+
+startup_timing.mark("process_start")
 
 
 def _clamp_thirdparty_loggers() -> None:
@@ -33,12 +36,22 @@ _clamp_thirdparty_loggers()
 # Module logger — used for any non-class-attached logging below.
 logger = logging.getLogger(__name__)
 
-import gi
-gi.require_version('Adw', '1')
-gi.require_version('Gtk', '4.0')
-gi.require_version('Vte', '3.91')
+from .gi_versions import require_gui_versions
+
+require_gui_versions()
+
+from . import daemon_prelaunch as _daemon_prelaunch
+
+# A running daemon may be connected to from here on (see daemon_prelaunch).
+# The worker then runs beside the gi.repository imports below, so nothing on
+# its path may import gi: PyGObject's importer is not safe for two threads
+# (tests/test_daemon_prelaunch.py checks the whole worker path).
+_daemon_prelaunch.release_connect()
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
+
+startup_timing.mark("gtk_imported")
+
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
     TOGGLE_FULLSCREEN_ACTION,
@@ -77,6 +90,8 @@ def _init_gettext():
     try:
         _gettext.bindtextdomain('sshpilot', localedir)
         _gettext.textdomain('sshpilot')
+        from .i18n import bind_translation
+        bind_translation(localedir)
         # Mirror to the C library so GTK/Adw (.ui, .desktop) translations resolve too.
         try:
             import locale
@@ -306,7 +321,7 @@ class SshPilotApplication(Adw.Application):
             self.apply_color_overrides(cfg)
 
         except Exception:
-            pass
+            logger.exception("Configuration setup failed; continuing with defaults")
 
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -386,7 +401,6 @@ class SshPilotApplication(Adw.Application):
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
             # App-specific combo, not terminal-standard → disabled by default.
             self.create_action('new-split-view-tab', self.on_new_split_view_tab, [])
-        
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
         # Use the "question" keyval, not "<Shift>slash": holding Shift turns
@@ -458,6 +472,7 @@ class SshPilotApplication(Adw.Application):
         GLib.idle_add(lambda: (self._schedule_startup_diagnostics(), False)[1])
 
         logger.info("sshPilot application initialized")
+        startup_timing.mark("app_initialized")
 
     def do_startup(self):
         """Install the native macOS menubar once the application is registered.
@@ -472,6 +487,7 @@ class SshPilotApplication(Adw.Application):
         explicitly), then the menubar is installed exactly once. Non-macOS
         builds never call ``install_menubar``.
         """
+        startup_timing.mark("app_startup_begun")
         Adw.Application.do_startup(self)
 
         # The saved light/dark choice has to be set before on_activate builds
@@ -605,12 +621,19 @@ class SshPilotApplication(Adw.Application):
 
     def on_activate(self, app):
         """Handle application activation"""
+        startup_timing.mark("app_activated")
         self._load_app_style()
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
+            from . import startup_preload
+
+            startup_preload.wait()
             from .window import MainWindow
+            startup_timing.mark("window_module_imported")
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
+            startup_timing.mark("window_presented")
+            self.window._after_next_paint(self.window._on_first_window_painted)
 
             # The window UI is built and presented and plugins are bound, so
             # it is now safe for plugins to do live UI/terminal work.
@@ -813,11 +836,16 @@ class SshPilotApplication(Adw.Application):
 
         launcher = getattr(self, "_api_daemon_launcher", None)
         if launcher is None:
+            # The launcher that started the daemon before GTK loaded, if any.
+            from . import daemon_prelaunch
+
+            launcher = daemon_prelaunch.launcher()
+        if launcher is None:
             launcher = DaemonLauncher(
                 verbose=bool(getattr(self, "verbose_override", False)),
                 quiet=bool(getattr(self, "quiet_override", False)),
             )
-            self._api_daemon_launcher = launcher
+        self._api_daemon_launcher = launcher
         helper = DaemonReconnectHelper(launcher=launcher)
         self._api_daemon_reconnect_helper = helper
         return helper
@@ -1700,6 +1728,7 @@ class SshPilotApplication(Adw.Application):
         app_level = numeric_level
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
+        startup_timing.logging_ready()
 
     def _on_config_setting_changed(self, _config, key, value):
         if key != 'terminal.pass_through_mode':
@@ -2240,7 +2269,7 @@ def _enable_crash_diagnostics():
         # Preserve a crash report left behind by the previous run.
         previous_crash = _rotate_previous_crash_log(log_dir)
         # Fresh log for this run so the next startup's detection stays clean.
-        _crash_log_fp = open(path, 'w', buffering=1)
+        _crash_log_fp = open(path, "w", encoding="utf-8", buffering=1)
         faulthandler.enable(file=_crash_log_fp, all_threads=True)
         logging.getLogger(__name__).info("Crash diagnostics enabled → %s", path)
     except Exception:
@@ -2250,6 +2279,8 @@ def _enable_crash_diagnostics():
             pass
     # Best-effort: ensure a core is produced even if the soft limit is 0.
     try:
+        import resource  # POSIX only
+
         _soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
         resource.setrlimit(
             resource.RLIMIT_CORE,
@@ -2294,13 +2325,20 @@ def _install_exception_hooks():
 
     sys.excepthook = _excepthook
 
+    prev_thread_excepthook = threading.excepthook
+
     def _thread_excepthook(args):
-        if issubclass(args.exc_type, SystemExit):
-            return
+        if not issubclass(args.exc_type, SystemExit):
+            try:
+                log.critical("Unhandled exception in thread %r",
+                             getattr(args.thread, 'name', '?'),
+                             exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            except Exception:
+                pass
+        # Chained for SystemExit too: the previous hook decides what it
+        # means (the default one ignores it).
         try:
-            log.critical("Unhandled exception in thread %r",
-                         getattr(args.thread, 'name', '?'),
-                         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            prev_thread_excepthook(args)
         except Exception:
             pass
 
@@ -2451,6 +2489,12 @@ def main():
     """Main entry point"""
     from .cli_connect import parse_sshpilot_cli
 
+    if sys.platform == "win32":
+        # Frozen builds start here, not in run.py.
+        from .platform.windows.environment import disable_dbus_autolaunch
+
+        disable_dbus_autolaunch()
+
     # Pre-parse so logging / isolated mode are configured before Gtk starts.
     # do_command_line parses again for single-instance handoff of ssh tokens.
     try:
@@ -2472,19 +2516,37 @@ def main():
     GLib.set_application_name('SSH Pilot')
 
     verbose = opts.verbose or opts.diagnostics
+    # Start (or find) the daemon now, in parallel with the window build. The
+    # source and frozen entry (run.py) and the Meson launcher already did this
+    # before GTK was imported; this covers any other caller of main().
+    from . import daemon_prelaunch
+
+    daemon_prelaunch.start(verbose=verbose, quiet=opts.quiet)
+    # Import the window's GTK-free dependencies off the GTK thread meanwhile.
+    from . import startup_preload
+
+    startup_preload.start()
     # GUI tests launch a second, throwaway instance alongside a developer's own
     # running copy; without a distinct application id GApplication would just
     # hand the launch off to that copy. Same shape as SSHPILOT_SSH_DIR: an
     # environment hook the app reads, no extra production surface.
-    app = SshPilotApplication(
-        verbose=verbose,
-        quiet=opts.quiet,
-        isolated=opts.isolated,
-        log_gtk_warnings=opts.log_gtk_warnings or opts.diagnostics,
-        fatal_warnings=opts.fatal_warnings,
-        application_id=os.environ.get('SSHPILOT_APP_ID') or None,
-    )
-    return app.run(sys.argv)
+    startup_timing.mark("main_entered")
+    try:
+        app = SshPilotApplication(
+            verbose=verbose,
+            quiet=opts.quiet,
+            isolated=opts.isolated,
+            log_gtk_warnings=opts.log_gtk_warnings or opts.diagnostics,
+            fatal_warnings=opts.fatal_warnings,
+            application_id=os.environ.get('SSHPILOT_APP_ID') or None,
+        )
+        return app.run(sys.argv)
+    finally:
+        # A secondary instance hands its command line to the running window
+        # and returns here without a window of its own: close the daemon
+        # client the early start opened for it. (In the primary the window
+        # took it.) Also runs when construction or run() raised.
+        daemon_prelaunch.discard()
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

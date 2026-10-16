@@ -208,7 +208,9 @@ def test_dead_connection_fails_service_and_signals_the_tab():
     )
     assert len(op_errors) == 1
     assert op_errors[0].code is ErrorCode.SFTP_PROTOCOL_LOST
-    assert op_errors[0].message == ErrorCode.SFTP_PROTOCOL_LOST.value
+    # The daemon sends the stable code; the controller localizes it before
+    # the tab's callback sees it.
+    assert op_errors[0].message == "The SFTP connection was lost"
 
     # Fixed: the failed op flips the service record to FAILED instead of
     # leaving it READY forever.

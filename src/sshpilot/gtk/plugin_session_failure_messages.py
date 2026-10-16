@@ -70,6 +70,15 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
         "FreeRDP 3 is not installed. Install '{preferred_program}' or "
         "'{fallback_program}' to use RDP connections."
     ),
+    PluginSessionFailureCode.SERIAL_PLINK_UNAVAILABLE: N_(
+        "PuTTY's 'plink' is not installed. Install PuTTY to use serial "
+        "connections on Windows."
+    ),
+    PluginSessionFailureCode.SERIAL_PLINK_TERMINAL_OPTIONS_UNSUPPORTED: N_(
+        "On Windows serial connections use PuTTY's 'plink', which cannot "
+        "change line endings, echo locally or log to a file. Turn those "
+        "options off to use this connection."
+    ),
     PluginSessionFailureCode.TELNET_UNAVAILABLE: N_(
         "The '{program}' program is not installed. Install it to use telnet connections."
     ),

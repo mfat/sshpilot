@@ -60,6 +60,8 @@ from .models.connections import (
     DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteConnectionsRequest,
+    DeleteConnectionsResult,
     DeleteKeyPassphraseRequest,
     SaveSshConfigTextRequest,
     StoreConnectionPasswordRequest,
@@ -213,6 +215,8 @@ from .transport.codec import (
     delete_key_passphrase_request_to_wire,
     delete_connection_request_to_wire,
     delete_connection_result_from_wire,
+    delete_connections_request_to_wire,
+    delete_connections_result_from_wire,
     delete_group_request_to_wire,
     detach_session_request_to_wire,
     encode_envelope,
@@ -421,6 +425,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "remove_connection_from_group": Capability.CONNECTIONS_GROUPS,
     "reorder_connection": Capability.CONNECTIONS_GROUPS,
     "move_connections": Capability.CONNECTIONS_GROUPS,
+    "delete_connections": Capability.CONNECTIONS_WRITE,
     "set_connection_layout": Capability.CONNECTIONS_GROUPS,
     "rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "add_tag_to_connections": Capability.CONNECTIONS_METADATA_WRITE,
@@ -1062,6 +1067,21 @@ class DaemonClient:
         )
         try:
             return delete_connection_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid delete result")
+
+    def delete_connections(
+        self, request: DeleteConnectionsRequest
+    ) -> DeleteConnectionsResult:
+        self._require_write_compatibility("delete connections")
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.delete_many",
+            delete_connections_request_to_wire(request),
+            mutation_connection_id=None,
+        )
+        try:
+            return delete_connections_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid delete result")
 
@@ -3325,12 +3345,13 @@ class DaemonClient:
             self._close_complete = True
 
     def _connect_and_handshake(self) -> None:
-        transport = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        transport.settimeout(self._connect_timeout)
+        from .transport import endpoint as transport_endpoint
+
         try:
-            transport.connect(str(self._socket_path))
+            transport = transport_endpoint.connect(
+                self._socket_path, timeout=self._connect_timeout
+            )
         except (OSError, socket.timeout):
-            transport.close()
             raise SshPilotError(
                 ErrorCode.DAEMON_UNAVAILABLE,
                 "The local sshPilot daemon is unavailable",
@@ -3355,6 +3376,7 @@ class DaemonClient:
                     Capability.INTERACTIONS_HOST_KEY.value,
                     Capability.INTERACTIONS_PASSWORD.value,
                     Capability.INTERACTIONS_PASSPHRASE.value,
+                    Capability.INTERACTIONS_SESSION_SECRETS.value,
                 }
             ),
             frontend_type=self._frontend_type,
