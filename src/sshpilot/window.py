@@ -303,6 +303,8 @@ _DEFERRED_ROWS_SLICE_SECONDS = 0.008
 # Rows hidden under collapsed groups cost the same to build but fill no
 # height: the first part of a split rebuild stops at this many rows in all.
 _SPLIT_BUILD_HIDDEN_FACTOR = 2
+# Work deferred until the first frame runs anyway after this long without one.
+_FIRST_PAINT_FALLBACK_MS = 5000
 
 
 def _section_expanded(header) -> bool:
@@ -383,6 +385,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._first_window_painted = False
         self._after_first_paint_callbacks = []
         self._preferences_preload_source = 0
+        self._preferences_preload_attempted = False
+        self._first_paint_fallback_source = 0
         self._initial_connection_list_focus_done = False
         # Coalesces projection-reset rebuilds; see on_projection_reset.
         self._connection_list_rebuild_count = 0
@@ -1376,6 +1380,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._preferences_preload_source = 0
         if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
             return GLib.SOURCE_REMOVE
+        if getattr(self, '_pending_connection_rows', None) is not None:
+            # Don't stall the deferred sidebar rows; try again once they land.
+            self._schedule_preferences_preload()
+            return GLib.SOURCE_REMOVE
+        self._preferences_preload_attempted = True
         try:
             from .preferences import PreferencesWindow
             if getattr(self, '_preferences_window', None) is None:
@@ -1393,6 +1402,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Warm Settings after the visible startup work has settled."""
         if (
             getattr(self, '_preferences_preload_source', 0)
+            or getattr(self, '_preferences_preload_attempted', False)
             or getattr(self, '_preferences_window', None) is not None
             or getattr(self, '_is_quitting', False)
         ):
@@ -1680,7 +1690,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _start_post_paint_services(self) -> bool:
         """Start non-visual services only after the first frame was displayed."""
-        self._ensure_omni_search()
+        self._schedule_preferences_preload()
 
         # Check for updates if enabled in preferences. Tips share the update
         # banner's area, so when a startup check runs they wait for its result
@@ -2418,7 +2428,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .sidebar_hover_reveal import SidebarHoverReveal
         self._sidebar_hover_reveal = SidebarHoverReveal(
             self._content_overlay,
-            popup_func=lambda: getattr(self, '_search_popup', None),
+            popup_func=self._ensure_search_popup,
             is_hidden=self._sidebar_hidden_by_toggle,
             keep_open=lambda: bool(getattr(self, '_search_expanded_sidebar', False)),
             in_hot_zone=self._in_sidebar_toggle_zone,
@@ -2439,6 +2449,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         main_box.append(self._global_overlay)
 
         self._omni_search = None
+        # The Start page's search field is built by the omni-search controller,
+        # so it must follow the first frame directly, not the startup timer.
+        self._run_after_first_paint(self._ensure_omni_search)
+        self._run_after_first_paint(self._ensure_search_popup)
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -7233,13 +7247,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._after_first_paint_callbacks = callbacks
         if callback not in callbacks:
             callbacks.append(callback)
+        if not getattr(self, '_first_paint_fallback_source', 0):
+            # A window that never paints (e.g. started minimized) must still
+            # get its deferred startup work.
+            self._first_paint_fallback_source = GLib.timeout_add(
+                _FIRST_PAINT_FALLBACK_MS, self._on_first_paint_fallback
+            )
+
+    def _on_first_paint_fallback(self) -> bool:
+        self._first_paint_fallback_source = 0
+        if not getattr(self, '_first_window_painted', False):
+            logger.debug("No first frame after %d ms; releasing deferred startup work",
+                         _FIRST_PAINT_FALLBACK_MS)
+            self._release_after_first_paint_callbacks()
+        return GLib.SOURCE_REMOVE
 
     def _on_first_window_painted(self) -> None:
         """Mark first paint and release startup work that is invisible initially."""
         startup_timing.mark("window_first_painted")
+        self._release_after_first_paint_callbacks()
+
+    def _release_after_first_paint_callbacks(self) -> None:
         if getattr(self, '_first_window_painted', False):
             return
         self._first_window_painted = True
+        source = getattr(self, '_first_paint_fallback_source', 0)
+        if source:
+            GLib.source_remove(source)
+            self._first_paint_fallback_source = 0
         callbacks = list(getattr(self, '_after_first_paint_callbacks', ()) or ())
         self._after_first_paint_callbacks = []
         for callback in callbacks:
