@@ -1493,8 +1493,9 @@ class TransferRuntime:
             nonlocal total
             for entry in listing:
                 self._check_cancel(record)
-                child_remote = self._join_remote(remote_dir, entry.filename)
-                child_local = os.path.join(local_dir, entry.filename)
+                name = self._listed_name(entry)
+                child_remote = self._join_remote(remote_dir, name)
+                child_local = os.path.join(local_dir, name)
                 if entry.is_dir() and not entry.is_symlink():
                     os.makedirs(child_local, exist_ok=True)
                     next_level.append((child_remote, child_local))
@@ -1560,6 +1561,25 @@ class TransferRuntime:
             completed += copied
             self._report_progress(record, completed)
         return completed
+
+    @staticmethod
+    def _listed_name(entry) -> str:
+        """Return a listed entry's name, refusing all but a single component.
+
+        The server picks these names and each one is joined onto a local
+        directory, so a separator, ``..`` or an absolute path would land the
+        download outside the destination the user chose. On Windows ``\\``
+        is a separator too, and ``:`` makes a drive path or a data stream.
+        """
+        name = entry.filename
+        unsafe = "/\x00\\:" if sys.platform == "win32" else "/\x00"
+        if not name or name in (".", "..") or any(c in name for c in unsafe):
+            raise _sftp_transfer_error(
+                SftpFailureCode.TRANSFER_FAILED,
+                ErrorCode.TRANSFER_IO_FAILED,
+                diagnostic="The server listed an unsafe file name",
+            )
+        return name
 
     @staticmethod
     def _join_remote(base: str, *parts: str) -> str:
