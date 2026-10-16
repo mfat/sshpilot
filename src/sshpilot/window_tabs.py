@@ -29,6 +29,7 @@ from .dnd_payload import (
     new_internal_drop_target,
 )
 from .terminal import TerminalWidget
+from .terminal_input import typed_command_line
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .connection_display import get_connection_alias, get_connection_host
@@ -82,11 +83,23 @@ def find_tab_page_at(tab_bar, x, y):
 def _cd_command(path: str, *, quiet: bool = False) -> bytes:
     """The ``cd`` typed into a terminal pane. *quiet* leads with a space, so
     shells that ignore space-prefixed lines (HISTCONTROL) keep automatic
-    navigation out of the history."""
+    navigation out of the history. Raises ValueError for a *path* that cannot
+    be typed."""
     from .file_manager_integration import quote_remote_path
 
     prefix = " " if quiet else ""
-    return f"{prefix}cd {quote_remote_path(path)}\n".encode("utf-8")
+    return typed_command_line(f"{prefix}cd {quote_remote_path(path)}")
+
+
+def _type_cd(terminal, path: str, *, quiet: bool = False) -> bool:
+    """Type the ``cd`` into *terminal*; False when *path* cannot be typed."""
+    try:
+        command = _cd_command(path, quiet=quiet)
+    except ValueError as exc:
+        logger.warning("Not changing the terminal's folder: %s", exc)
+        return False
+    terminal.feed_child_data_when_shell_ready(command)
+    return True
 
 
 class WindowTabsMixin:
@@ -684,7 +697,7 @@ class WindowTabsMixin:
             )
             # Following navigation, the remote shell starts in the folder too.
             if created and side == 'remote' and path:
-                terminal.feed_child_data_when_shell_ready(_cd_command(path, quiet=True))
+                _type_cd(terminal, path, quiet=True)
 
     def _file_manager_config(self) -> dict:
         config = getattr(self, 'config', None)
@@ -751,7 +764,7 @@ class WindowTabsMixin:
         if terminal is None:
             return False
         if not (created and side == 'local'):
-            terminal.feed_child_data_when_shell_ready(_cd_command(path))
+            return _type_cd(terminal, path)
         return True
 
     def toggle_file_manager_terminal(self, content, side: str, active: bool, path: str) -> bool:
@@ -770,7 +783,7 @@ class WindowTabsMixin:
         if terminal is None:
             return False
         if created and side == 'remote' and path:
-            terminal.feed_child_data_when_shell_ready(_cd_command(path, quiet=True))
+            _type_cd(terminal, path, quiet=True)
         return True
 
     def sync_file_manager_terminal(self, content, path: str, side: str) -> None:
@@ -791,7 +804,7 @@ class WindowTabsMixin:
             # Not spawned yet: start the shell there instead of typing a cd.
             terminal._local_shell_cwd = path
             return
-        terminal.feed_child_data_when_shell_ready(_cd_command(path, quiet=True))
+        _type_cd(terminal, path, quiet=True)
 
     def _on_tabmenu_hide_terminal_panel(self, action, param=None):
         try:

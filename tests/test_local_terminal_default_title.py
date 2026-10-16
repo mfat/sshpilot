@@ -58,6 +58,19 @@ def test_local_terminal_uses_terminal_as_default_title(monkeypatch):
     assert terminal.connection.nickname == 'Terminal'
 
 
+def test_local_terminal_never_types_control_characters(monkeypatch):
+    from sshpilot import terminal_manager as module
+
+    created = []
+    monkeypatch.setattr(module, 'TerminalWidget', lambda *args: created.append(args))
+    window = SimpleNamespace(config=object(), connection_manager=object())
+
+    assert module.TerminalManager(window).show_local_terminal(
+        command="docker logs 'a\x15id>pwned #'",
+    ) is False
+    assert created == []
+
+
 def test_broadcast_discovery_uses_local_terminal_predicate():
     from sshpilot.terminal_manager import TerminalManager
 

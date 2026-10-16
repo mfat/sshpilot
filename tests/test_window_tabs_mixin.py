@@ -475,6 +475,26 @@ def test_open_in_terminal_cds_a_running_local_shell(monkeypatch):
     assert created == [] and local.fed == [b"cd /tmp\n"]
 
 
+@pytest.mark.parametrize("side", ["local", "remote"])
+def test_open_in_terminal_never_types_control_characters(monkeypatch, side):
+    panel = _Terminal()
+    win, content, _embed, _host, _created = _open_in_terminal_fixture(
+        monkeypatch, panels={side: panel},
+    )
+    # Typed, Ctrl+U erases the opening quote and ``id>pwned #'`` runs.
+    assert not win.open_file_manager_terminal_at(
+        content, "/srv/reports\x15id>pwned #", side,
+    )
+    assert panel.fed == []
+
+
+def test_open_in_terminal_starts_a_local_shell_in_any_folder(monkeypatch):
+    win, content, embed, _host, created = _open_in_terminal_fixture(monkeypatch)
+    path = "/home/me/reports\x15id>pwned #"
+    assert win.open_file_manager_terminal_at(content, path, "local")
+    assert created == [("local", path)] and embed.panels["local"].fed == []
+
+
 @pytest.mark.parametrize("setting, sides", [
     ("remote", ["remote"]),
     ("local", ["local"]),
@@ -524,6 +544,17 @@ def test_navigation_sync_cds_the_terminal_under_the_pane(monkeypatch):
     assert created == []
 
 
+def test_navigation_sync_never_types_control_characters(monkeypatch):
+    remote, local = _Terminal(), _Terminal()
+    win, content, _embed, _host, _created = _open_in_terminal_fixture(
+        monkeypatch, panels={"remote": remote, "local": local},
+        fm_config={"terminal_follows_navigation": True},
+    )
+    win.sync_file_manager_terminal(content, "/srv/a\x03id #", "remote")
+    win.sync_file_manager_terminal(content, "/tmp/a\tb", "local")
+    assert remote.fed == [] and local.fed == []
+
+
 def test_navigation_sync_never_opens_a_terminal(monkeypatch):
     win, content, embed, _host, created = _open_in_terminal_fixture(
         monkeypatch, fm_config={"terminal_follows_navigation": True},
@@ -550,6 +581,13 @@ def test_terminal_button_opens_the_pane_terminal_in_its_folder(monkeypatch):
     assert created == [("remote", "conn"), ("local", "/home/me")]
     assert embed.panels["remote"].fed == [b" cd /srv/app\n"]
     assert embed.panels["local"].fed == []
+
+
+def test_terminal_button_opens_at_home_when_the_folder_cannot_be_typed(monkeypatch):
+    win, content, embed, _host, created = _open_in_terminal_fixture(monkeypatch)
+    assert win.toggle_file_manager_terminal(content, "remote", True, "/srv/a\x15id #")
+    assert created == [("remote", "conn")]
+    assert embed.panels["remote"].fed == []
 
 
 def test_terminal_button_closes_only_its_side(monkeypatch):
