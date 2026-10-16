@@ -11,6 +11,7 @@ import logging
 import ntpath
 import os
 import posixpath
+import re
 import shlex
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +145,31 @@ def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -
             if same(candidate[:len(prefix)], prefix):
                 return _join_rebased_home(str(target_home), candidate[len(prefix):])
     return path
+
+
+# Files in the SSH directory that OpenSSH reads as something other than a key or client config.
+# No path in a backup may name one: ``rc`` is run by sshd at login, ``authorized_keys`` grants
+# logins.
+_RESERVED_SSH_FILENAMES = frozenset({
+    'known_hosts', 'known_hosts2', 'authorized_keys', 'authorized_keys2', 'rc', 'environment',
+})
+
+# Every line a key file is made of: PEM/RFC4716 armour, a ``Name: value`` header (encrypted
+# PEM, PuTTY), base64, or a public-key line. ``=`` only as trailing padding and no bare ``\r``:
+# both separate a keyword from its argument in ssh_config, and a file restored into ``~/.ssh``
+# may match the user's own ``Include`` glob.
+_KEY_FILE_LINE = re.compile(
+    rb'(?:-{4,5} ?(?:BEGIN|END) [A-Z0-9 ]+ ?-{4,5}'
+    rb'|[A-Za-z0-9-]+: .*'
+    rb'|[A-Za-z0-9+/]*={0,2}'
+    rb'|(?:ssh|ecdsa|sk)-[a-z0-9@.-]+ [A-Za-z0-9+/]+={0,2}(?: .*)?'
+    rb')\r?')
+
+
+def _is_key_material(data: bytes) -> bool:
+    """True if *data* consists of key-file lines only, so that whatever else may read the file
+    (ssh via ``Include``, the app's own JSON loaders) finds nothing in it to act on."""
+    return all(_KEY_FILE_LINE.fullmatch(line) for line in data.split(b'\n'))
 
 
 # SSH directives whose argument is a path on the LOCAL filesystem — the only lines where a
@@ -1090,6 +1116,22 @@ class BackupManager:
         except Exception:
             return False
 
+    def _is_key_restore_target(self, path: str) -> bool:
+        """True if a backup may create a key file at *path*: inside a key store sshPilot manages
+        (``~/.ssh``; in isolated mode also the app config dir), symlinks resolved, and not under
+        a name OpenSSH or the app reserves for something else."""
+        roots = [get_ssh_dir()]
+        if self._current_isolated_mode():
+            roots.append(get_config_dir())
+        real = os.path.realpath(path)
+        # The client config (default and isolated main file) restores through its own path.
+        if os.path.basename(real).lower() in _RESERVED_SSH_FILENAMES | {'config', 'ssh_config'}:
+            return False
+        return any(
+            real != root and _is_under(real, root)
+            for root in (os.path.realpath(str(r)) for r in roots)
+        )
+
     def _restore_private_keys(self, manifest: Dict[str, Any]) -> Tuple[int, int]:
         """Restore private keys embedded in a backup to their original paths.
 
@@ -1098,6 +1140,10 @@ class BackupManager:
         import over destroying a key the user already has. Returns
         ``(written, skipped_existing)`` — ``written`` new keys placed, ``skipped_existing``
         left untouched because a file was already there.
+
+        The paths and bytes are backup data, so they only decide *which key* is restored: an
+        entry that points outside the key directories or is not key material is refused —
+        anywhere else a new file is a startup script, a plugin, an autostart entry.
         """
         written = 0
         skipped = 0
@@ -1117,24 +1163,33 @@ class BackupManager:
                     logger.info("Private key already exists; leaving it untouched: %s", path)
                     skipped += 1
                     continue
+                content = base64.b64decode(raw.encode('ascii'))
+                if not self._is_key_restore_target(path) or not _is_key_material(content):
+                    logger.warning("Skipping unsafe private key restore: %s", path)
+                    continue
                 os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
                 with open(path, 'wb') as f:
-                    f.write(base64.b64decode(raw.encode('ascii')))
+                    f.write(content)
                 private_mode = int(item.get('mode') or 0o600) & 0o777
                 # Private keys must never be restored with group/other access.
                 # On Windows OpenSSH checks the ACL, not mode bits.
                 chmod_private(path, (private_mode & 0o600) or 0o600)
 
-                # The matching .pub: also never overwrite an existing file.
-                public_path = _rebase_home_path(
-                    os.path.expanduser(str(item.get('public_path') or '')),
-                    source_home, target_home)
+                # The matching .pub: also never overwrite an existing file. It sits next to its
+                # key (where export read it), whatever the backup's 'public_path' says, and is
+                # never executable.
+                public_path = f"{path}.pub"
                 public_raw = item.get('public_content_b64')
-                if public_path and public_raw and not os.path.exists(public_path):
-                    os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
-                    with open(public_path, 'wb') as f:
-                        f.write(base64.b64decode(public_raw.encode('ascii')))
-                    os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
+                if public_raw and not os.path.exists(public_path):
+                    public_content = base64.b64decode(public_raw.encode('ascii'))
+                    if self._is_key_restore_target(public_path) \
+                            and _is_key_material(public_content):
+                        with open(public_path, 'wb') as f:
+                            f.write(public_content)
+                        public_mode = int(item.get('public_mode') or 0o644)
+                        os.chmod(public_path, (public_mode & 0o644) or 0o644)
+                    else:
+                        logger.warning("Skipping unsafe public key restore: %s", public_path)
                 written += 1
             except Exception:
                 logger.warning("Failed to restore a private key", exc_info=True)
@@ -1320,7 +1375,8 @@ class BackupManager:
                 dest = os.path.abspath(main_path)
             else:
                 dest = os.path.normpath(os.path.join(root, rel))
-                if not _is_under(dest, root):
+                if not _is_under(dest, root) \
+                        or os.path.basename(dest).lower() in _RESERVED_SSH_FILENAMES:
                     logger.warning("Skipping unsafe SSH config restore path: %s", rel)
                     continue
             text = _rewrite_includes(content or '', source_root)

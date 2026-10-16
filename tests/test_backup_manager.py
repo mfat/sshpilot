@@ -1,5 +1,6 @@
 """Tests for the .spbk credential gather/restore in BackupManager."""
 
+import base64
 import json
 import os
 
@@ -13,6 +14,10 @@ from sshpilot.api.models.secrets import (
 )
 from sshpilot.secret_storage import password_spec, sudo_password_spec
 from sshpilot.backup_archive import read_spbk
+
+PRIVATE_KEY = (b"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n"
+               b"-----END OPENSSH PRIVATE KEY-----\n")
+PUBLIC_KEY = b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 alice@laptop\n"
 
 
 class FakeMgr:
@@ -400,10 +405,11 @@ def test_spbk_export_honors_category_options(monkeypatch, tmp_path):
 
 def test_spbk_private_key_roundtrip_is_opt_in(monkeypatch, tmp_path):
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(tmp_path))
     key_path = tmp_path / "id_ed25519"
     pub_path = tmp_path / "id_ed25519.pub"
-    key_path.write_bytes(b"PRIVATE KEY\n")
-    pub_path.write_bytes(b"PUBLIC KEY\n")
+    key_path.write_bytes(PRIVATE_KEY)
+    pub_path.write_bytes(PUBLIC_KEY)
     key_path.chmod(0o600)
 
     selected = FakeConn("A", "h.example", "alice")
@@ -445,14 +451,15 @@ def test_spbk_private_key_roundtrip_is_opt_in(monkeypatch, tmp_path):
     assert success, error
     assert restored == 0
     assert restored_keys == 1
-    assert key_path.read_bytes() == b"PRIVATE KEY\n"
-    assert pub_path.read_bytes() == b"PUBLIC KEY\n"
+    assert key_path.read_bytes() == PRIVATE_KEY
+    assert pub_path.read_bytes() == PUBLIC_KEY
     assert oct(key_path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_spbk_restore_clamps_private_key_permissions(monkeypatch, tmp_path):
     """Backed-up private key modes must not restore group/other access."""
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(tmp_path))
     key_path = tmp_path / "id_ed25519"
     mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
     manifest = {
@@ -469,7 +476,7 @@ def test_spbk_restore_clamps_private_key_permissions(monkeypatch, tmp_path):
         "private_keys": [{
             "path": str(key_path),
             "mode": 0o644,
-            "content_b64": "UFJJVkFURSBLRVkK",
+            "content_b64": base64.b64encode(PRIVATE_KEY).decode(),
         }],
     }
 
@@ -488,8 +495,105 @@ def test_spbk_restore_clamps_private_key_permissions(monkeypatch, tmp_path):
     assert success, error
     assert restored == 0
     assert restored_keys == 1
-    assert key_path.read_bytes() == b"PRIVATE KEY\n"
+    assert key_path.read_bytes() == PRIVATE_KEY
     assert oct(key_path.stat().st_mode & 0o777) == "0o600"
+
+
+def _key_restore_home(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(home / ".ssh"))
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(home / ".config" / "sshpilot"))
+    return home
+
+
+def _files_under(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if not p.is_dir())
+
+
+def test_private_key_restore_is_confined_to_the_key_directory(monkeypatch, tmp_path):
+    """path/public_path/public_mode are backup data: nothing lands outside ~/.ssh or on a name
+    OpenSSH reads as something else, the .pub sits next to its key and is never executable."""
+    home = _key_restore_home(monkeypatch, tmp_path)
+    (home / ".ssh" / "link").symlink_to(tmp_path / "dangling")
+    key = base64.b64encode(PRIVATE_KEY).decode()
+    pub = base64.b64encode(PUBLIC_KEY).decode()
+    targets = [
+        "/home/alice/.local/lib/python3.12/site-packages/x.pth",
+        "/home/alice/.local/share/sshpilot/plugins/p/__init__.py",
+        "/home/alice/.config/sshpilot/id_isolated",       # a key store in isolated mode only
+        "/home/alice/.ssh/../.bash_aliases",
+        "/home/alice/.ssh/link",
+        str(tmp_path / "elsewhere"),
+        "/home/alice/.ssh/rc",
+        "/home/alice/.ssh/environment",
+        "/home/alice/.ssh/config",
+        "/home/alice/.ssh/Authorized_Keys",
+    ]
+    manifest = {"source_home": "/home/alice", "private_keys": [
+        *({"path": path, "content_b64": key} for path in targets),
+        {"path": "/home/alice/.ssh/work/id_ok", "content_b64": key,
+         "public_path": "/home/alice/.local/bin/ssh", "public_content_b64": pub,
+         "public_mode": 0o755},
+    ]}
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    assert mgr._restore_private_keys(manifest) == (1, 0)
+    assert _files_under(tmp_path) == [
+        "home/.ssh/link", "home/.ssh/work/id_ok", "home/.ssh/work/id_ok.pub"]
+    assert (home / ".ssh" / "work" / "id_ok.pub").read_bytes() == PUBLIC_KEY
+    assert (home / ".ssh" / "work" / "id_ok.pub").stat().st_mode & 0o777 == 0o644
+
+
+def test_private_key_restore_writes_key_material_only(monkeypatch, tmp_path):
+    """A file in ~/.ssh may match the user's own ``Include`` glob, so what is restored there must
+    not be readable as anything but a key."""
+    home = _key_restore_home(monkeypatch, tmp_path)
+    header = b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    hostile = [
+        b'Match exec "touch /tmp/pwned"\n',
+        header + b'Match exec "touch /tmp/pwned"\n',
+        b"# " + header + b"Host *\n    ProxyCommand /tmp/pwned\n",
+        header + b"ProxyCommand=/tmp/pwned\n",
+        header + b"ProxyCommand\r/tmp/pwned\n",
+        b'{"plugins": {"enabled": ["x"]}}\n',
+    ]
+    manifest = {"source_home": "/home/alice", "private_keys": [
+        *({"path": f"/home/alice/.ssh/config.d/{n}", "content_b64": base64.b64encode(c).decode()}
+          for n, c in enumerate(hostile)),
+        {"path": "/home/alice/.ssh/config.d/id_ok",
+         "content_b64": base64.b64encode(PRIVATE_KEY).decode(),
+         "public_content_b64": base64.b64encode(hostile[0]).decode()},
+    ]}
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    assert mgr._restore_private_keys(manifest) == (1, 0)
+    assert _files_under(home) == [".ssh/config.d/id_ok"]
+
+    for genuine in (
+        PRIVATE_KEY, PUBLIC_KEY, PRIVATE_KEY.replace(b"\n", b"\r\n"), PRIVATE_KEY.rstrip(b"\n"),
+        b"-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        b"DEK-Info: AES-128-CBC,83E8288B70623FE7\n\nAAAA/+==\n-----END RSA PRIVATE KEY-----\n",
+        b"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nComment: a key\n"
+        b"Public-Lines: 1\nAAAA\nPrivate-Lines: 1\nAAAA\nPrivate-MAC: 00ff\n",
+        b"---- BEGIN SSH2 PUBLIC KEY ----\nComment: \"a key\"\nAAAA\n---- END SSH2 PUBLIC KEY ----\n",
+    ):
+        assert bm._is_key_material(genuine)
+
+
+def test_private_key_restore_into_isolated_key_store(monkeypatch, tmp_path):
+    """Isolated mode keeps its keys in the app config dir, so they restore there too."""
+    home = _key_restore_home(monkeypatch, tmp_path)
+    manifest = {"source_home": "/home/alice", "private_keys": [
+        {"path": "/home/alice/.config/sshpilot/id_isolated",
+         "content_b64": base64.b64encode(PRIVATE_KEY).decode()},
+        {"path": "/home/alice/.config/sshpilot/known_hosts",
+         "content_b64": base64.b64encode(PUBLIC_KEY).decode()},
+        {"path": "/home/alice/.config/sshpilot/ssh_config",
+         "content_b64": base64.b64encode(PUBLIC_KEY).decode()},
+    ]}
+    mgr = bm.BackupManager(ModeConfig(tmp_path / "config.json", True))
+    assert mgr._restore_private_keys(manifest) == (1, 0)
+    assert _files_under(home) == [".config/sshpilot/id_isolated"]
 
 
 def test_spbk_private_key_merge_skips_existing(monkeypatch, tmp_path):
@@ -543,6 +647,7 @@ def test_spbk_replace_mode_never_overwrites_private_key(monkeypatch, tmp_path):
     only keys whose path doesn't exist are written, and the rest are reported as skipped."""
     import base64
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(tmp_path))
     key_path = tmp_path / "id_ed25519"
     pub_path = tmp_path / "id_ed25519.pub"
     key_path.write_bytes(b"EXISTING PRIVATE\n")
@@ -561,7 +666,7 @@ def test_spbk_replace_mode_never_overwrites_private_key(monkeypatch, tmp_path):
              "public_path": str(pub_path), "public_mode": 0o644,
              "public_content_b64": base64.b64encode(b"BACKUP PUB\n").decode()},
             {"path": str(new_path), "mode": 0o600,
-             "content_b64": base64.b64encode(b"NEW KEY\n").decode()},
+             "content_b64": base64.b64encode(PRIVATE_KEY).decode()},
         ],
     }
     success, error, restored, restored_keys = mgr.apply_imported_manifest(
@@ -571,7 +676,7 @@ def test_spbk_replace_mode_never_overwrites_private_key(monkeypatch, tmp_path):
     assert success, error
     assert key_path.read_bytes() == b"EXISTING PRIVATE\n"     # NOT overwritten, despite replace
     assert pub_path.read_bytes() == b"EXISTING PUBLIC\n"      # nor its .pub
-    assert new_path.read_bytes() == b"NEW KEY\n"              # only the non-existing one written
+    assert new_path.read_bytes() == PRIVATE_KEY               # only the non-existing one written
     assert restored_keys == 1
     assert mgr.last_import_skipped_keys == 1                  # existing key protected + counted
 
@@ -628,10 +733,11 @@ def test_spbk_private_key_merge_skips_public_when_private_exists(monkeypatch, tm
 def test_spbk_private_key_merge_restores_missing(monkeypatch, tmp_path):
     """Merge mode still restores keys whose paths do not yet exist."""
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(tmp_path))
     key_path = tmp_path / "id_ed25519"
     pub_path = tmp_path / "id_ed25519.pub"
-    key_path.write_bytes(b"PRIVATE KEY\n")
-    pub_path.write_bytes(b"PUBLIC KEY\n")
+    key_path.write_bytes(PRIVATE_KEY)
+    pub_path.write_bytes(PUBLIC_KEY)
 
     selected = FakeConn("A", "h.example", "alice")
     selected.keyfile = str(key_path)
@@ -669,8 +775,8 @@ def test_spbk_private_key_merge_restores_missing(monkeypatch, tmp_path):
     assert success, error
     assert restored == 0
     assert restored_keys == 1
-    assert key_path.read_bytes() == b"PRIVATE KEY\n"
-    assert pub_path.read_bytes() == b"PUBLIC KEY\n"
+    assert key_path.read_bytes() == PRIVATE_KEY
+    assert pub_path.read_bytes() == PUBLIC_KEY
 
 
 def test_spbk_restore_honors_secret_option(monkeypatch, tmp_path):
@@ -836,6 +942,30 @@ def test_replace_restores_tree_rebased_and_maps_main(monkeypatch, tmp_path):
     assert f"IdentityFile {newhome}/.ssh/id" in main_text     # home rebased
     assert "/home/alice" not in main_text
     assert (target_root / "conf.d" / "work.conf").read_text().count("Host work") == 1
+
+
+def test_replace_tree_never_writes_files_openssh_reserves(monkeypatch, tmp_path):
+    """A "config fragment" named like sshd's per-user files is neither created nor replaced."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    target_root = tmp_path / "dotssh"
+    target_root.mkdir()
+    main = target_root / "config"
+    (target_root / "authorized_keys").write_text("ssh-ed25519 AAAA mine\n")
+
+    import_data = {
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {
+            "config": "Host a\n",
+            "work/config": "Host work\n",
+            "rc": "touch /tmp/pwned\n",
+            "authorized_keys": "ssh-ed25519 AAAA theirs\n",
+            "known_hosts": "a ssh-ed25519 AAAA\n",
+        },
+    }
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    assert mgr._restore_ssh_tree(import_data, None, str(tmp_path))
+    assert _files_under(target_root) == ["authorized_keys", "config", "work/config"]
+    assert (target_root / "authorized_keys").read_text() == "ssh-ed25519 AAAA mine\n"
 
 
 def test_merge_fragment_dedups_drops_globals_keeps_unindented(monkeypatch, tmp_path):
