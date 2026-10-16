@@ -52,7 +52,7 @@ def _double_quote(text: str) -> str:
 
 def read_public_key(public_key_path: str) -> str:
     """The single public-key line in *public_key_path*."""
-    with open(public_key_path, "r", encoding="utf-8") as handle:
+    with open(public_key_path, encoding="utf-8") as handle:
         lines = [line.strip() for line in handle if line.strip()]
     if len(lines) != 1:
         raise ValueError("The public key file must contain exactly one key")
