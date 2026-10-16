@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from gettext import gettext as _, ngettext
 
 from .platform_utils import is_macos, is_windows

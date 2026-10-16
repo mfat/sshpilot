@@ -198,7 +198,7 @@ def _abi_self_test(lib: ctypes.CDLL) -> Optional[str]:
         lib.vterm_set_utf8(vt, 1)
         screen = lib.vterm_obtain_screen(vt)
         lib.vterm_screen_reset(screen, 1)
-        probe = "\x1b[1;3;4;7;9;38;2;10;20;30;48;5;196mA\x1b[0mé中".encode("utf-8")
+        probe = "\x1b[1;3;4;7;9;38;2;10;20;30;48;5;196mA\x1b[0mé中".encode()
         lib.vterm_input_write(vt, probe, len(probe))
         # Room past one cell, so a larger struct cannot write out of bounds.
         buffer = ctypes.create_string_buffer(CELL_SIZE * 4)
