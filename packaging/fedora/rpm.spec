@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.2}
+Version:        %{?version}%{!?version:6.3.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -148,6 +148,13 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Oct 16 2026 mFat <newmfat@gmail.com> - 6.3.3-1
+- Initial release of Windows port
+- Option to remember a password for the current session (until SSH Pilot quits)
+- Security hardening: refuse shell text in HostName/ProxyJump, control characters typed into terminals, and unsafe paths in SCP downloads and backup restores
+- Old config.json files are upgraded instead of reset to defaults
+- Various fixes and improvements
+
 * Fri Oct 16 2026 mFat <newmfat@gmail.com> - 6.3.2-1
 - Experimental Windows port: run from source or install with the new NSIS installer
 - Local shell tabs on the built-in terminal backend, with ConPTY and libvterm on Windows
