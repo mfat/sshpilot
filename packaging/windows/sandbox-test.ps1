@@ -2,7 +2,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\windows\sandbox-test.ps1 [-Gpu] [-NoLaunch]
 #
-# Needs build\windows\sshPilot-<version>-setup.exe (build.ps1 -Installer) and
+# Needs build\windows\SSHPilot-<version>-windows-<arch>-setup.exe (build.ps1 -Installer) and
 # the Windows Sandbox feature (Windows 10/11 Pro or Enterprise). Writes
 # build\windows\sshpilot-sandbox.wsb, which maps build\windows and this folder
 # read-only and build\windows\sandbox-results writable, and runs
@@ -16,7 +16,7 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $build = Join-Path $root "build\windows"
 $results = Join-Path $build "sandbox-results"
 
-if (-not (Get-ChildItem $build -Filter "sshPilot-*-setup.exe" -ErrorAction SilentlyContinue)) {
+if (-not (Get-ChildItem $build -Filter "SSHPilot-*-setup.exe" -ErrorAction SilentlyContinue)) {
     throw "no installer in ${build}: run build.ps1 -Installer first"
 }
 if (Test-Path $results) { Remove-Item -LiteralPath $results -Recurse -Force }

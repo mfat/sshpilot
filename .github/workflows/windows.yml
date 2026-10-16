@@ -150,7 +150,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sshpilot-windows-unsigned
-          path: build/windows/sshPilot-*-setup.exe
+          path: build/windows/SSHPilot-*-setup.exe
 
       - name: Sign with SignPath
         if: env.SIGNPATH_ENABLED == 'true'
@@ -177,7 +177,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/sshPilot-*-setup.exe' }}
+          files: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/SSHPilot-*-setup.exe' }}
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

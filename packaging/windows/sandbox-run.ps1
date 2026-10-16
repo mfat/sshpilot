@@ -22,7 +22,7 @@ Check "OpenSSH client present" (Test-Path "$env:SystemRoot\System32\OpenSSH\ssh.
 Check "fresh profile (no sshPilot settings)" (-not (Test-Path "$env:APPDATA\sshpilot") -and -not (Test-Path "$env:LOCALAPPDATA\sshpilot"))
 
 "`n== Install"
-$setup = Get-ChildItem $build -Filter "sshPilot-*-setup.exe" | Sort-Object LastWriteTime | Select-Object -Last 1
+$setup = Get-ChildItem $build -Filter "SSHPilot-*-setup.exe" | Sort-Object LastWriteTime | Select-Object -Last 1
 "Installer: $($setup.Name) ($([math]::Round($setup.Length / 1MB, 1)) MiB, built $($setup.LastWriteTime))"
 $p = Start-Process $setup.FullName -ArgumentList "/S" -PassThru -Wait
 Check "silent install exit code 0" ($p.ExitCode -eq 0) "(got $($p.ExitCode))"

@@ -15,7 +15,7 @@ Unicode true
   !error "pass /DSOURCE=<the PyInstaller sshPilot folder>"
 !endif
 !ifndef OUTFILE
-  !define OUTFILE "sshPilot-${VERSION}-setup.exe"
+  !define OUTFILE "SSHPilot-${VERSION}-windows-setup.exe"
 !endif
 
 ; APP_ID names the install folder and registry keys; renaming it would orphan
