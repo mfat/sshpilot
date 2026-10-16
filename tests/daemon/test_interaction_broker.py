@@ -35,6 +35,7 @@ from sshpilot.daemon.interaction_broker import (
     _operation_destination,
 )
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
+from sshpilot.platform.windows.environment import WINDOWS_PROCESS_ENV
 
 SESSION_ID = SessionId("session-1")
 CONNECTION_ID = ConnectionId(
@@ -42,6 +43,27 @@ CONNECTION_ID = ConnectionId(
 )
 CLIENT_A = ClientId("client-a")
 CLIENT_B = ClientId("client-b")
+
+
+def _launch_environment() -> dict:
+    """The environment a launch provider hands the broker.
+
+    Real launches keep the variables Windows programs need to start at all
+    (``WINDOWS_PROCESS_ENV``): without ``SystemRoot`` the askpass helper's
+    Winsock fails to load, so a bare HOME/PATH environment never reaches it.
+    """
+    environment = {
+        "HOME": "/tmp",
+        "PATH": os.environ.get("PATH", ""),
+        "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
+    }
+    if sys.platform == "win32":
+        environment.update(
+            (key, value)
+            for key, value in os.environ.items()
+            if key.upper() in WINDOWS_PROCESS_ENV
+        )
+    return environment
 
 
 def test_operation_destination_is_the_host_before_a_remote_command():
@@ -383,11 +405,7 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
         ),
         lambda _connection_id, **_kwargs: (
             ("/usr/bin/ssh", "example"),
-            {
-                "HOME": "/tmp",
-                "PATH": os.environ.get("PATH", ""),
-                "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
-            },
+            _launch_environment(),
         ),
     )
     # Helper must work without PYTHONPATH (OpenSSH may spawn with a reduced env).
@@ -485,11 +503,7 @@ def test_frozen_build_askpass_helper_round_trips_a_real_secret(tmp_path, monkeyp
             ),
             lambda _connection_id, **_kwargs: (
                 ("/usr/bin/ssh", "example"),
-                {
-                    "HOME": "/tmp",
-                    "PATH": os.environ.get("PATH", ""),
-                    "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
-                },
+                _launch_environment(),
             ),
         )
         assert environment["SSH_ASKPASS"] == str(instance._askpass_helper_path)
@@ -1825,11 +1839,7 @@ def test_cancelled_otp_prompt_is_not_replaced_by_openssh_retries(monkeypatch) ->
             ),
             lambda _connection_id, **_kwargs: (
                 ("/usr/bin/ssh", "example"),
-                {
-                    "HOME": "/tmp",
-                    "PATH": os.environ.get("PATH", ""),
-                    "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
-                },
+                _launch_environment(),
             ),
         )
         prompt = "(alice@example.test) Verification code: "

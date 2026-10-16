@@ -323,17 +323,33 @@ def test_tree_delete_resolves_roots_that_depend_on_each_other(client, tmp_path):
     for name in ("x", "y", "z"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "f").write_bytes(b"x")
-    (tmp_path / "z" / "sub").mkdir()
-    (tmp_path / "x" / "link").symlink_to(tmp_path / "z")
+    (tmp_path / "x" / "link").symlink_to(tmp_path / "z", target_is_directory=True)
 
     runtime = SftpServiceRuntime.__new__(SftpServiceRuntime)
-    runtime._remove_trees(
-        client,
-        [str(tmp_path / "x"), str(tmp_path / "x" / ".." / "y"), str(tmp_path / "x" / "link" / "sub")],
-    )
+    runtime._remove_trees(client, [str(tmp_path / "x"), str(tmp_path / "x" / ".." / "y")])
 
     assert not (tmp_path / "x").exists()
     assert not (tmp_path / "y").exists()
+    # A directory link is removed as a link; its target is left alone.
+    assert (tmp_path / "z" / "f").exists()
+
+
+def test_tree_delete_resolves_a_root_spelled_through_a_symlink(client, tmp_path):
+    """``x/link/sub`` must still name ``z/sub`` after ``x`` has been deleted."""
+    from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
+
+    for name in ("x", "z"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "f").write_bytes(b"x")
+    (tmp_path / "z" / "sub").mkdir()
+    (tmp_path / "x" / "link").symlink_to(tmp_path / "z", target_is_directory=True)
+
+    runtime = SftpServiceRuntime.__new__(SftpServiceRuntime)
+    runtime._remove_trees(
+        client, [str(tmp_path / "x"), str(tmp_path / "x" / "link" / "sub")]
+    )
+
+    assert not (tmp_path / "x").exists()
     assert not (tmp_path / "z" / "sub").exists()
     # Reached only through the symlink, which is removed as a link.
     assert (tmp_path / "z" / "f").exists()
@@ -399,6 +415,33 @@ def test_adaptive_read_grows_window_over_a_slow_link(tmp_path):
     # plus open/close; adaptive should finish the data phase in fewer windows.
     # Bound leaves room for handshake and EOF follow-up.
     assert round_trips < 10, f"adaptive read took {round_trips:.1f} round trips"
+
+
+def test_read_capped_below_the_advertised_limit_follows_up_in_parallel(tmp_path):
+    """Win32-OpenSSH advertises 255 KiB READs but answers at most 100 KiB.
+
+    Chunks larger than the server's real cap, as when it under-delivers on its
+    limits, come back short. Their missing pieces must be fetched together,
+    not one round trip per chunk.
+    """
+    delay = 0.1
+    size = 4 * 1024 * 1024
+    content = os.urandom(size)
+    path = tmp_path / "big.bin"
+    path.write_bytes(content)
+    sftp, process, stdout = _start_client(delay)
+    try:
+        # Above what either server answers per READ (~255 KiB / 100 KiB).
+        sftp.max_read_length = 1024 * 1024
+        started = time.monotonic()
+        with sftp.file(str(path), "rb") as handle:
+            assert handle.read(size + 1) == content
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    # open, first replies, their missing pieces, EOF follow-up, close. One
+    # follow-up per short reply made this 12+.
+    assert round_trips < 9, f"capped read took {round_trips:.1f} round trips"
 
 
 def test_adaptive_write_grows_window_over_a_slow_link(tmp_path):
@@ -626,8 +669,10 @@ def test_atomic_upload_many_writes_a_file_that_outgrew_one_chunk(client, tmp_pat
 def test_stat_many_missing_on_error_tolerates_non_enoent_failures(client, tmp_path):
     present = tmp_path / "here.bin"
     present.write_bytes(b"x")
-    # ENAMETOOLONG comes back as FX_FAILURE, not FX_NO_SUCH_FILE.
-    odd = str(tmp_path / ("n" * 300))
+    # Not FX_NO_SUCH_FILE: OpenSSH answers ENAMETOOLONG with FX_FAILURE, and
+    # Win32-OpenSSH, which reports a merely over-long name as missing,
+    # refuses a name this long with FX_BAD_MESSAGE.
+    odd = str(tmp_path / ("n" * 40000))
     with pytest.raises(proto.SFTPError):
         client.stat_many([odd])
     attrs = client.stat_many([odd, str(present)], missing_on_error=True)

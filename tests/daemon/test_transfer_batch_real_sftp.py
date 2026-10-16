@@ -157,15 +157,13 @@ def test_unwritable_destination_in_a_pipelined_window_is_attributed(batch, tmp_p
     src = _tree(tmp_path / "src", {"f1": 5, "f2": 5, "f3": 5})
     dst = tmp_path / "dst"
     dst.mkdir()
+    # A file where the destination's directory should be: no writes land
+    # under it on any platform (Windows ignores a directory's mode bits).
     blocked = tmp_path / "blocked"
-    blocked.mkdir()
-    os.chmod(blocked, 0o500)
-    try:
-        items = _items(src, dst, ["f1", "f2", "f3"])
-        items[1] = TransferItem(local_path=str(src / "f2"), remote_path=str(blocked / "f2"))
-        summary, _events = batch(TransferDirection.UPLOAD, items)
-    finally:
-        os.chmod(blocked, 0o700)
+    blocked.write_bytes(b"")
+    items = _items(src, dst, ["f1", "f2", "f3"])
+    items[1] = TransferItem(local_path=str(src / "f2"), remote_path=str(blocked / "f2"))
+    summary, _events = batch(TransferDirection.UPLOAD, items)
 
     assert summary.state is TransferState.FAILED
     assert [f.index for f in summary.item_failures] == [1]

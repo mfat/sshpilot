@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
-from sshpilot.platform.process import pid_alive
+from sshpilot.platform.process import pid_alive, windows_process_exited
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class ProcessIdentity:
             # Either the process is gone, or we could not read its start time.
             # Only the first is proof of absence, so an existing PID we cannot
             # fingerprint counts as alive.
-            return _pid_exists(self.pid)
+            return _pid_exists(self.pid) and not windows_process_exited(self.pid)
         # Creation times are floats from the same source; compare with a
         # tolerance well under any plausible PID-recycle interval.
         if abs(current - self.create_time) >= 0.05:
@@ -141,6 +141,8 @@ def pid_exists(pid: int) -> bool:
 def _is_zombie(pid: int) -> bool:
     """Whether ``pid`` has exited but not yet been waited for."""
 
+    if windows_process_exited(pid):
+        return True
     try:
         import psutil
 
