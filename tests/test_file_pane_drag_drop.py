@@ -1,5 +1,6 @@
 import json
 import os
+import posixpath
 
 
 def test_drop_rejects_stale_drag_metadata(load_file_manager_window, monkeypatch):
@@ -44,7 +45,7 @@ def test_drop_rejects_stale_drag_metadata(load_file_manager_window, monkeypatch)
         "path": source_pane._current_path,
         "position": 0,
         "entry_name": entry_alpha.name,
-        "entry_path": os.path.join(source_pane._current_path, entry_alpha.name),
+        "entry_path": posixpath.join(source_pane._current_path, entry_alpha.name),
     }
     drag_value = json.dumps(
         {"format": "sshpilot_drag", "payload": payload},
@@ -102,7 +103,7 @@ def test_drag_payload_with_colons_is_parsed(load_file_manager_window, monkeypatc
         "path": source_pane._current_path,
         "position": 0,
         "entry_name": entry.name,
-        "entry_path": os.path.join(source_pane._current_path, entry.name),
+        "entry_path": posixpath.join(source_pane._current_path, entry.name),
     }
     drag_value = json.dumps(
         {"format": "sshpilot_drag", "payload": payload},
@@ -117,7 +118,7 @@ def test_drag_payload_with_colons_is_parsed(load_file_manager_window, monkeypatc
     args, kwargs = download_calls[0]
     assert kwargs == {}
     assert len(args[0]) == 1
-    assert args[0][0][0] == os.path.join(source_pane._current_path, entry.name)
+    assert args[0][0][0] == posixpath.join(source_pane._current_path, entry.name)
 
 
 def test_drop_transfers_all_selected_entries(load_file_manager_window, monkeypatch):
@@ -232,7 +233,10 @@ def _make_drag_value(module, source_pane, entry):
         "path": source_pane._current_path,
         "position": 0,
         "entry_name": entry.name,
-        "entry_path": os.path.join(source_pane._current_path, entry.name),
+        # What _on_drag_prepare stores: POSIX for a remote pane.
+        "entry_path": (posixpath if source_pane._is_remote else os.path).join(
+            source_pane._current_path, entry.name
+        ),
     }
     return json.dumps(
         {"format": "sshpilot_drag", "payload": payload},
@@ -371,7 +375,7 @@ def test_same_pane_local_drop_into_folder_moves(load_file_manager_window, monkey
     entries, source_dir, destination, move = calls[0]
     assert [e.name for e in entries] == ["notes.md"]
     assert source_dir == "/home/user"
-    assert destination == "/home/user/docs"
+    assert destination == os.path.join("/home/user", "docs")
     assert move is True
 
 

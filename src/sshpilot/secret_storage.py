@@ -1784,12 +1784,9 @@ class RbwBackend(SecretBackend):
                 from platform_utils import get_managed_bw_cli_dir  # type: ignore
                 return get_managed_bw_cli_dir()
             except Exception:
-                return os.path.join(
-                    os.environ.get("XDG_DATA_HOME")
-                    or os.path.expanduser("~/.local/share"),
-                    "sshpilot",
-                    "bin",
-                )
+                from .platform.paths import get_data_dir
+
+                return os.path.join(get_data_dir(), "bin")
 
     def _pinentry_helper_path(self) -> str:
         return os.path.join(self._pinentry_helper_dir(), "rbw-pinentry")

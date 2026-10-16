@@ -1106,7 +1106,9 @@ class PreferencesWindow(Adw.Window):
             # Custom path entry (initially hidden)
             self.custom_terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             self.custom_terminal_entry = Gtk.Entry()
-            self.custom_terminal_entry.set_placeholder_text("/usr/bin/gnome-terminal")
+            self.custom_terminal_entry.set_placeholder_text(
+                r"C:\Windows\System32\cmd.exe" if is_windows() else "/usr/bin/gnome-terminal"
+            )
             self.custom_terminal_entry.set_can_focus(True)
 
             # Set current custom path if any

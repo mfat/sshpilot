@@ -113,6 +113,7 @@ class Plugin(SshPilotPlugin):
 1. Copy the directory to the user plugin dir:
    - Native: `~/.local/share/sshpilot/plugins/acme-vps/`
    - Flatpak: `~/.var/app/io.github.mfat.sshpilot/data/sshpilot/plugins/acme-vps/`
+   - Windows: `%LOCALAPPDATA%\sshpilot\plugins\acme-vps\`
    (Honors `$XDG_DATA_HOME` if set.)
 2. Launch sshPilot, open **Preferences ▸ Plugins**, toggle your plugin on.
 3. **Restart** sshPilot. User plugins are opt-in — a file on disk never runs code until you enable it by id.

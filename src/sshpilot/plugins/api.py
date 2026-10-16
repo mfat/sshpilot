@@ -1406,12 +1406,13 @@ class PluginContext:
 
     def _data_dir(self) -> str:
         import os
-        # Resolved from XDG_DATA_HOME directly (like the plugin loader's
-        # _user_plugin_dir), so it sits beside the installed plugins and needs
-        # no GTK/GLib at import time.
-        base = os.environ.get("XDG_DATA_HOME") or os.path.join(
-            os.path.expanduser("~"), ".local", "share")
-        path = os.path.join(base, "sshpilot", "plugin-data", self.plugin_id)
+
+        from ..platform.paths import get_data_dir
+
+        # The headless data dir (like the plugin loader's _user_plugin_dir),
+        # so it sits beside the installed plugins and needs no GTK/GLib at
+        # import time.
+        path = os.path.join(get_data_dir(), "plugin-data", self.plugin_id)
         os.makedirs(path, exist_ok=True)
         return path
 

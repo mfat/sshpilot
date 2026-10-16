@@ -422,11 +422,11 @@ def _read_app_setting(key: str, default):
     """
     import json
 
+    from .platform.paths import get_config_dir
+
     try:
-        config_dir = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".config"
-        )
-        config_file = os.path.join(config_dir, "sshpilot", "config.json")
+        # The same directory the app writes: %APPDATA%\sshpilot on Windows.
+        config_file = os.path.join(get_config_dir(), "config.json")
         with open(config_file, encoding="utf-8") as handle:
             data = json.load(handle)
         value = data.get(key, default)

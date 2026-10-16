@@ -8,7 +8,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import ntpath
 import os
+import posixpath
 import shlex
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +122,19 @@ _LOCAL_PATH_DIRECTIVES = frozenset({
 })
 
 
+def _home_prefixes(home: str) -> List[Tuple[str, str]]:
+    r"""``(prefix, separator)`` spellings of a home directory as a config spells it.
+
+    The backup may come from another OS, so *home* is parsed in its own flavour:
+    ``os.path.abspath("/home/alice")`` on Windows is ``C:\home\alice``, which a Linux
+    config never contains. A Windows home may appear with either separator."""
+    text = str(home)
+    if ntpath.splitdrive(text)[0] or "\\" in text:
+        text = ntpath.normpath(text).rstrip("\\")
+        return [(text + "\\", "\\"), (text.replace("\\", "/") + "/", "/")]
+    return [(posixpath.normpath(text).rstrip("/") + "/", "/")]
+
+
 def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str) -> str:
     """Rewrite home-prefixed absolute paths onto the current home, but ONLY on lines whose
     directive names a local-filesystem path (``IdentityFile``, ``ControlPath``, ``Include`` …).
@@ -129,18 +144,22 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
     rewrite per directive."""
     if not text or not source_home:
         return text
-    sh = os.path.abspath(str(source_home))
     th = os.path.abspath(str(target_home))
-    if sh == th:
+    # Keep the separator the line already uses after the home: OpenSSH for
+    # Windows reads ``C:/Users/bob/.ssh/id`` as well as backslashes.
+    rewrites = [
+        (needle, th.replace(os.sep, sep).rstrip(sep) + sep)
+        for needle, sep in _home_prefixes(str(source_home))
+    ]
+    rewrites = [(needle, repl) for needle, repl in rewrites if needle != repl]
+    if not rewrites:
         return text
-    needle = sh + os.sep
-    repl = th + os.sep
     out = []
     for line in text.splitlines(keepends=True):
-        if needle in line and _ssh_keyword(line) in _LOCAL_PATH_DIRECTIVES:
-            out.append(line.replace(needle, repl))
-        else:
-            out.append(line)
+        if _ssh_keyword(line) in _LOCAL_PATH_DIRECTIVES:
+            for needle, repl in rewrites:
+                line = line.replace(needle, repl)
+        out.append(line)
     return ''.join(out)
 
 

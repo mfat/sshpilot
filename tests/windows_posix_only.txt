@@ -232,7 +232,6 @@ tests/test_backup_edge_cases.py::test_bug4_replace_should_not_restore_dangling_i
 tests/test_backup_edge_cases.py::test_bug7_crossmode_absolute_include_stays_consistent  # path separators
 tests/test_backup_manager.py::test_passphrase_credential_rehomed_to_current_home  # assumes POSIX behaviour (reviewed by sample)
 tests/test_backup_manager.py::test_private_key_restore_rehomes_to_current_home  # assumes POSIX behaviour (reviewed by sample)
-tests/test_backup_manager.py::test_rebase_home_in_text_helper  # POSIX paths in fixtures
 tests/test_backup_manager.py::test_rebase_home_path_helper  # POSIX paths in fixtures
 tests/test_backup_manager.py::test_replace_restores_tree_rebased_and_maps_main  # POSIX paths in fixtures
 tests/test_backup_manager.py::test_spbk_private_key_roundtrip_is_opt_in  # POSIX file modes
@@ -257,11 +256,6 @@ tests/test_effective_config_diff.py::test_explicit_root_with_display_flag_matche
 tests/test_effective_config_diff.py::test_missing_user_config_reports_no_diff  # assumes POSIX behaviour (reviewed by sample)
 tests/test_effective_config_diff.py::test_user_level_global_additions_still_reported  # assumes POSIX behaviour (reviewed by sample)
 tests/test_file_manager_retry.py::test_refresh_falls_back_to_the_path_bar_when_the_pane_has_no_path  # assumes POSIX behaviour (reviewed by sample)
-tests/test_file_pane_activate_file.py::test_folder_still_navigates  # path separators
-tests/test_file_pane_activate_file.py::test_local_file_opens_in_default_app  # POSIX paths in fixtures
-tests/test_file_pane_activate_file.py::test_remote_folder_still_navigates  # path separators
-tests/test_file_pane_drag_drop.py::test_same_pane_local_drop_into_folder_moves  # POSIX paths in fixtures
-tests/test_file_pane_nautilus_parity.py::test_alt_down_opens_the_selected_folder  # POSIX paths in fixtures
 tests/test_flatpak_ssh_import.py::test_import_private_key_copies_companions_and_sets_mode  # POSIX file modes
 tests/test_gtk_bundle_pyinstaller.py::test_ensure_abi_symlink_when_only_versioned_present  # POSIX-only API
 tests/test_key_controller.py::test_a_key_present_in_both_stores_is_offered_once  # POSIX paths in fixtures
