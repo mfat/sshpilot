@@ -12,17 +12,26 @@ frame (``MainWindow._apply_ready_early_client``).
 window module is imported, which keeps the two threads from importing the same
 modules at the same time. Only modules that import without GTK are listed
 (GLib/Gio are already loaded), so the worker never runs GTK code off the GTK
-thread. A failed import is ignored: the importing code then raises it as usual.
+thread; nor does it register GObject types: ``sshpilot.config`` (``Config``)
+is imported on the GTK thread before the worker starts, and a test keeps the
+rest of the list free of GObject subclasses. A failed import is logged and
+skipped: the importing code then raises it as usual.
 """
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import threading
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 #: Set to ``1`` to import everything on the GTK thread, as before.
 DISABLE_ENV = "SSHPILOT_NO_STARTUP_PRELOAD"
+#: Longest the GTK thread waits for the worker; after that it imports the rest
+#: itself (the per-module import locks keep that correct).
+_WAIT_SECONDS = 10.0
 
 # In the order the window import loads them.
 MODULES = (
@@ -58,7 +67,6 @@ MODULES = (
     "sshpilot.core.settings.ssh_overrides",
     "sshpilot.core.settings.store",
     "sshpilot.core.settings",
-    "sshpilot.config",
     "sshpilot.api.models.keys",
     "sshpilot.api.models.daemon",
     "sshpilot.connection_display",
@@ -104,14 +112,21 @@ def _run() -> None:
         try:
             importlib.import_module(name)
         except Exception:
-            pass
+            logger.warning("Preloading %s failed", name, exc_info=True)
+
+
+def disabled() -> bool:
+    return os.environ.get(DISABLE_ENV, "").strip().lower() in {"1", "true", "yes"}
 
 
 def start() -> None:
     """Start the worker once (no-op when disabled or already started)."""
     global _thread
-    if _thread is not None or os.environ.get(DISABLE_ENV) == "1":
+    if _thread is not None or disabled():
         return
+    # Registers the Config GObject type here, on the GTK thread; the
+    # application needs it straight after this anyway.
+    importlib.import_module("sshpilot.config")
     _thread = threading.Thread(target=_run, name="sshpilot-preload", daemon=True)
     _thread.start()
 
@@ -119,5 +134,11 @@ def start() -> None:
 def wait() -> None:
     """Block until the worker is done (immediately if it never started)."""
     thread = _thread
-    if thread is not None:
-        thread.join()
+    if thread is None:
+        return
+    thread.join(_WAIT_SECONDS)
+    if thread.is_alive():
+        logger.warning(
+            "Startup preload still running after %.0f s; continuing without it",
+            _WAIT_SECONDS,
+        )

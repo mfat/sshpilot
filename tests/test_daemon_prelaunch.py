@@ -272,3 +272,52 @@ def test_verbose_log_forwarding_keeps_gi_off_the_worker():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[]"
+
+
+_WORKER_PATH_PROBE = r"""
+import json, os, subprocess, sys, time
+import sshpilot.daemon.launcher as launcher_module
+from sshpilot import daemon_prelaunch
+
+def refuse_to_spawn(*_args, **_kwargs):
+    raise OSError("spawning is not part of this test")
+
+init = launcher_module.DaemonLauncher.__init__
+def patched(self, *args, **kwargs):
+    kwargs["popen"] = refuse_to_spawn
+    init(self, *args, **kwargs)
+launcher_module.DaemonLauncher.__init__ = patched
+
+if sys.argv[1] == "stale":
+    # An endpoint whose publisher has exited, as a crashed daemon leaves it.
+    dead = subprocess.Popen([sys.executable, "-c", "pass"]); dead.wait()
+    path = launcher_module.DaemonLauncher().socket_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"port": 9, "token": "x" * 43, "pid": dead.pid}))
+
+daemon_prelaunch.start_from_argv(sys.argv[2:])
+daemon_prelaunch.release_connect()
+assert daemon_prelaunch._state.done.wait(30)
+print(json.dumps(sorted(m for m in sys.modules if m == "gi" or m.startswith("gi."))))
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="gi is pinned first elsewhere")
+@pytest.mark.parametrize("endpoint", ["none", "stale"])
+@pytest.mark.parametrize("flags", [[], ["--verbose"], ["--quiet"]])
+def test_the_whole_worker_path_never_imports_gi(tmp_path, endpoint, flags):
+    """On Windows the worker runs beside the GUI's gi imports (see main.py)."""
+    import os
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = dict(os.environ)
+    for name in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+                 "XDG_DATA_HOME"):
+        env[name] = str(tmp_path / name)
+    env["SSHPILOT_SSH_DIR"] = str(tmp_path / "ssh")
+    result = subprocess.run(
+        [sys.executable, "-c", _WORKER_PATH_PROBE, endpoint, *flags],
+        cwd=str(src), env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "[]"

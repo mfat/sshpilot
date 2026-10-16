@@ -126,7 +126,9 @@ def _run() -> None:
 def start() -> bool:
     """Warm the GL driver on a daemon thread (once; Windows GL renderers only)."""
     global _started
-    if _started or sys.platform != "win32" or os.environ.get(DISABLE_ENV) == "1":
+    if _started or sys.platform != "win32" or os.environ.get(
+        DISABLE_ENV, ""
+    ).strip().lower() in {"1", "true", "yes"}:
         return False
     renderer = os.environ.get("GSK_RENDERER", "").strip().lower()
     if renderer in _NON_GL_RENDERERS:

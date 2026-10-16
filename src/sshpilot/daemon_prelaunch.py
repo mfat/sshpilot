@@ -72,6 +72,12 @@ class _Prelaunch:
             from .daemon.launcher import DaemonLauncher
 
             self.launcher = DaemonLauncher(verbose=self.verbose, quiet=self.quiet)
+            discard_dead_endpoint = getattr(
+                self.launcher, "discard_dead_endpoint", None
+            )
+            if callable(discard_dead_endpoint):
+                # A crashed daemon's endpoint is nothing to wait for.
+                discard_dead_endpoint()
             socket_path = getattr(self.launcher, "socket_path", None)
             if socket_path is not None and os.path.lexists(socket_path):
                 _connect_released.wait(_CONNECT_RELEASE_WAIT_SECONDS)
@@ -119,9 +125,11 @@ def apply_verbosity_environment(verbose: bool, quiet: bool) -> None:
 def _export_language() -> None:
     """Export the interface language, as importing ``sshpilot.main`` does.
 
-    ``i18n`` reads the config directory through ``platform_utils`` (GLib; on
-    Linux and Flatpak that is where the directory really comes from), so the
-    gi version pins go first: nothing on that chain may load GTK unpinned.
+    Outside Windows ``i18n`` reads the config directory through
+    ``platform_utils`` (GLib; on Linux and Flatpak that is where the directory
+    really comes from), so the gi version pins go first: nothing on that chain
+    may load GTK unpinned. On Windows it uses the headless resolver and gi is
+    not imported here at all.
     """
     try:
         if sys.platform != "win32":
@@ -144,7 +152,7 @@ def release_connect() -> None:
 def start(*, verbose: bool = False, quiet: bool = False) -> bool:
     """Begin locating/starting the daemon in the background (idempotent)."""
     global _state
-    if os.environ.get(DISABLE_ENV, "").strip() in {"1", "true", "yes"}:
+    if os.environ.get(DISABLE_ENV, "").strip().lower() in {"1", "true", "yes"}:
         return False
     with _lock:
         if _state is not None:
@@ -153,9 +161,9 @@ def start(*, verbose: bool = False, quiet: bool = False) -> bool:
         quiet = bool(quiet) and not verbose
         apply_verbosity_environment(verbose, quiet)
         state = _state = _Prelaunch(verbose, quiet)
-    # Outside the lock: pins gi and imports GLib. Runs on this thread, before
-    # the worker exists, so the environment is complete before any spawn and
-    # is never written while another thread reads it.
+    # Outside the lock (and, except on Windows, pins gi and imports GLib). Runs
+    # on this thread, before the worker exists, so the environment is complete
+    # before any spawn and is never written while another thread reads it.
     _export_language()
     state.thread.start()
     return True

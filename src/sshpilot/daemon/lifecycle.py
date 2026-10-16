@@ -457,6 +457,23 @@ def _published_owner_gone(path: Path, pid: Optional[int]) -> Optional[str]:
     return None
 
 
+def endpoint_owner_gone(path: Path) -> bool:
+    """Whether the daemon that published ``path`` has provably exited.
+
+    Answered from the endpoint file alone, without connecting: only TCP
+    endpoints (Windows) record their publisher's pid. ``False`` means "not
+    proven gone" -- alive, unknown, unreadable, or a Unix socket, whose
+    refusals are immediate anyway.
+    """
+
+    if not _TCP:
+        return False
+    published = _endpoint.read_tcp_endpoint(path)
+    if published is None:
+        return False
+    return _published_owner_gone(path, published.pid) is not None
+
+
 def _probe_tcp_endpoint(
     path: Path, *, timeout: float, settle: bool = True
 ) -> Tuple[bool, Optional[int]]:

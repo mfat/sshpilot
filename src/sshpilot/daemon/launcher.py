@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 from .lifecycle import (
     SocketSecurityError,
+    endpoint_owner_gone,
     ensure_private_runtime_directory,
     evict_socket_owner,
     probe_socket_owner,
@@ -219,9 +220,9 @@ def _state_dir() -> str:
     anyway; elsewhere the GUI has imported GLib before the worker starts.
     """
     if sys.platform == "win32":
-        from sshpilot.platform import paths
+        from sshpilot.platform.paths import get_state_dir as headless_state_dir
 
-        return str(paths.get_state_dir())
+        return str(headless_state_dir())
     from sshpilot.platform_utils import get_state_dir
 
     return get_state_dir()
@@ -333,6 +334,7 @@ class DaemonLauncher:
         startup_timing.mark("daemon_connect_begun")
         with self._lock:
             self._prepare_socket_location()
+            self.discard_dead_endpoint()
 
             if not evict and not os.path.lexists(self.socket_path):
                 # Early start: with no endpoint there is no daemon to probe,
@@ -414,6 +416,24 @@ class DaemonLauncher:
             self._synchronize_explicit_log_level(client)
             startup_timing.mark("daemon_connect_returned", "spawned daemon")
             return DaemonLaunchResult(client=client, process=handle)
+
+    def discard_dead_endpoint(self) -> None:
+        """Remove an endpoint left by a daemon that has provably exited.
+
+        A crashed daemon leaves its endpoint file behind. Connecting to it
+        first loads the whole client stack and waits on a dead port (~0.5 s
+        on Windows) before the publisher check finds it stale; checking the
+        publisher first lets a launch with nothing to connect to start the
+        daemon at once. Never connects, so a live daemon is not disturbed.
+        """
+
+        try:
+            if os.path.lexists(self.socket_path) and endpoint_owner_gone(
+                self.socket_path
+            ):
+                remove_dead_socket(self.socket_path)
+        except Exception:
+            logger.debug("Could not check the daemon endpoint", exc_info=True)
 
     def _prepare_socket_location(self) -> None:
         """Validate the socket location, repairing what is safely repairable.

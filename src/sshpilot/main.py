@@ -43,6 +43,9 @@ require_gui_versions()
 from . import daemon_prelaunch as _daemon_prelaunch
 
 # A running daemon may be connected to from here on (see daemon_prelaunch).
+# The worker then runs beside the gi.repository imports below, so nothing on
+# its path may import gi: PyGObject's importer is not safe for two threads
+# (tests/test_daemon_prelaunch.py checks the whole worker path).
 _daemon_prelaunch.release_connect()
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
@@ -628,17 +631,9 @@ class SshPilotApplication(Adw.Application):
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
             startup_timing.mark("window_presented")
-            frame_clock = self.window.get_frame_clock()
-            if frame_clock is not None:
-                first_paint = []
-
-                def _on_first_paint(clock):
-                    clock.disconnect(first_paint[0])
-                    startup_timing.mark("window_first_painted")
-
-                first_paint.append(
-                    frame_clock.connect("after-paint", _on_first_paint)
-                )
+            self.window._after_next_paint(
+                lambda: startup_timing.mark("window_first_painted")
+            )
 
             # The window UI is built and presented and plugins are bound, so
             # it is now safe for plugins to do live UI/terminal work.

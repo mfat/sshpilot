@@ -297,8 +297,12 @@ _SIDEBAR_FORWARDING_FETCH_CHUNK = 16
 # A split sidebar rebuild (startup) builds the rows that fit the sidebar's
 # height first; this is the smallest row height it assumes (a compact row).
 _MIN_CONNECTION_ROW_HEIGHT = 28
-# Time each idle callback of a split rebuild spends adding the remaining rows.
-_DEFERRED_ROWS_SLICE_SECONDS = 0.02
+# Time each idle callback of a split rebuild spends building the remaining
+# rows: well under a 60 Hz frame (16.7 ms), so a slice never delays one much.
+_DEFERRED_ROWS_SLICE_SECONDS = 0.008
+# Rows hidden under collapsed groups cost the same to build but fill no
+# height: the first part of a split rebuild stops at this many rows in all.
+_SPLIT_BUILD_HIDDEN_FACTOR = 2
 
 
 def _section_expanded(header) -> bool:
@@ -4255,6 +4259,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         Freshly-built rows reserve their row actions; a narrow sidebar sheds
         them. Then restore scroll and selection.
         """
+        self._attach_staged_connection_rows()
+        if getattr(self, '_connection_rows_split', False):
+            # Scroll was captured before the build began, and the user may
+            # have scrolled since: leave the scroll position alone.
+            self._connection_rows_split = False
+            scroll_position = None
         self._ungrouped_area_row = None
         # Command/settings results in the popup are parked until the welcome-page
         # omnisearch lands — re-enable by calling self._append_command_matches().
@@ -4290,39 +4300,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def rebuild_connection_list(self, first_rows: Optional[int] = None):
         """Rebuild the connection list with groups.
 
-        With ``first_rows``, only that many visible connection rows are built
-        before returning; the rest are appended from idle callbacks after the
-        next frame (see :meth:`_build_remaining_connection_rows`). Each row
-        gets its final visibility as it is added, so the list looks the same
-        at every point it can be painted. Any later rebuild drops the rows
-        still pending; :meth:`complete_pending_connection_rows` builds them
-        at once.
+        With ``first_rows``, only about that many rows are added before
+        returning: ``first_rows`` visible ones, or twice as many in all when
+        most are hidden under collapsed groups. The rest are built from short
+        idle callbacks *off* the list and attached in one pass once the last
+        is built (see :meth:`_build_remaining_connection_rows`), so GTK lays
+        out and styles the list once rather than after every slice. Every
+        group and section has applied its final visibility by then, so a
+        header toggled meanwhile is honoured. Any later rebuild drops the
+        pending rows; :meth:`complete_pending_connection_rows` builds them at
+        once.
         """
         self._cancel_pending_connection_rows()
+        self._connection_rows_split = False
         steps = self._rebuild_connection_list_steps()
         if first_rows is None:
             for _visible in steps:
                 pass
             return
-        built = 0
+        visible_rows = built_rows = 0
         for visible in steps:
+            built_rows += 1
             if visible:
-                built += 1
-                if built >= first_rows:
-                    break
+                visible_rows += 1
+            if (visible_rows >= first_rows
+                    or built_rows >= first_rows * _SPLIT_BUILD_HIDDEN_FACTOR):
+                break
         else:
+            self._on_connection_rows_completed()
             return
-        # _finish_rebuild does this for every row once the rest are built.
+        # _finish_rebuild does this for every row once the rest are attached.
         self._apply_sidebar_row_actions(force=True)
+        self._connection_rows_split = True
+        self._staged_connection_rows = []
         self._pending_connection_rows = steps
         self._pending_connection_rows_source = GLib.idle_add(
             self._build_remaining_connection_rows
         )
 
     def _build_remaining_connection_rows(self):
-        """Idle step of a split rebuild: add rows for about one frame's worth."""
+        """Idle step of a split rebuild: build rows for a fraction of a frame."""
         steps = getattr(self, '_pending_connection_rows', None)
         if steps is None:
+            return GLib.SOURCE_REMOVE
+        if getattr(self, '_is_quitting', False):
+            self._cancel_pending_connection_rows()
             return GLib.SOURCE_REMOVE
         deadline = time.perf_counter() + _DEFERRED_ROWS_SLICE_SECONDS
         try:
@@ -4330,13 +4352,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if time.perf_counter() >= deadline:
                     return GLib.SOURCE_CONTINUE
         except Exception:
-            logger.exception("Building the remaining sidebar rows failed")
+            # Not a completed sidebar: drop what is pending and let the error
+            # surface, as it does from a rebuild that is not split.
+            self._take_pending_connection_rows()
+            self._staged_connection_rows = None
+            self._connection_rows_split = False
+            raise
         self._pending_connection_rows = None
         self._pending_connection_rows_source = None
-        startup_timing.mark(
-            "sidebar_rows_completed",
-            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
-        )
+        self._on_connection_rows_completed()
         return GLib.SOURCE_REMOVE
 
     def _take_pending_connection_rows(self):
@@ -4350,22 +4374,44 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return steps
 
     def _cancel_pending_connection_rows(self):
-        """Forget the rows a split rebuild has not built yet."""
+        """Forget the rows a split rebuild has not attached yet."""
         steps = self._take_pending_connection_rows()
+        self._staged_connection_rows = None
         if steps is not None:
             steps.close()
 
     def complete_pending_connection_rows(self):
-        """Build the rows a split rebuild still has pending, right now."""
+        """Build and attach the rows a split rebuild still has pending, now."""
         steps = self._take_pending_connection_rows()
         if steps is None:
             return
         for _visible in steps:
             pass
-        startup_timing.mark(
-            "sidebar_rows_completed",
-            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
-        )
+        self._on_connection_rows_completed()
+
+    def _append_list_row(self, row, connection=None) -> None:
+        """Add a row to the list, or stage it while a split rebuild builds."""
+        staged = getattr(self, '_staged_connection_rows', None)
+        if staged is not None:
+            staged.append((row, connection))
+            return
+        self.connection_list.append(row)
+        if connection is not None:
+            # A connection can appear under multiple groups: keep every row.
+            self.connection_rows.setdefault(connection, []).append(row)
+
+    def _attach_staged_connection_rows(self) -> None:
+        """Attach a split rebuild's off-list rows in one pass, in order."""
+        staged = getattr(self, '_staged_connection_rows', None)
+        self._staged_connection_rows = None
+        for row, connection in staged or ():
+            self.connection_list.append(row)
+            if connection is not None:
+                self.connection_rows.setdefault(connection, []).append(row)
+                # Built off the list: catch a status change from meanwhile.
+                update_status = getattr(row, 'update_status', None)
+                if callable(update_status):
+                    update_status()
 
     def _initial_sidebar_row_budget(self) -> int:
         """How many connection rows fill the sidebar's visible height."""
@@ -4518,7 +4564,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for group_info in matched_groups:
                 group_row = GroupRow(group_info, self.group_manager, connections_dict)
                 group_row.connect('group-toggled', self._on_group_toggled)
-                self.connection_list.append(group_row)
+                self._append_list_row(group_row)
+                yield True
 
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
@@ -4552,7 +4599,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         groups_header = None
         if hierarchy:
             groups_header = SectionHeaderRow("groups", _("Groups"), self.config)
-            self.connection_list.append(groups_header)
+            self._append_list_row(groups_header)
 
         # Build the list with groups
         group_rows = yield from self._build_grouped_list_steps(
@@ -4578,7 +4625,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 ungrouped_header = SectionHeaderRow(
                     "ungrouped", _("Ungrouped"), self.config
                 )
-                self.connection_list.append(ungrouped_header)
+                self._append_list_row(ungrouped_header)
             ungrouped_visible = _section_expanded(ungrouped_header)
 
             # Root order is daemon-owned; render from the snapshot and append
@@ -4641,7 +4688,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(group_row, "set_indentation"):
                 group_row.set_indentation(level)
             group_row.set_visible(parent_visible)
-            self.connection_list.append(group_row)
+            self._append_list_row(group_row)
+            yield parent_visible
             members_visible = parent_visible and bool(
                 group_info.get("expanded", True)
             )
@@ -4699,7 +4747,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if search_text and not local_terminal_row_matches(search_text):
             return
         row = LocalTerminalRow(self.config)
-        self.connection_list.append(row)
+        self._append_list_row(row)
 
     def add_connection_row(
         self,
@@ -4727,9 +4775,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
 
-        self.connection_list.append(row)
-        # A connection can appear under multiple groups, so keep a list of rows
-        self.connection_rows.setdefault(connection, []).append(row)
+        self._append_list_row(row, connection)
 
         # Apply current hide-hosts setting to new row. The row was built
         # before it had a window, so it already shows hosts; only hiding
@@ -7081,27 +7127,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for item in startup_timing.milestones()
         ):
             return
+        pending = getattr(self, '_staged_connection_rows', None) is not None
         startup_timing.mark(
             "sidebar_rows_built",
-            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows"
+            + (" on screen, the rest pending" if pending else ""),
         )
         if not startup_timing.profile_path():
             return
-        # Profiling harness: wait for the populated sidebar to be painted,
-        # then hand the milestones over and quit.
-        def _after_paint(*_args):
-            startup_timing.mark("sidebar_painted")
-            startup_timing.write_profile()
-            app = self.get_application()
-            if app is not None:
-                GLib.idle_add(lambda: (app.quit(), False)[1])
-            return GLib.SOURCE_REMOVE
+        # Profiling harness: wait for the first screenful to be painted, then
+        # for the whole list, then hand the milestones over and quit.
+        self._profile_awaiting_rows = True
+        self._after_next_paint(self._profile_first_screen_painted)
 
+    def _profile_first_screen_painted(self):
+        startup_timing.mark("sidebar_painted")
+        if getattr(self, '_staged_connection_rows', None) is None:
+            self._profile_all_rows_painted()
+
+    def _profile_all_rows_painted(self):
+        if not getattr(self, '_profile_awaiting_rows', False):
+            return
+        self._profile_awaiting_rows = False
+        startup_timing.mark("sidebar_all_rows_painted")
+        startup_timing.write_profile()
+        app = self.get_application()
+        if app is not None:
+            GLib.idle_add(lambda: (app.quit(), False)[1])
+
+    def _on_connection_rows_completed(self):
+        """A split (or short) startup rebuild has every row in the list."""
+        startup_timing.mark(
+            "sidebar_rows_completed",
+            f"{len(getattr(self, 'connection_rows', {}) or {})} connection rows",
+        )
+        if getattr(self, '_profile_awaiting_rows', False) and any(
+            item["name"] == "sidebar_painted"
+            for item in startup_timing.milestones()
+        ):
+            self._after_next_paint(self._profile_all_rows_painted)
+
+    def _after_next_paint(self, callback):
+        """Call ``callback()`` once, after the window's next painted frame."""
         handler = []
 
         def _on_paint(frame_clock):
-            frame_clock.disconnect(handler[0])
-            _after_paint()
+            frame_clock.disconnect(handler.pop())
+            callback()
 
         def _hook_frame_clock(*_args):
             if handler:
@@ -7109,7 +7181,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.disconnect(handler.pop())
             clock = self.get_frame_clock()
             if clock is None:
-                _after_paint()
+                callback()
                 return
             handler.append(clock.connect("after-paint", _on_paint))
             self.queue_draw()

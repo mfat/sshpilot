@@ -82,6 +82,102 @@ def test_first_rows_counts_visible_rows_and_defers_the_rest(monkeypatch):
     assert window._pending_connection_rows is None
 
 
+def test_hidden_rows_count_toward_a_capped_first_part(monkeypatch):
+    """Collapsed groups do not keep the first part going until the end."""
+    idle = _Idle(monkeypatch)
+    rows = [("v", True)] + [(f"h{i}", False) for i in range(20)]
+    window = _window(rows)
+
+    window.rebuild_connection_list(first_rows=3)
+
+    assert len(window.built) == 3 * window_module._SPLIT_BUILD_HIDDEN_FACTOR
+    idle.run()
+    assert window.finished
+
+
+def test_rows_after_the_split_wait_off_the_list_and_attach_in_order(monkeypatch):
+    idle = _Idle(monkeypatch)
+    window = MainWindow.__new__(MainWindow)
+    window._apply_sidebar_row_actions = lambda force=False: None
+    window.connection_list = []
+    window.connection_rows = {}
+    attached_when_finished = []
+
+    def steps():
+        for name in ("a", "b", "c", "d"):
+            window._append_list_row(_Row(name), name)
+            yield True
+        attached_when_finished.extend(window.connection_list)
+        window._finish_rebuild_probe = True
+
+    window._rebuild_connection_list_steps = steps
+    window.rebuild_connection_list(first_rows=2)
+
+    assert [row.name for row in window.connection_list] == ["a", "b"]
+    assert list(window.connection_rows) == ["a", "b"]
+    idle.run()
+    # Still off the list until the rebuild's end attaches them in one pass.
+    assert [row.name for row in window.connection_list] == ["a", "b"]
+    window._attach_staged_connection_rows()
+    assert [row.name for row in window.connection_list] == ["a", "b", "c", "d"]
+    assert list(window.connection_rows) == ["a", "b", "c", "d"]
+
+
+def test_a_split_rebuild_leaves_the_scroll_position_alone(monkeypatch):
+    _Idle(monkeypatch)
+    window = MainWindow.__new__(MainWindow)
+    window._connection_rows_split = True
+    window._staged_connection_rows = None
+    window._apply_sidebar_row_actions = lambda force=False: None
+    scheduled = []
+    monkeypatch.setattr(
+        window_module.GLib, "idle_add", lambda cb, *a, **k: scheduled.append(cb)
+    )
+    window.connection_scrolled = type("S", (), {
+        "get_vadjustment": lambda self: type("A", (), {"set_value": lambda s, v: None})()
+    })()
+
+    window._finish_rebuild(0.0, ())
+
+    assert scheduled == []  # no scroll restore queued
+    assert window._connection_rows_split is False
+
+
+def test_a_failed_slice_raises_and_reports_no_completion(monkeypatch):
+    from sshpilot import startup_timing
+
+    idle = _Idle(monkeypatch)
+    completed = []
+    window = _window([("a", True), ("b", True)])
+    window._on_connection_rows_completed = lambda: completed.append(True)
+
+    def steps():
+        yield True
+        raise RuntimeError("row failed")
+
+    window._rebuild_connection_list_steps = steps
+    window.rebuild_connection_list(first_rows=1)
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        window._build_remaining_connection_rows()
+    assert completed == []
+    assert window._pending_connection_rows is None
+    assert window._staged_connection_rows is None
+
+
+def test_quitting_drops_the_pending_rows(monkeypatch):
+    idle = _Idle(monkeypatch)
+    window = _window([("a", True), ("b", True), ("c", True)])
+    window.rebuild_connection_list(first_rows=1)
+    window._is_quitting = True
+
+    idle.run()
+
+    assert window.built == ["a"] and not window.finished
+    assert window._pending_connection_rows is None
+
+
 def test_a_short_list_finishes_at_once(monkeypatch):
     idle = _Idle(monkeypatch)
     window = _window([("a", True)])
@@ -177,8 +273,10 @@ def test_grouped_rows_get_their_final_visibility_as_they_are_added(monkeypatch):
     )
 
     # Paused after each row: what is already in the list must not change.
+    assert next(steps) is True  # the "open" group header
     assert next(steps) is True
     assert [(row.name, row.visible) for row in added] == [("c1", True)]
+    assert next(steps) is True  # the "shut" header, under an expanded parent
     assert next(steps) is False
     assert [(row.name, row.visible) for row in added] == [("c1", True), ("c2", False)]
 
@@ -209,6 +307,7 @@ def test_rows_under_a_collapsed_section_are_added_hidden(monkeypatch):
 
     steps = window._build_grouped_list_steps(hierarchy, {"c1": "c1"}, 0, False)
 
+    assert next(steps) is False  # the group header
     assert next(steps) is False
 
 
