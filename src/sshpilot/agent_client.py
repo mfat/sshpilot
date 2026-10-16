@@ -184,7 +184,9 @@ class AgentClient:
         if pty_socket_fd is not None:
             agent_args.extend(['--pty-socket', str(pty_socket_fd)])
 
-        args_str = ' '.join(agent_args)
+        # wrapper_script is parsed by a shell on the host; cwd is a folder name
+        # that may come from a download or an archive.
+        args_str = shlex.join(agent_args)
         
         # Create bash script that decodes and runs the agent
         wrapper_script = (
