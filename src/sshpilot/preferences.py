@@ -702,6 +702,7 @@ class PreferencesWindow(Adw.Window):
             on_new=self._on_new_terminal_theme,
             on_edit=self._on_edit_terminal_theme,
             on_delete=self._on_delete_terminal_theme,
+            collapsed_count=3,
         )
         palette_group = Adw.PreferencesGroup(title=_("Color Scheme"))
         palette_container = Adw.Bin()
@@ -2053,8 +2054,8 @@ class PreferencesWindow(Adw.Window):
         interface_page.set_title(_("Interface"))
         interface_page.set_icon_name("brush-monitor-symbolic")
 
-        self._add_interface_layout_group(interface_page)
         self._add_interface_language_group(interface_page)
+        self._add_interface_layout_group(interface_page)
         self._add_interface_startup_group(interface_page)
         self._add_interface_headerbar_and_tips_groups(interface_page)
         self._add_interface_window_group(interface_page)
