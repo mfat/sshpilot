@@ -10,6 +10,7 @@ from typing import Any
 from sshpilot.core.settings.store import (
     get_nested,
     load_settings,
+    load_settings_strict,
     save_settings,
     set_nested,
     settings_transaction_lock,
@@ -61,6 +62,7 @@ class PluginSettingsService:
         # Validate the exact JSON contract before touching the persistent tree.
         json.dumps(value, allow_nan=False)
         with self._lock:
-            config, _ = load_settings(self._path)
+            # Strict: a file that cannot be used is reported, not replaced.
+            config, _ = load_settings_strict(self._path)
             set_nested(config, self._full(plugin_id, key), value)
             save_settings(self._path, config)

@@ -33,9 +33,15 @@ from .store import (
     get_nested,
     load_settings,
     load_settings_strict,
+    migrate_settings_file,
     save_settings,
     set_nested,
     settings_transaction_lock,
+)
+from .versioning import (
+    SettingsMigrationError,
+    SettingsVersionError,
+    upgrade_settings,
 )
 
 __all__ = [
@@ -51,6 +57,8 @@ __all__ = [
     "INTEGER_RANGES",
     "VALID_HOST_KEY_VALUES",
     "SettingsFileError",
+    "SettingsMigrationError",
+    "SettingsVersionError",
     "compose_ssh_overrides",
     "compute_identity_revision",
     "compute_ssh_overrides_revision",
@@ -59,6 +67,7 @@ __all__ = [
     "get_nested",
     "load_settings",
     "load_settings_strict",
+    "migrate_settings_file",
     "normalize_custom_socket",
     "normalize_identity_settings",
     "normalize_provider",
@@ -68,4 +77,5 @@ __all__ = [
     "settings_transaction_lock",
     "ssh_config_from_settings",
     "ssh_settings_from_values",
+    "upgrade_settings",
 ]

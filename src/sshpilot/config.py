@@ -24,9 +24,11 @@ from .custom_terminal_themes import (
 )
 from sshpilot.core.settings import (
     CONFIG_VERSION as _CORE_CONFIG_VERSION,
+    SettingsFileError,
     ensure_config_defaults as _ensure_config_defaults_core,
     get_default_config as _get_default_config_core,
     ssh_config_from_settings as _ssh_config_from_settings_core,
+    upgrade_settings,
 )
 from sshpilot.core.settings.defaults import TERMINAL_PANE_CHOICES
 
@@ -97,52 +99,68 @@ class Config(GObject.Object):
             logger.warning(f"Could not import legacy GSettings values: {e}")
 
     def load_json_config(self) -> Dict[str, Any]:
-        """Load configuration from JSON file"""
+        """Load configuration from JSON file.
+
+        An older tree is upgraded in memory (``core.settings.versioning``);
+        the daemon upgrades the file itself, keeping a backup, when it starts.
+        A file this build cannot use — malformed, newer, or with no upgrade
+        path — is left untouched and the session runs on defaults;
+        ``save_json_config`` re-checks the file and refuses to write over it.
+        """
         try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, encoding="utf-8") as f:
-                    config = json.load(f)
-
-                # Purge outdated configurations
-                stored_version = config.get('config_version', 1)
-                if stored_version < CONFIG_VERSION:
-                    backup_file = f"{self.config_file}.bak"
-                    try:
-                        os.replace(self.config_file, backup_file)
-                        logger.warning(
-                            "Outdated config version %s detected; backing up to %s and regenerating defaults",
-                            stored_version,
-                            backup_file,
-                        )
-                    except OSError:
-                        os.remove(self.config_file)
-                        logger.warning(
-                            "Outdated config version %s detected; old config removed and new defaults generated",
-                            stored_version,
-                        )
-
-                    config = self.get_default_config()
-                    self.save_json_config(config)
-                else:
-                    config, updated = self._ensure_config_defaults(config)
-                    if updated:
-                        self.save_json_config(config)
-
-                return config
-            else:
+            if not os.path.exists(self.config_file):
                 # Create default config
                 default_config = self.get_default_config()
                 self.save_json_config(default_config)
                 return default_config
+            with open(self.config_file, encoding="utf-8") as f:
+                config = json.load(f)
+            if not isinstance(config, dict):
+                raise SettingsFileError("The settings file is not a settings object")
+            config, _stored = upgrade_settings(config)
+        except (SettingsFileError, ValueError) as e:
+            logger.error(
+                "config.json not loaded (%s); using defaults and leaving the file unchanged",
+                e,
+            )
+            return self.get_default_config()
         except Exception as e:
             logger.error(f"Failed to load JSON config: {e}")
             return self.get_default_config()
+        config, updated = self._ensure_config_defaults(config)
+        if updated:
+            self.save_json_config(config)
+        return config
+
+    def _require_current_file_on_disk(self) -> None:
+        """Raise unless config.json is absent or a usable current-version tree.
+
+        Called under the transaction lock before any write. An older file is
+        the daemon's to upgrade (it keeps the original as a backup first); a
+        malformed or newer one must survive unchanged.
+        """
+        if not os.path.exists(self.config_file):
+            return
+        try:
+            with open(self.config_file, encoding="utf-8") as handle:
+                on_disk = json.load(handle)
+        except (OSError, ValueError) as exc:
+            raise SettingsFileError("config.json is unreadable") from exc
+        if not isinstance(on_disk, dict):
+            raise SettingsFileError("config.json is not a settings object")
+        _tree, stored = upgrade_settings(on_disk)
+        if stored != CONFIG_VERSION:
+            raise SettingsFileError(
+                f"config.json is still at version {stored}; not writing until it is upgraded"
+            )
 
     def read_json_config_strict(self) -> Dict[str, Any]:
         """Read JSON state without replacing malformed input with defaults.
 
         Authoritative daemon reload uses this path so a partial external write
         cannot turn the last-known-good connection snapshot into defaults.
+        Read-only: an older tree is upgraded in memory, and a newer or
+        unknown version raises like malformed input.
         """
 
         if not os.path.exists(self.config_file):
@@ -151,6 +169,7 @@ class Config(GObject.Object):
             config = json.load(config_file)
         if not isinstance(config, dict):
             raise ValueError("configuration root must be an object")
+        config, _stored = upgrade_settings(config)
         config, _updated = self._ensure_config_defaults(config)
         return config
 
@@ -183,6 +202,10 @@ class Config(GObject.Object):
                 config_data = self.config_data
 
             with settings_transaction_lock(self.config_file):
+                # Never write over a file this build cannot use, or an older
+                # one before the daemon has backed it up and upgraded it.
+                # Raises -> save refused, file unchanged.
+                self._require_current_file_on_disk()
                 if not explicit:
                     config_data = self._merge_config_changes_with_disk(config_data)
 

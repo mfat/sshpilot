@@ -330,6 +330,24 @@ def _split_shared_workspace_once(isolated: bool) -> None:
     )
 
 
+def _upgrade_config_file() -> None:
+    """Upgrade an older config.json before any service or frontend reads it.
+
+    The daemon owns this: the original is kept as a uniquely named backup
+    first, and the GTK frontend refuses to write until the file is current. A
+    file that cannot be upgraded is left as it is; the services that read it
+    report that themselves, so the daemon still starts.
+    """
+    from sshpilot.core.settings import SettingsFileError, migrate_settings_file
+
+    try:
+        migrate_settings_file(get_config_dir() / "config.json")
+    except SettingsFileError as exc:
+        logging.getLogger(__name__).warning(
+            "config.json left unchanged type=%s", type(exc).__name__
+        )
+
+
 def _production_core_services():
     """Compose the daemon's headless application services.
 
@@ -364,6 +382,7 @@ def _production_core_services():
             return get_config_dir()
         raise ValueError("unsupported key store scope")
 
+    _upgrade_config_file()
     settings = DaemonBootstrapSettings()
     isolated = settings.use_isolated_config
     # Existing installs have one sidecar holding both roots' identities.

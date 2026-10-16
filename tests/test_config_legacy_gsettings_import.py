@@ -50,7 +50,9 @@ def _install_fake_gio(monkeypatch, settings, schema_keys):
 
 def _make_config(tmp_path, data):
     config_file = tmp_path / 'config.json'
-    config_file.write_text(json.dumps(data))
+    # A current-version file, as the daemon leaves it: the frontend does not
+    # write over an older one.
+    config_file.write_text(json.dumps({'config_version': config_module.CONFIG_VERSION, **data}))
     cfg = Config.__new__(Config)
     cfg.config_file = str(config_file)
     cfg.config_data = json.loads(config_file.read_text())

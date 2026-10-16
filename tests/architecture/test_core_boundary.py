@@ -111,6 +111,9 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- pure enum of file_manager.terminal_panes values ---------------
         ("config.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
         ("preferences.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
+        # -- pure config.json version policy (no I/O; the daemon migrates) --
+        ("config.py", "settings", "SettingsFileError"),
+        ("config.py", "settings", "upgrade_settings"),
         # -- counter differencing for the host-info dialog (pure arithmetic) --
         # The daemon is stateless across probes, so the difference between two
         # readings has to be taken by whoever holds both. No I/O, no clock.
@@ -143,8 +146,7 @@ PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
     ("config.py", "settings", "CONFIG_VERSION"): ("M4", "config version -> daemon"),
     ("config.py", "settings", "ensure_config_defaults"): ("M4", "defaults write -> daemon"),
     ("config.py", "settings", "get_default_config"): ("M4", "defaults -> daemon"),
-    ("config.py", "settings", "ssh_config_from_settings"): ("M4", "effective ssh settings -> daemon"),
-    # === M5 — secrets backend selection / vault state ===================
+    ("config.py", "settings", "ssh_config_from_settings"): ("M4", "effective ssh settings -> daemon"),    # === M5 — secrets backend selection / vault state ===================
     ("secret_storage.py", "secrets", "normalize_backend_name"): ("M5", "backend selection -> daemon"),
     ("secret_storage.py", "secrets", "platform_default_order"): ("M5", "backend order -> daemon"),
     ("secret_storage.py", "secrets", "decide_unlock"): ("M5", "vault unlock policy -> daemon"),

@@ -180,12 +180,16 @@ def test_bad_ssh_value_raises_malformed_without_overwrite(tmp_path):
     assert path.read_text(encoding="utf-8") == before
 
 
-def test_obsolete_version_replaced_with_defaults(tmp_path):
+def test_obsolete_version_upgraded_keeping_values_and_a_backup(tmp_path):
     path = _write(tmp_path / "config.json", {"config_version": 0})
+    original = path.read_bytes()
     service = _service(path)
     snapshot = service.get()
     assert snapshot.revision == compute_ssh_overrides_revision(DEFAULT_SSH_OVERRIDES)
-    assert (tmp_path / "config.json.bak").exists()
+    backups = list(tmp_path.glob("config.json.v0-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+    assert json.loads(path.read_text(encoding="utf-8"))["config_version"] == CONFIG_VERSION
 
 
 # ---------------------------------------------------------------------------

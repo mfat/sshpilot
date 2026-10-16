@@ -19,10 +19,11 @@ from sshpilot.api.models.daemon import (
 from sshpilot.core.connections.repository import ConnectionRepository
 from sshpilot.core.connections.ssh_config_store import SshConfigStore
 from sshpilot.core.settings.store import (
+    migrate_settings_file,
     save_settings,
     settings_transaction_lock,
 )
-from sshpilot.core.settings.defaults import CONFIG_VERSION, get_default_config
+from sshpilot.core.settings.defaults import get_default_config
 from sshpilot.platform.fs import makedirs_private
 from sshpilot.core.settings.migration import ensure_config_defaults
 
@@ -375,13 +376,16 @@ class OperationModeService:
         return True, bool(request.seed_isolated_config and data)
 
     def _read_config(self) -> dict:
-        # Read without the generic loader's obsolete-file backup side effect.
         # A transition must be able to restore the exact pre-transaction state
         # if publication or a dependent-service hook fails.  Missing files are
         # represented by the complete canonical current-version tree, which is
         # then persisted on a successful transition.
         if not self._config_path.exists():
             return get_default_config()
+        # An older file is upgraded first (original kept in a backup) so the
+        # transaction starts from, and can restore, a current-version tree; a
+        # malformed or newer one raises here and the transition is refused.
+        migrate_settings_file(self._config_path)
         try:
             with self._config_path.open(encoding="utf-8") as stream:
                 value = json.load(stream)
@@ -389,8 +393,6 @@ class OperationModeService:
             return get_default_config()
         if not isinstance(value, dict):
             raise ValueError("daemon configuration is not an object")
-        if "config_version" not in value:
-            value["config_version"] = CONFIG_VERSION
         value, _updated = ensure_config_defaults(value)
         return value
 
