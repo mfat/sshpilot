@@ -323,17 +323,33 @@ def test_tree_delete_resolves_roots_that_depend_on_each_other(client, tmp_path):
     for name in ("x", "y", "z"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "f").write_bytes(b"x")
-    (tmp_path / "z" / "sub").mkdir()
-    (tmp_path / "x" / "link").symlink_to(tmp_path / "z")
+    (tmp_path / "x" / "link").symlink_to(tmp_path / "z", target_is_directory=True)
 
     runtime = SftpServiceRuntime.__new__(SftpServiceRuntime)
-    runtime._remove_trees(
-        client,
-        [str(tmp_path / "x"), str(tmp_path / "x" / ".." / "y"), str(tmp_path / "x" / "link" / "sub")],
-    )
+    runtime._remove_trees(client, [str(tmp_path / "x"), str(tmp_path / "x" / ".." / "y")])
 
     assert not (tmp_path / "x").exists()
     assert not (tmp_path / "y").exists()
+    # A directory link is removed as a link; its target is left alone.
+    assert (tmp_path / "z" / "f").exists()
+
+
+def test_tree_delete_resolves_a_root_spelled_through_a_symlink(client, tmp_path):
+    """``x/link/sub`` must still name ``z/sub`` after ``x`` has been deleted."""
+    from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
+
+    for name in ("x", "z"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "f").write_bytes(b"x")
+    (tmp_path / "z" / "sub").mkdir()
+    (tmp_path / "x" / "link").symlink_to(tmp_path / "z", target_is_directory=True)
+
+    runtime = SftpServiceRuntime.__new__(SftpServiceRuntime)
+    runtime._remove_trees(
+        client, [str(tmp_path / "x"), str(tmp_path / "x" / "link" / "sub")]
+    )
+
+    assert not (tmp_path / "x").exists()
     assert not (tmp_path / "z" / "sub").exists()
     # Reached only through the symlink, which is removed as a link.
     assert (tmp_path / "z" / "f").exists()
