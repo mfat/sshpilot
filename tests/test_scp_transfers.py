@@ -73,26 +73,51 @@ def test_assemble_scp_transfer_args_upload_ipv6():
     assert destination == 'alice@[2001:db8::1]:/var/tmp'
 
 
-def test_assemble_scp_transfer_args_download_normalizes_host():
+def test_assemble_scp_transfer_args_download_sources_are_paths_on_target():
+    # A source is a path on the connection target, never an scp operand of
+    # its own: a listed remote entry may be named ``host:x`` or ``user@host:x``.
     sources, destination = assemble_scp_transfer_args(
         'alice@example.com',
-        ['~/logs/app.log', 'example.com:/opt/data.tar'],
+        ['~/logs/app.log', 'example.com:/opt/data.tar', 'bob@evil.example:/srv/backup'],
         '/tmp/out',
         'download',
     )
-    assert sources[0] == 'alice@example.com:~/logs/app.log'
-    assert sources[1] == 'example.com:/opt/data.tar'
+    assert sources == [
+        'alice@example.com:~/logs/app.log',
+        'alice@example.com:example.com:/opt/data.tar',
+        'alice@example.com:bob@evil.example:/srv/backup',
+    ]
     assert destination == '/tmp/out'
 
 
 def test_assemble_scp_transfer_args_download_ipv6():
     sources, destination = assemble_scp_transfer_args(
         'alice@[2001:db8::1]',
-        ['~/logs/app.log', '[2001:db8::1]:/opt/data.tar', 'bob@[2001:db8::2]:/srv/backup'],
+        ['~/logs/app.log', '/opt/data.tar', '~'],
         '/tmp/out',
         'download',
     )
-    assert sources[0] == 'alice@[2001:db8::1]:~/logs/app.log'
-    assert sources[1] == '[2001:db8::1]:/opt/data.tar'
-    assert sources[2] == 'bob@[2001:db8::2]:/srv/backup'
+    assert sources == [
+        'alice@[2001:db8::1]:~/logs/app.log',
+        'alice@[2001:db8::1]:/opt/data.tar',
+        'alice@[2001:db8::1]:~',
+    ]
     assert destination == '/tmp/out'
+
+
+def test_assemble_scp_transfer_args_download_escapes_glob_and_shell_characters():
+    # scp globs a remote source (".*" and ".[a.b]" match ".."), and the
+    # legacy -O retry hands it to the remote shell.
+    sources, _destination = assemble_scp_transfer_args(
+        'alice@example.com',
+        ['/srv/.[backup.2024]', '~/.*', '/srv/a?b\\c', '/srv/$(id) `id`;x', '~root'],
+        '/tmp/out',
+        'download',
+    )
+    assert sources == [
+        'alice@example.com:/srv/.\\[backup.2024\\]',
+        'alice@example.com:~/.\\*',
+        'alice@example.com:/srv/a\\?b\\\\c',
+        'alice@example.com:/srv/\\$\\(id\\)\\ \\`id\\`\\;x',
+        'alice@example.com:\\~root',
+    ]

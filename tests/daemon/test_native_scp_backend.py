@@ -298,6 +298,43 @@ def test_native_backend_marks_modern_and_legacy_process_groups():
     assert popen.calls[1][1]["start_new_session"] is True
 
 
+def test_download_sources_are_literal_paths_on_the_connection_target():
+    backend = NativeScpBackend(_Provider(), _Broker(), wait_timeout=_UNIT_WAIT_TIMEOUT)
+
+    sources, destination = backend.build_operands(
+        _request(
+            direction=TransferDirection.DOWNLOAD,
+            sources=(
+                "~/logs/app-1.log",
+                # scp globs a remote source; these patterns match "..".
+                "/srv/pub/.[backup.2024]",
+                "~/.*",
+                "/srv/a?b\\c",
+                # The legacy -O retry hands it to the remote shell.
+                "/srv/$(id) `id`;x",
+                # Listed names, not ~user or another host's operand.
+                "~root",
+                "example.test:.*",
+                "mallory@evil.test:x",
+            ),
+            destination="/home/alice/Downloads",
+        ),
+        "alice@example.test",
+    )
+
+    assert sources == (
+        "alice@example.test:~/logs/app-1.log",
+        "alice@example.test:/srv/pub/.\\[backup.2024\\]",
+        "alice@example.test:~/.\\*",
+        "alice@example.test:/srv/a\\?b\\\\c",
+        "alice@example.test:/srv/\\$\\(id\\)\\ \\`id\\`\\;x",
+        "alice@example.test:\\~root",
+        "alice@example.test:example.test:.\\*",
+        "alice@example.test:mallory@evil.test:x",
+    )
+    assert destination == "/home/alice/Downloads"
+
+
 def test_native_backend_retries_once_with_legacy_protocol_for_sftp_failure():
     provider = _Provider()
     broker = _Broker()

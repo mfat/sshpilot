@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from typing import Iterable, List, Optional, Tuple
 
-_REMOTE_SPEC_RE = re.compile(r"^[^@]+@(?:\[[^\]]+\]|[^:]+):.+$")
+# The characters shlex.quote() leaves alone; any other may be special to a
+# glob or to a shell.
+_REMOTE_PATH_UNSAFE_RE = re.compile(r"[^\w@%+=:,./-]")
 SFTP_UNAVAILABLE_MESSAGE = (
     "Could not start an SFTP session on the remote host. The remote SSH server "
     "may not have an SFTP server enabled."
@@ -24,11 +26,17 @@ _LEGACY_FLAG_UNSUPPORTED_MARKERS = (
 )
 
 
-def _extract_host(target: str) -> str:
-    host = target.split("@", 1)[-1]
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1]
-    return host
+def escape_remote_source(path: str) -> str:
+    """Make scp copy exactly *path*; a leading ``~/`` stays the remote home.
+
+    scp expands a remote source as a glob, where ``.*`` and ``.[a.b]`` also
+    match ``..``, and the legacy ``-O`` protocol hands it to the remote shell.
+    Both take a backslash-escaped character literally.
+    """
+    if path == "~":
+        return path
+    home = "~/" if path.startswith("~/") else ""
+    return home + _REMOTE_PATH_UNSAFE_RE.sub(r"\\\g<0>", path[len(home):])
 
 
 def assemble_scp_transfer_args(
@@ -42,18 +50,11 @@ def assemble_scp_transfer_args(
         raise ValueError(f"Unsupported scp direction: {direction}")
     if direction == "upload":
         return [source for source in sources if source], f"{target}:{destination}"
-    host = _extract_host(target)
-    variants = {host, f"[{host}]"} if ":" in host else {host}
-    normalized = []
-    for source in sources:
-        if not source:
-            continue
-        if source.startswith(f"{target}:") or any(
-            source.startswith(f"{variant}:") for variant in variants
-        ) or _REMOTE_SPEC_RE.match(source):
-            normalized.append(source)
-        else:
-            normalized.append(f"{target}:{source}")
+    # A source is a path on ``target``, never an scp operand of its own: a
+    # remote entry may be named ``user@host:path``.
+    normalized = [
+        f"{target}:{escape_remote_source(source)}" for source in sources if source
+    ]
     return normalized, destination
 
 
