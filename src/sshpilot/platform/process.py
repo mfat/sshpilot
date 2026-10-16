@@ -64,6 +64,36 @@ def pid_alive(pid: int, *, on_error: _T) -> Union[bool, _T]:
     return True
 
 
+def windows_process_exited(pid: int) -> bool:
+    """Whether *pid* is a Windows process that has exited, though it lingers.
+
+    An exited process stays visible while anything holds a handle to it,
+    and psutil can then still report it as running. Its process object is
+    signaled from the moment it exits. ``False`` when the process is running
+    or cannot be opened; always ``False`` off Windows.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    synchronize = 0x00100000
+    wait_object_0 = 0
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == wait_object_0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def kill_process_tree(pid: int, *, wait_timeout: Optional[float] = None) -> bool:
     """Kill *pid* and all its descendants at once, through psutil.
 
