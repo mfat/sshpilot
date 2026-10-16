@@ -427,13 +427,19 @@ class TestAuthOptions:
     def test_identityfile_expanded(self, complex_config):
         loaded, *_ = complex_config
         c = _by_id(loaded, "bastion")
-        assert "~" not in _field(c, "keyfile"), "IdentityFile ~ should be expanded"
+        # Compared as a path: an 8.3 short TEMP (C:\Users\RUNNER~1) holds a ~
+        # that is no home reference.
+        assert Path(_field(c, "keyfile")) == Path(
+            os.path.expanduser("~/.ssh/keys/bastion_key")
+        ), "IdentityFile ~ should be expanded"
 
     def test_certificatefile_parsed(self, complex_config):
         loaded, *_ = complex_config
         c = _by_id(loaded, "personal-dev")
         assert _field(c, "certificate") != ""
-        assert "~" not in _field(c, "certificate")
+        assert Path(_field(c, "certificate")) == Path(
+            os.path.expanduser("~/.ssh/id_ed25519-cert.pub")
+        )
 
     def test_forwardagent_yes_is_true(self, complex_config):
         loaded, *_ = complex_config

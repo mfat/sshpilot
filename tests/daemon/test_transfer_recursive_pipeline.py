@@ -184,7 +184,32 @@ def _run_over_delay(tmp_path, delay, *, direction, remote_path, local_path, poli
         process.wait(timeout=5)
         process.stdout.close()
         delayed.reader.close()
-    return summary, elapsed / delay if delay else 0.0
+    return summary, elapsed
+
+
+def _link_round_trips(tmp_path, delay, *, direction, remote_path, local_path, policy):
+    """Run a transfer over the delay line; ``(summary, round trips it added)``.
+
+    The same transfer first runs with no delay into a scratch destination, and
+    its time is subtracted, so only the link's cost is counted. Local file work
+    is not free: on Windows CI each new file is scanned, and 81 small downloads
+    took as long as ~75 round trips of 30 ms with no delay at all.
+    """
+    scratch = {"remote_path": remote_path, "local_path": local_path}
+    side = "local_path" if direction is TransferDirection.DOWNLOAD else "remote_path"
+    scratch[side] = scratch[side].with_name(scratch[side].name + "-baseline")
+    _, baseline = _run_over_delay(
+        tmp_path, 0.0, direction=direction, policy=policy, **scratch
+    )
+    summary, elapsed = _run_over_delay(
+        tmp_path,
+        delay,
+        direction=direction,
+        remote_path=remote_path,
+        local_path=local_path,
+        policy=policy,
+    )
+    return summary, (elapsed - baseline) / delay
 
 
 def _make_tree(root, *, dirs=10, files_per_dir=8):
@@ -210,7 +235,7 @@ def test_recursive_download_of_small_files_pipelines_over_rtt(tmp_path):
     os.chmod(target, 0o640)
     local_root = tmp_path / "local"
 
-    summary, round_trips = _run_over_delay(
+    summary, round_trips = _link_round_trips(
         tmp_path,
         delay,
         direction=TransferDirection.DOWNLOAD,
@@ -244,7 +269,7 @@ def test_recursive_upload_creates_directories_per_level(tmp_path):
     (local_root / "d00" / "a" / "b" / "f").write_bytes(b"x")
     remote_root = tmp_path / "remote"
 
-    summary, round_trips = _run_over_delay(
+    summary, round_trips = _link_round_trips(
         tmp_path,
         delay,
         direction=TransferDirection.UPLOAD,

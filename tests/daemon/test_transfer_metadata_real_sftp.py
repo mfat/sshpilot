@@ -48,6 +48,8 @@ pytestmark = pytest.mark.skipif(_SFTP_SERVER is None, reason="OpenSSH sftp-serve
 
 _UMASK = os.umask(0)
 os.umask(_UMASK)
+# Windows keeps only a read-only bit, so every file stats as 0o666 or 0o444.
+_POSIX_MODES = os.name == "posix"
 _OWNER = ClientId("client:owner")
 _MTIME = 1_600_000_000
 
@@ -115,7 +117,8 @@ def test_new_upload_takes_the_local_mode_and_mtime(transfers, tmp_path):
 
     assert remote.read_bytes() == b"#!/bin/sh\n"
     # The server's umask narrows a new file's mode, as with `sftp put`.
-    assert _mode(remote) == 0o750 & ~_UMASK
+    if _POSIX_MODES:
+        assert _mode(remote) == 0o750 & ~_UMASK
     assert int(os.stat(remote).st_mtime) == _MTIME
 
 
@@ -127,7 +130,8 @@ def test_new_download_takes_the_remote_mode_and_mtime(transfers, tmp_path):
     transfers(TransferDirection.DOWNLOAD, local, remote)
 
     assert local.read_bytes() == b"#!/bin/sh\n"
-    assert _mode(local) == 0o755 & ~_UMASK
+    if _POSIX_MODES:
+        assert _mode(local) == 0o755 & ~_UMASK
     assert int(os.stat(local).st_mtime) == _MTIME
 
 
