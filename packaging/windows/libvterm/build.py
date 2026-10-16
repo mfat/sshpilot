@@ -136,7 +136,9 @@ def patch(source: Path) -> None:
 
 def exported_functions(source: Path) -> list[str]:
     header = (source / "include" / "vterm.h").read_text(encoding="utf-8")
-    names = re.findall(r"^[A-Za-z_][\w \*]*?\b(vterm_\w+)\s*\(", header, re.M)
+    # The header's static inline helpers are never compiled into the DLL, and
+    # listing them in the .def fails the MSVC link with LNK2001.
+    names = re.findall(r"^(?!static\b)[A-Za-z_][\w \*]*?\b(vterm_\w+)\s*\(", header, re.M)
     return sorted(set(names)) + ["sshpilot_vterm_csi_args_bounded", "sshpilot_vterm_screen_get_row"]
 
 
