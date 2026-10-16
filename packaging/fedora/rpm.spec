@@ -142,6 +142,8 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
+%{_datadir}/icons/hicolor/128x128/apps/io.github.mfat.sshpilot.svg
+%{_datadir}/icons/hicolor/192x192/apps/io.github.mfat.sshpilot.svg
 # Glob the compression suffix: rpm gzips man pages, but which suffix it uses is
 # a distro policy, not something this spec should hardcode.
 %{_mandir}/man1/sshpilot.1*

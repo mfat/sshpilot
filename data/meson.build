@@ -42,12 +42,19 @@ install_data(app_icon,
   install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
 )
 
-# GTK rasterizes scalable-only window icons at 48px before sending them to a
-# Wayland compositor. Advertise the same vector artwork as a fixed 256px icon
-# too, so large Plasma task switchers receive a suitably sized texture.
-install_data(app_icon,
-  install_dir: datadir / 'icons' / 'hicolor' / '256x256' / 'apps',
-)
+# GTK hands its window icon to Wayland compositors (xdg-toplevel-icon) as
+# pixels, never as a name, and renders every size the theme reports as
+# scalable at a fixed 48px. KWin then uses that one buffer in place of the
+# .desktop icon, so a scalable-only icon is blurry in Plasma's large Alt-Tab
+# switcher (GNOME/gtk#7845, closed upstream without a fix). hicolor's
+# 256x256 and 512x512 directories are Type=Scalable, so they hit the same
+# path; 128x128 and 192x192 are the largest Threshold sizes, which GTK
+# renders at their own size and sends alongside the 48px buffer.
+foreach size : ['128x128', '192x192']
+  install_data(app_icon,
+    install_dir: datadir / 'icons' / 'hicolor' / size / 'apps',
+  )
+endforeach
 
 # Man pages for both binaries. Installed here rather than by a single distro's
 # packaging, so every package (deb, rpm, Arch, Flatpak) ships them.
