@@ -21,6 +21,7 @@ import errno
 import logging
 import os
 import stat
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.platform.fs import replace_local_file
 from sshpilot.api.events import (
     CoreEvent,
     CoreEventCallback,
@@ -113,6 +115,11 @@ def _apply_downloaded_metadata(temp_path: str, local_dst: str, attr) -> None:
         remote_mode = getattr(attr, "st_mode", None)
         base = stat.S_IMODE(remote_mode) & 0o777 if remote_mode is not None else 0o666
         mode = base & ~_current_umask()
+    if sys.platform == "win32":
+        # 0o444 sets FILE_ATTRIBUTE_READONLY. The temp then cannot be
+        # deleted if the replace fails, and a read-only destination cannot
+        # be replaced at all.
+        mode |= stat.S_IWRITE
     os.chmod(temp_path, mode)
     mtime = getattr(attr, "st_mtime", None)
     if mtime is not None:
@@ -1675,7 +1682,7 @@ class TransferRuntime:
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
             _apply_downloaded_metadata(temp_path, local_dst, attr)
-            os.replace(temp_path, local_dst)
+            replace_local_file(temp_path, local_dst)
         except BaseException:
             self._cleanup_local_temp(record)
             raise
@@ -1725,7 +1732,7 @@ class TransferRuntime:
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
             _apply_downloaded_metadata(temp_path, local_dst, attr)
-            os.replace(temp_path, local_dst)
+            replace_local_file(temp_path, local_dst)
         except BaseException:
             self._cleanup_local_temp(record)
             raise

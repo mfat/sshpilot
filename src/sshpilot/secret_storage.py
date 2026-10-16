@@ -59,8 +59,10 @@ import base64
 import json
 import functools
 import logging
+import ntpath
 import os
 import shlex
+import sys
 import shutil
 import subprocess
 import threading
@@ -68,6 +70,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+from .platform.fs import makedirs_private
 from .platform.process import hidden_console_kwargs
 
 logger = logging.getLogger(__name__)
@@ -277,11 +280,12 @@ def home_alias_for_path(path: str) -> str:
         rel = os.path.relpath(path, home)
     except ValueError:
         return ""
+    rel = rel.replace("\\", "/")
     if rel in (".", os.curdir):
         return "~"
     if rel.startswith(".."):
         return ""
-    return os.path.join("~", rel)
+    return "~/" + rel
 
 
 def normalize_key_path_for_storage(key_path: str) -> str:
@@ -378,9 +382,17 @@ def sudo_password_spec(host: str, username: str) -> SecretSpec:
 
 
 def _looks_like_key_path(account: str) -> bool:
-    return account.startswith("/") or account.startswith("~") or (
-        os.sep in account and "@" not in account
-    )
+    if not account:
+        return False
+    if account.startswith("/") or account.startswith("~"):
+        return True
+    # A vault written on Windows may be read on POSIX, where ``os.sep`` is
+    # ``/`` and would miss both ``C:\keys\id`` and ``C:/keys/id``.
+    if ntpath.splitdrive(account)[0] and ntpath.isabs(account):
+        return True
+    if "\\" in account and "@" not in account:
+        return True
+    return os.sep in account and "@" not in account
 
 
 def _split_user_host(text: str, username_hint: Optional[str] = None) -> Tuple[str, str]:
@@ -1789,7 +1801,8 @@ class RbwBackend(SecretBackend):
                 return os.path.join(get_data_dir(), "bin")
 
     def _pinentry_helper_path(self) -> str:
-        return os.path.join(self._pinentry_helper_dir(), "rbw-pinentry")
+        name = "rbw-pinentry.cmd" if sys.platform == "win32" else "rbw-pinentry"
+        return os.path.join(self._pinentry_helper_dir(), name)
 
     @staticmethod
     def _host_spawn_prefix() -> Optional[List[str]]:
@@ -1832,7 +1845,7 @@ class RbwBackend(SecretBackend):
                     or "failed to write host pinentry file"
                 )
             return
-        os.makedirs(dirname, mode=0o700, exist_ok=True)
+        makedirs_private(dirname)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
         try:
             os.write(fd, data)
@@ -1872,11 +1885,18 @@ class RbwBackend(SecretBackend):
         fallback = (
             "pinentry" if self._using_our_pinentry_helper(current) else (current or "pinentry")
         )
-        self._write_host_file(
-            helper,
-            _RBW_PINENTRY_HELPER.format(fallback=json.dumps(fallback)).encode("utf-8"),
-            0o700,
-        )
+        script = _RBW_PINENTRY_HELPER.format(fallback=json.dumps(fallback)).encode("utf-8")
+        if sys.platform == "win32":
+            # rbw-agent starts pinentry with CreateProcess. A shebang script
+            # is not an executable; a .cmd launcher is.
+            py_path = os.path.join(self._pinentry_helper_dir(), "rbw-pinentry.py")
+            self._write_host_file(py_path, script, 0o700)
+            launcher = (
+                f'@echo off\r\n@"{sys.executable}" "%~dp0rbw-pinentry.py" %*\r\n'
+            ).encode("utf-8")
+            self._write_host_file(helper, launcher, 0o700)
+        else:
+            self._write_host_file(helper, script, 0o700)
         set_res = self._run("config", "set", "pinentry", helper)
         if set_res.returncode != 0:
             logger.error(

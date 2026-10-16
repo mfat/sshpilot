@@ -13,6 +13,7 @@ nothing about connections.
 from __future__ import annotations
 
 import shlex
+import sys
 
 import pytest
 
@@ -32,9 +33,13 @@ def test_a_value_with_a_space_stays_one_argument():
 
     result = expand("knock %h", hostname="two words")
 
-    assert result == "knock 'two words'"
+    if sys.platform == "win32":
+        assert result == 'knock "two words"'
+    else:
+        assert result == "knock 'two words'"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell quoting")
 @pytest.mark.parametrize(
     "value", ["a'b", 'a"b', "a;rm -rf /", "a$(id)", "a`id`", "a b|c", "a\\b"]
 )
@@ -76,7 +81,10 @@ def test_a_trailing_percent_is_left_alone():
 def test_missing_values_expand_to_nothing_rather_than_the_token():
     """A half-configured connection should not knock a host called "%h"."""
 
-    assert expand("knock %h", hostname="") == "knock ''"
+    if sys.platform == "win32":
+        assert expand("knock %h", hostname="") == 'knock ""'
+    else:
+        assert expand("knock %h", hostname="") == "knock ''"
 
 
 def test_a_non_string_command_is_not_expanded():

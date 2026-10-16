@@ -21,6 +21,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Optional, Set, Union
 
+from sshpilot.platform.process import hidden_console_kwargs
+
 from ..ssh_config_document import SSHConfigDocument, split_include_args
 
 logger = logging.getLogger(__name__)
@@ -221,7 +223,12 @@ def get_effective_ssh_config(
     command.extend(["-G", host])
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, check=True, timeout=10
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            **hidden_console_kwargs(),
         )
     except Exception:
         return {}

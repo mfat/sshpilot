@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import platform
+import sys
 import shlex
 import shutil
 import ssl
@@ -51,7 +52,17 @@ from .platform.process import hidden_console_kwargs
 logger = logging.getLogger(__name__)
 
 _INSTALL_TIMEOUT = 600
-BW_CLI_DOWNLOAD = "https://bitwarden.com/download/?app=cli&platform=linux"
+def _bw_cli_download_platform() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+BW_CLI_DOWNLOAD = (
+    "https://bitwarden.com/download/?app=cli&platform=" + _bw_cli_download_platform()
+)
 BW_EU_SERVER = "https://vault.bitwarden.eu"
 # Bitwarden CLI two-step login ``--method`` values (Authenticator=0, Email=1, YubiKey=3).
 _BW_TWOFAMETHOD_VALUES = ("0", "1", "3")

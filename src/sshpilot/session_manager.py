@@ -33,6 +33,7 @@ import shutil
 import tempfile
 from typing import Dict, List, Optional
 
+from .platform.fs import makedirs_private
 from .platform_utils import get_config_dir
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ class SessionManager:
         """Persist sessions atomically with restrictive permissions."""
         try:
             directory = os.path.dirname(self._path)
-            os.makedirs(directory, mode=0o700, exist_ok=True)
+            makedirs_private(directory)
             payload = {
                 "sessions": self.sessions,
                 "previous": self.previous,

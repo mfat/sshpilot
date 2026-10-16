@@ -33,6 +33,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
+from ...platform.fs import makedirs_private
 from ...ssh_config_formatter import merged_block_lines
 from ...api.models.common import validate_ssh_host_alias
 from ..errors import CoreError, ErrorCode
@@ -145,7 +146,7 @@ class TransientConnections:
                 from sshpilot.platform.windows.acl import drop_owner_rights
 
                 drop_owner_rights(self._directory)
-        self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        makedirs_private(self._directory)
         return self._directory
 
     def _create_ssh_locked(

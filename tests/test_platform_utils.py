@@ -1,4 +1,5 @@
 import os
+import sys
 
 import pytest
 
@@ -174,7 +175,8 @@ def test_managed_bw_cli_path_uses_data_home(monkeypatch, tmp_path):
         raising=False,
     )
     path = platform_utils.get_managed_bw_cli_path()
-    assert path == os.path.join(str(tmp_path / "share"), "sshpilot", "bin", "bw")
+    filename = "bw.exe" if sys.platform == "win32" else "bw"
+    assert path == os.path.join(str(tmp_path / "share"), "sshpilot", "bin", filename)
 
 
 def test_managed_bw_cli_path_flatpak_uses_host_data(monkeypatch):

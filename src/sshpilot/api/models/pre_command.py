@@ -32,6 +32,8 @@ that already receive terminal content.
 
 from __future__ import annotations
 
+import shlex
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import Mapping, Optional
@@ -268,6 +270,20 @@ def _mode_from_metadata(value, command: str, sequence: str) -> PreCommandMode:
     return PreCommandMode.KNOCK
 
 
+_CMD_UNSAFE = frozenset("&|<>^%!\" \t")
+
+
+def _quote_shell_token(value: str) -> str:
+    """Quote *value* for the shell that runs a pre-connection command."""
+    if sys.platform != "win32":
+        return shlex.quote(value)
+    if not value:
+        return '""'
+    if any(char in _CMD_UNSAFE for char in value):
+        return '"' + value.replace('"', '""') + '"'
+    return value
+
+
 def expand_pre_command_tokens(
     command: str, *, hostname: str = "", port: object = "", username: str = ""
 ) -> str:
@@ -278,7 +294,9 @@ def expand_pre_command_tokens(
     is knocking for, and then rots silently the first time the connection is
     re-pointed or renamed.
 
-    Values are shell-quoted because the result is handed to ``sh -lc``: a
+    Values are quoted for the shell that will run the result: ``sh -lc`` on
+    POSIX, and ``cmd.exe`` on Windows (single quotes are literal there, so a
+    username such as ``DOMAIN\\user`` must not be wrapped in them). A
     hostname is the user's own configuration rather than hostile input, but a
     space or a quote in one should stay a hostname rather than becoming
     another argument. ``%%`` is a literal percent, and an unknown ``%x`` is
@@ -291,14 +309,12 @@ def expand_pre_command_tokens(
     stands and would otherwise disagree with the launch it is meant to
     rehearse.
     """
-    import shlex
-
     if not isinstance(command, str) or "%" not in command:
         return command if isinstance(command, str) else ""
     replacements = {
-        "h": shlex.quote(str(hostname or "")),
-        "p": shlex.quote(str(port or DEFAULT_SSH_PORT)),
-        "u": shlex.quote(str(username or "")),
+        "h": _quote_shell_token(str(hostname or "")),
+        "p": _quote_shell_token(str(port or DEFAULT_SSH_PORT)),
+        "u": _quote_shell_token(str(username or "")),
         "%": "%",
     }
     out = []

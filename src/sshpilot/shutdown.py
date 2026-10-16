@@ -78,9 +78,9 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
                 )
                 if hasattr(terminal, "process_pid") and terminal.process_pid:
                     try:
-                        import os, signal
+                        from .platform.process import kill_process_tree
 
-                        os.kill(terminal.process_pid, signal.SIGTERM)
+                        kill_process_tree(int(terminal.process_pid))
                     except Exception:
                         pass
                 if hasattr(terminal, "is_connected") and not terminal.is_connected:

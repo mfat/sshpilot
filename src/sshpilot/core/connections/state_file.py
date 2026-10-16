@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from ...api.models.connection_store import thaw_safe_metadata, validate_safe_metadata
-from ...platform.fs import fsync_directory
+from ...platform.fs import fsync_directory, makedirs_private
 from ..errors import CoreError, ErrorCode
 
 _MAX_STATE_BYTES = 16 * 1024 * 1024
@@ -640,7 +640,7 @@ def _atomic_write_bytes(
         )
     try:
         _refuse_symlink(path)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        makedirs_private(path.parent)
     except CoreError:
         raise
     except OSError as exc:

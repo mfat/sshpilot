@@ -25,6 +25,7 @@ from .core.settings import CONFIG_VERSION
 from .platform.locking import settings_transaction_lock
 from .platform.detect import is_flatpak
 from .platform.windows.acl import chmod_private
+from .ssh_config_document import split_include_args
 
 if TYPE_CHECKING:
     from .config import Config
@@ -94,21 +95,45 @@ def _current_home() -> str:
     return os.path.abspath(os.path.expanduser('~'))
 
 
+def _is_windows_style_path(text: str) -> bool:
+    """True when *text* is a Windows path, whatever OS is reading it."""
+    return bool(ntpath.splitdrive(text)[0]) or "\\" in text
+
+
+def _join_rebased_home(target_home: str, relative: str) -> str:
+    """Join *relative* onto *target_home* using the target's own separators."""
+    relative_posix = relative.replace("\\", "/").strip("/")
+    if _is_windows_style_path(target_home):
+        root = ntpath.normpath(target_home).rstrip("\\")
+        if not relative_posix:
+            return root
+        return root + "\\" + relative_posix.replace("/", "\\")
+    root = posixpath.normpath(target_home).rstrip("/")
+    if not relative_posix:
+        return root
+    return root + "/" + relative_posix
+
+
 def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -> str:
     """Map an absolute path that lived under the backup's *source* home onto the *current*
     home, so a key backed up as ``/home/alice/.ssh/id`` restores to ``/home/bob/.ssh/id``.
 
     Paths outside the source home (e.g. ``/etc/ssh/…``), or backups that predate the recorded
-    ``source_home``, are returned unchanged — no guessing."""
+    ``source_home``, are returned unchanged — no guessing. The source path is parsed in its
+    own flavour: ``os.path.abspath`` would turn ``/home/alice`` into ``C:\\home\\alice`` on
+    Windows and would fail to recognise ``C:\\Users\\alice`` on Linux."""
     if not path or not source_home:
         return path
-    ap = os.path.abspath(os.path.expanduser(str(path)))
-    sh = os.path.abspath(str(source_home))
-    if ap == sh:
-        return target_home
-    prefix = sh + os.sep
-    if ap.startswith(prefix):
-        return os.path.join(target_home, ap[len(prefix):])
+    raw = os.path.expanduser(str(path)) if str(path).startswith("~") else str(path)
+    flavour = ntpath if _is_windows_style_path(raw) else posixpath
+    normalized = flavour.normpath(raw)
+    for prefix, _separator in _home_prefixes(str(source_home)):
+        root = prefix[:-1]
+        for candidate in (raw, normalized):
+            if candidate == root:
+                return _join_rebased_home(str(target_home), "")
+            if candidate.startswith(prefix):
+                return _join_rebased_home(str(target_home), candidate[len(prefix):])
     return path
 
 
@@ -363,7 +388,7 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
         return line
     rest = line.strip()[len('include'):].lstrip(' =\t')
     try:
-        patterns = shlex.split(rest)
+        patterns = split_include_args(rest)
     except ValueError:
         patterns = rest.split()
     if not patterns:
@@ -375,7 +400,7 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
         if not os.path.isabs(pe):
             new_patterns.append(p)
         elif source_root and _is_under(pe, source_root):
-            new_patterns.append(os.path.relpath(pe, source_root))
+            new_patterns.append(os.path.relpath(pe, source_root).replace("\\", "/"))
         else:
             foreign = True
     indent = line[:len(line) - len(line.lstrip())]
@@ -1536,7 +1561,7 @@ class BackupManager:
             and not self._fragment_include_is_conditional(existing, fragment_name)
         ):
             return
-        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path))
+        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path)).replace("\\", "/")
         self._atomic_write_text(
             main_path,
             self._normalize_fragment_include(existing, fragment_name, rel),

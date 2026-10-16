@@ -232,7 +232,6 @@ tests/test_backup_edge_cases.py::test_bug4_replace_should_not_restore_dangling_i
 tests/test_backup_edge_cases.py::test_bug7_crossmode_absolute_include_stays_consistent  # path separators
 tests/test_backup_manager.py::test_passphrase_credential_rehomed_to_current_home  # assumes POSIX behaviour (reviewed by sample)
 tests/test_backup_manager.py::test_private_key_restore_rehomes_to_current_home  # assumes POSIX behaviour (reviewed by sample)
-tests/test_backup_manager.py::test_rebase_home_path_helper  # POSIX paths in fixtures
 tests/test_backup_manager.py::test_replace_restores_tree_rebased_and_maps_main  # POSIX paths in fixtures
 tests/test_backup_manager.py::test_spbk_private_key_roundtrip_is_opt_in  # POSIX file modes
 tests/test_backup_manager.py::test_spbk_restore_clamps_private_key_permissions  # POSIX file modes
@@ -310,10 +309,10 @@ tests/test_packaging_systemd.py::test_daemon_launcher_exists_and_is_executable  
 tests/test_parser_matches_ssh_g.py::TestParserMatchesSshG::test_rich_config_all_hosts_match  # assumes POSIX behaviour (reviewed by sample)
 tests/test_platform_utils.py::test_get_config_dir  # path separators
 tests/test_platform_utils.py::test_get_data_dir  # path separators
+tests/test_platform_utils.py::test_managed_bw_cli_path_uses_data_home  # Windows data dir is not GLib
 tests/test_platform_utils.py::test_inject_flatpak_host_env_inserts_env_fd_after_host  # assumes POSIX behaviour (reviewed by sample)
 tests/test_platform_utils.py::test_inject_flatpak_host_env_skips_empty_and_existing  # assumes POSIX behaviour (reviewed by sample)
 tests/test_platform_utils.py::test_managed_bw_cli_path_flatpak_uses_host_data  # POSIX paths in fixtures
-tests/test_platform_utils.py::test_managed_bw_cli_path_uses_data_home  # path separators
 tests/test_platform_utils.py::test_resolve_bw_cli_path_flatpak_host_binary  # POSIX paths in fixtures
 tests/test_portal_docs_resolution.py::test_lookup_document_path_falls_back_to_host  # POSIX-only API
 tests/test_portal_docs_resolution.py::test_lookup_document_path_prefers_portal_mount  # POSIX-only API

@@ -31,7 +31,11 @@ pip install -r requirements.txt
 python3 run.py
 ```
 
-Supported/tested Python versions are 3.12 and 3.13 (CI matrix).
+Supported/tested Python versions are 3.12 and 3.13 on Linux and macOS (CI
+matrix). Windows development uses Python 3.14; the setup, including how to
+activate the virtual environment, is in
+[docs/running-on-windows.md](docs/running-on-windows.md). The commands above
+are the Linux and macOS setup.
 
 ## Building and installing with Meson
 

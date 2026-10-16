@@ -2269,7 +2269,7 @@ def _enable_crash_diagnostics():
         # Preserve a crash report left behind by the previous run.
         previous_crash = _rotate_previous_crash_log(log_dir)
         # Fresh log for this run so the next startup's detection stays clean.
-        _crash_log_fp = open(path, 'w', buffering=1)
+        _crash_log_fp = open(path, "w", encoding="utf-8", buffering=1)
         faulthandler.enable(file=_crash_log_fp, all_threads=True)
         logging.getLogger(__name__).info("Crash diagnostics enabled → %s", path)
     except Exception:

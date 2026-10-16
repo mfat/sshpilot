@@ -97,19 +97,32 @@ def get_managed_bw_cli_dir() -> str:
     return os.path.join(get_data_dir(), "bin")
 
 
+def _managed_bw_cli_filename() -> str:
+    """Filename CreateProcess can execute.
+
+    An explicit path that contains a directory separator is not searched with
+    ``PATHEXT``. A Windows install named ``bw`` therefore fails with
+    ``WinError 193`` even though the zip member is ``bw.exe``.
+    """
+    if is_windows() and not is_flatpak():
+        return "bw.exe"
+    return "bw"
+
+
 def _legacy_managed_bw_cli_path() -> str:
     """Previous install location (``$XDG_STATE_HOME/sshpilot/bin/bw``), for discovery only."""
+    name = _managed_bw_cli_filename()
     if is_flatpak():
         home = _host_env("HOME")
         if home:
             state_home = _host_env("XDG_STATE_HOME") or os.path.join(home, ".local", "state")
-            return os.path.join(state_home, APP_NAME, "bin", "bw")
-    return os.path.join(get_state_dir(), "bin", "bw")
+            return os.path.join(state_home, APP_NAME, "bin", name)
+    return os.path.join(get_state_dir(), "bin", name)
 
 
 def get_managed_bw_cli_path() -> str:
     """Absolute path where sshPilot installs the Bitwarden CLI binary."""
-    return os.path.join(get_managed_bw_cli_dir(), "bw")
+    return os.path.join(get_managed_bw_cli_dir(), _managed_bw_cli_filename())
 
 
 def _managed_bw_cli_argv(path: str) -> Optional[List[str]]:
@@ -481,9 +494,11 @@ def _build_restart_command(executable, argv, main_spec):
 def restart_app() -> None:
     """Replace the current process with a fresh instance of the same app.
 
-    Works on Linux (including Flatpak) and macOS.  The setting must be
-    persisted before this is called — os.execv replaces the process
-    immediately with no further cleanup.
+    The setting must be persisted before this is called. On POSIX,
+    ``os.execv`` replaces the process in place. On Windows that call starts
+    a second process and exits this one immediately, racing the
+    single-instance lock, so the new process is spawned detached and this
+    one exits through ``os._exit``.
     """
     import sys
     import __main__
@@ -491,6 +506,15 @@ def restart_app() -> None:
     args = _build_restart_command(
         sys.executable, sys.argv, getattr(__main__, '__spec__', None)
     )
+    if sys.platform == "win32":
+        creationflags = 0
+        if hasattr(subprocess, "DETACHED_PROCESS"):
+            creationflags |= subprocess.DETACHED_PROCESS
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(args, close_fds=True, creationflags=creationflags)
+        os._exit(0)
+        return
     os.execv(sys.executable, args)
 
 

@@ -12,6 +12,8 @@ import threading
 from pathlib import Path
 from typing import Dict
 
+from .fs import makedirs_private
+
 try:  # pragma: no cover - exercised by cross-process tests on POSIX
     import fcntl
 except ImportError:  # pragma: no cover - Windows fallback
@@ -62,7 +64,7 @@ class CrossProcessRLock:
             return False
         depth = getattr(self._state, "depth", 0)
         if depth == 0 and _CAN_LOCK:
-            self._lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            makedirs_private(self._lock_path.parent)
             fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
             try:
                 _lock_fd(fd)

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 from gi.repository import Gio, GObject
+from .platform.fs import makedirs_private
 from .platform.locking import settings_transaction_lock
 from .platform_utils import get_config_dir
 from .custom_terminal_themes import (
@@ -99,7 +100,7 @@ class Config(GObject.Object):
         """Load configuration from JSON file"""
         try:
             if os.path.exists(self.config_file):
-                with open(self.config_file) as f:
+                with open(self.config_file, encoding="utf-8") as f:
                     config = json.load(f)
 
                 # Purge outdated configurations
@@ -186,7 +187,7 @@ class Config(GObject.Object):
                     config_data = self._merge_config_changes_with_disk(config_data)
 
                 directory = os.path.dirname(self.config_file) or '.'
-                os.makedirs(directory, mode=0o700, exist_ok=True)
+                makedirs_private(directory)
                 try:
                     os.chmod(directory, 0o700)
                 except OSError:
@@ -932,7 +933,7 @@ class Config(GObject.Object):
                 key: self.terminal_themes[key] for key in self.custom_theme_keys()
             }
             
-            with open(file_path, 'w') as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=2)
             
             logger.info(f"Configuration exported to {file_path}")
@@ -945,7 +946,7 @@ class Config(GObject.Object):
     def import_config(self, file_path: str) -> bool:
         """Import configuration from file"""
         try:
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 imported_config = json.load(f)
             
             # Import custom themes

@@ -47,6 +47,7 @@ except Exception:  # noqa: BLE001 — ImportError/ValueError/GError/TypeError
     _HAS_GTKSOURCE = False
     GtkSource = None
 
+from .platform.fs import rename_local_file
 from .platform_utils import is_flatpak
 from .text_editor import RemoteFileEditorWindow
 from .file_manager import (
@@ -1864,7 +1865,7 @@ class FileManagerWindow(Adw.Window):
             target = join(base_dir, new_name)
             if pane is self._left_pane:
                 try:
-                    os.rename(source, target)
+                    rename_local_file(source, target)
                 except Exception as exc:
                     pane.show_toast(_("Failed to rename item: {error}").format(error=exc))
                 else:

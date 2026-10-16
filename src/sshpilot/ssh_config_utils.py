@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 from typing import Optional
 
+from .platform.process import hidden_console_kwargs
 from .core.ssh_config_effective import (
     SSHConfigPathDiscovery,
     collect_host_block_lines,
@@ -96,6 +97,7 @@ def validate_ssh_config_text(text: str) -> Optional[str]:
             capture_output=True,
             text=True,
             timeout=10,
+            **hidden_console_kwargs(),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None

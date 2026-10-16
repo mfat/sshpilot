@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from typing import Optional
 
@@ -21,6 +22,44 @@ def makedirs_private(path: "os.PathLike[str] | str") -> None:
         os.makedirs(path, exist_ok=True)
     else:
         os.makedirs(path, mode=0o700, exist_ok=True)
+
+
+def replace_local_file(source: str, destination: str) -> None:
+    """Replace *destination* with *source*.
+
+    On Windows a mode of ``0o444`` sets ``FILE_ATTRIBUTE_READONLY``, and
+    ``os.replace`` then fails with access denied. Clear that attribute on
+    the destination before the replace.
+    """
+    if sys.platform == "win32" and os.path.exists(destination):
+        try:
+            os.chmod(destination, stat.S_IREAD | stat.S_IWRITE)
+        except OSError:
+            pass
+    os.replace(source, destination)
+
+
+def rename_local_file(source: str, destination: str) -> None:
+    """Rename *source* to *destination*.
+
+    A case-only change (``Foo.txt`` to ``foo.txt``) is invisible to
+    ``os.rename`` on a case-insensitive volume. Move through a temporary
+    name so the directory entry keeps the requested spelling.
+    """
+    if (
+        sys.platform == "win32"
+        and os.path.normcase(os.path.abspath(source)) == os.path.normcase(os.path.abspath(destination))
+        and os.path.normpath(source) != os.path.normpath(destination)
+    ):
+        temporary = source + ".sshpilot-rename"
+        os.replace(source, temporary)
+        try:
+            os.replace(temporary, destination)
+        except OSError:
+            os.replace(temporary, source)
+            raise
+        return
+    os.rename(source, destination)
 
 
 def fsync_directory(directory: "os.PathLike[str] | str") -> None:
