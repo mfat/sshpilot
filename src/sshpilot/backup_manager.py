@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple, List
 from .ssh_config_document import split_config_lines
 
+from .api.models.common import validate_ssh_host_alias
 from .api.models.secrets import (
     SecretTransferMessage,
     SecretTransferMessageCode,
@@ -248,26 +249,54 @@ def _is_under(path: str, root: str) -> bool:
     return ap == rp or ap.startswith(rp + os.sep)
 
 
-def _ssh_keyword(line: str) -> str:
-    """The lowercase SSH directive keyword of a line, honoring ``Key value``, ``Key=value`` and
-    ``Key = value``. Blank/comment lines return ``''``."""
-    s = line.strip()
-    if not s or s.startswith('#'):
-        return ''
+def _strdelim(s: str) -> Tuple[Optional[str], str]:
+    """``(token, rest)`` the way OpenSSH's ``strdelim()`` cuts the keyword off a line: the token
+    ends at a blank or at ONE ``=``, or at the closing quote of a ``"quoted"`` part (``None`` if it
+    is never closed)."""
     for i, ch in enumerate(s):
+        if ch == '"':
+            end = s.find('"', i + 1)
+            if end < 0:
+                return None, ''
+            return s[:i] + s[i + 1:end], s[end + 1:].lstrip()
         if ch.isspace() or ch == '=':
-            return s[:i].lower()
-    return s.lower()
+            rest = s[i + 1:].lstrip()
+            if ch != '=' and rest.startswith('='):
+                rest = rest[1:].lstrip()
+            return s[:i], rest
+    return s, ''
+
+
+def _split_directive(line: str) -> Tuple[str, str]:
+    """``(lowercase keyword, argument text)`` of a line, honoring every spelling OpenSSH reads as
+    that keyword: ``Key value``, ``Key=value``, ``Key = value``, ``"Key" value``, ``=Key value``.
+    Blank/comment lines return ``('', '')``."""
+    s = line.split('\0', 1)[0].strip()      # OpenSSH reads a C string
+    keyword, rest = _strdelim(s)
+    if keyword == '':                       # it skips one empty leading token (`=`, `""`)
+        keyword, rest = _strdelim(rest)
+    if not keyword or keyword.startswith('#'):
+        return '', ''
+    return keyword.lower(), rest
+
+
+def _ssh_keyword(line: str) -> str:
+    """The lowercase SSH directive keyword of a line (see :func:`_split_directive`)."""
+    return _split_directive(line)[0]
 
 
 def _host_patterns(line: str) -> List[str]:
-    """Patterns from a ``Host a b c`` header line."""
-    s = line.strip()
-    rest = s[4:].lstrip(' =\t') if len(s) >= 4 else ''
+    """Patterns from a ``Host a b c`` header line. Like OpenSSH, stop at a token that starts a
+    ``# comment`` — what follows names no host."""
+    rest = _split_directive(line)[1]
     try:
-        return shlex.split(rest)
+        patterns = shlex.split(rest)
     except ValueError:
-        return rest.split()
+        patterns = rest.split()
+    for i, pattern in enumerate(patterns):
+        if pattern.startswith('#'):
+            return patterns[:i]
+    return patterns
 
 
 def _iter_config_stanzas(text: str):
@@ -296,6 +325,31 @@ def _iter_config_stanzas(text: str):
 def _is_wildcard_pattern(pattern: str) -> bool:
     """A Host pattern that isn't a single concrete name (``*``/``?`` wildcards, ``!`` negation)."""
     return any(ch in pattern for ch in '*?!')
+
+
+def _importable_alias(pattern: str) -> Optional[str]:
+    """``pattern`` as a concrete Host alias that merge may write, else ``None``: a wildcard or
+    negation is a rule, not a host, and the rest is what the app refuses as an alias everywhere
+    else (empty, leading ``-``, control characters)."""
+    if _is_wildcard_pattern(pattern):
+        return None
+    try:
+        return validate_ssh_host_alias(pattern)
+    except ValueError:
+        return None
+
+
+_PLAIN_PATTERN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:@%+*?!")
+
+
+def _quote_pattern(pattern: str) -> str:
+    """A Host pattern written so that OpenSSH reads back exactly this ONE pattern: anything its
+    tokenizer could treat specially (blanks, quotes, backslash, a leading ``=`` or ``#``) goes
+    inside double quotes, with ``\\`` and ``"`` escaped."""
+    if all(ch in _PLAIN_PATTERN_CHARS for ch in pattern):
+        return pattern
+    return '"' + pattern.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def _owned_and_readable(path: str) -> bool:
@@ -371,9 +425,10 @@ def _select_new_host_blocks(imported_texts: List[str], existing_names: set
     Returns ``(new_block_text, dropped_nonhost, partial_collisions)``:
     - wildcard/negated ``Host`` stanzas, ``Match`` blocks and top-level globals are dropped
       (counted) — merge must never inject machine-wide SSH behavior from a backup;
+    - a wildcard next to a concrete name (``Host web *``) is dropped (counted) the same way and
+      the stanza is imported for the concrete name only;
     - a stanza whose names are all already present is skipped silently;
-    - a stanza where only SOME names collide is skipped and reported (an inherent ambiguity we
-      surface rather than guess)."""
+    - a stanza where only SOME names collide is imported for the new names and reported."""
     kept: List[str] = []
     dropped = 0
     collisions: List[List[str]] = []
@@ -386,25 +441,26 @@ def _select_new_host_blocks(imported_texts: List[str], existing_names: set
                 if has_content:
                     dropped += 1
                 continue
-            # Keep a stanza as long as it names at least one concrete host; only PURE
-            # wildcard/negation stanzas (Host *, Host prod-*, Host * !x) are global-ish and
-            # dropped. `Host prod !prod-db` keeps `prod`.
-            concrete = [p for p in patterns if not _is_wildcard_pattern(p)]
-            if not concrete:
+            # Import a stanza for the concrete hosts it names, and only for those. A negation can
+            # only narrow it (`Host prod !prod-db` keeps both); a wildcard widens it to hosts the
+            # backup does not define — alone (Host *, Host prod-*, Host * !x) or next to a
+            # concrete name (Host prod *) — so it is global-ish and never written.
+            concrete = [a for a in map(_importable_alias, patterns) if a]
+            negated = [p for p in patterns if p.startswith('!')]
+            if not concrete or len(concrete) + len(negated) < len(patterns):
                 dropped += 1
-                continue
             present = [p for p in concrete if p in existing_names]
             new_names = [p for p in concrete if p not in existing_names]
-            if not present:
-                kept.append('\n'.join(blk).rstrip())
-            elif new_names:
-                # Partial collision: import only the non-colliding names (rebuild the Host
-                # header, keep the body) instead of dropping the whole stanza — and still report
-                # the collision so the user knows some names were left to the existing hosts.
-                indent = blk[0][:len(blk[0]) - len(blk[0].lstrip())]
-                split_block = [f"{indent}Host {' '.join(new_names)}"] + list(blk[1:])
-                kept.append('\n'.join(split_block).rstrip())
-                collisions.append(patterns)
+            if new_names:
+                # Always rebuild the Host header from the names that were checked (keep the body),
+                # never copy it: shlex and OpenSSH do not tokenize alike (`x\<TAB>web`, `=web`),
+                # so the original text may name hosts this check did not see.
+                header = ' '.join(_quote_pattern(p) for p in new_names + negated)
+                kept.append('\n'.join([f"Host {header}"] + list(blk[1:])).rstrip())
+                if present:
+                    # Partial collision: only the non-colliding names are imported — report it
+                    # so the user knows some names were left to the existing hosts.
+                    collisions.append(patterns)
             # else: every concrete name already exists -> skip silently (a full duplicate,
             # e.g. re-importing your own backup, is not a reportable collision)
     return ('\n\n'.join(kept), dropped, collisions)
@@ -419,9 +475,9 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
       where the target root is not the home dir);
     - absolute includes OUTSIDE the source root were never bundled, so the line is commented out
       with a note instead of silently re-pointing at the target machine's system files."""
-    if _ssh_keyword(line) != 'include':
+    keyword, rest = _split_directive(line)
+    if keyword != 'include':
         return line
-    rest = line.strip()[len('include'):].lstrip(' =\t')
     try:
         patterns = split_include_args(rest)
     except ValueError:
@@ -1575,8 +1631,7 @@ class BackupManager:
             if kind == 'global':
                 return False
             if kind == 'match':
-                rest = block[0].strip()[len('match'):].strip().lower()
-                return rest != 'all'
+                return _split_directive(block[0])[1].lower() != 'all'
             return True
         return False
 
