@@ -356,6 +356,17 @@ def test_session_cancel_and_close_leave_no_active_interactions(
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL behaviour")
+def test_windows_askpass_launcher_is_readable_by_its_owner(broker: InteractionBroker) -> None:
+    # Python 3.13+ mkdtemp leaves only SYSTEM and Administrators inheritable;
+    # the private directory must pass the user's grant on to the launcher, or
+    # OpenSSH cannot start it (CreateProcessW error 5) and reads every prompt
+    # as an empty answer.
+    for path in broker._private_dir.iterdir():
+        with open(path, "rb") as handle:
+            handle.read(1)
+
+
 def test_private_askpass_helper_delivers_only_one_brokered_secret(
     broker: InteractionBroker,
     monkeypatch,

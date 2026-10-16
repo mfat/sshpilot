@@ -235,7 +235,11 @@ class InteractionBroker:
             # Windows: OpenSSH runs the helper through cmd.exe, and the
             # listener is loopback TCP. Each request still carries its
             # per-launch broker token, which is the channel's authority.
-            transport_endpoint.restrict_to_current_user(self._private_dir)
+            # The directory form: Python 3.13+ mkdtemp leaves only SYSTEM and
+            # Administrators inheritable, so a non-inherited user grant made
+            # askpass.cmd unrunnable (CreateProcessW error 5) and OpenSSH
+            # read every prompt as an empty answer.
+            transport_endpoint.restrict_directory_to_current_user(self._private_dir)
             self._askpass_helper_path = self._private_dir / "askpass.cmd"
             self._write_helper_launcher()
             self._askpass_listener, port = transport_endpoint.create_tcp_listener()

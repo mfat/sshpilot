@@ -119,6 +119,22 @@ def restrict_to_current_user(path: os.PathLike) -> None:
     _restrict(path)
 
 
+def restrict_directory_to_current_user(path: os.PathLike) -> None:
+    """Best-effort: limit ``path`` and what is created in it (no-op on POSIX).
+
+    Unlike :func:`restrict_to_current_user`, the user's grant is inherited, so
+    files written into the directory stay readable and runnable by the user.
+    """
+
+    if sys.platform != "win32":
+        return
+    from sshpilot.platform.windows.acl import (
+        restrict_directory_to_current_user as _restrict,
+    )
+
+    _restrict(path)
+
+
 def create_tcp_listener() -> Tuple[socket.socket, int]:
     """Bind an ephemeral loopback listener; return it and its port."""
 

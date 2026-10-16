@@ -264,6 +264,18 @@ class KeyService:
             ) from exc
         if completed.returncode != 0:
             raise CoreError(ErrorCode.KEY_INVALID, "ssh-keygen failed.")
+        if spec.encrypted and self._opens_without_passphrase(key_path):
+            # OpenSSH reads a failed askpass as an empty passphrase and writes
+            # the key in plaintext. Never hand that back as an encrypted key.
+            for path in (key_path, Path(f"{key_path}.pub")):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            raise CoreError(
+                ErrorCode.KEY_INVALID,
+                "No passphrase was set; the unencrypted key was removed.",
+            )
         try:
             # On Windows, OpenSSH checks the ACL rather than mode bits.
             chmod_private(key_path)
@@ -277,6 +289,22 @@ class KeyService:
                 type(perm_err).__name__,
             )
         return SSHKeyInfo(str(key_path))
+
+    @staticmethod
+    def _opens_without_passphrase(key_path: Path) -> bool:
+        """True when ``ssh-keygen -y`` reads *key_path* with an empty passphrase."""
+        try:
+            completed = subprocess.run(
+                ["ssh-keygen", "-y", "-P", "", "-f", str(key_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                timeout=_KEY_VERIFY_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return completed.returncode == 0
 
     def verify_key_passphrase(
         self,
