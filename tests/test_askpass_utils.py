@@ -332,6 +332,7 @@ def test_frozen_build_native_askpass_script_dispatches_via_internal_flag(monkeyp
 
     from sshpilot import askpass_utils
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", "/fake/SSHPilot", raising=False)
     monkeypatch.setattr(askpass_utils, "_ASKPASS_DIR", None)
@@ -349,3 +350,24 @@ def test_frozen_build_native_askpass_script_dispatches_via_internal_flag(monkeyp
     assert not os.path.exists(
         os.path.join(os.path.dirname(script_path), "askpass_helper.py")
     )
+
+
+def test_frozen_windows_native_askpass_is_a_cmd_launcher(monkeypatch):
+    # OpenSSH for Windows starts SSH_ASKPASS with CreateProcess, which cannot
+    # run a shell script (error 193) and reads the failure as an empty answer.
+    import sys
+
+    from sshpilot import askpass_utils
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Apps\SSHPilot.exe", raising=False)
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_DIR", None)
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_SCRIPT", None)
+
+    script_path = askpass_utils.force_regenerate_askpass_script()
+
+    assert script_path.endswith("askpass.cmd")
+    with open(script_path, "rb") as f:
+        content = f.read()
+    assert content == b'@echo off\r\n@"C:\\Apps\\SSHPilot.exe" --internal-native-askpass %*\r\n'

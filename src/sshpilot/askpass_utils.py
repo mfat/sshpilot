@@ -1466,10 +1466,17 @@ def ensure_passphrase_askpass() -> str:
     _ASKPASS_DIR = tempfile.mkdtemp(prefix="sshpilot-askpass-")
     os.chmod(_ASKPASS_DIR, 0o700)
 
-    script_path = os.path.join(_ASKPASS_DIR, "askpass.sh")
+    # OpenSSH for Windows starts SSH_ASKPASS with CreateProcess: a shell
+    # script fails (error 193) and OpenSSH reads that as an empty answer, so
+    # Windows gets a .cmd launcher, as the daemon broker does.
+    windows = sys.platform == "win32"
+    script_path = os.path.join(_ASKPASS_DIR, "askpass.cmd" if windows else "askpass.sh")
     logger.debug(f"Generating askpass shell wrapper at {script_path}")
 
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False) and windows:
+        with open(script_path, "w", encoding="utf-8", newline="") as f:
+            f.write(f'@echo off\r\n@"{sys.executable}" --internal-native-askpass %*\r\n')
+    elif getattr(sys, "frozen", False):
         # sys.executable is this application's own binary in a frozen
         # (PyInstaller) build, not a Python interpreter — "exec sys.executable
         # helper.py" would just relaunch the GUI instead of running
@@ -1493,8 +1500,12 @@ def ensure_passphrase_askpass() -> str:
             f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
             f.write("sys.exit(run_askpass_and_write(prompt))\n")
         os.chmod(helper_path, 0o600)
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
+        if windows:
+            with open(script_path, "w", encoding="utf-8", newline="") as f:
+                f.write(f'@echo off\r\n@"{sys.executable}" "{helper_path}" %*\r\n')
+        else:
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
 
     script_mode = os.stat(script_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
     os.chmod(script_path, script_mode)
