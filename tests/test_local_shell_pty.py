@@ -77,7 +77,11 @@ def test_cwd_and_environment_reach_the_shell(tmp_path):
     )
     text = output.decode("utf-8", "replace")
     assert "probe-value" in text
-    assert os.path.basename(str(tmp_path)).lower() in text.lower()
+    # Without the bundled conpty.dll (vendor/ is untracked, so a fresh
+    # worktree has none) the inbox conhost hard-wraps the echoed path at the
+    # 100-column width, splitting the directory name across a CR LF.
+    unwrapped = text.replace("\r", "").replace("\n", "")
+    assert os.path.basename(str(tmp_path)).lower() in unwrapped.lower()
     assert status == 0
 
 
