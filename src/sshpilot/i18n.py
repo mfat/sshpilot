@@ -11,6 +11,8 @@ An empty setting means "system default": leave the environment alone and let
 gettext read the user's locale, which is the behaviour every other GTK app has.
 """
 
+import functools
+import gettext as _stdlib_gettext
 import json
 import logging
 import os
@@ -79,6 +81,18 @@ def candidate_localedirs() -> List[str]:
     """
     dirs = [_BUILD_LOCALEDIR, _PACKAGE_LOCALEDIR, os.path.join(sys.prefix, 'share', 'locale')]
     return [d for d in dirs if d and os.path.isdir(d)]
+
+
+@functools.lru_cache(maxsize=None)
+def gettext(message: str) -> str:
+    """``gettext.gettext``, memoised for code that builds many widgets.
+
+    The stdlib function searches the locale directories for the catalogue on
+    every call. The language cannot change within a process (see the module
+    docstring), so a result never goes stale, provided nothing calls this
+    before :func:`sshpilot.main._init_gettext` has bound the text domain.
+    """
+    return _stdlib_gettext.gettext(message)
 
 
 def N_(message: str) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from typing import Any, List
 
-from gettext import gettext as _
+from .i18n import gettext as _
 
 # Stand-in shown wherever host details are suppressed by the privacy toggle
 # (the eye button in the sidebar header).
