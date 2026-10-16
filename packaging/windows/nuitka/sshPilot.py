@@ -24,4 +24,4 @@ os.environ["XDG_DATA_DIRS"] = os.pathsep.join(
 
 import run  # noqa: E402  (the --daemon / --internal-* dispatch runs on import)
 
-run.main()
+raise SystemExit(run.main())

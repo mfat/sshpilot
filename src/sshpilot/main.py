@@ -2540,4 +2540,4 @@ def main():
     return status
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

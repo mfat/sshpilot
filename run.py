@@ -84,4 +84,4 @@ start_from_argv(sys.argv[1:])
 from sshpilot.main import main
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

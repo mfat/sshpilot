@@ -180,7 +180,7 @@ def run_server(
     quiet: bool = False,
     serve_forever: Callable[..., None],
     shutdown: Callable[[], None],
-    startup_error: Optional[BaseException],
+    get_startup_error: Callable[[], Optional[BaseException]],
     restart_requested: Optional[Callable[[], bool]] = None,
 ) -> int:
     _configure_logging(verbose, quiet)
@@ -191,6 +191,9 @@ def run_server(
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
     serve_forever()
+    # Read after serve_forever returns: setup runs inside it and records its
+    # failure there, so a value captured before the call is always None.
+    startup_error = get_startup_error()
     if startup_error is not None:
         raise startup_error
     if restart_requested is not None and restart_requested():
@@ -281,7 +284,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             quiet=args.quiet,
             serve_forever=server.serve_forever,
             shutdown=_shutdown,
-            startup_error=server._startup_error,
+            get_startup_error=lambda: server._startup_error,
             restart_requested=lambda: bool(
                 server._lifecycle is not None and server._lifecycle.restart_requested
             ),
