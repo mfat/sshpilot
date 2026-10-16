@@ -707,6 +707,7 @@ def _window_with_preferences(preferences):
         _attach_client_backed_services=lambda: None,
         _build_ssh_overrides_controller=lambda: None,
         _maybe_restore_daemon_sessions=lambda: None,
+        _run_client_ready_callbacks=lambda _ready: None,
         get_application=lambda: None,
     )
     return MainWindow, window

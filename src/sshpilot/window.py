@@ -1038,6 +1038,35 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(self.client, bridge=self.client_bridge)
         self._maybe_restore_daemon_sessions()
+        self._run_client_ready_callbacks(True)
+
+    def when_daemon_client_ready(self, callback) -> None:
+        """Call ``callback(ready)`` once a daemon client is attached.
+
+        Runs at once when one already is. While the first selection is still
+        pending (the window is shown before the daemon answers), it waits:
+        ``ready`` is True after the client and its connection snapshot are
+        attached, False when the selection fails.
+        """
+        if self.client is not None and self.client_bridge is not None:
+            callback(True)
+            return
+        if not getattr(self, '_api_client_selection_pending', False):
+            callback(False)
+            return
+        pending = getattr(self, '_client_ready_callbacks', None)
+        if pending is None:
+            pending = self._client_ready_callbacks = []
+        pending.append(callback)
+
+    def _run_client_ready_callbacks(self, ready: bool) -> None:
+        callbacks = getattr(self, '_client_ready_callbacks', None) or []
+        self._client_ready_callbacks = []
+        for callback in callbacks:
+            try:
+                callback(ready)
+            except Exception:
+                logger.exception("Daemon client ready callback failed")
 
     def _handle_client_selection_error(self, error) -> None:
         """Keep the backend unavailable and expose retry/diagnostic recovery."""
@@ -1087,6 +1116,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(None)
         self._show_client_mode_warning()
+        self._run_client_ready_callbacks(False)
 
     def _mark_daemon_unavailable(self) -> None:
         """Invalidate daemon-dependent UI state without selecting a fallback."""
