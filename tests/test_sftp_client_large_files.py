@@ -626,8 +626,10 @@ def test_atomic_upload_many_writes_a_file_that_outgrew_one_chunk(client, tmp_pat
 def test_stat_many_missing_on_error_tolerates_non_enoent_failures(client, tmp_path):
     present = tmp_path / "here.bin"
     present.write_bytes(b"x")
-    # ENAMETOOLONG comes back as FX_FAILURE, not FX_NO_SUCH_FILE.
-    odd = str(tmp_path / ("n" * 300))
+    # Not FX_NO_SUCH_FILE: OpenSSH answers ENAMETOOLONG with FX_FAILURE, and
+    # Win32-OpenSSH, which reports a merely over-long name as missing,
+    # refuses a name this long with FX_BAD_MESSAGE.
+    odd = str(tmp_path / ("n" * 40000))
     with pytest.raises(proto.SFTPError):
         client.stat_many([odd])
     attrs = client.stat_many([odd, str(present)], missing_on_error=True)
