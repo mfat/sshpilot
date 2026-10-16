@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 _CHUNK = 32768  # 32 KiB — within the SFTP max packet for reads/writes.
 # Upper bound on a read/write chunk, whatever limits@openssh.com advertises.
 _MAX_CHUNK = 4 * 1024 * 1024
+# A short READ at least this long is taken as the server's real cap (one
+# shorter is more likely the end of the file).
+_MIN_SHORT_READ_SPLIT = _CHUNK
 # Starting READ/WRITE window. FileZilla uses the same initial depth, then grows
 # it from measured RTT so a high-latency link still keeps the pipe full.
 _INITIAL_PIPELINE_DEPTH = 16
@@ -1238,13 +1241,15 @@ class OpenSSHSFTPClient:
         measured RTT (FileZilla-style) so a high-latency link still fills the
         pipe. A server may return fewer bytes than asked (OpenSSH's sftp-server
         caps a READ at ~255 KiB), so a short reply is followed up for the rest
-        of its chunk; only an empty reply means EOF.
+        of its chunk; only an empty reply means EOF. The first short reply also
+        resizes the chunks to its length, in flight and to come.
         """
         step = self.max_read_length
         end = None if length is None else offset + length
         pipeline = _AdaptivePipeline(step)
         inflight: Deque[Tuple[int, int, _Pending]] = deque()
         next_offset = position = offset
+        split = False
         try:
             while True:
                 while len(inflight) < pipeline.max_pending and (
@@ -1260,8 +1265,20 @@ class OpenSSHSFTPClient:
                 if not inflight:
                     return
                 chunk_offset, size, slot = inflight.popleft()
-                data = self._read_data(self._wait(slot))
+                # A re-split chunk (below) may still be answered in full.
+                data = self._read_data(self._wait(slot))[:size]
                 chunk_end = chunk_offset + size
+                if not split and _MIN_SHORT_READ_SPLIT <= len(data) < size:
+                    # The server returns less than its limits advertise
+                    # (Win32-OpenSSH caps a READ at 100 KiB), so every chunk
+                    # in flight comes back short too. Ask for all their
+                    # missing pieces now instead of one round trip per chunk.
+                    split = True
+                    step = len(data)
+                    chunk_end = chunk_offset + step
+                    inflight = self._split_reads(
+                        handle, [(chunk_end, size - step, None), *inflight], step
+                    )
                 while data:
                     yield data
                     position += len(data)
@@ -1274,6 +1291,28 @@ class OpenSSHSFTPClient:
                 pipeline.on_catch_up(position)
         finally:
             self.last_transfer_peak_pending = pipeline.peak_pending
+
+    def _split_reads(
+        self,
+        handle: bytes,
+        reads: List[Tuple[int, int, Optional[_Pending]]],
+        step: int,
+    ) -> Deque[Tuple[int, int, _Pending]]:
+        """Cut each ``(offset, size, slot)`` READ into ``step``-sized pieces.
+
+        A read already sent keeps its slot for its first piece (its reply is
+        trimmed to that); the rest, and a read with no slot, are sent now.
+        """
+        pieces: Deque[Tuple[int, int, _Pending]] = deque()
+        for read_offset, size, slot in reads:
+            read_end = read_offset + size
+            if slot is not None:
+                pieces.append((read_offset, min(size, step), slot))
+                read_offset += step
+            for piece in range(read_offset, read_end, step):
+                piece_size = min(step, read_end - piece)
+                pieces.append((piece, piece_size, self._send_read(handle, piece, piece_size)))
+        return pieces
 
     def pipelined_writer(self, handle: bytes, offset: int = 0) -> "PipelinedWriter":
         return PipelinedWriter(self, handle, offset)

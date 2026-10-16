@@ -417,6 +417,33 @@ def test_adaptive_read_grows_window_over_a_slow_link(tmp_path):
     assert round_trips < 10, f"adaptive read took {round_trips:.1f} round trips"
 
 
+def test_read_capped_below_the_advertised_limit_follows_up_in_parallel(tmp_path):
+    """Win32-OpenSSH advertises 255 KiB READs but answers at most 100 KiB.
+
+    Chunks larger than the server's real cap, as when it under-delivers on its
+    limits, come back short. Their missing pieces must be fetched together,
+    not one round trip per chunk.
+    """
+    delay = 0.1
+    size = 4 * 1024 * 1024
+    content = os.urandom(size)
+    path = tmp_path / "big.bin"
+    path.write_bytes(content)
+    sftp, process, stdout = _start_client(delay)
+    try:
+        # Above what either server answers per READ (~255 KiB / 100 KiB).
+        sftp.max_read_length = 1024 * 1024
+        started = time.monotonic()
+        with sftp.file(str(path), "rb") as handle:
+            assert handle.read(size + 1) == content
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        _stop_client(sftp, process, stdout)
+    # open, first replies, their missing pieces, EOF follow-up, close. One
+    # follow-up per short reply made this 12+.
+    assert round_trips < 9, f"capped read took {round_trips:.1f} round trips"
+
+
 def test_adaptive_write_grows_window_over_a_slow_link(tmp_path):
     delay = 0.05
     size = 2 * 1024 * 1024
