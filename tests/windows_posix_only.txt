@@ -337,6 +337,8 @@ tests/test_secret_storage.py::test_bitwarden_flatpak_login_forwards_password_via
 tests/test_secret_storage.py::test_delete_clears_all_backends  # assumes POSIX behaviour (reviewed by sample)
 tests/test_secret_storage.py::test_master_password_stored_in_keyring_not_selected_vault  # secret backend selection differs on Windows
 tests/test_secret_storage.py::test_store_uses_primary_then_lookup  # assumes POSIX behaviour (reviewed by sample)
+tests/test_sftp_client_large_files.py::test_atomic_upload_many_stays_within_the_servers_handle_limit  # POSIX-only API (ulimit -n / RLIMIT_NOFILE)
+tests/test_sftp_client_large_files.py::test_read_small_files_stays_within_the_servers_handle_limit  # POSIX-only API (ulimit -n / RLIMIT_NOFILE)
 tests/test_ssh_config_document.py::test_parse_file_matches_parse_text  # assumes POSIX behaviour (reviewed by sample)
 tests/test_ssh_config_safe_write.py::test_atomic_write_creates_file_with_requested_mode  # POSIX file modes
 tests/test_ssh_config_safe_write.py::test_atomic_write_makes_backup_and_keeps_perms  # POSIX file modes
