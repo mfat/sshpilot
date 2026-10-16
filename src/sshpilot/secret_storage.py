@@ -1894,7 +1894,7 @@ class RbwBackend(SecretBackend):
             arguments = "-I"
         # cmd.exe expands %NAME% in a batch line, so a literal % is doubled.
         exe = exe.replace("%", "%%")
-        return f'@echo off\r\n@"{exe}" {arguments} "%~dp0rbw-pinentry.py" %*\r\n'.encode("utf-8")
+        return f'@echo off\r\n@"{exe}" {arguments} "%~dp0rbw-pinentry.py" %*\r\n'.encode()
 
     def _pinentry_helper_current(self, helper: str) -> bool:
         """Whether the installed helper can run as it is."""
