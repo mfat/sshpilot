@@ -116,7 +116,6 @@ tests/daemon/test_handshake.py::test_unknown_method_before_handshake_is_still_ha
 tests/daemon/test_handshake.py::test_unknown_method_uses_unsupported_method_error  # Unix sockets / fd passing
 tests/daemon/test_handshake.py::test_unsupported_protocol_version_is_rejected  # Unix sockets / fd passing
 tests/daemon/test_identity_service_phase.py::test_provider_agent_keys_use_fixed_socket_provider  # path separators
-tests/daemon/test_interaction_broker.py::test_cancelled_otp_prompt_is_not_replaced_by_openssh_retries  # POSIX file modes
 tests/daemon/test_interaction_broker.py::test_frozen_build_askpass_helper_dispatches_via_internal_flag  # POSIX file modes
 tests/daemon/test_interaction_broker.py::test_headless_launch_preserves_normal_environment_and_replaces_askpass  # path separators
 tests/daemon/test_interaction_broker.py::test_prepare_launch_brokers_interactions_without_saved_secret  # path separators
