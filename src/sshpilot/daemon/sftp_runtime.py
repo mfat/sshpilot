@@ -2477,7 +2477,7 @@ class SftpServiceRuntime:
             else:
                 roots[_key(resolved)] = resolved
         for path in dict.fromkeys(file_roots):
-            client.remove(path)
+            self._remove_file(client, path)
         _advance(len(file_roots))
 
         # A root is never assumed to lie inside another from its spelling.
@@ -2617,16 +2617,39 @@ class SftpServiceRuntime:
             return
         remove_many = getattr(client, "remove_many", None)
         if callable(remove_many):
-            remove_many(paths)
-            return
-        for path in paths:
             try:
-                client.remove(path)
-            except (FileNotFoundError, sftp_proto.SFTPError) as exc:
-                # Missing is idempotent (same policy as ``_remove_recursive``).
-                if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
-                    continue
+                remove_many(paths)
+                return
+            except sftp_proto.SFTPError as exc:
+                if exc.code != sftp_proto.FX_PERMISSION_DENIED:
+                    raise
+            # One path refused: retry each, so a directory link (below) is
+            # told apart from a real refusal. Paths already gone are skipped.
+        for path in paths:
+            SftpServiceRuntime._remove_file(client, path)
+
+    @staticmethod
+    def _remove_file(client, path: str) -> None:
+        """Remove one file or symlink; missing is idempotent.
+
+        A Windows server removes a directory symlink or junction only with
+        RMDIR (DeleteFile refuses it), so a refused REMOVE of a symlink is
+        retried as RMDIR before the refusal is reported.
+        """
+        try:
+            client.remove(path)
+        except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+            # Missing is idempotent (same policy as ``_remove_recursive``).
+            if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                return
+            if exc.code != sftp_proto.FX_PERMISSION_DENIED:
                 raise
+            try:
+                if not client.lstat(path).is_symlink():
+                    raise exc
+                client.rmdir(path)
+            except (FileNotFoundError, sftp_proto.SFTPError):
+                raise exc from None
 
     def rename(self, request: SftpRenameRequest, *, client_id: ClientId) -> None:
         if type(request) is not SftpRenameRequest:
