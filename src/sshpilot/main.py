@@ -321,7 +321,7 @@ class SshPilotApplication(Adw.Application):
             self.apply_color_overrides(cfg)
 
         except Exception:
-            pass
+            logger.exception("Configuration setup failed; continuing with defaults")
 
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -2325,13 +2325,20 @@ def _install_exception_hooks():
 
     sys.excepthook = _excepthook
 
+    prev_thread_excepthook = threading.excepthook
+
     def _thread_excepthook(args):
-        if issubclass(args.exc_type, SystemExit):
-            return
+        if not issubclass(args.exc_type, SystemExit):
+            try:
+                log.critical("Unhandled exception in thread %r",
+                             getattr(args.thread, 'name', '?'),
+                             exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            except Exception:
+                pass
+        # Chained for SystemExit too: the previous hook decides what it
+        # means (the default one ignores it).
         try:
-            log.critical("Unhandled exception in thread %r",
-                         getattr(args.thread, 'name', '?'),
-                         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            prev_thread_excepthook(args)
         except Exception:
             pass
 
@@ -2524,20 +2531,22 @@ def main():
     # hand the launch off to that copy. Same shape as SSHPILOT_SSH_DIR: an
     # environment hook the app reads, no extra production surface.
     startup_timing.mark("main_entered")
-    app = SshPilotApplication(
-        verbose=verbose,
-        quiet=opts.quiet,
-        isolated=opts.isolated,
-        log_gtk_warnings=opts.log_gtk_warnings or opts.diagnostics,
-        fatal_warnings=opts.fatal_warnings,
-        application_id=os.environ.get('SSHPILOT_APP_ID') or None,
-    )
-    status = app.run(sys.argv)
-    # A secondary instance hands its command line to the running window and
-    # returns here without a window of its own: close the daemon client the
-    # early start opened for it. (In the primary the window took it.)
-    daemon_prelaunch.discard()
-    return status
+    try:
+        app = SshPilotApplication(
+            verbose=verbose,
+            quiet=opts.quiet,
+            isolated=opts.isolated,
+            log_gtk_warnings=opts.log_gtk_warnings or opts.diagnostics,
+            fatal_warnings=opts.fatal_warnings,
+            application_id=os.environ.get('SSHPILOT_APP_ID') or None,
+        )
+        return app.run(sys.argv)
+    finally:
+        # A secondary instance hands its command line to the running window
+        # and returns here without a window of its own: close the daemon
+        # client the early start opened for it. (In the primary the window
+        # took it.) Also runs when construction or run() raised.
+        daemon_prelaunch.discard()
 
 if __name__ == '__main__':
     raise SystemExit(main())

@@ -296,6 +296,24 @@ def configure_daemon_logging(log_dir: os.PathLike[str] | str, level: object) -> 
     close_managed_handlers(root, roles=("daemon.file", "daemon.console"))
     root.setLevel(numeric)
     file_handler = _add_file_handler(root, directory / "daemon.log", "daemon.file", numeric)
+    return (file_handler, _add_daemon_console(root, numeric))
+
+
+def configure_daemon_console_logging(level: object) -> logging.Handler:
+    """Fallback for a daemon that cannot open daemon.log: stderr only.
+
+    Leaves an existing ``daemon.file`` handler in place, so a reconfigure
+    that fails part-way keeps whatever file logging was already working.
+    """
+
+    numeric = normalize_log_level(level)
+    root = logging.getLogger()
+    close_managed_handlers(root, roles=("daemon.console",))
+    root.setLevel(numeric)
+    return _add_daemon_console(root, numeric)
+
+
+def _add_daemon_console(root: logging.Logger, numeric: int) -> logging.Handler:
     console = logging.StreamHandler()
     console._sshpilot_managed = True  # type: ignore[attr-defined]
     console._sshpilot_log_role = "daemon.console"  # type: ignore[attr-defined]
@@ -303,7 +321,7 @@ def configure_daemon_logging(log_dir: os.PathLike[str] | str, level: object) -> 
     console.setFormatter(SanitizingFormatter(LOG_CONSOLE_FORMAT, datefmt="%H:%M:%S"))
     console.addFilter(_ShortNameFilter())
     root.addHandler(console)
-    return (file_handler, console)
+    return console
 
 
 class DaemonLogTailForwarder:

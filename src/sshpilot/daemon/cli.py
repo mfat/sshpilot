@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional, Sequence
 from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.daemon import RestartDaemonRequest, StopDaemonRequest
-from sshpilot.logging_support import configure_daemon_logging
+from sshpilot.logging_support import configure_daemon_console_logging, configure_daemon_logging
 from sshpilot.api.transport.codec import (
     daemon_diagnostics_to_wire,
     daemon_status_to_wire,
@@ -78,16 +78,34 @@ def _configure_logging(verbose: bool, quiet: bool = False) -> None:
     a managed console handler for directly started daemons.
     """
 
+    # The level, the directory and the file handler fail independently; each
+    # failure degrades only its own part and is reported once handlers exist.
+    configured = "info"
+    settings_error: Optional[BaseException] = None
     try:
-        from sshpilot.platform_utils import get_state_dir
         from .bootstrap_settings import DaemonBootstrapSettings
 
-        log_dir = get_state_dir()
         configured = DaemonBootstrapSettings().get_setting("logging.level", "info")
-    except Exception:
-        return
+    except Exception as exc:
+        settings_error = exc
     effective = "warning" if quiet else "debug" if verbose else configured
-    configure_daemon_logging(log_dir, effective)
+
+    log = logging.getLogger(__name__)
+    try:
+        from sshpilot.platform_utils import get_state_dir
+
+        configure_daemon_logging(get_state_dir(), effective)
+    except Exception as exc:
+        configure_daemon_console_logging(effective)
+        log.warning(
+            "Daemon file logging unavailable type=%s; logging to stderr only",
+            type(exc).__name__,
+        )
+    if settings_error is not None:
+        log.warning(
+            "Daemon log level setting unavailable type=%s; using info",
+            type(settings_error).__name__,
+        )
 
 
 def _print_json(payload: Any) -> None:
