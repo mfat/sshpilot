@@ -199,6 +199,10 @@ tests/daemon/test_ssh_readiness_runtime.py::test_loose_umask_directory_is_tighte
 tests/daemon/test_ssh_readiness_runtime.py::test_prepare_launch_engages_and_creates_private_file  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_ssh_readiness_runtime.py::test_resolve_diagnostics_root_creates_private_tree  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_ssh_readiness_runtime.py::test_resolve_diagnostics_root_rejects_symlinked_runtime  # path separators
+tests/daemon/test_transfer_metadata_real_sftp.py::test_download_over_existing_file_keeps_its_mode  # POSIX file modes
+tests/daemon/test_transfer_metadata_real_sftp.py::test_upload_over_existing_file_keeps_its_mode[384]  # POSIX file modes
+tests/daemon/test_transfer_metadata_real_sftp.py::test_upload_over_existing_file_keeps_its_mode[416]  # POSIX file modes
+tests/daemon/test_transfer_metadata_real_sftp.py::test_upload_over_existing_file_keeps_its_mode[493]  # POSIX file modes
 tests/daemon/test_transfer_runtime.py::test_recursive_upload_copies_directory_tree  # POSIX paths in fixtures
 tests/daemon/test_transfer_runtime.py::test_recursive_upload_rejects_symlink_root  # path separators
 tests/mcp/test_architecture.py::test_frontend_neutrality_detects_gi  # assumes POSIX behaviour (reviewed by sample)
