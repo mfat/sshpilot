@@ -11,7 +11,6 @@ An empty setting means "system default": leave the environment alone and let
 gettext read the user's locale, which is the behaviour every other GTK app has.
 """
 
-import functools
 import gettext as _stdlib_gettext
 import json
 import logging
@@ -83,16 +82,35 @@ def candidate_localedirs() -> List[str]:
     return [d for d in dirs if d and os.path.isdir(d)]
 
 
-@functools.lru_cache(maxsize=None)
-def gettext(message: str) -> str:
-    """``gettext.gettext``, memoised for code that builds many widgets.
+# The catalogue resolved by :func:`bind_translation`. The stdlib ``gettext()``
+# searches the locale directories for it on every call, which adds up for code
+# that builds many widgets; the language cannot change within a process (see
+# the module docstring), so resolving it once is enough.
+_translation: Optional[_stdlib_gettext.NullTranslations] = None
 
-    The stdlib function searches the locale directories for the catalogue on
-    every call. The language cannot change within a process (see the module
-    docstring), so a result never goes stale, provided nothing calls this
-    before :func:`sshpilot.main._init_gettext` has bound the text domain.
+
+def bind_translation(localedir: Optional[str]) -> None:
+    """Resolve the sshpilot catalogue once, after the text domain is bound."""
+    global _translation
+    _translation = _stdlib_gettext.translation('sshpilot', localedir, fallback=True)
+
+
+def gettext(message: str) -> str:
+    """``gettext.gettext`` through the catalogue :func:`bind_translation` resolved.
+
+    Before that has run it defers to the stdlib on every call, so a lookup made
+    too early is slow rather than stuck in the wrong language.
     """
-    return _stdlib_gettext.gettext(message)
+    if _translation is None:
+        return _stdlib_gettext.gettext(message)
+    return _translation.gettext(message)
+
+
+def ngettext(singular: str, plural: str, n: int) -> str:
+    """``gettext.ngettext`` through the resolved catalogue; see :func:`gettext`."""
+    if _translation is None:
+        return _stdlib_gettext.ngettext(singular, plural, n)
+    return _translation.ngettext(singular, plural, n)
 
 
 def N_(message: str) -> str:

@@ -238,3 +238,37 @@ def test_missing_or_broken_config_is_not_fatal(tmp_path, monkeypatch):
 
     (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
     assert i18n.configured_language() == ""
+
+
+class _Catalogue:
+    def gettext(self, message):
+        return "bound:" + message
+
+    def ngettext(self, singular, plural, n):
+        return "bound:" + (singular if n == 1 else plural)
+
+
+def test_lookups_go_through_the_bound_catalogue(monkeypatch):
+    monkeypatch.setattr(i18n, "_translation", _Catalogue())
+
+    assert i18n.gettext("Connect") == "bound:Connect"
+    assert i18n.ngettext("%d host", "%d hosts", 2) == "bound:%d hosts"
+
+
+def test_lookups_before_binding_are_not_kept(monkeypatch):
+    """An early lookup must not stay stuck once the catalogue is bound."""
+    monkeypatch.setattr(i18n, "_translation", None)
+    monkeypatch.setattr(i18n._stdlib_gettext, "gettext", lambda m: "early:" + m)
+    assert i18n.gettext("Connect") == "early:Connect"
+
+    monkeypatch.setattr(i18n, "_translation", _Catalogue())
+    assert i18n.gettext("Connect") == "bound:Connect"
+
+
+def test_bind_translation_falls_back_without_a_catalogue(monkeypatch, tmp_path):
+    monkeypatch.setattr(i18n, "_translation", None)
+
+    i18n.bind_translation(str(tmp_path))
+
+    assert i18n.gettext("Connect") == "Connect"
+    assert i18n.ngettext("%d host", "%d hosts", 1) == "%d host"

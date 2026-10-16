@@ -90,6 +90,8 @@ def _init_gettext():
     try:
         _gettext.bindtextdomain('sshpilot', localedir)
         _gettext.textdomain('sshpilot')
+        from .i18n import bind_translation
+        bind_translation(localedir)
         # Mirror to the C library so GTK/Adw (.ui, .desktop) translations resolve too.
         try:
             import locale

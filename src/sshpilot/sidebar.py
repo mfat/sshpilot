@@ -11,9 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Adw
 
-from gettext import ngettext
-
-from .i18n import gettext as _
+from .i18n import gettext as _, ngettext
 
 from .dnd_payload import (
     content_provider_for_payload,
@@ -986,7 +984,7 @@ def _show_row_drop_indicator(row: Gtk.ListBoxRow, top: bool) -> None:
     the top one before every other child, the bottom one after them.
     """
     attr = "drop_indicator_top" if top else "drop_indicator_bottom"
-    indicator = getattr(row, attr, None)
+    indicator = getattr(row, attr)
     if indicator is None:
         box = row.get_child()
         if box is None:
@@ -1001,8 +999,7 @@ def _show_row_drop_indicator(row: Gtk.ListBoxRow, top: bool) -> None:
 
 
 def _hide_row_drop_indicators(row: Gtk.ListBoxRow) -> None:
-    for attr in ("drop_indicator_top", "drop_indicator_bottom"):
-        indicator = getattr(row, attr, None)
+    for indicator in (row.drop_indicator_top, row.drop_indicator_bottom):
         if indicator is not None:
             indicator.set_visible(False)
 
