@@ -397,13 +397,16 @@ class DaemonTerminalSessionController:
             self._stream.close()
             self._stream = None
 
+        try:
+            request = DetachSessionRequest(
+                session_id=self._tab_state.session_id,
+                attachment_id=self._tab_state.attachment_id,
+            )
+        except ValueError as error:
+            self._on_error(error)
+            return
         self._bridge.submit(
-            lambda: self._client.detach_session(
-                DetachSessionRequest(
-                    session_id=self._tab_state.session_id,
-                    attachment_id=self._tab_state.attachment_id,
-                )
-            ),
+            lambda: self._client.detach_session(request),
             on_success=lambda _: None,
             on_error=self._on_error,
         )
@@ -461,14 +464,15 @@ class DaemonTerminalSessionController:
             else self._bridge.submit
         )
         try:
+            # Built on the GTK thread, like resize: a detach may clear the
+            # attachment before the worker runs.
+            request = TerminalInput(
+                session_id=self._tab_state.session_id,
+                attachment_id=self._tab_state.attachment_id,
+                data=data,
+            )
             submit(
-                lambda: self._client.send_terminal_input(
-                    TerminalInput(
-                        session_id=self._tab_state.session_id,
-                        attachment_id=self._tab_state.attachment_id,
-                        data=data,
-                    )
-                ),
+                lambda: self._client.send_terminal_input(request),
                 on_success=lambda _: None,
                 on_error=self._on_input_error,
             )
@@ -500,14 +504,19 @@ class DaemonTerminalSessionController:
     def _submit_resize(self, dimensions: TerminalDimensions) -> None:
         self._resize_sent = dimensions
         try:
+            # Built here, on the GTK thread: the worker runs later, after a
+            # detach or close may have cleared the attachment.
+            request = ResizeTerminalRequest(
+                session_id=self._tab_state.session_id,
+                attachment_id=self._tab_state.attachment_id,
+                dimensions=dimensions,
+            )
+        except ValueError:
+            self._finish_resize(None)
+            return
+        try:
             self._bridge.submit(
-                lambda: self._client.resize_terminal(
-                    ResizeTerminalRequest(
-                        session_id=self._tab_state.session_id,
-                        attachment_id=self._tab_state.attachment_id,
-                        dimensions=dimensions,
-                    )
-                ),
+                lambda: self._client.resize_terminal(request),
                 on_success=lambda _: self._finish_resize(None),
                 on_error=self._finish_resize,
             )

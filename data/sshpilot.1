@@ -1,4 +1,4 @@
-.TH SSHPILOT 1 "October 2026" "sshpilot 6.3.2" "User Commands"
+.TH SSHPILOT 1 "October 2026" "sshpilot 6.3.3" "User Commands"
 .SH NAME
 sshpilot \- SSH connection manager with integrated terminal
 .SH SYNOPSIS
@@ -50,7 +50,11 @@ short form, so OpenSSH's own
 passes straight through.
 .TP
 .B \-\-isolated
-Use an isolated SSH configuration.
+Switch to Isolated Mode: SSH Pilot's own SSH config, known_hosts and key
+directory instead of
+.IR ~/.ssh .
+The switch is saved, so later launches stay in Isolated Mode until Default
+Mode is chosen again in Settings \(-> Advanced \(-> Operation Mode.
 .TP
 .B \-\-sftp
 Open the destination in the file manager (SFTP) instead of a terminal tab.
@@ -100,13 +104,67 @@ fields (via the command converter) and run with OpenSSH in a new tab.
 Invalid destinations (for example
 .BR scp
 arguments) fail on the command line without opening the app session.
+.PP
+On a fresh launch the destination opens once the background service has
+loaded the saved connections. If SSH Pilot is already running, the
+destination opens as a new tab in that window and the command exits at once.
+.SH EXIT STATUS
+.TP
+.B 0
+The app started, or the destination was handed to it.
+.TP
+.B 2
+The sshPilot options could not be parsed.
+.TP
+.B 255
+The destination was rejected or could not be opened. The reason is printed
+on standard error and no connection is started. A fresh launch made only for
+that destination exits; if the background service is unavailable, the
+window stays open so the service can be retried from it.
+.SH ENVIRONMENT
+.TP
+.B SSHPILOT_SSH_DIR
+Use this directory instead of
+.I ~/.ssh
+for the SSH config, known_hosts and keys.
+.TP
+.BR XDG_CONFIG_HOME ", " XDG_STATE_HOME
+Base directories for the files below.
 .SH FILES
 .TP
 .I ~/.ssh/config
 The OpenSSH client configuration, which sshPilot treats as the source of truth
 for per-host settings.
+.TP
+.I ~/.config/sshpilot/config.json
+Application settings, including the operation mode.
+.TP
+.I ~/.local/state/sshpilot/
+Logs:
+.IR sshpilot.log ,
+.IR app.log ,
+.IR ssh.log ,
+.I daemon.log
+and
+.IR crash.log .
+.PP
+The Flatpak keeps these under
+.IR ~/.var/app/io.github.mfat.sshpilot/ .
+.SH NOTES
+Connections, sessions and transfers are owned by a per-user background
+service.
+.B sshpilot\-daemon status
+reports whether it is running,
+.B sshpilot\-daemon diagnostics
+prints its resource counters, and
+.B sshpilot\-daemon stop
+or
+.B restart
+manage it. It stops by itself after 5 minutes with no client and no
+session, port forward or transfer running.
 .SH SEE ALSO
 .BR ssh (1),
-.BR ssh_config (5)
+.BR ssh_config (5),
+.BR sshpilot\-agent (1)
 .SH AUTHOR
 mFat <newmfat@gmail.com>

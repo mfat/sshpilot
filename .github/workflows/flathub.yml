@@ -34,7 +34,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           PRE=""
           for _ in 1 2 3 4 5 6 7 8 9 10; do
-            PRE=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq .prerelease 2>/dev/null || echo "")
+            PRE=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq .prerelease 2>/dev/null) || PRE=""
             if [ -n "$PRE" ]; then
               break
             fi

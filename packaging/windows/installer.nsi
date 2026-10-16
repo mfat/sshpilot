@@ -18,20 +18,31 @@ Unicode true
   !define OUTFILE "sshPilot-${VERSION}-setup.exe"
 !endif
 
-!define APP_NAME "sshPilot"
-!define PUBLISHER "sshPilot contributors"
-!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+; APP_ID names the install folder and registry keys; renaming it would orphan
+; existing installs. APP_NAME is the name people see.
+!define APP_ID "sshPilot"
+!define APP_NAME "SSH Pilot"
+!define PUBLISHER "SSH Pilot contributors"
+!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 
 Name "${APP_NAME} ${VERSION}"
 OutFile "${OUTFILE}"
-InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
-InstallDirRegKey HKCU "Software\${APP_NAME}" "InstallDir"
+InstallDir "$LOCALAPPDATA\Programs\${APP_ID}"
+InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 ManifestDPIAware true
 
 !define MUI_ICON "${__FILEDIR__}\sshpilot.ico"
 !define MUI_UNICON "${__FILEDIR__}\sshpilot.ico"
+; 164x314 side panel of the welcome and finish pages.
+!define MUI_WELCOMEFINISHPAGE_BITMAP "${__FILEDIR__}\welcome.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "${__FILEDIR__}\welcome.bmp"
+; 150x57 banner on the right of every inner page's header.
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "${__FILEDIR__}\header.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP "${__FILEDIR__}\header.bmp"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\sshPilot.exe"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -71,7 +82,7 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 !macro EnsureNotRunning
   ; Files in use would be skipped silently, leaving old and new files mixed,
   ; and an open window restarts the daemon. Stop the daemon, then wait for the
-  ; user to close sshPilot; a silent run fails instead (exit code 2).
+  ; user to close SSH Pilot; a silent run fails instead (exit code 2).
   !define _ENR_ID ${__LINE__}
   retry_${_ENR_ID}:
     !insertmacro StopDaemon
@@ -90,7 +101,7 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
   !undef _ENR_ID
 !macroend
 
-Section "sshPilot" SecMain
+Section "SSH Pilot" SecMain
   SectionIn RO
   !insertmacro EnsureNotRunning
   SetOutPath "$INSTDIR"
@@ -98,10 +109,11 @@ Section "sshPilot" SecMain
   RMDir /r "$INSTDIR\_internal"
   File /r "${SOURCE}\*.*"
 
+  Delete "$SMPROGRAMS\${APP_ID}.lnk" ; older installers named it after APP_ID
   CreateShortcut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\sshPilot.exe"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  WriteRegStr HKCU "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\${APP_ID}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${PUBLISHER}"
@@ -119,12 +131,13 @@ SectionEnd
 Section "Uninstall"
   !insertmacro EnsureNotRunning
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_ID}.lnk"
   RMDir /r "$INSTDIR\_internal"
   Delete "$INSTDIR\sshPilot.exe"
   Delete "$INSTDIR\sshpilot-cli.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
-  DeleteRegKey HKCU "Software\${APP_NAME}"
+  DeleteRegKey HKCU "Software\${APP_ID}"
   ; Settings, connections and logs in %APPDATA% / %LOCALAPPDATA%\sshpilot stay.
 SectionEnd

@@ -10,7 +10,7 @@ Gtk, _Adw, _Gio, _GLib = requires_gui()
 
 from gi.repository import Gdk  # noqa: E402
 
-from sshpilot.terminal_backend_pyte import PyteTerminalView  # noqa: E402
+from sshpilot.terminal_backend_pyte import _PAD_X, _PAD_Y, PyteTerminalView  # noqa: E402
 
 pytestmark = pytest.mark.gui
 
@@ -53,7 +53,8 @@ def test_left_click_reports_press_and_release(model, monkeypatch):
     sent = []
     monkeypatch.setattr(view, "_send", sent.append)
     click = _Click(lambda: view._on_drag_end(_CancelledDrag(), 0.0, 0.0))
-    x, y = view._cell_w * 4.5, view._cell_h * 2.5
+    # Widget coordinates: the text grid starts inside the view's padding.
+    x, y = _PAD_X + view._cell_w * 4.5, _PAD_Y + view._cell_h * 2.5
 
     view._on_click_pressed(click, 1, x, y)
     view._on_click_released(click, 1, x, y)

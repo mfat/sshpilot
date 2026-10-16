@@ -223,6 +223,10 @@ class SshPilotApplication(Adw.Application):
         # unaffected, so non-cyclic resources still free promptly.)
         gc.disable()
         self._gc_pending = False
+        # CLI destinations waiting for the daemon client (see do_command_line),
+        # and the exit status of one that failed after the handler returned.
+        self._deferred_cli_command_lines = []
+        self.cli_exit_status = None
         #: scope id -> callable(text|None) for the inline pre-connection
         #: command status. Surfaces register while they own a launch scope.
         self._pre_command_status_targets = {}
@@ -1360,49 +1364,99 @@ class SshPilotApplication(Adw.Application):
             self.activate()
             return 0
 
-        def _cli_fail(message: str) -> int:
-            text = f'sshpilot: {message}\n'
-            try:
-                command_line.printerr_literal(text)
-            except Exception:
-                print(text, end='', file=sys.stderr)
-            # Fresh launch solely for a failed connect: exit like ssh.
-            # Remote (secondary) invocations only return status to the caller.
-            if not command_line.get_is_remote():
-                GLib.idle_add(self.quit)
-            return 255
-
         early = validate_cli_tokens(opts.ssh_tokens)
         if early:
-            return _cli_fail(early)
+            return self._cli_fail(command_line, early)
 
         # Alias lookup needs ConnectionManager (created with the window).
         self.activate()
         window = self.window or self._action_window()
         if window is None or not hasattr(window, 'open_cli_connect'):
-            return _cli_fail('Application window is not ready')
+            return self._cli_fail(command_line, 'Application window is not ready')
 
         try:
             window.present()
         except Exception:
             pass
 
+        when_ready = getattr(window, 'when_daemon_client_ready', None)
+        if not callable(when_ready):
+            return self._open_cli_target(command_line, window, opts, True)
+
+        # A fresh launch shows the window before the daemon answers; the
+        # alias can only be looked up once its connection snapshot is in.
+        state = {'status': None, 'deferred': False}
+
+        def _on_ready(ready):
+            status = self._open_cli_target(command_line, window, opts, ready)
+            if state['deferred']:
+                self._finish_deferred_cli(command_line, status)
+            else:
+                state['status'] = status
+
+        when_ready(_on_ready)
+        if state['status'] is not None:
+            return state['status']
+        # Holding the command line keeps a remote invoker waiting for its
+        # stderr and exit status until the target is resolved.
+        state['deferred'] = True
+        self._deferred_cli_command_lines.append(command_line)
+        return 0
+
+    def _cli_fail(self, command_line, message: str, *, quit_fresh: bool = True) -> int:
+        """Report a CLI connect failure on the invoker's stderr; return 255."""
+        text = f'sshpilot: {message}\n'
+        try:
+            command_line.printerr_literal(text)
+        except Exception:
+            print(text, end='', file=sys.stderr)
+        # Fresh launch solely for a failed connect: exit like ssh.
+        # Remote (secondary) invocations only return status to the caller.
+        if quit_fresh and not command_line.get_is_remote():
+            GLib.idle_add(self.quit)
+        return 255
+
+    def _open_cli_target(self, command_line, window, opts, ready: bool) -> int:
+        """Resolve the CLI destination and open it; return the exit status."""
+        if not ready:
+            # Keep the window: its recovery banner is how the user retries.
+            return self._cli_fail(
+                command_line,
+                'the SSH Pilot background service is not available',
+                quit_fresh=False,
+            )
+
         from .cli_connect import describe_cli_error, resolve_cli_connect
         try:
             resolved = resolve_cli_connect(opts.ssh_tokens, window.connection_manager)
         except ValueError as exc:
-            return _cli_fail(describe_cli_error(exc))
+            return self._cli_fail(command_line, describe_cli_error(exc))
         except Exception as exc:
             logger.exception('CLI resolve failed')
-            return _cli_fail(str(exc) or 'failed to resolve destination')
+            return self._cli_fail(command_line, str(exc) or 'failed to resolve destination')
 
         # Only now start a connection / open a tab.
         try:
             window.open_cli_connect_resolved(resolved, sftp=opts.sftp)
         except Exception as exc:
             logger.exception('CLI connect open failed')
-            return _cli_fail(str(exc) or 'failed to open connection')
+            return self._cli_fail(command_line, str(exc) or 'failed to open connection')
         return 0
+
+    def _finish_deferred_cli(self, command_line, status: int) -> None:
+        """Hand a deferred CLI connect's status back to whoever launched it."""
+        try:
+            command_line.set_exit_status(status)
+        except Exception:
+            pass
+        if status and not command_line.get_is_remote():
+            # GApplication read this launch's status when the handler
+            # returned; main() reports this one instead.
+            self.cli_exit_status = status
+        try:
+            self._deferred_cli_command_lines.remove(command_line)
+        except ValueError:
+            pass
 
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
@@ -2540,7 +2594,10 @@ def main():
             fatal_warnings=opts.fatal_warnings,
             application_id=os.environ.get('SSHPILOT_APP_ID') or None,
         )
-        return app.run(sys.argv)
+        status = app.run(sys.argv)
+        # A destination resolved after the window appeared failed too late
+        # for GApplication to report; run() then returned 0.
+        return getattr(app, 'cli_exit_status', None) or status
     finally:
         # A secondary instance hands its command line to the running window
         # and returns here without a window of its own: close the daemon

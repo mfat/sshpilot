@@ -509,7 +509,7 @@ def _key_restore_home(monkeypatch, tmp_path):
 
 
 def _files_under(root):
-    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if not p.is_dir())
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if not p.is_dir())
 
 
 def test_private_key_restore_is_confined_to_the_key_directory(monkeypatch, tmp_path):

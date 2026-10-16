@@ -64,11 +64,16 @@ def _check_signature(path: Path) -> None:
         "$s = Get-AuthenticodeSignature -LiteralPath $env:SSHPILOT_SIGNED_FILE; "
         "\"$($s.Status)|$($s.SignerCertificate.Subject)\""
     )
+    # Run from PowerShell 7 (as CI steps are), Windows PowerShell inherits its
+    # PSModulePath and then fails to load the 7.x Microsoft.PowerShell.Security
+    # module that provides Get-AuthenticodeSignature. Without the variable it
+    # falls back to its own module paths.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    env["SSHPILOT_SIGNED_FILE"] = str(path)
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True, text=True, timeout=60,
-            env={**os.environ, "SSHPILOT_SIGNED_FILE": str(path)},
+            capture_output=True, text=True, timeout=60, env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"warning: could not check the signature of {path.name}: {exc}", file=sys.stderr)

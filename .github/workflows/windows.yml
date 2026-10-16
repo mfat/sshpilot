@@ -4,8 +4,17 @@ name: Windows
 # (docs/running-on-windows.md, docs/architecture/windows-implementation-plan.md).
 
 on:
+  push:
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Build the installer without running the tests (experimental builds only)'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: windows-${{ github.workflow }}-${{ github.ref }}
@@ -13,6 +22,7 @@ concurrency:
 
 jobs:
   tests:
+    if: ${{ !inputs.skip_tests }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -72,10 +82,18 @@ jobs:
   package:
     # Builds the app folder and installer; signs when SignPath is configured
     # (packaging/windows/README.md).
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    # always() lets the job run when tests was skipped on request; a skip for
+    # any other reason, or a failure, still blocks it.
+    if: >-
+      always()
+      && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+      && (needs.tests.result == 'success'
+          || (needs.tests.result == 'skipped' && inputs.skip_tests))
     needs: tests
     runs-on: windows-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       # Step conditions cannot read secrets directly.
       SIGNPATH_ENABLED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
@@ -149,3 +167,14 @@ jobs:
         with:
           name: sshpilot-windows
           path: build/windows/signed
+
+      # Attach the installer to the tag's GitHub release, signed when SignPath
+      # ran, so it ships alongside the .deb, .rpm and macOS builds.
+      - name: Attach installer to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/sshPilot-*-setup.exe' }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

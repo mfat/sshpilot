@@ -140,7 +140,12 @@ class TransientConnections:
 
     def _directory_locked(self) -> Path:
         if self._directory is None:
-            self._directory = Path(tempfile.mkdtemp(prefix="sshpilot-adhoc-"))
+            # Resolved, because the loader records each Host block's source
+            # resolved: on Windows TEMP can be an 8.3 short path (RUNNER~1),
+            # and the record lookup and file cleanup compare against it.
+            self._directory = Path(
+                tempfile.mkdtemp(prefix="sshpilot-adhoc-")
+            ).resolve()
             if sys.platform == "win32":
                 # OpenSSH for Windows refuses configs under mkdtemp's ACL.
                 from sshpilot.platform.windows.acl import drop_owner_rights

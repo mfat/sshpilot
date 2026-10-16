@@ -368,6 +368,34 @@ def test_detach_session(controller, mock_bridge):
     mock_bridge.submit.assert_called()
 
 
+@pytest.mark.parametrize(
+    "submit_call, rpc",
+    [
+        (lambda c: c.send_input(b"x"), "send_terminal_input"),
+        (lambda c: c.resize(TerminalDimensions(rows=30, columns=100)), "resize_terminal"),
+        (lambda c: c.detach(), "detach_session"),
+    ],
+)
+def test_queued_request_keeps_the_attachment_it_was_made_for(
+    controller, mock_client, mock_bridge, submit_call, rpc
+):
+    """The worker runs after the GTK thread may have cleared the attachment
+    (a detach or a closing tab). The request is built when queued, so the
+    worker never sees an empty attachment id and fails the tab."""
+    controller._tab_state.input_owner = True
+    controller._tab_state.session_id = SessionId("test")
+    controller._tab_state.attachment_id = AttachmentId("att-1")
+
+    submit_call(controller)
+    work = mock_bridge.submit.call_args.args[0]
+    controller._tab_state.attachment_id = None
+
+    work()
+
+    request = getattr(mock_client, rpc).call_args.args[0]
+    assert request.attachment_id == AttachmentId("att-1")
+
+
 def test_close_session(controller, mock_bridge):
     """Test session termination."""
     controller._tab_state.session_id = SessionId("test")

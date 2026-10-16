@@ -6,8 +6,10 @@ would be an access violation, so the crash tests feed in a subprocess.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -71,6 +73,14 @@ def test_can_and_esc_end_the_csi():
     assert _guarded(data) == data
 
 
+def _env_with_src():
+    """Import the checkout, not an older sshpilot installed system-wide."""
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [src, env.get("PYTHONPATH")]))
+    return env
+
+
 @pytest.mark.parametrize("chunked", [False, True])
 def test_stock_libvterm_does_not_crash(chunked):
     pytest.importorskip("ctypes")
@@ -93,6 +103,7 @@ def test_stock_libvterm_does_not_crash(chunked):
     ])
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=60,
+        env=_env_with_src(),
     )
     if result.returncode == 77:
         pytest.skip("libvterm is not available")

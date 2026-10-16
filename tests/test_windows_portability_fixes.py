@@ -27,11 +27,16 @@ _MODE_700_ALLOW = frozenset({
 })
 
 
-def test_managed_bw_binary_name_is_executable():
+def test_managed_bw_binary_name_is_executable(tmp_path, monkeypatch):
+    from sshpilot import platform_utils
     from sshpilot.platform_utils import (
         _legacy_managed_bw_cli_path,
         get_managed_bw_cli_path,
     )
+
+    # The headless suite stubs GLib, so the XDG lookups return no real path.
+    monkeypatch.setattr(platform_utils, "get_data_dir", lambda: str(tmp_path / "data"))
+    monkeypatch.setattr(platform_utils, "get_state_dir", lambda: str(tmp_path / "state"))
 
     names = {
         os.path.basename(get_managed_bw_cli_path()),

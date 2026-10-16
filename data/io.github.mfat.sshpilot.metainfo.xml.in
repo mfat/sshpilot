@@ -61,6 +61,15 @@
 
 
 
+    <release version="6.3.3" date="2026-10-16">
+      <description>
+        <p>Initial release of Windows port</p>
+        <p>Option to remember a password for the current session (until SSH Pilot quits)</p>
+        <p>Security hardening: refuse shell text in HostName/ProxyJump, control characters typed into terminals, and unsafe paths in SCP downloads and backup restores</p>
+        <p>Old config.json files are upgraded instead of reset to defaults</p>
+        <p>Various fixes and improvements</p>
+      </description>
+    </release>
     <release version="6.3.2" date="2026-10-16">
       <description>
         <p>Experimental Windows port: run from source or install with the new NSIS installer</p>

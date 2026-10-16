@@ -148,7 +148,14 @@ def _local_dialog(tmp_path):
 
 
 def test_local_free_space_is_shown_without_statvfs(tmp_path, monkeypatch):
+    # Removing os.statvfs on POSIX would also break shutil.disk_usage, which
+    # wraps it there; on Windows disk_usage uses its own call. Stand in for
+    # that so the dialog is shown to work without touching os.statvfs.
     monkeypatch.delattr(os, "statvfs", raising=False)
+    monkeypatch.setattr(
+        properties_dialog.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=100, used=58, free=42),
+    )
     dialog = _local_dialog(tmp_path)
     shown = []
     dialog._show_free_space = shown.append
