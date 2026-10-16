@@ -53,6 +53,12 @@ class SSHConnectionValidator:
         return ValidationResult(True, _("Valid connection name"))
 
     def _validate_ip_address(self, ip_str: str) -> 'ValidationResult':
+        # ipaddress accepts any text after "%" as an IPv6 zone id, but ssh
+        # substitutes the host name into the shell command it runs for a
+        # jump host or ProxyCommand.
+        _address, _percent, zone = ip_str.partition('%')
+        if zone and not re.fullmatch(r'[A-Za-z0-9_.-]+', zone):
+            return ValidationResult(False, _("Invalid IPv6 zone id"), "error")
         try:
             ip = ipaddress.ip_address(ip_str)
             if ip.is_loopback:

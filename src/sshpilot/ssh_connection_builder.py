@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
+from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
 
@@ -999,8 +1000,14 @@ def _authored_ssh_options(
             port = 0
         if 1 <= port <= 65535:
             kwargs['port'] = port
+    # A block from an imported or restored file reaches here without any
+    # request model's checks, and the -F file on argv carries the same
+    # values, so shell text in HostName or a ProxyJump hop fails the launch
+    # instead of being re-emitted (see ``validate_ssh_hostname``).
     if 'hostname' in authored and _text('hostname'):
-        _option('HostName', _text('hostname'))
+        # OpenSSH drops a trailing "# comment" from a config line.
+        hostname = re.sub(r'\s+#.*$', '', _text('hostname'))
+        _option('HostName', validate_ssh_hostname(hostname, 'HostName'))
 
     # ProxyJump and ProxyCommand may coexist in one block; OpenSSH applies
     # the first line in the file and ignores the second. When the block
@@ -1013,6 +1020,8 @@ def _authored_ssh_options(
     if isinstance(raw_proxy_jump, str):
         raw_proxy_jump = [h for h in re.split(r'[\s,]+', raw_proxy_jump) if h]
     proxy_jump = [str(e).strip() for e in raw_proxy_jump if str(e).strip()]
+    for hop in proxy_jump:
+        validate_ssh_hostname(hop, 'ProxyJump')
     proxy_command = _text('proxy_command')
     both_proxies = (
         'proxyjump' in authored and proxy_jump

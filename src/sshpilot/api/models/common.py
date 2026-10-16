@@ -66,6 +66,29 @@ def validate_ssh_host_alias(value: str, field_name: str = "connection nickname")
     return normalized
 
 
+def validate_ssh_hostname(value: str, field_name: str = "connection hostname") -> str:
+    """Reject shell text in a name OpenSSH substitutes into a shell command.
+
+    For ``ProxyJump`` OpenSSH runs ``ssh [-l user] -W '[%h]:%p' jump`` through
+    ``sh -c`` with the resolved ``HostName`` as ``%h``. Its own check for these
+    characters covers only the destination argument -- always the Host alias
+    here -- so a ``HostName`` or a jump user that comes from a config file (an
+    imported or restored one included) is never checked. This is OpenSSH's
+    ``valid_hostname()`` rule; it still admits ``%h``-style tokens and IPv6
+    zone ids.
+    """
+    if not isinstance(value, str):
+        return value
+    if value.startswith("-") or any(
+        char in "'`\"$\\;&<>|(){}" or char.isspace() for char in value
+    ):
+        raise ValueError(
+            f"{field_name} {value!r} contains characters a shell would run "
+            "as a command; edit the host name or jump host"
+        )
+    return validate_single_line(value, field_name)
+
+
 @dataclass(frozen=True)
 class ClientInfo:
     """Describes the frontend/client implementation."""
