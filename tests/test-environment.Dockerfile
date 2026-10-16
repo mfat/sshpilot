@@ -24,7 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # System tools the protocol backends invoke, + python/test prerequisites.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git \
-        python3 python3-pip \
+        python3 python3-pip gettext \
         openssh-client openssh-tests sshpass \
         fido2-tools \
         socat mosh picocom screen telnet \

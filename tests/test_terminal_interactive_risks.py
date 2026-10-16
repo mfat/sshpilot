@@ -836,7 +836,7 @@ def test_transport_closed_during_quit_is_not_a_connection_failure():
     failures = []
     widget = SimpleNamespace(
         _is_quitting=True,
-        _on_connection_failed=failures.append,
+        _on_connection_failed=lambda message, **_k: failures.append(message),
         _show_toast=lambda *_a, **_k: None,
     )
     error = SshPilotError(ErrorCode.TRANSPORT_CLOSED, "The daemon transport is closed", retryable=True)

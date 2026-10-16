@@ -262,7 +262,8 @@ def test_connection_evidence_gate_turns_unconfirmed_failure_into_failed_state():
     assert SessionState.RUNNING not in states
     assert failed.state is SessionState.CLOSED
     assert failed.failure is not None
-    assert failed.failure.diagnostic == "permission denied (publickey,password)."
+    # ssh's own casing is kept: the reason is shown verbatim (76a9e22b).
+    assert failed.failure.diagnostic == "Permission denied (publickey,password)."
 
     runtime.shutdown()
     core.close()

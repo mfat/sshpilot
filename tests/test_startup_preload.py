@@ -29,6 +29,11 @@ def test_config_is_imported_on_the_calling_thread_not_the_worker():
 
 def test_preloaded_modules_need_no_gtk_and_register_no_gobject_types():
     """The worker runs beside Adwaita's start-up: no GTK, no new GTypes."""
+    # The child counts real GTypes, so it needs PyGObject; the in-process gi is
+    # conftest's stub, so ask a fresh interpreter (CI installs no PyGObject).
+    probe = subprocess.run([sys.executable, "-c", "import gi"], capture_output=True)
+    if probe.returncode != 0:
+        pytest.skip("needs real PyGObject")
     code = r"""
 import importlib, json, sys
 BLOCK = ("gi.repository.Gtk", "gi.repository.Gdk", "gi.repository.Adw",

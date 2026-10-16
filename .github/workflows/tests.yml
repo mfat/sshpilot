@@ -46,6 +46,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # msgfmt: the catalogue tests compile a real .po to check translated
+      # format strings (test_transfer_error_messages, test_protocol_suggestion_messages).
+      - name: Install gettext
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gettext
+
       # Tests stub gi.repository in tests/conftest.py and never load real GTK,
       # so we skip PyGObject / pycairo entirely (--no-deps); requirements.txt,
       # which requirements-dev.txt pulls in, deliberately omits them too.
