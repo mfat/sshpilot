@@ -1,6 +1,8 @@
 import argparse
 import os
+import shutil
 import sys
+import tempfile
 import types
 
 import pytest
@@ -16,6 +18,58 @@ import pytest
 # authorized_keys_window._RESTRICT_OPT_INS). A session fixture runs after that
 # and would leave those constants frozen in the developer's language.
 os.environ["LANGUAGE"] = "en"
+
+
+# Keep the suite out of the developer's real sshPilot directories. A test that
+# saves a Config() without isolating it otherwise writes into the real
+# config.json: patching GLib.get_user_config_dir is not enough, because
+# platform/paths ignores GLib on Windows and reads XDG_* first, then
+# %APPDATA% / %LOCALAPPDATA%. So every one of those variables points into a
+# per-process sandbox before anything resolves a path.
+#
+# Set at conftest import for the same reason as LANGUAGE: modules imported
+# during collection may resolve paths at import time, and real GLib caches its
+# user directories on first use. Tests that set their own values with
+# monkeypatch still win; their teardown restores the sandbox, not the real dirs.
+_USER_DIR_VARS = (
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+)
+_WINDOWS_USER_DIR_VARS = ("APPDATA", "LOCALAPPDATA")
+
+
+def _real_sshpilot_dirs():
+    """Where sshPilot keeps its files for the developer outside of tests."""
+    home = os.path.expanduser("~")
+    bases = [
+        os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"),
+        os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"),
+        os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state"),
+        os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache"),
+        os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming"),
+        os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"),
+    ]
+    return tuple(os.path.join(base, "sshpilot") for base in bases)
+
+
+REAL_SSHPILOT_DIRS = _real_sshpilot_dirs()
+USER_DIRS_SANDBOX = tempfile.mkdtemp(prefix="sshpilot-test-user-dirs-")
+for _var in _USER_DIR_VARS + (_WINDOWS_USER_DIR_VARS if sys.platform == "win32" else ()):
+    _dir = os.path.join(USER_DIRS_SANDBOX, _var.lower())
+    os.makedirs(_dir, exist_ok=True)
+    os.environ[_var] = _dir
+
+
+def pytest_unconfigure(config):
+    shutil.rmtree(USER_DIRS_SANDBOX, ignore_errors=True)
+
+
+@pytest.fixture
+def user_dirs_sandbox():
+    """The sandbox root and the real directories it stands in for."""
+    return types.SimpleNamespace(root=USER_DIRS_SANDBOX, real_dirs=REAL_SSHPILOT_DIRS)
 
 
 def _positive_int(value: str) -> int:
