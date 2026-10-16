@@ -44,7 +44,7 @@ def test_choosing_libvterm_saves_backend_and_model():
 
 def test_switching_between_models_counts_as_a_change():
     prefs = _prefs(backend='pyte', model='pyte')
-    prefs._get_open_terminals = lambda: []
+    prefs._get_open_terminals = list
     row = mock.Mock()
     row.get_selected.return_value = 2
 

@@ -495,7 +495,7 @@ class PyteTerminalView(Gtk.DrawingArea):
         model = self.model
         top = model.viewport_top(self.scroll_offset)
         columns = model.columns
-        cell_w, cell_h = self._cell_w, self._cell_h
+        cell_h = self._cell_h
         base_font = self._effective_font()
         fonts = {}
         layout = self.create_pango_layout("")

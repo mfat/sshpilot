@@ -369,7 +369,7 @@ def test_config_json_round_trips_non_latin1_text(tmp_path, monkeypatch):
 
     cfg.config_data = loaded
     cfg.terminal_themes = {}
-    cfg.custom_theme_keys = lambda: []
+    cfg.custom_theme_keys = list
     exported = tmp_path / "export.json"
     assert Config.export_config(cfg, str(exported)) is True
     assert json.loads(exported.read_text(encoding="utf-8"))["nickname"] == "東京"

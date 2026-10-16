@@ -229,7 +229,6 @@ def test_sidebar_peek_hint_shows_while_the_sidebar_is_set_to_hide(gui):
 
 def test_dialogs_from_settings_are_parented_to_settings(gui):
     """Page widgets resolve to the Settings window, so their dialogs stack on it."""
-    from gi.repository import Gtk
     from sshpilot.window_dialogs import parent_window
 
     prefs = _open_preferences(gui)
