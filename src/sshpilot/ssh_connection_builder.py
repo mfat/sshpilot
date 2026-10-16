@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
+from .ssh_config_document import split_config_lines
 from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
@@ -1133,7 +1134,7 @@ def _authored_extra_options(extra_ssh_config: str) -> List[str]:
 
     parsed: List[Tuple[str, str]] = []
     counts: Dict[str, int] = {}
-    for raw_line in extra_ssh_config.splitlines():
+    for raw_line in split_config_lines(extra_ssh_config):
         line = raw_line.strip()
         if not line or line.startswith('#'):
             continue

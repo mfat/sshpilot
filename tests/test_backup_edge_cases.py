@@ -134,6 +134,20 @@ def test_bug5_concrete_host_with_negation_should_survive_merge():
 
 
 # ---------------------------------------------------------------------------
+# Splitting where OpenSSH does not and re-joining with LF would turn the tail of
+# a comment into a real directive in the file we write.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("sep", ["\x0c", "\r", "\x85", "\u2028"])
+def test_comment_tail_is_not_rewritten_as_a_directive(sep):
+    comment = f"    # note{sep}ProxyCommand touch /tmp/x"
+    text = f"Host a\n    HostName a.example\n{comment}\n"
+    new, _dropped, _coll = bm._select_new_host_blocks([text], existing_names=set())
+    assert comment in new.split("\n")
+    normalized = bm.BackupManager._normalize_fragment_include(None, text, "f.conf", "f.conf")
+    assert comment in normalized.split("\n")
+
+
+# ---------------------------------------------------------------------------
 # BUG 6 (data loss, MEDIUM): the export tree filter requires os.W_OK, so a
 # user's OWN but read-only (chmod 400 — a common hardening) config file is
 # silently excluded from the backup. The W_OK filter was meant to skip files we

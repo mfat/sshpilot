@@ -23,6 +23,8 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Set
 
+from ..ssh_config_document import split_config_lines
+
 logger = logging.getLogger(__name__)
 
 _FORWARD_DIRECTIVES = frozenset(
@@ -100,7 +102,7 @@ def _materialize_file(
     seen.add(key)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
-        text = source.read_text(encoding="utf-8")
+        text = source.read_bytes().decode("utf-8")
     except OSError as exc:
         logger.warning("Could not read SSH config %s: %s", source, exc)
         destination.write_text(
@@ -110,7 +112,7 @@ def _materialize_file(
         return
 
     out_lines: list[str] = []
-    for raw_line in text.splitlines(keepends=True):
+    for raw_line in split_config_lines(text, keepends=True):
         newline = ""
         line = raw_line
         if raw_line.endswith("\r\n"):

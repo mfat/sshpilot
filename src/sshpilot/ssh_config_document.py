@@ -123,6 +123,23 @@ def split_include_args(remainder: str) -> List[str]:
 
 _BLOCK_HEADERS = ('host', 'match', 'include')
 
+_CONFIG_LINE_RE = re.compile(r'[^\n]*\n|[^\n]+')
+
+
+def split_config_lines(text: str, keepends: bool = False) -> List[str]:
+    """``str.splitlines()`` for ssh_config text: only LF ends a line.
+
+    ``str.splitlines()`` also breaks on a lone CR, VT, FF, FS/GS/RS, NEL,
+    U+2028 and U+2029. OpenSSH does not, so the tail of what it reads as one
+    comment or value would be parsed here as a directive of its own -- and a
+    ``ProxyCommand`` runs locally. Read the text with ``newline=''``: universal
+    newlines turn a lone CR into LF before this sees it.
+    """
+    lines = _CONFIG_LINE_RE.findall(text)
+    if keepends:
+        return lines
+    return [line.rstrip('\r\n') for line in lines]
+
 
 @dataclass
 class HostBlock:
@@ -181,7 +198,7 @@ class SSHConfigDocument:
 
     @classmethod
     def parse_text(cls, text: str, path: Optional[str] = None) -> 'SSHConfigDocument':
-        lines = text.splitlines(keepends=True)
+        lines = split_config_lines(text, keepends=True)
         nodes: List[Node] = []
         raw: List[str] = []
 

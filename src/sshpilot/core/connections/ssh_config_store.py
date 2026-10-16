@@ -36,6 +36,7 @@ from ...ssh_config_document import (
     SSHConfigDocument,
     _split_keyword,
     is_concrete_host_block,
+    split_config_lines,
 )
 from ...ssh_config_formatter import merged_block_lines
 from ...platform.fs import fsync_directory, makedirs_private
@@ -238,7 +239,7 @@ def _preserve_multivalue_on_update(
     extra = str(new_data.get("extra_ssh_config") or "")
     extra_keys = {
         _split_keyword(line.strip())[0].lower()
-        for line in extra.splitlines()
+        for line in split_config_lines(extra)
         if line.strip()
     }
     for attr, directive in (

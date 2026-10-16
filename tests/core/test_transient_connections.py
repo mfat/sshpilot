@@ -172,6 +172,22 @@ def test_request_refuses_line_breaks_in_nickname_and_update():
         )
 
 
+@pytest.mark.parametrize("separator", ["\x85", "\u2028", "\u2029"])
+def test_request_and_formatter_refuse_unicode_line_breaks(separator):
+    injected = f"bob #{separator}ProxyCommand evil"
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(nickname="x", hostname="h", username=injected)
+    with pytest.raises(ValueError):
+        UpdateConnectionRequest(username=injected)
+    with pytest.raises(ValueError):
+        CreateConnectionRequest(
+            nickname="x", hostname="h",
+            config_patch={"extra_ssh_config": f"Compression yes #{separator}x"},
+        )
+    with pytest.raises(ValueError):
+        format_ssh_config_entry({"nickname": "x", "hostname": "h", "username": injected})
+
+
 def test_formatter_refuses_line_breaks():
     with pytest.raises(ValueError):
         format_ssh_config_entry({"nickname": "x", "hostname": INJECTED})

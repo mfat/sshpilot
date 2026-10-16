@@ -102,6 +102,18 @@ def test_stripped_config_keeps_cli_localforward_drops_config_dynamic(tmp_path):
     assert "18001" in lines["localforward"]
 
 
+def test_materialize_keeps_a_lone_cr_inside_its_line(tmp_path):
+    # OpenSSH reads this as one comment; a copy with LF there would run it.
+    content = b"Host US\n  HostName 127.0.0.1\n  # note\rProxyCommand touch /tmp/x\n"
+    source = tmp_path / "config"
+    source.write_bytes(content)
+    out = materialize_ssh_config_without_port_forwards(
+        str(source), destination_dir=str(tmp_path / "stripped")
+    )
+    # Windows writes the copy with CRLF; the lone CR must stay in its line.
+    assert Path(out).read_bytes().replace(b"\r\n", b"\n") == content
+
+
 def test_argv_config_helpers():
     assert argv_config_file(["ssh", "-F", "/tmp/a", "host"]) == "/tmp/a"
     assert argv_config_file(["ssh", "-F/tmp/b", "host"]) == "/tmp/b"

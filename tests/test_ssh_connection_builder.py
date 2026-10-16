@@ -537,6 +537,17 @@ def test_authored_advanced_options_are_emitted():
     assert "stricthostkeychecking=yes" in argv
 
 
+def test_advanced_option_value_is_split_at_lf_only():
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            extra_ssh_config='tag "a\u2028ProxyCommand touch /tmp/x"',
+            authored=("hostname", "tag"),
+        )
+    )
+    assert not any(arg.startswith("ProxyCommand=") for arg in argv)
+
+
 def test_structural_and_accumulating_advanced_options_are_not_emitted():
     argv = _argv(
         _config_connection(

@@ -572,3 +572,42 @@ def test_revision_does_not_depend_on_working_directory(tmp_path, monkeypatch):
         monkeypatch.chdir(cwd)
         revisions.add(load_ssh_configuration(root, isolated=False).root_revision)
     assert len(revisions) == 1
+
+
+# ---------------------------------------------------------------------------
+# Only LF ends a line, as in OpenSSH
+# ---------------------------------------------------------------------------
+NOT_LINE_BREAKS = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\r", "\x85", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("separator", NOT_LINE_BREAKS)
+def test_comment_tail_is_not_a_directive(tmp_path, separator):
+    root = tmp_path / "config"
+    root.write_bytes(
+        (
+            "Host victim\n"
+            "    HostName v.example.com\n"
+            f"    # note{separator}ProxyCommand touch /tmp/x\n"
+            f"    # note{separator}# sshpilot:PreCommand touch /tmp/x\n"
+        ).encode()
+    )
+    victim = _by_id(load_ssh_configuration(root, isolated=False), "victim")
+    assert not victim.data.get("proxy_command")
+    assert not victim.data.get("pre_command")
+    assert "proxycommand" not in victim.data["__authored_directives"]
+
+
+@pytest.mark.parametrize("separator", NOT_LINE_BREAKS)
+def test_comment_tail_is_not_an_include(tmp_path, separator):
+    (tmp_path / "hidden.conf").write_text(
+        "Host hidden\n    HostName h.example.com\n", encoding="utf-8"
+    )
+    root = tmp_path / "config"
+    content = (
+        f"# note{separator}Include hidden.conf\nHost ok\n    HostName ok.example.com\n"
+    ).encode()
+    root.write_bytes(content)
+    assert _ids(load_ssh_configuration(root, isolated=False)) == ["ok"]
+    assert _ids(
+        load_ssh_configuration(root, isolated=False, _content_overrides={root: content})
+    ) == ["ok"]

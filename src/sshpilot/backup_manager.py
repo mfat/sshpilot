@@ -15,6 +15,7 @@ import shlex
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple, List
+from .ssh_config_document import split_config_lines
 
 from .api.models.secrets import (
     SecretTransferMessage,
@@ -188,7 +189,7 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
     if not rewrites:
         return text
     out = []
-    for line in text.splitlines(keepends=True):
+    for line in split_config_lines(text, keepends=True):
         if _ssh_keyword(line) in _LOCAL_PATH_DIRECTIVES:
             for needle, repl in rewrites:
                 line = line.replace(needle, repl)
@@ -252,7 +253,7 @@ def _iter_config_stanzas(text: str):
     cur_kind = 'global'
     cur_patterns: Optional[List[str]] = None
     buf: List[str] = []
-    for line in text.splitlines():
+    for line in split_config_lines(text):
         kw = _ssh_keyword(line)
         if kw in ('host', 'match'):
             if buf:
@@ -421,7 +422,7 @@ def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
 def _rewrite_includes(text: str, source_root: Optional[str]) -> str:
     """Apply :func:`_rewrite_include_line` to every line of an imported config file."""
     return ''.join(_rewrite_include_line(line, source_root)
-                   for line in text.splitlines(keepends=True))
+                   for line in split_config_lines(text, keepends=True))
 
 
 class BackupManager:
@@ -1529,7 +1530,7 @@ class BackupManager:
         """Return *text* with any sshPilot-managed fragment ``Include`` removed and a single
         unconditional (``Match all``-guarded) ``Include`` appended."""
         out: List[str] = []
-        for line in text.splitlines():
+        for line in split_config_lines(text):
             if _ssh_keyword(line) == 'include' and fragment_name in line.lower():
                 if out and out[-1].strip() == '# Added by sshPilot import':
                     out.pop()
@@ -1556,7 +1557,7 @@ class BackupManager:
         existing = ''
         if os.path.exists(main_path):
             try:
-                with open(main_path, encoding='utf-8') as f:
+                with open(main_path, encoding='utf-8', newline='') as f:
                     existing = f.read()
             except OSError:
                 existing = ''

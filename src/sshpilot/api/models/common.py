@@ -31,7 +31,8 @@ def require_identifier(value: str, field_name: str) -> str:
 
 
 def has_control_characters(value: str, *, allow_newlines: bool = False) -> bool:
-    """True when *value* holds a C0 control character or DEL (tab is allowed).
+    """True when *value* holds a C0 control character, DEL or a Unicode line
+    break (NEL, U+2028, U+2029); tab is allowed.
 
     A line break in a value that lands on one ssh_config line starts a new
     directive -- ``HostName x\\n  ProxyCommand ...`` runs a local command --
@@ -41,7 +42,7 @@ def has_control_characters(value: str, *, allow_newlines: bool = False) -> bool:
         code = ord(char)
         if char == "\t" or (allow_newlines and char == "\n"):
             continue
-        if code < 0x20 or code == 0x7F:
+        if code < 0x20 or code == 0x7F or code in (0x85, 0x2028, 0x2029):
             return True
     return False
 

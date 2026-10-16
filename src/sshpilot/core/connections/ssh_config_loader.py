@@ -32,6 +32,7 @@ from ...ssh_config_document import (
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
+    split_config_lines,
     split_include_args,
 )
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
@@ -130,12 +131,12 @@ def _resolve_config_files(
         override = overrides.get(path.resolve())
         if override is not None:
             try:
-                return override.decode("utf-8").splitlines(keepends=True)
+                return split_config_lines(override.decode("utf-8"))
             except UnicodeDecodeError:
                 unreadable.append(path)
                 return None
         try:
-            return path.read_text(encoding="utf-8").splitlines(keepends=True)
+            return split_config_lines(path.read_bytes().decode("utf-8"))
         except FileNotFoundError:
             return _MISSING  # missing include -> tolerated, treated as empty
         except (OSError, UnicodeError):

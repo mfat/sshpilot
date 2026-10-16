@@ -23,7 +23,7 @@ from typing import Dict, FrozenSet, List, Optional, Set, Union
 
 from sshpilot.platform.process import hidden_console_kwargs
 
-from ..ssh_config_document import SSHConfigDocument, split_include_args
+from ..ssh_config_document import SSHConfigDocument, split_config_lines, split_include_args
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +110,8 @@ def discover_ssh_config_paths(
         if absolute in visited:
             return
         try:
-            with open(absolute, encoding="utf-8") as handle:
-                lines = handle.readlines()
+            with open(absolute, encoding="utf-8", newline="") as handle:
+                lines = split_config_lines(handle.read())
         except (OSError, UnicodeError) as exc:
             logger.warning("Cannot read SSH config include %s: %s", absolute, exc)
             if os.path.exists(absolute):
@@ -263,7 +263,7 @@ def _effective_config_lines(config: Dict[str, Union[str, List[str]]]) -> List[st
 
 def _authored_directives(block_text: str) -> Set[str]:
     names: Set[str] = set()
-    for raw_line in block_text.splitlines():
+    for raw_line in split_config_lines(block_text):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
