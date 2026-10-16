@@ -2,7 +2,7 @@
 
 Drives the runtime with the real client against OpenSSH's sftp-server binary,
 which answers ``statvfs@openssh.com`` for the local disk the test can also
-measure with ``os.statvfs``.
+measure with ``shutil.disk_usage`` (``os.statvfs`` on POSIX).
 """
 
 from __future__ import annotations
@@ -59,11 +59,12 @@ def test_filesystem_usage_matches_the_disk(service, tmp_path):
         SftpPathRequest(service_id=service_id, path=str(tmp_path)), client_id=_OWNER
     )
 
-    local = os.statvfs(tmp_path)
+    # disk_usage's free is what the user may use (f_bavail on POSIX).
+    local = shutil.disk_usage(tmp_path)
     assert usage.path == str(tmp_path)
-    assert usage.total_bytes == local.f_blocks * local.f_frsize
+    assert usage.total_bytes == local.total
     # Free space moves as other processes write; allow 64 MiB of drift.
-    assert abs(usage.available_bytes - local.f_bavail * local.f_frsize) < 64 * 1024 * 1024
+    assert abs(usage.available_bytes - local.free) < 64 * 1024 * 1024
     assert usage.available_bytes <= usage.free_bytes <= usage.total_bytes
 
 
