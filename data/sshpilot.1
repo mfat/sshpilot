@@ -160,7 +160,8 @@ prints its resource counters, and
 .B sshpilot\-daemon stop
 or
 .B restart
-manage it. It stops by itself 5 minutes after its last client disconnects.
+manage it. It stops by itself after 5 minutes with no client and no
+session, port forward or transfer running.
 .SH SEE ALSO
 .BR ssh (1),
 .BR ssh_config (5),
