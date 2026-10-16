@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import os
+import secrets
 import stat
 import sys
-import uuid
 from typing import Optional
 
 
@@ -52,7 +52,7 @@ def rename_local_file(source: str, destination: str) -> None:
         and os.path.normcase(os.path.abspath(source)) == os.path.normcase(os.path.abspath(destination))
         and os.path.normpath(source) != os.path.normpath(destination)
     ):
-        temporary = f"{source}.{uuid.uuid4().hex}.sshpilot-rename"
+        temporary = f"{source}.{secrets.token_hex(16)}.sshpilot-rename"
         os.rename(source, temporary)
         try:
             os.replace(temporary, destination)
