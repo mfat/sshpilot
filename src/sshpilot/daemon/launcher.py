@@ -207,6 +207,26 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
 FROZEN_WINDOWS_CONSOLE_EXE = "sshpilot-cli.exe"
 
 
+def _state_dir() -> str:
+    """The frontend state directory, without importing gi on Windows.
+
+    The early daemon start (``sshpilot.daemon_prelaunch``) runs this launcher
+    on a worker while the GUI thread imports GTK. ``platform_utils`` imports
+    ``gi.repository.GLib`` at module level, and PyGObject's importer is not
+    safe for two threads loading GLib at once: the GTK import then met a half
+    built GLib (``'gi.repository.GLib' object has no attribute 'Idle'``). On
+    Windows ``platform_utils.get_state_dir`` uses the headless resolver
+    anyway; elsewhere the GUI has imported GLib before the worker starts.
+    """
+    if sys.platform == "win32":
+        from sshpilot.platform import paths
+
+        return str(paths.get_state_dir())
+    from sshpilot.platform_utils import get_state_dir
+
+    return get_state_dir()
+
+
 def _frozen_console_executable() -> Optional[str]:
     """The daemon's executable in a frozen Windows build.
 
@@ -670,10 +690,9 @@ class DaemonLauncher:
             return
         try:
             from sshpilot.logging_support import ensure_daemon_log_forwarder
-            from sshpilot.platform_utils import get_state_dir
 
             ensure_daemon_log_forwarder(
-                Path(get_state_dir()) / "daemon.log",
+                Path(_state_dir()) / "daemon.log",
                 enabled=True,
             )
         except Exception:

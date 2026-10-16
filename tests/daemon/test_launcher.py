@@ -347,7 +347,7 @@ def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monke
 
 
 def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch):
-    from sshpilot import platform_utils
+    from sshpilot.daemon import launcher as launcher_module
     from sshpilot.logging_support import (
         close_managed_handlers,
         configure_frontend_logging,
@@ -356,7 +356,7 @@ def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch)
 
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setattr(platform_utils, "get_state_dir", lambda: str(state))
+    monkeypatch.setattr(launcher_module, "_state_dir", lambda: str(state))
     close_managed_handlers()
     configure_frontend_logging(state, "debug")
 
@@ -557,7 +557,7 @@ def test_socket_readiness_timeout_is_bounded_and_stops_exact_child(tmp_path):
 def test_verbose_launcher_uses_shared_daemon_log_forwarder(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "sshpilot.platform_utils.get_state_dir",
+        "sshpilot.daemon.launcher._state_dir",
         lambda: str(tmp_path),
     )
     monkeypatch.setattr(

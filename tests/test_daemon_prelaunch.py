@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -245,3 +248,27 @@ def test_with_no_endpoint_the_daemon_is_started_at_once(monkeypatch, tmp_path):
 
     assert daemon_prelaunch._state.done.wait(5)
     assert _FakeLauncher.instances[0].calls == ["early"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows resolves it without GLib")
+def test_verbose_log_forwarding_keeps_gi_off_the_worker():
+    """The worker must not import gi while the GUI thread imports GTK.
+
+    PyGObject's importer is not safe for two threads loading GLib at once;
+    with --verbose the launcher's daemon.log forwarder used to import
+    platform_utils (GLib) on the worker, and the GTK import then met a half
+    built GLib ("'gi.repository.GLib' object has no attribute 'Idle'").
+    """
+    src = Path(__file__).resolve().parents[1] / "src"
+    code = (
+        "import sys\n"
+        "from sshpilot.daemon import launcher\n"
+        "launcher._state_dir()\n"
+        "print(sorted(m for m in sys.modules if m == 'gi' or m.startswith('gi.')))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=str(src),
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
