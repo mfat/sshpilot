@@ -36,8 +36,17 @@ if appstreamcli.found()
   )
 endif
 
-install_data('icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg',
+app_icon = 'icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg'
+
+install_data(app_icon,
   install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
+)
+
+# GTK rasterizes scalable-only window icons at 48px before sending them to a
+# Wayland compositor. Advertise the same vector artwork as a fixed 256px icon
+# too, so large Plasma task switchers receive a suitably sized texture.
+install_data(app_icon,
+  install_dir: datadir / 'icons' / 'hicolor' / '256x256' / 'apps',
 )
 
 # Man pages for both binaries. Installed here rather than by a single distro's
