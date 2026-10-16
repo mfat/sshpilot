@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import socket
 import struct
+import sys
 import tempfile
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Callable, Dict, Optional, TypeVar
+from typing import Callable, Dict, List, Optional, Tuple, TypeVar
 
 from gi.repository import GLib
 
@@ -16,6 +18,94 @@ from .api.errors import ErrorCode, SshPilotError
 from .api.models.terminal import TerminalOutput
 
 logger = logging.getLogger(__name__)
+
+# A native python.exe attached to a console does not observe GLib's context
+# wakeup. Idle callbacks queued from worker threads sit until the next window
+# message. A socket registered with the main context is already in that wait,
+# so writing one byte runs the queued callbacks.
+_WIN32_WAKE_LOCK = threading.Lock()
+_WIN32_PENDING: List[Tuple[Callable[..., object], tuple]] = []
+_WIN32_WAKE_READ: Optional[socket.socket] = None
+_WIN32_WAKE_WRITE: Optional[socket.socket] = None
+
+
+def _on_win32_wake(_sock, _condition) -> bool:
+    """Run callbacks queued by worker threads. Always keep the watch."""
+    read_sock = _WIN32_WAKE_READ
+    if read_sock is not None:
+        try:
+            while True:
+                read_sock.recv(4096)
+        except (BlockingIOError, InterruptedError):
+            pass
+        except OSError:
+            pass
+    with _WIN32_WAKE_LOCK:
+        batch = list(_WIN32_PENDING)
+        _WIN32_PENDING.clear()
+    for callback, args in batch:
+        try:
+            callback(*args)
+        except Exception:
+            logger.exception("GTK wake callback failed")
+    return True
+
+
+def _ensure_win32_wake() -> bool:
+    """Register the wake socket on the default main context. Main thread."""
+    global _WIN32_WAKE_READ, _WIN32_WAKE_WRITE
+    if sys.platform != "win32":
+        return False
+    if _WIN32_WAKE_WRITE is not None:
+        return True
+    read_sock, write_sock = socket.socketpair()
+    read_sock.setblocking(False)
+    write_sock.setblocking(False)
+    for end in (read_sock, write_sock):
+        try:
+            end.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+    GLib.io_add_watch(
+        read_sock,
+        GLib.PRIORITY_DEFAULT,
+        GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+        _on_win32_wake,
+    )
+    _WIN32_WAKE_READ = read_sock
+    _WIN32_WAKE_WRITE = write_sock
+    return True
+
+
+def _signal_win32_wake() -> bool:
+    write_sock = _WIN32_WAKE_WRITE
+    if write_sock is None:
+        return False
+    try:
+        write_sock.send(b"\x00")
+    except (BlockingIOError, InterruptedError):
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def gtk_thread_idle(callback, *args, priority=None):
+    """Queue ``callback`` on the GTK thread and wake a Windows console GUI."""
+    if sys.platform == "win32" and _WIN32_WAKE_WRITE is not None:
+        with _WIN32_WAKE_LOCK:
+            _WIN32_PENDING.append((callback, args))
+        if _signal_win32_wake():
+            return 0
+        with _WIN32_WAKE_LOCK:
+            try:
+                _WIN32_PENDING.remove((callback, args))
+            except ValueError:
+                return 0
+    if priority is None:
+        return GLib.idle_add(callback, *args)
+    return GLib.idle_add(callback, *args, priority=priority)
+
 
 T = TypeVar("T")
 # Maximum raw payload handed to GTK in one idle slice.  This is a latency
@@ -50,7 +140,7 @@ class GtkClientBridge:
     def __init__(
         self,
         *,
-        dispatcher: Callable[..., object] = GLib.idle_add,
+        dispatcher: Callable[..., object] = gtk_thread_idle,
         max_workers: int = 1,
         max_pending_terminal_inputs: int = DEFAULT_PENDING_TERMINAL_INPUTS,
     ) -> None:
@@ -58,6 +148,11 @@ class GtkClientBridge:
             raise ValueError("GTK client bridge needs at least one worker")
         if max_pending_terminal_inputs < 1:
             raise ValueError("pending terminal input limit must be positive")
+        if dispatcher is gtk_thread_idle:
+            try:
+                _ensure_win32_wake()
+            except Exception:
+                logger.exception("Windows GTK wake socket failed")
         self._dispatcher = dispatcher
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
