@@ -61,6 +61,19 @@
 
 
 
+    <release version="6.3.2" date="2026-10-16">
+      <description>
+        <p>Experimental Windows port: run from source or install with the new NSIS installer</p>
+        <p>Local shell tabs on the built-in terminal backend, with ConPTY and libvterm on Windows</p>
+        <p>Faster startup: the daemon starts while the GUI loads and the sidebar shows in the first frame</p>
+        <p>Faster full-screen redraws and synchronized output support in the built-in terminal</p>
+        <p>Option to remember a password until SSH Pilot quits</p>
+        <p>Save search-box connections with options inherited from Host *</p>
+        <p>Security hardening: refuse shell text in HostName/ProxyJump, control characters typed into terminals, and unsafe paths in SCP downloads and backup restores</p>
+        <p>Old config.json files are upgraded instead of reset to defaults</p>
+        <p>Various fixes and improvements</p>
+      </description>
+    </release>
     <release version="6.3.1" date="2026-10-13">
       <description>
         <p>New Settings dialog with built-in search and dedicated pages for Appearance and Sidebar</p>
