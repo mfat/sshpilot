@@ -631,9 +631,7 @@ class SshPilotApplication(Adw.Application):
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
             startup_timing.mark("window_presented")
-            self.window._after_next_paint(
-                lambda: startup_timing.mark("window_first_painted")
-            )
+            self.window._after_next_paint(self.window._on_first_window_painted)
 
             # The window UI is built and presented and plugins are bound, so
             # it is now safe for plugins to do live UI/terminal work.

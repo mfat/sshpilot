@@ -4821,8 +4821,14 @@ def _build_sidebar_header(window, sidebar_box):
     window.menu_button.set_can_focus(False)
     window.menu_button.set_icon_name('open-menu-symbolic')
     label_icon_button(window.menu_button, _('Main menu'), tooltip=_('Menu'))
-    window.menu_button.set_menu_model(window.create_menu())
-    window._install_main_menu_theme_selector()
+
+    def _build_main_menu(btn):
+        if btn.get_menu_model() is not None:
+            return
+        btn.set_menu_model(window.create_menu())
+        window._install_main_menu_theme_selector()
+
+    window.menu_button.set_create_popup_func(_build_main_menu)
 
     header_handle = Gtk.WindowHandle()
     header_handle.set_hexpand(True)

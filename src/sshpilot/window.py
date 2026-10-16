@@ -380,6 +380,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._config_changed_handler = None
         self._startup_tasks_scheduled = False
         self._startup_complete = False
+        self._first_window_painted = False
+        self._after_first_paint_callbacks = []
+        self._preferences_preload_source = 0
         self._initial_connection_list_focus_done = False
         # Coalesces projection-reset rebuilds; see on_projection_reset.
         self._connection_list_rebuild_count = 0
@@ -1370,6 +1373,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _preload_preferences_window(self) -> bool:
         """Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant."""
+        self._preferences_preload_source = 0
         if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
             return GLib.SOURCE_REMOVE
         try:
@@ -1383,6 +1387,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
         except Exception as exc:
             logger.debug("Preloading preferences page skipped/failed: %s", exc)
+        return GLib.SOURCE_REMOVE
+
+    def _schedule_preferences_preload(self) -> bool:
+        """Warm Settings after the visible startup work has settled."""
+        if (
+            getattr(self, '_preferences_preload_source', 0)
+            or getattr(self, '_preferences_window', None) is not None
+            or getattr(self, '_is_quitting', False)
+        ):
+            return GLib.SOURCE_REMOVE
+        self._preferences_preload_source = GLib.timeout_add(
+            250, self._preload_preferences_window
+        )
         return GLib.SOURCE_REMOVE
 
     def _check_previous_crash(self):
@@ -1658,11 +1675,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._pending_focus_operations.clear()
 
-        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
-        try:
-            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
-        except Exception as e:
-            logger.debug(f"Failed to schedule preferences preloading: {e}")
+        self._run_after_first_paint(self._start_post_paint_services)
+        return False  # Don't repeat
+
+    def _start_post_paint_services(self) -> bool:
+        """Start non-visual services only after the first frame was displayed."""
+        self._ensure_omni_search()
 
         # Check for updates if enabled in preferences. Tips share the update
         # banner's area, so when a startup check runs they wait for its result
@@ -2144,63 +2162,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
 
-    def setup_ui(self):
-        """Set up the user interface"""
-        # Outer skeleton (ToastOverlay -> main_box) is in the template; the split
-        # view, custom title bar, banners, sidebar, and tabs are appended below.
-        main_box = self.main_box
-
-        # Create update notification banner (hidden by default)
-        # Use overlay to position dismiss button on top of banner
-        banner_overlay = Gtk.Overlay()
-        banner_overlay.set_visible(False)  # Hidden by default
-
-        self.update_banner = Adw.Banner()
-        self.update_banner.set_revealed(False)
-        banner_overlay.set_child(self.update_banner)
-
-        # Create dismiss button with text, positioned at the left
-        dismiss_button = Gtk.Button()
-        dismiss_button.set_label(_('Dismiss'))
+    def _ensure_update_banner(self):
+        """Build the update banner only when an update is ready to display."""
+        if getattr(self, 'update_banner', None) is not None:
+            return self.update_banner
+        banner = Adw.Banner()
+        banner.set_revealed(False)
+        overlay = Gtk.Overlay()
+        overlay.set_child(banner)
+        dismiss_button = Gtk.Button(label=_('Dismiss'))
         dismiss_button.set_halign(Gtk.Align.START)
         dismiss_button.set_valign(Gtk.Align.CENTER)
         dismiss_button.set_margin_start(12)
         dismiss_button.connect('clicked', self._on_update_banner_dismiss)
-        banner_overlay.add_overlay(dismiss_button)
-
-        self.update_banner_container = banner_overlay
+        overlay.add_overlay(dismiss_button)
+        self.update_banner_container.append(overlay)
+        self.update_banner = banner
         self.update_banner_dismiss_button = dismiss_button
-        # Note: Update banner will be added to content area in setup_content_area()
-        # to ensure it appears below the header bar
+        return banner
 
-        # Create terminal tips banner (hidden by default). Shown in the same
-        # area as the update banner — below the header bar, above the content —
-        # instead of floating over the terminal where it would mask output.
-        # The update banner takes priority over tips (see show_terminal_tip and
-        # _show_update_banner).
-        # A Gtk.Revealer holding a single inline row: the extra buttons are real
-        # children of the banner body, so no Gtk.Overlay hack is needed to show
-        # them (Adw.Banner only exposes one action button). The revealer gives us
-        # the same slide-in/out animation Adw.Banner.set_revealed() provided.
+    def _ensure_tips_banner(self):
+        """Build terminal-tip controls only when a tip is ready to display."""
+        if getattr(self, 'tips_revealer', None) is not None:
+            return self.tips_revealer
         _ensure_tips_banner_css()
-        self.tips_revealer = Gtk.Revealer()
-        self.tips_revealer.add_css_class('tips-banner-revealer')
-        # SLIDE_DOWN slides the banner in from the top edge and collapses it back
-        # up on dismiss (matching Adw.Banner's feel).
-        self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        self.tips_revealer.set_transition_duration(250)
-        self.tips_revealer.set_reveal_child(False)
-        self._tips_paused_for_sidebar = False
-        self._tips_was_revealed_before_sidebar_anim = False
-        self._tips_saved_transition_duration = 250
-
-        # No outer margins: the accent background must span the full width like
-        # the previous Adw.Banner. Horizontal padding comes from the .tips-banner
-        # CSS instead, so there are no gaps on the sides.
+        revealer = Gtk.Revealer()
+        revealer.add_css_class('tips-banner-revealer')
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_transition_duration(250)
+        revealer.set_reveal_child(False)
         tips_body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tips_body.add_css_class('tips-banner')
-
-        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss".
         self.tips_next_button = Gtk.Button(label=_('Next tip'))
         self.tips_next_button.set_valign(Gtk.Align.CENTER)
         self.tips_next_button.connect('clicked', self._on_tips_banner_next)
@@ -2209,23 +2201,45 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
         tips_body.append(self.tips_next_button)
         tips_body.append(tips_dismiss_button)
-
-        # Tip text fills the middle.
         self.tips_label = Gtk.Label()
         self.tips_label.set_hexpand(True)
         self.tips_label.set_halign(Gtk.Align.CENTER)
         self.tips_label.set_wrap(True)
         self.tips_label.set_justify(Gtk.Justification.CENTER)
         tips_body.append(self.tips_label)
-
-        # Trailing button: "Don't show again".
         tips_dont_show_button = Gtk.Button(label=_('Don\'t show again'))
         tips_dont_show_button.set_valign(Gtk.Align.CENTER)
         tips_dont_show_button.connect('clicked', self._on_tips_banner_dont_show_again)
         tips_body.append(tips_dont_show_button)
+        revealer.set_child(tips_body)
+        self.tips_banner_container.append(revealer)
+        self.tips_revealer = revealer
+        return revealer
 
-        self.tips_revealer.set_child(tips_body)
-        self.tips_banner_container = self.tips_revealer
+    def setup_ui(self):
+        """Set up the user interface"""
+        # Outer skeleton (ToastOverlay -> main_box) is in the template; the split
+        # view, custom title bar, banners, sidebar, and tabs are appended below.
+        main_box = self.main_box
+
+        # Keep stable slots in the content hierarchy, but do not construct the
+        # hidden banners and their controls until they are actually displayed.
+        self.update_banner = None
+        self.update_banner_dismiss_button = None
+        self.update_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.update_banner_container.set_visible(False)
+        self.tips_revealer = None
+        self.tips_label = None
+        self.tips_next_button = None
+        self.tips_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.tips_banner_container.set_visible(False)
+        self._tips_paused_for_sidebar = False
+        self._tips_was_revealed_before_sidebar_anim = False
+        self._tips_saved_transition_duration = 250
 
         # macOS creates a real header bar for native fullscreen. It is attached
         # above the tab row only while fullscreen, giving the menu-bar spacer
@@ -2398,10 +2412,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
         self._search_popup = None
-        GLib.idle_add(
-            lambda: (self._ensure_search_popup(), GLib.SOURCE_REMOVE)[1],
-            priority=GLib.PRIORITY_LOW,
-        )
         # Resting the pointer on the header bar's sidebar toggle while the
         # sidebar is hidden floats it out in the same popup (see
         # sidebar_hover_reveal.py).
@@ -2429,10 +2439,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         main_box.append(self._global_overlay)
 
         self._omni_search = None
-        GLib.idle_add(
-            lambda: (self._ensure_omni_search(), GLib.SOURCE_REMOVE)[1],
-            priority=GLib.PRIORITY_LOW,
-        )
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -7211,6 +7217,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for item in startup_timing.milestones()
         ):
             self._after_next_paint(self._profile_all_rows_painted)
+        self._run_after_first_paint(self._schedule_preferences_preload)
+
+    def _run_after_first_paint(self, callback) -> None:
+        """Run a one-shot callback at low priority after the first window frame."""
+        if getattr(self, '_first_window_painted', False):
+            GLib.idle_add(
+                lambda: (callback(), GLib.SOURCE_REMOVE)[1],
+                priority=GLib.PRIORITY_LOW,
+            )
+            return
+        callbacks = getattr(self, '_after_first_paint_callbacks', None)
+        if callbacks is None:
+            callbacks = []
+            self._after_first_paint_callbacks = callbacks
+        if callback not in callbacks:
+            callbacks.append(callback)
+
+    def _on_first_window_painted(self) -> None:
+        """Mark first paint and release startup work that is invisible initially."""
+        startup_timing.mark("window_first_painted")
+        if getattr(self, '_first_window_painted', False):
+            return
+        self._first_window_painted = True
+        callbacks = list(getattr(self, '_after_first_paint_callbacks', ()) or ())
+        self._after_first_paint_callbacks = []
+        for callback in callbacks:
+            self._run_after_first_paint(callback)
 
     def _after_next_paint(self, callback):
         """Call ``callback()`` once, after the window's next painted frame."""
