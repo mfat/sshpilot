@@ -13710,8 +13710,8 @@ msgid "Sort Connections"
 msgstr "Verbindungen sortieren"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "Sortierte Reihenfolge als Ihre manuelle Reihenfolge gespeichert"
+msgid "Saved as your manual order"
+msgstr "Als Ihre manuelle Reihenfolge gespeichert"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
@@ -13720,8 +13720,8 @@ msgstr ""
 "geändert"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "Manuelle Reihenfolge wird angezeigt"
+msgid "Sorting switched to manual order"
+msgstr "Sortierung auf manuelle Reihenfolge umgestellt"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format

@@ -3635,7 +3635,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if snapshot is None:
             return
         saved_arrangement = layout_request_from_snapshot(snapshot)
-        toast = Adw.Toast.new(_("Sorted order saved as your manual order"))
+        toast = Adw.Toast.new(_("Saved as your manual order"))
         toast.set_button_label(_("Undo"))
         toast.set_timeout(8)
         toast.connect(
@@ -3698,7 +3698,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
 
         if preset.manual:
-            message = _("Showing your manual order")
+            message = _("Sorting switched to manual order")
         else:
             message = _("Connections sorted — {title}").format(title=preset.title)
 

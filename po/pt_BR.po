@@ -13590,16 +13590,16 @@ msgid "Sort Connections"
 msgstr "Ordenar conexões"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "Ordem classificada salva como sua ordem manual"
+msgid "Saved as your manual order"
+msgstr "Salvo como sua ordem manual"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
 msgstr "Não foi possível desfazer: a lista de conexões mudou desde então"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "Exibindo sua ordem manual"
+msgid "Sorting switched to manual order"
+msgstr "Ordenação alterada para ordem manual"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format

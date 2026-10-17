@@ -13514,16 +13514,16 @@ msgid "Sort Connections"
 msgstr "مرتب‌سازی اتصال‌ها"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "ترتیب مرتب‌شده به‌عنوان ترتیب دستی شما ذخیره شد"
+msgid "Saved as your manual order"
+msgstr "به‌عنوان ترتیب دستی شما ذخیره شد"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
 msgstr "واگرد ممکن نیست: فهرست اتصال‌ها از آن زمان تغییر کرده است"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "نمایش ترتیب سفارشی شما"
+msgid "Sorting switched to manual order"
+msgstr "مرتب‌سازی به ترتیب دستی تغییر کرد"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format
