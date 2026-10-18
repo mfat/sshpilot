@@ -36,6 +36,10 @@ class IconContextMenu:
 
         btn = Gtk.Button()
         btn.add_css_class('flat')
+        # A click would focus the button; closing the popover then hands focus
+        # back to the row it hangs off, and a ListBox row taking focus
+        # collapses a multi-selection to that row (seen on Delete).
+        btn.set_focus_on_click(False)
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box.set_margin_start(8)
         box.set_margin_end(8)
