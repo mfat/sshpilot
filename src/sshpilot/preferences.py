@@ -1529,22 +1529,7 @@ class PreferencesWindow(Adw.Window):
         # "Open a saved session" radio rather than being hoisted into the
         # group's internal list box above the bare check buttons.
         self._startup_session_names = []
-        try:
-            session_manager = getattr(self.parent_window, 'session_manager', None)
-            if session_manager is not None:
-                self._startup_session_names = list(session_manager.list_session_names())
-        except Exception:
-            self._startup_session_names = []
-
-        session_model = Gtk.StringList()
-        if self._startup_session_names:
-            for name in self._startup_session_names:
-                session_model.append(name)
-        else:
-            session_model.append(_("(no saved sessions)"))
-
         self.startup_session_row = Gtk.DropDown()
-        self.startup_session_row.set_model(session_model)
         self.startup_session_row.set_valign(Gtk.Align.CENTER)
 
         self.startup_session_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -1556,15 +1541,7 @@ class PreferencesWindow(Adw.Window):
         self.startup_session_box.append(session_label)
         self.startup_session_box.append(self.startup_session_row)
 
-        selected_session = self.config.get_setting('app-startup-session-name', '')
-        if selected_session in self._startup_session_names:
-            self.startup_session_row.set_selected(
-                self._startup_session_names.index(selected_session)
-            )
-        self.startup_session_box.set_sensitive(
-            bool(self._startup_session_names)
-            and self.saved_session_startup_radio.get_active()
-        )
+        self._refresh_startup_sessions()
 
         # Connect radio button changes
         self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
@@ -1582,6 +1559,60 @@ class PreferencesWindow(Adw.Window):
         startup_group.add(self.startup_session_box)
 
         interface_page.add(startup_group)
+
+        # Sessions saved while Settings exists (it is built once and kept)
+        # must show up without a restart, so re-read the store on activation.
+        self.connect('notify::is-active', self._on_active_refresh_startup_sessions)
+
+    def _on_active_refresh_startup_sessions(self, *_args):
+        if self.is_active():
+            self._refresh_startup_sessions()
+
+    def _refresh_startup_sessions(self):
+        """Fill the startup-session dropdown from the current session store."""
+        row = getattr(self, 'startup_session_row', None)
+        if row is None:
+            return
+        names = []
+        try:
+            session_manager = getattr(self.parent_window, 'session_manager', None)
+            if session_manager is not None:
+                names = list(session_manager.list_session_names())
+        except Exception:
+            names = []
+
+        selected_session = self.config.get_setting('app-startup-session-name', '')
+        if names != getattr(self, '_startup_session_names', None) or row.get_model() is None:
+            session_model = Gtk.StringList()
+            for name in names or [_("(no saved sessions)")]:
+                session_model.append(name)
+            # Cleared first so swapping the model cannot persist a stale index.
+            self._startup_session_names = []
+            row.set_model(session_model)
+            self._startup_session_names = names
+        if selected_session in names:
+            row.set_selected(names.index(selected_session))
+        self.startup_session_box.set_sensitive(
+            bool(names) and self.saved_session_startup_radio.get_active()
+        )
+        if self.saved_session_startup_radio.get_active():
+            self._persist_shown_startup_session()
+
+    def _persist_shown_startup_session(self):
+        """Store the session the dropdown shows.
+
+        A Gtk.DropDown shows its first item without emitting a change, so
+        without this the startup option names no session at all.
+        """
+        row = getattr(self, 'startup_session_row', None)
+        names = getattr(self, '_startup_session_names', [])
+        if row is None or not names:
+            return
+        index = row.get_selected()
+        if 0 <= index < len(names):
+            name = names[index]
+            if self.config.get_setting('app-startup-session-name', '') != name:
+                self.config.set_setting('app-startup-session-name', name)
 
     def _add_interface_layout_group(self, interface_page):
         """Add the Layout group: presets over the startup settings."""
@@ -7206,6 +7237,8 @@ class PreferencesWindow(Adw.Window):
             target.set_sensitive(
                 behavior == 'saved-session' and bool(getattr(self, '_startup_session_names', []))
             )
+        if behavior == 'saved-session':
+            self._persist_shown_startup_session()
 
     def on_startup_session_changed(self, combo_row, *args):
         """Persist the chosen startup session name."""

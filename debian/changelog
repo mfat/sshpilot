@@ -1,3 +1,13 @@
+sshpilot (6.3.5-1) unstable; urgency=medium
+
+  * Release v6.3.5.
+  * A session saved while Settings is open now appears in Settings'
+    startup session list without restarting
+  * Starting the app with a saved session now opens the session shown in
+    Settings
+
+ -- Mehdi <mah.fat@gmail.com>  Sun, 18 Oct 2026 13:51:27 +0000
+
 sshpilot (6.3.4-1) unstable; urgency=medium
 
   * Release v6.3.4.

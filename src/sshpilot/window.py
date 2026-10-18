@@ -1691,6 +1691,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 data = session_manager.get_previous()
             elif startup_behavior == 'saved-session':
                 name = self.config.get_setting('app-startup-session-name', '')
+                if not name:
+                    # Settings showed the first session without storing it
+                    # (fixed there now); open what the user saw selected.
+                    names = session_manager.list_session_names()
+                    name = names[0] if names else ''
                 if name:
                     data = session_manager.get_session(name)
                 if data is None:

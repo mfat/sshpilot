@@ -360,3 +360,51 @@ def test_previous_session_is_not_carried_across_a_mode_switch(tmp_path, monkeypa
 
     manager.set_isolated(False)
     assert manager.get_previous() is not None
+
+
+class _StubDropDown:
+    def __init__(self, selected=0):
+        self._selected = selected
+
+    def get_selected(self):
+        return self._selected
+
+    def set_sensitive(self, _sensitive):
+        pass
+
+
+def test_choosing_saved_session_stores_the_shown_session():
+    """The dropdown shows its first session without emitting a change."""
+    from sshpilot import preferences
+
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    prefs.config = _StubConfig()
+    prefs.config.get_setting = lambda key, default=None: default
+    prefs.terminal_startup_radio = _StubRadio(active=False)
+    prefs.previous_session_startup_radio = _StubRadio(active=False)
+    prefs.saved_session_startup_radio = _StubRadio(active=True)
+    prefs._startup_session_names = ['Work', 'Admin']
+    prefs.startup_session_row = _StubDropDown(selected=0)
+
+    preferences.PreferencesWindow.on_startup_behavior_changed(prefs, None)
+    assert prefs.config.saved == [
+        ('app-startup-behavior', 'saved-session'),
+        ('app-startup-session-name', 'Work'),
+    ]
+
+
+def test_startup_without_stored_name_opens_the_first_session():
+    from sshpilot import window as window_module
+
+    restored = []
+    data = {'tabs': [{'type': 'local'}]}
+    win = types.SimpleNamespace(
+        session_manager=types.SimpleNamespace(
+            list_session_names=lambda: ['Admin', 'Work'],
+            get_session=lambda name: data if name == 'Admin' else None,
+        ),
+        config=types.SimpleNamespace(get_setting=lambda key, default=None: default),
+        restore_session=lambda payload, replace: restored.append(payload),
+    )
+    window_module.MainWindow._restore_startup_session(win, 'saved-session')
+    assert restored == [data]

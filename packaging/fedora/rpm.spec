@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.4}
+Version:        %{?version}%{!?version:6.3.5}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -148,6 +148,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sun Oct 18 2026 mFat <newmfat@gmail.com> - 6.3.5-1
+- A session saved while Settings is open now appears in Settings' startup session list without restarting
+- Starting the app with a saved session now opens the session shown in Settings
+
 * Sun Oct 18 2026 mFat <newmfat@gmail.com> - 6.3.4-1
 - Using a right-click menu action on several selected connections (such as Delete) keeps all of them selected
 - Clicking a terminal's own tab pill keeps that terminal active
