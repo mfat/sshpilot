@@ -24,7 +24,7 @@ The result:
 | `build\windows\dist\sshPilot\sshPilot.exe` | the GUI (windowed) |
 | `build\windows\dist\sshPilot\sshpilot-cli.exe` | the daemon (`--daemon`), askpass (`--internal-askpass`) and rbw's pinentry (`--internal-rbw-pinentry`); console subsystem |
 | `build\windows\dist\sshPilot\_internal\` | Python, GTK 4, typelibs, `libvterm-0.dll`, `conpty.dll`, `OpenConsole.exe` |
-| `build\windows\sshPilot-<version>-setup.exe` | the installer (about 60 MiB) |
+| `build\windows\SSHPilot-<version>-windows-<arch>-setup.exe` | the installer (about 60 MiB) |
 
 `build.ps1` runs `verify_bundle.py`, which fails the build when a file the app
 loads at runtime (typelibs, schemas, pixbuf loaders, the ctypes-loaded DLLs)
@@ -54,7 +54,7 @@ administrator rights), adds a Start-menu shortcut and an entry under
 Settings → Apps, and stops a running daemon before replacing files.
 Uninstalling removes the program but keeps settings and connections in
 `%APPDATA%\sshpilot` and `%LOCALAPPDATA%\sshpilot`. Silent install:
-`sshPilot-<version>-setup.exe /S`, optionally `/D=<directory>` (last).
+`SSHPilot-<version>-windows-<arch>-setup.exe /S`, optionally `/D=<directory>` (last).
 
 ## Testing on a clean Windows
 

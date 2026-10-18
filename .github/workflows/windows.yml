@@ -82,12 +82,15 @@ jobs:
   package:
     # Builds the app folder and installer; signs when SignPath is configured
     # (packaging/windows/README.md).
-    # always() lets the job run when tests was skipped on request; a skip for
-    # any other reason, or a failure, still blocks it.
+    # always() lets the job run when tests was skipped on request, and on a
+    # tag even when tests failed: a flaky test leaves the run red but must not
+    # block the release installer. A cancelled tests job, or a failure on a
+    # manual run, still blocks it.
     if: >-
       always()
       && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
       && (needs.tests.result == 'success'
+          || (needs.tests.result == 'failure' && startsWith(github.ref, 'refs/tags/'))
           || (needs.tests.result == 'skipped' && inputs.skip_tests))
     needs: tests
     runs-on: windows-latest
@@ -147,7 +150,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sshpilot-windows-unsigned
-          path: build/windows/sshPilot-*-setup.exe
+          path: build/windows/SSHPilot-*-setup.exe
 
       - name: Sign with SignPath
         if: env.SIGNPATH_ENABLED == 'true'
@@ -174,7 +177,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/sshPilot-*-setup.exe' }}
+          files: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/SSHPilot-*-setup.exe' }}
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -92,8 +92,8 @@ def test_runner_streams_output_and_reports_exit(monkeypatch):
         assert pty.spawned[0].endswith("ssh.exe")
         assert pty.spawned[1] == ' -p 22 "host name"'
 
-        assert handle.write("é".encode("utf-8")[:1])  # split UTF-8 sequence
-        assert handle.write("é".encode("utf-8")[1:])
+        assert handle.write("é".encode()[:1])  # split UTF-8 sequence
+        assert handle.write("é".encode()[1:])
         assert "".join(pty.written) == "é"
 
         handle.resize(TerminalDimensions(rows=40, columns=120))

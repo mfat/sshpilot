@@ -28,6 +28,7 @@ def test_local_authorized_keys_read_is_bounded_and_revisioned(tmp_path, monkeypa
     path = ssh_dir / "authorized_keys"
     path.write_text("comment\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     runtime = SftpServiceRuntime(SimpleNamespace())
     result = runtime.read_file(
@@ -47,6 +48,7 @@ def test_local_replace_rejects_stale_revision(tmp_path, monkeypatch):
     path = ssh_dir / "authorized_keys"
     path.write_text("old\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     runtime = SftpServiceRuntime(SimpleNamespace())
     with pytest.raises(SshPilotError) as raised:
@@ -71,6 +73,7 @@ def test_local_replace_is_atomic_secure_and_backed_up(tmp_path, monkeypatch):
     path.write_text("old\n", encoding="utf-8")
     os.chmod(path, 0o644)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     runtime = SftpServiceRuntime(SimpleNamespace())
     old = runtime.read_file(
@@ -102,6 +105,7 @@ def test_local_replace_cleans_up_per_target_sync_state(tmp_path, monkeypatch):
     path = ssh_dir / "authorized_keys"
     path.write_text("old\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     runtime = SftpServiceRuntime(SimpleNamespace())
     old = runtime.read_file(
@@ -132,6 +136,7 @@ def test_local_concurrent_same_revision_replacements_serialize(tmp_path, monkeyp
     path = ssh_dir / "authorized_keys"
     path.write_text("original\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     runtime = SftpServiceRuntime(SimpleNamespace())
     original = runtime.read_file(
@@ -601,6 +606,7 @@ def test_shutdown_rejects_waiting_local_replacement(tmp_path, monkeypatch):
     path = ssh_dir / "authorized_keys"
     path.write_text("original\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     runtime = SftpServiceRuntime(SimpleNamespace())
     original = runtime.read_file(

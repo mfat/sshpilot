@@ -13514,16 +13514,16 @@ msgid "Sort Connections"
 msgstr "مرتب‌سازی اتصال‌ها"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "ترتیب مرتب‌شده به‌عنوان ترتیب دستی شما ذخیره شد"
+msgid "Saved as your manual order"
+msgstr "به‌عنوان ترتیب دستی شما ذخیره شد"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
 msgstr "واگرد ممکن نیست: فهرست اتصال‌ها از آن زمان تغییر کرده است"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "نمایش ترتیب سفارشی شما"
+msgid "Sorting switched to manual order"
+msgstr "مرتب‌سازی به ترتیب دستی تغییر کرد"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format
@@ -16368,6 +16368,64 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:194
+#, python-brace-format
+msgid ""
+"The imported host {host} connects through {via}, so it now goes through your "
+"own {via}, not the one in the backup."
+msgstr ""
+"میزبان واردشده {host} از طریق {via} متصل می‌شود، بنابراین اکنون از {via} "
+"خودتان عبور می‌کند، نه از نسخه موجود در پشتیبان."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:231
+#, python-brace-format
+msgid ""
+"{count} rule for all hosts (Host * or Match) in the backup was not merged, "
+"because it would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgid_plural ""
+"{count} rules for all hosts (Host * or Match) in the backup were not merged, "
+"because they would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgstr[0] ""
+"{count} قانون برای همه میزبان‌ها (Host * یا Match) در پشتیبان ادغام نشد، زیرا"
+" همه اتصال‌ها را تغییر می‌داد. میزبان‌های واردشده به‌جای آن از قوانین این "
+"رایانه پیروی می‌کنند."
+msgstr[1] ""
+"{count} قانون برای همه میزبان‌ها (Host * یا Match) در پشتیبان ادغام نشدند، "
+"زیرا همه اتصال‌ها را تغییر می‌دادند. میزبان‌های واردشده به‌جای آن از قوانین "
+"این رایانه پیروی می‌کنند."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:241
+#, python-brace-format
+msgid ""
+"{count} host entry in the backup also names hosts you already have; only its "
+"new names were added: {hosts}"
+msgid_plural ""
+"{count} host entries in the backup also name hosts you already have; only "
+"their new names were added: {hosts}"
+msgstr[0] ""
+"{count} ورودی میزبان در پشتیبان میزبان‌هایی را هم نام می‌برد که از قبل دارید؛"
+" فقط نام‌های جدید آن اضافه شد: {hosts}"
+msgstr[1] ""
+"{count} ورودی میزبان در پشتیبان میزبان‌هایی را هم نام می‌برند که از قبل "
+"دارید؛ فقط نام‌های جدید آن‌ها اضافه شد: {hosts}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:249
+#, python-brace-format
+msgid ""
+"{count} host in the backup has the same name as one of yours but different "
+"settings. Yours was kept and the backup's was not imported: {hosts}"
+msgid_plural ""
+"{count} hosts in the backup have the same names as yours but different "
+"settings. Yours were kept and the backup's were not imported: {hosts}"
+msgstr[0] ""
+"{count} میزبان در پشتیبان هم‌نام یکی از میزبان‌های شماست اما تنظیمات متفاوتی "
+"دارد. میزبان شما حفظ شد و میزبان پشتیبان وارد نشد: {hosts}"
+msgstr[1] ""
+"{count} میزبان در پشتیبان هم‌نام میزبان‌های شما هستند اما تنظیمات متفاوتی "
+"دارند. میزبان‌های شما حفظ شدند و میزبان‌های پشتیبان وارد نشدند: {hosts}"
 
 #~ msgid "With the start page or a terminal"
 #~ msgstr "همراه صفحهٔ شروع یا ترمینال"

@@ -346,8 +346,6 @@ def test_broker_env_keeps_windows_process_essentials(monkeypatch):
     """OpenSSH for Windows exits 255 with no output when these are stripped."""
     import os
 
-    import sshpilot.ssh_connection_builder as scb
-
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     monkeypatch.setenv("ProgramData", r"C:\ProgramData")

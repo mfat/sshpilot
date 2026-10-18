@@ -12,6 +12,9 @@ def test_every_public_transfer_code_has_a_frontend_presentation():
         SecretTransferMessageCode.BITWARDEN_NOTE_LARGEST_SECTION,
         SecretTransferMessageCode.SSH_CONFIG_FILES_SKIPPED,
         SecretTransferMessageCode.REFERENCED_KEY_FILES_MISSING,
+        SecretTransferMessageCode.MERGE_GLOBAL_RULES_SKIPPED,
+        SecretTransferMessageCode.MERGE_PARTIAL_NAME_COLLISION,
+        SecretTransferMessageCode.MERGE_EXISTING_HOSTS_KEPT,
     }
 
     assert set(SecretTransferMessageCode) == set(messages._MESSAGE_TEMPLATES) | plural_codes
@@ -98,6 +101,32 @@ def test_counted_warning_uses_gettext_plural(monkeypatch, count, expected):
 
     assert messages.format_secret_transfer_message(message) == expected
     assert seen[0][2] == count
+
+
+@pytest.mark.parametrize(
+    ("code", "parameters", "expected"),
+    (
+        (SecretTransferMessageCode.MERGE_GLOBAL_RULES_SKIPPED, {"count": 1},
+         "1 rule for all hosts (Host * or Match) in the backup was not merged, because it "
+         "would change every connection. Imported hosts follow this computer's rules "
+         "instead."),
+        (SecretTransferMessageCode.MERGE_PARTIAL_NAME_COLLISION,
+         {"count": 2, "hosts": "a b, c d"},
+         "2 host entries in the backup also name hosts you already have; only their new "
+         "names were added: a b, c d"),
+        (SecretTransferMessageCode.MERGE_EXISTING_HOSTS_KEPT, {"count": 1, "hosts": "web"},
+         "1 host in the backup has the same name as one of yours but different settings. "
+         "Yours was kept and the backup's was not imported: web"),
+        (SecretTransferMessageCode.MERGE_HOST_ROUTED_THROUGH_EXISTING,
+         {"host": "db", "via": "web"},
+         "The imported host db connects through web, so it now goes through your own web, "
+         "not the one in the backup."),
+    ),
+)
+def test_merge_restore_warnings_render(code, parameters, expected):
+    message = SecretTransferMessage(code, parameters=parameters)
+
+    assert messages.format_secret_transfer_message(message) == expected
 
 
 def test_multiple_warnings_keep_wire_order():

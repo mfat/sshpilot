@@ -26,6 +26,8 @@ _TAB_METHODS = (
     "_on_tab_close_confirmed",
     "_close_tab",
     "_on_tab_bar_pressed",
+    "_on_tab_bar_capture_press",
+    "_restore_focus_after_tab_click",
     "_show_tab_rename_popover",
     "_apply_tab_title",
     "_build_tab_context_menus",
@@ -347,6 +349,86 @@ def test_tab_bar_double_click_close_button_does_not_open_local():
             calls.append('rename')
 
     Stub()._on_tab_bar_pressed(None, 2, 40, 5)
+    assert calls == []
+
+
+class _FocusStub:
+    """A widget that records grab_focus and knows its ancestor."""
+
+    def __init__(self, calls, name, ancestor=None):
+        self.calls, self.name, self.ancestor = calls, name, ancestor
+
+    def is_ancestor(self, widget):
+        return widget is self.ancestor
+
+    def get_mapped(self):
+        return True
+
+    def grab_focus(self):
+        self.calls.append(('grab', self.name))
+
+    def child_focus(self, _direction):
+        self.calls.append(('child_focus', self.name))
+
+
+def _focus_window(calls, *, selected_before, selected_after, focus_before):
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self.tab_view = types.SimpleNamespace(get_selected_page=lambda: self._selected)
+            self._selected = selected_before
+
+        def get_focus(self):
+            return focus_before
+
+        def _is_start_tab_page(self, _page):
+            return False
+
+        def _focus_terminal_widget(self, terminal):
+            calls.append(('terminal', terminal))
+
+    stub = Stub()
+    stub._on_tab_bar_capture_press(None, 1, 0, 0)
+    stub._selected = selected_after
+    return stub
+
+
+def test_click_on_selected_tab_gives_focus_back_to_the_pane():
+    calls = []
+    page_child = object()
+    page = types.SimpleNamespace(get_child=lambda: page_child)
+    vte = _FocusStub(calls, 'vte', ancestor=page_child)
+    stub = _focus_window(calls, selected_before=page, selected_after=page,
+                         focus_before=vte)
+
+    stub._restore_focus_after_tab_click(page)
+
+    assert calls == [('grab', 'vte')]
+
+
+def test_click_on_selected_tab_with_focus_elsewhere_focuses_its_content():
+    calls = []
+    child = _FocusStub(calls, 'pane')
+    page = types.SimpleNamespace(get_child=lambda: child)
+    sidebar = _FocusStub(calls, 'sidebar')
+    stub = _focus_window(calls, selected_before=page, selected_after=page,
+                         focus_before=sidebar)
+
+    stub._restore_focus_after_tab_click(page)
+
+    assert calls == [('child_focus', 'pane')]
+
+
+def test_click_on_another_tab_is_left_to_on_tab_selected():
+    calls = []
+    old = types.SimpleNamespace(get_child=lambda: object())
+    new = types.SimpleNamespace(get_child=lambda: object())
+    stub = _focus_window(calls, selected_before=old, selected_after=new,
+                         focus_before=None)
+
+    stub._restore_focus_after_tab_click(new)
+
     assert calls == []
 
 

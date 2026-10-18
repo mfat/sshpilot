@@ -181,6 +181,7 @@ def test_bug7_crossmode_absolute_include_stays_consistent(tmp_path, monkeypatch)
     home = tmp_path / "home_bob"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     iso_root = tmp_path / "cfg" / "sshpilot"
     iso_root.mkdir(parents=True)
     main = iso_root / "ssh_config"

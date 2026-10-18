@@ -13120,16 +13120,16 @@ msgid "Sort Connections"
 msgstr "排序连接"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "已将排序后的顺序保存为您的手动顺序"
+msgid "Saved as your manual order"
+msgstr "已保存为您的手动顺序"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
 msgstr "无法撤销：连接列表在此之后已更改"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "正在显示手动排序"
+msgid "Sorting switched to manual order"
+msgstr "排序已切换为手动顺序"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format
@@ -15807,6 +15807,46 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:194
+#, python-brace-format
+msgid ""
+"The imported host {host} connects through {via}, so it now goes through your "
+"own {via}, not the one in the backup."
+msgstr "导入的主机 {host} 通过 {via} 连接，因此现在会经过您自己的 {via}，而不是备份中的那个。"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:231
+#, python-brace-format
+msgid ""
+"{count} rule for all hosts (Host * or Match) in the backup was not merged, "
+"because it would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgid_plural ""
+"{count} rules for all hosts (Host * or Match) in the backup were not merged, "
+"because they would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgstr[0] ""
+"备份中有 {count} 条适用于所有主机的规则（Host * 或 Match）未合并，因为它们会改变所有连接。导入的主机改为遵循本机的规则。"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:241
+#, python-brace-format
+msgid ""
+"{count} host entry in the backup also names hosts you already have; only its "
+"new names were added: {hosts}"
+msgid_plural ""
+"{count} host entries in the backup also name hosts you already have; only "
+"their new names were added: {hosts}"
+msgstr[0] "备份中有 {count} 个主机条目同时包含您已有的主机；只添加了其中的新名称：{hosts}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:249
+#, python-brace-format
+msgid ""
+"{count} host in the backup has the same name as one of yours but different "
+"settings. Yours was kept and the backup's was not imported: {hosts}"
+msgid_plural ""
+"{count} hosts in the backup have the same names as yours but different "
+"settings. Yours were kept and the backup's were not imported: {hosts}"
+msgstr[0] "备份中有 {count} 个主机与您的主机同名但设置不同。已保留您的主机，未导入备份中的主机：{hosts}"
 
 #~ msgid "With the start page or a terminal"
 #~ msgstr "搭配起始页或终端"

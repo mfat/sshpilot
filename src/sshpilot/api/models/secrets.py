@@ -384,6 +384,10 @@ class SecretTransferMessageCode(str, Enum):
     METADATA_RESTORE_FAILED = "metadata_restore_failed"
     DISPLAY_NAME_RESTORE_FAILED = "display_name_restore_failed"
     CONNECTION_REMOVE_FAILED = "connection_remove_failed"
+    MERGE_GLOBAL_RULES_SKIPPED = "merge_global_rules_skipped"
+    MERGE_PARTIAL_NAME_COLLISION = "merge_partial_name_collision"
+    MERGE_EXISTING_HOSTS_KEPT = "merge_existing_hosts_kept"
+    MERGE_HOST_ROUTED_THROUGH_EXISTING = "merge_host_routed_through_existing"
 
 
 _SECRET_TRANSFER_MESSAGE_PARAMETER_TYPES = {
@@ -442,6 +446,19 @@ _SECRET_TRANSFER_MESSAGE_PARAMETER_TYPES.update(
             "connection": str,
         },
         SecretTransferMessageCode.CONNECTION_REMOVE_FAILED: {"connection": str},
+        SecretTransferMessageCode.MERGE_GLOBAL_RULES_SKIPPED: {"count": int},
+        SecretTransferMessageCode.MERGE_PARTIAL_NAME_COLLISION: {
+            "count": int,
+            "hosts": str,
+        },
+        SecretTransferMessageCode.MERGE_EXISTING_HOSTS_KEPT: {
+            "count": int,
+            "hosts": str,
+        },
+        SecretTransferMessageCode.MERGE_HOST_ROUTED_THROUGH_EXISTING: {
+            "host": str,
+            "via": str,
+        },
     }
 )
 

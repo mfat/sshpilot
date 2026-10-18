@@ -2537,6 +2537,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to attach content widget", exc_info=True)
 
+    def _get_remembered_sidebar_width(self) -> int:
+        """The sidebar width to save: the one the user dragged to, else the
+        width it rests at. Not the live divider, which a narrow window squeezes
+        to make room for the content side."""
+        try:
+            width = self.split_view.user_width
+            if width is None:
+                width = self.split_view.get_resting_sidebar_width()
+            return int(width)
+        except Exception:
+            return self._get_sidebar_width()
+
     def _get_sidebar_width(self) -> int:
         """The sidebar's current width in pixels (the paned divider position)."""
         try:
@@ -3635,7 +3647,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if snapshot is None:
             return
         saved_arrangement = layout_request_from_snapshot(snapshot)
-        toast = Adw.Toast.new(_("Sorted order saved as your manual order"))
+        toast = Adw.Toast.new(_("Saved as your manual order"))
         toast.set_button_label(_("Undo"))
         toast.set_timeout(8)
         toast.connect(
@@ -3698,7 +3710,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
 
         if preset.manual:
-            message = _("Showing your manual order")
+            message = _("Sorting switched to manual order")
         else:
             message = _("Connections sorted — {title}").format(title=preset.title)
 
@@ -3845,6 +3857,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         rename_gesture.set_button(1)
         rename_gesture.connect('pressed', self._on_tab_bar_pressed)
         self.tab_bar.add_controller(rename_gesture)
+
+        # Clicking the already-selected tab makes AdwTabBox focus the pill,
+        # which leaves the terminal cursor inactive. Record the focus before
+        # AdwTabBox sees the press so _on_tab_bar_pressed can hand it back.
+        focus_memo = Gtk.GestureClick()
+        focus_memo.set_button(1)
+        focus_memo.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        focus_memo.connect('pressed', self._on_tab_bar_capture_press)
+        self.tab_bar.add_controller(focus_memo)
 
         # Suppress the context menu on the pinned Start tab. This capture-phase
         # gesture runs before AdwTabBox's own (bubble-phase) right-click handler,
@@ -7589,7 +7610,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle window size change"""
         width = self.get_default_size()[0]
         height = self.get_default_size()[1]
-        sidebar_width = self._get_sidebar_width()
+        sidebar_width = self._get_remembered_sidebar_width()
 
         self.config.save_window_geometry(width, height, sidebar_width)
 
@@ -8613,7 +8634,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Save window state before quitting"""
         try:
             width, height = self.get_default_size()
-            sidebar_width = getattr(self.split_view, 'get_sidebar_width', lambda: 300)()
+            sidebar_width = self._get_remembered_sidebar_width()
             self.config.save_window_geometry(width, height, sidebar_width)
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:

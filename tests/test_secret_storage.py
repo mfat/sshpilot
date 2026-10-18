@@ -106,6 +106,7 @@ def test_key_path_lookup_candidates_include_tilde_when_home_differs(monkeypatch,
     not contain the real key path; OpenSSH still prompts with the absolute path.
     """
     monkeypatch.setenv("HOME", str(tmp_path / "sandbox-home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "sandbox-home"))
     (tmp_path / "sandbox-home").mkdir()
     candidates = ss.key_path_lookup_candidates("/home/other/.ssh/kwp4")
     assert "~/.ssh/kwp4" in candidates
@@ -114,6 +115,7 @@ def test_key_path_lookup_candidates_include_tilde_when_home_differs(monkeypatch,
 
 def test_lookup_passphrase_finds_tilde_account_when_home_differs(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path / "sandbox-home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "sandbox-home"))
     (tmp_path / "sandbox-home").mkdir()
     backend = FakeBackend("libsecret")
     backend.data["~/.ssh/kwp4"] = "secret-pp"

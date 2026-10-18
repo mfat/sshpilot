@@ -561,7 +561,7 @@ def _save_plugin_password(typed, original):
             ),
         },
         _orig_plugin_password=original,
-        _collect_connection_meta=lambda: {},
+        _collect_connection_meta=dict,
         SaveRequest=ConnectionDialog.SaveRequest,
         emit=lambda _signal, data, *_rest: emitted.append(data),
         close=lambda: None,

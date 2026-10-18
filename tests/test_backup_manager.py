@@ -3,6 +3,10 @@
 import base64
 import json
 import os
+import sys
+import types
+
+import pytest
 
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
@@ -503,6 +507,7 @@ def _key_restore_home(monkeypatch, tmp_path):
     home = tmp_path / "home"
     (home / ".ssh").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(home / ".ssh"))
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(home / ".config" / "sshpilot"))
     return home
@@ -543,6 +548,164 @@ def test_private_key_restore_is_confined_to_the_key_directory(monkeypatch, tmp_p
         "home/.ssh/link", "home/.ssh/work/id_ok", "home/.ssh/work/id_ok.pub"]
     assert (home / ".ssh" / "work" / "id_ok.pub").read_bytes() == PUBLIC_KEY
     assert (home / ".ssh" / "work" / "id_ok.pub").stat().st_mode & 0o777 == 0o644
+
+
+OTHER_PRIVATE_KEY = PRIVATE_KEY.replace(b"b3BlbnNzaC1rZXktdjEA", b"T1RIRVJLRVk=")
+
+
+def _relocation_manifest(config_text, keys, source_home="/home/alice"):
+    return {
+        "version": 1, "format": "spbk", "source_home": source_home,
+        "backup_options": {"app_settings": False, "ssh_config": True, "known_hosts": False,
+                           "secrets": True, "private_keys": True},
+        "app_config": {},
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {"config": config_text},
+        "private_keys": [
+            {"path": path, "mode": 0o600, "content_b64": base64.b64encode(content).decode(),
+             "public_content_b64": base64.b64encode(PUBLIC_KEY).decode()}
+            for path, content in keys],
+    }
+
+
+def _restore_relocation_manifest(home, manifest):
+    mgr = bm.BackupManager(
+        FakeConfig(), FakeConnMgr([], ssh_config_path=str(home / ".ssh" / "config")))
+    success, error, _restored, restored_keys = mgr.apply_imported_manifest(
+        manifest, mode="replace", create_backup=False,
+        restore_options={"app_settings": False, "ssh_config": True, "known_hosts": False,
+                         "secrets": False, "private_keys": True})
+    assert success, error
+    return mgr, restored_keys, (home / ".ssh" / "config").read_text()
+
+
+def test_key_from_outside_the_key_directory_is_restored_into_it(monkeypatch, tmp_path):
+    """A key kept outside ~/.ssh on the source cannot be restored where it was, so it goes into
+    ~/.ssh and every IdentityFile spelling of its old path follows it."""
+    home = _key_restore_home(monkeypatch, tmp_path)
+    config = (
+        "Host desk\n    IdentityFile /home/alice/keys/desk_key\n"
+        "Host tilde\n    IdentityFile ~/keys/desk_key\n"
+        'Host quoted\n    IdentityFile="/home/alice/keys/desk_key"\n'
+        "Host other\n    IdentityFile ~/keys/not_in_backup\n"
+        "Host remote\n    RemoteCommand cat /home/alice/keys/desk_key\n"
+    )
+    manifest = _relocation_manifest(config, [("/home/alice/keys/desk_key", PRIVATE_KEY)])
+
+    _mgr, restored_keys, text = _restore_relocation_manifest(home, manifest)
+
+    new_key = home / ".ssh" / "desk_key"
+    assert restored_keys == 1
+    assert new_key.read_bytes() == PRIVATE_KEY
+    assert (home / ".ssh" / "desk_key.pub").read_bytes() == PUBLIC_KEY
+    assert not (home / "keys").exists()
+    assert text.count(f"IdentityFile {new_key}\n") == 3
+    assert "IdentityFile ~/keys/not_in_backup\n" in text
+    assert "RemoteCommand cat /home/alice/keys/desk_key\n" in text
+
+
+def test_relocated_key_takes_a_new_name_beside_a_different_key(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+    mine = home / ".ssh" / "desk_key"
+    mine.write_bytes(OTHER_PRIVATE_KEY)
+    manifest = _relocation_manifest(
+        "Host desk\n    IdentityFile /home/alice/keys/desk_key\n",
+        [("/home/alice/keys/desk_key", PRIVATE_KEY)])
+
+    _mgr, restored_keys, text = _restore_relocation_manifest(home, manifest)
+
+    assert mine.read_bytes() == OTHER_PRIVATE_KEY           # never overwritten
+    renamed = home / ".ssh" / "desk_key-2"
+    assert restored_keys == 1
+    assert renamed.read_bytes() == PRIVATE_KEY
+    assert f"IdentityFile {renamed}\n" in text
+
+
+def test_relocated_key_reuses_an_identical_copy(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+    (home / ".ssh" / "desk_key").write_bytes(PRIVATE_KEY)
+    manifest = _relocation_manifest(
+        "Host desk\n    IdentityFile /home/alice/keys/desk_key\n",
+        [("/home/alice/keys/desk_key", PRIVATE_KEY)])
+
+    mgr, restored_keys, text = _restore_relocation_manifest(home, manifest)
+
+    assert (restored_keys, mgr.last_import_skipped_keys) == (0, 1)
+    assert not (home / ".ssh" / "desk_key-2").exists()
+    assert f"IdentityFile {home / '.ssh' / 'desk_key'}\n" in text
+
+
+def test_key_already_at_its_original_location_stays_there(monkeypatch, tmp_path):
+    """Restoring on a machine that still has the key where the config says changes nothing."""
+    home = _key_restore_home(monkeypatch, tmp_path)
+    (home / "keys").mkdir()
+    (home / "keys" / "desk_key").write_bytes(PRIVATE_KEY)
+    manifest = _relocation_manifest(
+        "Host desk\n    IdentityFile /home/alice/keys/desk_key\n",
+        [("/home/alice/keys/desk_key", PRIVATE_KEY)])
+
+    mgr, restored_keys, text = _restore_relocation_manifest(home, manifest)
+
+    assert (restored_keys, mgr.last_import_skipped_keys) == (0, 1)
+    assert not (home / ".ssh" / "desk_key").exists()
+    assert f"IdentityFile {home.as_posix()}/keys/desk_key\n" in text
+
+
+def test_windows_key_outside_the_home_is_restored_into_the_key_directory(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+    manifest = _relocation_manifest(
+        "Host desk\n    IdentityFile D:\\keys\\desk_key\n",
+        [("D:\\keys\\desk_key", PRIVATE_KEY)], source_home="C:\\Users\\alice")
+
+    _mgr, restored_keys, _text = _restore_relocation_manifest(home, manifest)
+
+    assert restored_keys == 1
+    assert (home / ".ssh" / "desk_key").read_bytes() == PRIVATE_KEY
+
+
+def test_relocated_key_name_never_takes_a_reserved_file(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+    manifest = _relocation_manifest(
+        "Host a\n    IdentityFile /home/alice/keys/config\n",
+        [("/home/alice/keys/config", PRIVATE_KEY),
+         ("/home/alice/keys/.hidden", OTHER_PRIVATE_KEY)])
+
+    _mgr, restored_keys, text = _restore_relocation_manifest(home, manifest)
+
+    assert restored_keys == 2
+    assert (home / ".ssh" / "restored_config").read_bytes() == PRIVATE_KEY
+    assert (home / ".ssh" / "restored_key").read_bytes() == OTHER_PRIVATE_KEY
+    assert text.startswith("Host a\n    IdentityFile ")     # the main config, not a key
+
+
+def test_relocated_key_passphrase_follows_the_key(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+
+    class LookupMgr(FakeMgr):
+        def lookup(self, spec):
+            return self.data.get(spec.keyring_account)
+
+    stored = LookupMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: stored)
+    manifest = _relocation_manifest(
+        "Host desk\n    IdentityFile /home/alice/keys/desk_key\n",
+        [("/home/alice/keys/desk_key", PRIVATE_KEY)])
+    manifest["credentials"] = [{
+        "id": "/home/alice/keys/desk_key", "type": "key", "host": None, "username": None,
+        "secret": "pp", "metadata": {"key_path": "/home/alice/keys/desk_key"}}]
+    mgr = bm.BackupManager(
+        FakeConfig(), FakeConnMgr([], ssh_config_path=str(home / ".ssh" / "config")))
+
+    success, error, restored, _keys = mgr.apply_imported_manifest(
+        manifest, mode="replace", create_backup=False,
+        restore_options={"app_settings": False, "ssh_config": True, "known_hosts": False,
+                         "secrets": True, "private_keys": True})
+
+    assert success, error
+    assert restored == 1
+    accounts = list(stored.data)
+    assert any(str(home / ".ssh" / "desk_key") in a for a in accounts)
+    assert not any("keys" + os.sep + "desk_key" in a or "keys/desk_key" in a for a in accounts)
 
 
 def test_private_key_restore_writes_key_material_only(monkeypatch, tmp_path):
@@ -842,6 +1005,7 @@ def test_private_key_restore_rehomes_to_current_home(monkeypatch, tmp_path):
     newhome = tmp_path / "home_bob"
     newhome.mkdir()
     monkeypatch.setenv("HOME", str(newhome))
+    monkeypatch.setenv("USERPROFILE", str(newhome))
     manifest = {
         "source_home": "/home/alice",
         "private_keys": [{
@@ -862,6 +1026,7 @@ def test_passphrase_credential_rehomed_to_current_home(monkeypatch, tmp_path):
     newhome = tmp_path / "home_bob"
     newhome.mkdir()
     monkeypatch.setenv("HOME", str(newhome))
+    monkeypatch.setenv("USERPROFILE", str(newhome))
 
     class LookupMgr(FakeMgr):
         def lookup(self, spec):
@@ -908,7 +1073,7 @@ def test_export_bundles_include_tree_and_skips_out_of_root(monkeypatch, tmp_path
                                    "known_hosts": False, "secrets": False,
                                    "private_keys": False})
     tree = data["ssh_config_files"]
-    frag_rel = os.path.join("conf.d", "base.conf")
+    frag_rel = "conf.d/base.conf"           # "/" on every OS, so restore elsewhere splits it
     assert set(tree) >= {"config", frag_rel}
     assert data["ssh_config_main_rel"] == "config"
     assert "Host in-fragment" in tree[frag_rel]
@@ -921,6 +1086,7 @@ def test_replace_restores_tree_rebased_and_maps_main(monkeypatch, tmp_path):
     newhome = tmp_path / "home_bob"
     newhome.mkdir()
     monkeypatch.setenv("HOME", str(newhome))
+    monkeypatch.setenv("USERPROFILE", str(newhome))
     target_root = tmp_path / "dotssh"
     target_root.mkdir()
     main = target_root / "config"
@@ -942,6 +1108,61 @@ def test_replace_restores_tree_rebased_and_maps_main(monkeypatch, tmp_path):
     assert f"IdentityFile {newhome}/.ssh/id" in main_text     # home rebased
     assert "/home/alice" not in main_text
     assert (target_root / "conf.d" / "work.conf").read_text().count("Host work") == 1
+
+
+def _replace_tree(tmp_path, import_data):
+    target_root = tmp_path / "dotssh"
+    target_root.mkdir()
+    main = target_root / "config"
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    ok, err = mgr._import_replace(import_data, {"app_settings": False, "ssh_config": True,
+                                               "known_hosts": False, "secrets": False,
+                                               "private_keys": False})
+    assert ok, err
+    return target_root
+
+
+def test_windows_backup_fragment_keyed_with_backslash_restores_into_its_directory(
+        monkeypatch, tmp_path):
+    """Windows exports used to key Include fragments ``conf.d\\work.conf``; elsewhere that
+    must still be the file conf.d/work.conf, or ``Include conf.d/*.conf`` finds no hosts."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = _replace_tree(tmp_path, {
+        "platform": "nt",
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {
+            "config": "Include conf.d/*.conf\n",
+            "conf.d\\work.conf": "Host db\n    HostName db.example\n",
+        },
+    })
+    assert (root / "conf.d" / "work.conf").read_text() == "Host db\n    HostName db.example\n"
+    assert _files_under(root) == ["conf.d/work.conf", "config"]
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="a backslash always separates directories on Windows")
+def test_posix_backup_keeps_a_backslash_in_a_file_name(monkeypatch, tmp_path):
+    """On POSIX a backslash is part of the name, so only a Windows backup splits on it."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = _replace_tree(tmp_path, {
+        "platform": "posix",
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {"config": "Include *\n", "odd\\name.conf": "Host odd\n"},
+    })
+    assert not (root / "odd").exists()
+
+
+def test_export_includes_each_key_file_once_however_it_is_spelled(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+    key = home / ".ssh" / "id_api"
+    key.write_bytes(PRIVATE_KEY)
+    conns = [
+        types.SimpleNamespace(keyfile=str(key), identity_files=[]),
+        types.SimpleNamespace(keyfile="~/.ssh/id_api", identity_files=[]),
+        types.SimpleNamespace(keyfile="", identity_files=[f"{home}/.ssh/./id_api"]),
+    ]
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    assert len(mgr._gather_private_keys(conns)) == 1
 
 
 def test_replace_tree_never_writes_files_openssh_reserves(monkeypatch, tmp_path):

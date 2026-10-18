@@ -247,6 +247,7 @@ def env(tmp_path, monkeypatch):
     FakeClient.fail = {}
     FakeClient.keys = []
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(plugin_mod.Plugin, "client_class", FakeClient)
     p = plugin_mod.Plugin()
     ctx = Ctx()

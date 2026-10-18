@@ -818,6 +818,75 @@ def test_daemon_import_backup_supports_replace_mode(monkeypatch, tmp_path):
     assert result.counts.get("restored", 0) >= 0
 
 
+def _merge_import(monkeypatch, tmp_path, target_config, backup_config):
+    config_dir, ssh_dir = _isolate_paths(monkeypatch, tmp_path)
+    config_file = config_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"config_version": CONFIG_VERSION, "ssh": {}}), encoding="utf-8"
+    )
+    (ssh_dir / "config").write_text(target_config, encoding="utf-8")
+    source = tmp_path / "in.spbk"
+    write_spbk(
+        str(source),
+        {
+            "version": 1, "format": "spbk", "app_config": {}, "known_hosts": None,
+            "credentials": [], "private_keys": [],
+            "ssh_config": backup_config,
+            "ssh_config_main_rel": "config",
+            "ssh_config_files": {"config": backup_config},
+            "backup_options": {"app_settings": False, "ssh_config": True,
+                               "known_hosts": False, "secrets": False,
+                               "private_keys": False},
+        },
+        None,
+    )
+    fake = FakeMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: fake)
+    result = daemon_import_backup(
+        fake, source=str(source), options={"mode": "merge"}, settings_path=config_file,
+    )
+    assert result.status.value == "success", result.message
+    return result
+
+
+def test_daemon_merge_import_reports_what_it_left_to_this_machine(monkeypatch, tmp_path):
+    """The result screen learns which backup rules and hosts merge did not take, and which
+    imported hosts now jump through this machine's host of the same name."""
+    result = _merge_import(
+        monkeypatch, tmp_path,
+        target_config="Host *\n    User matt\nHost web\n    HostName mine.example\n",
+        backup_config=(
+            "Host *\n    Port 2020\n"
+            "Host web\n    HostName web.example\n"
+            "Host db\n    ProxyJump alice@web:22\n"
+            "Host viaproxy\n    ProxyCommand ssh -W %h:%p web\n"
+            "Host api\n    HostName api.example\n"
+        ),
+    )
+
+    assert [(w.code, dict(w.parameters)) for w in result.warnings] == [
+        (SecretTransferMessageCode.MERGE_GLOBAL_RULES_SKIPPED, {"count": 1}),
+        (SecretTransferMessageCode.MERGE_EXISTING_HOSTS_KEPT, {"count": 1, "hosts": "web"}),
+        (SecretTransferMessageCode.MERGE_HOST_ROUTED_THROUGH_EXISTING,
+         {"host": "db", "via": "web"}),
+        (SecretTransferMessageCode.MERGE_HOST_ROUTED_THROUGH_EXISTING,
+         {"host": "viaproxy", "via": "web"}),
+    ]
+
+
+def test_daemon_merge_of_identical_hosts_reports_nothing(monkeypatch, tmp_path):
+    """Restoring your own backup on top of itself keeps every host as it is: not a warning,
+    even with different indentation or keyword case."""
+    result = _merge_import(
+        monkeypatch, tmp_path,
+        target_config="Host web\n    HostName web.example\n    Port 22\n",
+        backup_config="Host web\n  hostname   web.example\n\n  # mine\n  PORT 22\n"
+                      "Host db\n    ProxyJump web\n",
+    )
+
+    assert result.warnings == ()
+
+
 # ---------------------------------------------------------------------------
 # Connection-store backup/restore: real ConnectionRepository round trips
 #

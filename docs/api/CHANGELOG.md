@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+- `SecretTransferMessageCode` gains four merge-restore warnings, returned in
+  `SecretTransferResult.warnings` by every backup import in merge mode:
+  `merge_global_rules_skipped` (`count`: `Host *`, `Match` and other global
+  stanzas the backup had that merge never writes),
+  `merge_partial_name_collision` (`count`, `hosts`: multi-name `Host` lines
+  imported only for their new names), `merge_existing_hosts_kept` (`count`,
+  `hosts`: backup hosts not imported because this machine defines a host of
+  that name differently) and `merge_host_routed_through_existing` (`host`,
+  `via`: an imported host whose `ProxyJump` or `ProxyCommand` now goes through
+  this machine's own `via`). New enum values, so the API implementation
+  version is 0.85; Protocol remains 1.0.
 - `delete_connections` (`connections.delete_many`, capability
   `connections.write`) takes the new `DeleteConnectionsRequest` and returns
   the new `DeleteConnectionsResult`. It deletes every listed connection with

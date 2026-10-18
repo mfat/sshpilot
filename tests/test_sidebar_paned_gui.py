@@ -180,6 +180,30 @@ def test_a_squeezed_sidebar_keeps_its_leading_edge():
         window.destroy()
 
 
+def test_a_narrow_window_squeezes_the_sidebar_not_the_content():
+    """The content side's title row ends in the window controls; a window too
+    narrow for both sides must give up sidebar width rather than push the
+    content past the window's right edge. The squeeze is not a drag, so the
+    remembered width survives it."""
+    paned = _paned(user_width=300)
+    sidebar = Gtk.Box()
+    sidebar.set_size_request(250, -1)
+    paned.set_sidebar(sidebar)
+    content = Gtk.Box()
+    content.set_size_request(460, -1)
+    paned.set_content(content)
+    window = _shown(paned, width=600)
+    try:
+        _settle(lambda: paned.get_position() <= 600 - 460)
+        _pump()
+        found, bounds = content.compute_bounds(paned)
+        assert found
+        assert bounds.get_x() + bounds.get_width() <= paned.get_width()
+        assert paned.user_width == 300
+    finally:
+        window.destroy()
+
+
 def test_overlay_presentation_is_not_offered_by_the_paned():
     paned = _paned()
     paned.set_collapsed(True)

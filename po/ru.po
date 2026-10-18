@@ -13659,16 +13659,16 @@ msgid "Sort Connections"
 msgstr "Сортировка подключений"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "Отсортированный порядок сохранён как ваш ручной порядок"
+msgid "Saved as your manual order"
+msgstr "Сохранено как ваш ручной порядок"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
 msgstr "Не удалось отменить: список подключений с тех пор изменился"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "Отображение в пользовательском порядке"
+msgid "Sorting switched to manual order"
+msgstr "Сортировка переключена на ручной порядок"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format
@@ -16605,6 +16605,74 @@ msgstr "Сквозная передача"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Скопировать ключ на сервер"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:194
+#, python-brace-format
+msgid ""
+"The imported host {host} connects through {via}, so it now goes through your "
+"own {via}, not the one in the backup."
+msgstr ""
+"Импортированный хост {host} подключается через {via}, поэтому теперь он идёт "
+"через ваш собственный {via}, а не через хост из резервной копии."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:231
+#, python-brace-format
+msgid ""
+"{count} rule for all hosts (Host * or Match) in the backup was not merged, "
+"because it would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgid_plural ""
+"{count} rules for all hosts (Host * or Match) in the backup were not merged, "
+"because they would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgstr[0] ""
+"{count} правило для всех хостов (Host * или Match) из резервной копии не было"
+" объединено, так как оно изменило бы все подключения. Импортированные хосты "
+"следуют правилам этого компьютера."
+msgstr[1] ""
+"{count} правила для всех хостов (Host * или Match) из резервной копии не были"
+" объединены, так как они изменили бы все подключения. Импортированные хосты "
+"следуют правилам этого компьютера."
+msgstr[2] ""
+"{count} правил для всех хостов (Host * или Match) из резервной копии не были "
+"объединены, так как они изменили бы все подключения. Импортированные хосты "
+"следуют правилам этого компьютера."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:241
+#, python-brace-format
+msgid ""
+"{count} host entry in the backup also names hosts you already have; only its "
+"new names were added: {hosts}"
+msgid_plural ""
+"{count} host entries in the backup also name hosts you already have; only "
+"their new names were added: {hosts}"
+msgstr[0] ""
+"{count} запись хоста в резервной копии также называет хосты, которые у вас "
+"уже есть; добавлены только её новые имена: {hosts}"
+msgstr[1] ""
+"{count} записи хостов в резервной копии также называют хосты, которые у вас "
+"уже есть; добавлены только их новые имена: {hosts}"
+msgstr[2] ""
+"{count} записей хостов в резервной копии также называют хосты, которые у вас "
+"уже есть; добавлены только их новые имена: {hosts}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:249
+#, python-brace-format
+msgid ""
+"{count} host in the backup has the same name as one of yours but different "
+"settings. Yours was kept and the backup's was not imported: {hosts}"
+msgid_plural ""
+"{count} hosts in the backup have the same names as yours but different "
+"settings. Yours were kept and the backup's were not imported: {hosts}"
+msgstr[0] ""
+"{count} хост в резервной копии называется так же, как один из ваших, но имеет"
+" другие настройки. Ваш сохранён, а хост из копии не импортирован: {hosts}"
+msgstr[1] ""
+"{count} хоста в резервной копии называются так же, как ваши, но имеют другие "
+"настройки. Ваши сохранены, а хосты из копии не импортированы: {hosts}"
+msgstr[2] ""
+"{count} хостов в резервной копии называются так же, как ваши, но имеют другие"
+" настройки. Ваши сохранены, а хосты из копии не импортированы: {hosts}"
 
 #~ msgid "With the start page or a terminal"
 #~ msgstr "Со стартовой страницей или терминалом"

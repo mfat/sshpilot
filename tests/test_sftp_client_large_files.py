@@ -259,17 +259,33 @@ def test_remove_many_pipelines_over_a_slow_link(tmp_path):
         paths.append(str(path))
     delay = 0.05
     sftp, process, stdout = _start_client(delay)
+    # Requests sent but not yet waited on: the window remove_many keeps open.
+    # Counted rather than timed: wall-clock RTTs jitter past any tight bound
+    # on a loaded CI runner (7.3 against < 5 on Windows with -n 4).
+    outstanding = peak = 0
+    send, wait = sftp._send, sftp._wait
+
+    def _counting_send(*args):
+        nonlocal outstanding, peak
+        outstanding += 1
+        peak = max(peak, outstanding)
+        return send(*args)
+
+    def _counting_wait(slot):
+        nonlocal outstanding
+        outstanding -= 1
+        return wait(slot)
+
+    sftp._send, sftp._wait = _counting_send, _counting_wait
     try:
-        started = time.monotonic()
         failures = sftp.remove_many(paths, continue_on_error=True)
-        round_trips = (time.monotonic() - started) / delay
     finally:
+        sftp._send, sftp._wait = send, wait
         _stop_client(sftp, process, stdout)
     assert failures == []
     assert all(not os.path.exists(path) for path in paths)
-    # 200 removes / depth 100 ≈ 2 windows; leave headroom for handshake jitter.
-    # Depth 16 would need ~12.5 windows and fail this bound on a slow link.
-    assert round_trips < 5, f"remove_many took {round_trips:.1f} round trips"
+    # 200 removes at depth 100 ≈ 2 round trips; depth 16 would need ~12.5.
+    assert peak == 100, f"remove_many kept {peak} removes in flight"
 
 
 def test_rmdir_many_removes_empty_dirs_and_reports_the_rest(client, tmp_path):

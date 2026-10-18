@@ -13681,16 +13681,16 @@ msgid "Sort Connections"
 msgstr "Trier les connexions"
 
 #: src/sshpilot/window.py:3370
-msgid "Sorted order saved as your manual order"
-msgstr "Ordre trié enregistré comme votre ordre manuel"
+msgid "Saved as your manual order"
+msgstr "Enregistré comme votre ordre manuel"
 
 #: src/sshpilot/window.py:3385
 msgid "Could not undo: the connection list has changed since"
 msgstr "Impossible d’annuler : la liste des connexions a changé depuis"
 
 #: src/sshpilot/window.py:3433
-msgid "Showing your manual order"
-msgstr "Affichage selon l’ordre que vous avez défini"
+msgid "Sorting switched to manual order"
+msgstr "Tri basculé sur l’ordre manuel"
 
 #: src/sshpilot/window.py:3435
 #, python-brace-format
@@ -16678,6 +16678,66 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:194
+#, python-brace-format
+msgid ""
+"The imported host {host} connects through {via}, so it now goes through your "
+"own {via}, not the one in the backup."
+msgstr ""
+"L’hôte importé {host} se connecte via {via} : il passe donc désormais par "
+"votre propre {via}, et non par celui de la sauvegarde."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:231
+#, python-brace-format
+msgid ""
+"{count} rule for all hosts (Host * or Match) in the backup was not merged, "
+"because it would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgid_plural ""
+"{count} rules for all hosts (Host * or Match) in the backup were not merged, "
+"because they would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgstr[0] ""
+"{count} règle pour tous les hôtes (Host * ou Match) de la sauvegarde n’a pas "
+"été fusionnée, car elle modifierait toutes les connexions. Les hôtes importés"
+" suivent les règles de cet ordinateur."
+msgstr[1] ""
+"{count} règles pour tous les hôtes (Host * ou Match) de la sauvegarde n’ont "
+"pas été fusionnées, car elles modifieraient toutes les connexions. Les hôtes "
+"importés suivent les règles de cet ordinateur."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:241
+#, python-brace-format
+msgid ""
+"{count} host entry in the backup also names hosts you already have; only its "
+"new names were added: {hosts}"
+msgid_plural ""
+"{count} host entries in the backup also name hosts you already have; only "
+"their new names were added: {hosts}"
+msgstr[0] ""
+"{count} entrée d’hôte de la sauvegarde nomme aussi des hôtes que vous avez "
+"déjà ; seuls ses nouveaux noms ont été ajoutés : {hosts}"
+msgstr[1] ""
+"{count} entrées d’hôte de la sauvegarde nomment aussi des hôtes que vous avez"
+" déjà ; seuls leurs nouveaux noms ont été ajoutés : {hosts}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:249
+#, python-brace-format
+msgid ""
+"{count} host in the backup has the same name as one of yours but different "
+"settings. Yours was kept and the backup's was not imported: {hosts}"
+msgid_plural ""
+"{count} hosts in the backup have the same names as yours but different "
+"settings. Yours were kept and the backup's were not imported: {hosts}"
+msgstr[0] ""
+"{count} hôte de la sauvegarde porte le même nom que l’un des vôtres mais avec"
+" d’autres paramètres. Le vôtre a été conservé et celui de la sauvegarde n’a "
+"pas été importé : {hosts}"
+msgstr[1] ""
+"{count} hôtes de la sauvegarde portent les mêmes noms que les vôtres mais "
+"avec d’autres paramètres. Les vôtres ont été conservés et ceux de la "
+"sauvegarde n’ont pas été importés : {hosts}"
 
 #~ msgid "With the start page or a terminal"
 #~ msgstr "Avec la page d’accueil ou un terminal"
