@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.3.5" date="2026-10-18">
+      <description>
+        <p>A session saved while Settings is open now appears in Settings&#x27; startup session list without restarting</p>
+        <p>Starting the app with a saved session now opens the session shown in Settings</p>
+      </description>
+    </release>
     <release version="6.3.4" date="2026-10-18">
       <description>
         <p>Using a right-click menu action on several selected connections (such as Delete) keeps all of them selected</p>
