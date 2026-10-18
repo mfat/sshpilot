@@ -93,6 +93,7 @@ def _use_home(tmp_path, monkeypatch, config_text=None) -> None:
     if config_text is not None:
         (ssh_dir / "config").write_text(config_text)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
 
 
 def test_default_config_path_excludes_system_defaults(tmp_path, monkeypatch):

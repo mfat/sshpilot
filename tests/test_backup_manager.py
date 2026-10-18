@@ -503,6 +503,7 @@ def _key_restore_home(monkeypatch, tmp_path):
     home = tmp_path / "home"
     (home / ".ssh").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(home / ".ssh"))
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(home / ".config" / "sshpilot"))
     return home
@@ -842,6 +843,7 @@ def test_private_key_restore_rehomes_to_current_home(monkeypatch, tmp_path):
     newhome = tmp_path / "home_bob"
     newhome.mkdir()
     monkeypatch.setenv("HOME", str(newhome))
+    monkeypatch.setenv("USERPROFILE", str(newhome))
     manifest = {
         "source_home": "/home/alice",
         "private_keys": [{
@@ -862,6 +864,7 @@ def test_passphrase_credential_rehomed_to_current_home(monkeypatch, tmp_path):
     newhome = tmp_path / "home_bob"
     newhome.mkdir()
     monkeypatch.setenv("HOME", str(newhome))
+    monkeypatch.setenv("USERPROFILE", str(newhome))
 
     class LookupMgr(FakeMgr):
         def lookup(self, spec):
@@ -921,6 +924,7 @@ def test_replace_restores_tree_rebased_and_maps_main(monkeypatch, tmp_path):
     newhome = tmp_path / "home_bob"
     newhome.mkdir()
     monkeypatch.setenv("HOME", str(newhome))
+    monkeypatch.setenv("USERPROFILE", str(newhome))
     target_root = tmp_path / "dotssh"
     target_root.mkdir()
     main = target_root / "config"

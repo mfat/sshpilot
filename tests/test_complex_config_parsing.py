@@ -922,6 +922,7 @@ class TestEdgeCases:
         environment variables", so `${HOME}/.ssh/id_rsa` must be expanded.
         """
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         main = tmp_path / "config"
         main.write_text(
             "Host env-key\n"
@@ -1138,6 +1139,7 @@ class TestEdgeCases:
         ssh / `ssh -G` to resolve.)
         """
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         main = tmp_path / "config"
         main.write_text(
             "Host pct-key\n"
@@ -1200,6 +1202,7 @@ class TestEdgeCases:
         """
         # Point %d (home) at tmp_path so the included file is discoverable.
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         ssh_dir = tmp_path / ".ssh"
         ssh_dir.mkdir()
         (ssh_dir / "included.conf").write_text(

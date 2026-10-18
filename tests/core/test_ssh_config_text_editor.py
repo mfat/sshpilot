@@ -63,6 +63,7 @@ def test_daemon_resolves_normal_config_root(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("SSHPILOT_SSH_DIR", str(home / ".ssh"))
 
@@ -84,6 +85,7 @@ def test_daemon_resolves_isolated_config_root(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
 
     from sshpilot.daemon.cli import _resolve_ssh_root

@@ -31,6 +31,7 @@ def _isolate_daemon_xdg(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
     monkeypatch.setenv("HOME", str(root / "home"))
+    monkeypatch.setenv("USERPROFILE", str(root / "home"))
     (root / "home").mkdir(exist_ok=True)
     monkeypatch.delenv("SSHPILOT_DAEMON_SOCKET", raising=False)
     yield root
