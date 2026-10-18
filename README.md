@@ -1,4 +1,4 @@
-**SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS
+**SSH Pilot** is a user-friendly SSH and SFTP client for Linux, macOS and Windows.
 
 [![Latest release](https://img.shields.io/github/v/release/mfat/sshpilot)](https://github.com/mfat/sshpilot/releases/latest)
 [![License: GPL v3](https://img.shields.io/github/license/mfat/sshpilot)](LICENSE)
