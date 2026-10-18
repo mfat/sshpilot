@@ -14,6 +14,7 @@ from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Ad
 from .i18n import gettext as _, ngettext
 
 from .dnd_payload import (
+    accept_only_in_app_drops,
     content_provider_for_payload,
     decode_dnd_payload,
     new_internal_drop_target,
@@ -2926,6 +2927,9 @@ def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
 
     drop_target = new_internal_drop_target()
+    # Only sidebar drags can land here; a file dragged in from another app
+    # would otherwise open the reorder gap (#1334).
+    accept_only_in_app_drops(drop_target)
     drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
     drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
     drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
@@ -2942,6 +2946,7 @@ def setup_connection_list_dnd(window):
     window._ungrouped_area_visible = False
     window._connection_autoscroll_timeout_id = 0
     window._connection_autoscroll_velocity = 0.0
+    window._connection_list_leave_idle_id = 0
     if not hasattr(window, "_connection_autoscroll_margin"):
         window._connection_autoscroll_margin = 48.0
     if not hasattr(window, "_connection_autoscroll_max_velocity"):
@@ -2951,6 +2956,8 @@ def setup_connection_list_dnd(window):
 
 
 def _on_connection_list_motion(window, target, x, y):
+    # Back over the list before a deferred leave ran: keep the feedback.
+    _cancel_connection_list_leave(window)
     try:
         # Prevent row selection during drag by temporarily disabling selection
         if not hasattr(window, '_drag_in_progress'):
@@ -3107,16 +3114,35 @@ def _on_connection_list_motion(window, target, x, y):
 
 
 def _on_connection_list_leave(window, target):
+    # GTK emits "leave" in the middle of its drop-crossing walk, and the
+    # pointer may still rest on the placeholder's bar. Unparenting that row
+    # now leaves GTK walking a detached widget up to NULL and segfaulting
+    # (#1334), so take the rows out once the crossing has finished.
+    _stop_connection_autoscroll(window)
+    if not getattr(window, "_connection_list_leave_idle_id", 0):
+        window._connection_list_leave_idle_id = GLib.idle_add(
+            _finish_connection_list_leave, window
+        )
+    return True
+
+
+def _cancel_connection_list_leave(window):
+    source_id = getattr(window, "_connection_list_leave_idle_id", 0)
+    if source_id:
+        GLib.source_remove(source_id)
+        window._connection_list_leave_idle_id = 0
+
+
+def _finish_connection_list_leave(window):
+    window._connection_list_leave_idle_id = 0
     _clear_drop_indicator(window)
     _hide_ungrouped_area(window)
-    _stop_connection_autoscroll(window)
 
     # Restore selection mode after drag
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
         window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-    
-    return True
+    return GLib.SOURCE_REMOVE
 
 
 def _show_drop_indicator(window, row, position):

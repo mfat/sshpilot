@@ -101,6 +101,15 @@ def claim_in_app_drops_ahead_of_children(target: Gtk.DropTarget) -> None:
     from other apps still reaches the terminal.
     """
     target.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    accept_only_in_app_drops(target)
+
+
+def accept_only_in_app_drops(target: Gtk.DropTarget) -> None:
+    """Make *target* ignore drags that started in another process.
+
+    A ``TYPE_STRING`` target otherwise also accepts files and text dragged in
+    from other apps, which then run its hover feedback for nothing.
+    """
     target.connect("accept", _accept_in_app_string_drop)
 
 

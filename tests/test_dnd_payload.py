@@ -150,3 +150,15 @@ def test_claimed_drop_target_runs_ahead_and_takes_only_in_app_strings():
             lambda gtype, s=has_string: s and gtype == GObject.TYPE_STRING
         )
         assert _accept_in_app_string_drop(target, drop) is expected
+
+
+def test_accept_only_in_app_drops_wires_the_in_app_check():
+    from sshpilot.dnd_payload import (
+        _accept_in_app_string_drop,
+        accept_only_in_app_drops,
+    )
+
+    target = MagicMock()
+    accept_only_in_app_drops(target)
+    target.connect.assert_called_once_with("accept", _accept_in_app_string_drop)
+    target.set_propagation_phase.assert_not_called()
