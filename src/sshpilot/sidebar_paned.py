@@ -47,6 +47,9 @@ _CONTENT_MIN_WIDTH = 320
 #: give both the sidebar its content minimum and the content side its own.
 _ABSOLUTE_MIN_WIDTH = 44
 
+#: Thin (non-wide) Gtk.Paned handle, counted against the content side.
+_HANDLE_WIDTH = 1
+
 #: Quiet period after the last divider move before the width is persisted.
 _PERSIST_DELAY_MS = 400
 
@@ -55,15 +58,30 @@ _PERSIST_DELAY_MS = 400
 DEFAULT_MAX_WIDTH = 400
 
 
-def drag_ceiling(split_width: int, max_width: int) -> int:
+def drag_ceiling(split_width: int, max_width: int, content_min: int = 0) -> int:
     """Widest the user may drag the sidebar in a ``split_width``-wide split.
 
-    The content side keeps ``_CONTENT_MIN_WIDTH``; before the first allocation
-    (``split_width`` 0) the configured maximum is all there is to go on.
+    The content side keeps ``_CONTENT_MIN_WIDTH``, or its own measured
+    minimum when that is wider; before the first allocation (``split_width``
+    0) the configured maximum is all there is to go on.
     """
     if split_width <= 0:
         return max(_ABSOLUTE_MIN_WIDTH, int(max_width))
-    return max(_ABSOLUTE_MIN_WIDTH, int(split_width) - _CONTENT_MIN_WIDTH)
+    keep = max(_CONTENT_MIN_WIDTH, int(content_min))
+    return max(_ABSOLUTE_MIN_WIDTH, int(split_width) - keep)
+
+
+def content_cap(split_width: int, content_min: int) -> Optional[int]:
+    """Widest the sidebar may be without pushing the content side below its
+    minimum, or None before the first allocation.
+
+    Unlike the drag floor this always wins: when the window is too narrow for
+    both, the sidebar is squeezed (and clipped) rather than the content side,
+    whose title row carries the window controls.
+    """
+    if split_width <= 0:
+        return None
+    return max(0, int(split_width) - int(content_min))
 
 
 def resolve_position(
@@ -73,6 +91,7 @@ def resolve_position(
     max_width: int,
     fraction: float,
     user_width: Optional[int],
+    content_min: int = 0,
 ) -> int:
     """Divider position for one set of constraints.
 
@@ -88,13 +107,17 @@ def resolve_position(
     min_width = int(min_width)
     max_width = int(max_width)
     if max_width <= min_width:
-        return max(_ABSOLUTE_MIN_WIDTH, min_width)
-    ceiling = drag_ceiling(split_width, max_width)
-    floor = max(_ABSOLUTE_MIN_WIDTH, min(min_width, ceiling))
-    if user_width is not None:
-        return max(floor, min(int(user_width), ceiling))
-    automatic = int(fraction * split_width) if split_width > 0 else max_width
-    return max(floor, min(automatic, min(max_width, ceiling)))
+        position = max(_ABSOLUTE_MIN_WIDTH, min_width)
+    else:
+        ceiling = drag_ceiling(split_width, max_width, content_min)
+        floor = max(_ABSOLUTE_MIN_WIDTH, min(min_width, ceiling))
+        if user_width is not None:
+            position = max(floor, min(int(user_width), ceiling))
+        else:
+            automatic = int(fraction * split_width) if split_width > 0 else max_width
+            position = max(floor, min(automatic, min(max_width, ceiling)))
+    cap = content_cap(split_width, content_min)
+    return position if cap is None else min(position, cap)
 
 
 class _ClipStart(Gtk.Widget):
@@ -191,7 +214,11 @@ class SidebarPaned(Gtk.Paned):
         # _target_position / _on_position_notify.
         self.set_shrink_start_child(True)
         self.set_resize_end_child(True)
-        self.set_shrink_end_child(True)
+        # The content side is never squeezed below its minimum: that would
+        # clip the title row from the right and take the window controls with
+        # it. A window too narrow for both sides squeezes the sidebar instead
+        # (see the content cap in resolve_position / _on_position_notify).
+        self.set_shrink_end_child(False)
 
         self._max_width = int(max_width)
         self._fraction = float(fraction)
@@ -213,7 +240,20 @@ class SidebarPaned(Gtk.Paned):
 
     def _drag_ceiling(self, width: int) -> int:
         """Widest the user may drag the sidebar in a ``width``-wide split."""
-        return drag_ceiling(width, self._max_width)
+        return drag_ceiling(width, self._max_width, self._content_side_min())
+
+    def _content_side_min(self) -> int:
+        """Width the content side needs, plus the handle between the panes."""
+        content = self.get_end_child()
+        if content is None or not content.get_visible():
+            return 0
+        try:
+            minimum, _natural, _a, _b = content.measure(
+                Gtk.Orientation.HORIZONTAL, -1)
+            return int(minimum) + _HANDLE_WIDTH
+        except Exception:
+            logger.debug("content measure failed", exc_info=True)
+            return 0
 
     def _content_min_width(self) -> int:
         """The narrowest the sidebar's own content can be laid out."""
@@ -247,6 +287,7 @@ class SidebarPaned(Gtk.Paned):
             max_width=self._max_width,
             fraction=self._fraction,
             user_width=self._user_width,
+            content_min=self._content_side_min(),
         )
 
     def _target_position(self, width: int) -> int:
@@ -301,9 +342,18 @@ class SidebarPaned(Gtk.Paned):
         if not self._show_sidebar:
             self._sync_position(width)
             return
-        ceiling = self._drag_ceiling(width)
+        content_min = self._content_side_min()
+        ceiling = drag_ceiling(width, self._max_width, content_min)
         floor = max(_ABSOLUTE_MIN_WIDTH, min(self._floor(), ceiling))
         clamped = max(floor, min(position, ceiling))
+        cap = content_cap(width, content_min)
+        if cap is not None and clamped >= cap:
+            # The window is too narrow for the sidebar's width. Gtk.Paned
+            # clamps the divider here itself, and that notify arrives after
+            # do_size_allocate has returned, so it looks like a drag; a squeeze
+            # must not overwrite the remembered width.
+            clamped = cap
+            dragging = False
         if clamped != position:
             self._applying = True
             try:

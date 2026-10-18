@@ -2537,6 +2537,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to attach content widget", exc_info=True)
 
+    def _get_remembered_sidebar_width(self) -> int:
+        """The sidebar width to save: the one the user dragged to, else the
+        width it rests at. Not the live divider, which a narrow window squeezes
+        to make room for the content side."""
+        try:
+            width = self.split_view.user_width
+            if width is None:
+                width = self.split_view.get_resting_sidebar_width()
+            return int(width)
+        except Exception:
+            return self._get_sidebar_width()
+
     def _get_sidebar_width(self) -> int:
         """The sidebar's current width in pixels (the paned divider position)."""
         try:
@@ -7589,7 +7601,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle window size change"""
         width = self.get_default_size()[0]
         height = self.get_default_size()[1]
-        sidebar_width = self._get_sidebar_width()
+        sidebar_width = self._get_remembered_sidebar_width()
 
         self.config.save_window_geometry(width, height, sidebar_width)
 
@@ -8613,7 +8625,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Save window state before quitting"""
         try:
             width, height = self.get_default_size()
-            sidebar_width = getattr(self.split_view, 'get_sidebar_width', lambda: 300)()
+            sidebar_width = self._get_remembered_sidebar_width()
             self.config.save_window_geometry(width, height, sidebar_width)
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:

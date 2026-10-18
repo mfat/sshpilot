@@ -21,13 +21,14 @@ _CONTENT_MIN = 180
 
 
 def _pos(width, *, min_width=_CONTENT_MIN, max_width=400, fraction=0.25,
-         user_width=None):
+         user_width=None, content_min=0):
     return _mod().resolve_position(
         width,
         min_width=min_width,
         max_width=max_width,
         fraction=fraction,
         user_width=user_width,
+        content_min=content_min,
     )
 
 
@@ -86,3 +87,18 @@ def test_drag_ceiling_leaves_room_for_the_content():
     assert mod.drag_ceiling(1200, 400) == 1200 - 320
     # Nothing allocated yet: the configured maximum is all there is to go on.
     assert mod.drag_ceiling(0, 400) == 400
+
+
+def test_drag_ceiling_keeps_a_content_side_wider_than_the_default():
+    assert _mod().drag_ceiling(1200, 400, content_min=464) == 1200 - 464
+
+
+def test_narrow_window_squeezes_the_sidebar_not_the_content():
+    """The content side's title row carries the window controls; when both
+    sides cannot fit, the sidebar gives up width, even below its own floor."""
+    # 650px window, 464px content: only 186px left for a 260px-floor sidebar.
+    assert _pos(650, min_width=260, content_min=464) == 186
+    assert _pos(650, min_width=260, content_min=464, user_width=330) == 186
+    assert _pos(400, min_width=260, content_min=464) == 0
+    # Before the first allocation there is no window width to cap against.
+    assert _pos(0, min_width=260, content_min=464) == 400
