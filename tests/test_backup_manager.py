@@ -3,7 +3,10 @@
 import base64
 import json
 import os
+import sys
 import types
+
+import pytest
 
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
@@ -1136,6 +1139,8 @@ def test_windows_backup_fragment_keyed_with_backslash_restores_into_its_director
     assert _files_under(root) == ["conf.d/work.conf", "config"]
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="a backslash always separates directories on Windows")
 def test_posix_backup_keeps_a_backslash_in_a_file_name(monkeypatch, tmp_path):
     """On POSIX a backslash is part of the name, so only a Windows backup splits on it."""
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
