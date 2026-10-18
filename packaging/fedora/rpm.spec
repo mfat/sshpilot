@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.3}
+Version:        %{?version}%{!?version:6.3.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -148,6 +148,16 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sun Oct 18 2026 mFat <newmfat@gmail.com> - 6.3.4-1
+- Using a right-click menu action on several selected connections (such as Delete) keeps all of them selected
+- Clicking a terminal's own tab pill keeps that terminal active
+- The window controls stay visible in a narrow window
+- Restoring a backup puts keys kept outside ~/.ssh into the key directory
+- Restoring a backup made on Windows also restores its Include files
+- After a merge restore, the app tells you what was left as it was on this machine
+- The connection-sort message is worded more clearly
+- The Windows installer is now named SSHPilot-<version>-windows-<arch>-setup.exe
+
 * Fri Oct 16 2026 mFat <newmfat@gmail.com> - 6.3.3-1
 - Initial release of Windows port
 - Option to remember a password for the current session (until SSH Pilot quits)

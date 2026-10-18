@@ -1,3 +1,21 @@
+sshpilot (6.3.4-1) unstable; urgency=medium
+
+  * Release v6.3.4.
+  * Using a right-click menu action on several selected connections
+    (such as Delete) keeps all of them selected
+  * Clicking a terminal's own tab pill keeps that terminal active
+  * The window controls stay visible in a narrow window
+  * Restoring a backup puts keys kept outside ~/.ssh into the key
+    directory
+  * Restoring a backup made on Windows also restores its Include files
+  * After a merge restore, the app tells you what was left as it was on
+    this machine
+  * The connection-sort message is worded more clearly
+  * The Windows installer is now named SSHPilot-<version>-windows-
+    <arch>-setup.exe
+
+ -- Mehdi <mah.fat@gmail.com>  Sun, 18 Oct 2026 10:54:11 +0000
+
 sshpilot (6.3.3-1) unstable; urgency=medium
 
   * Release v6.3.3.

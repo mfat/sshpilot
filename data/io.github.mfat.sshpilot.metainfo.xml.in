@@ -61,6 +61,18 @@
 
 
 
+    <release version="6.3.4" date="2026-10-18">
+      <description>
+        <p>Using a right-click menu action on several selected connections (such as Delete) keeps all of them selected</p>
+        <p>Clicking a terminal&#x27;s own tab pill keeps that terminal active</p>
+        <p>The window controls stay visible in a narrow window</p>
+        <p>Restoring a backup puts keys kept outside ~/.ssh into the key directory</p>
+        <p>Restoring a backup made on Windows also restores its Include files</p>
+        <p>After a merge restore, the app tells you what was left as it was on this machine</p>
+        <p>The connection-sort message is worded more clearly</p>
+        <p>The Windows installer is now named SSHPilot-&lt;version&gt;-windows-&lt;arch&gt;-setup.exe</p>
+      </description>
+    </release>
     <release version="6.3.3" date="2026-10-16">
       <description>
         <p>Initial release of Windows port</p>
