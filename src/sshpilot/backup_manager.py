@@ -224,6 +224,38 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
     return ''.join(out)
 
 
+# Directives that name a key file, so a key restored somewhere else must be renamed in them.
+_KEY_PATH_DIRECTIVES = frozenset({'identityfile', 'certificatefile'})
+
+
+def _same_path_key(path: str) -> str:
+    """A comparison key under which two spellings of one local path are equal: ``~``, either
+    separator, and (on Windows) letter case."""
+    return os.path.normcase(os.path.normpath(os.path.expanduser(str(path))))
+
+
+def _relocate_key_paths_in_text(text: str, relocations: Dict[str, str]) -> str:
+    """Point ``IdentityFile``/``CertificateFile`` lines at the new home of a key that restore
+    placed elsewhere. *relocations* maps :func:`_same_path_key` of the old path to the new
+    path. Lines naming any other file are left byte-for-byte alone."""
+    if not text or not relocations:
+        return text
+    out = []
+    for line in split_config_lines(text, keepends=True):
+        keyword, rest = _split_directive(line)
+        if keyword in _KEY_PATH_DIRECTIVES:
+            argument, tail = _strdelim(rest)
+            new_path = relocations.get(_same_path_key(argument)) if argument else None
+            if new_path and not tail.strip():
+                body = line.rstrip('\r\n')
+                indent = body[:len(body) - len(body.lstrip())]
+                spelled = body.lstrip()[:len(keyword)]
+                quoted = f'"{new_path}"' if any(ch.isspace() for ch in new_path) else new_path
+                line = f"{indent}{spelled} {quoted}{line[len(body):]}"
+        out.append(line)
+    return ''.join(out)
+
+
 # --- SSH config as an Include-aware file tree --------------------------------
 #
 # The app READS ~/.ssh/config as a tree (Include-resolved) and WRITES it surgically per host,
@@ -544,6 +576,9 @@ class BackupManager:
         self.last_merge_collisions: List[List[str]] = []
         # {'mirrored': n, 'failed': n} after an export that also mirrored secrets, else None.
         self.last_mirror_counts: Optional[Dict[str, int]] = None
+        # Keys the restore in progress places in the key directory instead of their original
+        # location: {_same_path_key(rebased original): new path}. Set per restore.
+        self._key_relocations: Dict[str, str] = {}
 
     def get_ssh_config_path(self) -> str:
         """Get the current SSH config path based on mode"""
@@ -1144,6 +1179,7 @@ class BackupManager:
                 if cred.type == 'key':
                     old_path = cred.metadata.get('key_path') or cred.id
                     new_path = _rebase_home_path(old_path, source_home, target_home)
+                    new_path = self._key_relocations.get(_same_path_key(new_path), new_path)
                     if new_path != old_path:
                         cred.metadata['key_path'] = new_path
                         cred.id = new_path
@@ -1172,13 +1208,18 @@ class BackupManager:
         except Exception:
             return False
 
+    def _key_roots(self) -> List[str]:
+        """The key stores sshPilot manages: ``~/.ssh``, and in isolated mode the app config dir."""
+        roots = [str(get_ssh_dir())]
+        if self._current_isolated_mode():
+            roots.append(str(get_config_dir()))
+        return roots
+
     def _is_key_restore_target(self, path: str) -> bool:
         """True if a backup may create a key file at *path*: inside a key store sshPilot manages
         (``~/.ssh``; in isolated mode also the app config dir), symlinks resolved, and not under
         a name OpenSSH or the app reserves for something else."""
-        roots = [get_ssh_dir()]
-        if self._current_isolated_mode():
-            roots.append(get_config_dir())
+        roots = self._key_roots()
         real = os.path.realpath(path)
         # The client config (default and isolated main file) restores through its own path.
         if os.path.basename(real).lower() in _RESERVED_SSH_FILENAMES | {'config', 'ssh_config'}:
@@ -1187,6 +1228,72 @@ class BackupManager:
             real != root and _is_under(real, root)
             for root in (os.path.realpath(str(r)) for r in roots)
         )
+
+    @staticmethod
+    def _rebased_key_path(item: Dict[str, Any], source_home: Optional[str],
+                          target_home: str) -> str:
+        """Where a backed-up key lived, mapped onto this machine's home."""
+        return _rebase_home_path(
+            os.path.expanduser(str(item.get('path') or '')), source_home, target_home)
+
+    def _plan_key_relocations(self, manifest: Dict[str, Any]) -> Dict[str, str]:
+        """Choose a place in the key directory for each backed-up key whose own location restore
+        may not write to (``~/keys/id`` from another machine, ``D:\\keys\\id`` on Linux).
+
+        Such a key keeps its file name; a different file already using that name gets the key a
+        numbered name instead, and an identical copy is reused. A key that already exists at its
+        original location is left there and keeps being used. Returns
+        ``{_same_path_key(original): new path}``."""
+        relocations: Dict[str, str] = {}
+        claimed: set = set()
+        key_dir = str(get_ssh_dir())
+        source_home = manifest.get('source_home')
+        target_home = _current_home()
+        for item in manifest.get('private_keys') or []:
+            try:
+                path = self._rebased_key_path(item, source_home, target_home)
+                raw = item.get('content_b64')
+                # Only a key from outside every key store moves; one inside that is refused (a
+                # reserved name, a symlink out) stays refused.
+                if not path or not raw or os.path.lexists(path) or any(
+                        _is_under(os.path.abspath(path), os.path.abspath(root))
+                        for root in self._key_roots()):
+                    continue
+                content = base64.b64decode(raw.encode('ascii'))
+                if not _is_key_material(content):
+                    continue
+                # The source's own separator, whichever OS wrote the backup.
+                name = path.replace('\\', '/').rstrip('/').rsplit('/', 1)[-1]
+                stem = name if name and not name.startswith('.') else 'restored_key'
+                if stem.lower() in _RESERVED_SSH_FILENAMES | {'config', 'ssh_config'}:
+                    stem = f'restored_{stem}'
+                for n in range(1, 100):
+                    candidate = os.path.join(key_dir, stem if n == 1 else f'{stem}-{n}')
+                    if _same_path_key(candidate) in claimed:
+                        continue
+                    if os.path.exists(candidate) or os.path.exists(f'{candidate}.pub'):
+                        try:
+                            with open(candidate, 'rb') as f:
+                                if f.read() != content:
+                                    continue
+                        except OSError:
+                            continue
+                    if not self._is_key_restore_target(candidate):
+                        break
+                    relocations[_same_path_key(path)] = candidate
+                    claimed.add(_same_path_key(candidate))
+                    logger.info("Restoring key %s to %s (its own location is outside the key "
+                                "directory)", path, candidate)
+                    break
+            except Exception:
+                logger.warning("Could not place a backed-up key", exc_info=True)
+        return relocations
+
+    def _rebase_config_text(self, text: str, source_home: Optional[str],
+                            target_home: str) -> str:
+        """Home-rebase restored SSH config text and point it at relocated keys."""
+        return _relocate_key_paths_in_text(
+            _rebase_home_in_text(text, source_home, target_home), self._key_relocations)
 
     def _restore_private_keys(self, manifest: Dict[str, Any]) -> Tuple[int, int]:
         """Restore private keys embedded in a backup to their original paths.
@@ -1209,11 +1316,12 @@ class BackupManager:
             try:
                 # Rebase the source machine's home onto this one so a laptop backup lands in
                 # /home/<me>/.ssh instead of a non-existent /home/<them>/.ssh.
-                path = _rebase_home_path(
-                    os.path.expanduser(str(item.get('path') or '')), source_home, target_home)
+                path = self._rebased_key_path(item, source_home, target_home)
                 raw = item.get('content_b64')
                 if not path or not raw:
                     continue
+                # A key whose own location is out of bounds goes where the plan put it.
+                path = self._key_relocations.get(_same_path_key(path), path)
                 # NEVER overwrite an existing private key — leave it exactly as it is.
                 if os.path.exists(path):
                     logger.info("Private key already exists; leaving it untouched: %s", path)
@@ -1259,6 +1367,17 @@ class BackupManager:
         credentials/private keys. The caller owns passphrase and option prompts."""
         self.last_transfer_message = None
         effective_options = self._restore_options_for_manifest(manifest, restore_options)
+        # Decided before the config is written, so its IdentityFile lines follow the keys.
+        self._key_relocations = (
+            self._plan_key_relocations(manifest) if effective_options['private_keys'] else {})
+        try:
+            return self._apply_manifest(manifest, mode, create_backup, effective_options)
+        finally:
+            self._key_relocations = {}
+
+    def _apply_manifest(self, manifest: Dict[str, Any], mode: str, create_backup: bool,
+                        effective_options: Dict[str, bool]
+                        ) -> Tuple[bool, Optional[str], int, int]:
         success, error = self._apply_parsed(
             manifest, mode, create_backup, restore_options=effective_options)
         restored = (
@@ -1436,7 +1555,7 @@ class BackupManager:
                     logger.warning("Skipping unsafe SSH config restore path: %s", rel)
                     continue
             text = _rewrite_includes(content or '', source_root)
-            text = _rebase_home_in_text(text, source_home, target_home)
+            text = self._rebase_config_text(text, source_home, target_home)
             self._atomic_write_text(dest, text, 0o600)
             written.add(dest)
         logger.info("Restored %d SSH config file(s) under %s", len(written), root)
@@ -1482,7 +1601,7 @@ class BackupManager:
                 if not self._restore_ssh_tree(import_data, source_home, target_home) \
                         and import_data.get('ssh_config'):
                     ssh_config_path = self.get_ssh_config_path()
-                    ssh_text = _rebase_home_in_text(
+                    ssh_text = self._rebase_config_text(
                         import_data['ssh_config'], source_home, target_home)
                     self._atomic_write_text(ssh_config_path, ssh_text, 0o600)
                     logger.info(f"Replaced SSH config at {ssh_config_path}")
@@ -1534,7 +1653,7 @@ class BackupManager:
             # fragment — reusing the app's real Include-aware view instead of a second parser.
             if options['ssh_config']:
                 imported_texts = [
-                    _rebase_home_in_text(t, source_home, target_home)
+                    self._rebase_config_text(t, source_home, target_home)
                     for t in self._imported_ssh_texts(import_data)
                 ]
                 if imported_texts:
