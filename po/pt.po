@@ -16576,6 +16576,65 @@ msgstr "Transmissão direta"
 msgid "Copy key to Server"
 msgstr "Copiar chave para o servidor"
 
+#: src/sshpilot/gtk/secret_transfer_messages.py:194
+#, python-brace-format
+msgid ""
+"The imported host {host} connects through {via}, so it now goes through your "
+"own {via}, not the one in the backup."
+msgstr ""
+"O anfitrião importado {host} liga-se através de {via}, por isso passa agora "
+"pelo seu próprio {via}, e não pelo da cópia de segurança."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:231
+#, python-brace-format
+msgid ""
+"{count} rule for all hosts (Host * or Match) in the backup was not merged, "
+"because it would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgid_plural ""
+"{count} rules for all hosts (Host * or Match) in the backup were not merged, "
+"because they would change every connection. Imported hosts follow this "
+"computer's rules instead."
+msgstr[0] ""
+"{count} regra para todos os anfitriões (Host * ou Match) da cópia de "
+"segurança não foi integrada, porque alteraria todas as ligações. Os "
+"anfitriões importados seguem as regras deste computador."
+msgstr[1] ""
+"{count} regras para todos os anfitriões (Host * ou Match) da cópia de "
+"segurança não foram integradas, porque alterariam todas as ligações. Os "
+"anfitriões importados seguem as regras deste computador."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:241
+#, python-brace-format
+msgid ""
+"{count} host entry in the backup also names hosts you already have; only its "
+"new names were added: {hosts}"
+msgid_plural ""
+"{count} host entries in the backup also name hosts you already have; only "
+"their new names were added: {hosts}"
+msgstr[0] ""
+"{count} entrada de anfitrião da cópia de segurança também nomeia anfitriões "
+"que já tem; só os seus nomes novos foram adicionados: {hosts}"
+msgstr[1] ""
+"{count} entradas de anfitrião da cópia de segurança também nomeiam anfitriões"
+" que já tem; só os seus nomes novos foram adicionados: {hosts}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:249
+#, python-brace-format
+msgid ""
+"{count} host in the backup has the same name as one of yours but different "
+"settings. Yours was kept and the backup's was not imported: {hosts}"
+msgid_plural ""
+"{count} hosts in the backup have the same names as yours but different "
+"settings. Yours were kept and the backup's were not imported: {hosts}"
+msgstr[0] ""
+"{count} anfitrião da cópia de segurança tem o mesmo nome que um dos seus, mas"
+" outras definições. O seu foi mantido e o da cópia não foi importado: {hosts}"
+msgstr[1] ""
+"{count} anfitriões da cópia de segurança têm os mesmos nomes que os seus, mas"
+" outras definições. Os seus foram mantidos e os da cópia não foram "
+"importados: {hosts}"
+
 #~ msgid "With the start page or a terminal"
 #~ msgstr "Com a página inicial ou um terminal"
 

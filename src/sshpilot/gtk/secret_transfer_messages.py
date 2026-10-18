@@ -190,6 +190,10 @@ _MESSAGE_TEMPLATES = {
     SecretTransferMessageCode.CONNECTION_REMOVE_FAILED: N_(
         "Could not remove connection {connection}."
     ),
+    SecretTransferMessageCode.MERGE_HOST_ROUTED_THROUGH_EXISTING: N_(
+        "The imported host {host} connects through {via}, so it now goes through "
+        "your own {via}, not the one in the backup."
+    ),
 }
 
 _SECTION_LABELS = {
@@ -220,6 +224,32 @@ def _template_for(message: SecretTransferMessage) -> str:
         return ngettext(
             "{count} referenced key file was missing and not included: {paths}",
             "{count} referenced key files were missing and not included: {paths}",
+            params["count"],
+        )
+    if code is SecretTransferMessageCode.MERGE_GLOBAL_RULES_SKIPPED:
+        return ngettext(
+            "{count} rule for all hosts (Host * or Match) in the backup was not merged, "
+            "because it would change every connection. Imported hosts follow this "
+            "computer's rules instead.",
+            "{count} rules for all hosts (Host * or Match) in the backup were not merged, "
+            "because they would change every connection. Imported hosts follow this "
+            "computer's rules instead.",
+            params["count"],
+        )
+    if code is SecretTransferMessageCode.MERGE_PARTIAL_NAME_COLLISION:
+        return ngettext(
+            "{count} host entry in the backup also names hosts you already have; only "
+            "its new names were added: {hosts}",
+            "{count} host entries in the backup also name hosts you already have; only "
+            "their new names were added: {hosts}",
+            params["count"],
+        )
+    if code is SecretTransferMessageCode.MERGE_EXISTING_HOSTS_KEPT:
+        return ngettext(
+            "{count} host in the backup has the same name as one of yours but different "
+            "settings. Yours was kept and the backup's was not imported: {hosts}",
+            "{count} hosts in the backup have the same names as yours but different "
+            "settings. Yours were kept and the backup's were not imported: {hosts}",
             params["count"],
         )
     try:

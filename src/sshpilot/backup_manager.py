@@ -430,11 +430,10 @@ def _gather_ssh_config_tree(main_path: str) -> Tuple[Dict[str, str], List[str]]:
     return tree, skipped
 
 
-def _existing_host_names(main_path: str) -> set:
-    """All Host patterns already present across the live config tree (Include-aware), so merge
-    dedup sees hosts that live in fragments, not just the main file."""
+def _existing_host_stanzas(main_path: str):
+    """``(patterns, block_lines)`` of every Host stanza across the live config tree
+    (Include-aware), in the order OpenSSH reads them."""
     from .ssh_config_utils import resolve_ssh_config_files
-    names: set = set()
     try:
         files = resolve_ssh_config_files(main_path)
     except Exception:
@@ -445,10 +444,80 @@ def _existing_host_names(main_path: str) -> set:
                 txt = fh.read()
         except OSError:
             continue
-        for kind, patterns, _blk in _iter_config_stanzas(txt):
+        for kind, patterns, blk in _iter_config_stanzas(txt):
             if kind == 'host' and patterns:
-                names.update(patterns)
+                yield patterns, blk
+
+
+def _existing_host_names(main_path: str) -> set:
+    """All Host patterns already present across the live config tree (Include-aware), so merge
+    dedup sees hosts that live in fragments, not just the main file."""
+    names: set = set()
+    for patterns, _blk in _existing_host_stanzas(main_path):
+        names.update(patterns)
     return names
+
+
+def _stanza_settings(block_lines: List[str]) -> Tuple[str, ...]:
+    """A Host stanza's directives without its header, blank lines and comments, with the
+    keyword lower-cased and runs of blanks collapsed, so layout alone never tells two apart."""
+    settings = []
+    for line in block_lines[1:]:
+        keyword, rest = _split_directive(line)
+        if keyword:
+            settings.append(f"{keyword} {' '.join(rest.split())}")
+    return tuple(settings)
+
+
+def _jump_host_names(block_lines: List[str]) -> List[str]:
+    """Host names a stanza connects through: each ``ProxyJump`` hop (``[user@]host[:port]``,
+    ``ssh://`` form included) and each word of ``ProxyCommand``."""
+    names: List[str] = []
+    for line in block_lines[1:]:
+        keyword, rest = _split_directive(line)
+        if keyword == 'proxyjump':
+            for hop in rest.split(','):
+                hop = hop.strip()
+                if hop.startswith('ssh://'):
+                    hop = hop[len('ssh://'):]
+                hop = hop.rsplit('@', 1)[-1]
+                hop = hop[1:].split(']', 1)[0] if hop.startswith('[') else hop.split(':', 1)[0]
+                if hop:
+                    names.append(hop)
+        elif keyword == 'proxycommand':
+            names.extend(rest.split())
+    return names
+
+
+def _merge_differences(imported_texts: List[str], existing: Dict[str, Tuple[str, ...]]
+                       ) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """What a merge leaves to the target's own hosts, beyond the stanzas it drops.
+
+    Returns ``(kept, routed)``: ``kept`` are backup hosts that were not imported because this
+    machine has a host of that name **set up differently** (an identical one, as when restoring
+    your own backup, is not a difference); ``routed`` pairs each imported host with a kept host
+    its ``ProxyJump``/``ProxyCommand`` goes through, which is now this machine's version."""
+    kept: List[str] = []
+    imported_blocks: List[Tuple[List[str], List[str]]] = []
+    for txt in imported_texts:
+        for kind, patterns, blk in _iter_config_stanzas(txt or ''):
+            if kind != 'host' or not patterns:
+                continue
+            concrete = [a for a in map(_importable_alias, patterns) if a]
+            new_names = []
+            for name in concrete:
+                if name not in existing:
+                    new_names.append(name)
+                elif existing[name] != _stanza_settings(blk) and name not in kept:
+                    kept.append(name)
+            if new_names:
+                imported_blocks.append((new_names, blk))
+    routed: List[Tuple[str, str]] = []
+    for new_names, blk in imported_blocks:
+        for via in _jump_host_names(blk):
+            if via in kept and (new_names[0], via) not in routed:
+                routed.append((new_names[0], via))
+    return kept, routed
 
 
 def _select_new_host_blocks(imported_texts: List[str], existing_names: set
@@ -575,6 +644,10 @@ class BackupManager:
         # Merge diagnostics: wildcard/Match/global stanzas dropped, and partial-name collisions.
         self.last_merge_dropped_globals = 0
         self.last_merge_collisions: List[List[str]] = []
+        # Backup hosts left to this machine's differently-defined host of the same name, and
+        # (imported host, kept host) pairs where an imported host now jumps through ours.
+        self.last_merge_kept_hosts: List[str] = []
+        self.last_merge_routed_hosts: List[Tuple[str, str]] = []
         # {'mirrored': n, 'failed': n} after an export that also mirrored secrets, else None.
         self.last_mirror_counts: Optional[Dict[str, int]] = None
         # Keys the restore in progress places in the key directory instead of their original
@@ -1710,6 +1783,15 @@ class BackupManager:
         new_text, dropped, collisions = _select_new_host_blocks(imported_texts, existing)
         self.last_merge_dropped_globals = dropped
         self.last_merge_collisions = collisions
+        existing_settings: Dict[str, Tuple[str, ...]] = {}
+        for patterns, blk in _existing_host_stanzas(main_path):
+            for name in patterns:
+                existing_settings.setdefault(name, _stanza_settings(blk))   # first one wins
+        self.last_merge_kept_hosts, self.last_merge_routed_hosts = _merge_differences(
+            imported_texts, existing_settings)
+        if self.last_merge_kept_hosts:
+            logger.info("Merge kept this machine's own definition of: %s",
+                        ", ".join(self.last_merge_kept_hosts))
         if dropped:
             logger.info("Merge dropped %d wildcard/Match/global stanza(s) from the import "
                         "(never injected into your config)", dropped)

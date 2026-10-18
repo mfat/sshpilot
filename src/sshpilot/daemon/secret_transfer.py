@@ -625,7 +625,7 @@ def daemon_import_backup(
             )
         ignored = int(getattr(mgr, "last_import_ignored_secrets", 0) or 0)
         counts = {"restored": 1, "ignored_secrets": ignored}
-        cs_warnings = _connection_store_warnings(mgr)
+        cs_warnings = _restore_warnings(mgr)
         return SecretTransferResult(
             operation="import", path=source, counts=counts, warnings=cs_warnings,
             status=SecretOperationState.SUCCESS, message=None,
@@ -679,7 +679,7 @@ def daemon_import_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings = list(_connection_store_warnings(mgr))
+    warnings = list(_restore_warnings(mgr))
     if not success:
         return SecretTransferResult(
             operation="import",
@@ -1157,7 +1157,7 @@ def daemon_import_bitwarden_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings = list(_connection_store_warnings(mgr))
+    warnings = list(_restore_warnings(mgr))
     if not success:
         return SecretTransferResult(
             operation="import",
@@ -1382,7 +1382,7 @@ def daemon_import_ssh_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings = list(_connection_store_warnings(mgr))
+    warnings = list(_restore_warnings(mgr))
     if not success:
         return SecretTransferResult(
             operation="import", path="ssh", counts=counts, warnings=(),
@@ -1407,33 +1407,43 @@ def daemon_import_ssh_backup(
     )
 
 
-def _import_warnings(mgr: Any, persists: bool) -> List[str]:
-    """Success-dialog warnings for a daemon import: backend persistence plus
-    the merge outcomes the GUI path used to surface (``last_merge_collisions``
-    / ``last_merge_dropped_globals``)."""
-    warnings: List[str] = []
-    if not persists:
-        warnings.append(
-            "The selected secret backend does not persist secrets (agent); "
-            "no credentials were restored."
-        )
-    collisions = getattr(mgr, "last_merge_collisions", None) or []
-    if collisions:
-        names = ", ".join(" ".join(p) for p in collisions)
-        warnings.append(
-            "{} imported host(s) shared a name with an existing host; the "
-            "conflicting names were left as-is: {}.".format(
-                len(collisions), names
-            )
-        )
-    dropped = int(getattr(mgr, "last_merge_dropped_globals", 0) or 0)
+def _merge_warnings(manager: Any) -> List[SecretTransferMessage]:
+    """What a merge restore left to this machine's own config, for the result screen: global
+    stanzas it never writes, multi-name hosts imported only in part, backup hosts kept in this
+    machine's version, and imported hosts that now jump through such a host."""
+    warnings: List[SecretTransferMessage] = []
+    dropped = int(getattr(manager, "last_merge_dropped_globals", 0) or 0)
     if dropped:
-        warnings.append(
-            "{} global rule(s) from the backup (Host * / Match blocks) were not "
-            "imported — they affect every connection, so they are not merged "
-            "automatically.".format(dropped)
-        )
+        warnings.append(_message(
+            SecretTransferMessageCode.MERGE_GLOBAL_RULES_SKIPPED,
+            parameters={"count": dropped},
+        ))
+    collisions = list(getattr(manager, "last_merge_collisions", None) or [])
+    if collisions:
+        warnings.append(_message(
+            SecretTransferMessageCode.MERGE_PARTIAL_NAME_COLLISION,
+            parameters={
+                "count": len(collisions),
+                "hosts": ", ".join(" ".join(patterns) for patterns in collisions),
+            },
+        ))
+    kept = list(getattr(manager, "last_merge_kept_hosts", None) or [])
+    if kept:
+        warnings.append(_message(
+            SecretTransferMessageCode.MERGE_EXISTING_HOSTS_KEPT,
+            parameters={"count": len(kept), "hosts": ", ".join(kept)},
+        ))
+    for host, via in getattr(manager, "last_merge_routed_hosts", None) or []:
+        warnings.append(_message(
+            SecretTransferMessageCode.MERGE_HOST_ROUTED_THROUGH_EXISTING,
+            parameters={"host": host, "via": via},
+        ))
     return warnings
+
+
+def _restore_warnings(manager: Any) -> Tuple[SecretTransferMessage, ...]:
+    """Every non-fatal outcome of a restore that the result screen reports."""
+    return _connection_store_warnings(manager) + tuple(_merge_warnings(manager))
 
 
 def _settings_path() -> Path:
