@@ -147,7 +147,38 @@ class WindowTabsMixin:
         # Update the UI based on the number of remaining tabs
         GLib.idle_add(self._update_ui_after_tab_close)
     
+    def _on_tab_bar_capture_press(self, _gesture, _n_press, _x, _y):
+        self._tab_bar_focus_before_press = self.get_focus()
+        self._tab_bar_selected_before_press = self.tab_view.get_selected_page()
+
+    def _restore_focus_after_tab_click(self, page) -> None:
+        """Undo AdwTabBox focusing the pill of the tab that was already
+        selected, so a click on it keeps the terminal typing-ready. Clicks on
+        another tab are handled by on_tab_selected."""
+        previous = getattr(self, '_tab_bar_focus_before_press', None)
+        was_selected = getattr(self, '_tab_bar_selected_before_press', None)
+        self._tab_bar_focus_before_press = None
+        self._tab_bar_selected_before_press = None
+        if page is None or page is not was_selected:
+            return
+        if self._is_start_tab_page(page):
+            return
+        child = page.get_child()
+        if child is None:
+            return
+        if previous is not None and previous.is_ancestor(child) and previous.get_mapped():
+            previous.grab_focus()
+        elif _is_terminal_widget(child):
+            self._focus_terminal_widget(child)
+        else:
+            child.child_focus(Gtk.DirectionType.TAB_FORWARD)
+
     def _on_tab_bar_pressed(self, gesture, n_press, x, y):
+        if n_press == 1:
+            kind, *rest = classify_tab_bar_hit(self.tab_bar, x, y)
+            if kind == 'tab':
+                self._restore_focus_after_tab_click(rest[0])
+            return
         if n_press != 2:
             return
         kind, *rest = classify_tab_bar_hit(self.tab_bar, x, y)

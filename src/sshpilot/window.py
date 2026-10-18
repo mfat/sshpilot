@@ -3858,6 +3858,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         rename_gesture.connect('pressed', self._on_tab_bar_pressed)
         self.tab_bar.add_controller(rename_gesture)
 
+        # Clicking the already-selected tab makes AdwTabBox focus the pill,
+        # which leaves the terminal cursor inactive. Record the focus before
+        # AdwTabBox sees the press so _on_tab_bar_pressed can hand it back.
+        focus_memo = Gtk.GestureClick()
+        focus_memo.set_button(1)
+        focus_memo.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        focus_memo.connect('pressed', self._on_tab_bar_capture_press)
+        self.tab_bar.add_controller(focus_memo)
+
         # Suppress the context menu on the pinned Start tab. This capture-phase
         # gesture runs before AdwTabBox's own (bubble-phase) right-click handler,
         # so we can clear the view's menu model just-in-time when the click lands
