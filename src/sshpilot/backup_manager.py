@@ -422,7 +422,8 @@ def _gather_ssh_config_tree(main_path: str) -> Tuple[Dict[str, str], List[str]]:
             continue
         try:
             with open(af, encoding='utf-8') as fh:
-                tree[os.path.relpath(af, root)] = fh.read()
+                # Keyed with '/' whatever the OS, so a restore elsewhere splits it into dirs.
+                tree[os.path.relpath(af, root).replace(os.sep, '/')] = fh.read()
         except OSError:
             if af not in skipped:
                 skipped.append(af)
@@ -718,7 +719,8 @@ class BackupManager:
             tree, skipped = _gather_ssh_config_tree(ssh_config_path)
             export_data['ssh_config_files'] = tree
             export_data['ssh_config_main_rel'] = os.path.relpath(
-                os.path.abspath(ssh_config_path), _ssh_config_root(ssh_config_path))
+                os.path.abspath(ssh_config_path), _ssh_config_root(ssh_config_path)
+            ).replace(os.sep, '/')
             # Absolute source root, so restore can make absolute Include lines relative.
             export_data['ssh_config_root'] = _ssh_config_root(ssh_config_path)
             self.last_export_skipped_config_files = skipped
@@ -833,6 +835,7 @@ class BackupManager:
 
     def _connection_key_paths(self, connections) -> List[str]:
         paths: List[str] = []
+        seen: set = set()
         for conn in connections or []:
             for attr in ('keyfile', 'identity_files', 'resolved_identity_files'):
                 value = getattr(conn, attr, None)
@@ -844,7 +847,9 @@ class BackupManager:
                     if not candidate:
                         continue
                     path = os.path.expanduser(str(candidate))
-                    if path and path not in paths:
+                    # ``C:/Users/me/.ssh/id`` and ``~\.ssh\id`` are one file on Windows.
+                    if path and _same_path_key(path) not in seen:
+                        seen.add(_same_path_key(path))
                         paths.append(path)
         return paths
 
@@ -1544,6 +1549,11 @@ class BackupManager:
         root = _ssh_config_root(main_path)
         main_rel = import_data.get('ssh_config_main_rel') or ''
         source_root = import_data.get('ssh_config_root') or None
+        # Backups written on Windows before export settled on '/' key fragments with '\'.
+        # Only there is it a separator: on POSIX it is a legal file-name character.
+        if import_data.get('platform') == 'nt':
+            tree = {rel.replace('\\', '/'): content for rel, content in tree.items()}
+            main_rel = main_rel.replace('\\', '/')
         written: set = set()
         for rel, content in tree.items():
             if rel == main_rel:

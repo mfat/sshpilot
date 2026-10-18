@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import types
 
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
@@ -1069,7 +1070,7 @@ def test_export_bundles_include_tree_and_skips_out_of_root(monkeypatch, tmp_path
                                    "known_hosts": False, "secrets": False,
                                    "private_keys": False})
     tree = data["ssh_config_files"]
-    frag_rel = os.path.join("conf.d", "base.conf")
+    frag_rel = "conf.d/base.conf"           # "/" on every OS, so restore elsewhere splits it
     assert set(tree) >= {"config", frag_rel}
     assert data["ssh_config_main_rel"] == "config"
     assert "Host in-fragment" in tree[frag_rel]
@@ -1104,6 +1105,59 @@ def test_replace_restores_tree_rebased_and_maps_main(monkeypatch, tmp_path):
     assert f"IdentityFile {newhome}/.ssh/id" in main_text     # home rebased
     assert "/home/alice" not in main_text
     assert (target_root / "conf.d" / "work.conf").read_text().count("Host work") == 1
+
+
+def _replace_tree(tmp_path, import_data):
+    target_root = tmp_path / "dotssh"
+    target_root.mkdir()
+    main = target_root / "config"
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    ok, err = mgr._import_replace(import_data, {"app_settings": False, "ssh_config": True,
+                                               "known_hosts": False, "secrets": False,
+                                               "private_keys": False})
+    assert ok, err
+    return target_root
+
+
+def test_windows_backup_fragment_keyed_with_backslash_restores_into_its_directory(
+        monkeypatch, tmp_path):
+    """Windows exports used to key Include fragments ``conf.d\\work.conf``; elsewhere that
+    must still be the file conf.d/work.conf, or ``Include conf.d/*.conf`` finds no hosts."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = _replace_tree(tmp_path, {
+        "platform": "nt",
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {
+            "config": "Include conf.d/*.conf\n",
+            "conf.d\\work.conf": "Host db\n    HostName db.example\n",
+        },
+    })
+    assert (root / "conf.d" / "work.conf").read_text() == "Host db\n    HostName db.example\n"
+    assert _files_under(root) == ["conf.d/work.conf", "config"]
+
+
+def test_posix_backup_keeps_a_backslash_in_a_file_name(monkeypatch, tmp_path):
+    """On POSIX a backslash is part of the name, so only a Windows backup splits on it."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = _replace_tree(tmp_path, {
+        "platform": "posix",
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {"config": "Include *\n", "odd\\name.conf": "Host odd\n"},
+    })
+    assert not (root / "odd").exists()
+
+
+def test_export_includes_each_key_file_once_however_it_is_spelled(monkeypatch, tmp_path):
+    home = _key_restore_home(monkeypatch, tmp_path)
+    key = home / ".ssh" / "id_api"
+    key.write_bytes(PRIVATE_KEY)
+    conns = [
+        types.SimpleNamespace(keyfile=str(key), identity_files=[]),
+        types.SimpleNamespace(keyfile="~/.ssh/id_api", identity_files=[]),
+        types.SimpleNamespace(keyfile="", identity_files=[f"{home}/.ssh/./id_api"]),
+    ]
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    assert len(mgr._gather_private_keys(conns)) == 1
 
 
 def test_replace_tree_never_writes_files_openssh_reserves(monkeypatch, tmp_path):
