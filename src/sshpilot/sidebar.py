@@ -1425,7 +1425,11 @@ class GroupRow(Gtk.ListBoxRow):
     def _on_drag_begin(self, source, drag):
         # macOS string payloads render as drag text unless we set an icon.
         set_internal_drag_icon(
-            source, self, drag=drag, icon_name="folder-symbolic"
+            source,
+            self,
+            drag=drag,
+            icon_name="folder-symbolic",
+            label=str(self.group_info.get("name") or ""),
         )
         try:
             window = self.get_root()
@@ -2393,7 +2397,11 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_drag_begin(self, source, drag):
         # macOS string payloads render as drag text unless we set an icon.
         set_internal_drag_icon(
-            source, self, drag=drag, icon_name="computer-symbolic"
+            source,
+            self,
+            drag=drag,
+            icon_name="computer-symbolic",
+            label=self._drag_label(),
         )
         try:
             window = self.get_root()
@@ -2406,6 +2414,20 @@ class ConnectionRow(Gtk.ListBoxRow):
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
+
+    def _drag_label(self) -> str:
+        """Name of the dragged host, or a count when a multi-selection rides along."""
+        window = self.get_root()
+        # "prepare" has already recorded the dragged set on the window.
+        dragged = getattr(window, "_dragged_connections", None) or []
+        if len(dragged) > 1:
+            return ngettext(
+                "{count} connection", "{count} connections", len(dragged)
+            ).format(count=len(dragged))
+        return (
+            getattr(self.connection, "display_name", None)
+            or self.connection.nickname
+        )
 
     def _on_drag_end(self, source, drag, delete_data):
         try:
@@ -2855,7 +2877,11 @@ class LocalTerminalRow(Gtk.ListBoxRow):
 
     def _on_drag_begin(self, source, drag):
         set_internal_drag_icon(
-            source, self, drag=drag, icon_name="utilities-terminal-symbolic"
+            source,
+            self,
+            drag=drag,
+            icon_name="utilities-terminal-symbolic",
+            label=self.nickname_label.get_text(),
         )
         try:
             window = self.get_root()

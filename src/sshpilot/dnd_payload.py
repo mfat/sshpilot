@@ -25,9 +25,12 @@ import json
 import logging
 from typing import Any, Optional
 
-from gi.repository import Gdk, GObject, Gtk
+from gi.repository import Gdk, GObject, Gtk, Pango
 
 logger = logging.getLogger(__name__)
+
+# Long connection names are cut with an ellipsis past this width.
+DRAG_CHIP_MAX_CHARS = 28
 
 DND_FORMAT = "sshpilot_internal_drag"
 
@@ -52,6 +55,7 @@ def set_internal_drag_icon(
     *,
     drag: Optional[Gdk.Drag] = None,
     icon_name: Optional[str] = None,
+    label: Optional[str] = None,
 ) -> None:
     """Attach a drag preview that does not expose the JSON payload string.
 
@@ -61,9 +65,10 @@ def set_internal_drag_icon(
     macOS — ``DragIcon`` has tripped AppKit during
     ``beginDraggingSessionWithItems``.
 
-    On other platforms, keep the existing ``DragIcon`` + symbolic-icon look
-    when *drag* and *icon_name* are provided; otherwise fall back to a
-    widget paintable.
+    On other platforms, use a ``DragIcon`` when *drag* and *icon_name* are
+    provided; otherwise fall back to a widget paintable. With *label*, the
+    icon and text sit on an accent ``.drag-chip`` so the preview stays visible
+    over a terminal whose colours match the app theme's foreground.
     """
     from .platform_utils import is_macos
 
@@ -73,8 +78,18 @@ def set_internal_drag_icon(
             return
         icon = Gtk.DragIcon.get_for_drag(drag)
         image = Gtk.Image.new_from_icon_name(icon_name)
-        image.set_icon_size(Gtk.IconSize.LARGE)
-        icon.set_child(image)
+        if not label:
+            image.set_icon_size(Gtk.IconSize.LARGE)
+            icon.set_child(image)
+            return
+        chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chip.add_css_class("drag-chip")
+        text = Gtk.Label(label=label)
+        text.set_ellipsize(Pango.EllipsizeMode.END)
+        text.set_max_width_chars(DRAG_CHIP_MAX_CHARS)
+        chip.append(image)
+        chip.append(text)
+        icon.set_child(chip)
     except Exception as exc:
         logger.debug("Could not set drag icon: %s", exc)
 
