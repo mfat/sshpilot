@@ -4792,12 +4792,12 @@ def _build_sidebar_header(window, sidebar_box):
                 sort_section.append_item(item)
             menu.append_section(_('Sort'), sort_section)
 
-            tag_menu = Gio.Menu()
+            tag_section = Gio.Menu()
             all_item = Gio.MenuItem.new(_('All Connections'), None)
             all_item.set_action_and_target_value(
                 'win.filter-tag', GLib.Variant('s', '')
             )
-            tag_menu.append_item(all_item)
+            tag_section.append_item(all_item)
 
             tag_map = {}
             for conn in window.connection_manager.get_connections():
@@ -4808,7 +4808,6 @@ def _build_sidebar_header(window, sidebar_box):
                     )
                 except Exception:
                     pass
-            tags_section = Gio.Menu()
             for display_tag, nicknames in compute_tag_groups(tag_map):
                 item = Gio.MenuItem.new(
                     f'{display_tag} ({len(nicknames)})', None
@@ -4816,17 +4815,25 @@ def _build_sidebar_header(window, sidebar_box):
                 item.set_action_and_target_value(
                     'win.filter-tag', GLib.Variant('s', display_tag.casefold())
                 )
-                tags_section.append_item(item)
-            tag_menu.append_section(None, tags_section)
+                tag_section.append_item(item)
+            menu.append_section(_('Filter by Tag'), tag_section)
 
-            options = Gio.Menu()
-            options.append_submenu(_('Filter by Tag'), tag_menu)
-            hosts_item = Gio.MenuItem.new(_('Show Hostnames'), 'win.show-hostnames')
-            hosts_item.set_attribute_value(
-                'hidden-when', GLib.Variant('s', 'action-disabled')
-            )
-            options.append_item(hosts_item)
-            menu.append_section(None, options)
+            # Masks the user@hostname line; offered only while rows show it.
+            # Skip the section when disabled, or its heading stays behind.
+            hosts_action = window.lookup_action('show-hostnames')
+            if hosts_action is None or hosts_action.get_enabled():
+                privacy_section = Gio.Menu()
+                # A plain action, so the label says what a click does
+                # instead of carrying a check mark.
+                label = (
+                    _('Show user@hostname')
+                    if getattr(window, '_hide_hosts', False)
+                    else _('Hide user@hostname')
+                )
+                privacy_section.append_item(
+                    Gio.MenuItem.new(label, 'win.toggle-hide-hosts')
+                )
+                menu.append_section(_('Privacy'), privacy_section)
 
             btn.set_menu_model(menu)
         except Exception:

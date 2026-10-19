@@ -17219,3 +17219,15 @@ msgstr "Тегов пока нет"
 #: src/sshpilot/connection_dialog_field_helpers.py
 msgid "Tags you add to connections will be listed here."
 msgstr "Здесь будут перечислены теги, добавленные к подключениям."
+
+#: src/sshpilot/sidebar.py
+msgid "Privacy"
+msgstr "Конфиденциальность"
+
+#: src/sshpilot/sidebar.py
+msgid "Show user@hostname"
+msgstr "Показать user@hostname"
+
+#: src/sshpilot/sidebar.py
+msgid "Hide user@hostname"
+msgstr "Скрыть user@hostname"

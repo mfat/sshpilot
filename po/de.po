@@ -17293,3 +17293,15 @@ msgstr "Noch keine Tags"
 #: src/sshpilot/connection_dialog_field_helpers.py
 msgid "Tags you add to connections will be listed here."
 msgstr "Tags, die Sie Verbindungen hinzufügen, werden hier aufgelistet."
+
+#: src/sshpilot/sidebar.py
+msgid "Privacy"
+msgstr "Datenschutz"
+
+#: src/sshpilot/sidebar.py
+msgid "Show user@hostname"
+msgstr "user@hostname anzeigen"
+
+#: src/sshpilot/sidebar.py
+msgid "Hide user@hostname"
+msgstr "user@hostname ausblenden"

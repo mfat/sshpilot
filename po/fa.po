@@ -16953,3 +16953,15 @@ msgstr "هنوز برچسبی وجود ندارد"
 #: src/sshpilot/connection_dialog_field_helpers.py
 msgid "Tags you add to connections will be listed here."
 msgstr "برچسب‌هایی که به اتصال‌ها اضافه می‌کنید اینجا فهرست می‌شوند."
+
+#: src/sshpilot/sidebar.py
+msgid "Privacy"
+msgstr "حریم خصوصی"
+
+#: src/sshpilot/sidebar.py
+msgid "Show user@hostname"
+msgstr "نمایش user@hostname"
+
+#: src/sshpilot/sidebar.py
+msgid "Hide user@hostname"
+msgstr "پنهان کردن user@hostname"

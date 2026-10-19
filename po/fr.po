@@ -16823,3 +16823,15 @@ msgstr "Aucune étiquette pour le moment"
 #: src/sshpilot/connection_dialog_field_helpers.py
 msgid "Tags you add to connections will be listed here."
 msgstr "Les étiquettes que vous ajoutez aux connexions apparaîtront ici."
+
+#: src/sshpilot/sidebar.py
+msgid "Privacy"
+msgstr "Confidentialité"
+
+#: src/sshpilot/sidebar.py
+msgid "Show user@hostname"
+msgstr "Afficher utilisateur@nom d’hôte"
+
+#: src/sshpilot/sidebar.py
+msgid "Hide user@hostname"
+msgstr "Masquer utilisateur@nom d’hôte"
