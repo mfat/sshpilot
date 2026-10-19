@@ -1078,6 +1078,9 @@ class OmniSearchController:
             focus_func=self._entry_focus_widget,
         )
         self.popup.set_anchor(home)
+        # Away from Start, center over the tab area rather than the whole
+        # window, so an open sidebar does not push the panel off-center.
+        self.popup.set_center_region(getattr(window, "tab_view", None))
         self._set_results_visible(False)
 
     def _set_results_visible(self, visible: bool) -> None:

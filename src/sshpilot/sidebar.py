@@ -4750,8 +4750,7 @@ def _build_sidebar_header(window, sidebar_box):
         filter_action.connect('activate', _on_filter_tag)
         window.add_action(filter_action)
 
-    # View options: sort + tag filter + show hostnames. The button icon
-    # still tracks the active sort preset (window._update_sort_button).
+    # View options: sort + tag filter + show hostnames.
     view_button = window._build_sort_button()
 
     def _build_view_menu(btn):
@@ -4808,7 +4807,6 @@ def _build_sidebar_header(window, sidebar_box):
             logger.error("Failed to build view options menu", exc_info=True)
 
     view_button.set_create_popup_func(_build_view_menu)
-    label_icon_button(view_button, _('View Options'))
     window._sidebar_view_button = view_button
 
     # Main app menu (packed on the content header bar in setup_content_area).

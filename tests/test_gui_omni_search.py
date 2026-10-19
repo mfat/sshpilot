@@ -65,6 +65,36 @@ def test_omni_search_switches_between_welcome_anchor_and_center(gui):
     omni.dismiss()
 
 
+def test_omni_search_centers_over_tab_area_away_from_start(gui):
+    """Away from Start the panel centers on the tab area, not the window,
+    so an open sidebar does not push it toward the left."""
+    win = gui.window
+    omni = win._omni_search
+    win._apply_sidebar_visible(True)
+    _open_local_terminal(gui, win)
+    assert not win.is_start_tab_selected()
+
+    omni.show()
+    gui.pump(300)
+    try:
+        panel = omni.popup._panel
+        ok, panel_x, _y = _translate(panel, win)
+        ok2, area_x, _y2 = _translate(win.tab_view, win)
+        assert ok and ok2
+        panel_mid = panel_x + panel.get_width() / 2
+        area_mid = area_x + win.tab_view.get_width() / 2
+        assert abs(panel_mid - area_mid) <= 2
+    finally:
+        omni.dismiss()
+
+
+def _translate(widget, target):
+    result = widget.translate_coordinates(target, 0, 0)
+    if len(result) == 2:
+        return True, result[0], result[1]
+    return result
+
+
 def test_omni_search_rebuilds_results_on_real_window(gui):
     omni = gui.window._omni_search
     omni.show()

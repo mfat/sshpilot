@@ -3520,6 +3520,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         button = Gtk.MenuButton()
         button.add_css_class('flat')
         button.set_can_focus(False)
+        button.set_icon_name('view-more-symbolic')
         menu = Gio.Menu()
         for preset_id in CONNECTION_SORT_MENU:
             item = Gio.MenuItem.new(CONNECTION_SORT_PRESETS[preset_id].title, None)
@@ -3542,11 +3543,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not self.sort_button:
             return
 
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(self.sort_button, preset.icon_name)
+        # The button is the sidebar's View Options menu (fixed "more" icon);
+        # the active sort shows as its radio mark and accessible description.
         label_icon_button(
             self.sort_button,
-            _("Sort Connections"),
+            _("View Options"),
             description=preset.title,
         )
 

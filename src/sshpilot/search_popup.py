@@ -151,6 +151,7 @@ class SearchPopup:
         self._search_only = False
         self._show_groups = True
         self._anchor = None
+        self._center_region = None
         self._margins = (0, 0, 0, 0)
 
         self._build()
@@ -191,6 +192,9 @@ class SearchPopup:
         self._frame.connect("notify::child-revealed", self._on_child_revealed)
         self._overlay.add_overlay(self._frame)
         self._overlay.set_measure_overlay(self._frame, False)
+        # Runs only while the frame is mapped (the popup is open): follow the
+        # center region as the window or sidebar resizes.
+        self._frame.add_tick_callback(self._on_frame_tick)
 
         self._apply_layout()
         self._apply_backdrop()
@@ -221,6 +225,12 @@ class SearchPopup:
     def set_anchor(self, widget: Optional[Gtk.Widget]) -> None:
         """Set the widget whose bounds define ``anchored`` placement."""
         self._anchor = widget
+        self._apply_layout()
+
+    def set_center_region(self, widget: Optional[Gtk.Widget]) -> None:
+        """Center ``center`` placement over ``widget``'s columns instead of
+        the whole overlay (e.g. the work area beside a sidebar)."""
+        self._center_region = widget
         self._apply_layout()
 
     def set_position(self, position: str) -> None:
@@ -323,7 +333,43 @@ class SearchPopup:
         host.set_margin_top(top + top_margin)
         width = self._width if self._width is not None else self._width_func()
         height = self._height if self._height is not None else -1
+        region = self._region_columns() if self._position == Position.CENTER else None
+        self._laid_out_region = region
+        if region is not None:
+            # Inset to the region's columns and let CENTER place whatever
+            # width is actually allocated.
+            x, region_width = region
+            width = max(1, min(width, region_width - 32))
+            host.set_margin_start(start + max(0, int(x)))
+            host.set_margin_end(
+                end + max(0, int(self._overlay.get_width() - x - region_width)))
         self._panel.set_size_request(width, height)
+
+    def _on_frame_tick(self, _widget, _clock) -> bool:
+        if (self._position == Position.CENTER
+                and self._region_columns() != getattr(self, "_laid_out_region", None)):
+            self._apply_layout()
+        return GLib.SOURCE_CONTINUE
+
+    def _region_columns(self):
+        """(x, width) of the center region in overlay coordinates, or None."""
+        region = getattr(self, "_center_region", None)
+        if region is None or self._overlay is None:
+            return None
+        try:
+            if not region.get_mapped() or region.get_width() <= 0:
+                return None
+            translated = region.translate_coordinates(self._overlay, 0, 0)
+            if len(translated) == 2:
+                x, _y = translated
+                ok = True
+            else:
+                ok, x, _y = translated
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not ok:
+            return None
+        return x, region.get_width()
 
     def _apply_backdrop(self):
         if self._scrim is None:
