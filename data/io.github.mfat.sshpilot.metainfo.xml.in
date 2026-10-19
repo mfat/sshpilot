@@ -61,6 +61,22 @@
 
 
 
+    <release version="6.3.6" date="2026-10-19">
+      <description>
+        <p>New app icon on every platform</p>
+        <p>Sidebar: actions moved into a single title row, and they come along in the hover/search popup</p>
+        <p>Sidebar view menu: new Filter by Tag and Privacy sections</p>
+        <p>Omnisearch centred over the tab area; Start tab shows only while no other tab is open</p>
+        <p>Terminal theme and command snippets buttons hidden by default (theme button kept in the header bar)</p>
+        <p>Dragging a connection shows its name on an accent chip</p>
+        <p>A newly added split pane scrolls into view</p>
+        <p>Docker Console: filter field on the Images, Volumes, Networks and Compose tabs (#1335)</p>
+        <p>Tag picker shows existing tags and an empty state when there are none (#1336)</p>
+        <p>Server Metrics: &quot;Show more&quot; now expands the established connection lists, and Top processes lists up to 50 (#1337)</p>
+        <p>Windows installer: asks about the startup update check, new artwork, prepared for SignPath code signing</p>
+        <p>Fixed a crash when a drag left the sidebar over the drop gap (#1334)</p>
+      </description>
+    </release>
     <release version="6.3.5" date="2026-10-18">
       <description>
         <p>A session saved while Settings is open now appears in Settings&#x27; startup session list without restarting</p>

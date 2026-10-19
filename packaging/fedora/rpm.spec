@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.5}
+Version:        %{?version}%{!?version:6.3.6}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -148,6 +148,20 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Mon Oct 19 2026 mFat <newmfat@gmail.com> - 6.3.6-1
+- New app icon on every platform
+- Sidebar: actions moved into a single title row, and they come along in the hover/search popup
+- Sidebar view menu: new Filter by Tag and Privacy sections
+- Omnisearch centred over the tab area; Start tab shows only while no other tab is open
+- Terminal theme and command snippets buttons hidden by default (theme button kept in the header bar)
+- Dragging a connection shows its name on an accent chip
+- A newly added split pane scrolls into view
+- Docker Console: filter field on the Images, Volumes, Networks and Compose tabs (#1335)
+- Tag picker shows existing tags and an empty state when there are none (#1336)
+- Server Metrics: "Show more" now expands the established connection lists, and Top processes lists up to 50 (#1337)
+- Windows installer: asks about the startup update check, new artwork, prepared for SignPath code signing
+- Fixed a crash when a drag left the sidebar over the drop gap (#1334)
+
 * Sun Oct 18 2026 mFat <newmfat@gmail.com> - 6.3.5-1
 - A session saved while Settings is open now appears in Settings' startup session list without restarting
 - Starting the app with a saved session now opens the session shown in Settings
