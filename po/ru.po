@@ -17212,6 +17212,3 @@ msgstr "Фильтровать по тегу"
 msgid "Show Hostnames"
 msgstr "Показывать имена хостов"
 
-#: src/sshpilot/window.py
-msgid "Terminal Theme…"
-msgstr "Тема терминала…"

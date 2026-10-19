@@ -16946,6 +16946,3 @@ msgstr "فیلتر بر اساس برچسب"
 msgid "Show Hostnames"
 msgstr "نمایش نام‌های Host"
 
-#: src/sshpilot/window.py
-msgid "Terminal Theme…"
-msgstr "تم ترمینال…"

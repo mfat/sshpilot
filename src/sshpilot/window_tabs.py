@@ -1647,7 +1647,7 @@ class WindowTabsMixin:
 
         try:
             allowed = bool(
-                self.config.get_setting('ui.headerbar_show_terminal_theme', False)
+                self.config.get_setting('ui.headerbar_show_terminal_theme', True)
             )
         except Exception:
             allowed = True

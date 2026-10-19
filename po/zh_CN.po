@@ -16334,6 +16334,3 @@ msgstr "按标签筛选"
 msgid "Show Hostnames"
 msgstr "显示主机名"
 
-#: src/sshpilot/window.py
-msgid "Terminal Theme…"
-msgstr "终端主题…"

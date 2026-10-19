@@ -17286,6 +17286,3 @@ msgstr "Nach Tag filtern"
 msgid "Show Hostnames"
 msgstr "Hostnamen anzeigen"
 
-#: src/sshpilot/window.py
-msgid "Terminal Theme…"
-msgstr "Terminal-Farbschema…"

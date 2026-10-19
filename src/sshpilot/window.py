@@ -2607,7 +2607,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', True),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
-            ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', False),
+            ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', True),
             ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', False),
             ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
@@ -3452,47 +3452,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._popdown_terminal_theme_menu()
 
     def _popdown_terminal_theme_menu(self) -> None:
-        # The popover may be re-homed onto the main menu button (see
-        # _on_terminal_theme_action), so the header button may not own it.
-        popover = getattr(self, '_terminal_theme_popover', None)
-        if popover is None:
-            popover = getattr(self._terminal_theme_menu_button, 'get_popover', lambda: None)()
+        popover = getattr(self._terminal_theme_menu_button, 'get_popover', lambda: None)()
         if popover is not None:
             popover.popdown()
-
-    def _on_terminal_theme_action(self, *_args) -> None:
-        """Open the terminal color-scheme chooser from the main menu.
-
-        The chooser popover belongs to the header-bar button; when that button
-        is hidden, borrow the main menu button as its anchor for one showing.
-        """
-        self._ensure_terminal_theme_chooser()
-        button = getattr(self, '_terminal_theme_menu_button', None)
-        if button is None:
-            return
-        if button.get_visible() and button.get_mapped():
-            button.popup()
-            return
-        popover = button.get_popover()
-        anchor = getattr(self, 'menu_button', None)
-        if popover is None or anchor is None:
-            return
-        button.set_popover(None)
-        popover.set_parent(anchor)
-
-        def _restore(p):
-            p.unparent()
-            button.set_popover(p)
-            return GLib.SOURCE_REMOVE
-
-        handler_id = None
-
-        def _on_closed(p):
-            p.disconnect(handler_id)
-            GLib.idle_add(_restore, p)
-
-        handler_id = popover.connect('closed', _on_closed)
-        popover.popup()
 
     def _on_new_terminal_theme(self) -> None:
         from .terminal_theme_editor import edit_custom_theme
@@ -3528,7 +3490,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
                 terminal_theme_popover = Gtk.Popover()
                 terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
-                self._terminal_theme_popover = terminal_theme_popover
                 self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
                 self._sync_terminal_theme_selector(selected_theme)
                 chooser = self._terminal_theme_chooser
@@ -4260,7 +4221,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             'custom', GLib.Variant('s', 'theme-selector')
         )
         theme_section.append_item(theme_item)
-        theme_section.append(_('Terminal Theme…'), 'win.terminal-theme')
         menu.append_section(None, theme_section)
 
         new_section = Gio.Menu()

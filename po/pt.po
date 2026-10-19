@@ -17161,6 +17161,3 @@ msgstr "Filtrar por etiqueta"
 msgid "Show Hostnames"
 msgstr "Mostrar nomes de anfitrião"
 
-#: src/sshpilot/window.py
-msgid "Terminal Theme…"
-msgstr "Tema do terminal…"

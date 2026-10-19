@@ -2052,7 +2052,6 @@ class PreferencesWindow(Adw.Window):
             _("Terminal Theme Button"),
             _("Show the color-scheme button on terminal tabs"),
             'ui.headerbar_show_terminal_theme',
-            default=False,
         )
         _add_headerbar_switch(
             _("Theme Menu"),
