@@ -16309,3 +16309,31 @@ msgstr[0] "备份中有 {count} 个主机与您的主机同名但设置不同。
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "发送命令后关闭命令片段"
+
+#: src/sshpilot/sidebar.py
+msgid "New"
+msgstr "新建"
+
+#: src/sshpilot/sidebar.py
+msgid "New Connection or Group"
+msgstr "新建连接或分组"
+
+#: src/sshpilot/sidebar.py
+msgid "View Options"
+msgstr "视图选项"
+
+#: src/sshpilot/sidebar.py
+msgid "Sort"
+msgstr "排序"
+
+#: src/sshpilot/sidebar.py
+msgid "Filter by Tag"
+msgstr "按标签筛选"
+
+#: src/sshpilot/sidebar.py
+msgid "Show Hostnames"
+msgstr "显示主机名"
+
+#: src/sshpilot/window.py
+msgid "Terminal Theme…"
+msgstr "终端主题…"

@@ -16921,3 +16921,31 @@ msgstr[1] ""
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "پس از ارسال دستور، قطعات فرمان را ببندید"
+
+#: src/sshpilot/sidebar.py
+msgid "New"
+msgstr "جدید"
+
+#: src/sshpilot/sidebar.py
+msgid "New Connection or Group"
+msgstr "اتصال یا گروه جدید"
+
+#: src/sshpilot/sidebar.py
+msgid "View Options"
+msgstr "گزینه‌های نمایش"
+
+#: src/sshpilot/sidebar.py
+msgid "Sort"
+msgstr "مرتب‌سازی"
+
+#: src/sshpilot/sidebar.py
+msgid "Filter by Tag"
+msgstr "فیلتر بر اساس برچسب"
+
+#: src/sshpilot/sidebar.py
+msgid "Show Hostnames"
+msgstr "نمایش نام‌های Host"
+
+#: src/sshpilot/window.py
+msgid "Terminal Theme…"
+msgstr "تم ترمینال…"

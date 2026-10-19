@@ -1,4 +1,4 @@
-"""The hide-hostnames toolbar button only appears when hostnames are shown."""
+"""Show Hostnames is offered only when the sidebar shows hostnames."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -8,6 +8,14 @@ import pytest
 from sshpilot.sidebar import update_hide_hosts_button_visibility
 
 
+class _Action:
+    def __init__(self):
+        self.enabled = None
+
+    def set_enabled(self, value):
+        self.enabled = value
+
+
 def _window(mode, show_hostname):
     prefs = {
         'ui.sidebar_mode': mode,
@@ -15,34 +23,37 @@ def _window(mode, show_hostname):
     }
     config = MagicMock()
     config.get_setting.side_effect = lambda key, default=None: prefs.get(key, default)
-    button = SimpleNamespace(get_parent=lambda: None)
-    return SimpleNamespace(config=config, _hide_hosts_button=button), button, prefs
+    action = _Action()
+    actions = {'show-hostnames': action}
+    return SimpleNamespace(config=config, lookup_action=actions.get), action, prefs
 
 
 @pytest.mark.parametrize(
-    'mode, show_hostname, hidden',
+    'mode, show_hostname, enabled',
     [
-        ('full', True, False),
-        ('full', False, True),
-        ('compact', True, True),
-        ('compact', False, True),
+        ('full', True, True),
+        ('full', False, False),
+        ('compact', True, False),
+        ('compact', False, False),
     ],
 )
-def test_button_is_excluded_unless_hostnames_are_shown(mode, show_hostname, hidden):
-    win, button, _prefs = _window(mode, show_hostname)
+def test_action_is_disabled_unless_hostnames_are_shown(mode, show_hostname, enabled):
+    win, action, _prefs = _window(mode, show_hostname)
     update_hide_hosts_button_visibility(win)
-    assert button._overflow_force_hidden is hidden
+    assert action.enabled is enabled
 
 
-def test_button_returns_when_hostnames_are_shown_again():
-    win, button, prefs = _window('compact', True)
+def test_action_returns_when_hostnames_are_shown_again():
+    win, action, prefs = _window('compact', True)
     update_hide_hosts_button_visibility(win)
-    assert button._overflow_force_hidden is True
+    assert action.enabled is False
 
     prefs['ui.sidebar_mode'] = 'full'
     update_hide_hosts_button_visibility(win)
-    assert button._overflow_force_hidden is False
+    assert action.enabled is True
 
 
-def test_missing_button_is_a_no_op():
-    update_hide_hosts_button_visibility(SimpleNamespace(config=MagicMock()))
+def test_missing_action_is_a_no_op():
+    update_hide_hosts_button_visibility(
+        SimpleNamespace(config=MagicMock(), lookup_action=lambda _name: None)
+    )

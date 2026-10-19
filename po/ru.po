@@ -17187,3 +17187,31 @@ msgstr[2] ""
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Закрывать фрагменты команд после отправки команды"
+
+#: src/sshpilot/sidebar.py
+msgid "New"
+msgstr "Создать"
+
+#: src/sshpilot/sidebar.py
+msgid "New Connection or Group"
+msgstr "Новое подключение или группа"
+
+#: src/sshpilot/sidebar.py
+msgid "View Options"
+msgstr "Параметры вида"
+
+#: src/sshpilot/sidebar.py
+msgid "Sort"
+msgstr "Сортировка"
+
+#: src/sshpilot/sidebar.py
+msgid "Filter by Tag"
+msgstr "Фильтровать по тегу"
+
+#: src/sshpilot/sidebar.py
+msgid "Show Hostnames"
+msgstr "Показывать имена хостов"
+
+#: src/sshpilot/window.py
+msgid "Terminal Theme…"
+msgstr "Тема терминала…"

@@ -34,7 +34,7 @@ HEADERBAR_VISIBILITY_ACTIONS = (
     ('headerbar-sidebar-toggle', N_('Sidebar Toggle Button'), 'ui.headerbar_show_sidebar_toggle', True),
     ('headerbar-split-view', N_('Split View Button'), 'ui.headerbar_show_split_view', False),
     ('headerbar-commands', N_('Command Snippets Button'), 'ui.headerbar_show_commands', True),
-    ('headerbar-terminal-theme', N_('Terminal Theme Button'), 'ui.headerbar_show_terminal_theme', True),
+    ('headerbar-terminal-theme', N_('Terminal Theme Button'), 'ui.headerbar_show_terminal_theme', False),
     ('headerbar-theme-menu', N_('Theme Menu'), 'ui.headerbar_show_theme_toggle', False),
     ('headerbar-local-terminal', N_('Local Terminal Button'), 'ui.headerbar_show_local_terminal', True),
 )
@@ -1587,6 +1587,13 @@ def register_window_actions(window):
     window.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)
     window.broadcast_command_action.connect('activate', window.on_broadcast_command_action)
     window.add_action(window.broadcast_command_action)
+
+    # Terminal color-scheme chooser, reachable from the main menu even while
+    # the header-bar button is hidden.
+    if hasattr(window, '_on_terminal_theme_action'):
+        window.terminal_theme_action = Gio.SimpleAction.new('terminal-theme', None)
+        window.terminal_theme_action.connect('activate', window._on_terminal_theme_action)
+        window.add_action(window.terminal_theme_action)
 
     # Action for editing known hosts
     if hasattr(window, 'on_edit_known_hosts_action'):

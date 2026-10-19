@@ -17136,3 +17136,31 @@ msgstr[1] ""
 
 #~ msgid "Close Command Snippets after sending a command"
 #~ msgstr "Fechar trechos de comandos após enviar um comando"
+
+#: src/sshpilot/sidebar.py
+msgid "New"
+msgstr "Novo"
+
+#: src/sshpilot/sidebar.py
+msgid "New Connection or Group"
+msgstr "Nova ligação ou grupo"
+
+#: src/sshpilot/sidebar.py
+msgid "View Options"
+msgstr "Opções de visualização"
+
+#: src/sshpilot/sidebar.py
+msgid "Sort"
+msgstr "Ordenar"
+
+#: src/sshpilot/sidebar.py
+msgid "Filter by Tag"
+msgstr "Filtrar por etiqueta"
+
+#: src/sshpilot/sidebar.py
+msgid "Show Hostnames"
+msgstr "Mostrar nomes de anfitrião"
+
+#: src/sshpilot/window.py
+msgid "Terminal Theme…"
+msgstr "Tema do terminal…"

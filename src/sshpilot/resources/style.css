@@ -243,3 +243,8 @@ button.layout-card:checked {
     font-size: 7px;
     font-weight: bold;
 }
+
+/* Sidebar header and content titlebar share one 46px row. */
+headerbar.sidebar-title-row {
+    min-height: 46px;
+}

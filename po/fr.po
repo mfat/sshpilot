@@ -16791,3 +16791,31 @@ msgstr[1] ""
 
 #~ msgid "Sidebar behavior"
 #~ msgstr "Comportement de la barre latérale"
+
+#: src/sshpilot/sidebar.py
+msgid "New"
+msgstr "Nouveau"
+
+#: src/sshpilot/sidebar.py
+msgid "New Connection or Group"
+msgstr "Nouvelle connexion ou nouveau groupe"
+
+#: src/sshpilot/sidebar.py
+msgid "View Options"
+msgstr "Options d’affichage"
+
+#: src/sshpilot/sidebar.py
+msgid "Sort"
+msgstr "Trier"
+
+#: src/sshpilot/sidebar.py
+msgid "Filter by Tag"
+msgstr "Filtrer par étiquette"
+
+#: src/sshpilot/sidebar.py
+msgid "Show Hostnames"
+msgstr "Afficher les noms d’hôte"
+
+#: src/sshpilot/window.py
+msgid "Terminal Theme…"
+msgstr "Jeu de couleurs du terminal…"
