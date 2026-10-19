@@ -174,20 +174,22 @@ _FULL_PROBE_SCRIPT = (
     'echo "===NETSTAT_AN==="; [ "$os" = Linux ] || netstat -an -p tcp 2>/dev/null;'
     'echo "===WHO==="; who 2>/dev/null;'
     'echo "===W==="; w -h 2>/dev/null;'
-    # Ranked by CPU share.  BusyBox ps has neither -o nor --sort, so OpenWrt
-    # leaves PROCESSES empty and the parser reads TOP instead -- the same
-    # two-section fallback WHO and W use.  BSD ps sorts with -r and spells
+    # Ranked by CPU share and cut at the top 50: past that nearly every row
+    # reads 0.0, and the dialog lists them without virtualisation (top's
+    # limit allows for its few header lines).  BusyBox ps has neither -o nor
+    # --sort, so OpenWrt leaves PROCESSES empty and the parser reads TOP
+    # instead -- the same two-section fallback WHO and W use.  BSD ps sorts with -r and spells
     # "every process" -ax, since -e there prints the environment.
     'echo "===PROCESSES==="; if [ "$os" = Linux ];'
-    ' then ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -n 11;'
-    ' else ps -ax -r -o pcpu,pmem,comm 2>/dev/null | head -n 11; fi;'
+    ' then ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -n 51;'
+    ' else ps -ax -r -o pcpu,pmem,comm 2>/dev/null | head -n 51; fi;'
     # head swallows the exit status of the pipeline above, so the same
     # invocation decides whether top is needed at all.  Repeating it costs a
     # few milliseconds; running top where ps already answered costs half a
     # second on every gather.
     'echo "===TOP==="; [ "$os" = Linux ] &&'
     ' { ps -eo pcpu,pmem,comm --sort=-pcpu >/dev/null 2>&1'
-    ' || top -bn1 2>/dev/null | head -n 16; };'
+    ' || top -bn1 2>/dev/null | head -n 54; };'
     # One state letter and one thread count per process.  procps prints both;
     # a ps without -o leaves the section empty and the counts fall back to
     # procs_running/procs_blocked from STAT, which every Linux publishes.

@@ -79,7 +79,7 @@ _MAX_CORE_BARS = 64
 #: fold away behind a "Show N more" button.
 _SOCKETS_SHOWN = 8
 
-#: Top processes listed before the rest of the probe's ten fold away.
+#: Top processes listed before the rest of the probe's fifty fold away.
 _PROCESSES_SHOWN = 5
 
 #: Usage fractions at or above these read as worth watching, elevated and
