@@ -45,6 +45,8 @@
 
 ## Download
 
+The Windows installer on the Releases page is covered by our [code signing policy](#code-signing-policy).
+
 You can download directly from the [Releases](https://github.com/mfat/sshpilot/releases/) section, but we recommend adding one of the repositories below for automatic updates:
 
 ### <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Ubuntu PPA
@@ -221,6 +223,17 @@ https://t.me/sshpilot
 SSH Pilot uses the following third-party libraries:
 
 - **[xterm.js](https://github.com/xtermjs/xterm.js)** - The terminal emulator behind the xterm.js terminal backend, with its fit, search and web-links add-ons (MIT License)
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+The Windows installer attached to each release is built by GitHub Actions from this repository and signed through SignPath after an approver approves the release.
+
+- Committers and reviewers: [Mehdi (@mfat)](https://github.com/mfat)
+- Approvers: [Mehdi (@mfat)](https://github.com/mfat)
+
+Privacy: SSH Pilot checks GitHub for new versions when it starts; GitHub sees your IP address. You can turn this off in the Windows installer or in Preferences. Nothing else is sent unless you ask for it. See the [privacy policy](https://sshpilot.app/privacy.html) and the full [code signing policy](https://sshpilot.app/code-signing.html).
 
 ## License
 

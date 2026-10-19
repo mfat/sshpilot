@@ -20,7 +20,7 @@ from . import icon_utils
 
 logger = logging.getLogger(__name__)
 
-# A flat variant of the app icon (no raised base; same art as the macOS icon,
+# The app icon art (same as the macOS icon,
 # packaging/macos/sshpilot.svg), bundled rather than looked
 # up in the icon theme so it also renders from a source checkout where hicolor
 # has nothing installed.
@@ -35,7 +35,7 @@ def _ensure_css():
 
 
 class WelcomePage(Gtk.Overlay):
-    """Start page shown in the pinned Start tab."""
+    """Start page shown in the Start tab while no other tab is open."""
 
     def __init__(self, window) -> None:
         super().__init__()

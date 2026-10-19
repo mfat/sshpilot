@@ -42,17 +42,35 @@ class _Conn:
         self.nickname = nickname
 
 
+class _FakeStore:
+    """Connection store double: tags live in per-connection metadata."""
+
+    def __init__(self, tags_by_nickname):
+        self._tags = tags_by_nickname
+
+    def get_connections(self):
+        return [_Conn(n) for n in self._tags]
+
+    def get_metadata(self, nickname):
+        tags = self._tags[nickname]
+        return {} if tags is None else {"tags": tags}
+
+
 class TestTagCandidates:
-    def test_none_config_returns_empty(self):
+    def test_no_store_returns_empty(self):
         d = _dialog()
-        d.parent_window = type("P", (), {"config": None})()
+        d.parent_window = type("P", (), {"connection_manager": None})()
         assert d._tag_candidates() == []
 
-    def test_returns_tag_names_dropping_counts(self):
+    def test_reads_tags_from_the_connection_store_not_config(self):
+        # Regression for #1336: config's connections_meta is empty now that
+        # tags live in the store, so the picker silently did nothing.
         d = _dialog()
-        cfg = type("C", (), {"get_all_tags": lambda self: [("work", 3), ("home", 1)]})()
-        d.parent_window = type("P", (), {"config": cfg})()
-        assert d._tag_candidates() == ["work", "home"]
+        store = _FakeStore({"a": ["work", "Home"], "b": ["home"], "c": None})
+        cfg = type("C", (), {"get_all_tags": lambda self: []})()
+        d.parent_window = type("P", (), {"connection_manager": store, "config": cfg})()
+        assert d._known_tags() == [("Home", 2), ("work", 1)]
+        assert d._tag_candidates() == ["Home", "work"]
 
 
 class TestJumpHostCandidates:

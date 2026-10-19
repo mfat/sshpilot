@@ -14,6 +14,7 @@ from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Ad
 from .i18n import gettext as _, ngettext
 
 from .dnd_payload import (
+    accept_only_in_app_drops,
     content_provider_for_payload,
     decode_dnd_payload,
     new_internal_drop_target,
@@ -42,6 +43,7 @@ from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .accent_override_css import NAVIGATION_SIDEBAR_SELECTION_CSS
 from .shortcut_utils import get_primary_modifier_label
+from .connection_sort import CONNECTION_SORT_MENU, CONNECTION_SORT_PRESETS
 from .tag_groups import compute_tag_groups, effective_tags
 
 # Feature detection for libadwaita versions across distros
@@ -1423,7 +1425,11 @@ class GroupRow(Gtk.ListBoxRow):
     def _on_drag_begin(self, source, drag):
         # macOS string payloads render as drag text unless we set an icon.
         set_internal_drag_icon(
-            source, self, drag=drag, icon_name="folder-symbolic"
+            source,
+            self,
+            drag=drag,
+            icon_name="folder-symbolic",
+            label=str(self.group_info.get("name") or ""),
         )
         try:
             window = self.get_root()
@@ -2391,7 +2397,11 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_drag_begin(self, source, drag):
         # macOS string payloads render as drag text unless we set an icon.
         set_internal_drag_icon(
-            source, self, drag=drag, icon_name="computer-symbolic"
+            source,
+            self,
+            drag=drag,
+            icon_name="computer-symbolic",
+            label=self._drag_label(),
         )
         try:
             window = self.get_root()
@@ -2404,6 +2414,20 @@ class ConnectionRow(Gtk.ListBoxRow):
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
+
+    def _drag_label(self) -> str:
+        """Name of the dragged host, or a count when a multi-selection rides along."""
+        window = self.get_root()
+        # "prepare" has already recorded the dragged set on the window.
+        dragged = getattr(window, "_dragged_connections", None) or []
+        if len(dragged) > 1:
+            return ngettext(
+                "{count} connection", "{count} connections", len(dragged)
+            ).format(count=len(dragged))
+        return (
+            getattr(self.connection, "display_name", None)
+            or self.connection.nickname
+        )
 
     def _on_drag_end(self, source, drag, delete_data):
         try:
@@ -2853,7 +2877,11 @@ class LocalTerminalRow(Gtk.ListBoxRow):
 
     def _on_drag_begin(self, source, drag):
         set_internal_drag_icon(
-            source, self, drag=drag, icon_name="utilities-terminal-symbolic"
+            source,
+            self,
+            drag=drag,
+            icon_name="utilities-terminal-symbolic",
+            label=self.nickname_label.get_text(),
         )
         try:
             window = self.get_root()
@@ -2926,6 +2954,9 @@ def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
 
     drop_target = new_internal_drop_target()
+    # Only sidebar drags can land here; a file dragged in from another app
+    # would otherwise open the reorder gap (#1334).
+    accept_only_in_app_drops(drop_target)
     drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
     drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
     drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
@@ -2942,6 +2973,7 @@ def setup_connection_list_dnd(window):
     window._ungrouped_area_visible = False
     window._connection_autoscroll_timeout_id = 0
     window._connection_autoscroll_velocity = 0.0
+    window._connection_list_leave_idle_id = 0
     if not hasattr(window, "_connection_autoscroll_margin"):
         window._connection_autoscroll_margin = 48.0
     if not hasattr(window, "_connection_autoscroll_max_velocity"):
@@ -2951,6 +2983,8 @@ def setup_connection_list_dnd(window):
 
 
 def _on_connection_list_motion(window, target, x, y):
+    # Back over the list before a deferred leave ran: keep the feedback.
+    _cancel_connection_list_leave(window)
     try:
         # Prevent row selection during drag by temporarily disabling selection
         if not hasattr(window, '_drag_in_progress'):
@@ -3107,16 +3141,35 @@ def _on_connection_list_motion(window, target, x, y):
 
 
 def _on_connection_list_leave(window, target):
+    # GTK emits "leave" in the middle of its drop-crossing walk, and the
+    # pointer may still rest on the placeholder's bar. Unparenting that row
+    # now leaves GTK walking a detached widget up to NULL and segfaulting
+    # (#1334), so take the rows out once the crossing has finished.
+    _stop_connection_autoscroll(window)
+    if not getattr(window, "_connection_list_leave_idle_id", 0):
+        window._connection_list_leave_idle_id = GLib.idle_add(
+            _finish_connection_list_leave, window
+        )
+    return True
+
+
+def _cancel_connection_list_leave(window):
+    source_id = getattr(window, "_connection_list_leave_idle_id", 0)
+    if source_id:
+        GLib.source_remove(source_id)
+        window._connection_list_leave_idle_id = 0
+
+
+def _finish_connection_list_leave(window):
+    window._connection_list_leave_idle_id = 0
     _clear_drop_indicator(window)
     _hide_ungrouped_area(window)
-    _stop_connection_autoscroll(window)
 
     # Restore selection mode after drag
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
         window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-    
-    return True
+    return GLib.SOURCE_REMOVE
 
 
 def _show_drop_indicator(window, row, position):
@@ -4611,13 +4664,14 @@ def _horizontal_clip(child: Gtk.Widget) -> Gtk.ScrolledWindow:
 
 
 def update_hide_hosts_button_visibility(window) -> None:
-    """Offer the hide-hostnames toggle only while rows show user@hostname.
+    """Offer Show Hostnames only while rows show user@hostname.
 
     Compact mode never shows the subtitle, so the toggle would do nothing
-    visible in the sidebar there either.
+    visible in the sidebar there either. The View Options menu item hides
+    itself while the action is disabled (``hidden-when=action-disabled``).
     """
-    button = getattr(window, '_hide_hosts_button', None)
-    if button is None:
+    action = window.lookup_action('show-hostnames') if hasattr(window, 'lookup_action') else None
+    if action is None:
         return
     config = getattr(window, 'config', None)
     relevant = False
@@ -4629,59 +4683,27 @@ def update_hide_hosts_button_visibility(window) -> None:
         )
     except Exception:
         logger.debug("Failed to read hostname display settings", exc_info=True)
-    from sshpilot.overflow_toolbar import mark_force_hidden
-    # The overflow toolbar owns item visibility; exclude the button from
-    # packing rather than toggling it directly.
-    mark_force_hidden(button, not relevant)
+    action.set_enabled(relevant)
 
 
 def _build_sidebar_header(window, sidebar_box):
-    """Build the sidebar action header (add/search/filter/sort/…)."""
-    from sshpilot.overflow_toolbar import OverflowToolbar
+    """Build the sidebar header-bar widgets (+ menu, search, view options).
 
-    # Gaps shrink toward zero before any action moves into the "…" menu;
-    # visible icons share the row width equally (homogeneous).
-    header = OverflowToolbar(
-        spacing=6,
-        min_spacing=0,
-        fill_width=True,
-        primary_count=1,
-        accessible_name=_('Connection list actions'),
-    )
-    header.set_margin_start(12)
-    header.set_margin_end(12)
-    header.set_margin_top(12)
-    header.set_margin_bottom(6)
-    window._sidebar_header_toolbar = header
-    window._sidebar_header_box = header
-
+    ``_assemble_sidebar_shell`` packs them into the sidebar's Adw.HeaderBar,
+    so the title row carries the actions instead of a second button strip.
+    """
     from sshpilot import icon_utils
-    add_button = icon_utils.new_button_from_icon_name('list-add-symbolic')
-    add_button.add_css_class('flat')
-    label_icon_button(
-        add_button,
-        _('New Connection'),
-        tooltip=_('New Connection ({shortcut}+Shift+N)').format(
-            shortcut=get_primary_modifier_label()),
-    )
-    add_button.connect('clicked', window.on_add_connection_clicked)
-    try:
-        add_button.set_can_focus(False)
-    except Exception:
-        pass
-    header.add_item(add_button)
-    window._sidebar_add_button = add_button
 
-    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
-    new_group_button.add_css_class('flat')
-    label_icon_button(new_group_button, _('New Group'))
-    new_group_button.set_action_name('win.create-group')
-    try:
-        new_group_button.set_can_focus(False)
-    except Exception:
-        pass
-    header.add_item(new_group_button)
-    window._sidebar_new_group_button = new_group_button
+    add_menu = Gio.Menu()
+    add_menu.append(_('New Connection'), 'app.new-connection')
+    add_menu.append(_('New Group'), 'win.create-group')
+    add_button = Gtk.MenuButton()
+    add_button.add_css_class('flat')
+    add_button.set_can_focus(False)
+    add_button.set_icon_name('list-add-symbolic')
+    add_button.set_menu_model(add_menu)
+    label_icon_button(add_button, _('New'), tooltip=_('New Connection or Group'))
+    window._sidebar_add_button = add_button
 
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
     window.search_button.add_css_class('flat')
@@ -4696,24 +4718,11 @@ def _build_sidebar_header(window, sidebar_box):
         window.search_button.set_can_focus(False)
     except Exception:
         pass
-    header.add_item(window.search_button)
 
-    def _update_eye_icon(btn):
-        try:
-            icon = 'view-conceal-symbolic' if window._hide_hosts else 'view-reveal-symbolic'
-            icon_utils.set_button_icon(btn, icon)
-            action = _('Show hostnames') if window._hide_hosts else _('Hide hostnames')
-            label_icon_button(
-                btn,
-                action,
-                tooltip=action,
-                description=(
-                    _('Hostnames are hidden') if window._hide_hosts
-                    else _('Hostnames are shown')
-                ),
-            )
-        except Exception:
-            pass
+    def _sync_show_hostnames_state():
+        action = window.lookup_action('show-hostnames')
+        if action is not None:
+            action.set_state(GLib.Variant('b', not window._hide_hosts))
 
     def _toggle_hide_hosts(*_args):
         try:
@@ -4732,34 +4741,24 @@ def _build_sidebar_header(window, sidebar_box):
                     welcome_view.apply_hide_hosts(window._hide_hosts)
                 except Exception:
                     logger.debug("Failed to update Start page hostnames", exc_info=True)
-            hide_btn = getattr(window, '_hide_hosts_button', None)
-            if hide_btn is not None:
-                _update_eye_icon(hide_btn)
+            _sync_show_hostnames_state()
         except Exception:
             pass
 
     window._toggle_hide_hosts = _toggle_hide_hosts
+    # Kept as a stateless alias for keyboard shortcuts; the menu uses the
+    # stateful show-hostnames action so it can carry a check mark.
     if window.lookup_action('toggle-hide-hosts') is None:
         hide_action = Gio.SimpleAction.new('toggle-hide-hosts', None)
         hide_action.connect('activate', _toggle_hide_hosts)
         window.add_action(hide_action)
-
-    hide_button = icon_utils.new_button_from_icon_name('view-reveal-symbolic')
-    hide_button.add_css_class('flat')
-    _update_eye_icon(hide_button)
-    hide_button.connect('clicked', _toggle_hide_hosts)
-    try:
-        hide_button.set_can_focus(False)
-    except Exception:
-        pass
-    window._hide_hosts_button = hide_button
-    header.add_item(hide_button)
-    update_hide_hosts_button_visibility(window)
-
-    tag_button = Gtk.MenuButton()
-    tag_button.add_css_class('flat')
-    tag_button.set_icon_name('tag-symbolic')
-    label_icon_button(tag_button, _('Filter by tag'))
+    if window.lookup_action('show-hostnames') is None:
+        show_action = Gio.SimpleAction.new_stateful(
+            'show-hostnames', None,
+            GLib.Variant('b', not bool(getattr(window, '_hide_hosts', False))),
+        )
+        show_action.connect('activate', _toggle_hide_hosts)
+        window.add_action(show_action)
 
     if window.lookup_action('filter-tag') is None:
         filter_action = Gio.SimpleAction.new_stateful(
@@ -4777,14 +4776,28 @@ def _build_sidebar_header(window, sidebar_box):
         filter_action.connect('activate', _on_filter_tag)
         window.add_action(filter_action)
 
-    def _build_tag_menu(btn):
+    # View options: sort + tag filter + show hostnames.
+    view_button = window._build_sort_button()
+
+    def _build_view_menu(btn):
         try:
             menu = Gio.Menu()
+
+            sort_section = Gio.Menu()
+            for preset_id in CONNECTION_SORT_MENU:
+                item = Gio.MenuItem.new(CONNECTION_SORT_PRESETS[preset_id].title, None)
+                item.set_action_and_target_value(
+                    'win.sort-connections', GLib.Variant('s', preset_id)
+                )
+                sort_section.append_item(item)
+            menu.append_section(_('Sort'), sort_section)
+
+            tag_section = Gio.Menu()
             all_item = Gio.MenuItem.new(_('All Connections'), None)
             all_item.set_action_and_target_value(
                 'win.filter-tag', GLib.Variant('s', '')
             )
-            menu.append_item(all_item)
+            tag_section.append_item(all_item)
 
             tag_map = {}
             for conn in window.connection_manager.get_connections():
@@ -4795,7 +4808,6 @@ def _build_sidebar_header(window, sidebar_box):
                     )
                 except Exception:
                     pass
-            tags_section = Gio.Menu()
             for display_tag, nicknames in compute_tag_groups(tag_map):
                 item = Gio.MenuItem.new(
                     f'{display_tag} ({len(nicknames)})', None
@@ -4803,24 +4815,32 @@ def _build_sidebar_header(window, sidebar_box):
                 item.set_action_and_target_value(
                     'win.filter-tag', GLib.Variant('s', display_tag.casefold())
                 )
-                tags_section.append_item(item)
-            menu.append_section(None, tags_section)
+                tag_section.append_item(item)
+            menu.append_section(_('Filter by Tag'), tag_section)
+
+            # Masks the user@hostname line; offered only while rows show it.
+            # Skip the section when disabled, or its heading stays behind.
+            hosts_action = window.lookup_action('show-hostnames')
+            if hosts_action is None or hosts_action.get_enabled():
+                privacy_section = Gio.Menu()
+                # A plain action, so the label says what a click does
+                # instead of carrying a check mark.
+                label = (
+                    _('Show user@hostname')
+                    if getattr(window, '_hide_hosts', False)
+                    else _('Hide user@hostname')
+                )
+                privacy_section.append_item(
+                    Gio.MenuItem.new(label, 'win.toggle-hide-hosts')
+                )
+                menu.append_section(_('Privacy'), privacy_section)
+
             btn.set_menu_model(menu)
         except Exception:
-            logger.error("Failed to build tag filter menu", exc_info=True)
+            logger.error("Failed to build view options menu", exc_info=True)
 
-    tag_button.set_create_popup_func(_build_tag_menu)
-    try:
-        tag_button.set_can_focus(False)
-    except Exception:
-        pass
-    header.add_item(tag_button)
-
-    sort_button = window._build_sort_button()
-    header.add_item(sort_button)
-
-    preferences_button = window._build_preferences_button()
-    header.add_item(preferences_button)
+    view_button.set_create_popup_func(_build_view_menu)
+    window._sidebar_view_button = view_button
 
     # Main app menu (packed on the content header bar in setup_content_area).
     window.menu_button = Gtk.MenuButton()
@@ -4837,12 +4857,10 @@ def _build_sidebar_header(window, sidebar_box):
 
     window.menu_button.set_create_popup_func(_build_main_menu)
 
-    header_handle = Gtk.WindowHandle()
-    header_handle.set_hexpand(True)
-    header_handle.set_child(header)
-    window._sidebar_header_handle = header_handle
-    window._sidebar_header_clip = _horizontal_clip(header_handle)
-    sidebar_box.append(window._sidebar_header_clip)
+    window._sidebar_header_start = [add_button]
+    # pack_end order: the first item sits at the far end.
+    window._sidebar_header_end = [view_button, window.search_button]
+    update_hide_hosts_button_visibility(window)
 
 
 def _build_sidebar_search(window, sidebar_box):
@@ -5563,21 +5581,81 @@ def _build_sidebar_toolbar(window, sidebar_box):
     sidebar_box.append(window._sidebar_toolbar_clip)
 
 
+def _build_sidebar_popup_header(window, sidebar_box):
+    """Strip at the top of the sidebar content that carries the header-bar
+    actions while the content floats in the hover/search popup (the sidebar
+    header bar stays behind). Hidden while docked."""
+    strip = Gtk.CenterBox()
+    strip.add_css_class('sidebar-popup-header')
+    strip.set_margin_start(6)
+    strip.set_margin_end(6)
+    strip.set_margin_top(6)
+    strip.set_margin_bottom(6)
+    start_box = Gtk.Box(spacing=6)
+    end_box = Gtk.Box(spacing=6)
+    strip.set_start_widget(start_box)
+    strip.set_end_widget(end_box)
+    strip.set_visible(False)
+    window._sidebar_popup_header = strip
+    window._sidebar_popup_header_start = start_box
+    window._sidebar_popup_header_end = end_box
+    sidebar_box.prepend(strip)
+
+
+def set_sidebar_header_actions_floating(window, floating: bool) -> None:
+    """Move the sidebar header-bar actions into the popup strip (floating) or
+    back into the sidebar header bar."""
+    header = getattr(window, 'sidebar_header_bar', None)
+    strip = getattr(window, '_sidebar_popup_header', None)
+    if header is None or strip is None:
+        return
+    start = list(getattr(window, '_sidebar_header_start', []))
+    end = list(getattr(window, '_sidebar_header_end', []))
+    start_box = window._sidebar_popup_header_start
+    end_box = window._sidebar_popup_header_end
+    if floating == strip.get_visible():
+        return
+    for widget in start + end:
+        parent = widget.get_parent()
+        if parent is None:
+            continue
+        if floating:
+            header.remove(widget)
+        else:
+            parent.remove(widget)
+    if floating:
+        for widget in start:
+            start_box.append(widget)
+        # pack_end order puts the first item at the far end.
+        for widget in reversed(end):
+            end_box.append(widget)
+    else:
+        for widget in start:
+            header.pack_start(widget)
+        for widget in end:
+            header.pack_end(widget)
+    strip.set_visible(floating)
+
+
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
-    # Sidebar header: the title only. Window controls live in the content
-    # title bar — a copy here would floor the header (and the sidebar) much
-    # wider than the connection list needs.
+    # Sidebar header: the title plus the connection-list actions. Window
+    # controls live in the content title bar — a copy here would floor the
+    # header (and the sidebar) much wider than the connection list needs.
     window.sidebar_header_bar = Adw.HeaderBar()
     window.sidebar_header_bar.add_css_class('flat')
+    window.sidebar_header_bar.add_css_class('sidebar-title-row')
     window.sidebar_header_bar.set_show_start_title_buttons(False)
     window.sidebar_header_bar.set_show_end_title_buttons(False)
 
     sidebar_title_label = Gtk.Label(label='SSH Pilot')
     sidebar_title_label.add_css_class('title')
-    sidebar_title_label.set_xalign(0.0)
     window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
+    for widget in getattr(window, '_sidebar_header_start', []):
+        window.sidebar_header_bar.pack_start(widget)
+    for widget in getattr(window, '_sidebar_header_end', []):
+        window.sidebar_header_bar.pack_end(widget)
 
     sidebar_toolbar_view = Adw.ToolbarView()
     # Same tone AdwOverlaySplitView / AdwNavigationSplitView apply via their
@@ -5611,6 +5689,7 @@ def build_sidebar(window):
     sidebar_box.append(window.connection_scrolled)
 
     _build_sidebar_toolbar(window, sidebar_box)
+    _build_sidebar_popup_header(window, sidebar_box)
     _assemble_sidebar_shell(window, sidebar_box)
 
 

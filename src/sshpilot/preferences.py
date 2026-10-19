@@ -2047,11 +2047,13 @@ class PreferencesWindow(Adw.Window):
             _("Command Snippets Button"),
             _("Show the command snippets toggle button"),
             'ui.headerbar_show_commands',
+            default=False,
         )
         _add_headerbar_switch(
             _("Terminal Theme Button"),
             _("Show the color-scheme button on terminal tabs"),
             'ui.headerbar_show_terminal_theme',
+            default=False,
         )
         _add_headerbar_switch(
             _("Theme Menu"),
@@ -7217,6 +7219,8 @@ class PreferencesWindow(Adw.Window):
         check_on_startup = switch.get_active()
         logger.info(f"Check for updates on startup changed to: {check_on_startup}")
         self.config.set_setting('updates.check_on_startup', check_on_startup)
+        from .installer_update_choice import mirror_choice
+        mirror_choice(check_on_startup)
 
     def on_startup_behavior_changed(self, radio_button, *args):
         """Handle startup behavior radio button change"""

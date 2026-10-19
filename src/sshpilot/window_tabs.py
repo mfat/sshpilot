@@ -334,7 +334,7 @@ class WindowTabsMixin:
         """Expose or hide the tab menu model before AdwTabBox builds the menu.
 
         Runs in the capture phase, ahead of AdwTabBox's own right-click handler.
-        The pinned Start tab gets a NULL model (no menu); every other tab gets
+        The Start tab gets a NULL model (no menu); every other tab gets
         the full model. Pinned AdwTab widgets carry the "pinned" CSS class.
         """
         # Remember where the menu was opened so "Rename Tab…" can anchor its
@@ -1195,7 +1195,8 @@ class WindowTabsMixin:
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         if self._is_start_tab_page(page):
-            return True
+            # Only _remove_start_tab may close it; the user cannot.
+            return not getattr(self, '_closing_start_tab', False)
 
         # If we are closing pages programmatically (e.g., after deleting a
         # connection), suppress the confirmation dialog and allow the default
@@ -1368,7 +1369,7 @@ class WindowTabsMixin:
 
         # Sidebar behavior: a session (SSH or local) just opened. Hide after a
         # short delay so the terminal settles, then the sidebar slides away.
-        # The pinned Start page attaches at startup too — it is not a session,
+        # The Start page attaches at startup too — it is not a session,
         # so it must not trigger hide. Detect it by child type: at
         # attach time `_start_tab_page` isn't assigned yet (prepend() emits
         # page-attached synchronously before the return value is stored), so an
@@ -1379,6 +1380,9 @@ class WindowTabsMixin:
             is_start = self._is_start_tab_page(page) or isinstance(start_child, WelcomePage)
         except Exception:
             is_start = self._is_start_tab_page(page)
+        if not is_start:
+            # The Start tab is shown only while no other tab is open.
+            self._remove_start_tab()
         try:
             action = self._sidebar_on_terminal_open() if not is_start else 'none'
             if action == 'hide':
@@ -1616,11 +1620,18 @@ class WindowTabsMixin:
         if button is None:
             return
 
+        try:
+            allowed = bool(
+                self.config.get_setting('ui.headerbar_show_commands', False)
+            )
+        except Exception:
+            allowed = False
+
         visible = False
         try:
             page = self.tab_view.get_selected_page()
             child = page.get_child() if page is not None else None
-            if page is None or self._is_start_tab_page(page):
+            if not allowed or page is None or self._is_start_tab_page(page):
                 visible = False
             elif _is_terminal_widget(child):
                 visible = bool(child.get_visible())
@@ -1647,10 +1658,10 @@ class WindowTabsMixin:
 
         try:
             allowed = bool(
-                self.config.get_setting('ui.headerbar_show_terminal_theme', True)
+                self.config.get_setting('ui.headerbar_show_terminal_theme', False)
             )
         except Exception:
-            allowed = True
+            allowed = False
 
         visible = False
         try:
@@ -1676,12 +1687,16 @@ class WindowTabsMixin:
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
+        if self._is_start_tab_page(page):
+            # Removed because a user tab opened; nothing to tear down.
+            self._update_tab_button_visibility()
+            return
         self._update_command_snippets_button_visibility()
         # Skip dict cleanup when a terminal is being moved into a split pane
         # (the terminal stays live; its tracking entries remain valid).
         if getattr(self, '_moving_tab_to_pane', False):
             self._update_tab_button_visibility()
-            if tab_view.get_n_pages() <= 1:
+            if not self.has_user_tabs():
                 self.show_start_tab()
             return
 

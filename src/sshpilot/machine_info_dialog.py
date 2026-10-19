@@ -75,6 +75,13 @@ _HISTORY_LENGTH = 60
 #: more cores than this is a machine nobody reads core-by-core.
 _MAX_CORE_BARS = 64
 
+#: How many established sockets each Traffic column lists before the rest
+#: fold away behind a "Show N more" button.
+_SOCKETS_SHOWN = 8
+
+#: Top processes listed before the rest of the probe's fifty fold away.
+_PROCESSES_SHOWN = 5
+
 #: Usage fractions at or above these read as worth watching, elevated and
 #: critical.  These are Glances' defaults, which are a well-worn scale.
 _CAREFUL_FRACTION = 0.50
@@ -356,6 +363,27 @@ def _card() -> Gtk.Box:
     return box
 
 
+def _more_toggle(hidden: int, set_expanded: Callable[[bool], None]) -> Gtk.Button:
+    """A "Show N more" / "Show fewer" button for a list cut short."""
+
+    collapsed = ngettext("Show %d more", "Show %d more", hidden) % hidden
+    button = Gtk.Button(label=collapsed)
+    button.add_css_class("flat")
+    button.add_css_class("caption")
+    button.set_margin_top(4)
+    button.set_margin_bottom(4)
+    expanded = False
+
+    def toggle(_button: Gtk.Button) -> None:
+        nonlocal expanded
+        expanded = not expanded
+        set_expanded(expanded)
+        button.set_label(_("Show fewer") if expanded else collapsed)
+
+    button.connect("clicked", toggle)
+    return button
+
+
 def _tile_flow(*, max_per_line: int = 3) -> Gtk.FlowBox:
     """Equal-width cards that wrap from N columns down to 1 as space shrinks."""
 
@@ -495,7 +523,13 @@ class _Table:
             self._grid.attach(label, column, 0, 1, 1)
         self._row = 1
 
-    def add_row(self, cells: Sequence[Gtk.Widget]) -> None:
+    def add_row(self, cells: Sequence[Gtk.Widget]) -> List[Gtk.Widget]:
+        """Attach a row and return its widgets, separator included.
+
+        A grid row with every child hidden takes no space, so callers fold a
+        row away by toggling the visibility of what this returns.
+        """
+
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.set_margin_top(6)
         separator.set_margin_bottom(6)
@@ -520,6 +554,7 @@ class _Table:
             cell.set_hexpand(expand)
             self._grid.attach(cell, column, self._row, 1, 1)
         self._row += 1
+        return [separator, *cells]
 
     def add_empty(self, text: str) -> None:
         label = Gtk.Label(label=text)
@@ -1797,8 +1832,9 @@ class MachineInfoDialog:
                 (_("Memory"), 1.0, False),
             )
         )
-        processes = self._snapshot.processes[:5]
-        for process in processes:
+        processes = self._snapshot.processes
+        folded: List[Gtk.Widget] = []
+        for index, process in enumerate(processes):
             command = _value_label(process.command, mono=True)
             command.add_css_class("caption")
             cpu = _value_label(_format_reported_percent(process.cpu_percent), mono=True)
@@ -1808,9 +1844,21 @@ class MachineInfoDialog:
             )
             memory.add_css_class("caption")
             memory.set_opacity(0.75)
-            table.add_row([command, cpu, memory])
+            row = table.add_row([command, cpu, memory])
+            if index >= _PROCESSES_SHOWN:
+                folded.extend(row)
         if not processes:
             table.add_empty(_("No process list reported"))
+        hidden = len(processes) - _PROCESSES_SHOWN
+        if hidden > 0:
+
+            def show_folded(expanded: bool) -> None:
+                for widget in folded:
+                    widget.set_visible(expanded)
+
+            show_folded(False)
+            table.widget.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            table.widget.append(_more_toggle(hidden, show_folded))
         section.append(table.widget)
         return section
 
@@ -2191,8 +2239,13 @@ class MachineInfoDialog:
             column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             column.append(_section_label(title))
             card = _card()
-            shown = sockets[:8]
-            for index, socket in enumerate(shown):
+            # The first rows are always on show; the rest wait behind a
+            # button so a busy host does not push the page off-screen.
+            extra = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            for index, socket in enumerate(sockets):
+                target = card if index < _SOCKETS_SHOWN else extra
+                if index:
+                    target.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
                 row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
                 row.set_margin_start(16)
                 row.set_margin_end(16)
@@ -2229,19 +2282,16 @@ class MachineInfoDialog:
                 process.set_opacity(0.55)
                 row.append(process)
 
-                card.append(row)
-                if index < len(shown) - 1:
-                    card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-            hidden = len(sockets) - len(shown)
-            if hidden:
+                target.append(row)
+            hidden = len(sockets) - _SOCKETS_SHOWN
+            if hidden > 0:
+                revealer = Gtk.Revealer()
+                revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+                revealer.set_child(extra)
+                card.append(revealer)
                 card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-                more = Gtk.Label(label=ngettext("%d more", "%d more", hidden) % hidden)
-                more.add_css_class("caption")
-                more.set_opacity(0.55)
-                more.set_margin_top(11)
-                more.set_margin_bottom(11)
-                card.append(more)
-            if not shown:
+                card.append(_more_toggle(hidden, revealer.set_reveal_child))
+            if not sockets:
                 empty = Gtk.Label(label=_("None"))
                 empty.add_css_class("dim-label")
                 empty.set_margin_top(12)

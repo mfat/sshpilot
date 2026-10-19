@@ -20,6 +20,9 @@ class ImagesTabMixin:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._images_search = w.filter_entry(
+            _("Filter by repository / tag / id…"), self._filter_images)
+        toolbar.append(self._images_search)
         pull = Gtk.Button(label=_("Pull image"))
         pull.set_tooltip_text(_("docker pull — progress shown in a terminal tab"))
         pull.add_css_class("suggested-action")
@@ -50,6 +53,10 @@ class ImagesTabMixin:
         self._images_placeholder = self._make_loading_placeholder(_("Loading images…"))
         box.append(w.wrap_with_overlay(scroller, self._images_placeholder))
         return box
+
+    def _filter_images(self) -> None:
+        self._filter_listing(self._images_list, self._images_placeholder,
+                             self._images_search, _("No matching images"))
 
     def _refresh_images(self) -> None:
         client = self._client()
@@ -103,7 +110,8 @@ class ImagesTabMixin:
             rm.add_css_class("flat")
             rm.connect("clicked", lambda _b, i=iid, r=f"{repo}:{tag}": self._remove_image(i, r))
             row.append(rm)
-            self._images_list.append(w.listbox_wrap(row))
+            self._images_list.append(w.listbox_wrap(row, f"{repo}:{tag}", iid))
+        self._filter_images()
 
     def _pull_image(self) -> None:
         client = self._client()

@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 HEADERBAR_VISIBILITY_ACTIONS = (
     ('headerbar-sidebar-toggle', N_('Sidebar Toggle Button'), 'ui.headerbar_show_sidebar_toggle', True),
     ('headerbar-split-view', N_('Split View Button'), 'ui.headerbar_show_split_view', False),
-    ('headerbar-commands', N_('Command Snippets Button'), 'ui.headerbar_show_commands', True),
-    ('headerbar-terminal-theme', N_('Terminal Theme Button'), 'ui.headerbar_show_terminal_theme', True),
+    ('headerbar-commands', N_('Command Snippets Button'), 'ui.headerbar_show_commands', False),
+    ('headerbar-terminal-theme', N_('Terminal Theme Button'), 'ui.headerbar_show_terminal_theme', False),
     ('headerbar-theme-menu', N_('Theme Menu'), 'ui.headerbar_show_theme_toggle', False),
     ('headerbar-local-terminal', N_('Local Terminal Button'), 'ui.headerbar_show_local_terminal', True),
 )
@@ -965,7 +965,7 @@ class WindowActions:
     def _prompt_open_session(self, name, data):
         """Open a session, prompting to replace or add when tabs are already open."""
         try:
-            has_open = self.tab_view.get_n_pages() > 0
+            has_open = self.has_user_tabs()
         except Exception:
             has_open = False
 

@@ -18,6 +18,21 @@ def _focus_is_within(window, widget):
     return False
 
 
+def _open_local_terminal(gui, win, timeout_ms=5000):
+    """Open a local terminal and wait until its shell has spawned.
+
+    Spawn completion grabs focus for the terminal, so a focus assertion made
+    before it lands races the shell start-up (88 ms to ~2 s under Xvfb).
+    """
+    win.terminal_manager.show_local_terminal()
+    terminal = win.tab_view.get_selected_page().get_child()
+    waited = 0
+    while getattr(terminal, 'process_pid', None) is None and waited < timeout_ms:
+        gui.pump(20)
+        waited += 20
+    gui.pump(50)
+
+
 def test_omni_search_switches_between_welcome_anchor_and_center(gui):
     win = gui.window
     omni = win._omni_search
@@ -37,8 +52,7 @@ def test_omni_search_switches_between_welcome_anchor_and_center(gui):
     assert not omni.popup.visible
     assert omni.home.get_child() is omni.content
 
-    win.terminal_manager.show_local_terminal()
-    gui.pump(200)
+    _open_local_terminal(gui, win)
     assert not win.is_start_tab_selected()
 
     omni.show()
@@ -49,6 +63,36 @@ def test_omni_search_switches_between_welcome_anchor_and_center(gui):
     assert _focus_is_within(win, omni.entry)
 
     omni.dismiss()
+
+
+def test_omni_search_centers_over_tab_area_away_from_start(gui):
+    """Away from Start the panel centers on the tab area, not the window,
+    so an open sidebar does not push it toward the left."""
+    win = gui.window
+    omni = win._omni_search
+    win._apply_sidebar_visible(True)
+    _open_local_terminal(gui, win)
+    assert not win.is_start_tab_selected()
+
+    omni.show()
+    gui.pump(300)
+    try:
+        panel = omni.popup._panel
+        ok, panel_x, _y = _translate(panel, win)
+        ok2, area_x, _y2 = _translate(win.tab_view, win)
+        assert ok and ok2
+        panel_mid = panel_x + panel.get_width() / 2
+        area_mid = area_x + win.tab_view.get_width() / 2
+        assert abs(panel_mid - area_mid) <= 2
+    finally:
+        omni.dismiss()
+
+
+def _translate(widget, target):
+    result = widget.translate_coordinates(target, 0, 0)
+    if len(result) == 2:
+        return True, result[0], result[1]
+    return result
 
 
 def test_omni_search_rebuilds_results_on_real_window(gui):
@@ -133,8 +177,17 @@ def test_real_mouse_click_routes_typing_to_welcome_omni(gui):
     assert win.search_entry.get_text() == ""
 
 
+def _close_selected_tab(win):
+    """Close the selected tab without a confirmation dialog."""
+    win._suppress_close_confirmation = True
+    try:
+        win.tab_view.close_page(win.tab_view.get_selected_page())
+    finally:
+        win._suppress_close_confirmation = False
+
+
 def test_start_activation_traces_omni_attention_once(gui):
-    """Returning to the Start tab traces the docked omni-search border exactly
+    """Returning to the Start tab (closing the last tab) traces the docked omni-search border exactly
     once, without grabbing its keyboard focus, and the tracer retires by
     itself. Timing waits derive from the production duration, not arbitrary
     sleeps."""
@@ -151,7 +204,7 @@ def test_start_activation_traces_omni_attention_once(gui):
     assert not win.is_start_tab_selected()
     assert not omni.attention_active
 
-    win.show_start_tab()
+    _close_selected_tab(win)
     gui.pump(50)
     assert win.is_start_tab_selected()
     assert omni.attention_active
@@ -166,7 +219,7 @@ def test_start_activation_traces_omni_attention_once(gui):
     assert not win.is_start_tab_selected()
     assert not omni.attention_active
 
-    win.show_start_tab()
+    _close_selected_tab(win)
     gui.pump(50)
     assert omni.attention_active
     gui.pump(attention_total_ms + 250)

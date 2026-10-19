@@ -39,17 +39,94 @@ def test_selection_toolbar_keeps_same_width_for_connections_and_groups(gui):
     assert connection_size == group_size == empty_size
 
 
-def test_new_group_button_is_in_sidebar_header(gui):
-    header = gui.window._sidebar_header_toolbar
-    new_group = getattr(gui.window, '_sidebar_new_group_button', None)
-    assert new_group is not None
-    assert new_group.get_parent() is not None
-    assert new_group.get_action_name() == 'win.create-group'
-    assert new_group.get_child().get_icon_name() == 'folder-new-symbolic'
-    # New Connection and New Group lead, side by side, then Search.
-    assert header._items[:3] == [
-        gui.window._sidebar_add_button, new_group, gui.window.search_button]
+def _menu_actions(model):
+    actions = []
+    for index in range(model.get_n_items()):
+        value = model.get_item_attribute_value(index, 'action', None)
+        if value is not None:
+            actions.append(value.get_string())
+    return actions
 
+
+def test_sidebar_actions_live_in_the_title_row(gui):
+    win = gui.window
+    header = win.sidebar_header_bar
+    add_button = win._sidebar_add_button
+    view_button = win._sidebar_view_button
+    # One row: the actions are packed into the sidebar header bar itself.
+    for button in (add_button, win.search_button, view_button):
+        assert button.is_ancestor(header)
+    # The + menu offers both New Connection and New Group.
+    assert _menu_actions(add_button.get_menu_model()) == [
+        'app.new-connection', 'win.create-group']
+    assert add_button.get_icon_name() == 'list-add-symbolic'
+
+
+def _view_menu(gui):
+    view_button = gui.window._sidebar_view_button
+    view_button.popup()
+    gui.pump(50)
+    view_button.popdown()
+    menu = view_button.get_menu_model()
+    labels = [
+        menu.get_item_attribute_value(i, 'label', None).get_string()
+        for i in range(menu.get_n_items())
+    ]
+    return menu, labels
+
+
+def test_view_options_menu_carries_sort_tags_and_privacy(gui):
+    win = gui.window
+    action = win.lookup_action('show-hostnames')
+    action.set_enabled(True)
+    menu, labels = _view_menu(gui)
+    assert labels == ['Sort', 'Filter by Tag', 'Privacy']
+    assert set(_menu_actions(menu.get_item_link(0, 'section'))) == {'win.sort-connections'}
+    assert set(_menu_actions(menu.get_item_link(1, 'section'))) == {'win.filter-tag'}
+    privacy = menu.get_item_link(2, 'section')
+    assert _menu_actions(privacy) == ['win.toggle-hide-hosts']
+
+    def privacy_label():
+        menu, _labels = _view_menu(gui)
+        section = menu.get_item_link(2, 'section')
+        return section.get_item_attribute_value(0, 'label', None).get_string()
+
+    hidden_before = win._hide_hosts
+    try:
+        win._hide_hosts = False
+        assert privacy_label() == 'Hide user@hostname'
+        win.lookup_action('toggle-hide-hosts').activate(None)
+        gui.pump(20)
+        assert win._hide_hosts is True
+        assert privacy_label() == 'Show user@hostname'
+    finally:
+        if win._hide_hosts != hidden_before:
+            win.lookup_action('toggle-hide-hosts').activate(None)
+            gui.pump(20)
+
+
+def test_privacy_section_is_dropped_while_user_hostname_is_hidden(gui):
+    action = gui.window.lookup_action('show-hostnames')
+    action.set_enabled(False)
+    try:
+        _menu, labels = _view_menu(gui)
+        assert labels == ['Sort', 'Filter by Tag']
+    finally:
+        action.set_enabled(True)
+
+
+def test_show_hostnames_state_follows_toggle(gui):
+    win = gui.window
+    action = win.lookup_action('show-hostnames')
+    before = action.get_state().get_boolean()
+    win.lookup_action('toggle-hide-hosts').activate(None)
+    gui.pump(20)
+    assert action.get_state().get_boolean() is (not before)
+    # Disabled unless rows show hostnames; enabled, it toggles the same state.
+    action.set_enabled(True)
+    action.activate(None)
+    gui.pump(20)
+    assert action.get_state().get_boolean() is before
 
 
 def test_explicit_sort_is_not_reapplied_during_sidebar_rebuild(gui, monkeypatch):

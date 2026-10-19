@@ -154,9 +154,11 @@ def test_headerbar_menu_action_updates_shared_preference(monkeypatch):
     assert action.get_state().get_boolean() is False
     assert window.update_count == 1
 
+    # Hidden by default; the View menu can turn it on.
     theme_action = window.actions['headerbar-terminal-theme']
-    assert theme_action.get_state().get_boolean() is True
-    theme_action.change_state(Variant(False))
-    assert window.config.values['ui.headerbar_show_terminal_theme'] is False
     assert theme_action.get_state().get_boolean() is False
+    assert window.actions['headerbar-commands'].get_state().get_boolean() is False
+    theme_action.change_state(Variant(True))
+    assert window.config.values['ui.headerbar_show_terminal_theme'] is True
+    assert theme_action.get_state().get_boolean() is True
     assert window.update_count == 2

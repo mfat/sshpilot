@@ -1588,3 +1588,62 @@ def test_local_windows_json_output_parses(monkeypatch):
         _local_runner(calls, stdout='{"ID":"a1","Names":"web"}\r\n'),
         "__local__", "docker")
     assert client.ps() == [{"ID": "a1", "Names": "web"}]
+
+
+def _placeholder_shown(ph):
+    return ph._revealer.get_reveal_child()
+
+
+def _visible_rows(listbox):
+    n = 0
+    ch = listbox.get_first_child()
+    while ch is not None:
+        if ch.get_visible():
+            n += 1
+        ch = ch.get_next_sibling()
+    return n
+
+
+def test_filter_entries_on_images_volumes_networks_compose():
+    """#1335: every list tab, not just Containers, has a filter entry."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    cases = [
+        (page._on_images, page._images_search, page._images_list,
+         page._images_placeholder,
+         [{"Repository": "nginx", "Tag": "latest", "ID": "aaa111"},
+          {"Repository": "postgres", "Tag": "16", "ID": "bbb222"},
+          {"Repository": "redis", "Tag": "7", "ID": "ccc333"}],
+         "postgres:16"),
+        (page._on_volumes, page._volumes_search, page._volumes_list,
+         page._volumes_placeholder,
+         [{"Name": "pgdata", "Driver": "local"},
+          {"Name": "cache", "Driver": "local"}],
+         "PGDATA"),
+        (page._on_networks, page._networks_search, page._networks_list,
+         page._networks_placeholder,
+         [{"Name": "bridge", "Driver": "bridge", "ID": "n1"},
+          {"Name": "app_net", "Driver": "overlay", "ID": "n2"}],
+         "overlay"),
+        (page._on_compose, page._compose_search, page._compose_list,
+         page._compose_placeholder,
+         [{"Name": "shop", "Status": "running(2)", "ConfigFiles": "/a.yml"},
+          {"Name": "blog", "Status": "exited(1)", "ConfigFiles": "/b.yml"}],
+         "exited"),
+    ]
+    for on_rows, search, listbox, ph, rows, query in cases:
+        search.set_text(query)
+        on_rows(rows, None)  # a refresh keeps the active filter
+        assert _visible_rows(listbox) == 1, query
+        assert not _placeholder_shown(ph)
+        search.set_text("no-such-thing")
+        search.emit("search-changed")
+        assert _visible_rows(listbox) == 0
+        assert _placeholder_shown(ph)
+        assert ph.get_title().startswith("No matching")
+        search.set_text("")
+        search.emit("search-changed")
+        assert _visible_rows(listbox) == len(rows)
+        assert not _placeholder_shown(ph)

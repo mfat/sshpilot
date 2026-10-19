@@ -119,7 +119,7 @@ class WindowSessionMixin:
         return {'tabs': tabs}
 
     def _close_all_tabs(self):
-        """Close every user tab; the pinned Start tab is kept.
+        """Close every user tab; Start comes back once none are left.
 
         Suppressing the confirmation also skips on_tab_close's disconnect, so
         each page is torn down explicitly — otherwise a daemon session outlives
@@ -161,7 +161,7 @@ class WindowSessionMixin:
             if pane_index < len(svt._panes):
                 pane = svt._panes[pane_index]
             else:
-                pane = svt.add_pane()
+                pane = svt.add_pane(reveal=False)
             for conn_entry in pane_conns or []:
                 nickname = conn_entry.get('nickname') if isinstance(conn_entry, dict) else None
                 connection = self._connection_from_session_reference(conn_entry)

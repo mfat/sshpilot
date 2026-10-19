@@ -186,6 +186,41 @@ def test_terminal_theme_button_visibility_honors_headerbar_preference(monkeypatc
     assert button.visible is True
 
 
+def test_command_snippets_button_visibility_honors_headerbar_preference(monkeypatch):
+    from sshpilot import window_tabs
+
+    terminal = types.SimpleNamespace(get_visible=lambda: True)
+    page = types.SimpleNamespace(get_child=lambda: terminal)
+    button = types.SimpleNamespace(visible=None)
+    button.set_visible = lambda visible: setattr(button, 'visible', visible)
+
+    class Config:
+        values = {}
+
+        def get_setting(self, key, default):
+            return self.values.get(key, default)
+
+    class Stub(window_tabs.WindowTabsMixin):
+        config = Config()
+        tab_view = types.SimpleNamespace(get_selected_page=lambda: page)
+        _cmd_blocks_toggle_btn = button
+        _update_terminal_theme_button_visibility = None
+
+        def _is_start_tab_page(self, _page):
+            return False
+
+    monkeypatch.setattr(window_tabs, '_is_terminal_widget', lambda child: child is terminal)
+
+    stub = Stub()
+    # Hidden by default, even on a terminal tab.
+    stub._update_command_snippets_button_visibility()
+    assert button.visible is False
+
+    stub.config.values['ui.headerbar_show_commands'] = True
+    stub._update_command_snippets_button_visibility()
+    assert button.visible is True
+
+
 class _FakeWidget:
     """Minimal stand-in for Gtk.Widget used by classify_tab_bar_hit."""
 

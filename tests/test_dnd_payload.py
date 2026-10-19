@@ -124,6 +124,40 @@ def test_set_internal_drag_icon_uses_dragicon_off_macos(monkeypatch):
 
 
 
+def test_set_internal_drag_icon_label_builds_ellipsized_chip(monkeypatch):
+    # A bare symbolic icon vanishes over a terminal matching the app's
+    # foreground; the labelled chip carries its own accent background.
+    import sshpilot.dnd_payload as dnd
+
+    source = MagicMock()
+    icon = MagicMock()
+    chip = MagicMock()
+    image = MagicMock()
+    text = MagicMock()
+    monkeypatch.setattr("sshpilot.platform_utils.is_macos", lambda: False)
+    monkeypatch.setattr(
+        dnd.Gtk.DragIcon, "get_for_drag", staticmethod(lambda d: icon)
+    )
+    monkeypatch.setattr(
+        dnd.Gtk.Image, "new_from_icon_name", staticmethod(lambda name: image)
+    )
+    monkeypatch.setattr(dnd.Gtk, "Box", MagicMock(return_value=chip))
+    monkeypatch.setattr(dnd.Gtk, "Label", MagicMock(return_value=text))
+
+    name = "a-very-long-production-database-hostname.example.internal"
+    set_internal_drag_icon(
+        source, MagicMock(), drag=object(), icon_name="computer-symbolic",
+        label=name,
+    )
+
+    icon.set_child.assert_called_once_with(chip)
+    chip.add_css_class.assert_called_once_with("drag-chip")
+    assert [c.args[0] for c in chip.append.call_args_list] == [image, text]
+    dnd.Gtk.Label.assert_called_once_with(label=name)
+    text.set_ellipsize.assert_called_once_with(dnd.Pango.EllipsizeMode.END)
+    text.set_max_width_chars.assert_called_once_with(dnd.DRAG_CHIP_MAX_CHARS)
+
+
 def test_claimed_drop_target_runs_ahead_and_takes_only_in_app_strings():
     # PyXterm's WebKit view swallows string drops, so the terminal/pane target
     # must run in CAPTURE — but only for our own drags, so external text still
@@ -150,3 +184,15 @@ def test_claimed_drop_target_runs_ahead_and_takes_only_in_app_strings():
             lambda gtype, s=has_string: s and gtype == GObject.TYPE_STRING
         )
         assert _accept_in_app_string_drop(target, drop) is expected
+
+
+def test_accept_only_in_app_drops_wires_the_in_app_check():
+    from sshpilot.dnd_payload import (
+        _accept_in_app_string_drop,
+        accept_only_in_app_drops,
+    )
+
+    target = MagicMock()
+    accept_only_in_app_drops(target)
+    target.connect.assert_called_once_with("accept", _accept_in_app_string_drop)
+    target.set_propagation_phase.assert_not_called()

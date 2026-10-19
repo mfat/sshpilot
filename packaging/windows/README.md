@@ -82,7 +82,9 @@ Unsigned installers trigger SmartScreen. The release job signs through
 [SignPath Foundation](https://signpath.org/) (free for open source) when the
 repository has `SIGNPATH_API_TOKEN` and the `SIGNPATH_ORGANIZATION_ID`,
 `SIGNPATH_PROJECT_SLUG` and `SIGNPATH_SIGNING_POLICY_SLUG` variables; without
-them it publishes the unsigned build as a workflow artifact.
+them it publishes the unsigned build as a workflow artifact. The project's
+default artifact configuration is `signpath\installer.xml`; edit it there and
+in SignPath together.
 
 winget: after a signed release, submit the manifest with
 `wingetcreate update <id> --urls <installer URL> --version <version> --submit`

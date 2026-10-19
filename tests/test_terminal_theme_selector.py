@@ -44,6 +44,6 @@ def test_terminal_theme_picker_has_headerbar_visibility_preference():
     preferences_source = Path("src/sshpilot/preferences.py").read_text(encoding="utf-8")
     window_source = Path("src/sshpilot/window.py").read_text(encoding="utf-8")
 
-    assert "'ui.headerbar_show_terminal_theme', True" in actions_source
+    assert "'ui.headerbar_show_terminal_theme', False" in actions_source
     assert "'ui.headerbar_show_terminal_theme'" in preferences_source
-    assert "'_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', True" in window_source
+    assert "'_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', False" in window_source

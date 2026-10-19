@@ -51,6 +51,18 @@
     min-width: 72px;
 }
 
+/* Drag preview for sidebar rows (dnd_payload.py). Accent fill + shadow so it
+   stays visible over terminals of any colour scheme. */
+.drag-chip {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    border-radius: 999px;
+    padding: 4px 12px 4px 9px;
+    margin: 6px;
+    box-shadow: 0 1px 4px alpha(black, 0.35), 0 0 0 1px alpha(black, 0.12);
+    font-weight: bold;
+}
+
 /* Start page (welcome_page.py). */
 .startpage.drag-over {
     background-color: alpha(@accent_bg_color, 0.18);
@@ -242,4 +254,9 @@ button.layout-card:checked {
     font-family: monospace;
     font-size: 7px;
     font-weight: bold;
+}
+
+/* Sidebar header and content titlebar share one 46px row. */
+headerbar.sidebar-title-row {
+    min-height: 46px;
 }

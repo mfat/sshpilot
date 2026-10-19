@@ -1732,6 +1732,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # (or for the user to dismiss an update). When the check is disabled,
         # surface tips on their own — otherwise "Show tips" appears broken.
         try:
+            from .installer_update_choice import apply_installer_choice
+            apply_installer_choice(self.config)
             check_on_startup = self.config.get_setting('updates.check_on_startup', True)
             if check_on_startup:
                 logger.debug("Checking for updates on startup")
@@ -2604,8 +2606,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         mapping = (
             ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', True),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
-            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
-            ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', True),
+            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', False),
+            ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', False),
             ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', False),
             ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
@@ -3205,7 +3207,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         width the sidebar would otherwise pick for itself.
         """
         widest = 0
-        for attr in ('_sidebar_header_handle', '_sidebar_toolbar_box', 'connection_list'):
+        for attr in ('sidebar_header_bar', '_sidebar_toolbar_box', 'connection_list'):
             widget = getattr(self, attr, None)
             if widget is None:
                 continue
@@ -3518,6 +3520,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         button = Gtk.MenuButton()
         button.add_css_class('flat')
         button.set_can_focus(False)
+        button.set_icon_name('view-more-symbolic')
         menu = Gio.Menu()
         for preset_id in CONNECTION_SORT_MENU:
             item = Gio.MenuItem.new(CONNECTION_SORT_PRESETS[preset_id].title, None)
@@ -3530,28 +3533,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._update_sort_button()
         return button
 
-    def _build_preferences_button(self):
-        from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("org.gnome.Settings-system-symbolic")
-        button.add_css_class('flat')
-        button.set_can_focus(False)
-        # Show the effective (possibly user-customized) shortcut in the tooltip,
-        # while the accessible name stays the bare action.
-        accels = self._get_safe_current_shortcuts().get('preferences') or []
-        labels = ', '.join(
-            label for label in (_accelerator_label(a) for a in accels) if label
-        )
-        label_icon_button(
-            button,
-            _("Settings"),
-            tooltip=(
-                _("Settings ({accels})").format(accels=labels)
-                if labels else _("Settings")
-            ),
-        )
-        button.connect("clicked", lambda *_: self.show_preferences())
-        return button
-
     def _update_sort_button(self):
         preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
         preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
@@ -3562,11 +3543,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not self.sort_button:
             return
 
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(self.sort_button, preset.icon_name)
+        # The button is the sidebar's View Options menu (fixed "more" icon);
+        # the active sort shows as its radio mark and accessible description.
         label_icon_button(
             self.sort_button,
-            _("Sort Connections"),
+            _("View Options"),
             description=preset.title,
         )
 
@@ -3724,7 +3705,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         toast_overlay.add_toast(toast)
 
     def setup_content_area(self):
-        """Set up the main content area with tab overview and pinned Start tab."""
+        """Set up the main content area with tab overview and Start tab."""
         # Create tab view
         self.tab_view = Adw.TabView()
         self.tab_view.set_hexpand(True)
@@ -3872,7 +3853,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         focus_memo.connect('pressed', self._on_tab_bar_capture_press)
         self.tab_bar.add_controller(focus_memo)
 
-        # Suppress the context menu on the pinned Start tab. This capture-phase
+        # Suppress the context menu on the Start tab. This capture-phase
         # gesture runs before AdwTabBox's own (bubble-phase) right-click handler,
         # so we can clear the view's menu model just-in-time when the click lands
         # on the Start tab — AdwTabBox.do_popup early-returns on a NULL model.
@@ -5015,7 +4996,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def has_user_tabs(self) -> bool:
         try:
-            return self.tab_view.get_n_pages() > 1
+            return any(
+                not self._is_start_tab_page(page)
+                for page in self.tab_view.get_pages()
+            )
         except Exception:
             return False
 
@@ -5026,30 +5010,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             return False
 
-    def _pin_start_tab_page(self) -> None:
-        """Pin the Start tab so the tab bar hides its close button."""
-        page = getattr(self, '_start_tab_page', None)
-        if page is None:
-            return
-        try:
-            self.tab_view.set_page_pinned(page, True)
-        except Exception:
-            try:
-                page.set_pinned(True)
-            except Exception:
-                logger.debug("Could not pin Start tab", exc_info=True)
-
     def _create_start_tab(self) -> None:
-        """Add the pinned Start tab (WelcomePage) if it is not already present."""
+        """Add the Start tab (WelcomePage) if it is not already present.
+
+        The Start tab exists only while no other tab is open: the first user
+        tab removes it (``_remove_start_tab``) and closing the last one brings
+        it back. The WelcomePage widget is kept and reused across both.
+        """
         if getattr(self, '_start_tab_page', None) is not None:
             try:
                 if self._start_tab_page in list(self.tab_view.get_pages()):
-                    self._pin_start_tab_page()
                     return
             except Exception:
                 pass
 
-        self.welcome_view = WelcomePage(self)
+        recreated = getattr(self, 'welcome_view', None) is not None
+        if not recreated:
+            self.welcome_view = WelcomePage(self)
         self._start_tab_page = self.tab_view.prepend(self.welcome_view)
         self._start_tab_page.set_title(_('Start'))
         try:
@@ -5059,9 +5036,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
         except Exception:
             pass
-        self._pin_start_tab_page()
+        auto_selected = self.tab_view.get_selected_page() is self._start_tab_page
         self.tab_view.set_selected_page(self._start_tab_page)
+        if recreated and auto_selected:
+            # prepend() into an empty view selected the page before
+            # _start_tab_page pointed at it, so on_tab_selected missed the
+            # Start transition (focus, omni attention); replay it.
+            self.on_tab_selected(self.tab_view)
         self._update_content_theme_for_selected_tab()
+
+    def _remove_start_tab(self) -> None:
+        """Drop the Start tab once a user tab is open."""
+        page = getattr(self, '_start_tab_page', None)
+        if page is None or not self.has_user_tabs():
+            return
+        try:
+            if page not in list(self.tab_view.get_pages()):
+                return
+        except Exception:
+            return
+        self._closing_start_tab = True
+        try:
+            self.tab_view.close_page(page)
+        except Exception:
+            logger.debug("Could not remove Start tab", exc_info=True)
+        finally:
+            self._closing_start_tab = False
+        try:
+            if page not in list(self.tab_view.get_pages()):
+                self._start_tab_page = None
+        except Exception:
+            pass
 
     def _update_content_theme_for_selected_tab(self) -> None:
         """Use terminal background only when a non-Start tab is selected."""
@@ -5076,7 +5081,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug("Failed to update tab content theme", exc_info=True)
 
     def show_start_tab(self) -> None:
-        """Select the pinned Start tab."""
+        """Show the Start tab (only while no user tab is open)."""
+        if self.has_user_tabs():
+            self.show_tab_view()
+            return
         self._create_start_tab()
         try:
             self.tab_view.set_selected_page(self._start_tab_page)
@@ -5096,7 +5104,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         logger.info("Showing Start tab")
 
     def show_welcome_view(self):
-        """Select the pinned Start tab (legacy name)."""
+        """Show the Start tab (legacy name)."""
         self.show_start_tab()
 
     def show_tab_view(self):
@@ -6795,14 +6803,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_search_popup_shown(self) -> None:
         """Detached: start below the header bar, and honour search-only modes
         (spotlight hides the list)."""
-        self._search_popup.set_margins(top=self._sidebar_popup_top_inset())
+        top, bottom = self._sidebar_popup_vertical_insets()
+        self._search_popup.set_margins(top=top, bottom=bottom)
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(not self._search_popup.search_only)
+        # The sidebar header bar stays behind; bring its actions along.
+        from sshpilot.sidebar import set_sidebar_header_actions_floating
+        set_sidebar_header_actions_floating(self, True)
 
     def _on_search_popup_hidden(self) -> None:
-        """Re-attached: restore the connection list visibility."""
+        """Re-attached: restore the connection list and header actions."""
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(True)
+        from sshpilot.sidebar import set_sidebar_header_actions_floating
+        set_sidebar_header_actions_floating(self, False)
 
     def _dismiss_search_popup(self) -> None:
         """Esc / click-outside: route through search teardown when search is
@@ -6844,6 +6858,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return 0
         ok, h = header.compute_bounds(overlay)
         return max(0, int(h.get_y() + h.get_height())) if ok else 0
+
+    def _sidebar_popup_vertical_insets(self) -> tuple:
+        """(top, bottom) insets for the sidebar popup: the visible terminal
+        cards' outer edges when any are showing, so the popup lines up with
+        the terminal rather than its surrounding margin; else below the
+        header."""
+        top = self._sidebar_popup_top_inset()
+        overlay = getattr(self, '_content_overlay', None)
+        if overlay is None:
+            return top, 0
+        edges = []
+        for card in self._visible_terminal_cards():
+            try:
+                ok, bounds = card.compute_bounds(overlay)
+            except Exception:
+                ok = False
+            if ok:
+                edges.append((bounds.get_y(), bounds.get_y() + bounds.get_height()))
+        if not edges:
+            return top, 0
+        card_top = int(min(edge[0] for edge in edges))
+        card_bottom = int(max(edge[1] for edge in edges))
+        return max(top, card_top), max(0, overlay.get_height() - card_bottom)
+
+    def _visible_terminal_cards(self) -> list:
+        """Mapped ``.terminal-card`` widgets in the selected tab (one per
+        split pane)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            pending = [page.get_child()] if page is not None else []
+        except Exception:
+            return []
+        cards = []
+        while pending:
+            widget = pending.pop()
+            if widget is None or not widget.get_mapped():
+                continue
+            if widget.has_css_class('terminal-card'):
+                cards.append(widget)
+                continue
+            child = widget.get_first_child()
+            while child is not None:
+                pending.append(child)
+                child = child.get_next_sibling()
+        return cards
 
     def _sidebar_hidden_by_toggle(self) -> bool:
         """True while the sidebar is hidden via the header control / F9."""

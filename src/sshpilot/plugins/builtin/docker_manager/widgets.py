@@ -240,11 +240,34 @@ def clear_grid(grid: Gtk.Grid) -> None:
         child = nxt
 
 
-def listbox_wrap(widget: Gtk.Widget) -> Gtk.Widget:
+def listbox_wrap(widget: Gtk.Widget, *filter_parts: str) -> Gtk.Widget:
+    """Wrap *widget* in a row; *filter_parts* are what a filter entry matches."""
     row = Gtk.ListBoxRow()
     row.set_activatable(False)
     row.set_child(widget)
+    row._docker_filter_text = " ".join(p for p in filter_parts if p).lower()
     return row
+
+
+def filter_entry(placeholder: str, on_changed: Callable[[], None]) -> Gtk.SearchEntry:
+    entry = Gtk.SearchEntry()
+    entry.set_placeholder_text(placeholder)
+    entry.set_hexpand(True)
+    entry.connect("search-changed", lambda _e: on_changed())
+    return entry
+
+
+def filter_listbox(listbox: Gtk.ListBox, query: str) -> int:
+    """Show only rows whose filter text contains *query*; return how many show."""
+    query = query.strip().lower()
+    visible = 0
+    child = listbox.get_first_child()
+    while child is not None:
+        show = not query or query in getattr(child, "_docker_filter_text", "")
+        child.set_visible(show)
+        visible += show
+        child = child.get_next_sibling()
+    return visible
 
 
 def grid_message(text: str, *, error: bool = False) -> Gtk.Widget:
