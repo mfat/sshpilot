@@ -977,3 +977,38 @@ def test_a_live_sample_updates_the_memory_gauge_in_place():
     )
     dialog._apply_readings(sample)
     assert "75%" in _texts(dialog._memory_gauge.widget)
+
+
+def test_the_top_processes_past_the_first_five_fold_behind_a_button():
+    processes = tuple(
+        ProcessUsage(command=f"worker{index}", cpu_percent=10.0 - index, memory_percent=1.0)
+        for index in range(10)
+    )
+    page = _dialog(_snapshot(processes=processes))._build_resources()
+    labels = {w.get_text(): w for w in _walk(page) if isinstance(w, Gtk.Label)}
+    assert labels["worker4"].get_visible()
+    assert not labels["worker5"].get_visible()
+    assert not labels["worker9"].get_visible()
+
+    button = next(
+        w for w in _walk(page)
+        if isinstance(w, Gtk.Button) and w.get_label() == "Show 5 more"
+    )
+    button.emit("clicked")
+    assert labels["worker9"].get_visible()
+    assert button.get_label() == "Show fewer"
+
+    button.emit("clicked")
+    assert not labels["worker9"].get_visible()
+    assert button.get_label() == "Show 5 more"
+
+
+def test_five_or_fewer_top_processes_need_no_button():
+    processes = tuple(
+        ProcessUsage(command=f"worker{index}", cpu_percent=1.0) for index in range(5)
+    )
+    page = _dialog(_snapshot(processes=processes))._build_resources()
+    assert not any(
+        isinstance(w, Gtk.Button) and (w.get_label() or "").startswith("Show ")
+        for w in _walk(page)
+    )
