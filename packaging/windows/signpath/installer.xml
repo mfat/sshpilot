@@ -5,10 +5,18 @@
 
   actions/upload-artifact zips what it uploads, so the root is a zip holding
   the single NSIS setup exe built by build.ps1 -Installer.
+
+  SignPath Foundation requires product name and version metadata on every
+  signed file (https://signpath.org/terms). They come from the VI* keys in
+  installer.nsi; windows.yml passes the version.
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
   <zip-file>
-    <pe-file path="SSHPilot-*-setup.exe">
+    <pe-file path="SSHPilot-${version}-windows-*-setup.exe"
+             product-name="SSH Pilot" product-version="${version}">
       <authenticode-sign/>
     </pe-file>
   </zip-file>

@@ -165,7 +165,11 @@ jobs:
         run: |
           set -eu
           VERSION='${{ steps.check.outputs.version }}'
-          NOTES="${RUNNER_TEMP}/changelog.txt"
+          # SignPath Foundation requires release pages to link the code
+          # signing policy; the changelog itself stays as written.
+          NOTES="${RUNNER_TEMP}/release-notes.md"
+          cp "${RUNNER_TEMP}/changelog.txt" "$NOTES"
+          printf '\n---\nWindows installer: [Code signing policy](https://sshpilot.app/code-signing.html) · [Privacy](https://sshpilot.app/privacy.html)\n' >> "$NOTES"
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             ARGS=(
               release edit "v$VERSION"

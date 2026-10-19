@@ -157,6 +157,15 @@ jobs:
           $env:PATH = "${env:ProgramFiles(x86)}\NSIS;$env:PATH"
           powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
 
+      # The SignPath artifact configuration checks the installer's product
+      # version against this (packaging/windows/signpath/installer.xml).
+      - name: Read the version
+        id: version
+        shell: pwsh
+        run: |
+          $v = & .venv-win\Scripts\python.exe -c "import sys; sys.path.insert(0, 'src'); from sshpilot import __version__; print(__version__)"
+          "version=$v" >> $env:GITHUB_OUTPUT
+
       - name: Upload unsigned build
         id: upload
         uses: actions/upload-artifact@v4
@@ -175,6 +184,8 @@ jobs:
           github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: build/windows/signed
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
 
       - name: Upload signed build
         if: env.SIGNPATH_ENABLED == 'true'
