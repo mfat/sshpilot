@@ -17176,3 +17176,10 @@ msgstr "Filtrar por etiqueta"
 msgid "Show Hostnames"
 msgstr "Mostrar nombres de host"
 
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "No tags yet"
+msgstr "Aún no hay etiquetas"
+
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "Tags you add to connections will be listed here."
+msgstr "Las etiquetas que añada a las conexiones aparecerán aquí."

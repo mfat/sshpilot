@@ -16946,3 +16946,10 @@ msgstr "فیلتر بر اساس برچسب"
 msgid "Show Hostnames"
 msgstr "نمایش نام‌های Host"
 
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "No tags yet"
+msgstr "هنوز برچسبی وجود ندارد"
+
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "Tags you add to connections will be listed here."
+msgstr "برچسب‌هایی که به اتصال‌ها اضافه می‌کنید اینجا فهرست می‌شوند."

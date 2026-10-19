@@ -17212,3 +17212,10 @@ msgstr "Фильтровать по тегу"
 msgid "Show Hostnames"
 msgstr "Показывать имена хостов"
 
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "No tags yet"
+msgstr "Тегов пока нет"
+
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "Tags you add to connections will be listed here."
+msgstr "Здесь будут перечислены теги, добавленные к подключениям."

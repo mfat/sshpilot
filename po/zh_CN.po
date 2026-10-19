@@ -16334,3 +16334,10 @@ msgstr "按标签筛选"
 msgid "Show Hostnames"
 msgstr "显示主机名"
 
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "No tags yet"
+msgstr "暂无标签"
+
+#: src/sshpilot/connection_dialog_field_helpers.py
+msgid "Tags you add to connections will be listed here."
+msgstr "您添加到连接的标签将在此处列出。"

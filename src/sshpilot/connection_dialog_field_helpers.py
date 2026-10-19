@@ -311,12 +311,32 @@ class ConnectionDialogFieldHelpersMixin:
     def _show_tag_picker_popover(self, button):
         """Show a popover to pick from the tags already used by other connections."""
         candidates = self._known_tags()
-        if not candidates:
-            return
 
         popover = Gtk.Popover()
         popover.set_parent(button)
         popover.set_has_arrow(True)
+
+        if not candidates:
+            # Say so instead of a button that silently does nothing.
+            empty = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            empty.set_margin_top(12)
+            empty.set_margin_bottom(12)
+            empty.set_margin_start(12)
+            empty.set_margin_end(12)
+            title = Gtk.Label(label=_("No tags yet"))
+            title.add_css_class('heading')
+            empty.append(title)
+            hint = Gtk.Label(
+                label=_("Tags you add to connections will be listed here.")
+            )
+            hint.set_wrap(True)
+            hint.set_max_width_chars(32)
+            hint.set_justify(Gtk.Justification.CENTER)
+            hint.add_css_class('dim-label')
+            empty.append(hint)
+            popover.set_child(empty)
+            popover.popup()
+            return
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         outer.set_margin_top(8)
