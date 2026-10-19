@@ -6803,7 +6803,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_search_popup_shown(self) -> None:
         """Detached: start below the header bar, and honour search-only modes
         (spotlight hides the list)."""
-        self._search_popup.set_margins(top=self._sidebar_popup_top_inset())
+        top, bottom = self._sidebar_popup_vertical_insets()
+        self._search_popup.set_margins(top=top, bottom=bottom)
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(not self._search_popup.search_only)
         # The sidebar header bar stays behind; bring its actions along.
@@ -6857,6 +6858,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return 0
         ok, h = header.compute_bounds(overlay)
         return max(0, int(h.get_y() + h.get_height())) if ok else 0
+
+    def _sidebar_popup_vertical_insets(self) -> tuple:
+        """(top, bottom) insets for the sidebar popup: the visible terminal
+        cards' outer edges when any are showing, so the popup lines up with
+        the terminal rather than its surrounding margin; else below the
+        header."""
+        top = self._sidebar_popup_top_inset()
+        overlay = getattr(self, '_content_overlay', None)
+        if overlay is None:
+            return top, 0
+        edges = []
+        for card in self._visible_terminal_cards():
+            try:
+                ok, bounds = card.compute_bounds(overlay)
+            except Exception:
+                ok = False
+            if ok:
+                edges.append((bounds.get_y(), bounds.get_y() + bounds.get_height()))
+        if not edges:
+            return top, 0
+        card_top = int(min(edge[0] for edge in edges))
+        card_bottom = int(max(edge[1] for edge in edges))
+        return max(top, card_top), max(0, overlay.get_height() - card_bottom)
+
+    def _visible_terminal_cards(self) -> list:
+        """Mapped ``.terminal-card`` widgets in the selected tab (one per
+        split pane)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            pending = [page.get_child()] if page is not None else []
+        except Exception:
+            return []
+        cards = []
+        while pending:
+            widget = pending.pop()
+            if widget is None or not widget.get_mapped():
+                continue
+            if widget.has_css_class('terminal-card'):
+                cards.append(widget)
+                continue
+            child = widget.get_first_child()
+            while child is not None:
+                pending.append(child)
+                child = child.get_next_sibling()
+        return cards
 
     def _sidebar_hidden_by_toggle(self) -> bool:
         """True while the sidebar is hidden via the header control / F9."""
