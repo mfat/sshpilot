@@ -7217,6 +7217,8 @@ class PreferencesWindow(Adw.Window):
         check_on_startup = switch.get_active()
         logger.info(f"Check for updates on startup changed to: {check_on_startup}")
         self.config.set_setting('updates.check_on_startup', check_on_startup)
+        from .installer_update_choice import mirror_choice
+        mirror_choice(check_on_startup)
 
     def on_startup_behavior_changed(self, radio_button, *args):
         """Handle startup behavior radio button change"""

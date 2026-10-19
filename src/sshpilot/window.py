@@ -1732,6 +1732,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # (or for the user to dismiss an update). When the check is disabled,
         # surface tips on their own — otherwise "Show tips" appears broken.
         try:
+            from .installer_update_choice import apply_installer_choice
+            apply_installer_choice(self.config)
             check_on_startup = self.config.get_setting('updates.check_on_startup', True)
             if check_on_startup:
                 logger.debug("Checking for updates on startup")

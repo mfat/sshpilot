@@ -7,6 +7,8 @@
 Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "nsDialogs.nsh"
+!include "LogicLib.nsh"
 
 !ifndef VERSION
   !error "pass /DVERSION=..."
@@ -24,6 +26,13 @@ Unicode true
 !define APP_NAME "SSH Pilot"
 !define PUBLISHER "SSH Pilot contributors"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
+!define PRIVACY_URL "https://sshpilot.app/privacy.html"
+
+; 1 when the app should check for updates on startup. The app copies it into
+; its config on the next launch (installer_update_choice.py) and mirrors later
+; Preferences changes back, so a rerun of setup starts from the current choice.
+Var CheckUpdates
+Var CheckUpdatesBox
 
 Name "${APP_NAME} ${VERSION}"
 OutFile "${OUTFILE}"
@@ -48,6 +57,8 @@ ManifestDPIAware true
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${__FILEDIR__}\..\..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
+; SignPath Foundation requires the privacy notice and an opt-out during setup.
+Page custom UpdateCheckPage UpdateCheckPageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -61,6 +72,48 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "CompanyName" "${PUBLISHER}"
 VIAddVersionKey "FileDescription" "${APP_NAME} installer"
 VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
+
+Function .onInit
+  StrCpy $CheckUpdates 1
+  ClearErrors
+  ReadRegDWORD $0 HKCU "Software\${APP_ID}" "CheckForUpdates"
+  ${IfNot} ${Errors}
+    StrCpy $CheckUpdates $0
+  ${EndIf}
+FunctionEnd
+
+Function UpdateCheckPage
+  !insertmacro MUI_HEADER_TEXT "Privacy" "Choose whether ${APP_NAME} checks for updates."
+  nsDialogs::Create 1018
+  Pop $0
+  ${NSD_CreateLabel} 0 0 100% 24u "SSH Pilot checks GitHub for new versions when it starts. GitHub sees your IP address."
+  Pop $0
+  ${NSD_CreateCheckbox} 0 30u 100% 12u "Check for updates on startup"
+  Pop $CheckUpdatesBox
+  ${If} $CheckUpdates == 1
+    ${NSD_Check} $CheckUpdatesBox
+  ${EndIf}
+  ${NSD_CreateLabel} 0 52u 100% 12u "You can change this later in Preferences."
+  Pop $0
+  ${NSD_CreateLink} 0 70u 100% 12u "Privacy policy"
+  Pop $0
+  ${NSD_OnClick} $0 OpenPrivacyPolicy
+  nsDialogs::Show
+FunctionEnd
+
+Function OpenPrivacyPolicy
+  Pop $0
+  ExecShell "open" "${PRIVACY_URL}"
+FunctionEnd
+
+Function UpdateCheckPageLeave
+  ${NSD_GetState} $CheckUpdatesBox $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $CheckUpdates 1
+  ${Else}
+    StrCpy $CheckUpdates 0
+  ${EndIf}
+FunctionEnd
 
 !macro StopDaemon
   ; A running daemon holds files in $INSTDIR open; ask it to stop, then wait.
@@ -114,6 +167,8 @@ Section "SSH Pilot" SecMain
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   WriteRegStr HKCU "Software\${APP_ID}" "InstallDir" "$INSTDIR"
+  WriteRegDWORD HKCU "Software\${APP_ID}" "CheckForUpdates" $CheckUpdates
+  WriteRegDWORD HKCU "Software\${APP_ID}" "CheckForUpdatesPending" 1
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${PUBLISHER}"
