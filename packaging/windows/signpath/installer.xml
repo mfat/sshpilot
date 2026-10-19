@@ -8,7 +8,7 @@
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
-    <pe-file path="SSHPilot-*-windows-setup.exe">
+    <pe-file path="SSHPilot-*-setup.exe">
       <authenticode-sign/>
     </pe-file>
   </zip-file>
