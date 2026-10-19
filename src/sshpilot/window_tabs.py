@@ -757,6 +757,7 @@ class WindowTabsMixin:
             teardown=lambda: self.cleanup_embedded_terminal(terminal),
             side=side,
         )
+        self._update_local_terminal_button_visibility()
         return terminal, True
 
     @staticmethod
@@ -881,6 +882,7 @@ class WindowTabsMixin:
             self.terminal_to_connection.pop(terminal, None)
         except Exception as exc:
             logger.debug("Error cleaning up embedded terminal dicts: %s", exc)
+        self._update_local_terminal_button_visibility()
 
     def _on_tabmenu_open_system_terminal(self, action, param=None):
         try:
@@ -1606,8 +1608,90 @@ class WindowTabsMixin:
             mover = getattr(self, '_move_title_to_content_header', None)
             if callable(mover):
                 mover()
+            self._update_local_terminal_button_visibility()
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
+
+    def _update_local_terminal_button_visibility(self) -> None:
+        """Header-bar local-terminal button only while no terminal is open.
+
+        The preference allows the control. With no terminal open it stays in
+        the header bar; once a terminal is open the same action moves to the
+        tab bar's leading new-tab button.
+        """
+        header = getattr(self, '_headerbar_local_terminal_button', None)
+        plus = getattr(self, '_tab_bar_new_tab_button', None)
+        if header is None and plus is None:
+            return
+        try:
+            allowed = bool(
+                self.config.get_setting('ui.headerbar_show_local_terminal', True)
+            )
+        except Exception:
+            allowed = True
+        terminal_open = self._has_open_terminal() if allowed else False
+        if header is not None:
+            header.set_visible(allowed and not terminal_open)
+        if plus is not None:
+            plus.set_visible(allowed and terminal_open)
+
+    def _has_open_terminal(self) -> bool:
+        """True when a tab is showing a terminal.
+
+        Covers a terminal page, a split pane, and a file-manager terminal
+        panel. The Start page never counts.
+        """
+        tab_view = getattr(self, 'tab_view', None)
+        if tab_view is None or not hasattr(tab_view, 'get_pages'):
+            return False
+        try:
+            pages = list(tab_view.get_pages())
+        except Exception:
+            logger.debug(
+                "Failed to list tabs while checking for an open terminal",
+                exc_info=True,
+            )
+            return False
+        for page in pages:
+            try:
+                if self._is_start_tab_page(page):
+                    continue
+                child = page.get_child()
+            except Exception:
+                continue
+            if self._child_has_open_terminal(child):
+                return True
+        return False
+
+    def _child_has_open_terminal(self, child) -> bool:
+        if child is None:
+            return False
+        if _is_terminal_widget(child):
+            return True
+        terminals = getattr(child, 'get_all_terminals', None)
+        if callable(terminals):
+            try:
+                if terminals():
+                    return True
+            except Exception:
+                logger.debug("Failed to list split terminals", exc_info=True)
+        try:
+            embeds = self._file_manager_embeds_for_child(child)
+        except Exception:
+            embeds = []
+        for embed in embeds:
+            panel = getattr(embed, 'has_terminal_panel', None)
+            if not callable(panel):
+                continue
+            try:
+                if panel():
+                    return True
+            except Exception:
+                logger.debug(
+                    "Failed to query file-manager terminal panel",
+                    exc_info=True,
+                )
+        return False
 
     def _update_command_snippets_button_visibility(self) -> None:
         """Show snippets only while the selected tab visibly contains a terminal."""
