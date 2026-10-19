@@ -1,3 +1,28 @@
+sshpilot (6.3.6-1) unstable; urgency=medium
+
+  * Release v6.3.6.
+  * New app icon on every platform
+  * Sidebar: actions moved into a single title row, and they come along
+    in the hover/search popup
+  * Sidebar view menu: new Filter by Tag and Privacy sections
+  * Omnisearch centred over the tab area; Start tab shows only while no
+    other tab is open
+  * Terminal theme and command snippets buttons hidden by default (theme
+    button kept in the header bar)
+  * Dragging a connection shows its name on an accent chip
+  * A newly added split pane scrolls into view
+  * Docker Console: filter field on the Images, Volumes, Networks and
+    Compose tabs (#1335)
+  * Tag picker shows existing tags and an empty state when there are
+    none (#1336)
+  * Server Metrics: "Show more" now expands the established connection
+    lists, and Top processes lists up to 50 (#1337)
+  * Windows installer: asks about the startup update check, new artwork,
+    prepared for SignPath code signing
+  * Fixed a crash when a drag left the sidebar over the drop gap (#1334)
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 19 Oct 2026 13:31:43 +0000
+
 sshpilot (6.3.5-1) unstable; urgency=medium
 
   * Release v6.3.5.
