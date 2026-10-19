@@ -119,7 +119,7 @@ class WindowSessionMixin:
         return {'tabs': tabs}
 
     def _close_all_tabs(self):
-        """Close every user tab; the pinned Start tab is kept.
+        """Close every user tab; Start comes back once none are left.
 
         Suppressing the confirmation also skips on_tab_close's disconnect, so
         each page is torn down explicitly — otherwise a daemon session outlives

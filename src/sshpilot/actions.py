@@ -965,7 +965,7 @@ class WindowActions:
     def _prompt_open_session(self, name, data):
         """Open a session, prompting to replace or add when tabs are already open."""
         try:
-            has_open = self.tab_view.get_n_pages() > 0
+            has_open = self.has_user_tabs()
         except Exception:
             has_open = False
 

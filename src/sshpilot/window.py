@@ -3704,7 +3704,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         toast_overlay.add_toast(toast)
 
     def setup_content_area(self):
-        """Set up the main content area with tab overview and pinned Start tab."""
+        """Set up the main content area with tab overview and Start tab."""
         # Create tab view
         self.tab_view = Adw.TabView()
         self.tab_view.set_hexpand(True)
@@ -3852,7 +3852,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         focus_memo.connect('pressed', self._on_tab_bar_capture_press)
         self.tab_bar.add_controller(focus_memo)
 
-        # Suppress the context menu on the pinned Start tab. This capture-phase
+        # Suppress the context menu on the Start tab. This capture-phase
         # gesture runs before AdwTabBox's own (bubble-phase) right-click handler,
         # so we can clear the view's menu model just-in-time when the click lands
         # on the Start tab — AdwTabBox.do_popup early-returns on a NULL model.
@@ -4995,7 +4995,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def has_user_tabs(self) -> bool:
         try:
-            return self.tab_view.get_n_pages() > 1
+            return any(
+                not self._is_start_tab_page(page)
+                for page in self.tab_view.get_pages()
+            )
         except Exception:
             return False
 
@@ -5006,30 +5009,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             return False
 
-    def _pin_start_tab_page(self) -> None:
-        """Pin the Start tab so the tab bar hides its close button."""
-        page = getattr(self, '_start_tab_page', None)
-        if page is None:
-            return
-        try:
-            self.tab_view.set_page_pinned(page, True)
-        except Exception:
-            try:
-                page.set_pinned(True)
-            except Exception:
-                logger.debug("Could not pin Start tab", exc_info=True)
-
     def _create_start_tab(self) -> None:
-        """Add the pinned Start tab (WelcomePage) if it is not already present."""
+        """Add the Start tab (WelcomePage) if it is not already present.
+
+        The Start tab exists only while no other tab is open: the first user
+        tab removes it (``_remove_start_tab``) and closing the last one brings
+        it back. The WelcomePage widget is kept and reused across both.
+        """
         if getattr(self, '_start_tab_page', None) is not None:
             try:
                 if self._start_tab_page in list(self.tab_view.get_pages()):
-                    self._pin_start_tab_page()
                     return
             except Exception:
                 pass
 
-        self.welcome_view = WelcomePage(self)
+        recreated = getattr(self, 'welcome_view', None) is not None
+        if not recreated:
+            self.welcome_view = WelcomePage(self)
         self._start_tab_page = self.tab_view.prepend(self.welcome_view)
         self._start_tab_page.set_title(_('Start'))
         try:
@@ -5039,9 +5035,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
         except Exception:
             pass
-        self._pin_start_tab_page()
+        auto_selected = self.tab_view.get_selected_page() is self._start_tab_page
         self.tab_view.set_selected_page(self._start_tab_page)
+        if recreated and auto_selected:
+            # prepend() into an empty view selected the page before
+            # _start_tab_page pointed at it, so on_tab_selected missed the
+            # Start transition (focus, omni attention); replay it.
+            self.on_tab_selected(self.tab_view)
         self._update_content_theme_for_selected_tab()
+
+    def _remove_start_tab(self) -> None:
+        """Drop the Start tab once a user tab is open."""
+        page = getattr(self, '_start_tab_page', None)
+        if page is None or not self.has_user_tabs():
+            return
+        try:
+            if page not in list(self.tab_view.get_pages()):
+                return
+        except Exception:
+            return
+        self._closing_start_tab = True
+        try:
+            self.tab_view.close_page(page)
+        except Exception:
+            logger.debug("Could not remove Start tab", exc_info=True)
+        finally:
+            self._closing_start_tab = False
+        try:
+            if page not in list(self.tab_view.get_pages()):
+                self._start_tab_page = None
+        except Exception:
+            pass
 
     def _update_content_theme_for_selected_tab(self) -> None:
         """Use terminal background only when a non-Start tab is selected."""
@@ -5056,7 +5080,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug("Failed to update tab content theme", exc_info=True)
 
     def show_start_tab(self) -> None:
-        """Select the pinned Start tab."""
+        """Show the Start tab (only while no user tab is open)."""
+        if self.has_user_tabs():
+            self.show_tab_view()
+            return
         self._create_start_tab()
         try:
             self.tab_view.set_selected_page(self._start_tab_page)
@@ -5076,7 +5103,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         logger.info("Showing Start tab")
 
     def show_welcome_view(self):
-        """Select the pinned Start tab (legacy name)."""
+        """Show the Start tab (legacy name)."""
         self.show_start_tab()
 
     def show_tab_view(self):

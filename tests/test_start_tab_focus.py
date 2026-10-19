@@ -412,19 +412,20 @@ def test_stale_start_focus_idle_does_not_steal_focus_after_switching_away(
     and the callback would otherwise pull focus out of the terminal.
     """
     row = _scrolled_to_bottom_with_selection(window)
-    session_page = window.open_session_tab()
+    window.open_session_tab()
 
     window.grab_focus_calls.clear()
 
-    window.show_start_tab()
+    # Start only returns once the last session closes.
+    window.close_last_session_tab()
 
     assert window.tab_view.get_selected_page() is window._start_tab_page
     assert len(idle_queue.pending) == 1
 
+    # A new session opens before the queued focus pass runs.
+    session_page = window.open_session_tab()
     terminal_focus = _TerminalWidget()
     window.focus_widget = terminal_focus
-
-    window.tab_view.set_selected_page(session_page)
 
     assert window.tab_view.get_selected_page() is session_page
 

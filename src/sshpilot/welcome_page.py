@@ -35,7 +35,7 @@ def _ensure_css():
 
 
 class WelcomePage(Gtk.Overlay):
-    """Start page shown in the pinned Start tab."""
+    """Start page shown in the Start tab while no other tab is open."""
 
     def __init__(self, window) -> None:
         super().__init__()
