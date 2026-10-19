@@ -1616,11 +1616,18 @@ class WindowTabsMixin:
         if button is None:
             return
 
+        try:
+            allowed = bool(
+                self.config.get_setting('ui.headerbar_show_commands', False)
+            )
+        except Exception:
+            allowed = False
+
         visible = False
         try:
             page = self.tab_view.get_selected_page()
             child = page.get_child() if page is not None else None
-            if page is None or self._is_start_tab_page(page):
+            if not allowed or page is None or self._is_start_tab_page(page):
                 visible = False
             elif _is_terminal_widget(child):
                 visible = bool(child.get_visible())
@@ -1647,10 +1654,10 @@ class WindowTabsMixin:
 
         try:
             allowed = bool(
-                self.config.get_setting('ui.headerbar_show_terminal_theme', True)
+                self.config.get_setting('ui.headerbar_show_terminal_theme', False)
             )
         except Exception:
-            allowed = True
+            allowed = False
 
         visible = False
         try:

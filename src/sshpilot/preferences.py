@@ -2047,11 +2047,13 @@ class PreferencesWindow(Adw.Window):
             _("Command Snippets Button"),
             _("Show the command snippets toggle button"),
             'ui.headerbar_show_commands',
+            default=False,
         )
         _add_headerbar_switch(
             _("Terminal Theme Button"),
             _("Show the color-scheme button on terminal tabs"),
             'ui.headerbar_show_terminal_theme',
+            default=False,
         )
         _add_headerbar_switch(
             _("Theme Menu"),
