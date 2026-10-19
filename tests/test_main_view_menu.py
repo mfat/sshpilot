@@ -58,6 +58,7 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
         ('item', 'Toggle Full Screen', 'win.toggle-fullscreen'),
         ('item', 'Sidebar Toggle Button', 'win.headerbar-sidebar-toggle'),
         ('item', 'Split View Button', 'win.headerbar-split-view'),
+        ('item', 'Tab Overview Button', 'win.headerbar-tab-button'),
         ('item', 'Command Snippets Button', 'win.headerbar-commands'),
         ('item', 'Terminal Theme Button', 'win.headerbar-terminal-theme'),
         ('item', 'Theme Menu', 'win.headerbar-theme-menu'),

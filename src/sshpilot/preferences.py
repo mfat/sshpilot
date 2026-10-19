@@ -2044,6 +2044,11 @@ class PreferencesWindow(Adw.Window):
             default=False,
         )
         _add_headerbar_switch(
+            _("Tab Overview Button"),
+            _("Show the tab overview button on the tab bar"),
+            'ui.headerbar_show_tab_button',
+        )
+        _add_headerbar_switch(
             _("Command Snippets Button"),
             _("Show the command snippets toggle button"),
             'ui.headerbar_show_commands',

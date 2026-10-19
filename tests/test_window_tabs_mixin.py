@@ -152,6 +152,46 @@ def test_split_layout_context_action_converts_right_clicked_terminal(monkeypatch
     assert stub.converted == (page, terminal, 'vertical')
 
 
+def test_tab_overview_button_visibility_honors_headerbar_preference():
+    from sshpilot import window_tabs
+
+    button = types.SimpleNamespace(visible=None)
+    button.set_visible = lambda visible: setattr(button, 'visible', visible)
+    bar = types.SimpleNamespace(visible=None)
+    bar.set_visible = lambda visible: setattr(bar, 'visible', visible)
+
+    class Config:
+        values = {'ui.headerbar_show_tab_button': True}
+
+        def get_setting(self, key, default):
+            return self.values.get(key, default)
+
+    class Stub(window_tabs.WindowTabsMixin):
+        config = Config()
+        tab_button = button
+        tab_bar = bar
+        _user_tabs = True
+
+        def has_user_tabs(self):
+            return self._user_tabs
+
+    stub = Stub()
+    stub._update_tab_button_visibility()
+    assert button.visible is True
+    assert bar.visible is True
+
+    stub.config.values['ui.headerbar_show_tab_button'] = False
+    stub._update_tab_button_visibility()
+    assert button.visible is False
+    assert bar.visible is True
+
+    stub._user_tabs = False
+    stub.config.values['ui.headerbar_show_tab_button'] = True
+    stub._update_tab_button_visibility()
+    assert button.visible is False
+    assert bar.visible is False
+
+
 def test_terminal_theme_button_visibility_honors_headerbar_preference(monkeypatch):
     from sshpilot import window_tabs
 
