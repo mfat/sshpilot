@@ -5548,6 +5548,62 @@ def _build_sidebar_toolbar(window, sidebar_box):
     sidebar_box.append(window._sidebar_toolbar_clip)
 
 
+def _build_sidebar_popup_header(window, sidebar_box):
+    """Strip at the top of the sidebar content that carries the header-bar
+    actions while the content floats in the hover/search popup (the sidebar
+    header bar stays behind). Hidden while docked."""
+    strip = Gtk.CenterBox()
+    strip.add_css_class('sidebar-popup-header')
+    strip.set_margin_start(6)
+    strip.set_margin_end(6)
+    strip.set_margin_top(6)
+    strip.set_margin_bottom(6)
+    start_box = Gtk.Box(spacing=6)
+    end_box = Gtk.Box(spacing=6)
+    strip.set_start_widget(start_box)
+    strip.set_end_widget(end_box)
+    strip.set_visible(False)
+    window._sidebar_popup_header = strip
+    window._sidebar_popup_header_start = start_box
+    window._sidebar_popup_header_end = end_box
+    sidebar_box.prepend(strip)
+
+
+def set_sidebar_header_actions_floating(window, floating: bool) -> None:
+    """Move the sidebar header-bar actions into the popup strip (floating) or
+    back into the sidebar header bar."""
+    header = getattr(window, 'sidebar_header_bar', None)
+    strip = getattr(window, '_sidebar_popup_header', None)
+    if header is None or strip is None:
+        return
+    start = list(getattr(window, '_sidebar_header_start', []))
+    end = list(getattr(window, '_sidebar_header_end', []))
+    start_box = window._sidebar_popup_header_start
+    end_box = window._sidebar_popup_header_end
+    if floating == strip.get_visible():
+        return
+    for widget in start + end:
+        parent = widget.get_parent()
+        if parent is None:
+            continue
+        if floating:
+            header.remove(widget)
+        else:
+            parent.remove(widget)
+    if floating:
+        for widget in start:
+            start_box.append(widget)
+        # pack_end order puts the first item at the far end.
+        for widget in reversed(end):
+            end_box.append(widget)
+    else:
+        for widget in start:
+            header.pack_start(widget)
+        for widget in end:
+            header.pack_end(widget)
+    strip.set_visible(floating)
+
+
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
     # Sidebar header: the title plus the connection-list actions. Window
@@ -5600,6 +5656,7 @@ def build_sidebar(window):
     sidebar_box.append(window.connection_scrolled)
 
     _build_sidebar_toolbar(window, sidebar_box)
+    _build_sidebar_popup_header(window, sidebar_box)
     _assemble_sidebar_shell(window, sidebar_box)
 
 

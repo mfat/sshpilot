@@ -26,14 +26,23 @@ def test_popup_reparents_sidebar_on_real_window(gui):
     assert tv.get_content() is box
     assert popup.visible is False
 
+    header = win.sidebar_header_bar
+    actions = [win._sidebar_add_button, win.search_button, win._sidebar_view_button]
+    assert all(button.is_ancestor(header) for button in actions)
+
     popup.show()  # runs _on_search_popup_shown -> the real minimal-mode helpers
     assert popup.visible is True
     assert tv.get_content() is None
     assert box.get_parent() is popup._panel
+    # The header bar stays behind, so its actions ride along in the popup.
+    assert win._sidebar_popup_header.get_visible()
+    assert all(button.is_ancestor(win._sidebar_popup_header) for button in actions)
 
-    popup.hide()  # runs _on_search_popup_hidden
+    popup.hide(animate=False)  # runs _on_search_popup_hidden
     assert popup.visible is False
     assert tv.get_content() is box
+    assert not win._sidebar_popup_header.get_visible()
+    assert all(button.is_ancestor(header) for button in actions)
 
 
 def test_popup_transparency_toggle_on_real_window(gui):

@@ -6806,11 +6806,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._search_popup.set_margins(top=self._sidebar_popup_top_inset())
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(not self._search_popup.search_only)
+        # The sidebar header bar stays behind; bring its actions along.
+        from sshpilot.sidebar import set_sidebar_header_actions_floating
+        set_sidebar_header_actions_floating(self, True)
 
     def _on_search_popup_hidden(self) -> None:
-        """Re-attached: restore the connection list visibility."""
+        """Re-attached: restore the connection list and header actions."""
         if getattr(self, 'connection_scrolled', None):
             self.connection_scrolled.set_visible(True)
+        from sshpilot.sidebar import set_sidebar_header_actions_floating
+        set_sidebar_header_actions_floating(self, False)
 
     def _dismiss_search_popup(self) -> None:
         """Esc / click-outside: route through search teardown when search is
