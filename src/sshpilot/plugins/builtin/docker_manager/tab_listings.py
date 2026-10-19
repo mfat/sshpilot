@@ -18,8 +18,12 @@ from gettext import gettext as _  # noqa: E402
 
 class ListingsTabMixin:
     def _build_listing_section(self, list_attr: str, ph_attr: str,
-                               loading: str) -> Gtk.Widget:
+                               loading: str, search_attr: str, filter_hint: str,
+                               refilter: Callable[[], None]) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        search = w.filter_entry(filter_hint, refilter)
+        setattr(self, search_attr, search)
+        box.append(search)
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
         listbox = Gtk.ListBox()
@@ -34,7 +38,8 @@ class ListingsTabMixin:
 
     def _populate_listing(self, listbox: Gtk.ListBox, ph: Gtk.Widget,
                           rows: Optional[List[dict]], err: Optional[Exception],
-                          empty: str, build_row: Callable[[dict], Gtk.Widget]) -> None:
+                          empty: str, build_row: Callable[[dict], Gtk.Widget],
+                          refilter: Callable[[], None]) -> None:
         w.clear_listbox(listbox)
         if err is not None:
             self._set_placeholder_idle(ph, w.error_text(err), error=True)
@@ -45,6 +50,17 @@ class ListingsTabMixin:
         self._hide_placeholder(ph)
         for r in rows:
             listbox.append(build_row(r))
+        refilter()
+
+    def _filter_listing(self, listbox: Gtk.ListBox, ph: Gtk.Widget,
+                        search: Gtk.SearchEntry, no_match: str) -> None:
+        # An empty list already shows its "No …" or error placeholder.
+        if listbox.get_first_child() is None:
+            return
+        if w.filter_listbox(listbox, search.get_text()):
+            self._hide_placeholder(ph)
+        else:
+            self._set_placeholder_idle(ph, no_match)
 
     def _inspect_dialog(self, fetch: Callable[[], dict], title: str) -> None:
         def done(data: Optional[dict], err: Optional[Exception]) -> None:
@@ -64,7 +80,13 @@ class ListingsTabMixin:
     # -- Volumes --------------------------------------------------------
     def _build_volumes_section(self) -> Gtk.Widget:
         return self._build_listing_section(
-            "_volumes_list", "_volumes_placeholder", _("Loading volumes…"))
+            "_volumes_list", "_volumes_placeholder", _("Loading volumes…"),
+            "_volumes_search", _("Filter by name / driver…"),
+            self._filter_volumes)
+
+    def _filter_volumes(self) -> None:
+        self._filter_listing(self._volumes_list, self._volumes_placeholder,
+                             self._volumes_search, _("No matching volumes"))
 
     def _refresh_volumes(self) -> None:
         client = self._client()
@@ -75,7 +97,8 @@ class ListingsTabMixin:
 
     def _on_volumes(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._populate_listing(self._volumes_list, self._volumes_placeholder,
-                               rows, err, _("No volumes"), self._volume_row)
+                               rows, err, _("No volumes"), self._volume_row,
+                               self._filter_volumes)
 
     def _volume_row(self, v: dict) -> Gtk.Widget:
         name = w.field(v, "Name")
@@ -88,7 +111,7 @@ class ListingsTabMixin:
                          refreshes=False)
         w.add_row_action(row, "user-trash-symbolic", _("Remove"),
                          lambda n=name: self._remove_volume(n))
-        return w.listbox_wrap(row)
+        return w.listbox_wrap(row, name, driver)
 
     def _remove_volume(self, name: str) -> None:
         client = self._client()
@@ -112,7 +135,13 @@ class ListingsTabMixin:
     # -- Networks -------------------------------------------------------
     def _build_networks_section(self) -> Gtk.Widget:
         return self._build_listing_section(
-            "_networks_list", "_networks_placeholder", _("Loading networks…"))
+            "_networks_list", "_networks_placeholder", _("Loading networks…"),
+            "_networks_search", _("Filter by name / driver / id…"),
+            self._filter_networks)
+
+    def _filter_networks(self) -> None:
+        self._filter_listing(self._networks_list, self._networks_placeholder,
+                             self._networks_search, _("No matching networks"))
 
     def _refresh_networks(self) -> None:
         client = self._client()
@@ -123,7 +152,8 @@ class ListingsTabMixin:
 
     def _on_networks(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._populate_listing(self._networks_list, self._networks_placeholder,
-                               rows, err, _("No networks"), self._network_row)
+                               rows, err, _("No networks"), self._network_row,
+                               self._filter_networks)
 
     # Built-in networks docker won't let you remove — don't offer a dead button.
     _UNREMOVABLE_NETWORKS = {"bridge", "host", "none"}
@@ -140,7 +170,7 @@ class ListingsTabMixin:
         if name not in self._UNREMOVABLE_NETWORKS:
             w.add_row_action(row, "user-trash-symbolic", _("Remove"),
                              lambda nm=name: self._remove_network(nm))
-        return w.listbox_wrap(row)
+        return w.listbox_wrap(row, name, sub, w.field(n, "ID", "Id"))
 
     def _remove_network(self, name: str) -> None:
         client = self._client()

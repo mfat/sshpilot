@@ -18,6 +18,9 @@ from gettext import gettext as _  # noqa: E402
 class ComposeTabMixin:
     def _build_compose_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._compose_search = w.filter_entry(
+            _("Filter by project name / status…"), self._filter_compose)
+        box.append(self._compose_search)
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
@@ -30,6 +33,10 @@ class ComposeTabMixin:
         )
         box.append(w.wrap_with_overlay(scroller, self._compose_placeholder))
         return box
+
+    def _filter_compose(self) -> None:
+        self._filter_listing(self._compose_list, self._compose_placeholder,
+                             self._compose_search, _("No matching compose projects"))
 
     def _refresh_compose(self) -> None:
         client = self._client()
@@ -59,6 +66,7 @@ class ComposeTabMixin:
         self._hide_placeholder(self._compose_placeholder)
         for proj in rows:
             self._compose_list.append(self._compose_row(proj))
+        self._filter_compose()
 
     def _compose_row(self, proj: dict) -> Gtk.Widget:
         name = w.field(proj, "Name", default="?")
@@ -101,7 +109,7 @@ class ComposeTabMixin:
                              refreshes=False)
         w.add_row_action(row, "user-trash-symbolic", _("Down (stop & remove)"),
                          lambda: self._compose_down(name), refreshes=False)
-        return w.listbox_wrap(row)
+        return w.listbox_wrap(row, name, status, config)
 
     def _compose_services(self, project: str) -> None:
         client = self._client()
