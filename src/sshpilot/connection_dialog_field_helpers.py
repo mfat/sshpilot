@@ -177,10 +177,7 @@ class ConnectionDialogFieldHelpersMixin:
 
     def _tag_candidates(self):
         """Known tags for inline completion in the tags row."""
-        cfg = getattr(self.parent_window, 'config', None)
-        if cfg is None or not hasattr(cfg, 'get_all_tags'):
-            return []
-        return [t for t, _n in cfg.get_all_tags()]
+        return [t for t, _n in self._known_tags()]
 
     def _jump_host_candidates(self):
         """Saved connection nicknames for inline completion in the jump hosts row."""
@@ -285,15 +282,35 @@ class ConnectionDialogFieldHelpersMixin:
             if state:
                 state['busy'] = False
 
+    def _known_tags(self):
+        """Distinct stored tags across saved connections, with usage counts.
+
+        Tags live in the connection store's metadata (the same source the
+        sidebar's tag filter reads), not in the local config.
+        """
+        from .tag_groups import compute_tag_groups
+
+        store = getattr(self.parent_window, 'connection_manager', None)
+        if store is None:
+            return []
+        tag_map = {}
+        try:
+            for conn in store.get_connections():
+                # Store metadata is keyed by connection id.
+                key = getattr(conn, 'id', None) or getattr(conn, 'nickname', None)
+                if not key:
+                    continue
+                tags = store.get_metadata(key).get('tags', [])
+                if isinstance(tags, (list, tuple)):
+                    tag_map[key] = tags
+        except Exception as e:
+            logger.debug("Collect known tags: %s", e)
+            return []
+        return [(tag, len(nicks)) for tag, nicks in compute_tag_groups(tag_map)]
+
     def _show_tag_picker_popover(self, button):
         """Show a popover to pick from the tags already used by other connections."""
-        cfg = getattr(self.parent_window, 'config', None)
-        if cfg is None or not hasattr(cfg, 'get_all_tags'):
-            return
-        try:
-            candidates = cfg.get_all_tags()
-        except Exception:
-            candidates = []
+        candidates = self._known_tags()
         if not candidates:
             return
 
