@@ -230,7 +230,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 The Windows installer attached to each release is built by GitHub Actions from this repository and signed through SignPath after an approver approves the release.
 
-- Committers and reviewers: [Mehdi (@mfat)](https://github.com/mfat), [Sadeq (@sadeq-n-yazdi)](https://github.com/sadeq-n-yazdi)
+- Committers and reviewers: [Mehdi (@mfat)](https://github.com/mfat)
 - Approvers: [Mehdi (@mfat)](https://github.com/mfat)
 
 Privacy: SSH Pilot checks GitHub for new versions when it starts; GitHub sees your IP address. You can turn this off in the Windows installer or in Preferences. Nothing else is sent unless you ask for it. See the [privacy policy](https://sshpilot.app/privacy.html) and the full [code signing policy](https://sshpilot.app/code-signing.html).
