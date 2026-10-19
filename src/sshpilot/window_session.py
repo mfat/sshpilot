@@ -161,7 +161,7 @@ class WindowSessionMixin:
             if pane_index < len(svt._panes):
                 pane = svt._panes[pane_index]
             else:
-                pane = svt.add_pane()
+                pane = svt.add_pane(reveal=False)
             for conn_entry in pane_conns or []:
                 nickname = conn_entry.get('nickname') if isinstance(conn_entry, dict) else None
                 connection = self._connection_from_session_reference(conn_entry)

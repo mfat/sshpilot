@@ -1193,8 +1193,8 @@ class SplitViewTab(Gtk.Box):
         self.append(self._add_strip)
 
         # Start with 2 empty panes (minimum requirement)
-        self.add_pane()
-        self.add_pane()
+        self.add_pane(reveal=False)
+        self.add_pane(reveal=False)
 
         # Monitor drag motion over the entire tab so the strip reacts as soon
         # as a connection is dragged anywhere over the terminal area.
@@ -1522,11 +1522,63 @@ class SplitViewTab(Gtk.Box):
 
     # ── pane management ──────────────────────────────────────────────────────
 
-    def add_pane(self) -> SplitPane:
-        """Add a new empty pane and rebuild the layout. Returns the new pane."""
+    def add_pane(self, reveal: bool = True) -> SplitPane:
+        """Add a new empty pane and rebuild the layout. Returns the new pane.
+
+        With ``reveal`` the pane is scrolled into view once laid out; a new
+        row below a full viewport would otherwise appear off-screen.
+        """
         pane = SplitPane(self, self.window)  # SplitPane.__init__ calls register_pane
         self._rebuild_layout()
+        if reveal:
+            self.scroll_pane_into_view(pane)
         return pane
+
+    REVEAL_MAX_FRAMES = 30
+
+    def scroll_pane_into_view(self, pane: SplitPane) -> None:
+        """Scroll the pane grid until ``pane`` is fully visible.
+
+        Runs on frame ticks: the rebuild and the viewport sync resize rows in
+        later layout passes, so the pane's position is only final once its
+        allocation and the adjustment's upper bound have caught up.
+        """
+        frames = [0]
+
+        def _tick(_widget, _clock) -> bool:
+            frames[0] += 1
+            if pane not in self._panes or frames[0] > self.REVEAL_MAX_FRAMES:
+                return GLib.SOURCE_REMOVE
+            if self._viewport_sync_scheduled:
+                return GLib.SOURCE_CONTINUE
+            try:
+                ok, bounds = pane.compute_bounds(self._content_area)
+                adj = self._pane_scroll.get_vadjustment()
+            except Exception:
+                return GLib.SOURCE_REMOVE
+            if not ok or bounds.get_height() <= 0:
+                return GLib.SOURCE_CONTINUE
+            top = bounds.get_y()
+            bottom = top + bounds.get_height()
+            if bottom > adj.get_upper():
+                return GLib.SOURCE_CONTINUE  # adjustment not updated yet
+            page = adj.get_page_size()
+            value = adj.get_value()
+            if top < value:
+                target = top
+            elif bottom > value + page:
+                # Bottom edge at the viewport bottom, but never past the top.
+                target = min(top, bottom - page)
+            else:
+                return GLib.SOURCE_REMOVE
+            max_y = max(adj.get_lower(), adj.get_upper() - page)
+            adj.set_value(max(adj.get_lower(), min(target, max_y)))
+            return GLib.SOURCE_REMOVE
+
+        try:
+            self._pane_scroll.add_tick_callback(_tick)
+        except Exception:
+            pass
 
     def remove_pane(self, pane: SplitPane) -> None:
         if pane in self._panes:
