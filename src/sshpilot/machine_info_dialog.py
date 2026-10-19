@@ -75,6 +75,10 @@ _HISTORY_LENGTH = 60
 #: more cores than this is a machine nobody reads core-by-core.
 _MAX_CORE_BARS = 64
 
+#: How many established sockets each Traffic column lists before the rest
+#: fold away behind a "Show N more" button.
+_SOCKETS_SHOWN = 8
+
 #: Usage fractions at or above these read as worth watching, elevated and
 #: critical.  These are Glances' defaults, which are a well-worn scale.
 _CAREFUL_FRACTION = 0.50
@@ -2191,8 +2195,13 @@ class MachineInfoDialog:
             column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             column.append(_section_label(title))
             card = _card()
-            shown = sockets[:8]
-            for index, socket in enumerate(shown):
+            # The first rows are always on show; the rest wait behind a
+            # button so a busy host does not push the page off-screen.
+            extra = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            for index, socket in enumerate(sockets):
+                target = card if index < _SOCKETS_SHOWN else extra
+                if index:
+                    target.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
                 row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
                 row.set_margin_start(16)
                 row.set_margin_end(16)
@@ -2229,19 +2238,16 @@ class MachineInfoDialog:
                 process.set_opacity(0.55)
                 row.append(process)
 
-                card.append(row)
-                if index < len(shown) - 1:
-                    card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-            hidden = len(sockets) - len(shown)
-            if hidden:
+                target.append(row)
+            hidden = len(sockets) - _SOCKETS_SHOWN
+            if hidden > 0:
+                revealer = Gtk.Revealer()
+                revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+                revealer.set_child(extra)
+                card.append(revealer)
                 card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-                more = Gtk.Label(label=ngettext("%d more", "%d more", hidden) % hidden)
-                more.add_css_class("caption")
-                more.set_opacity(0.55)
-                more.set_margin_top(11)
-                more.set_margin_bottom(11)
-                card.append(more)
-            if not shown:
+                card.append(self._socket_toggle(revealer, hidden))
+            if not sockets:
                 empty = Gtk.Label(label=_("None"))
                 empty.add_css_class("dim-label")
                 empty.set_margin_top(12)
@@ -2251,6 +2257,25 @@ class MachineInfoDialog:
             _insert_tile(columns, column, min_width=280)
         page.append(columns)
         return page
+
+    @staticmethod
+    def _socket_toggle(revealer: Gtk.Revealer, hidden: int) -> Gtk.Button:
+        """A button that shows or hides the sockets past the first few."""
+
+        collapsed = ngettext("Show %d more", "Show %d more", hidden) % hidden
+        button = Gtk.Button(label=collapsed)
+        button.add_css_class("flat")
+        button.add_css_class("caption")
+        button.set_margin_top(4)
+        button.set_margin_bottom(4)
+
+        def toggle(_button: Gtk.Button) -> None:
+            expanded = not revealer.get_reveal_child()
+            revealer.set_reveal_child(expanded)
+            button.set_label(_("Show fewer") if expanded else collapsed)
+
+        button.connect("clicked", toggle)
+        return button
 
     # -- System ---------------------------------------------------------
 

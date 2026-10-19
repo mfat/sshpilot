@@ -532,7 +532,41 @@ def test_a_capped_socket_list_names_the_protocol_and_says_what_it_hid():
     )
     texts = _texts(_dialog(_snapshot(sockets=sockets))._build_traffic())
     assert "tcp" in texts and "udp" in texts
-    assert "3 more" in texts
+    assert "Show 3 more" in texts
+
+
+def test_the_more_button_reveals_the_hidden_sockets_and_folds_them_back():
+    sockets = tuple(
+        SocketConnection(
+            protocol="tcp",
+            local_address="10.0.0.5",
+            local_port=22,
+            peer_address=f"10.0.0.{index}",
+            peer_port=51000,
+            process="sshd",
+            direction=SocketDirection.INCOMING,
+        )
+        for index in range(11)
+    )
+    page = _dialog(_snapshot(sockets=sockets))._build_traffic()
+    button = next(
+        w for w in _walk(page)
+        if isinstance(w, Gtk.Button) and w.get_label() == "Show 3 more"
+    )
+    revealer = next(w for w in _walk(page) if isinstance(w, Gtk.Revealer))
+    hidden_peers = {
+        w.get_text() for w in _walk(revealer.get_child()) if isinstance(w, Gtk.Label)
+    }
+    assert {"10.0.0.8:51000", "10.0.0.9:51000", "10.0.0.10:51000"} <= hidden_peers
+    assert not revealer.get_reveal_child()
+
+    button.emit("clicked")
+    assert revealer.get_reveal_child()
+    assert button.get_label() == "Show fewer"
+
+    button.emit("clicked")
+    assert not revealer.get_reveal_child()
+    assert button.get_label() == "Show 3 more"
 
 
 def test_the_system_tab_reports_what_the_host_exposes():

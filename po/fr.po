@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-19 16:38+0330\n"
+"POT-Creation-Date: 2026-10-19 16:49+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -524,7 +524,7 @@ msgstr "Clé de sécurité"
 #: src/sshpilot/askpass_utils.py:856
 #: src/sshpilot/daemon_interaction_dialogs.py:464
 #: src/sshpilot/daemon_sessions_dialog.py:35
-#: src/sshpilot/machine_info_dialog.py:944
+#: src/sshpilot/machine_info_dialog.py:948
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:449
 #: src/sshpilot/preferences.py:5290 src/sshpilot/sshcopyid_window.py:678
 #: src/sshpilot/terminal.py:1199 src/sshpilot/window.py:3236
@@ -2060,7 +2060,7 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:3635
 #: src/sshpilot/file_manager/permissions.py:76
 #: src/sshpilot/login_profile_dialogs.py:659
-#: src/sshpilot/machine_info_dialog.py:2245
+#: src/sshpilot/machine_info_dialog.py:2251
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:206
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:213
 #: src/sshpilot/preferences.py:3120 src/sshpilot/shortcut_editor.py:442
@@ -2129,7 +2129,7 @@ msgstr "Sélectionner la bibliothèque du fournisseur de clé de sécurité FIDO
 #: src/sshpilot/connection_dialog.py:4730
 #: src/sshpilot/connection_dialog_port_forwarding.py:209
 #: src/sshpilot/host_info_tab.py:103 src/sshpilot/host_info_tab.py:569
-#: src/sshpilot/machine_info_dialog.py:2447
+#: src/sshpilot/machine_info_dialog.py:2472
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:312
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
@@ -2180,7 +2180,7 @@ msgstr "Nom d’utilisateur"
 #: src/sshpilot/connection_dialog_port_forwarding.py:211
 #: src/sshpilot/connection_dialog_port_forwarding.py:578
 #: src/sshpilot/effective_config_dialog.py:34
-#: src/sshpilot/machine_info_dialog.py:2277
+#: src/sshpilot/machine_info_dialog.py:2302
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:314
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:41
 msgid "Port"
@@ -3723,9 +3723,9 @@ msgid "File"
 msgstr "Fichier"
 
 #: src/sshpilot/file_manager/pane.py:2849
-#: src/sshpilot/machine_info_dialog.py:338
-#: src/sshpilot/machine_info_dialog.py:346
-#: src/sshpilot/machine_info_dialog.py:2392
+#: src/sshpilot/machine_info_dialog.py:342
+#: src/sshpilot/machine_info_dialog.py:350
+#: src/sshpilot/machine_info_dialog.py:2417
 msgid "Unknown"
 msgstr "Inconnu"
 
@@ -4840,8 +4840,8 @@ msgstr ""
 #: src/sshpilot/gtk/host_info_failure_messages.py:35
 #: src/sshpilot/gtk/login_profile_messages.py:110
 #: src/sshpilot/gtk/login_profile_messages.py:111
-#: src/sshpilot/host_info_tab.py:367 src/sshpilot/machine_info_dialog.py:1075
-#: src/sshpilot/machine_info_dialog.py:1375
+#: src/sshpilot/host_info_tab.py:367 src/sshpilot/machine_info_dialog.py:1079
+#: src/sshpilot/machine_info_dialog.py:1379
 msgid "Daemon connection unavailable."
 msgstr "Connexion au démon indisponible."
 
@@ -6282,34 +6282,34 @@ msgstr[1] ""
 #: src/sshpilot/host_info_payload.py:114 src/sshpilot/host_info_payload.py:132
 #: src/sshpilot/host_info_payload.py:143 src/sshpilot/host_info_payload.py:307
 #: src/sshpilot/host_info_payload.py:383 src/sshpilot/host_info_payload.py:392
-#: src/sshpilot/machine_info_dialog.py:185
-#: src/sshpilot/machine_info_dialog.py:201
-#: src/sshpilot/machine_info_dialog.py:229
-#: src/sshpilot/machine_info_dialog.py:247
-#: src/sshpilot/machine_info_dialog.py:264
-#: src/sshpilot/machine_info_dialog.py:279
-#: src/sshpilot/machine_info_dialog.py:1777
-#: src/sshpilot/machine_info_dialog.py:1903
-#: src/sshpilot/machine_info_dialog.py:2111
-#: src/sshpilot/machine_info_dialog.py:2357
+#: src/sshpilot/machine_info_dialog.py:189
+#: src/sshpilot/machine_info_dialog.py:205
+#: src/sshpilot/machine_info_dialog.py:233
+#: src/sshpilot/machine_info_dialog.py:251
+#: src/sshpilot/machine_info_dialog.py:268
+#: src/sshpilot/machine_info_dialog.py:283
+#: src/sshpilot/machine_info_dialog.py:1781
+#: src/sshpilot/machine_info_dialog.py:1907
+#: src/sshpilot/machine_info_dialog.py:2115
+#: src/sshpilot/machine_info_dialog.py:2382
 msgid "N/A"
 msgstr "N/D"
 
 #: src/sshpilot/host_info_payload.py:74 src/sshpilot/host_info_payload.py:88
-#: src/sshpilot/machine_info_dialog.py:187
-#: src/sshpilot/machine_info_dialog.py:203
+#: src/sshpilot/machine_info_dialog.py:191
+#: src/sshpilot/machine_info_dialog.py:207
 #, python-format
 msgid "%d B"
 msgstr "%d B"
 
 #: src/sshpilot/host_info_payload.py:102
-#: src/sshpilot/machine_info_dialog.py:217
+#: src/sshpilot/machine_info_dialog.py:221
 #, python-format
 msgid "%d B/s"
 msgstr "%d B/s"
 
 #: src/sshpilot/host_info_payload.py:120
-#: src/sshpilot/machine_info_dialog.py:235
+#: src/sshpilot/machine_info_dialog.py:239
 #, python-format
 msgid "%d day"
 msgid_plural "%d days"
@@ -6317,7 +6317,7 @@ msgstr[0] "%d jour"
 msgstr[1] "%d jours"
 
 #: src/sshpilot/host_info_payload.py:122
-#: src/sshpilot/machine_info_dialog.py:237
+#: src/sshpilot/machine_info_dialog.py:241
 #, python-format
 msgid "%d hour"
 msgid_plural "%d hours"
@@ -6325,7 +6325,7 @@ msgstr[0] "%d heure"
 msgstr[1] "%d heures"
 
 #: src/sshpilot/host_info_payload.py:124
-#: src/sshpilot/machine_info_dialog.py:239
+#: src/sshpilot/machine_info_dialog.py:243
 #, python-format
 msgid "%d minute"
 msgid_plural "%d minutes"
@@ -6333,42 +6333,42 @@ msgstr[0] "%d minute"
 msgstr[1] "%d minutes"
 
 #: src/sshpilot/host_info_payload.py:126
-#: src/sshpilot/machine_info_dialog.py:241
+#: src/sshpilot/machine_info_dialog.py:245
 msgid "Less than a minute"
 msgstr "Moins d’une minute"
 
 #: src/sshpilot/host_info_payload.py:127
-#: src/sshpilot/machine_info_dialog.py:242
-#: src/sshpilot/machine_info_dialog.py:2125 src/sshpilot/window_dialogs.py:3077
+#: src/sshpilot/machine_info_dialog.py:246
+#: src/sshpilot/machine_info_dialog.py:2129 src/sshpilot/window_dialogs.py:3077
 msgid ", "
 msgstr ", "
 
 #: src/sshpilot/host_info_payload.py:134
-#: src/sshpilot/machine_info_dialog.py:249
+#: src/sshpilot/machine_info_dialog.py:253
 #, python-format
 msgid "%.2f GHz"
 msgstr "%.2f GHz"
 
 #: src/sshpilot/host_info_payload.py:135
-#: src/sshpilot/machine_info_dialog.py:250
+#: src/sshpilot/machine_info_dialog.py:254
 #, python-format
 msgid "%.0f MHz"
 msgstr "%.0f MHz"
 
 #: src/sshpilot/host_info_payload.py:139
-#: src/sshpilot/machine_info_dialog.py:254
+#: src/sshpilot/machine_info_dialog.py:258
 #, python-format
 msgid "%d%%"
 msgstr "%d %%"
 
 #: src/sshpilot/host_info_payload.py:151
-#: src/sshpilot/machine_info_dialog.py:1590
+#: src/sshpilot/machine_info_dialog.py:1594
 #, python-format
 msgid "%(cores)d cores · %(threads)d threads · %(sockets)d sockets"
 msgstr "%(cores)d cœurs · %(threads)d threads · %(sockets)d sockets"
 
 #: src/sshpilot/host_info_payload.py:157
-#: src/sshpilot/machine_info_dialog.py:1596
+#: src/sshpilot/machine_info_dialog.py:1600
 #, python-format
 msgid "%d core"
 msgid_plural "%d cores"
@@ -6376,104 +6376,104 @@ msgstr[0] "%d cœur"
 msgstr[1] "%d cœurs"
 
 #: src/sshpilot/host_info_payload.py:161
-#: src/sshpilot/machine_info_dialog.py:1600
+#: src/sshpilot/machine_info_dialog.py:1604
 #, python-format
 msgid "%(model)s (%(topology)s)"
 msgstr "%(model)s (%(topology)s)"
 
 #: src/sshpilot/host_info_payload.py:171
-#: src/sshpilot/machine_info_dialog.py:1312
+#: src/sshpilot/machine_info_dialog.py:1316
 #, python-format
 msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
 msgstr "charge %(one).2f · %(five).2f · %(fifteen).2f"
 
 #: src/sshpilot/host_info_payload.py:181
-#: src/sshpilot/machine_info_dialog.py:1322
+#: src/sshpilot/machine_info_dialog.py:1326
 #, python-format
 msgid "swap %(used)s / %(total)s"
 msgstr "swap %(used)s / %(total)s"
 
 #: src/sshpilot/host_info_payload.py:225 src/sshpilot/host_info_payload.py:286
 #: src/sshpilot/host_info_payload.py:421 src/sshpilot/host_info_payload.py:479
-#: src/sshpilot/machine_info_dialog.py:1299
-#: src/sshpilot/machine_info_dialog.py:1536
-#: src/sshpilot/machine_info_dialog.py:1546
-#: src/sshpilot/machine_info_dialog.py:2014
+#: src/sshpilot/machine_info_dialog.py:1303
+#: src/sshpilot/machine_info_dialog.py:1540
+#: src/sshpilot/machine_info_dialog.py:1550
+#: src/sshpilot/machine_info_dialog.py:2018
 #, python-format
 msgid "%(used)s / %(total)s"
 msgstr "%(used)s / %(total)s"
 
 #: src/sshpilot/host_info_payload.py:230
-#: src/sshpilot/machine_info_dialog.py:1551
+#: src/sshpilot/machine_info_dialog.py:1555
 #, python-format
 msgid "%(fstype)s on %(device)s"
 msgstr "%(fstype)s sur %(device)s"
 
 #: src/sshpilot/host_info_payload.py:236 src/sshpilot/host_info_payload.py:386
-#: src/sshpilot/machine_info_dialog.py:1566
+#: src/sshpilot/machine_info_dialog.py:1570
 msgid "Hostname"
 msgstr "Nom d’hôte"
 
 #: src/sshpilot/host_info_payload.py:238
-#: src/sshpilot/machine_info_dialog.py:1569
-#: src/sshpilot/machine_info_dialog.py:1973
+#: src/sshpilot/machine_info_dialog.py:1573
+#: src/sshpilot/machine_info_dialog.py:1977
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:200
 msgid "Device"
 msgstr "Périphérique"
 
 #: src/sshpilot/host_info_payload.py:241
-#: src/sshpilot/machine_info_dialog.py:1572
+#: src/sshpilot/machine_info_dialog.py:1576
 msgid "Operating system"
 msgstr "Système d’exploitation"
 
 #: src/sshpilot/host_info_payload.py:242
-#: src/sshpilot/machine_info_dialog.py:1573
+#: src/sshpilot/machine_info_dialog.py:1577
 msgid "Kernel"
 msgstr "Noyau"
 
 #: src/sshpilot/host_info_payload.py:243
-#: src/sshpilot/machine_info_dialog.py:1574
+#: src/sshpilot/machine_info_dialog.py:1578
 msgid "Processor"
 msgstr "Processeur"
 
 #: src/sshpilot/host_info_payload.py:245
-#: src/sshpilot/machine_info_dialog.py:1575
+#: src/sshpilot/machine_info_dialog.py:1579
 msgid "CPU frequency"
 msgstr "Fréquence du processeur"
 
 #: src/sshpilot/host_info_payload.py:249 src/sshpilot/host_info_payload.py:419
 #: src/sshpilot/host_info_payload.py:506
-#: src/sshpilot/machine_info_dialog.py:1532
-#: src/sshpilot/machine_info_dialog.py:1576
-#: src/sshpilot/machine_info_dialog.py:1684
-#: src/sshpilot/machine_info_dialog.py:1797
-#: src/sshpilot/machine_info_dialog.py:1820
+#: src/sshpilot/machine_info_dialog.py:1536
+#: src/sshpilot/machine_info_dialog.py:1580
+#: src/sshpilot/machine_info_dialog.py:1688
+#: src/sshpilot/machine_info_dialog.py:1801
+#: src/sshpilot/machine_info_dialog.py:1824
 #: src/sshpilot/plugins/builtin/docker_manager/tab_stats.py:24
 msgid "Memory"
 msgstr "Mémoire"
 
 #: src/sshpilot/host_info_payload.py:250
-#: src/sshpilot/machine_info_dialog.py:1577
+#: src/sshpilot/machine_info_dialog.py:1581
 msgid "Uptime"
 msgstr "Temps de fonctionnement"
 
 #: src/sshpilot/host_info_payload.py:251
-#: src/sshpilot/machine_info_dialog.py:1578
+#: src/sshpilot/machine_info_dialog.py:1582
 msgid "Booted"
 msgstr "Démarré"
 
 #: src/sshpilot/host_info_payload.py:259
-#: src/sshpilot/machine_info_dialog.py:1620
+#: src/sshpilot/machine_info_dialog.py:1624
 msgid "1 min"
 msgstr "1 min"
 
 #: src/sshpilot/host_info_payload.py:260
-#: src/sshpilot/machine_info_dialog.py:1621
+#: src/sshpilot/machine_info_dialog.py:1625
 msgid "5 min"
 msgstr "5 min"
 
 #: src/sshpilot/host_info_payload.py:261
-#: src/sshpilot/machine_info_dialog.py:1622
+#: src/sshpilot/machine_info_dialog.py:1626
 msgid "15 min"
 msgstr "15 min"
 
@@ -6483,8 +6483,8 @@ msgid "inodes %(pct)s"
 msgstr "inodes %(pct)s"
 
 #: src/sshpilot/host_info_payload.py:345 src/sshpilot/host_info_payload.py:348
-#: src/sshpilot/machine_info_dialog.py:264
-#: src/sshpilot/machine_info_dialog.py:275
+#: src/sshpilot/machine_info_dialog.py:268
+#: src/sshpilot/machine_info_dialog.py:279
 #, python-format
 msgid "%.1f%%"
 msgstr "%.1f %%"
@@ -6507,7 +6507,7 @@ msgid "OS version"
 msgstr "Version du système d’exploitation"
 
 #: src/sshpilot/host_info_payload.py:389
-#: src/sshpilot/machine_info_dialog.py:2269
+#: src/sshpilot/machine_info_dialog.py:2294
 msgid "Architecture"
 msgstr "Architecture"
 
@@ -6521,7 +6521,7 @@ msgid "SSH process"
 msgstr "Processus SSH"
 
 #: src/sshpilot/host_info_payload.py:396
-#: src/sshpilot/machine_info_dialog.py:2124
+#: src/sshpilot/machine_info_dialog.py:2128
 msgid "Default gateway"
 msgstr "Passerelle par défaut"
 
@@ -6539,58 +6539,58 @@ msgstr "DNS"
 #. load average: load is a queue length, and showing it here under a
 #. "CPU" heading is what this replaced.
 #: src/sshpilot/host_info_payload.py:412 src/sshpilot/host_info_payload.py:501
-#: src/sshpilot/machine_info_dialog.py:1524
-#: src/sshpilot/machine_info_dialog.py:1683
-#: src/sshpilot/machine_info_dialog.py:1796
+#: src/sshpilot/machine_info_dialog.py:1528
+#: src/sshpilot/machine_info_dialog.py:1687
+#: src/sshpilot/machine_info_dialog.py:1800
 msgid "CPU"
 msgstr "Processeur"
 
 #. Storage does not move between samples, so this gauge keeps no history.
 #: src/sshpilot/host_info_payload.py:429
-#: src/sshpilot/machine_info_dialog.py:1557
+#: src/sshpilot/machine_info_dialog.py:1561
 msgid "Root filesystem"
 msgstr "Système de fichiers racine"
 
-#: src/sshpilot/host_info_shell.py:21 src/sshpilot/machine_info_dialog.py:1436
+#: src/sshpilot/host_info_shell.py:21 src/sshpilot/machine_info_dialog.py:1440
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:108
 msgid "Overview"
 msgstr "Vue d’ensemble"
 
-#: src/sshpilot/host_info_shell.py:22 src/sshpilot/machine_info_dialog.py:1437
+#: src/sshpilot/host_info_shell.py:22 src/sshpilot/machine_info_dialog.py:1441
 msgid "Resources"
 msgstr "Ressources"
 
-#: src/sshpilot/host_info_shell.py:23 src/sshpilot/machine_info_dialog.py:1438
+#: src/sshpilot/host_info_shell.py:23 src/sshpilot/machine_info_dialog.py:1442
 msgid "Storage"
 msgstr "Stockage"
 
-#: src/sshpilot/host_info_shell.py:24 src/sshpilot/machine_info_dialog.py:1439
+#: src/sshpilot/host_info_shell.py:24 src/sshpilot/machine_info_dialog.py:1443
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:357
 msgid "Network"
 msgstr "Réseau"
 
-#: src/sshpilot/host_info_shell.py:25 src/sshpilot/machine_info_dialog.py:1440
+#: src/sshpilot/host_info_shell.py:25 src/sshpilot/machine_info_dialog.py:1444
 msgid "Traffic"
 msgstr "Trafic"
 
-#: src/sshpilot/host_info_shell.py:26 src/sshpilot/machine_info_dialog.py:1441
+#: src/sshpilot/host_info_shell.py:26 src/sshpilot/machine_info_dialog.py:1445
 msgid "System"
 msgstr "Système"
 
 #: src/sshpilot/host_info_shell.py:27 src/sshpilot/log_viewer.py:574
-#: src/sshpilot/machine_info_dialog.py:948
+#: src/sshpilot/machine_info_dialog.py:952
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:641
 #: src/sshpilot/preferences.py:1229
 msgid "Refresh"
 msgstr "Actualiser"
 
 #: src/sshpilot/host_info_shell.py:28 src/sshpilot/host_info_tab.py:93
-#: src/sshpilot/host_info_tab.py:371 src/sshpilot/machine_info_dialog.py:906
-#: src/sshpilot/machine_info_dialog.py:1081
+#: src/sshpilot/host_info_tab.py:371 src/sshpilot/machine_info_dialog.py:910
+#: src/sshpilot/machine_info_dialog.py:1085
 msgid "Gathering host information…"
 msgstr "Collecte des informations de l’hôte…"
 
-#: src/sshpilot/host_info_shell.py:29 src/sshpilot/machine_info_dialog.py:1617
+#: src/sshpilot/host_info_shell.py:29 src/sshpilot/machine_info_dialog.py:1621
 msgid "Load average"
 msgstr "Charge moyenne"
 
@@ -6598,11 +6598,11 @@ msgstr "Charge moyenne"
 msgid "Per-core CPU"
 msgstr "CPU par cœur"
 
-#: src/sshpilot/host_info_shell.py:31 src/sshpilot/machine_info_dialog.py:1969
+#: src/sshpilot/host_info_shell.py:31 src/sshpilot/machine_info_dialog.py:1973
 msgid "Filesystems"
 msgstr "Systèmes de fichiers"
 
-#: src/sshpilot/host_info_shell.py:32 src/sshpilot/machine_info_dialog.py:2049
+#: src/sshpilot/host_info_shell.py:32 src/sshpilot/machine_info_dialog.py:2053
 msgid "Interfaces"
 msgstr "Interfaces"
 
@@ -6614,11 +6614,11 @@ msgstr "Ports en écoute"
 msgid "Established sockets"
 msgstr "Sockets établies"
 
-#: src/sshpilot/host_info_shell.py:35 src/sshpilot/machine_info_dialog.py:1792
+#: src/sshpilot/host_info_shell.py:35 src/sshpilot/machine_info_dialog.py:1796
 msgid "Top processes"
 msgstr "Principaux processus"
 
-#: src/sshpilot/host_info_shell.py:36 src/sshpilot/machine_info_dialog.py:1899
+#: src/sshpilot/host_info_shell.py:36 src/sshpilot/machine_info_dialog.py:1903
 msgid "Temperatures"
 msgstr "Températures"
 
@@ -6626,11 +6626,11 @@ msgstr "Températures"
 msgid "Login sessions"
 msgstr "Sessions de connexion"
 
-#: src/sshpilot/host_info_shell.py:38 src/sshpilot/machine_info_dialog.py:2322
+#: src/sshpilot/host_info_shell.py:38 src/sshpilot/machine_info_dialog.py:2347
 msgid "Failed units"
 msgstr "Unités en échec"
 
-#: src/sshpilot/host_info_shell.py:39 src/sshpilot/machine_info_dialog.py:2342
+#: src/sshpilot/host_info_shell.py:39 src/sshpilot/machine_info_dialog.py:2367
 msgid "SSH host keys"
 msgstr "Clés d’hôte SSH"
 
@@ -6642,7 +6642,7 @@ msgstr "Réception"
 msgid "Transmit"
 msgstr "Émission"
 
-#: src/sshpilot/host_info_shell.py:42 src/sshpilot/machine_info_dialog.py:2008
+#: src/sshpilot/host_info_shell.py:42 src/sshpilot/machine_info_dialog.py:2012
 msgid "read-only"
 msgstr "lecture seule"
 
@@ -6655,22 +6655,22 @@ msgid "Updated"
 msgstr "Actualisé"
 
 #: src/sshpilot/host_info_tab.py:104 src/sshpilot/host_info_tab.py:570
-#: src/sshpilot/machine_info_dialog.py:2448
+#: src/sshpilot/machine_info_dialog.py:2473
 #, python-format
 msgid "%s — Dashboard"
 msgstr "%s — Tableau de bord"
 
-#: src/sshpilot/host_info_tab.py:111 src/sshpilot/machine_info_dialog.py:979
+#: src/sshpilot/host_info_tab.py:111 src/sshpilot/machine_info_dialog.py:983
 #, python-format
 msgid "%(nickname)s — %(user)s@%(host)s"
 msgstr "%(nickname)s — %(user)s@%(host)s"
 
-#: src/sshpilot/host_info_tab.py:117 src/sshpilot/machine_info_dialog.py:983
+#: src/sshpilot/host_info_tab.py:117 src/sshpilot/machine_info_dialog.py:987
 #, python-format
 msgid "%(nickname)s — %(host)s"
 msgstr "%(nickname)s — %(host)s"
 
-#: src/sshpilot/host_info_tab.py:382 src/sshpilot/machine_info_dialog.py:1090
+#: src/sshpilot/host_info_tab.py:382 src/sshpilot/machine_info_dialog.py:1094
 #, python-format
 msgid ""
 "Could not gather host information.\n"
@@ -6681,7 +6681,7 @@ msgstr ""
 "\n"
 "%s"
 
-#: src/sshpilot/host_info_tab.py:388 src/sshpilot/machine_info_dialog.py:1095
+#: src/sshpilot/host_info_tab.py:388 src/sshpilot/machine_info_dialog.py:1099
 msgid "The host returned no system information."
 msgstr "L’hôte n’a renvoyé aucune information système."
 
@@ -7124,48 +7124,48 @@ msgstr[0] "{count} connexion a été détachée et a conservé ses paramètres."
 msgstr[1] ""
 "{count} connexions ont été détachées et ont conservé leurs paramètres."
 
-#: src/sshpilot/machine_info_dialog.py:335
+#: src/sshpilot/machine_info_dialog.py:339
 msgid "Loopback"
 msgstr "Boucle locale"
 
-#: src/sshpilot/machine_info_dialog.py:336
+#: src/sshpilot/machine_info_dialog.py:340
 msgid "Wi-Fi"
 msgstr "Wi-Fi"
 
-#: src/sshpilot/machine_info_dialog.py:337
+#: src/sshpilot/machine_info_dialog.py:341
 msgid "Ethernet"
 msgstr "Ethernet"
 
-#: src/sshpilot/machine_info_dialog.py:343
+#: src/sshpilot/machine_info_dialog.py:347
 msgid "Up"
 msgstr "Actif"
 
-#: src/sshpilot/machine_info_dialog.py:344
+#: src/sshpilot/machine_info_dialog.py:348
 #: src/sshpilot/plugins/builtin/docker_manager/tab_compose.py:192
 msgid "Down"
 msgstr "Inactif"
 
-#: src/sshpilot/machine_info_dialog.py:345
+#: src/sshpilot/machine_info_dialog.py:349
 msgid "No carrier"
 msgstr "Aucune porteuse"
 
-#: src/sshpilot/machine_info_dialog.py:719
+#: src/sshpilot/machine_info_dialog.py:723
 msgid "CPU utilization"
 msgstr "Utilisation du processeur"
 
-#: src/sshpilot/machine_info_dialog.py:729
-#: src/sshpilot/machine_info_dialog.py:1765
+#: src/sshpilot/machine_info_dialog.py:733
+#: src/sshpilot/machine_info_dialog.py:1769
 msgid "Total"
 msgstr "Total"
 
-#: src/sshpilot/machine_info_dialog.py:769
+#: src/sshpilot/machine_info_dialog.py:773
 #, python-format
 msgid "%d more core"
 msgid_plural "%d more cores"
 msgstr[0] "%d cœur de plus"
 msgstr[1] "%d cœurs de plus"
 
-#: src/sshpilot/machine_info_dialog.py:814
+#: src/sshpilot/machine_info_dialog.py:818
 #, python-format
 msgid ""
 "user %(user)s · system %(system)s · iowait %(iowait)s · steal %(steal)s · "
@@ -7174,297 +7174,301 @@ msgstr ""
 "utilisateur %(user)s · système %(system)s · attente E/S %(iowait)s · volé "
 "%(steal)s · inactif %(idle)s"
 
-#: src/sshpilot/machine_info_dialog.py:930 src/sshpilot/omni_search.py:584
+#: src/sshpilot/machine_info_dialog.py:934 src/sshpilot/omni_search.py:584
 #: src/sshpilot/omni_search.py:596 src/sshpilot/sidebar.py:1937
 #: src/sshpilot/welcome_page.py:327
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:948
 msgid "Dashboard"
 msgstr "Tableau de bord"
 
-#: src/sshpilot/machine_info_dialog.py:950
+#: src/sshpilot/machine_info_dialog.py:954
 msgid "Refresh host information"
 msgstr "Actualiser les informations de l’hôte"
 
-#: src/sshpilot/machine_info_dialog.py:1172
+#: src/sshpilot/machine_info_dialog.py:1176
 #, python-format
 msgid "Updated %d second ago"
 msgid_plural "Updated %d seconds ago"
 msgstr[0] "Mis à jour il y a %d seconde"
 msgstr[1] "Mis à jour il y a %d secondes"
 
-#: src/sshpilot/machine_info_dialog.py:1178
+#: src/sshpilot/machine_info_dialog.py:1182
 #, python-format
 msgid "Updated %d minute ago"
 msgid_plural "Updated %d minutes ago"
 msgstr[0] "Mis à jour il y a %d minute"
 msgstr[1] "Mis à jour il y a %d minutes"
 
-#: src/sshpilot/machine_info_dialog.py:1406
+#: src/sshpilot/machine_info_dialog.py:1410
 #, python-format
 msgid "Could not open %(label)s: %(error)s"
 msgstr "Impossible d’ouvrir %(label)s : %(error)s"
 
-#: src/sshpilot/machine_info_dialog.py:1415
+#: src/sshpilot/machine_info_dialog.py:1419
 msgid "Could not open the system browser."
 msgstr "Impossible d’ouvrir le navigateur système."
 
-#: src/sshpilot/machine_info_dialog.py:1685
+#: src/sshpilot/machine_info_dialog.py:1689
 msgid "Disk"
 msgstr "Disque"
 
-#: src/sshpilot/machine_info_dialog.py:1688
+#: src/sshpilot/machine_info_dialog.py:1692
 msgid "Time spent waiting"
 msgstr "Temps d’attente"
 
-#: src/sshpilot/machine_info_dialog.py:1696
+#: src/sshpilot/machine_info_dialog.py:1700
 msgid "This host does not report waiting times"
 msgstr "Cet hôte ne signale aucun temps d’attente"
 
-#: src/sshpilot/machine_info_dialog.py:1732
+#: src/sshpilot/machine_info_dialog.py:1736
 #, python-format
 msgid "nothing could run %s"
 msgstr "rien n’a pu s’exécuter %s"
 
-#: src/sshpilot/machine_info_dialog.py:1743
+#: src/sshpilot/machine_info_dialog.py:1747
 msgid "Process table"
 msgstr "Table des processus"
 
-#: src/sshpilot/machine_info_dialog.py:1746
+#: src/sshpilot/machine_info_dialog.py:1750
 msgid "No process counts reported"
 msgstr "Aucun décompte de processus signalé"
 
-#: src/sshpilot/machine_info_dialog.py:1766
+#: src/sshpilot/machine_info_dialog.py:1770
 msgid "Running"
 msgstr "En cours"
 
-#: src/sshpilot/machine_info_dialog.py:1767
+#: src/sshpilot/machine_info_dialog.py:1771
 msgid "Sleeping"
 msgstr "En veille"
 
-#: src/sshpilot/machine_info_dialog.py:1768
+#: src/sshpilot/machine_info_dialog.py:1772
 msgid "Stopped"
 msgstr "Arrêtés"
 
-#: src/sshpilot/machine_info_dialog.py:1769
+#: src/sshpilot/machine_info_dialog.py:1773
 msgid "Zombie"
 msgstr "Zombie"
 
-#: src/sshpilot/machine_info_dialog.py:1770
+#: src/sshpilot/machine_info_dialog.py:1774
 msgid "Threads"
 msgstr "Threads"
 
-#: src/sshpilot/machine_info_dialog.py:1771
+#: src/sshpilot/machine_info_dialog.py:1775
 msgid "PID limit"
 msgstr "Limite de PID"
 
-#: src/sshpilot/machine_info_dialog.py:1795
+#: src/sshpilot/machine_info_dialog.py:1799
 msgid "Process"
 msgstr "Processus"
 
-#: src/sshpilot/machine_info_dialog.py:1813
+#: src/sshpilot/machine_info_dialog.py:1817
 msgid "No process list reported"
 msgstr "Aucune liste de processus signalée"
 
-#: src/sshpilot/machine_info_dialog.py:1875
+#: src/sshpilot/machine_info_dialog.py:1879
 msgid "Swap"
 msgstr "Swap"
 
-#: src/sshpilot/machine_info_dialog.py:1882
+#: src/sshpilot/machine_info_dialog.py:1886
 #, python-format
 msgid "%(used)s / %(total)s · %(percent)s"
 msgstr "%(used)s / %(total)s · %(percent)s"
 
-#: src/sshpilot/machine_info_dialog.py:1935
+#: src/sshpilot/machine_info_dialog.py:1939
 #, python-format
 msgid "%d °C"
 msgstr "%d °C"
 
-#: src/sshpilot/machine_info_dialog.py:1960
+#: src/sshpilot/machine_info_dialog.py:1964
 #, python-format
 msgid "inodes %s"
 msgstr "inodes %s"
 
-#: src/sshpilot/machine_info_dialog.py:1972
+#: src/sshpilot/machine_info_dialog.py:1976
 msgid "Mount point"
 msgstr "Point de montage"
 
-#: src/sshpilot/machine_info_dialog.py:1974
+#: src/sshpilot/machine_info_dialog.py:1978
 msgid "Usage"
 msgstr "Utilisation"
 
-#: src/sshpilot/machine_info_dialog.py:1975
+#: src/sshpilot/machine_info_dialog.py:1979
 msgid "Used / Size"
 msgstr "Utilisé / Taille"
 
-#: src/sshpilot/machine_info_dialog.py:1976
+#: src/sshpilot/machine_info_dialog.py:1980
 msgid "Available"
 msgstr "Disponible"
 
-#: src/sshpilot/machine_info_dialog.py:2009
-#: src/sshpilot/machine_info_dialog.py:2088
-#: src/sshpilot/machine_info_dialog.py:2399
+#: src/sshpilot/machine_info_dialog.py:2013
+#: src/sshpilot/machine_info_dialog.py:2092
+#: src/sshpilot/machine_info_dialog.py:2424
 msgid " · "
 msgstr " · "
 
-#: src/sshpilot/machine_info_dialog.py:2039
+#: src/sshpilot/machine_info_dialog.py:2043
 msgid "No filesystems reported"
 msgstr "Aucun système de fichiers signalé"
 
-#: src/sshpilot/machine_info_dialog.py:2087
+#: src/sshpilot/machine_info_dialog.py:2091
 #, python-format
 msgid "MTU %d"
 msgstr "MTU %d"
 
-#: src/sshpilot/machine_info_dialog.py:2098
+#: src/sshpilot/machine_info_dialog.py:2102
 msgid "No interfaces reported"
 msgstr "Aucune interface signalée"
 
-#: src/sshpilot/machine_info_dialog.py:2105
+#: src/sshpilot/machine_info_dialog.py:2109
 msgid "Routing & resolution"
 msgstr "Routage et résolution"
 
-#: src/sshpilot/machine_info_dialog.py:2108
+#: src/sshpilot/machine_info_dialog.py:2112
 #, python-format
 msgid "%(gateway)s via %(interface)s"
 msgstr "%(gateway)s via %(interface)s"
 
-#: src/sshpilot/machine_info_dialog.py:2114
+#: src/sshpilot/machine_info_dialog.py:2118
 #, python-format
 msgid "%(port)d/tcp (%(process)s)"
 msgstr "%(port)d/tcp (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:2118
-#: src/sshpilot/machine_info_dialog.py:2283
+#: src/sshpilot/machine_info_dialog.py:2122
+#: src/sshpilot/machine_info_dialog.py:2308
 #, python-format
 msgid "%d/tcp"
 msgstr "%d/tcp"
 
-#: src/sshpilot/machine_info_dialog.py:2125
+#: src/sshpilot/machine_info_dialog.py:2129
 msgid "DNS servers"
 msgstr "Serveurs DNS"
 
-#: src/sshpilot/machine_info_dialog.py:2126
+#: src/sshpilot/machine_info_dialog.py:2130
 msgid "Listening SSH port"
 msgstr "Port SSH en écoute"
 
-#: src/sshpilot/machine_info_dialog.py:2136
+#: src/sshpilot/machine_info_dialog.py:2140
 msgid "Bandwidth"
 msgstr "Bande passante"
 
-#: src/sshpilot/machine_info_dialog.py:2139
+#: src/sshpilot/machine_info_dialog.py:2143
 msgid "Network interface"
 msgstr "Interface réseau"
 
-#: src/sshpilot/machine_info_dialog.py:2140
+#: src/sshpilot/machine_info_dialog.py:2144
 msgid "Received"
 msgstr "Reçu"
 
-#: src/sshpilot/machine_info_dialog.py:2141
+#: src/sshpilot/machine_info_dialog.py:2145
 msgid "Transmitted"
 msgstr "Transmis"
 
-#: src/sshpilot/machine_info_dialog.py:2142
+#: src/sshpilot/machine_info_dialog.py:2146
 msgid "Rate ↓"
 msgstr "Débit ↓"
 
-#: src/sshpilot/machine_info_dialog.py:2143
+#: src/sshpilot/machine_info_dialog.py:2147
 msgid "Rate ↑"
 msgstr "Débit ↑"
 
-#: src/sshpilot/machine_info_dialog.py:2170
+#: src/sshpilot/machine_info_dialog.py:2174
 msgid "No interface counters reported"
 msgstr "Aucun compteur d’interface signalé"
 
-#: src/sshpilot/machine_info_dialog.py:2173
+#: src/sshpilot/machine_info_dialog.py:2177
 msgid "Remote sessions"
 msgstr "Sessions distantes"
 
-#: src/sshpilot/machine_info_dialog.py:2186
+#: src/sshpilot/machine_info_dialog.py:2190
 #, python-format
 msgid "Incoming · %d established"
 msgid_plural "Incoming · %d established"
 msgstr[0] "Entrant · %d établie"
 msgstr[1] "Entrant · %d établies"
 
-#: src/sshpilot/machine_info_dialog.py:2188
+#: src/sshpilot/machine_info_dialog.py:2192
 #, python-format
 msgid "Outgoing · %d established"
 msgid_plural "Outgoing · %d established"
 msgstr[0] "Sortant · %d établie"
 msgstr[1] "Sortant · %d établies"
 
-#: src/sshpilot/machine_info_dialog.py:2238
+#: src/sshpilot/machine_info_dialog.py:2265
 #, python-format
-msgid "%d more"
-msgid_plural "%d more"
-msgstr[0] "%d de plus"
-msgstr[1] "%d de plus"
+msgid "Show %d more"
+msgid_plural "Show %d more"
+msgstr[0] "Afficher %d de plus"
+msgstr[1] "Afficher %d de plus"
 
-#: src/sshpilot/machine_info_dialog.py:2268
+#: src/sshpilot/machine_info_dialog.py:2275
+msgid "Show fewer"
+msgstr "Afficher moins"
+
+#: src/sshpilot/machine_info_dialog.py:2293
 msgid "Distribution"
 msgstr "Distribution"
 
-#: src/sshpilot/machine_info_dialog.py:2274
+#: src/sshpilot/machine_info_dialog.py:2299
 msgid "Running services"
 msgstr "Services en cours d’exécution"
 
-#: src/sshpilot/machine_info_dialog.py:2278
+#: src/sshpilot/machine_info_dialog.py:2303
 msgid "Service"
 msgstr "Service"
 
-#: src/sshpilot/machine_info_dialog.py:2279
+#: src/sshpilot/machine_info_dialog.py:2304
 msgid "Web UI"
 msgstr "Interface web"
 
-#: src/sshpilot/machine_info_dialog.py:2292
+#: src/sshpilot/machine_info_dialog.py:2317
 #, python-format
 msgid "%(label)s (%(process)s)"
 msgstr "%(label)s (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:2309
+#: src/sshpilot/machine_info_dialog.py:2334
 #, python-format
 msgid "Open %(label)s in the system browser"
 msgstr "Ouvrir %(label)s dans le navigateur système"
 
-#: src/sshpilot/machine_info_dialog.py:2319
+#: src/sshpilot/machine_info_dialog.py:2344
 msgid "No listening services reported"
 msgstr "Aucun service en écoute signalé"
 
 #. Also what a host without systemd looks like: neither has a
 #. failed unit to report.
-#: src/sshpilot/machine_info_dialog.py:2335
+#: src/sshpilot/machine_info_dialog.py:2360
 msgid "No failed units"
 msgstr "Aucune unité en échec"
 
-#: src/sshpilot/machine_info_dialog.py:2345
+#: src/sshpilot/machine_info_dialog.py:2370
 msgid "Algorithm"
 msgstr "Algorithme"
 
-#: src/sshpilot/machine_info_dialog.py:2346
+#: src/sshpilot/machine_info_dialog.py:2371
 msgid "Fingerprint"
 msgstr "Empreinte"
 
-#: src/sshpilot/machine_info_dialog.py:2347
+#: src/sshpilot/machine_info_dialog.py:2372
 msgid "Bits"
 msgstr "Bits"
 
-#: src/sshpilot/machine_info_dialog.py:2362
+#: src/sshpilot/machine_info_dialog.py:2387
 msgid "No host keys reported"
 msgstr "Aucune clé d’hôte signalée"
 
-#: src/sshpilot/machine_info_dialog.py:2365
+#: src/sshpilot/machine_info_dialog.py:2390
 msgid "Logged-in users"
 msgstr "Utilisateurs connectés"
 
-#: src/sshpilot/machine_info_dialog.py:2377
+#: src/sshpilot/machine_info_dialog.py:2402
 msgid "No remote sessions"
 msgstr "Aucune session distante"
 
-#: src/sshpilot/machine_info_dialog.py:2377
+#: src/sshpilot/machine_info_dialog.py:2402
 msgid "No logged-in users"
 msgstr "Aucun utilisateur connecté"
 
-#: src/sshpilot/machine_info_dialog.py:2398
+#: src/sshpilot/machine_info_dialog.py:2423
 msgid "local console"
 msgstr "console locale"
 
