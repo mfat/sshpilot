@@ -136,8 +136,20 @@ jobs:
           & $py -m pip install --no-deps -e .
           & $py -m pip install -r requirements.txt pyyaml pyinstaller
 
+      # choco exits 0 when the community feed answers 503, so check for
+      # makensis itself and retry; otherwise the build fails later as
+      # "NSIS is not installed".
       - name: Install NSIS
-        run: choco install nsis --no-progress -y
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          foreach ($attempt in 1..4) {
+            choco install nsis --no-progress -y
+            if (Test-Path $makensis) { exit 0 }
+            Write-Host "makensis.exe missing after attempt $attempt; retrying"
+            Start-Sleep -Seconds (15 * $attempt)
+          }
+          throw "NSIS did not install after 4 attempts"
 
       - name: Build app and installer
         shell: pwsh
