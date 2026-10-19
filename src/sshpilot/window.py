@@ -2401,8 +2401,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
         self._headerbar_start_box.append(self.local_terminal_button)
-        # Preferences ▸ Interface ▸ Header Bar. Hidden once a terminal is
-        # open; the tab bar's leading new-tab button takes over.
+        # Toggled by Preferences ▸ Interface ▸ Header Bar.
         self._headerbar_local_terminal_button = self.local_terminal_button
 
         # Add the custom title bar directly for the legacy content fallback
@@ -2633,10 +2632,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # selected-tab state is a separate runtime condition. Apply it last so
         # preference refreshes cannot resurrect the button on the Start page.
         self._update_command_snippets_button_visibility()
-        # The mapping above follows the switch alone. Re-apply the
-        # "only while no terminal is open" rule so a refresh cannot put the
-        # header-bar button back beside open terminals.
-        self._update_local_terminal_button_visibility()
 
     def update_sidebar_display(self):
         """Update sidebar display based on current preferences."""
@@ -3842,24 +3837,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
 
         self.tab_bar.set_end_action_widget(self.tab_button)
-
-        # Plus prefixed to the tabs. The end slot stays the overview button.
-        # Same action as the header-bar local-terminal button; shown only
-        # once a terminal is open (see _update_local_terminal_button_visibility).
-        from sshpilot import icon_utils as _tab_icon_utils
-        self._tab_bar_new_tab_button = Gtk.Button()
-        self._tab_bar_new_tab_button.set_has_frame(False)
-        self._tab_bar_new_tab_button.add_css_class('flat')
-        _tab_icon_utils.set_button_icon(self._tab_bar_new_tab_button, 'tab-new-symbolic')
-        label_icon_button(
-            self._tab_bar_new_tab_button,
-            _('New Local Terminal'),
-            tooltip=_('New local terminal ({modifier}+Shift+T)').format(
-                modifier=get_primary_modifier_label()),
-        )
-        self._tab_bar_new_tab_button.set_action_name('app.local-terminal')
-        self._tab_bar_new_tab_button.set_visible(False)
-        self.tab_bar.set_start_action_widget(self._tab_bar_new_tab_button)
 
         # Double-click on a tab to rename it inline
         rename_gesture = Gtk.GestureClick()

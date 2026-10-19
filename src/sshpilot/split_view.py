@@ -820,9 +820,6 @@ class SplitPane(Gtk.Box):
         self._split_view_tab._note_active_pane(self)
         self._bind_title()
         self._update_group_chip()
-        updater = getattr(self._window, '_update_local_terminal_button_visibility', None)
-        if callable(updater):
-            updater()
 
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
@@ -876,9 +873,6 @@ class SplitPane(Gtk.Box):
     def _after_inner_close(self) -> bool:
         if self.get_terminal_count() == 0:
             self.close_pane()
-        updater = getattr(self._window, '_update_local_terminal_button_visibility', None)
-        if callable(updater):
-            updater()
         return False
 
     # ── pane close ───────────────────────────────────────────────────────────
