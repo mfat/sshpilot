@@ -684,6 +684,11 @@ class PluginContext:
     then. The daemon client is selected on a background thread while the
     window is being built, so it does not exist during ``activate()``;
     ``app_started`` is deliberately held until that selection resolves.
+    The GTK loader does not abandon a user plugin whose ``activate()`` hits
+    that error: it retries the activation once, just before ``app_started``,
+    when the client exists. Read settings from ``app_started`` when you can —
+    the daemon process that launches a protocol plugin has no client to retry
+    against.
     Key operations need one thing more — the daemon-confirmed operation mode,
     which can land shortly after ``app_started`` — so ``list_keys()`` may still
     report an empty list on the event itself.

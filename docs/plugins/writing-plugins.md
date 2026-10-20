@@ -406,6 +406,10 @@ both subclasses of `RuntimeError`, so catch that if you need to be tolerant.
 (`ctx.identities` is the exception: it degrades to an empty list rather than
 raising.) `APP_STARTED` is held until the daemon client resolves, so it is the
 earliest safe point — read your persisted settings there, not in `activate`.
+Plugins that already read settings inside `activate()` (health, inventory-import,
+tailscale) are not left unloaded: the GTK loader retries that activation once
+the client is connected, just before `APP_STARTED`. The daemon process, which
+has no client, does not retry.
 
 Key operations need one thing more than the client: the daemon-confirmed
 operation mode, which can land a moment *after* `APP_STARTED`. `list_keys()` can
@@ -488,7 +492,9 @@ Use the stdlib `logging` module (`logger = logging.getLogger(__name__)`); output
 goes to sshPilot's log (run the app from a terminal to see it; raise verbosity in
 **Preferences ▸ Advanced**). A plugin that raises in `activate` is logged and
 skipped without taking the app down, so check the log if your plugin doesn't
-appear. Keep the pure logic in module-level functions/classes with no `gi`
+appear. `BackendUnavailable` (a settings read before the daemon client exists)
+is the exception: that activation is retried once the client connects, just
+before `app_started`. Keep the pure logic in module-level functions/classes with no `gi`
 import and import `gi` lazily inside the page factory — then you can unit-test the
 logic without a display (see each plugin's `tests/`).
 
