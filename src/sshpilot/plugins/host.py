@@ -392,6 +392,10 @@ class PluginHost:
         self._app_started_requested = False
         self._app_started_emitted = False
         self._backend_settled = False
+        # User plugins activated before the client exists. Each entry is
+        # (plugin_id, callback) and runs once, just before app_started, when
+        # daemon_client() can answer. See defer_until_backend().
+        self._backend_deferred: List[Tuple[str, Callable[[], None]]] = []
 
     # --- binding ------------------------------------------------------
     def bind_window(self, window) -> None:
@@ -510,12 +514,86 @@ class PluginHost:
         self._backend_settled = True
         self._emit_app_started_if_ready()
 
+    def defer_until_backend(self, callback: Callable[[], None], *,
+                            plugin_id: str = "") -> None:
+        """Run ``callback`` once, immediately before ``app_started``.
+
+        Plugin ``activate()`` runs while the daemon client is still being
+        selected, so a settings read raises ``BackendUnavailable`` and used
+        to abandon the plugin (issue #1342: health, inventory-import,
+        tailscale). The loader hands that activation back here. Both startup
+        orders are safe: selection can resolve before the window is bound,
+        and ``daemon_client()`` stays None until then, so the callback waits
+        for the emit — the first moment the window and the client both exist.
+        Subscribers registered by the callback still receive ``app_started``.
+        """
+        item = (plugin_id, callback)
+        if self._app_started_emitted:
+            self._run_one_deferred(item)
+            return
+        self._backend_deferred.append(item)
+
+    def _run_backend_deferred(self) -> None:
+        pending = self._backend_deferred
+        self._backend_deferred = []
+        if not pending:
+            return
+        if self.daemon_client() is None:
+            for plugin_id, _callback in pending:
+                logger.warning(
+                    "Daemon backend unavailable; user plugin %r was not loaded",
+                    plugin_id or "?",
+                )
+            return
+        for item in pending:
+            self._run_one_deferred(item)
+        self._refresh_plugins_preferences()
+
+    def _run_one_deferred(self, item: Tuple[str, Callable[[], None]]) -> None:
+        plugin_id, callback = item
+        if self.daemon_client() is None:
+            # app_started is firing (or already fired) and there is still no
+            # client. Waiting any longer would never finish.
+            logger.warning(
+                "Daemon backend unavailable; user plugin %r was not loaded",
+                plugin_id or "?",
+            )
+            return
+        try:
+            callback()
+        except Exception:
+            logger.exception(
+                "Deferred plugin activation failed for %r", plugin_id or "?")
+
+    def _refresh_plugins_preferences(self) -> None:
+        """Rebuild the Plugins page if it was filled in before activation finished.
+
+        Preferences can be preloaded while client selection is still in
+        flight. It decides Active/Inactive from ``loaded_plugins``, which the
+        deferred callbacks append to, so a page built in that window would
+        keep saying Inactive after the plugin actually loaded."""
+        window = self._window
+        if window is None:
+            return
+        prefs = getattr(window, "_preferences_window", None)
+        rebuild = getattr(prefs, "_rebuild_plugins_page", None)
+        if not callable(rebuild):
+            return
+        try:
+            rebuild()
+        except Exception:
+            logger.exception("Failed to refresh the Plugins preferences page")
+
     def _emit_app_started_if_ready(self) -> None:
         if self._app_started_emitted:
             return
         if not (self._app_started_requested and self._backend_settled):
             return
+        # Set this before the deferred activations so a callback that
+        # re-enters cannot emit twice or run the queue twice. Subscriptions
+        # made inside those callbacks still observe the emit below.
         self._app_started_emitted = True
+        self._run_backend_deferred()
         self.events.emit(Events.APP_STARTED, None)
 
     def dispatch_app_shutdown(self) -> None:
