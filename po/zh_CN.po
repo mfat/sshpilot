@@ -16280,6 +16280,48 @@ msgstr "直通"
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
 
+
+#: src/sshpilot/preferences.py:754 src/sshpilot/settings_index.py:123
+#: src/sshpilot/settings_index.py:126
+msgid "Highlighting"
+msgstr ""
+
+#: src/sshpilot/preferences.py:757 src/sshpilot/settings_index.py:123
+msgid "Highlight Network Output"
+msgstr ""
+
+#: src/sshpilot/preferences.py:759
+msgid "Colour IP and MAC addresses, VLANs, interfaces and link status"
+msgstr ""
+
+#: src/sshpilot/preferences.py:768 src/sshpilot/settings_index.py:126
+msgid "Highlight Profile"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Generic"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Cisco IOS"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Junos"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Huawei VRP"
+msgstr ""
+
+#: src/sshpilot/settings_index.py:124
+msgid "syntax;color;colour;cisco;junos;huawei;ip;mac;vlan"
+msgstr ""
+
+#: src/sshpilot/settings_index.py:126
+msgid "cisco;junos;huawei"
+msgstr ""
+
 #~ msgid "Connection list actions"
 #~ msgstr "连接列表操作"
 
