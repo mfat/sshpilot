@@ -1659,11 +1659,12 @@ class PreferencesWindow(Adw.Window):
         themes.append(_("Follow System"))
         themes.append(_("Light"))
         themes.append(_("Dark"))
+        themes.append(_("OLED Black"))
         self.theme_row.set_model(themes)
 
         # Load saved theme preference
         saved_theme = self.config.get_setting('app-theme', 'default')
-        theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
+        theme_mapping = {'default': 0, 'light': 1, 'dark': 2, 'black': 3}
         self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
 
         self.theme_row.connect('notify::selected', self.on_theme_changed)
@@ -4692,13 +4693,19 @@ class PreferencesWindow(Adw.Window):
     def on_theme_changed(self, combo_row, param):
         """Handle theme selection change"""
         selected = combo_row.get_selected()
-        theme_names = ["Follow System", "Light", "Dark"]
+        theme_names = ["Follow System", "Light", "Dark", "OLED Black"]
         selected_theme = theme_names[selected] if selected < len(theme_names) else "Follow System"
 
         logger.info(f"Theme changed to: {selected_theme}")
 
         # Apply theme immediately
         style_manager = Adw.StyleManager.get_default()
+
+        try:
+            from .oled_theme_css import apply_oled_theme_override
+            apply_oled_theme_override(selected == 3)
+        except Exception:
+            pass
 
         if selected == 0:  # Follow System
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
@@ -4709,6 +4716,9 @@ class PreferencesWindow(Adw.Window):
         elif selected == 2:  # Dark
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             self.config.set_setting('app-theme', 'dark')
+        elif selected == 3:  # OLED Black
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            self.config.set_setting('app-theme', 'black')
 
     def on_group_color_display_changed(self, combo_row, _param):
         """Persist sidebar group color display preference changes."""
