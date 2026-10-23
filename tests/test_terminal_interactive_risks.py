@@ -690,7 +690,9 @@ def test_terminal_input_backpressure_does_not_silently_lose_keystroke():
         bridge.shutdown(wait=True)
 
 
-def test_frontend_input_queue_bound_reports_undelivered_input():
+def test_input_during_inflight_request_is_coalesced_not_rejected():
+    """A wheel scroll in less makes VTE commit thousands of cursor keys before
+    the main loop delivers a single completion; they must reach the PTY."""
     dispatcher = _Dispatcher()
     bridge = GtkClientBridge(
         dispatcher=dispatcher,
@@ -701,15 +703,45 @@ def test_frontend_input_queue_bound_reports_undelivered_input():
     client.block_input = True
     errors = []
     controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
     try:
         controller.send_input(b"first")
         assert client.input_called.wait(2.0)
-        controller.send_input(b"second")
+        for _ in range(5000):
+            controller.send_input(b"\x1bOB")
+
+        assert errors == []
+        client.release_input.set()
+        dispatcher.run_until(lambda: len(client.pty_input) == 2)
+
+        assert errors == []
+        assert client.pty_input == [b"first", b"\x1bOB" * 5000]
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+def test_frontend_input_buffer_bound_reports_undelivered_input():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
+    controller._max_pending_input_bytes = 8
+    try:
+        controller.send_input(b"first")
+        assert client.input_called.wait(2.0)
+        controller.send_input(b"12345678")
+        controller.send_input(b"9")
 
         assert [error.code for error in errors] == [
             ErrorCode.TERMINAL_INPUT_BACKPRESSURE
         ]
-        assert client.pty_input == []
+        client.release_input.set()
+        dispatcher.run_until(lambda: len(client.pty_input) == 2)
+        assert client.pty_input == [b"first", b"12345678"]
     finally:
         client.release_input.set()
         bridge.shutdown(wait=True)
@@ -846,3 +878,22 @@ def test_transport_closed_during_quit_is_not_a_connection_failure():
     widget._is_quitting = False
     TerminalWidget._on_daemon_error(widget, error)
     assert failures  # outside quit it is still reported
+
+
+def test_backpressure_toast_is_not_repeated_per_rejected_keystroke():
+    """Adw.ToastOverlay shows queued toasts one after another; one per
+    rejected key kept the message cycling long after the tab was closed."""
+    toasts = []
+    widget = SimpleNamespace(
+        _on_connection_failed=lambda message: pytest.fail(message),
+        _show_toast=lambda message, timeout=3: toasts.append(message),
+    )
+    error = SshPilotError(
+        ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+        "The terminal input queue is full",
+        retryable=True,
+    )
+    for _ in range(500):
+        TerminalWidget._on_daemon_error(widget, error)
+
+    assert len(toasts) == 1
