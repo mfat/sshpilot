@@ -5,16 +5,19 @@ Three transports, same manifest dict:
 - :class:`SpbkFileBackend` — the local ``.spbk`` file (existing behaviour), via
   :func:`backup_archive.write_spbk` / :func:`backup_archive.read_spbk`.
 - :class:`BitwardenBackupBackend` — a single Bitwarden **secure note** holding
-  ``SSHPILOT-BACKUP-v1\\n<base64(gzip(json(manifest)))>``. No attachments (premium/Flatpak
-  issues) and no extra passphrase envelope — the note relies on Bitwarden's own vault encryption.
-  If the encoded note would exceed the field limit, :class:`BackupTooLargeForNote` is raised so
-  the caller can fall back to a ``.spbk`` file.
+  ``SSHPILOT-BACKUP-v1\\n<base64(gzip(json(manifest)))>``. No extra passphrase envelope — the
+  note relies on Bitwarden's own vault encryption. If the encoded note would exceed the field
+  limit, the same payload goes into an **attachment** on the note instead, and the note holds
+  only ``SSHPILOT-BACKUP-v1-ATTACHMENT\\n<filename>``. Attachments need Bitwarden Premium; without
+  it :class:`BackupTooLargeForNote` is raised (``premium_required``) so the caller can fall back
+  to a ``.spbk`` file.
 - :class:`SSHServerBackupBackend` — a ``.spbk`` file in a directory on one of the user's own SSH
   servers, transferred over the plain ssh exec channel (``cat``) via a duck-typed ``runner``.
 
 GTK-free. The Bitwarden backend depends only on a small duck-typed object exposing
-``create_or_update_secure_note`` / ``list_secure_notes`` / ``read_secure_note`` (implemented by
-``secret_storage.BitwardenBackend``), so it is trivially fakeable in tests.
+``create_or_update_secure_note`` / ``list_secure_notes`` / ``read_secure_note`` and, for
+oversized backups, ``store_secure_note_attachment`` / ``read_secure_note_attachment``
+(implemented by ``secret_storage.BitwardenBackend``), so it is trivially fakeable in tests.
 """
 
 from __future__ import annotations
@@ -34,9 +37,12 @@ from .api.models.secrets import (
 )
 
 BACKUP_NOTE_MAGIC = "SSHPILOT-BACKUP-v1"
+# A note whose payload lives in an attachment: this line, then the attachment's filename.
+BACKUP_ATTACHMENT_MAGIC = "SSHPILOT-BACKUP-v1-ATTACHMENT"
+BACKUP_ATTACHMENT_NAME = "sshpilot-backup.txt"
 BACKUP_ITEM_PREFIX = "sshPilot Backup"
-# Bitwarden's note field caps around 10k characters (Vaultwarden may allow more). We refuse
-# rather than silently truncate.
+# Bitwarden's note field caps around 10k characters (Vaultwarden may allow more). Anything
+# bigger goes into an attachment rather than being silently truncated.
 BW_NOTE_MAX_CHARS = 10_000
 
 
@@ -64,7 +70,9 @@ class BackupError(Exception):
 
 
 class BackupTooLargeForNote(BackupError):
-    """The encoded manifest exceeds the Bitwarden note field limit — use a ``.spbk`` file."""
+    """The encoded manifest exceeds the Bitwarden note field limit and could not go into an
+    attachment instead (``premium_required``: the account has no Premium) — use a ``.spbk``
+    file."""
 
     def __init__(
         self,
@@ -73,6 +81,7 @@ class BackupTooLargeForNote(BackupError):
         limit: int,
         largest_section: str = "",
         largest_section_cost: int = 0,
+        premium_required: bool = False,
     ) -> None:
         super().__init__(
             SecretTransferMessageCode.BITWARDEN_NOTE_TOO_LARGE,
@@ -80,6 +89,7 @@ class BackupTooLargeForNote(BackupError):
         )
         self.largest_section = largest_section
         self.largest_section_cost = largest_section_cost
+        self.premium_required = premium_required
 
 
 @dataclass
@@ -195,6 +205,24 @@ class BitwardenBackupBackend:
     def export(self, manifest: dict, *, passphrase: Optional[str] = None) -> BackupEntry:
         content = encode_manifest_note(manifest)
         if len(content) > BW_NOTE_MAX_CHARS:
+            item_id = self._export_attachment(manifest, content)
+        else:
+            item_id = self._bw.create_or_update_secure_note(self._item_name, content)
+        if not item_id:
+            raise BackupError(SecretTransferMessageCode.BITWARDEN_NOTE_SAVE_FAILED)
+        return BackupEntry(id=item_id, name=self._item_name)
+
+    def _export_attachment(self, manifest: dict, content: str) -> Optional[str]:
+        pointer = f"{BACKUP_ATTACHMENT_MAGIC}\n{BACKUP_ATTACHMENT_NAME}"
+        try:
+            return self._bw.store_secure_note_attachment(
+                self._item_name, pointer, BACKUP_ATTACHMENT_NAME, content.encode("ascii"),
+            )
+        except Exception as exc:
+            # Duck-typed like ``self._bw`` itself: the frontend may not import
+            # ``secret_storage`` for its ``BitwardenPremiumRequired``.
+            if not getattr(exc, "premium_required", False):
+                raise
             # Name what is actually big. Guessing wastes the user's time: which
             # part dominates depends entirely on the vault — app settings can
             # outweigh private keys several times over.
@@ -204,11 +232,8 @@ class BitwardenBackupBackend:
                 limit=BW_NOTE_MAX_CHARS,
                 largest_section=label,
                 largest_section_cost=cost,
-            )
-        item_id = self._bw.create_or_update_secure_note(self._item_name, content)
-        if not item_id:
-            raise BackupError(SecretTransferMessageCode.BITWARDEN_NOTE_SAVE_FAILED)
-        return BackupEntry(id=item_id, name=self._item_name)
+                premium_required=True,
+            ) from None
 
     def list_exports(self) -> List[BackupEntry]:
         entries: List[BackupEntry] = []
@@ -225,6 +250,15 @@ class BitwardenBackupBackend:
         note = self._bw.read_secure_note(entry.id)
         if note is None:
             raise BackupError(SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED)
+        head, _, filename = note.partition("\n")
+        if head.strip() == BACKUP_ATTACHMENT_MAGIC:
+            data = self._bw.read_secure_note_attachment(entry.id, filename.strip())
+            if data is None:
+                raise BackupError(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED,
+                    diagnostic="backup attachment could not be downloaded",
+                )
+            note = data.decode("ascii", "replace")
         return decode_manifest_note(note)
 
 

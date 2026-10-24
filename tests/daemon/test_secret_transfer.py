@@ -1430,6 +1430,7 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
             limit=10000,
             largest_section="private_keys",
             largest_section_cost=12000,
+            premium_required=True,
         )
         raise error
 
@@ -1459,6 +1460,7 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
     # The counts reach the UI, alongside a hint about trimming the backup.
     assert result.counts == {"credentials": 3, "private_keys": 2}
     assert [warning.code for warning in result.warnings] == [
+        SecretTransferMessageCode.BITWARDEN_ATTACHMENT_NEEDS_PREMIUM,
         SecretTransferMessageCode.BITWARDEN_NOTE_LARGEST_SECTION,
         SecretTransferMessageCode.EXPORT_SPBK_INSTEAD,
         SecretTransferMessageCode.BITWARDEN_BACKUP_TOO_LARGE,

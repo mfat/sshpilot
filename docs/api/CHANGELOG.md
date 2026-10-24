@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- Bitwarden backup exports larger than the secure-note field limit now store
+  the encoded backup as a secure-note attachment when the account supports
+  attachments (for example, Bitwarden Premium or Vaultwarden). Accounts
+  without attachment support fall back to the existing `.spbk` guidance and
+  return the new `bitwarden_attachment_needs_premium` warning. New enum value,
+  so the API implementation version is 0.86; Protocol remains 1.0.
 - `SecretTransferMessageCode` gains four merge-restore warnings, returned in
   `SecretTransferResult.warnings` by every backup import in merge mode:
   `merge_global_rules_skipped` (`count`: `Host *`, `Match` and other global

@@ -351,6 +351,12 @@ def daemon_export_backup(
             # The message names the part that dominates this particular backup
             # (see ``largest_note_section``), so the warning stays generic.
             too_large = []
+            if getattr(exc, "premium_required", False):
+                too_large.append(
+                    _message(
+                        SecretTransferMessageCode.BITWARDEN_ATTACHMENT_NEEDS_PREMIUM
+                    )
+                )
             section = getattr(exc, "largest_section", "")
             cost = getattr(exc, "largest_section_cost", 0)
             if section and cost:
