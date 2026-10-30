@@ -1,0 +1,183 @@
+# Temporary diagnostic for https://github.com/mfat/sshpilot/issues/1357
+# Remove this workflow before the PR is marked ready.
+#
+# Two jobs on windows-latest (currently windows-2025, not the reporter's 26H2):
+#   1. Silent-install the v6.3.6 GitHub release and launch it
+#   2. Build this branch the same way as .github/workflows/windows.yml package,
+#      then launch the frozen dist (and the installer it produces)
+name: Windows repro #1357
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/windows-launch-crash-1357-0538
+
+concurrency:
+  group: windows-repro-1357-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  repro-release-6-3-6:
+    name: Launch v6.3.6 release installer
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Record runner OS
+        shell: pwsh
+        run: |
+          Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" |
+            Select-Object ProductName, DisplayVersion, CurrentBuild, UBR, BuildLabEx |
+            Format-List
+
+      - name: Download v6.3.6 Windows installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build\windows\repro-636 | Out-Null
+          $url = "https://github.com/mfat/sshpilot/releases/download/v6.3.6/SSHPilot-6.3.6-windows-x86_64-setup.exe"
+          $out = "build\windows\repro-636\SSHPilot-6.3.6-windows-x86_64-setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          Unblock-File $out
+          Get-Item $out | Format-List FullName, Length, LastWriteTime
+
+      - name: Silent-install 6.3.6 and launch
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $setup = Join-Path $PWD "build\windows\repro-636\SSHPilot-6.3.6-windows-x86_64-setup.exe"
+          $dest = "C:\sshpilot-repro-636"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Write-Host "Installing to $dest"
+          $p = Start-Process -FilePath $setup -ArgumentList "/S /D=$dest" -Wait -PassThru
+          Write-Host "installer exit=$($p.ExitCode)"
+          $deadline = (Get-Date).AddMinutes(2)
+          while (-not (Test-Path "$dest\sshPilot.exe") -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 2
+          }
+          if (-not (Test-Path "$dest\sshPilot.exe")) {
+            throw "silent install did not produce $dest\sshPilot.exe (installer exit $($p.ExitCode))"
+          }
+          Get-ChildItem $dest | Format-Table Name, Length
+          $outDir = Join-Path $PWD "build\windows\repro-636\launch"
+          & powershell -ExecutionPolicy Bypass -File packaging\windows\ci-launch-capture.ps1 `
+            -AppDir $dest -OutDir $outDir -Label "release-6.3.6" -TimeoutSeconds 25
+          Write-Host "launch script exit=$LASTEXITCODE"
+
+      - name: Upload 6.3.6 launch artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-release-6-3-6
+          path: build/windows/repro-636
+          if-no-files-found: warn
+
+  repro-branch-build:
+    name: Build branch and launch
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Record runner OS
+        shell: pwsh
+        run: |
+          Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" |
+            Select-Object ProductName, DisplayVersion, CurrentBuild, UBR, BuildLabEx |
+            Format-List
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Cache GTK runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/GTK4_Gvsbuild_*.zip
+          key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
+
+      - name: Fetch GTK 4 and ConPTY
+        run: |
+          python scripts/fetch-gtk.py
+          python scripts/fetch-conpty.py
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build patched libvterm
+        run: python packaging/windows/libvterm/build.py --compiler msvc
+
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m venv .venv-win
+          $py = ".venv-win\Scripts\python.exe"
+          & $py -m pip install --upgrade pip
+          $wheels = Get-ChildItem vendor\gtk\wheels -Filter *.whl | Where-Object { $_.Name -match "^(pygobject|pycairo)-.*-cp314-" }
+          & $py -m pip install $wheels.FullName
+          & $py -m pip install --no-deps -e .
+          & $py -m pip install -r requirements.txt pyyaml pyinstaller
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          foreach ($attempt in 1..4) {
+            choco install nsis --no-progress -y
+            if (Test-Path $makensis) { exit 0 }
+            Write-Host "makensis.exe missing after attempt $attempt; retrying"
+            Start-Sleep -Seconds (15 * $attempt)
+          }
+          throw "NSIS did not install after 4 attempts"
+
+      - name: Build app and installer
+        shell: pwsh
+        run: |
+          $env:PATH = "${env:ProgramFiles(x86)}\NSIS;$env:PATH"
+          powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
+
+      - name: Launch branch dist folder
+        shell: pwsh
+        run: |
+          $app = Join-Path $PWD "build\windows\dist\sshPilot"
+          $outDir = Join-Path $PWD "build\windows\repro-branch\dist-launch"
+          & powershell -ExecutionPolicy Bypass -File packaging\windows\ci-launch-capture.ps1 `
+            -AppDir $app -OutDir $outDir -Label "branch-dist" -TimeoutSeconds 25
+          Write-Host "dist launch script exit=$LASTEXITCODE"
+
+      - name: Silent-install branch installer and launch
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "build\windows\SSHPilot-*-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "no branch installer in build\windows" }
+          $dest = "C:\sshpilot-repro-branch"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Write-Host "Installing $($setup.FullName) to $dest"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S /D=$dest" -Wait -PassThru
+          Write-Host "installer exit=$($p.ExitCode)"
+          $deadline = (Get-Date).AddMinutes(2)
+          while (-not (Test-Path "$dest\sshPilot.exe") -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 2
+          }
+          if (-not (Test-Path "$dest\sshPilot.exe")) {
+            throw "silent install did not produce $dest\sshPilot.exe (installer exit $($p.ExitCode))"
+          }
+          $outDir = Join-Path $PWD "build\windows\repro-branch\installed-launch"
+          & powershell -ExecutionPolicy Bypass -File packaging\windows\ci-launch-capture.ps1 `
+            -AppDir $dest -OutDir $outDir -Label "branch-installed" -TimeoutSeconds 25
+          Write-Host "installed launch script exit=$LASTEXITCODE"
+
+      - name: Upload branch launch artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-branch-build
+          path: |
+            build/windows/repro-branch
+            build/windows/SSHPilot-*-setup.exe
+          if-no-files-found: warn
