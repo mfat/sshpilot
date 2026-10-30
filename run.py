@@ -27,8 +27,12 @@ startup_timing.mark("process_start")
 # this environment. See sshpilot/platform/windows/openssh.py.
 if sys.platform == "win32":
     from sshpilot.platform.windows.environment import disable_dbus_autolaunch
+    from sshpilot.platform.windows.gtk_runtime import configure as configure_gtk_runtime
     from sshpilot.platform.windows.openssh import prefer_builtin_openssh
 
+    # Pin bundled GTK/GI DLLs before any gi import (issue #1357). OpenSSH is
+    # prepended afterwards so `ssh` still resolves to System32\OpenSSH.
+    configure_gtk_runtime()
     prefer_builtin_openssh()
     disable_dbus_autolaunch()
 

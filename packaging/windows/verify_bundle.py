@@ -20,6 +20,12 @@ REQUIRED_FILES = [
     "_internal/conpty.dll",
     "_internal/OpenConsole.exe",
 ]
+# Either name is a GI repository DLL; 6.3.6 ships girepository-2.0-0.dll.
+REQUIRED_ONE_OF = [
+    ("GI repository DLL", ("_internal/girepository-2.0-0.dll", "_internal/girepository-1.0-1.dll")),
+    ("GLib", ("_internal/glib-2.0-0.dll",)),
+    ("Gio", ("_internal/gio-2.0-0.dll",)),
+]
 REQUIRED_TYPELIBS = ["Gtk-4.0", "Gdk-4.0", "Adw-1", "GtkSource-5", "Pango-1.0", "GdkPixbuf-2.0", "Gio-2.0"]
 REQUIRED_GLOBS = [
     ("GSettings schemas", "_internal/share/glib-2.0/schemas/gschemas.compiled"),
@@ -34,6 +40,9 @@ def main(argv=None) -> int:
     for relative in REQUIRED_FILES:
         if not (root / relative).is_file():
             problems.append(f"missing {relative}")
+    for label, options in REQUIRED_ONE_OF:
+        if not any((root / relative).is_file() for relative in options):
+            problems.append(f"missing {label} ({' or '.join(options)})")
     typelib_dirs = list(root.glob("_internal/**/girepository-1.0")) + list(root.glob("_internal/gi_typelibs"))
     found = {path.stem for directory in typelib_dirs for path in directory.glob("*.typelib")}
     for name in REQUIRED_TYPELIBS:

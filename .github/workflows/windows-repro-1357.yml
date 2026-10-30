@@ -142,6 +142,7 @@ jobs:
           powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
 
       - name: Launch branch dist folder
+        continue-on-error: true
         shell: pwsh
         run: |
           $app = Join-Path $PWD "build\windows\dist\sshPilot"
@@ -151,6 +152,7 @@ jobs:
           Write-Host "dist launch script exit=$LASTEXITCODE"
 
       - name: Silent-install branch installer and launch
+        continue-on-error: true
         shell: pwsh
         run: |
           $setup = Get-ChildItem "build\windows\SSHPilot-*-setup.exe" | Select-Object -First 1

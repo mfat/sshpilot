@@ -38,7 +38,14 @@ logger = logging.getLogger(__name__)
 
 from .gi_versions import require_gui_versions
 
-require_gui_versions()
+try:
+    require_gui_versions()
+except Exception as exc:
+    if sys.platform == "win32":
+        from .platform.windows.gtk_runtime import log_import_failure
+
+        log_import_failure(exc)
+    raise
 
 from . import daemon_prelaunch as _daemon_prelaunch
 
@@ -48,7 +55,16 @@ from . import daemon_prelaunch as _daemon_prelaunch
 # (tests/test_daemon_prelaunch.py checks the whole worker path).
 _daemon_prelaunch.release_connect()
 
-from gi.repository import Adw, Gtk, Gio, GLib, Gdk
+# GLib/Gio before Adw/Gtk so Gio.ActionMap wraps against the bundled libgio
+# (issue #1357: TypeError: must be an interface when the DLL failed to load).
+try:
+    from gi.repository import GLib, Gio, Gdk, Gtk, Adw
+except Exception as exc:
+    if sys.platform == "win32":
+        from .platform.windows.gtk_runtime import log_import_failure
+
+        log_import_failure(exc)
+    raise
 
 startup_timing.mark("gtk_imported")
 
