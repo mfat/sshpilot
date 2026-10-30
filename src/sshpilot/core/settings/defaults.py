@@ -139,6 +139,7 @@ def get_default_config() -> Dict[str, Any]:
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
             'headerbar_show_sidebar_toggle': True,
             'headerbar_show_split_view': False,
+            'headerbar_show_tab_button': True,
             'headerbar_show_commands': False,
             'headerbar_show_terminal_theme': False,
             'headerbar_show_theme_toggle': False,

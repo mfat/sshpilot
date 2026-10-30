@@ -24,6 +24,7 @@ def test_sidebar_row_action_button_defaults():
 def test_headerbar_sidebar_toggle_defaults_on():
     defaults = Config.get_default_config(Config.__new__(Config))
     assert defaults['ui']['headerbar_show_sidebar_toggle'] is True
+    assert defaults['ui']['headerbar_show_tab_button'] is True
 
 
 def test_sidebar_connection_row_display_defaults():

@@ -1409,6 +1409,7 @@ class RemoteFileEditorWindow(Adw.Window):
                 GLib.idle_add(self._on_daemon_save_error, e, privileged)
 
         service = self._daemon_file_service
+        make_backup = bool(getattr(service, "editor_backups_enabled", True))
         if privileged:
             saver = getattr(service, "save_text_privileged", None)
             if saver is None or not getattr(service, "privileged_supported", False):
@@ -1421,9 +1422,9 @@ class RemoteFileEditorWindow(Adw.Window):
                     privileged,
                 )
                 return
-            future = saver(text, make_backup=True)
+            future = saver(text, make_backup=make_backup)
         else:
-            future = service.save_text(text, make_backup=True)
+            future = service.save_text(text, make_backup=make_backup)
         future.add_done_callback(complete)
 
     def _on_daemon_save_success(self) -> None:

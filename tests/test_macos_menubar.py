@@ -124,6 +124,7 @@ def test_build_menubar_uses_existing_actions():
         "app.tab-overview",
         "win.headerbar-sidebar-toggle",
         "win.headerbar-split-view",
+        "win.headerbar-tab-button",
         "win.headerbar-commands",
         "win.headerbar-terminal-theme",
         "win.headerbar-theme-menu",

@@ -71,6 +71,7 @@ SETTINGS = (
                  N_("language;locale;translation")),
     SettingEntry("interface", N_("Header Bar Buttons"), N_("Sidebar Toggle Button")),
     SettingEntry("interface", N_("Header Bar Buttons"), N_("Split View Button")),
+    SettingEntry("interface", N_("Header Bar Buttons"), N_("Tab Overview Button")),
     SettingEntry("interface", N_("Header Bar Buttons"), N_("Command Snippets Button")),
     SettingEntry("interface", N_("Header Bar Buttons"), N_("Terminal Theme Button")),
     SettingEntry("interface", N_("Header Bar Buttons"), N_("Theme Menu")),

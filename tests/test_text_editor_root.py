@@ -76,6 +76,8 @@ def _daemon_save_editor(tmp_path, future):
             self.values.append(value)
 
     class Service:
+        editor_backups_enabled = False
+
         def save_text(self, text, *, make_backup):
             self.text = text
             self.make_backup = make_backup
@@ -142,6 +144,7 @@ def test_daemon_save_success_notifies_owner(monkeypatch, tmp_path):
     ed._perform_save("new")
 
     assert service.text == "new"
+    assert service.make_backup is False
     assert ed._daemon_file_revision == "new-revision"
     assert saved == [True]
     assert uploads == []
@@ -410,6 +413,7 @@ def test_root_read_missing_file_cancels_root_mode(monkeypatch, tmp_path):
 def _root_save_editor(tmp_path, future, *, privileged=True):
     class Service:
         privileged_supported = privileged
+        editor_backups_enabled = False
 
         def save_text_privileged(self, text, *, make_backup):
             self.text = text
@@ -475,7 +479,7 @@ def test_root_save_routes_through_daemon_privileged_saver(monkeypatch, tmp_path)
     ed._upload_file_root()
 
     assert service.text == "root edit"
-    assert service.make_backup is True
+    assert service.make_backup is False
     assert not hasattr(ed, "used_legacy_upload")
     assert ed._daemon_file_revision == "new-root-rev"
     assert buffer.modified is False

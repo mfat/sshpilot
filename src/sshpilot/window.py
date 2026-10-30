@@ -2606,6 +2606,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         mapping = (
             ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', True),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
+            ('tab_button', 'ui.headerbar_show_tab_button', True),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', False),
             ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', False),
             ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', False),
@@ -2620,6 +2621,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         action.set_state(GLib.Variant.new_boolean(visible))
                 except Exception:
                     logger.debug("Failed to synchronize View menu action for %s", key, exc_info=True)
+            # Tab overview visibility also depends on whether user tabs exist;
+            # _update_tab_button_visibility applies that after this loop.
+            if attr == 'tab_button':
+                continue
             btn = getattr(self, attr, None)
             if btn is None:
                 continue
@@ -2631,6 +2636,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The preference controls whether the button is allowed at all; the
         # selected-tab state is a separate runtime condition. Apply it last so
         # preference refreshes cannot resurrect the button on the Start page.
+        self._update_tab_button_visibility()
         self._update_command_snippets_button_visibility()
 
     def update_sidebar_display(self):

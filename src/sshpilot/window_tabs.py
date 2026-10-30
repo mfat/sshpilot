@@ -1597,7 +1597,13 @@ class WindowTabsMixin:
         try:
             show_tabs = self.has_user_tabs()
             if hasattr(self, 'tab_button'):
-                self.tab_button.set_visible(show_tabs)
+                try:
+                    show_button = bool(
+                        self.config.get_setting('ui.headerbar_show_tab_button', True)
+                    )
+                except Exception:
+                    show_button = True
+                self.tab_button.set_visible(show_tabs and show_button)
             if hasattr(self, 'tab_bar'):
                 self.tab_bar.set_visible(show_tabs)
             # The tab bar occupies the custom title bar's centre stack. When
