@@ -81,7 +81,7 @@ modules:
         --libexecdir=/app/libexec
         --with-privsep-path=/app/var/empty
         --without-pam
-        --without-kerberos5
+        --with-kerberos5
         --disable-strip
       - make -j${FLATPAK_BUILDER_N_JOBS:-2}
       - make install-nokeys
@@ -93,6 +93,12 @@ modules:
       - test -x /app/bin/ssh-add
       - test -x /app/libexec/ssh-sk-helper
       - ldd /app/libexec/ssh-sk-helper | grep -q libfido2
+      - ldd /app/bin/ssh | grep -q libgssapi_krb5
+      - >-
+        /app/bin/ssh -G
+        -o GSSAPIAuthentication=yes
+        -o GSSAPIDelegateCredentials=yes
+        sshpilot-gssapi-build-check >/dev/null
       - /app/bin/ssh -V
     sources:
       - type: git
