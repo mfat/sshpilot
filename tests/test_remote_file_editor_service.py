@@ -99,6 +99,16 @@ def test_save_text_keeps_normal_revision_after_save():
     assert client.replaces[1].expected_revision == "new-1"
 
 
+def test_save_text_can_disable_remote_backup():
+    client = FakeClient()
+    service = _make(client)
+
+    _wait(service.load())
+    _wait(service.save_text("edited", make_backup=False))
+
+    assert client.replaces[0].backup is False
+
+
 def test_privileged_supported_reflects_constructor():
     assert _make(FakeClient(), privileged=True).privileged_supported is True
     assert _make(FakeClient(), privileged=False).privileged_supported is False
@@ -142,6 +152,16 @@ def test_save_text_privileged_tracks_its_own_revision():
     _wait(service.save_text_privileged("two"))
 
     assert client.replaces[1].expected_revision == "new-1"
+
+
+def test_save_text_privileged_can_disable_remote_backup():
+    client = FakeClient()
+    service = _make(client, privileged=True)
+
+    _wait(service.load_privileged())
+    _wait(service.save_text_privileged("root edit", make_backup=False))
+
+    assert client.replaces[0].backup is False
 
 
 def test_normal_and_privileged_revisions_are_independent():
@@ -196,6 +216,7 @@ def test_display_name_and_writable_accessors():
     assert service.display_name == PATH
     assert service.writable is True
     assert service.editor_owned is True
+    assert service.editor_backups_enabled is False
 
 
 class FakeCapabilities:

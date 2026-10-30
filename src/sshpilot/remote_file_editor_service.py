@@ -41,6 +41,9 @@ class DaemonRemoteFileService:
     #: This instance is dedicated to exactly one editor window, so the editor
     #: owns its lifecycle (same marker as the SSH-config editor service).
     editor_owned = True
+    # Ordinary files edited from Manage Files should not leave persistent
+    # sibling backups on the remote host after every save.
+    editor_backups_enabled = False
 
     def __init__(
         self,
