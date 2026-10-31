@@ -40,6 +40,8 @@ from sshpilot.core.plugins import (
 
 logger = logging.getLogger(__name__)
 
+SEND_TERMINAL_TIMEOUT_SECONDS = 30.0
+
 # Re-export core event contracts for compatibility.
 __all__ = [
     "ALL_EVENTS",
@@ -880,12 +882,30 @@ class PluginHost:
             return False
         try:
             from sshpilot.api.models.terminal import TerminalInput
+            from sshpilot.api.transport.terminal_frames import (
+                MAX_TERMINAL_PAYLOAD_SIZE,
+            )
 
+            data = text.encode("utf-8")
+            if len(data) > MAX_TERMINAL_PAYLOAD_SIZE:
+                import time
+
+                from sshpilot.api.terminal_input import send_paced_terminal_input
+
+                deadline = time.monotonic() + SEND_TERMINAL_TIMEOUT_SECONDS
+                sent = send_paced_terminal_input(
+                    client,
+                    str(session_id),
+                    attached.attachment.id,
+                    data,
+                    should_stop=lambda: time.monotonic() > deadline,
+                )
+                return sent == len(data)
             client.send_terminal_input(
                 TerminalInput(
                     session_id=str(session_id),
                     attachment_id=attached.attachment.id,
-                    data=text.encode("utf-8"),
+                    data=data,
                 )
             )
             return True

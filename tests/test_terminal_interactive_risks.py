@@ -21,11 +21,16 @@ from sshpilot.api.models.terminal import (
     ReplayBounds,
     ReplayResult,
     TerminalDimensions,
+    TerminalInputStatus,
     TerminalOutput,
 )
 from sshpilot.api.terminal_events import TerminalSubscription
+from sshpilot.api.terminal_input import send_paced_terminal_input
 from sshpilot.api.transport.framing import MultiplexedFrameDecoder
-from sshpilot.api.transport.terminal_frames import TerminalFrameKind
+from sshpilot.api.transport.terminal_frames import (
+    MAX_TERMINAL_PAYLOAD_SIZE,
+    TerminalFrameKind,
+)
 from sshpilot.daemon.server import DaemonServer, _ClientConnection
 from sshpilot.gtk_client_bridge import GtkClientBridge
 from sshpilot.terminal import TerminalWidget
@@ -712,6 +717,218 @@ def test_frontend_input_queue_bound_reports_undelivered_input():
         assert client.pty_input == []
     finally:
         client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+class _PacedClient(_TerminalClient):
+    """Client whose input queue drains by a step per status read once reading."""
+
+    def __init__(self, capacity: int = 256 * 1024) -> None:
+        super().__init__("paced")
+        self.capacity = capacity
+        self.queued = 0
+        self.max_queued = 0
+        self.status_error = None
+        self.reading = False
+
+    def get_terminal_input_status(self, _request):
+        if self.status_error is not None:
+            raise self.status_error
+        if self.reading:
+            self.queued = max(0, self.queued - 32 * 1024)
+        return TerminalInputStatus(
+            queued_bytes=self.queued,
+            capacity_bytes=self.capacity,
+        )
+
+    def send_terminal_input(self, request) -> None:
+        super().send_terminal_input(request)
+        self.queued += len(request.data)
+        self.max_queued = max(self.max_queued, self.queued)
+
+
+def _pump_until(dispatcher, predicate, timeout: float = 5.0) -> None:
+    # The paste advances on its own thread, so most progress queues no callback
+    # for _Dispatcher.run_until to wake on.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        dispatcher.drain()
+        if predicate():
+            return
+        time.sleep(0.002)
+    raise AssertionError("GTK condition was not reached")
+
+
+def _large_input(size: int = 1024 * 1024) -> bytes:
+    return bytes(index % 251 for index in range(size))
+
+
+def test_large_input_arrives_whole_in_frames_within_the_payload_limit():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _PacedClient()
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    data = _large_input()
+    try:
+        client.reading = True
+        controller.send_input(data)
+
+        _pump_until(
+            dispatcher,
+            lambda: controller._bulk_input_stop is None,
+        )
+
+        assert b"".join(client.pty_input) == data
+        assert all(
+            len(frame) <= MAX_TERMINAL_PAYLOAD_SIZE for frame in client.pty_input
+        )
+        assert client.max_queued <= client.capacity
+        assert errors == []
+    finally:
+        bridge.shutdown(wait=True)
+
+
+def test_paced_input_waits_for_the_queue_instead_of_overflowing_it():
+    client = _PacedClient()
+    client.queued = client.capacity
+    result = []
+    data = _large_input(200 * 1024)
+    pump = threading.Thread(
+        target=lambda: result.append(
+            send_paced_terminal_input(
+                client,
+                _SESSION_ID,
+                _ATTACHMENT_ID,
+                data,
+                should_stop=lambda: False,
+            )
+        )
+    )
+    pump.start()
+    try:
+        time.sleep(0.1)
+        assert client.pty_input == []
+    finally:
+        client.reading = True
+        pump.join(5.0)
+
+    assert result == [len(data)]
+    assert b"".join(client.pty_input) == data
+
+
+def test_input_typed_during_a_paste_lands_after_it():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _PacedClient()
+    controller = _active_controller(client, bridge, on_error=[].append)
+    data = _large_input()
+    try:
+        client.reading = True
+        controller.send_input(b"before")
+        controller.send_input(data)
+        controller.send_input(b"after")
+
+        _pump_until(
+            dispatcher,
+            lambda: bool(client.pty_input) and client.pty_input[-1] == b"after",
+        )
+
+        assert b"".join(client.pty_input) == b"before" + data + b"after"
+    finally:
+        bridge.shutdown(wait=True)
+
+
+def test_ctrl_c_stops_a_paste_and_closes_bracketed_paste_mode():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _PacedClient()
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    data = b"\x1b[200~" + _large_input() + b"\x1b[201~"
+    try:
+        controller.send_input(data)
+        _pump_until(dispatcher, lambda: bool(client.pty_input))
+
+        controller.send_input(b"\x03")
+        _pump_until(
+            dispatcher,
+            lambda: bool(client.pty_input) and client.pty_input[-1] == b"\x03",
+        )
+
+        assert client.pty_input[-2] == b"\x1b[201~"
+        assert len(b"".join(client.pty_input)) < len(data)
+        assert errors == []
+    finally:
+        bridge.shutdown(wait=True)
+
+
+def test_rejected_frame_stops_a_paste_so_it_cannot_leave_a_gap():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _PacedClient()
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    _bind_active_stream(controller, bridge, client)
+    try:
+        controller.send_input(_large_input())
+        _pump_until(dispatcher, lambda: bool(client.pty_input))
+
+        delivered = len(client.pty_input)
+        client.reject_input = True
+        client.reading = True
+        _pump_until(
+            dispatcher,
+            lambda: controller._bulk_input_stop is None,
+        )
+
+        assert ErrorCode.TERMINAL_INPUT_BACKPRESSURE in [
+            error.code for error in errors
+        ]
+        assert len(client.pty_input) < 16
+        assert len(client.pty_input) >= delivered
+    finally:
+        bridge.shutdown(wait=True)
+
+
+def test_failed_paste_reports_undelivered_input_and_releases_held_input():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _PacedClient()
+    client.status_error = SshPilotError(
+        ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+        "The attachment does not own terminal input",
+    )
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    try:
+        controller.send_input(_large_input())
+        controller.send_input(b"after")
+
+        _pump_until(dispatcher, lambda: client.pty_input == [b"after"])
+
+        assert [error.code for error in errors] == [
+            ErrorCode.TERMINAL_INPUT_BACKPRESSURE
+        ]
+    finally:
+        bridge.shutdown(wait=True)
+
+
+def test_input_rejected_locally_is_not_a_connection_failure():
+    bridge = GtkClientBridge(dispatcher=_Dispatcher(), max_workers=1)
+    errors = []
+    controller = _active_controller(
+        _TerminalClient("client"),
+        bridge,
+        on_error=errors.append,
+    )
+    try:
+        controller._on_input_error(ValueError("frame too large"))
+
+        assert [error.code for error in errors] == [
+            ErrorCode.TERMINAL_INPUT_BACKPRESSURE
+        ]
+    finally:
         bridge.shutdown(wait=True)
 
 

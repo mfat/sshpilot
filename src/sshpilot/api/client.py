@@ -116,6 +116,8 @@ from .models.terminal import (
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     TerminalInput,
 )
 from .models.common import (
@@ -444,6 +446,12 @@ class SshPilotClient(Protocol):
         ...
 
     def send_terminal_input(self, request: TerminalInput) -> None:
+        ...
+
+    def get_terminal_input_status(
+        self,
+        request: TerminalInputStatusRequest,
+    ) -> TerminalInputStatus:
         ...
 
     def broadcast_terminal_input(self, request: BroadcastTerminalInputRequest) -> None:

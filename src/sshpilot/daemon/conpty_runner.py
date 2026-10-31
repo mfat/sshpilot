@@ -215,6 +215,10 @@ class ConPtyProcessHandle:
                 return False
         return True
 
+    def input_status(self) -> tuple[int, int]:
+        # write() blocks until ConPTY has the bytes, so nothing stays queued.
+        return 0, self._input_limit
+
     def resize(self, dimensions: TerminalDimensions) -> None:
         self.last_dimensions = dimensions
         try:

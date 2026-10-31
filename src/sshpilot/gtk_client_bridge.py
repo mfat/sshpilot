@@ -41,6 +41,7 @@ T = TypeVar("T")
 DEFAULT_GTK_TERMINAL_PENDING_BYTES = 64 * 1024
 DEFAULT_GTK_TERMINAL_SPOOL_BYTES = 64 * 1024 * 1024
 DEFAULT_PENDING_TERMINAL_INPUTS = 256
+DEFAULT_TERMINAL_BULK_INPUT_WORKERS = 4
 
 _TERMINAL_OUTPUT_RECORD = struct.Struct("!QQBQ")
 _OUTPUT_REPLAY = 1
@@ -89,6 +90,10 @@ class GtkClientBridge:
             max_workers=1,
             thread_name_prefix="sshpilot-terminal-input",
         )
+        self._terminal_bulk_input_executor = ThreadPoolExecutor(
+            max_workers=DEFAULT_TERMINAL_BULK_INPUT_WORKERS,
+            thread_name_prefix="sshpilot-terminal-bulk-input",
+        )
         self._terminal_input_slots = threading.BoundedSemaphore(
             max_pending_terminal_inputs
         )
@@ -97,6 +102,10 @@ class GtkClientBridge:
         self._requests: Dict[Future, GtkClientRequest] = {}
         self._active_requests = set()
         self._terminal_bindings = set()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     def bind_terminal(
         self,
@@ -201,6 +210,27 @@ class GtkClientBridge:
             on_error=on_error,
             on_discard=on_discard,
             slot=self._terminal_input_slots,
+        )
+
+    def submit_terminal_bulk_input(
+        self,
+        operation: Callable[[], T],
+        *,
+        on_success: Callable[[T], None],
+        on_error: Callable[[BaseException], None],
+    ) -> GtkClientRequest:
+        """Run paced input off the shared input worker.
+
+        A large paste can take as long as the remote does to read it; on the
+        one input worker it would stall typing in every other tab.
+        """
+
+        return self._submit_on(
+            self._terminal_bulk_input_executor,
+            operation,
+            on_success=on_success,
+            on_error=on_error,
+            on_discard=None,
         )
 
     def _submit_on(
@@ -350,6 +380,7 @@ class GtkClientBridge:
         self._executor.shutdown(wait=wait, cancel_futures=True)
         self._interaction_executor.shutdown(wait=wait, cancel_futures=True)
         self._terminal_input_executor.shutdown(wait=wait, cancel_futures=True)
+        self._terminal_bulk_input_executor.shutdown(wait=wait, cancel_futures=True)
         if wait and wait_timeout > 0:
             # ThreadPoolExecutor has no join timeout; a short sleep gives
             # cancelled workers a bounded chance to exit without hanging tests.
@@ -363,6 +394,7 @@ class GtkClientBridge:
                         *getattr(self._executor, "_threads", ()),
                         *getattr(self._interaction_executor, "_threads", ()),
                         *getattr(self._terminal_input_executor, "_threads", ()),
+                        *getattr(self._terminal_bulk_input_executor, "_threads", ()),
                     )
                 ):
                     break

@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- `get_terminal_input_status` (`terminal.input_status`, capability
+  `terminal.input`) takes the new `TerminalInputStatusRequest` and returns the
+  new `TerminalInputStatus` with the session input queue's `queued_bytes` and
+  `capacity_bytes`, so a client can split input over the 64 KiB frame limit and
+  send it no faster than the remote reads it. New method and models, so the API
+  implementation version is 0.86; Protocol remains 1.0.
 - `SecretTransferMessageCode` gains four merge-restore warnings, returned in
   `SecretTransferResult.warnings` by every backup import in merge mode:
   `merge_global_rules_skipped` (`count`: `Host *`, `Match` and other global

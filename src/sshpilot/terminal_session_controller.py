@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from gettext import gettext as _
 from collections import deque
 from dataclasses import dataclass
@@ -30,12 +31,16 @@ from .api.models.terminal import (
     TerminalDimensions,
     TerminalInput,
 )
+from .api.terminal_input import send_paced_terminal_input
+from .api.transport.terminal_frames import MAX_TERMINAL_PAYLOAD_SIZE
 from .gtk.plugin_session_failure_messages import format_plugin_session_failure
 from .gtk.session_failure_messages import format_session_failure
 
 logger = logging.getLogger(__name__)
 
 _RECOVERY_REPLAY_CHUNK_BYTES = 512 * 1024
+_BRACKETED_PASTE_END = b"\x1b[201~"
+_INTERRUPT = b"\x03"
 
 
 class SessionFailureError(SshPilotError):
@@ -242,6 +247,7 @@ class DaemonTerminalSessionController:
         self._recovery_input = deque()
         self._recovery_input_bytes = 0
         self._max_recovery_input_bytes = 256 * 1024
+        self._bulk_input_stop: Optional[threading.Event] = None
         self._session_failure_reported = False
 
     @property
@@ -451,18 +457,24 @@ class DaemonTerminalSessionController:
         if not self._tab_state.session_id:
             return
 
+        if self._bulk_input_stop is not None:
+            # Held so typing cannot land inside the paste; Ctrl+C is the way
+            # out of one that is too long or going to the wrong place.
+            if _INTERRUPT in data:
+                self._bulk_input_stop.set()
+            self._queue_recovery_input(data)
+            return
+
         if not self._tab_state.attachment_id:
             if self._tab_state.state is TerminalSessionState.RECOVERING:
                 self._queue_recovery_input(data)
             return
 
-        submit = (
-            self._bridge.submit_terminal_input
-            if callable(
-                getattr(type(self._bridge), "submit_terminal_input", None)
-            )
-            else self._bridge.submit
-        )
+        if len(data) > MAX_TERMINAL_PAYLOAD_SIZE:
+            self._start_bulk_input(data)
+            return
+
+        submit = self._input_submitter()
         try:
             # Built on the GTK thread, like resize: a detach may clear the
             # attachment before the worker runs.
@@ -478,6 +490,91 @@ class DaemonTerminalSessionController:
             )
         except BaseException as error:
             self._on_input_error(error)
+
+    def _input_submitter(self):
+        return (
+            self._bridge.submit_terminal_input
+            if callable(
+                getattr(type(self._bridge), "submit_terminal_input", None)
+            )
+            else self._bridge.submit
+        )
+
+    def _start_bulk_input(self, data: bytes) -> None:
+        session_id = self._tab_state.session_id
+        attachment_id = self._tab_state.attachment_id
+        bridge = self._bridge
+        stop = threading.Event()
+        self._bulk_input_stop = stop
+
+        def should_stop() -> bool:
+            return (
+                stop.is_set()
+                or self._closed
+                or bool(getattr(bridge, "closed", False))
+            )
+
+        def begin(_result) -> None:
+            submit = (
+                bridge.submit_terminal_bulk_input
+                if callable(
+                    getattr(type(bridge), "submit_terminal_bulk_input", None)
+                )
+                else bridge.submit
+            )
+            try:
+                submit(
+                    lambda: send_paced_terminal_input(
+                        self._client,
+                        session_id,
+                        attachment_id,
+                        data,
+                        should_stop=should_stop,
+                    ),
+                    on_success=lambda sent: self._finish_bulk_input(data, sent),
+                    on_error=self._fail_bulk_input,
+                )
+            except BaseException as error:
+                self._fail_bulk_input(error)
+
+        # Pacing runs on its own thread; going through the input worker first
+        # keeps it behind keystrokes that are already queued there.
+        try:
+            self._input_submitter()(
+                lambda: None,
+                on_success=begin,
+                on_error=self._fail_bulk_input,
+            )
+        except BaseException as error:
+            self._fail_bulk_input(error)
+
+    def _finish_bulk_input(self, data: bytes, sent: int) -> None:
+        self._bulk_input_stop = None
+        if sent < len(data) and data.endswith(_BRACKETED_PASTE_END):
+            # A cut-short paste must still close, or the remote stays in paste
+            # mode and swallows the keys that follow.
+            self.send_input(_BRACKETED_PASTE_END)
+        self._flush_recovery_input()
+
+    def _fail_bulk_input(self, error) -> None:
+        self._bulk_input_stop = None
+        logger.debug(
+            "Paced terminal input stopped: %s",
+            getattr(getattr(error, "code", None), "value", type(error).__name__),
+        )
+        if not self._closed:
+            self._report_undelivered_input()
+        self._flush_recovery_input()
+
+    def _report_undelivered_input(self) -> None:
+        self._on_error(
+            SshPilotError(
+                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                "Terminal input was not delivered",
+                retryable=True,
+                session_id=self._tab_state.session_id,
+            )
+        )
 
     def resize(self, dimensions: TerminalDimensions) -> None:
         """Resize terminal. Requires input ownership (resize authority)."""
@@ -817,6 +914,12 @@ class DaemonTerminalSessionController:
     def _handle_bound_error(self, generation: int, error) -> None:
         if generation != self._stream_generation or self._closed:
             return
+        if (
+            self._bulk_input_stop is not None
+            and getattr(error, "code", None) is ErrorCode.TERMINAL_INPUT_BACKPRESSURE
+        ):
+            # A rejected frame leaves a gap; later ones must not close over it.
+            self._bulk_input_stop.set()
         self._on_error(error)
 
     def _begin_output_recovery(self, *, reattach: bool) -> None:
@@ -1110,6 +1213,8 @@ class DaemonTerminalSessionController:
         self._resize_in_flight = False
         self._recovery_input.clear()
         self._recovery_input_bytes = 0
+        if self._bulk_input_stop is not None:
+            self._bulk_input_stop.set()
 
     def _on_session_closed(self, _result) -> None:
         """Handle session close completion."""
@@ -1242,6 +1347,11 @@ class DaemonTerminalSessionController:
             # Still surface to the widget so it can classify (non-fatal).
             if self._on_error is not self._default_error_handler:
                 self._on_error(error)
+            return
+        if code is None and isinstance(error, (TypeError, ValueError)):
+            # Rejected here before sending: the session itself is unaffected.
+            logger.debug("Terminal input rejected locally: %s", error)
+            self._report_undelivered_input()
             return
         self._on_error(error)
 

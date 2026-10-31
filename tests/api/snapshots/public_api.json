@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.85",
+  "api_implementation_version": "0.86",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -364,6 +364,10 @@
     "get_ssh_config_text": {
       "capability": "connections.config.read",
       "status": "implemented"
+    },
+    "get_terminal_input_status": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
     },
     "get_transfer": {
       "capability": "transfers.read",
@@ -830,6 +834,7 @@
     "get_session",
     "get_sftp_service",
     "get_ssh_config_text",
+    "get_terminal_input_status",
     "get_transfer",
     "has_connection_password",
     "has_key_passphrase",
@@ -1627,6 +1632,16 @@
     "get_ssh_config_text": {
       "parameters": [],
       "return": "SshConfigText"
+    },
+    "get_terminal_input_status": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "TerminalInputStatusRequest"
+        }
+      ],
+      "return": "TerminalInputStatus"
     },
     "get_transfer": {
       "parameters": [
@@ -3314,6 +3329,9 @@
     "terminal.claim_input": {
       "capability": "terminal.input"
     },
+    "terminal.input_status": {
+      "capability": "terminal.input"
+    },
     "terminal.release_input": {
       "capability": "terminal.input"
     },
@@ -3787,6 +3805,8 @@
     "TemperatureReading",
     "TerminalDimensions",
     "TerminalInput",
+    "TerminalInputStatus",
+    "TerminalInputStatusRequest",
     "TerminalOutput",
     "TransferBackend",
     "TransferConflictPolicy",
@@ -5196,6 +5216,14 @@
       "session_id",
       "attachment_id",
       "data"
+    ],
+    "TerminalInputStatus": [
+      "queued_bytes",
+      "capacity_bytes"
+    ],
+    "TerminalInputStatusRequest": [
+      "session_id",
+      "attachment_id"
     ],
     "TerminalOutput": [
       "session_id",

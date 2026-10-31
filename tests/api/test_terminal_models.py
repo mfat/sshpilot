@@ -8,12 +8,39 @@ from sshpilot.api.models.terminal import (
     ReplayResult,
     TerminalDimensions,
     TerminalInput,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     TerminalOutput,
 )
 from sshpilot.api.transport.codec import (
     broadcast_terminal_input_request_from_wire,
     broadcast_terminal_input_request_to_wire,
+    terminal_input_status_from_wire,
+    terminal_input_status_request_from_wire,
+    terminal_input_status_request_to_wire,
+    terminal_input_status_to_wire,
 )
+
+
+def test_terminal_input_status_round_trips_and_rejects_invalid_values():
+    request = TerminalInputStatusRequest(
+        session_id=SessionId("session-1"),
+        attachment_id=AttachmentId("attachment-1"),
+    )
+    assert (
+        terminal_input_status_request_from_wire(
+            terminal_input_status_request_to_wire(request)
+        )
+        == request
+    )
+    status = TerminalInputStatus(queued_bytes=1024, capacity_bytes=262144)
+    assert terminal_input_status_from_wire(terminal_input_status_to_wire(status)) == status
+    for queued_bytes, capacity_bytes in ((-1, 1), (0, 0), (True, 1)):
+        with pytest.raises(ValueError):
+            TerminalInputStatus(
+                queued_bytes=queued_bytes,
+                capacity_bytes=capacity_bytes,
+            )
 
 
 def test_terminal_input_and_output_preserve_arbitrary_bytes():

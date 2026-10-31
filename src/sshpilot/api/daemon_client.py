@@ -160,6 +160,8 @@ from .models.terminal import (
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     TerminalInput,
     TerminalOutput,
 )
@@ -251,6 +253,8 @@ from .transport.codec import (
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
+    terminal_input_status_from_wire,
+    terminal_input_status_request_to_wire,
     restart_daemon_request_to_wire,
     set_daemon_log_level_request_to_wire,
     session_summary_from_wire,
@@ -403,6 +407,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
     "open_transient_connection": Capability.SESSIONS_WRITE,
     "broadcast_terminal_input": Capability.TERMINAL_INPUT,
+    "get_terminal_input_status": Capability.TERMINAL_INPUT,
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
@@ -2652,6 +2657,20 @@ class DaemonClient:
                     )
                 )
                 raise self._closed_error() from None
+
+    def get_terminal_input_status(
+        self,
+        request: TerminalInputStatusRequest,
+    ) -> TerminalInputStatus:
+        self._require_capability(Capability.TERMINAL_INPUT)
+        result = self._request(
+            "terminal.input_status",
+            terminal_input_status_request_to_wire(request),
+        )
+        try:
+            return terminal_input_status_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid terminal input status")
 
     def broadcast_terminal_input(self, request: BroadcastTerminalInputRequest) -> None:
         self._require_capability(Capability.TERMINAL_INPUT)

@@ -47,6 +47,8 @@ from sshpilot.api.models.sessions import (
 )
 from sshpilot.api.models.terminal import (
     BroadcastTerminalInputRequest,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     ReplayBounds,
     ReplayRequest,
     ReplayResult,
@@ -1346,6 +1348,47 @@ class SessionRuntime:
                 retryable=True,
                 session_id=request.session_id,
             )
+
+    def terminal_input_status(
+        self,
+        request: TerminalInputStatusRequest,
+        *,
+        client_id: ClientId,
+    ) -> TerminalInputStatus:
+        """Report queue room so a large input can be paced instead of rejected."""
+        if type(request) is not TerminalInputStatusRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "Terminal input status request is invalid",
+            )
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(request.session_id)
+            handle = self._terminal_input_handle_locked(
+                record,
+                session_id=request.session_id,
+                attachment_id=request.attachment_id,
+                client_id=client_id,
+            )
+        if handle is None:
+            # send_terminal_input would drop bytes here; a pacer must not.
+            raise SshPilotError(
+                ErrorCode.SESSION_INVALID_STATE,
+                "The session is not accepting terminal input",
+                session_id=request.session_id,
+            )
+        input_status = getattr(handle, "input_status", None)
+        if not callable(input_status):
+            raise SshPilotError(
+                ErrorCode.TERMINAL_UNAVAILABLE,
+                "The session does not own a writable terminal",
+                session_id=request.session_id,
+            )
+        queued_bytes, capacity_bytes = input_status()
+        return TerminalInputStatus(
+            queued_bytes=queued_bytes,
+            capacity_bytes=capacity_bytes,
+        )
 
     def broadcast_terminal_input(
         self,

@@ -129,6 +129,8 @@ from sshpilot.api.transport.codec import (
     split_connection_request_from_wire,
     ssh_config_text_to_wire,
     resize_terminal_request_from_wire,
+    terminal_input_status_request_from_wire,
+    terminal_input_status_to_wire,
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
     sftp_copy_request_from_wire,
@@ -279,6 +281,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "terminal.replay": Capability.TERMINAL_REPLAY,
     "terminal.resize": Capability.TERMINAL_RESIZE,
     "terminal.broadcast_input": Capability.TERMINAL_INPUT,
+    "terminal.input_status": Capability.TERMINAL_INPUT,
     "terminal.claim_input": Capability.TERMINAL_INPUT,
     "terminal.release_input": Capability.TERMINAL_INPUT,
     "sftp.list_services": Capability.SFTP_READ,
@@ -832,6 +835,7 @@ class RequestDispatcher:
             "terminal.replay": self._handle_replay_terminal,
             "terminal.resize": self._handle_resize_terminal,
             "terminal.broadcast_input": self._handle_broadcast_terminal_input,
+            "terminal.input_status": self._handle_terminal_input_status,
             "terminal.claim_input": self._handle_claim_terminal_input,
             "terminal.release_input": self._handle_release_terminal_input,
             "sftp.list_services": self._handle_list_sftp_services,
@@ -2337,6 +2341,18 @@ class RequestDispatcher:
             client_id=self._required_client_id(state),
         )
         return None
+
+    def _handle_terminal_input_status(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        return terminal_input_status_to_wire(
+            self._session_runtime.terminal_input_status(
+                terminal_input_status_request_from_wire(request.params),
+                client_id=self._required_client_id(state),
+            )
+        )
 
     def _handle_broadcast_terminal_input(
         self,
