@@ -138,6 +138,29 @@ def test_expire_all_masters_overrides_user_controlmaster(monkeypatch, tmp_path):
     mux.expire_all_masters(mode="exit", background=False)
 
     (argv,) = calls
-    assert argv[:3] == ["ssh", "-o", "ControlMaster=no"]
-    assert argv.index("ControlMaster=no") < argv.index("-O")
+    head = argv[: argv.index("-O")]
+    assert head[0] == "ssh"
+    assert head[head.index("-F") + 1] == os.devnull
+    assert "ControlMaster=no" in head and "ProxyCommand=false" in head
     assert argv[argv.index("-O") + 1] == "exit"
+
+
+def test_expire_all_masters_keeps_a_socket_that_failed_the_handshake(
+    monkeypatch, tmp_path
+):
+    """Only positive evidence of absence unlinks. A failed mux handshake (or
+    the placeholder's DNS error after it) may be a live master; removing its
+    socket would strand it with no way left to close it."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    sock_dir = mux.socket_dir()
+    path = os.path.join(sock_dir, "busy")
+    open(path, "w").close()
+    monkeypatch.setattr(
+        mux.subprocess, "run",
+        lambda argv, **kw: types.SimpleNamespace(
+            returncode=255, stdout=b"",
+            stderr=b"muxclient: master hello exchange failed\r\n"
+                   b"ssh: Could not resolve hostname sshpilot-invalidate\r\n"),
+    )
+    mux.expire_all_masters(mode="exit", background=False)
+    assert os.path.exists(path)

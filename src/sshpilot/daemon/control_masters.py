@@ -28,27 +28,31 @@ import logging
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Mapping, Optional, Sequence, Tuple
 
 from .lifecycle import resolve_socket_path
+from ..ssh_multiplex import CONTROL_COMMAND_OPTIONS, output_shows_no_master
 
 logger = logging.getLogger(__name__)
 
 # ``ssh -O check`` prints e.g. "Master running (pid=12345)".
 _MASTER_PID_PATTERN = re.compile(rb"\(pid=(\d+)\)")
-# Positive evidence that nothing is listening on the ControlPath: OpenSSH
-# reports a refused connection or a missing/stale socket. Anything else that
-# merely fails is not evidence of absence.
-_ABSENT_PATTERN = re.compile(
-    rb"No such file or directory"
-    rb"|Connection refused"
-    rb"|control socket connect|Control socket connect"
-    rb"|not a control socket|No control (path|socket)",
-    re.IGNORECASE,
+# The socket accepted the connection but did not complete the mux handshake:
+# something is listening, so this is not evidence of absence. Seen from a real
+# master that is in the middle of exiting.
+_HANDSHAKE_FAILED_PATTERN = re.compile(
+    rb"master hello exchange failed|mux_client_request_alive"
 )
+
+#: Pauses before re-asking a ControlPath whose check failed in a way we do not
+#: recognise. A master that is exiting answers like that for a moment and then
+#: reads as gone; a socket that stays broken is still reported as UNKNOWN.
+#: Timeouts are not retried -- each would cost a full timeout.
+UNRECOGNIZED_RETRY_DELAYS = (0.1, 0.25, 0.5)
 
 DEFAULT_CONTROL_COMMAND_TIMEOUT = 2.0
 
@@ -168,9 +172,7 @@ def _run_control_command(
         return subprocess.run(
             [
                 "ssh",
-                # Must outrank the user's ssh_config: see probe_control_master.
-                "-o",
-                "ControlMaster=no",
+                *CONTROL_COMMAND_OPTIONS,
                 "-o",
                 f"ControlPath={path}",
                 "-O",
@@ -189,7 +191,10 @@ def _run_control_command(
 
 
 def probe_control_master(
-    path: Path, *, timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT
+    path: Path,
+    *,
+    timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT,
+    retry_delays: Sequence[float] = UNRECOGNIZED_RETRY_DELAYS,
 ) -> ControlMasterProbe:
     """Ask one ControlPath whether a master is behind it.
 
@@ -198,19 +203,35 @@ def probe_control_master(
     run or could not finish tells us nothing, and saying "absent" there would
     unlink the socket of a master that is alive and holding a remote
     connection open.
+
+    A check that fails in a way we do not recognise (including a failed mux
+    handshake) is asked again after each of ``retry_delays``: a master that
+    is exiting answers like that briefly before its socket disappears. What is
+    still unrecognised after the last retry stays UNKNOWN.
     """
+
+    probe, retryable = _probe_control_master_once(path, timeout=timeout)
+    for delay in retry_delays:
+        if not retryable:
+            break
+        time.sleep(delay)
+        probe, retryable = _probe_control_master_once(path, timeout=timeout)
+    return probe
+
+
+def _probe_control_master_once(
+    path: Path, *, timeout: float
+) -> Tuple[ControlMasterProbe, bool]:
+    """One ``ssh -O check``. The flag says whether asking again could help."""
 
     try:
         result = subprocess.run(
             [
                 "ssh",
-                # ``ControlMaster yes``/``ask`` in the user's ssh_config makes
-                # ``-O`` skip the socket and try to reach the placeholder host
-                # instead, so every live master reads as "unrecognized failure"
-                # and quit is blocked (issue #1361). Command-line ``-o`` is the
-                # only thing that outranks the user's config.
-                "-o",
-                "ControlMaster=no",
+                # See CONTROL_COMMAND_OPTIONS: the user's ssh_config must not
+                # be able to divert the check (issue #1361), and a failed
+                # check must not fall through to a real connection.
+                *CONTROL_COMMAND_OPTIONS,
                 "-o",
                 f"ControlPath={path}",
                 "-O",
@@ -226,15 +247,15 @@ def probe_control_master(
     except subprocess.TimeoutExpired:
         return ControlMasterProbe(
             path=path, state=MasterState.UNKNOWN, reason="the check timed out"
-        )
+        ), False
     except FileNotFoundError:
         return ControlMasterProbe(
             path=path, state=MasterState.UNKNOWN, reason="ssh is unavailable"
-        )
+        ), False
     except (OSError, subprocess.SubprocessError):
         return ControlMasterProbe(
             path=path, state=MasterState.UNKNOWN, reason="the check could not run"
-        )
+        ), False
 
     output = (result.stderr or b"") + (result.stdout or b"")
     if result.returncode == 0:
@@ -246,18 +267,24 @@ def probe_control_master(
                 path=path,
                 state=MasterState.LIVE,
                 reason="the master did not report a pid",
-            )
+            ), False
         return ControlMasterProbe(
             path=path, state=MasterState.LIVE, pid=int(match.group(1))
-        )
+        ), False
 
-    if _ABSENT_PATTERN.search(output):
-        return ControlMasterProbe(path=path, state=MasterState.ABSENT)
+    if output_shows_no_master(output):
+        return ControlMasterProbe(path=path, state=MasterState.ABSENT), False
+    if _HANDSHAKE_FAILED_PATTERN.search(output):
+        return ControlMasterProbe(
+            path=path,
+            state=MasterState.UNKNOWN,
+            reason="the socket accepted the connection but did not answer as a master",
+        ), True
     return ControlMasterProbe(
         path=path,
         state=MasterState.UNKNOWN,
         reason="the check failed for an unrecognized reason",
-    )
+    ), True
 
 
 def launch_rides_live_master(
@@ -290,7 +317,11 @@ def launch_rides_live_master(
     )
     if path is None:
         return False
-    return probe_control_master(path, timeout=timeout).state is MasterState.LIVE
+    # No retries: an unrecognised answer means "not live" here either way, and
+    # retrying would only delay the launch.
+    return probe_control_master(
+        path, timeout=timeout, retry_delays=()
+    ).state is MasterState.LIVE
 
 
 def resolve_launch_control_path(

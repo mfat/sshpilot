@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -23,6 +24,48 @@ logger = logging.getLogger(__name__)
 # closes the master lingers this long before expiring (release() also tears it
 # down explicitly via ``ssh -O exit``).
 DEFAULT_PERSIST = "60"
+
+#: Options for every ``ssh -O`` aimed at a literal ControlPath. Each one closes a
+#: way for the user's environment to turn a socket check into something else:
+#:
+#: * ``-F <devnull>`` ignores the user and system ssh_config, which can carry
+#:   ``ControlMaster yes``/``ask`` (``-O`` then skips the socket entirely --
+#:   issue #1361), ``ProxyJump``, ``Match exec`` and the like.
+#: * ``ControlMaster=no`` keeps the mux client path explicit.
+#: * ``ProxyCommand=false``: when the socket accepts but the mux handshake
+#:   fails, OpenSSH falls through to a *real* connection to the placeholder
+#:   host. A DNS search domain can make that name resolve, so without this the
+#:   check opens a network connection (or hangs until its timeout). With a
+#:   proxy command ssh never resolves the host itself, and ``false`` exits at
+#:   once, so the fallback fails locally and immediately.
+CONTROL_COMMAND_OPTIONS = (
+    "-F", os.devnull,
+    "-o", "ControlMaster=no",
+    "-o", "ProxyCommand=false",
+)
+
+
+# Positive evidence that nothing is listening on the ControlPath: OpenSSH
+# reports a refused connection or a missing/stale socket. Anything else that
+# merely fails is not evidence of absence.
+_ABSENT_PATTERN = re.compile(
+    rb"No such file or directory"
+    rb"|Connection refused"
+    rb"|control socket connect|Control socket connect"
+    rb"|not a control socket|No control (path|socket)",
+    re.IGNORECASE,
+)
+
+
+def output_shows_no_master(output: bytes) -> bool:
+    """Whether failed ``ssh -O`` output positively shows nothing is listening.
+
+    Only a refused connection or a missing socket counts. A failed mux
+    handshake, a DNS error from the placeholder host, or anything
+    unrecognised does not: something may still be behind the socket.
+    """
+    return bool(_ABSENT_PATTERN.search(output or b""))
+
 
 #: OpenSSH for Windows has no connection multiplexing (no Unix sockets), and a
 #: ControlMaster option makes its launches fail outright.
@@ -125,17 +168,19 @@ def expire_all_masters(
         for name in entries:
             path = os.path.join(socket_dir(), name)
             try:
-                # ControlMaster=no: see control_masters.probe_control_master
-                # (issue #1361). Without it a user's ``ControlMaster yes``
-                # makes this fail for a *live* master, and the unlink below
-                # would strand it with no socket left to reach it through.
                 result = subprocess.run(
-                    ["ssh", "-o", "ControlMaster=no",
+                    ["ssh", *CONTROL_COMMAND_OPTIONS,
                      "-o", f"ControlPath={path}", "-O", mode,
                      "sshpilot-invalidate"],
                     capture_output=True, timeout=timeout, check=False)
+                # Unlink only on positive evidence the master is gone. Any
+                # other failure (a handshake that failed, a wedged master)
+                # may be a live master, and removing its socket would strand
+                # it with no way left to reach or close it.
                 if result.returncode != 0 and os.path.exists(path):
-                    os.unlink(path)  # stale socket, master already gone
+                    output = (result.stderr or b"") + (result.stdout or b"")
+                    if output_shows_no_master(output):
+                        os.unlink(path)  # stale socket, master already gone
             except Exception:
                 logger.debug("expire_all_masters: %s not stopped", path,
                              exc_info=True)
