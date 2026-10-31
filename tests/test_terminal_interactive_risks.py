@@ -695,7 +695,9 @@ def test_terminal_input_backpressure_does_not_silently_lose_keystroke():
         bridge.shutdown(wait=True)
 
 
-def test_frontend_input_queue_bound_reports_undelivered_input():
+def test_input_during_inflight_request_is_coalesced_not_rejected():
+    """A wheel scroll in less makes VTE commit thousands of cursor keys before
+    the main loop delivers a single completion; they must reach the PTY."""
     dispatcher = _Dispatcher()
     bridge = GtkClientBridge(
         dispatcher=dispatcher,
@@ -706,15 +708,105 @@ def test_frontend_input_queue_bound_reports_undelivered_input():
     client.block_input = True
     errors = []
     controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
     try:
         controller.send_input(b"first")
         assert client.input_called.wait(2.0)
-        controller.send_input(b"second")
+        for _ in range(5000):
+            controller.send_input(b"\x1bOB")
+
+        assert errors == []
+        client.release_input.set()
+        dispatcher.run_until(lambda: len(client.pty_input) == 2)
+
+        assert errors == []
+        assert client.pty_input == [b"first", b"\x1bOB" * 5000]
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+def test_held_input_over_one_frame_is_sent_in_frame_sized_pieces():
+    """One frame takes 64 KiB, and a larger one fails whole and loses it all."""
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
+    held = b"\x1bOB" * 30000
+    try:
+        controller.send_input(b"first")
+        assert client.input_called.wait(2.0)
+        for start in range(0, len(held), 3):
+            controller.send_input(held[start:start + 3])
+
+        client.release_input.set()
+        dispatcher.run_until(
+            lambda: sum(map(len, client.pty_input)) == len(held) + 5
+        )
+
+        assert errors == []
+        assert b"".join(client.pty_input) == b"first" + held
+        assert max(map(len, client.pty_input)) <= MAX_TERMINAL_PAYLOAD_SIZE
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+def test_input_typed_while_held_input_drains_stays_behind_it():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 2
+    piece = b"h" * MAX_TERMINAL_PAYLOAD_SIZE
+    held = piece * 3
+    try:
+        controller.send_input(b"a")
+        controller.send_input(b"b")
+        assert client.input_called.wait(2.0)
+        for _ in range(3):
+            controller.send_input(piece)
+
+        client.release_input.set()
+        dispatcher.run_until(lambda: len(client.pty_input) >= 3)
+        controller.send_input(b"typed")
+        dispatcher.run_until(
+            lambda: sum(map(len, client.pty_input)) == len(held) + 7
+        )
+
+        assert errors == []
+        assert b"".join(client.pty_input) == b"ab" + held + b"typed"
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+def test_frontend_input_buffer_bound_reports_undelivered_input():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
+    controller._max_pending_input_bytes = 8
+    try:
+        controller.send_input(b"first")
+        assert client.input_called.wait(2.0)
+        controller.send_input(b"12345678")
+        controller.send_input(b"9")
 
         assert [error.code for error in errors] == [
             ErrorCode.TERMINAL_INPUT_BACKPRESSURE
         ]
-        assert client.pty_input == []
+        client.release_input.set()
+        dispatcher.run_until(lambda: len(client.pty_input) == 2)
+        assert client.pty_input == [b"first", b"12345678"]
     finally:
         client.release_input.set()
         bridge.shutdown(wait=True)
@@ -786,6 +878,36 @@ def test_large_input_arrives_whole_in_frames_within_the_payload_limit():
         assert client.max_queued <= client.capacity
         assert errors == []
     finally:
+        bridge.shutdown(wait=True)
+
+
+def test_large_input_stays_behind_input_held_before_it():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _PacedClient()
+    client.block_input = True
+    client.reading = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
+    held = b"OB" * 100
+    data = _large_input(70 * 1024)
+    try:
+        controller.send_input(b"first")
+        assert client.input_called.wait(2.0)
+        controller.send_input(held)
+        controller.send_input(data)
+        client.release_input.set()
+
+        _pump_until(
+            dispatcher,
+            lambda: sum(map(len, client.pty_input)) >= len(held) + len(data) + 5,
+        )
+
+        assert b"".join(client.pty_input) == b"first" + held + data
+        assert errors == []
+    finally:
+        client.release_input.set()
         bridge.shutdown(wait=True)
 
 
@@ -1063,3 +1185,22 @@ def test_transport_closed_during_quit_is_not_a_connection_failure():
     widget._is_quitting = False
     TerminalWidget._on_daemon_error(widget, error)
     assert failures  # outside quit it is still reported
+
+
+def test_backpressure_toast_is_not_repeated_per_rejected_keystroke():
+    """Adw.ToastOverlay shows queued toasts one after another; one per
+    rejected key kept the message cycling long after the tab was closed."""
+    toasts = []
+    widget = SimpleNamespace(
+        _on_connection_failed=lambda message: pytest.fail(message),
+        _show_toast=lambda message, timeout=3: toasts.append(message),
+    )
+    error = SshPilotError(
+        ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+        "The terminal input queue is full",
+        retryable=True,
+    )
+    for _ in range(500):
+        TerminalWidget._on_daemon_error(widget, error)
+
+    assert len(toasts) == 1

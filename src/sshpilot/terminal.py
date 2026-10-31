@@ -2049,10 +2049,17 @@ class TerminalWidget(Gtk.Box):
                 return
             if code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE:
                 logger.warning("Terminal input was not delivered due to backpressure")
-                self._show_toast(
-                    _("Terminal input was not delivered; please try again."),
-                    timeout=5,
-                )
+                # Adw.ToastOverlay queues toasts and shows them one after
+                # another, so one per rejected keystroke kept the message
+                # cycling for minutes, long after the tab was closed.
+                now = time.monotonic()
+                last = getattr(self, '_backpressure_toast_at', None)
+                if last is None or now - last >= 5:
+                    self._backpressure_toast_at = now
+                    self._show_toast(
+                        _("Terminal input was not delivered; please try again."),
+                        timeout=5,
+                    )
                 return
             if code in {
                 ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
