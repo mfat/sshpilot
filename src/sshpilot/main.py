@@ -494,6 +494,13 @@ class SshPilotApplication(Adw.Application):
         startup_timing.mark("app_startup_begun")
         Adw.Application.do_startup(self)
 
+        try:
+            from .macos_click_guard import install_click_guard
+
+            install_click_guard()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Could not install the macOS click guard: %s", exc)
+
         # The saved light/dark choice has to be set before on_activate builds
         # the window: deferring it to an idle callback let the first frame
         # render in the system scheme and then visibly flip.

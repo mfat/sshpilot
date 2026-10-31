@@ -30,6 +30,7 @@ from .api.models.terminal import (
     TerminalDimensions,
     TerminalInput,
 )
+from .api.transport.terminal_frames import MAX_TERMINAL_PAYLOAD_SIZE
 from .gtk.plugin_session_failure_messages import format_plugin_session_failure
 from .gtk.session_failure_messages import format_session_failure
 
@@ -242,6 +243,16 @@ class DaemonTerminalSessionController:
         self._recovery_input = deque()
         self._recovery_input_bytes = 0
         self._max_recovery_input_bytes = 256 * 1024
+        # Past a few input RPCs in flight, keystrokes are coalesced into the
+        # next one. A wheel scroll in less on macOS makes VTE commit thousands
+        # of cursor keys within a single main-loop iteration, before any
+        # completion frees a slot, and one request per commit overran the
+        # bridge queue.
+        self._inputs_in_flight = 0
+        self._max_inputs_in_flight = 16
+        self._input_generation = 0
+        self._pending_input = bytearray()
+        self._max_pending_input_bytes = 256 * 1024
         self._session_failure_reported = False
 
     @property
@@ -456,6 +467,24 @@ class DaemonTerminalSessionController:
                 self._queue_recovery_input(data)
             return
 
+        # Held input must drain first, or newer keys would overtake it.
+        if (
+            self._pending_input
+            or self._inputs_in_flight >= self._max_inputs_in_flight
+        ):
+            if len(self._pending_input) + len(data) > self._max_pending_input_bytes:
+                self._on_input_error(
+                    SshPilotError(
+                        ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                        "The frontend terminal input queue is full",
+                        retryable=True,
+                        session_id=self._tab_state.session_id,
+                    )
+                )
+                return
+            self._pending_input += data
+            return
+
         submit = (
             self._bridge.submit_terminal_input
             if callable(
@@ -471,13 +500,34 @@ class DaemonTerminalSessionController:
                 attachment_id=self._tab_state.attachment_id,
                 data=data,
             )
+            generation = self._input_generation
             submit(
                 lambda: self._client.send_terminal_input(request),
-                on_success=lambda _: None,
-                on_error=self._on_input_error,
+                on_success=lambda _: self._finish_input(generation, None),
+                on_error=lambda error: self._finish_input(generation, error),
             )
+            self._inputs_in_flight += 1
         except BaseException as error:
             self._on_input_error(error)
+
+    def _finish_input(self, generation: int, error) -> None:
+        if generation != self._input_generation:
+            return
+        self._inputs_in_flight = max(0, self._inputs_in_flight - 1)
+        if error is not None:
+            self._on_input_error(error)
+        if self._closed:
+            return
+        # One frame per completion: a frame over the limit fails whole, and
+        # several at once could overrun the daemon's input queue.
+        while self._pending_input:
+            held = self._pending_input
+            self._pending_input = bytearray()
+            sent_before = self._inputs_in_flight
+            self.send_input(bytes(held[:MAX_TERMINAL_PAYLOAD_SIZE]))
+            self._pending_input[:0] = held[MAX_TERMINAL_PAYLOAD_SIZE:]
+            if self._inputs_in_flight > sent_before:
+                return
 
     def resize(self, dimensions: TerminalDimensions) -> None:
         """Resize terminal. Requires input ownership (resize authority)."""
@@ -1108,6 +1158,9 @@ class DaemonTerminalSessionController:
     def _clear_pending_terminal_control(self) -> None:
         self._pending_resize = None
         self._resize_in_flight = False
+        self._input_generation += 1
+        self._inputs_in_flight = 0
+        self._pending_input.clear()
         self._recovery_input.clear()
         self._recovery_input_bytes = 0
 
