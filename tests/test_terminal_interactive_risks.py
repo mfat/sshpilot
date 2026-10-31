@@ -25,7 +25,10 @@ from sshpilot.api.models.terminal import (
 )
 from sshpilot.api.terminal_events import TerminalSubscription
 from sshpilot.api.transport.framing import MultiplexedFrameDecoder
-from sshpilot.api.transport.terminal_frames import TerminalFrameKind
+from sshpilot.api.transport.terminal_frames import (
+    MAX_TERMINAL_PAYLOAD_SIZE,
+    TerminalFrameKind,
+)
 from sshpilot.daemon.server import DaemonServer, _ClientConnection
 from sshpilot.gtk_client_bridge import GtkClientBridge
 from sshpilot.terminal import TerminalWidget
@@ -716,6 +719,64 @@ def test_input_during_inflight_request_is_coalesced_not_rejected():
 
         assert errors == []
         assert client.pty_input == [b"first", b"\x1bOB" * 5000]
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+def test_held_input_over_one_frame_is_sent_in_frame_sized_pieces():
+    """One frame takes 64 KiB, and a larger one fails whole and loses it all."""
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 1
+    held = b"\x1bOB" * 30000
+    try:
+        controller.send_input(b"first")
+        assert client.input_called.wait(2.0)
+        for start in range(0, len(held), 3):
+            controller.send_input(held[start:start + 3])
+
+        client.release_input.set()
+        dispatcher.run_until(
+            lambda: sum(map(len, client.pty_input)) == len(held) + 5
+        )
+
+        assert errors == []
+        assert b"".join(client.pty_input) == b"first" + held
+        assert max(map(len, client.pty_input)) <= MAX_TERMINAL_PAYLOAD_SIZE
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
+def test_input_typed_while_held_input_drains_stays_behind_it():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    controller._max_inputs_in_flight = 2
+    held = b"h" * (MAX_TERMINAL_PAYLOAD_SIZE * 3)
+    try:
+        controller.send_input(b"a")
+        controller.send_input(b"b")
+        assert client.input_called.wait(2.0)
+        controller.send_input(held)
+
+        client.release_input.set()
+        dispatcher.run_until(lambda: len(client.pty_input) >= 3)
+        controller.send_input(b"typed")
+        dispatcher.run_until(
+            lambda: sum(map(len, client.pty_input)) == len(held) + 7
+        )
+
+        assert errors == []
+        assert b"".join(client.pty_input) == b"ab" + held + b"typed"
     finally:
         client.release_input.set()
         bridge.shutdown(wait=True)

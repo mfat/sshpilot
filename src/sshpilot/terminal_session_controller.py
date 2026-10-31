@@ -30,6 +30,7 @@ from .api.models.terminal import (
     TerminalDimensions,
     TerminalInput,
 )
+from .api.transport.terminal_frames import MAX_TERMINAL_PAYLOAD_SIZE
 from .gtk.plugin_session_failure_messages import format_plugin_session_failure
 from .gtk.session_failure_messages import format_session_failure
 
@@ -466,7 +467,11 @@ class DaemonTerminalSessionController:
                 self._queue_recovery_input(data)
             return
 
-        if self._inputs_in_flight >= self._max_inputs_in_flight:
+        # Held input must drain first, or newer keys would overtake it.
+        if (
+            self._pending_input
+            or self._inputs_in_flight >= self._max_inputs_in_flight
+        ):
             if len(self._pending_input) + len(data) > self._max_pending_input_bytes:
                 self._on_input_error(
                     SshPilotError(
@@ -511,11 +516,18 @@ class DaemonTerminalSessionController:
         self._inputs_in_flight = max(0, self._inputs_in_flight - 1)
         if error is not None:
             self._on_input_error(error)
-        if self._closed or not self._pending_input:
+        if self._closed:
             return
-        pending = bytes(self._pending_input)
-        self._pending_input.clear()
-        self.send_input(pending)
+        # One frame per completion: a frame over the limit fails whole, and
+        # several at once could overrun the daemon's input queue.
+        while self._pending_input:
+            held = self._pending_input
+            self._pending_input = bytearray()
+            sent_before = self._inputs_in_flight
+            self.send_input(bytes(held[:MAX_TERMINAL_PAYLOAD_SIZE]))
+            self._pending_input[:0] = held[MAX_TERMINAL_PAYLOAD_SIZE:]
+            if self._inputs_in_flight > sent_before:
+                return
 
     def resize(self, dimensions: TerminalDimensions) -> None:
         """Resize terminal. Requires input ownership (resize authority)."""
