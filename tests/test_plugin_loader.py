@@ -105,6 +105,258 @@ def test_broken_user_plugin_does_not_break_loading(tmp_path):
     assert not any(p.plugin_id == "broken" for p in loaded)
 
 
+def _settings_client(stored):
+    """Daemon client double that answers plugin settings from ``stored``."""
+    import types
+
+    return types.SimpleNamespace(
+        get_plugin_setting=lambda _plugin_id, key, default=None: stored.get(key, default),
+        set_plugin_setting=lambda _plugin_id, key, value: stored.__setitem__(key, value),
+    )
+
+
+class _BoundWindow:
+    """Enough of a window for ``daemon_client()`` and page registration.
+
+    ``lookup_action`` reports every action as already installed so page
+    registration does not construct a ``Gio.SimpleAction``."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def lookup_action(self, _name):
+        return object()
+
+    def remove_action(self, _name):
+        return None
+
+    def get_application(self):
+        return None
+
+
+def _present(host, client):
+    """The two real startup signals, in the order the window uses them.
+
+    ``notify_backend_settled`` can run before the window is bound (the client
+    was already selected) or after ``dispatch_app_started`` (selection finishes
+    once the window is on screen). Callers bind the window themselves when
+    they want ``daemon_client()`` to succeed."""
+    host._window = _BoundWindow(client)
+    host.dispatch_app_started()
+    host.notify_backend_settled()
+
+
+def test_user_plugin_that_reads_settings_in_activate_loads_once_backend_is_up(tmp_path):
+    """Issue #1342: health, inventory-import, and tailscale call
+    ``ctx.settings.get`` inside ``activate()``.
+
+    Plugin loading runs while the daemon client is still being selected, so
+    that read raises ``BackendUnavailable`` and the loader used to abandon
+    the plugin. The same read succeeds once the client is attached, which
+    happens before ``app_started``. The plugin must be loaded by then, with
+    the persisted value rather than the caller's default, and an
+    ``app_started`` subscription made during that activation must run once.
+    """
+    from sshpilot.plugins.host import PluginHost
+
+    body = textwrap.dedent("""
+        from sshpilot.plugins.api import Events, SshPilotPlugin
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                self.ctx = ctx
+                # Registered before the read, as a plugin might do, so a
+                # retry must not deliver app_started twice.
+                ctx.ui.register_page(
+                    "health", "Health", "network-transmit-receive-symbolic",
+                    lambda: None)
+                ctx.events.subscribe(Events.APP_STARTED, self._on_started)
+                self.timeout = ctx.settings.get("timeout", 3.0)
+                self.format = ctx.settings.get("format", "plain")
+                self.default_user = ctx.settings.get("default_user", "")
+
+            def _on_started(self, _payload):
+                self.started = getattr(self, "started", 0) + 1
+    """)
+    _write_user_plugin(tmp_path, "health", body=body)
+    cfg = FakeConfig({"plugins.enabled": ["health"]})
+    host = PluginHost(connection_manager=None)
+    stored = {"timeout": 9.5, "format": "ansible", "default_user": "cw"}
+
+    loaded = load_plugins(
+        app_config=cfg, connection_manager=None, plugin_host=host)
+    assert not any(p.plugin_id == "health" for p in loaded)
+
+    _present(host, _settings_client(stored))
+
+    health = next(p for p in loaded if p.plugin_id == "health")
+    assert health.instance.timeout == 9.5
+    assert health.instance.format == "ansible"
+    assert health.instance.default_user == "cw"
+    assert health.instance.started == 1
+    assert host.ui.page_ids_for_plugin("health") == ["health:health"]
+
+
+def test_settings_plugin_waits_if_the_backend_settles_before_the_window_binds(tmp_path):
+    """Client selection can resolve during window construction, before
+    ``bind_window``. Dropping a deferred plugin at that moment loses it:
+    ``daemon_client()`` is still None until the window is bound, and
+    ``app_started`` is what finally runs with both in place."""
+    from sshpilot.plugins.host import PluginHost
+
+    body = textwrap.dedent("""
+        from sshpilot.plugins.api import SshPilotPlugin
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                self.region = ctx.settings.get("region", "fra1")
+    """)
+    _write_user_plugin(tmp_path, "inventory-import", body=body)
+    cfg = FakeConfig({"plugins.enabled": ["inventory-import"]})
+    host = PluginHost(connection_manager=None)
+    loaded = load_plugins(
+        app_config=cfg, connection_manager=None, plugin_host=host)
+
+    host.notify_backend_settled()
+    assert not any(p.plugin_id == "inventory-import" for p in loaded)
+
+    host._window = _BoundWindow(_settings_client({"region": "nyc1"}))
+    host.dispatch_app_started()
+
+    plugin = next(p for p in loaded if p.plugin_id == "inventory-import")
+    assert plugin.instance.region == "nyc1"
+
+
+def test_deferred_load_keeps_app_started_and_refreshes_an_open_plugins_page(tmp_path):
+    """A plugin that did not need the backend still gets one app_started, and
+    a Plugins page built before the client attached is rebuilt so it does not
+    stay on Inactive."""
+    from sshpilot.plugins.host import PluginHost
+
+    ready = textwrap.dedent("""
+        from sshpilot.plugins.api import Events, SshPilotPlugin
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                ctx.events.subscribe(Events.APP_STARTED, self._on_started)
+
+            def _on_started(self, _payload):
+                self.started = getattr(self, "started", 0) + 1
+    """)
+    deferred = textwrap.dedent("""
+        from sshpilot.plugins.api import SshPilotPlugin
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                self.timeout = ctx.settings.get("timeout", 3.0)
+    """)
+    _write_user_plugin(tmp_path, "notes", body=ready)
+    _write_user_plugin(tmp_path, "health", body=deferred)
+    cfg = FakeConfig({"plugins.enabled": ["notes", "health"]})
+    host = PluginHost(connection_manager=None)
+    loaded = load_plugins(
+        app_config=cfg, connection_manager=None, plugin_host=host)
+    assert any(p.plugin_id == "notes" for p in loaded)
+    assert not any(p.plugin_id == "health" for p in loaded)
+
+    class _Prefs:
+        def __init__(self):
+            self.rebuilt = 0
+
+        def _rebuild_plugins_page(self):
+            self.rebuilt += 1
+
+    prefs = _Prefs()
+    window = _BoundWindow(_settings_client({"timeout": 1.5}))
+    window._preferences_window = prefs
+    host._window = window
+    host.dispatch_app_started()
+    assert prefs.rebuilt == 0  # backend has not settled; nothing retried yet
+    host.notify_backend_settled()
+
+    notes = next(p for p in loaded if p.plugin_id == "notes")
+    health = next(p for p in loaded if p.plugin_id == "health")
+    assert notes.instance.started == 1
+    assert health.instance.timeout == 1.5
+    assert prefs.rebuilt == 1
+
+
+def test_settings_plugin_stays_unloaded_when_the_backend_never_connects(tmp_path):
+    from sshpilot.plugins.host import PluginHost
+
+    body = textwrap.dedent("""
+        from sshpilot.plugins.api import SshPilotPlugin
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                self.value = ctx.settings.get("format", "plain")
+    """)
+    _write_user_plugin(tmp_path, "tailscale", body=body)
+    cfg = FakeConfig({"plugins.enabled": ["tailscale"]})
+    host = PluginHost(connection_manager=None)
+    loaded = load_plugins(
+        app_config=cfg, connection_manager=None, plugin_host=host)
+
+    host._window = _BoundWindow(client=None)
+    host.dispatch_app_started()
+    host.notify_backend_settled()
+
+    assert not any(p.plugin_id == "tailscale" for p in loaded)
+
+
+def test_daemon_protocol_load_does_not_retry_settings_reads(tmp_path):
+    """The daemon has no client to attach later. A settings read in activate()
+    must still skip the plugin; waiting would never finish, and the protocol
+    would look registered when its backend never ran."""
+    body = textwrap.dedent("""
+        from sshpilot.plugins.api import (
+            ProtocolBackend, SpawnSpec, SshPilotPlugin,
+        )
+
+        class _Backend(ProtocolBackend):
+            protocol_id = "settings-proto"
+            display_name = "settings-proto"
+
+            def capabilities(self):
+                return frozenset()
+
+            def build_spawn(self, connection, ctx):
+                return SpawnSpec(argv=["true"])
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                ctx.settings.get("region", "fra1")
+                ctx.register_protocol(_Backend())
+    """)
+    _write_user_plugin(tmp_path, "settings-proto", body=body)
+    cfg = FakeConfig({"plugins.enabled": ["settings-proto"]})
+
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="settings-proto")
+
+    assert registry_mod.protocol_registry().get_or_none("settings-proto") is None
+
+
+def test_activate_error_other_than_missing_backend_is_not_retried(tmp_path):
+    from sshpilot.plugins.host import PluginHost
+
+    body = textwrap.dedent("""
+        from sshpilot.plugins.api import SshPilotPlugin
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                raise RuntimeError("boom")
+    """)
+    _write_user_plugin(tmp_path, "broken-activate", body=body)
+    cfg = FakeConfig({"plugins.enabled": ["broken-activate"]})
+    host = PluginHost(connection_manager=None)
+    loaded = load_plugins(
+        app_config=cfg, connection_manager=None, plugin_host=host)
+
+    _present(host, _settings_client({}))
+
+    assert not any(p.plugin_id == "broken-activate" for p in loaded)
+
+
 def test_discover_reads_manifest_version(tmp_path):
     # A `version` in plugin.json populates PluginInfo.version (drives update
     # detection); its absence leaves it None.

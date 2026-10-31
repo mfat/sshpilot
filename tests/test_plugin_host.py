@@ -1062,7 +1062,8 @@ def test_loader_builds_per_plugin_context(monkeypatch):
         return []
 
     monkeypatch.setattr(loader_mod, "_load_builtin", fake_load_builtin)
-    monkeypatch.setattr(loader_mod, "_load_user", lambda make_ctx, enabled: [])
+    monkeypatch.setattr(
+        loader_mod, "_load_user", lambda make_ctx, enabled, **_kwargs: [])
     # Avoid the ssh-required RuntimeError by registering a dummy ssh backend.
     monkeypatch.setattr(loader_mod, "protocol_registry",
                         lambda: types.SimpleNamespace(get_or_none=lambda n: object()))

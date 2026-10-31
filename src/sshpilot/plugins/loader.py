@@ -43,7 +43,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from sshpilot.core.plugins import EventBus
 
-from .api import API_VERSION, PluginContext, SshPilotPlugin
+from .api import API_VERSION, BackendUnavailable, PluginContext, SshPilotPlugin
 from .registry import protocol_registry
 
 logger = logging.getLogger(__name__)
@@ -275,11 +275,45 @@ def _user_plugin_candidates(enabled: frozenset,
     return declared_match + undeclared
 
 
+def _release_plugin_registrations(host, plugin_id: str) -> None:
+    """Drop anything a partial ``activate()`` registered, so a retry starts clean.
+
+    A plugin can subscribe and register a page before the settings read that
+    raises. Calling ``activate()`` again without this would deliver
+    ``app_started`` twice and leave the first page in place (a second
+    registration of the same id is ignored)."""
+    if host is None or not plugin_id:
+        return
+    events = getattr(host, "events", None)
+    if events is not None:
+        try:
+            events.unsubscribe_plugin(plugin_id)
+        except Exception:
+            logger.exception(
+                "Failed to drop event subscriptions for plugin %r", plugin_id)
+    ui = getattr(host, "ui", None)
+    if ui is not None:
+        for method_name in ("remove_plugin_pages", "remove_plugin_actions"):
+            method = getattr(ui, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method(plugin_id)
+            except Exception:
+                logger.exception("Failed to drop UI for plugin %r", plugin_id)
+    try:
+        protocol_registry().unregister_plugin(plugin_id)
+    except Exception:
+        logger.exception("Failed to drop protocols for plugin %r", plugin_id)
+
+
 def _load_user(make_ctx,
                enabled: frozenset,
                *,
                wanted_protocol: Optional[str] = None,
-               stop_when: Optional[Callable[[], bool]] = None) -> List[LoadedPlugin]:
+               stop_when: Optional[Callable[[], bool]] = None,
+               defer_backend: Optional[Callable[[str, str, Any, str], None]] = None,
+               ) -> List[LoadedPlugin]:
     """User plugins are opt-in: only ids the user enabled in preferences
     are imported at all (arbitrary code execution should be a deliberate
     choice, not a consequence of a file existing on disk).
@@ -287,7 +321,13 @@ def _load_user(make_ctx,
     ``wanted_protocol``/``stop_when`` narrow the sweep for the daemon, which
     wants one protocol backend rather than every plugin: candidates that
     disclaim the protocol are skipped, and the sweep ends the moment
-    ``stop_when()`` reports the protocol resolved."""
+    ``stop_when()`` reports the protocol resolved.
+
+    ``defer_backend`` receives plugins whose ``activate()`` raised
+    ``BackendUnavailable`` (settings and other daemon-backed calls are not
+    connected yet). The GTK host runs that callback once the client exists,
+    just before ``app_started``. The daemon process passes none: there is no
+    later client, and waiting would never finish."""
     loaded: List[LoadedPlugin] = []
     for child, meta in _user_plugin_candidates(enabled, wanted_protocol):
         pid = meta["id"]
@@ -295,6 +335,7 @@ def _load_user(make_ctx,
         if not init_py.is_file():
             logger.error("User plugin %r has no __init__.py", pid)
             continue
+        instance = None
         try:
             module_name = f"sshpilot_user_plugin_{pid}"
             spec = importlib.util.spec_from_file_location(
@@ -317,6 +358,15 @@ def _load_user(make_ctx,
             instance.activate(make_ctx(pid))
             loaded.append(LoadedPlugin(pid, meta.get("name", pid),
                                        instance, False, str(child)))
+        except BackendUnavailable:
+            if instance is not None and defer_backend is not None:
+                logger.debug(
+                    "Deferring user plugin %r until the daemon backend is connected",
+                    pid,
+                )
+                defer_backend(pid, meta.get("name", pid), instance, str(child))
+            else:
+                logger.exception("Failed to load user plugin %r", pid)
         except Exception:
             logger.exception("Failed to load user plugin %r", pid)
         if stop_when is not None and stop_when():
@@ -346,7 +396,34 @@ def load_plugins(*, app_config, connection_manager,
                              host=plugin_host)
 
     loaded = _load_builtin(make_ctx, disabled=_id_set(app_config, "plugins.disabled"))
-    loaded += _load_user(make_ctx, enabled=_id_set(app_config, "plugins.enabled"))
+
+    def _defer_backend(pid: str, name: str, instance: Any, path: str) -> None:
+        def retry() -> None:
+            # The first activate() may have registered a page or a subscription
+            # before the settings read raised. Drop those so the retry is the
+            # one the rest of the app observes.
+            _release_plugin_registrations(plugin_host, pid)
+            try:
+                instance.activate(make_ctx(pid))
+            except Exception:
+                logger.exception("Failed to load user plugin %r", pid)
+                _release_plugin_registrations(plugin_host, pid)
+                return
+            loaded.append(LoadedPlugin(pid, name, instance, False, path))
+            logger.info(
+                "Loaded user plugin %r after the daemon backend connected", pid)
+
+        plugin_host.defer_until_backend(retry, plugin_id=pid)
+
+    defer = None
+    if plugin_host is not None and callable(
+            getattr(plugin_host, "defer_until_backend", None)):
+        defer = _defer_backend
+    loaded += _load_user(
+        make_ctx,
+        enabled=_id_set(app_config, "plugins.enabled"),
+        defer_backend=defer,
+    )
     global _builtins_ensured_for
     _builtins_ensured_for = id(registry)
 
