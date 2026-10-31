@@ -635,6 +635,15 @@ class SshPilotApplication(Adw.Application):
             from .window import MainWindow
             startup_timing.mark("window_module_imported")
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
+            if sys.platform == "win32":
+                try:
+                    from .platform.windows.transient_close import (
+                        install_transient_close_handoff,
+                    )
+
+                    install_transient_close_handoff()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("Could not install the close hand-off: %s", exc)
             self.window.present()
             startup_timing.mark("window_presented")
             self.window._after_next_paint(self.window._on_first_window_painted)
