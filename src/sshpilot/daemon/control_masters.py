@@ -168,6 +168,9 @@ def _run_control_command(
         return subprocess.run(
             [
                 "ssh",
+                # Must outrank the user's ssh_config: see probe_control_master.
+                "-o",
+                "ControlMaster=no",
                 "-o",
                 f"ControlPath={path}",
                 "-O",
@@ -201,6 +204,13 @@ def probe_control_master(
         result = subprocess.run(
             [
                 "ssh",
+                # ``ControlMaster yes``/``ask`` in the user's ssh_config makes
+                # ``-O`` skip the socket and try to reach the placeholder host
+                # instead, so every live master reads as "unrecognized failure"
+                # and quit is blocked (issue #1361). Command-line ``-o`` is the
+                # only thing that outranks the user's config.
+                "-o",
+                "ControlMaster=no",
                 "-o",
                 f"ControlPath={path}",
                 "-O",

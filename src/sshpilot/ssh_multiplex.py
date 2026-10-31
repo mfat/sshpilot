@@ -125,8 +125,13 @@ def expire_all_masters(
         for name in entries:
             path = os.path.join(socket_dir(), name)
             try:
+                # ControlMaster=no: see control_masters.probe_control_master
+                # (issue #1361). Without it a user's ``ControlMaster yes``
+                # makes this fail for a *live* master, and the unlink below
+                # would strand it with no socket left to reach it through.
                 result = subprocess.run(
-                    ["ssh", "-o", f"ControlPath={path}", "-O", mode,
+                    ["ssh", "-o", "ControlMaster=no",
+                     "-o", f"ControlPath={path}", "-O", mode,
                      "sshpilot-invalidate"],
                     capture_output=True, timeout=timeout, check=False)
                 if result.returncode != 0 and os.path.exists(path):

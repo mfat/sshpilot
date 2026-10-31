@@ -171,3 +171,54 @@ def test_an_unresolvable_directory_is_not_empty(monkeypatch):
     monkeypatch.setattr(control_masters, "control_master_directory", lambda: None)
     with pytest.raises(LookupError):
         survey_control_masters()
+
+
+def _assert_overrides_user_controlmaster(argv, action):
+    """``-o ControlMaster=no`` must precede ``-O`` so a ``ControlMaster yes``
+    or ``ask`` in the user's ssh_config cannot divert the command to the
+    placeholder host (issue #1361)."""
+    assert argv[0] == "ssh"
+    assert "ControlMaster=no" in argv
+    assert argv[argv.index("ControlMaster=no") - 1] == "-o"
+    assert argv.index("ControlMaster=no") < argv.index("-O")
+    assert argv[argv.index("-O") + 1] == action
+
+
+def test_probe_overrides_user_controlmaster_setting(tmp_path, monkeypatch):
+    seen = []
+
+    def _run(argv, **_kwargs):
+        seen.append(argv)
+        return subprocess.CompletedProcess(
+            args=argv, returncode=0, stdout=b"", stderr=b"Master running (pid=4242)\r\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    probe = probe_control_master(tmp_path / "abcdef")
+    assert probe.state is MasterState.LIVE and probe.pid == 4242
+    _assert_overrides_user_controlmaster(seen[0], "check")
+
+
+def test_terminate_exit_overrides_user_controlmaster_setting(tmp_path, monkeypatch):
+    directory = _control_dir(tmp_path)
+    seen = []
+    exited = []
+
+    def _run(argv, **_kwargs):
+        seen.append(argv)
+        action = argv[argv.index("-O") + 1]
+        if action == "exit":
+            exited.append(True)
+            return subprocess.CompletedProcess(argv, 0, b"", b"Exit request sent.\r\n")
+        if exited:
+            return subprocess.CompletedProcess(
+                argv, 255, b"", b"Control socket connect(x): No such file or directory\n"
+            )
+        return subprocess.CompletedProcess(argv, 0, b"", b"Master running (pid=4242)\r\n")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    assert terminate_owned_control_masters(directory=directory) == ()
+    actions = [argv[argv.index("-O") + 1] for argv in seen]
+    assert actions == ["check", "exit", "check"]
+    for argv, action in zip(seen, actions):
+        _assert_overrides_user_controlmaster(argv, action)
