@@ -1459,11 +1459,51 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
     # The counts reach the UI, alongside a hint about trimming the backup.
     assert result.counts == {"credentials": 3, "private_keys": 2}
     assert [warning.code for warning in result.warnings] == [
+        SecretTransferMessageCode.BITWARDEN_ATTACHMENT_NEEDS_PREMIUM,
         SecretTransferMessageCode.BITWARDEN_NOTE_LARGEST_SECTION,
         SecretTransferMessageCode.EXPORT_SPBK_INSTEAD,
         SecretTransferMessageCode.BITWARDEN_BACKUP_TOO_LARGE,
         SecretTransferMessageCode.BITWARDEN_NOTE_REDUCE,
     ]
+
+
+def test_bitwarden_attachment_restore_without_premium_names_the_cause(tmp_path):
+    """A lapsed subscription must not read as a corrupt or unreadable backup."""
+    from types import SimpleNamespace
+
+    from sshpilot.backup_backends import BACKUP_ATTACHMENT_MAGIC
+    from sshpilot.daemon.secret_transfer import (
+        daemon_import_bitwarden_backup,
+        daemon_preview_bitwarden_backup,
+    )
+    from sshpilot.secret_storage import BitwardenPremiumRequired
+
+    class Backend:
+        def is_available(self):
+            return True
+
+        def list_secure_notes(self, _prefix):
+            return [{"id": "N1", "name": "sshPilot Backup x"}]
+
+        def read_secure_note(self, _item_id):
+            return f"{BACKUP_ATTACHMENT_MAGIC}\nbackup.txt"
+
+        def read_secure_note_attachment(self, _item_id, _filename):
+            raise BitwardenPremiumRequired("Premium status is required")
+
+    manager = SimpleNamespace(get_backend=lambda _name: Backend())
+    expected = SecretTransferMessageCode.BITWARDEN_ATTACHMENT_RESTORE_NEEDS_PREMIUM
+
+    preview, manifest = daemon_preview_bitwarden_backup(
+        manager, entry_id="N1", settings_path=tmp_path / "settings.json"
+    )
+    assert manifest is None
+    assert preview.error.code is expected
+
+    result = daemon_import_bitwarden_backup(
+        manager, entry_id="N1", settings_path=tmp_path / "settings.json"
+    )
+    assert result.message.code is expected
 
 
 def test_headless_config_ssh_settings_can_build_an_ssh_command(tmp_path):

@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- Bitwarden backup exports too large for a secure note are now stored as an
+  attachment on the note, when the account has attachments (Bitwarden Premium or
+  Vaultwarden). The note limit is corrected to 7,439 characters, because the
+  server's 10,000 applies after encryption. `SecretTransferMessageCode` gains
+  `bitwarden_attachment_needs_premium`, a warning on an export the account
+  cannot store, and `bitwarden_attachment_restore_needs_premium`, the error on
+  a preview or import of an attachment backup without Premium. New enum values,
+  so the API implementation version is 0.87; Protocol remains 1.0.
 - `get_terminal_input_status` (`terminal.input_status`, capability
   `terminal.input`) takes the new `TerminalInputStatusRequest` and returns the
   new `TerminalInputStatus` with the session input queue's `queued_bytes` and

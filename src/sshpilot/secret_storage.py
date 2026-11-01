@@ -56,6 +56,7 @@ this module existed, so existing saved credentials keep working under ``auto``.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import functools
 import logging
@@ -65,6 +66,7 @@ import shlex
 import sys
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -121,6 +123,14 @@ _kdbx_create_database = _UNSET
 # they always agree).
 class CredentialsError(Exception):
     pass
+
+
+class BitwardenPremiumRequired(Exception):
+    """``bw`` refused an attachment operation because the account has no Premium.
+
+    Callers outside this module match on ``premium_required`` rather than the class."""
+
+    premium_required = True
 
 
 def _get_secret():
@@ -821,6 +831,8 @@ class BitwardenBackend(SecretBackend):
     name = "bitwarden"
     session_backed = True
     _TIMEOUT = 120  # seconds — generous enough for a master-password unlock
+    # Several ``_TIMEOUT``s, so a dir another process is still using is never swept.
+    _STALE_TEMPDIR_SECONDS = 3600
 
     def __init__(self, bin_name: str = "bw") -> None:
         self._bin_name = bin_name
@@ -1331,26 +1343,166 @@ class BitwardenBackend(SecretBackend):
             return None
         try:
             existing = self._search_item(name, token)
-            if existing and existing.get("id"):
-                item = dict(existing)
-                item["type"] = 2
-                item["notes"] = content
-                item.setdefault("secureNote", {"type": 0})
-                res = self._run(["edit", "item", item["id"]], token=token,
-                                input_bytes=self._encode(item))
-                return item["id"] if res.returncode == 0 else None
-            item = {"type": 2, "name": name, "notes": content, "secureNote": {"type": 0}}
-            fid = self._ensure_folder_id(token)
-            if fid:
-                item["folderId"] = fid
-            res = self._run(["create", "item"], token=token, input_bytes=self._encode(item))
-            if res.returncode != 0:
-                return None
-            created = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
-            return created.get("id") if isinstance(created, dict) else None
+            item_id = self._write_secure_note(name, content, token, existing)
+            if item_id and existing:
+                # The payload now lives in the note, so an earlier upload is stale.
+                self._delete_attachments(item_id, existing.get("attachments"), token)
+            return item_id
         except Exception as exc:
             logger.error("bw secure-note store failed: %s", exc)
             return None
+
+    def _write_secure_note(self, name: str, content: str, token: str,
+                           existing: Optional[dict]) -> Optional[str]:
+        """Edit ``existing`` (if it has an id) or create a new secure note; returns the id."""
+        if existing and existing.get("id"):
+            item = dict(existing)
+            item["type"] = 2
+            item["notes"] = content
+            item.setdefault("secureNote", {"type": 0})
+            res = self._run(["edit", "item", item["id"]], token=token,
+                            input_bytes=self._encode(item))
+            return item["id"] if res.returncode == 0 else None
+        item = {"type": 2, "name": name, "notes": content, "secureNote": {"type": 0}}
+        fid = self._ensure_folder_id(token)
+        if fid:
+            item["folderId"] = fid
+        res = self._run(["create", "item"], token=token, input_bytes=self._encode(item))
+        if res.returncode != 0:
+            return None
+        created = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
+        return created.get("id") if isinstance(created, dict) else None
+
+    def store_secure_note_attachment(self, name: str, note: str, filename: str,
+                                     data: bytes) -> Optional[str]:
+        """Store ``data`` as attachment ``filename`` on the secure note ``name``, whose ``notes``
+        become ``note``. Returns the item id, or ``None`` on failure. ``filename`` must not already
+        be on the item.
+
+        The CLI cannot report Premium status up front, so ``bw create attachment``'s own refusal
+        is the check: it raises :class:`BitwardenPremiumRequired`. A note created here is removed
+        again on any failure, and an existing note keeps its content until the upload is in place,
+        so a failed export never costs a good backup."""
+        token = self._current_token()
+        if not token or not self._bin:
+            return None
+        try:
+            existing = self._search_item(name, token)
+            if not existing or not existing.get("id"):
+                existing = None
+            item_id = (existing["id"] if existing
+                       else self._write_secure_note(name, note, token, None))
+            if not item_id:
+                return None
+            try:
+                uploaded = self._upload_attachment(item_id, filename, data, token)
+            except BaseException:
+                if existing is None:
+                    self._discard_item(item_id, token)
+                raise
+            if not uploaded:
+                if existing is None:
+                    self._discard_item(item_id, token)
+                return None
+            if existing is None:
+                return item_id
+            # Repoint before deleting, so the note always names an attachment that exists.
+            if not self._write_secure_note(name, note, token, existing):
+                return None
+            self._delete_attachments(item_id, existing.get("attachments"), token)
+            return item_id
+        except BitwardenPremiumRequired:
+            raise
+        except Exception as exc:
+            logger.error("bw secure-note attachment store failed: %s", exc)
+            return None
+
+    def read_secure_note_attachment(self, item_id: str, filename: str) -> Optional[bytes]:
+        """The bytes of attachment ``filename`` on item ``item_id``, or ``None``. ``--raw`` keeps
+        the backup on a pipe rather than in a file. ``bw`` gates reading on Premium as well as
+        writing, so a lapsed subscription raises :class:`BitwardenPremiumRequired`."""
+        token = self._current_token()
+        if not token:
+            return None
+        try:
+            result = self._run(["get", "attachment", filename, "--itemid", item_id, "--raw"],
+                               token=token)
+        except Exception as exc:
+            logger.error("bw read attachment failed: %s", exc)
+            return None
+        if result.returncode == 0:
+            return result.stdout
+        self._raise_if_premium_refused(result)
+        logger.error("bw get attachment failed: %s", self._failure_detail(result))
+        return None
+
+    def _upload_attachment(self, item_id: str, filename: str, data: bytes, token: str) -> bool:
+        with self._host_visible_tempdir() as tmp:
+            path = os.path.join(tmp, filename)
+            with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                              | getattr(os, "O_BINARY", 0), 0o600), "wb") as fh:
+                fh.write(data)
+            result = self._run(["create", "attachment", "--file", path, "--itemid", item_id],
+                               token=token)
+        if result.returncode == 0:
+            return True
+        self._raise_if_premium_refused(result)
+        logger.error("bw create attachment failed: %s", self._failure_detail(result))
+        return False
+
+    @staticmethod
+    def _failure_detail(result) -> str:
+        return (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
+
+    def _raise_if_premium_refused(self, result) -> None:
+        detail = self._failure_detail(result)
+        if "premium" in detail.lower():
+            raise BitwardenPremiumRequired(detail)
+
+    def _delete_attachments(self, item_id: str, attachments: Optional[list], token: str) -> None:
+        """Best effort: a leftover wastes storage, but the note no longer refers to it."""
+        for attachment in attachments or ():
+            attachment_id = attachment.get("id")
+            if not attachment_id:
+                continue
+            res = self._run(["delete", "attachment", str(attachment_id), "--itemid", item_id],
+                            token=token)
+            if res.returncode != 0:
+                logger.warning("bw could not remove stale attachment on %s: %s",
+                               item_id, self._failure_detail(res))
+
+    def _discard_item(self, item_id: str, token: str) -> None:
+        try:
+            res = self._run(["delete", "item", item_id, "--permanent"], token=token)
+            if res.returncode != 0:
+                logger.warning("bw could not remove incomplete item %s: %s",
+                               item_id, self._failure_detail(res))
+        except Exception as exc:
+            logger.warning("bw could not remove incomplete item %s: %s", item_id, exc)
+
+    @classmethod
+    @contextlib.contextmanager
+    def _host_visible_tempdir(cls):
+        """A private temp dir ``bw`` can read by path; ``bw create attachment`` takes only a file.
+
+        Under Flatpak ``bw`` may run on the host, where the sandbox's ``/tmp`` does not exist, but
+        the sandbox data dir (``~/.var/app/<id>/data``) is the same path on both sides. The file
+        holds the unencrypted backup, so the dir is 0700 and always removed; one a crash left
+        behind goes the next time this runs."""
+        from .platform.paths import get_data_dir
+
+        parent = os.path.join(str(get_data_dir()), "bw-tmp")
+        makedirs_private(parent)
+        cutoff = time.time() - cls._STALE_TEMPDIR_SECONDS
+        for entry in os.scandir(parent):
+            with contextlib.suppress(OSError):
+                if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                    shutil.rmtree(entry.path, ignore_errors=True)
+        tmp = tempfile.mkdtemp(dir=parent)
+        try:
+            yield tmp
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def list_secure_notes(self, name_prefix: str) -> List[dict]:
         """Secure-note items whose name starts with ``name_prefix`` (e.g. our backup items)."""

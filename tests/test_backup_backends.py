@@ -21,10 +21,16 @@ from sshpilot.backup_backends import (
 )
 
 
+class FakePremiumRequired(Exception):
+    premium_required = True
+
+
 class FakeBw:
     """Stand-in for secret_storage.BitwardenBackend's secure-note methods."""
-    def __init__(self):
+    def __init__(self, *, premium=True):
         self.items = {}
+        self.attachments = {}      # (item id, filename) -> bytes
+        self.premium = premium
         self._n = 0
 
     def create_or_update_secure_note(self, name, content):
@@ -45,6 +51,18 @@ class FakeBw:
     def read_secure_note(self, item_id):
         it = self.items.get(item_id)
         return it["notes"] if it else None
+
+    def store_secure_note_attachment(self, name, note, filename, data):
+        if not self.premium:
+            raise FakePremiumRequired("Premium status is required to use this feature.")
+        iid = self.create_or_update_secure_note(name, note)
+        self.attachments[(iid, filename)] = data
+        return iid
+
+    def read_secure_note_attachment(self, item_id, filename):
+        if not self.premium:
+            raise FakePremiumRequired("Premium status is required to use this feature.")
+        return self.attachments.get((item_id, filename))
 
 
 def test_encode_decode_roundtrip():
@@ -81,13 +99,82 @@ def test_bitwarden_backup_roundtrip():
     assert backend.read(listed[0]) == manifest
 
 
-def test_bitwarden_too_large_raises_and_stores_nothing():
+def _encrypted_note_length(plain_chars):
+    """Length of Bitwarden's ``2.<iv>|<data>|<mac>`` string for an ASCII note."""
+    ciphertext = (plain_chars // 16 + 1) * 16   # AES-CBC with PKCS#7 padding
+    data = (ciphertext + 2) // 3 * 4
+    return len("2.") + 24 + len("|") + data + len("|") + 44
+
+
+def test_note_limit_is_the_servers_limit_after_encryption():
+    assert _encrypted_note_length(BW_NOTE_MAX_CHARS) <= 10_000
+    assert _encrypted_note_length(BW_NOTE_MAX_CHARS + 1) > 10_000
+
+
+def test_bitwarden_too_large_goes_into_an_attachment():
     bw = FakeBw()
+    backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup big")
+    manifest = {"blob": base64.b64encode(os.urandom(40000)).decode("ascii")}
+    entry = backend.export(manifest)
+    note = bw.items[entry.id]["notes"]
+    assert len(note) <= BW_NOTE_MAX_CHARS
+    assert note.splitlines()[0] == "SSHPILOT-BACKUP-v1-ATTACHMENT"
+    assert backend.read(backend.list_exports()[0]) == manifest
+
+
+def test_bitwarden_note_under_10k_that_encryption_pushes_over_goes_into_an_attachment():
+    bw = FakeBw()
+    backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup edge")
+    manifest = {"blob": base64.b64encode(os.urandom(5800)).decode("ascii")}
+    assert BW_NOTE_MAX_CHARS < len(encode_manifest_note(manifest)) < 10_000
+    backend.export(manifest)
+    assert len(bw.attachments) == 1
+
+
+def test_bitwarden_each_attachment_export_gets_its_own_filename():
+    bw = FakeBw()
+    backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup big")
+    manifest = {"blob": base64.b64encode(os.urandom(40000)).decode("ascii")}
+    backend.export(manifest)
+    backend.export(manifest)
+    assert len(bw.attachments) == 2
+
+
+def test_bitwarden_too_large_without_premium_raises_and_stores_nothing():
+    bw = FakeBw(premium=False)
     backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup big")
     incompressible = base64.b64encode(os.urandom(40000)).decode("ascii")  # won't gzip under 10k
     with pytest.raises(BackupTooLargeForNote):
         backend.export({"blob": incompressible})
     assert bw.items == {}
+
+
+def test_bitwarden_small_backup_never_uses_an_attachment():
+    bw = FakeBw(premium=False)
+    backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup small")
+    backend.export({"version": 1, "ssh_config": "Host a\n"})
+    assert bw.attachments == {}
+
+
+def test_bitwarden_missing_attachment_raises_read_error():
+    bw = FakeBw()
+    iid = bw.create_or_update_secure_note(
+        "sshPilot Backup x", "SSHPILOT-BACKUP-v1-ATTACHMENT\nsshpilot-backup-1.txt")
+    backend = BitwardenBackupBackend(bw)
+    with pytest.raises(BackupError) as excinfo:
+        backend.read(BackupEntry(id=iid, name="sshPilot Backup x"))
+    assert excinfo.value.transfer_message.code is SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED
+
+
+def test_bitwarden_attachment_restore_after_premium_lapsed_says_so():
+    bw = FakeBw()
+    backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup big")
+    entry = backend.export({"blob": base64.b64encode(os.urandom(40000)).decode("ascii")})
+    bw.premium = False
+    with pytest.raises(BackupError) as excinfo:
+        backend.read(entry)
+    assert (excinfo.value.transfer_message.code
+            is SecretTransferMessageCode.BITWARDEN_ATTACHMENT_RESTORE_NEEDS_PREMIUM)
 
 
 def test_bitwarden_read_foreign_item_raises():
@@ -243,7 +330,7 @@ def test_bitwarden_too_large_names_the_dominant_part():
     a fixed "private keys are the problem" hint sends the user to uncheck the
     wrong box.
     """
-    bw = FakeBw()
+    bw = FakeBw(premium=False)
     backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup big")
     manifest = {
         "version": 1,

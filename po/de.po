@@ -5923,6 +5923,14 @@ msgid "The backup is too large for a Bitwarden note."
 msgstr "Die Sicherung ist zu groß für eine Bitwarden-Notiz."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:32
+msgid "Backups this large are stored as an attachment, which needs Bitwarden Premium."
+msgstr "Sicherungen dieser Größe werden als Anhang gespeichert, was Bitwarden Premium erfordert."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:35
+msgid "This backup is stored as an attachment, which needs Bitwarden Premium to restore."
+msgstr "Diese Sicherung ist als Anhang gespeichert; zum Wiederherstellen ist Bitwarden Premium erforderlich."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:32
 msgid ""
 "Leaving out the largest part, or exporting fewer connections, may bring it "
 "under the limit."
