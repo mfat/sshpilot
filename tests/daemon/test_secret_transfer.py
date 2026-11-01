@@ -9,6 +9,7 @@ GTK-driven path — no parallel backup implementation is maintained.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ from sshpilot.api.models.secrets import (
     SecretTransferMessageCode,
 )
 from sshpilot.backup_archive import read_spbk, write_spbk
+from sshpilot.backup_backends import BACKUP_ATTACHMENT_MAGIC, BitwardenBackupBackend
 from sshpilot.core.connections.models import ConnectionRecord
 from sshpilot.core.settings import CONFIG_VERSION
 from sshpilot.daemon.secret_backend_service import SecretBackendService
@@ -29,7 +31,9 @@ from sshpilot.daemon.secret_transfer import (
     _HeadlessBackupConfig,
     daemon_export_backup,
     daemon_import_backup,
+    daemon_import_bitwarden_backup,
     daemon_preview_backup,
+    daemon_preview_bitwarden_backup,
 )
 from sshpilot.secret_storage import password_spec, sudo_password_spec
 
@@ -1467,17 +1471,118 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
     ]
 
 
+class _AttachmentVault:
+    """In-memory Bitwarden backend holding one backup note and its attachment."""
+
+    def __init__(self):
+        self.notes = {}
+        self.attachments = {}
+
+    def is_available(self):
+        return True
+
+    def create_or_update_secure_note(self, name, content):
+        self.notes[name] = content
+        return name
+
+    def store_secure_note_attachment(self, name, note, filename, data):
+        self.notes[name] = note
+        self.attachments[(name, filename)] = data
+        return name
+
+    def list_secure_notes(self, _prefix):
+        return [{"id": name, "name": name, "type": 2} for name in self.notes]
+
+    def read_secure_note(self, item_id):
+        return self.notes.get(item_id)
+
+    def read_secure_note_attachment(self, item_id, filename):
+        return self.attachments.get((item_id, filename))
+
+
+def _attachment_backup(monkeypatch, tmp_path):
+    """A secrets-and-keys backup too big for a note, stored as an attachment."""
+    config_dir, ssh_dir = _isolate_paths(monkeypatch, tmp_path)
+    config_file = config_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"config_version": CONFIG_VERSION, "ssh": {}}), encoding="utf-8"
+    )
+    key = (
+        b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        + base64.encodebytes(os.urandom(20000))
+        + b"-----END OPENSSH PRIVATE KEY-----\n"
+    )
+    manifest = {
+        "version": 1,
+        "format": "spbk",
+        "app_config": {},
+        "ssh_config": "",
+        "known_hosts": None,
+        "credentials": [
+            {"id": "alice@h.example", "type": "password",
+             "host": "h.example", "username": "alice",
+             "secret": "pw-restored", "metadata": {}},
+        ],
+        "private_keys": [
+            {"path": str(ssh_dir / "id_restored"), "mode": 0o600,
+             "content_b64": base64.b64encode(key).decode("ascii")},
+        ],
+        "backup_options": {"app_settings": True, "ssh_config": True,
+                           "known_hosts": False, "secrets": True,
+                           "private_keys": True},
+    }
+    vault = _AttachmentVault()
+    entry = BitwardenBackupBackend(vault, item_name="sshPilot Backup big").export(manifest)
+    assert len(vault.attachments) == 1
+
+    fake = FakeMgr()
+    fake.get_backend = lambda _name: vault
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: fake)
+    return fake, entry, config_file, ssh_dir, key
+
+
+def test_bitwarden_attachment_backup_restores_after_preview(monkeypatch, tmp_path):
+    """The UI flow: preview reads the attachment, import applies the cached manifest."""
+    fake, entry, config_file, ssh_dir, key = _attachment_backup(monkeypatch, tmp_path)
+
+    preview, cached = daemon_preview_bitwarden_backup(
+        fake, entry_id=entry.id, settings_path=config_file
+    )
+    assert preview.error is None
+    assert cached is not None
+    assert {"secrets", "private_keys"} <= set(preview.included)
+
+    result = daemon_import_bitwarden_backup(
+        fake,
+        entry_id=entry.id,
+        options={"secrets": True, "private_keys": True},
+        settings_path=config_file,
+        manifest=cached,
+    )
+    assert result.status is SecretOperationState.SUCCESS, result.message
+    assert result.counts["restored"] == 1
+    assert result.counts["keys_written"] == 1
+    assert fake.data[password_spec("h.example", "alice").keyring_account] == "pw-restored"
+    assert (ssh_dir / "id_restored").read_bytes() == key
+
+
+def test_bitwarden_attachment_backup_restores_without_a_preview(monkeypatch, tmp_path):
+    """With nothing cached, import fetches the attachment itself."""
+    fake, entry, config_file, ssh_dir, key = _attachment_backup(monkeypatch, tmp_path)
+
+    result = daemon_import_bitwarden_backup(
+        fake,
+        entry_id=entry.id,
+        options={"secrets": True, "private_keys": True},
+        settings_path=config_file,
+    )
+    assert result.status is SecretOperationState.SUCCESS, result.message
+    assert fake.data[password_spec("h.example", "alice").keyring_account] == "pw-restored"
+    assert (ssh_dir / "id_restored").read_bytes() == key
+
+
 def test_bitwarden_attachment_restore_without_premium_names_the_cause(tmp_path):
     """A lapsed subscription must not read as a corrupt or unreadable backup."""
-    from types import SimpleNamespace
-
-    from sshpilot.backup_backends import BACKUP_ATTACHMENT_MAGIC
-    from sshpilot.daemon.secret_transfer import (
-        daemon_import_bitwarden_backup,
-        daemon_preview_bitwarden_backup,
-    )
-    from sshpilot.secret_storage import BitwardenPremiumRequired
-
     class Backend:
         def is_available(self):
             return True
@@ -1489,7 +1594,7 @@ def test_bitwarden_attachment_restore_without_premium_names_the_cause(tmp_path):
             return f"{BACKUP_ATTACHMENT_MAGIC}\nbackup.txt"
 
         def read_secure_note_attachment(self, _item_id, _filename):
-            raise BitwardenPremiumRequired("Premium status is required")
+            raise ss.BitwardenPremiumRequired("Premium status is required")
 
     manager = SimpleNamespace(get_backend=lambda _name: Backend())
     expected = SecretTransferMessageCode.BITWARDEN_ATTACHMENT_RESTORE_NEEDS_PREMIUM
