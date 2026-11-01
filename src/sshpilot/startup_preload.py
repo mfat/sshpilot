@@ -84,6 +84,7 @@ MODULES = (
     "sshpilot.tag_groups",
     "sshpilot.wol",
     "sshpilot.terminal_cursor",
+    "sshpilot.terminal_highlight",
     "sshpilot.ssh_process_manager",
     "sshpilot.core.connection_evidence",
     "sshpilot.terminal_input",
