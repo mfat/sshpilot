@@ -30,6 +30,7 @@ box.main-menu-theme-selector checkbutton.follow {
 }
 box.main-menu-theme-selector checkbutton.light { background: #fff; }
 box.main-menu-theme-selector checkbutton.dark { background: #202020; }
+box.main-menu-theme-selector checkbutton.black { background: #000000; box-shadow: 0 0 0 1px alpha(currentColor, 0.35); }
 box.main-menu-theme-selector checkbutton.theme-selector-choice radio {
   -gtk-icon-source: none;
   border: none;
@@ -53,7 +54,7 @@ box.main-menu-theme-selector checkbutton.theme-selector-choice radio:checked {
 
 
 def create_theme_selector() -> Gtk.Widget:
-    """Return the three-choice visual theme selector used by the main menu."""
+    """Return the visual theme selector used by the main menu."""
     _install_css()
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     box.set_hexpand(True)
@@ -64,6 +65,7 @@ def create_theme_selector() -> Gtk.Widget:
         ('default', 'follow', _('Follow System Style')),
         ('light', 'light', _('Light Style')),
         ('dark', 'dark', _('Dark Style')),
+        ('black', 'black', _('OLED Black Style')),
     ):
         button = Gtk.CheckButton()
         button.set_hexpand(True)
