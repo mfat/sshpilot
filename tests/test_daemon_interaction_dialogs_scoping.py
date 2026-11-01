@@ -919,6 +919,114 @@ def test_password_and_passphrase_route_to_secret_dispatch(immediate_idle):
     dialogs.close()
 
 
+def _passphrase_summary(*, can_remember=True, confirmation_required=False):
+    from sshpilot.api.models import PassphrasePrompt
+
+    summary = _summary(InteractionType.PRIVATE_KEY_PASSPHRASE, "operation-1")
+    return InteractionSummary(
+        **{
+            **summary.__dict__,
+            "prompt": PassphrasePrompt(
+                key_display_name="id_ed25519",
+                key_fingerprint=None,
+                attempt=1,
+                can_remember=can_remember,
+                stored_secret_available=False,
+                confirmation_required=confirmation_required,
+            ),
+        }
+    )
+
+
+def _capture_passphrase_dialog(monkeypatch, *, tick=None):
+    calls = {}
+
+    def fake_show(**kwargs):
+        calls.update(kwargs)
+        if tick is not None:
+            tick(kwargs)
+        return "correct horse"
+
+    monkeypatch.setattr("sshpilot.window_dialogs.show_ssh_passphrase_dialog", fake_show)
+    return calls
+
+
+def _client_with_session_secrets():
+    client = _FakeClient()
+    client.get_capabilities = lambda: SimpleNamespace(supports=lambda _capability: True)
+    return client
+
+
+def test_passphrase_prompt_offers_both_remember_options(monkeypatch):
+    calls = _capture_passphrase_dialog(monkeypatch)
+    client = _client_with_session_secrets()
+    dialogs = DaemonInteractionDialogs(client, _SyncBridge(), parent=None)
+
+    dialogs._present_secret(_passphrase_summary(), parent=SimpleNamespace())
+
+    assert calls["key_name"] == "id_ed25519"
+    assert calls["allow_store"] is True
+    assert calls["store_label"] == "Remember passphrase"
+    assert calls["on_session_remember"] is not None
+    assert client.secrets[-1][2] == b"correct horse"
+    assert client.responded[-1].remember_policy is RememberPolicy.DO_NOT_STORE
+    dialogs.close()
+
+
+@pytest.mark.parametrize(
+    ("tick", "expected"),
+    [
+        (lambda kwargs: kwargs["on_store"]("ignored"), RememberPolicy.STORE_AFTER_SUCCESS),
+        (lambda kwargs: kwargs["on_session_remember"](), RememberPolicy.REMEMBER_FOR_SESSION),
+    ],
+)
+def test_passphrase_remember_choice_sets_policy(monkeypatch, tick, expected):
+    _capture_passphrase_dialog(monkeypatch, tick=tick)
+    client = _client_with_session_secrets()
+    dialogs = DaemonInteractionDialogs(client, _SyncBridge(), parent=None)
+
+    dialogs._present_secret(_passphrase_summary(), parent=SimpleNamespace())
+
+    assert client.responded[-1].remember_policy is expected
+    dialogs.close()
+
+
+def test_unrememberable_passphrase_prompt_offers_no_remember_option(monkeypatch):
+    calls = _capture_passphrase_dialog(monkeypatch)
+    client = _client_with_session_secrets()
+    dialogs = DaemonInteractionDialogs(client, _SyncBridge(), parent=None)
+
+    dialogs._present_secret(
+        _passphrase_summary(can_remember=False), parent=SimpleNamespace()
+    )
+
+    assert calls["allow_store"] is False
+    assert calls["on_session_remember"] is None
+    dialogs.close()
+
+
+def test_new_passphrase_prompt_keeps_its_confirmation_dialog(monkeypatch):
+    calls = _capture_passphrase_dialog(monkeypatch)
+
+    class _Reached(Exception):
+        pass
+
+    def fake_alert_dialog(**_kwargs):
+        raise _Reached
+
+    monkeypatch.setattr(dialogs_mod.Adw, "AlertDialog", fake_alert_dialog)
+    dialogs = DaemonInteractionDialogs(_FakeClient(), _SyncBridge(), parent=None)
+
+    with pytest.raises(_Reached):
+        dialogs._present_secret(
+            _passphrase_summary(confirmation_required=True),
+            parent=SimpleNamespace(),
+        )
+
+    assert calls == {}
+    dialogs.close()
+
+
 # ---------------------------------------------------------------------------
 # B. SshCopyIdRunner binds the presenter to the operation and secret flows
 # ---------------------------------------------------------------------------

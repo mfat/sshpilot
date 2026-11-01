@@ -5,7 +5,8 @@ Window*Mixin modules) to shrink the window.py god-object. MainWindow inherits
 this; methods keep their signatures and ``self.`` state access.
 
 Also hosts the shared in-app SSH password / passphrase prompt helpers
-(:func:`show_ssh_password_dialog`, :func:`_show_password_passphrase_dialog`)
+(:func:`show_ssh_password_dialog`, :func:`show_ssh_passphrase_dialog`,
+:func:`_show_password_passphrase_dialog`)
 and Wayland-safe modal parenting (:func:`resolve_app_modal_parent`,
 :func:`present_for_modal_dialog`). ``window`` re-exports those for callers
 that historically imported them from there.
@@ -457,6 +458,34 @@ def show_ssh_password_dialog(
         connection_manager=connection_manager,
         heading=heading,
         body=body,
+        store_label=store_label,
+        on_store=on_store,
+        allow_store=allow_store,
+        on_dialog=on_dialog,
+        on_session_remember=on_session_remember,
+    )
+
+
+def show_ssh_passphrase_dialog(
+    *,
+    parent_window: Gtk.Window,
+    key_name: str = "",
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
+    allow_store: Optional[bool] = None,
+    on_dialog: Optional[Any] = None,
+    on_session_remember: Optional[Any] = None,
+) -> Optional[str]:
+    """Show the standard in-app SSH key **passphrase** dialog (blocking).
+
+    The passphrase counterpart of :func:`show_ssh_password_dialog`; the
+    callbacks mean the same thing. **Must be called on the GTK main thread.**
+    """
+    present_for_modal_dialog(parent_window)
+    return _show_password_passphrase_dialog(
+        parent_window,
+        prompt_type="passphrase",
+        key_path=key_name,
         store_label=store_label,
         on_store=on_store,
         allow_store=allow_store,

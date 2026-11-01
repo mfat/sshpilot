@@ -1773,6 +1773,20 @@ class InteractionBroker:
             port = context.port
             confirmation_required = context.confirm_passphrase
             interaction_mode = context.interaction_mode
+            allow_stored_secrets = context.allow_stored_secrets
+            if attempt > 1:
+                # A repeated prompt proves the previous answer failed, whether
+                # or not the next one asks to be remembered.
+                retained = []
+                for pending in context.pending_remember:
+                    if (
+                        pending.interaction_type is interaction_type
+                        and pending.key == key_path
+                    ):
+                        pending.clear()
+                    else:
+                        retained.append(pending)
+                context.pending_remember[:] = retained
         stored: Optional[str] = None
         session_key = self._session_secret_key(interaction_type, connection_id, key_path)
         if not try_stored and attempt > 1:
@@ -1877,7 +1891,13 @@ class InteractionBroker:
                 key_display_name=Path(key_path).name if key_path else "SSH key",
                 key_fingerprint=None,
                 attempt=attempt,
-                can_remember=self._passphrase_store is not None and bool(key_path),
+                # Key operations (allow_stored_secrets=False) never authenticate,
+                # so nothing would commit a remembered passphrase.
+                can_remember=(
+                    self._passphrase_store is not None
+                    and bool(key_path)
+                    and allow_stored_secrets
+                ),
                 stored_secret_available=bool(stored),
                 confirmation_required=confirmation_required,
             )
@@ -1933,16 +1953,6 @@ class InteractionBroker:
             with self._condition:
                 current = self._askpass_contexts.get(token)
                 if current is not None and not current.closed:
-                    # A repeated prompt proves the previous password failed.
-                    if interaction_type is InteractionType.PASSWORD:
-                        retained = []
-                        for pending in current.pending_remember:
-                            if pending.interaction_type is InteractionType.PASSWORD:
-                                pending.clear()
-                            else:
-                                retained.append(pending)
-                        current.pending_remember.clear()
-                        current.pending_remember.extend(retained)
                     if current.commit_point_passed:
                         # ``mark_authenticated`` already ran for this session,
                         # and it never runs twice. Nothing will commit this

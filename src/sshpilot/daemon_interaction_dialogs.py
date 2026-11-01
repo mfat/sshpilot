@@ -434,6 +434,9 @@ class DaemonInteractionDialogs:
             self._present_shared_password(summary, prompt, parent)
             return
         if isinstance(prompt, PassphrasePrompt):
+            if not prompt.confirmation_required:
+                self._present_shared_passphrase(summary, prompt, parent)
+                return
             heading = _("Passphrase for {key_display_name}").format(
                 key_display_name=prompt.key_display_name
             )
@@ -453,11 +456,6 @@ class DaemonInteractionDialogs:
                     prompt, (ChallengePrompt, PresencePrompt, ConfirmationPrompt)
                 )
                 else _("Enter and confirm a new passphrase.")
-                if isinstance(prompt, PassphrasePrompt)
-                and prompt.confirmation_required
-                else _("Authentication attempt {attempt}").format(
-                    attempt=summary.attempt
-                )
             ),
         )
         if isinstance(prompt, PresencePrompt):
@@ -674,6 +672,56 @@ class DaemonInteractionDialogs:
         # prepare it for modal presentation because this call uses the shared
         # helper's parent_window escape hatch.
         present_for_modal_dialog(parent)
+        self._run_remember_dialog(
+            summary,
+            offer_session=self._supports_session_secrets(),
+            show_dialog=lambda **options: show_ssh_password_dialog(
+                parent_window=parent,
+                display_name=f"{prompt.username}@{prompt.hostname}",
+                host=prompt.hostname,
+                username=prompt.username,
+                allow_store=bool(prompt.can_remember),
+                store_label=_("Remember password"),
+                **options,
+            ),
+        )
+
+    def _present_shared_passphrase(
+        self,
+        summary: InteractionSummary,
+        prompt: PassphrasePrompt,
+        parent: Gtk.Widget,
+    ) -> None:
+        """Key-unlock counterpart of :meth:`_present_shared_password`.
+
+        ``prompt.can_remember`` is false when the daemon has nowhere to keep
+        the answer (no key path, or a key operation rather than a login), so
+        unlike a password it gates the session option too.
+        """
+        from .window_dialogs import show_ssh_passphrase_dialog
+
+        self._run_remember_dialog(
+            summary,
+            offer_session=(
+                bool(prompt.can_remember) and self._supports_session_secrets()
+            ),
+            show_dialog=lambda **options: show_ssh_passphrase_dialog(
+                parent_window=parent,
+                key_name=prompt.key_display_name,
+                allow_store=bool(prompt.can_remember),
+                store_label=_("Remember passphrase"),
+                **options,
+            ),
+        )
+
+    def _run_remember_dialog(
+        self,
+        summary: InteractionSummary,
+        *,
+        offer_session: bool,
+        show_dialog,
+    ) -> None:
+        """Run a blocking shared prompt and submit its remember choice."""
         remember = [False]
         remember_session = [False]
         # Register a real handle, not None: this dialog blocks in a nested main
@@ -685,18 +733,12 @@ class DaemonInteractionDialogs:
         # what made that reachable.
         self._dialogs[summary.id] = None
         try:
-            value = show_ssh_password_dialog(
-                parent_window=parent,
-                display_name=f"{prompt.username}@{prompt.hostname}",
-                host=prompt.hostname,
-                username=prompt.username,
-                allow_store=bool(prompt.can_remember),
-                store_label=_("Remember password"),
-                on_store=lambda _password: remember.__setitem__(0, True),
+            value = show_dialog(
+                on_store=lambda _secret: remember.__setitem__(0, True),
                 on_dialog=self._dialog_handle_sink(summary.id),
                 on_session_remember=(
                     (lambda: remember_session.__setitem__(0, True))
-                    if self._supports_session_secrets()
+                    if offer_session
                     else None
                 ),
             )
