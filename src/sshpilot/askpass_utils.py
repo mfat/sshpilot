@@ -1243,6 +1243,13 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             dialog_success_log="ASKPASS: Returning response from GUI dialog",
         )
 
+    if prompt.lstrip().lower().startswith("bad passphrase"):
+        # ssh-add has no retry limit: it re-asks after every rejected answer
+        # until askpass fails. Storage would repeat the same wrong passphrase,
+        # spinning on the key's KDF until the caller's timeout kills ssh-add.
+        _log("ASKPASS: stored passphrase was rejected; declining retry")
+        return None
+
     key_path = _extract_key_path(prompt)
     if not key_path:
         _log("ASKPASS: Could not extract key path from prompt")
