@@ -10,7 +10,7 @@
 set -eu
 
 GTK4_FRDP_URL=${GTK4_FRDP_URL:-https://github.com/mfat/gtk4-frdp.git}
-GTK4_FRDP_COMMIT=${GTK4_FRDP_COMMIT:-cb81b43db8f4252889644662e9c03fb2836d4483}
+GTK4_FRDP_COMMIT=${GTK4_FRDP_COMMIT:-2f4d96d199b06d94f88bb893450473433ec7b514}
 
 prefix=${1:?usage: $0 PREFIX [meson options...]}
 shift

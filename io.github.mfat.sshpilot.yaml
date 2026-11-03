@@ -178,7 +178,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/mfat/gtk4-frdp.git
-        commit: cb81b43db8f4252889644662e9c03fb2836d4483
+        commit: 2f4d96d199b06d94f88bb893450473433ec7b514
 
   - flatpak/python3-deps.yml
 
