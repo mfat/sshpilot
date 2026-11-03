@@ -11,6 +11,8 @@ finish-args:
   - --socket=fallback-x11
   - --socket=wayland
   - --socket=ssh-auth
+  # Sound from RDP sessions shown in a tab (gtk4-frdp, FreeRDP rdpsnd).
+  - --socket=pulseaudio
   # --device=all, not dri: this manifest builds libfido2 and an OpenSSH
   # with security-key support, and a FIDO2 key needs hidraw access that
   # dri alone does not grant. Matches the Flathub manifest.
@@ -129,6 +131,54 @@ modules:
       - type: archive
         url: https://download.gnome.org/sources/vte/0.84/vte-0.84.1.tar.xz
         sha256: aca1caa8478aebcdbb1d67897fb3511eb7601debae6810e16a15b6fa25f31ac8
+
+  # FreeRDP 3 libraries for the embedded RDP tab (gtk4-frdp below). Only the
+  # libraries and channels are built: no client programs, no server.
+  - name: freerdp
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DWITH_CLIENT=ON
+      - -DWITH_CLIENT_SDL=OFF
+      - -DWITH_X11=OFF
+      - -DWITH_WAYLAND=OFF
+      - -DWITH_SERVER=OFF
+      - -DWITH_SAMPLE=OFF
+      - -DWITH_MANPAGES=OFF
+      - -DWITH_OPENH264=OFF
+      - -DWITH_FFMPEG=ON
+      - -DWITH_SWSCALE=ON
+      - -DWITH_CUPS=OFF
+      - -DWITH_FUSE=OFF
+      - -DWITH_PCSC=OFF
+      - -DWITH_PULSE=ON
+      - -DCHANNEL_URBDRC=OFF
+      - -DWITH_WEBVIEW=OFF
+    cleanup:
+      - /bin
+      - /share/FreeRDP
+    sources:
+      - type: archive
+        url: https://pub.freerdp.com/releases/freerdp-3.32.1.tar.xz
+        sha256: 4dd5bf474deff7a2a82dff7edca4ea0a608da376a9698514901feab3637711e8
+        x-checker-data:
+          type: anitya
+          project-id: 10442
+          url-template: https://pub.freerdp.com/releases/freerdp-$version.tar.xz
+
+  # gtk4-frdp: the GTK 4 RDP widget behind RDP tabs (GtkFrdp-4.0).
+  - name: gtk4-frdp
+    buildsystem: meson
+    config-opts:
+      - -Dtests=false
+      - -Dexamples=false
+      - -Ddocumentation=false
+    sources:
+      - type: git
+        url: https://github.com/mfat/gtk4-frdp.git
+        commit: cb81b43db8f4252889644662e9c03fb2836d4483
 
   - flatpak/python3-deps.yml
 

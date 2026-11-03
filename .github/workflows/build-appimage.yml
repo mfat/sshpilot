@@ -56,7 +56,18 @@ jobs:
             file \
             wget \
             xvfb \
-            dbus-x11
+            dbus-x11 \
+            git \
+            libgtk-4-dev \
+            freerdp3-dev \
+            libwinpr3-dev \
+            gobject-introspection \
+            libgirepository1.0-dev
+
+      # gtk4-frdp is not in Ubuntu's archive: build it at the pinned commit so
+      # the bundle can open RDP connections in a tab.
+      - name: Build gtk4-frdp
+        run: sudo scripts/build-gtk4-frdp.sh /usr
 
       # src/sshpilot/__init__.py is the single source of truth the release
       # tooling bumps; the tag is only the trigger.

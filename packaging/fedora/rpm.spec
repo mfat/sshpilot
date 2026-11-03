@@ -64,6 +64,9 @@ Recommends:     telnet
 # For the built-in RDP protocol plugin: FreeRDP 3 (sdl-freerdp/xfreerdp);
 # degrades gracefully if absent
 Recommends:     freerdp
+# RDP connections in an sshPilot tab (gtk4-frdp, GtkFrdp-4.0); without it RDP
+# opens in FreeRDP's own window
+Recommends:     gtk4-frdp
 # Deliberately absent: python3-certifi is only consulted by builds with no
 # system CA store (the macOS bundle); update_checker.py falls back to the stdlib
 # default context, which is the correct one here. python3-flask and

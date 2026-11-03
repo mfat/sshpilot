@@ -76,6 +76,28 @@ jobs:
           echo "=== Toolkit versions ==="
           brew list --versions gtk4 libadwaita vte3 gtksourceview5 glib pygobject3
 
+      # gtk4-frdp (RDP connections in a tab) is not in Homebrew: build it at
+      # the pinned commit into the Homebrew prefix, where the spec collects
+      # typelibs and libraries from. Best effort: if FreeRDP has no bottle at
+      # the snapshot or the build fails, the app still ships and RDP opens in
+      # FreeRDP's own window.
+      - name: Build gtk4-frdp
+        env:
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_UPGRADE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          set -uo pipefail
+          if brew install --force-bottle freerdp pkgconf \
+             && "$(brew --prefix python@3.13)/bin/python3.13" -m venv "$RUNNER_TEMP/meson" \
+             && "$RUNNER_TEMP/meson/bin/pip" install -q meson ninja \
+             && PATH="$RUNNER_TEMP/meson/bin:$PATH" scripts/build-gtk4-frdp.sh "$(brew --prefix)"; then
+            echo "gtk4-frdp installed: $(ls "$(brew --prefix)"/lib/girepository-1.0/GtkFrdp-4.0.typelib)"
+          else
+            echo "::warning::gtk4-frdp did not build; this bundle opens RDP in FreeRDP's window"
+          fi
+
       - name: Prepare Homebrew virtual environment
         run: |
           echo "=== DEBUG: Preparing virtual environment ==="

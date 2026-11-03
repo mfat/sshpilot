@@ -266,6 +266,10 @@ WANTED = [
     # Pulls JavaScriptCore with it; both the PyXterm.js terminal backend and
     # the Host Info tab need them.
     ("WebKit", "6.0"),
+    # gtk4-frdp, for RDP connections in a tab; brings FreeRDP 3 along through
+    # the library closure below. Skipped (RDP then opens in FreeRDP's own
+    # window) when the build machine does not have it.
+    ("GtkFrdp", "4.0"),
     ("Gio", "2.0"),
     ("GLib", "2.0"),
     ("GLibUnix", "2.0"),
