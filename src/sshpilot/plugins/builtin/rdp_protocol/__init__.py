@@ -318,6 +318,13 @@ class RdpProtocolBackend(ProtocolBackend):
             FieldSpec(key="domain", label=_("Domain"), kind="text"),
             # Stored in secure storage, never in the connection data.
             FieldSpec(key="password", label=_("Password"), kind="password"),
+            # The tab needs gtk4-frdp and supports the core options only;
+            # "auto" falls back to FreeRDP's window otherwise (rdp_view_policy).
+            FieldSpec(key="viewer", label=_("Open in"), kind="choice",
+                      default="auto", group="display",
+                      choices=[("auto", _("Tab when possible")),
+                               ("tab", _("Tab")),
+                               ("window", _("FreeRDP window"))]),
             # GNOME Connections' wording: short enough to fit the row.
             FieldSpec(key="display_mode", label=_("Scale mode"), kind="choice",
                       default="resize", group="display",

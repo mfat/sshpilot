@@ -9177,7 +9177,7 @@ msgstr "(بدون اتصال)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:318
 msgid "Domain"
-msgstr ""
+msgstr "دامنه"
 
 #. GNOME Connections' wording: short enough to fit the row.
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:322
@@ -17361,3 +17361,89 @@ msgstr "رونوشت کلید به سرور"
 
 #~ msgid "Show Hostnames"
 #~ msgstr "نمایش نام‌های Host"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Accept Once"
+msgstr "یک‌بار پذیرفتن"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Accept and Remember"
+msgstr "پذیرفتن و به خاطر سپردن"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Common name: {name}\nIssuer: {issuer}\nFingerprint: {fingerprint}"
+msgstr "نام عمومی: {name}\nصادرکننده: {issuer}\nاثر انگشت: {fingerprint}"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Connection Lost"
+msgstr "اتصال قطع شد"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Could Not Connect"
+msgstr "اتصال برقرار نشد"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Enter your credentials for {host}."
+msgstr "اطلاعات ورود خود را برای {host} وارد کنید."
+
+#: src/sshpilot/rdp_tab.py
+msgid "FreeRDP window"
+msgstr "پنجرهٔ FreeRDP"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Log In"
+msgstr "ورود"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Open in"
+msgstr "باز کردن در"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Open in FreeRDP Window"
+msgstr "باز کردن در پنجرهٔ FreeRDP"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Opening in a FreeRDP window: the RDP tab does not support {options}."
+msgstr "در پنجرهٔ FreeRDP باز می‌شود: زبانهٔ RDP از {options} پشتیبانی نمی‌کند."
+
+#: src/sshpilot/rdp_tab.py
+msgid "RDP tabs need gtk4-frdp, which is not installed. Opening in a FreeRDP window instead."
+msgstr "زبانه‌های RDP به gtk4-frdp نیاز دارند که نصب نیست. به‌جای آن در پنجرهٔ FreeRDP باز می‌شود."
+
+#: src/sshpilot/rdp_tab.py
+msgid "Server Certificate Changed"
+msgstr "گواهی سرور تغییر کرده است"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Tab"
+msgstr "زبانه"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Tab when possible"
+msgstr "زبانه در صورت امکان"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The RDP tab ignores these settings: {options}."
+msgstr "زبانهٔ RDP این تنظیمات را نادیده می‌گیرد: {options}."
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The certificate of {host} is different from the one accepted before. This can mean the server was reinstalled, or that someone is intercepting the connection."
+msgstr "گواهی {host} با گواهی‌ای که پیش‌تر پذیرفته شده بود فرق دارد. ممکن است سرور دوباره نصب شده باشد، یا کسی در حال شنود اتصال باشد."
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The identity of {host} cannot be verified. Check the fingerprint before you continue."
+msgstr "هویت {host} قابل تأیید نیست. پیش از ادامه، اثر انگشت را بررسی کنید."
+
+#: src/sshpilot/rdp_tab.py
+msgid "The remote session ended."
+msgstr "نشست راه دور پایان یافت."
+
+#: src/sshpilot/rdp_tab.py
+msgid "Unknown Server Certificate"
+msgstr "گواهی سرور ناشناخته"

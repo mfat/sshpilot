@@ -1192,11 +1192,65 @@ class WindowTabsMixin:
             # without a dialog.
             close_fn()
 
+    def existing_rdp_tab(self, connection):
+        """The open RDP tab of ``connection``, if any."""
+        tab = self.__dict__.get('_rdp_tabs', {}).get(connection)
+        if tab is not None and tab.get_parent() is not None:
+            return tab
+        return None
+
+    def open_rdp_tab(self, connection, data, *, force_new: bool = False):
+        """Show an RDP connection in an embedded tab (gtk4-frdp), reusing the
+        connection's open tab unless ``force_new``. The caller has already
+        decided the tab is the right view (``rdp_view_policy``)."""
+        from .rdp_tab import RdpTab
+
+        tabs = self.__dict__.setdefault('_rdp_tabs', {})
+        existing = tabs.get(connection)
+        if existing is not None and not force_new:
+            page = self.tab_view.get_page(existing) if existing.get_parent() else None
+            if page is not None:
+                self.tab_view.set_selected_page(page)
+                if not existing.connected:
+                    existing.connect_session()
+                return existing
+
+        tab = RdpTab(self, connection, data, open_in_window=self._open_rdp_in_window)
+        if hasattr(self, 'show_tab_view'):
+            self.show_tab_view()
+        page = self.tab_view.append(tab)
+        page.set_title(get_connection_alias(connection) or get_connection_host(connection) or "RDP")
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name("computer-symbolic"))
+        except Exception:
+            pass
+        self.tab_view.set_selected_page(page)
+        tabs[connection] = tab
+        tab.connect_session()
+        return tab
+
+    def _open_rdp_in_window(self, connection):
+        """The tab's "Open in FreeRDP Window" button: the usual external
+        route, bypassing the tab choice."""
+        self.terminal_manager.connect_to_host(connection, force_new=True, rdp_view='window')
+
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         if self._is_start_tab_page(page):
             # Only _remove_start_tab may close it; the user cannot.
             return not getattr(self, '_closing_start_tab', False)
+
+        # Embedded RDP: end the session; the widget frees itself once its
+        # session thread has stopped.
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        from .rdp_tab import RdpTab
+        if isinstance(child, RdpTab):
+            child.close_session()
+            tabs = self.__dict__.get('_rdp_tabs', {})
+            for connection, tab in list(tabs.items()):
+                if tab is child:
+                    del tabs[connection]
+            return False
 
         # If we are closing pages programmatically (e.g., after deleting a
         # connection), suppress the confirmation dialog and allow the default

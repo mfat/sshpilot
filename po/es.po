@@ -9239,7 +9239,7 @@ msgstr "(sin conexiones)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:318
 msgid "Domain"
-msgstr ""
+msgstr "Dominio"
 
 #. GNOME Connections' wording: short enough to fit the row.
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:322
@@ -17619,3 +17619,89 @@ msgstr "Copiar clave al servidor"
 
 #~ msgid "Show Hostnames"
 #~ msgstr "Mostrar nombres de host"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Accept Once"
+msgstr "Aceptar una vez"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Accept and Remember"
+msgstr "Aceptar y recordar"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Common name: {name}\nIssuer: {issuer}\nFingerprint: {fingerprint}"
+msgstr "Nombre común: {name}\nEmisor: {issuer}\nHuella digital: {fingerprint}"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Connection Lost"
+msgstr "Conexión perdida"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Could Not Connect"
+msgstr "No se pudo conectar"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Enter your credentials for {host}."
+msgstr "Introduzca sus credenciales para {host}."
+
+#: src/sshpilot/rdp_tab.py
+msgid "FreeRDP window"
+msgstr "Ventana de FreeRDP"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Log In"
+msgstr "Iniciar sesión"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Open in"
+msgstr "Abrir en"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Open in FreeRDP Window"
+msgstr "Abrir en ventana de FreeRDP"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Opening in a FreeRDP window: the RDP tab does not support {options}."
+msgstr "Se abre en una ventana de FreeRDP: la pestaña RDP no admite {options}."
+
+#: src/sshpilot/rdp_tab.py
+msgid "RDP tabs need gtk4-frdp, which is not installed. Opening in a FreeRDP window instead."
+msgstr "Las pestañas RDP necesitan gtk4-frdp, que no está instalado. Se abrirá en una ventana de FreeRDP."
+
+#: src/sshpilot/rdp_tab.py
+msgid "Server Certificate Changed"
+msgstr "El certificado del servidor ha cambiado"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Tab"
+msgstr "Pestaña"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Tab when possible"
+msgstr "Pestaña cuando sea posible"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The RDP tab ignores these settings: {options}."
+msgstr "La pestaña RDP ignora estos ajustes: {options}."
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The certificate of {host} is different from the one accepted before. This can mean the server was reinstalled, or that someone is intercepting the connection."
+msgstr "El certificado de {host} es distinto del que se aceptó antes. Puede significar que el servidor se reinstaló o que alguien está interceptando la conexión."
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The identity of {host} cannot be verified. Check the fingerprint before you continue."
+msgstr "No se puede verificar la identidad de {host}. Compruebe la huella digital antes de continuar."
+
+#: src/sshpilot/rdp_tab.py
+msgid "The remote session ended."
+msgstr "La sesión remota ha terminado."
+
+#: src/sshpilot/rdp_tab.py
+msgid "Unknown Server Certificate"
+msgstr "Certificado de servidor desconocido"

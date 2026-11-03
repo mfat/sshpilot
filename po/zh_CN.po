@@ -8940,7 +8940,7 @@ msgstr "(无连接)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:318
 msgid "Domain"
-msgstr ""
+msgstr "域"
 
 #. GNOME Connections' wording: short enough to fit the row.
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:322
@@ -16863,3 +16863,89 @@ msgstr "复制密钥到服务器"
 
 #~ msgid "Show Hostnames"
 #~ msgstr "显示主机名"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Accept Once"
+msgstr "仅接受本次"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Accept and Remember"
+msgstr "接受并记住"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Common name: {name}\nIssuer: {issuer}\nFingerprint: {fingerprint}"
+msgstr "通用名称：{name}\n颁发者：{issuer}\n指纹：{fingerprint}"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Connection Lost"
+msgstr "连接已断开"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Could Not Connect"
+msgstr "无法连接"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Enter your credentials for {host}."
+msgstr "请输入 {host} 的登录凭据。"
+
+#: src/sshpilot/rdp_tab.py
+msgid "FreeRDP window"
+msgstr "FreeRDP 窗口"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Log In"
+msgstr "登录"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Open in"
+msgstr "打开方式"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Open in FreeRDP Window"
+msgstr "在 FreeRDP 窗口中打开"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "Opening in a FreeRDP window: the RDP tab does not support {options}."
+msgstr "将在 FreeRDP 窗口中打开：RDP 标签页不支持 {options}。"
+
+#: src/sshpilot/rdp_tab.py
+msgid "RDP tabs need gtk4-frdp, which is not installed. Opening in a FreeRDP window instead."
+msgstr "RDP 标签页需要 gtk4-frdp，但未安装。将改用 FreeRDP 窗口打开。"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Server Certificate Changed"
+msgstr "服务器证书已更改"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Tab"
+msgstr "标签页"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Tab when possible"
+msgstr "尽可能使用标签页"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The RDP tab ignores these settings: {options}."
+msgstr "RDP 标签页会忽略以下设置：{options}。"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The certificate of {host} is different from the one accepted before. This can mean the server was reinstalled, or that someone is intercepting the connection."
+msgstr "{host} 的证书与之前接受的不同。这可能意味着服务器已重新安装，也可能有人正在拦截连接。"
+
+#: src/sshpilot/rdp_tab.py
+#, python-brace-format
+msgid "The identity of {host} cannot be verified. Check the fingerprint before you continue."
+msgstr "无法验证 {host} 的身份。请在继续之前核对指纹。"
+
+#: src/sshpilot/rdp_tab.py
+msgid "The remote session ended."
+msgstr "远程会话已结束。"
+
+#: src/sshpilot/rdp_tab.py
+msgid "Unknown Server Certificate"
+msgstr "未知的服务器证书"

@@ -194,6 +194,7 @@ class TerminalManager:
         pty_prompt: Optional[str] = None,
         pty_response: Optional[str] = None,
         _secret_unlock_attempted: bool = False,
+        rdp_view: Optional[str] = None,
     ):
         """Open an SSH terminal using an explicit route decided once up front.
 
@@ -210,6 +211,10 @@ class TerminalManager:
         )
 
         window = self.window
+        if str(getattr(connection, "protocol", "") or "") == "rdp" and rdp_view != "window":
+            self._route_rdp(connection, force_new=force_new)
+            return
+
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
@@ -253,6 +258,98 @@ class TerminalManager:
             pty_response=pty_response,
             _secret_unlock_attempted=_secret_unlock_attempted,
         )
+
+    def _route_rdp(self, connection, *, force_new: bool) -> None:
+        """Open an RDP connection in an embedded tab or in FreeRDP's window.
+
+        Sidebar rows carry no plugin settings, so the daemon's full details
+        are fetched first and the choice is made from them
+        (``rdp_view_policy``). The FreeRDP route continues through
+        ``connect_to_host``, which reports daemon problems as usual."""
+        window = self.window
+
+        def to_window():
+            self.connect_to_host(connection, force_new=force_new, rdp_view="window")
+
+        if not force_new:
+            existing = window.existing_rdp_tab(connection)
+            if existing is not None:
+                window.tab_view.set_selected_page(window.tab_view.get_page(existing))
+                if not existing.connected:
+                    existing.connect_session()
+                return
+
+        bridge = getattr(window, "client_bridge", None)
+        client = getattr(window, "client", None)
+        try:
+            from .api.connection_identity import connection_id_for
+
+            connection_id = connection_id_for(connection)
+        except Exception:
+            connection_id = None
+        if bridge is None or client is None or connection_id is None:
+            to_window()
+            return
+
+        def on_details(details):
+            from .rdp_tab import embedded_rdp_available
+            from .rdp_view_policy import (
+                RdpView,
+                RdpViewReason,
+                connection_data_from_details,
+                decide_view,
+            )
+
+            data = connection_data_from_details(details)
+            decision = decide_view(data, embedded_available=embedded_rdp_available())
+            message = None
+            if decision.reason is RdpViewReason.NOT_INSTALLED and decision.explicit_tab:
+                message = _("RDP tabs need gtk4-frdp, which is not installed. "
+                            "Opening in a FreeRDP window instead.")
+            elif decision.reason is RdpViewReason.UNSUPPORTED_OPTIONS:
+                options = ", ".join(self._rdp_option_labels(decision.options))
+                if decision.view is RdpView.TAB:
+                    message = _("The RDP tab ignores these settings: {options}.").format(
+                        options=options)
+                else:
+                    message = _("Opening in a FreeRDP window: the RDP tab does not "
+                                "support {options}.").format(options=options)
+            if message:
+                self._toast(message)
+            if decision.view is RdpView.TAB:
+                window.open_rdp_tab(connection, data, force_new=force_new)
+            else:
+                to_window()
+
+        def on_error(error):
+            logger.warning("Could not load RDP settings for %s: %s",
+                           getattr(connection, "nickname", "?"), error)
+            to_window()
+
+        bridge.submit(lambda: client.get_connection(connection_id),
+                      on_success=on_details, on_error=on_error)
+
+    @staticmethod
+    def _rdp_option_labels(keys):
+        """The RDP editor's (translated) labels for field ``keys``."""
+        labels = {}
+        try:
+            from .plugins.registry import protocol_registry
+
+            backend = protocol_registry().get("rdp")
+            labels = {spec.key: spec.label for spec in backend.connection_fields()}
+        except Exception:
+            logger.debug("RDP field labels unavailable", exc_info=True)
+        return [labels.get(key, key) for key in keys]
+
+    def _toast(self, message: str) -> None:
+        overlay = getattr(self.window, "toast_overlay", None)
+        if overlay is None:
+            logger.info("%s", message)
+            return
+        toast = Adw.Toast.new(message)
+        toast.set_timeout(6)
+        overlay.add_toast(toast)
 
     def _open_external_ssh(self, connection, *, _secret_unlock_attempted: bool = False):
         """External-process-owned SSH — no internal tab, no daemon session."""
