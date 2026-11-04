@@ -14,7 +14,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 REPO_ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.anyio
 
-V2_TOOLS = {"get_context", "inspect_impact", "index_status"}
+V2_TOOLS = {"get_context", "inspect_impact", "index_status", "diagnose_bug"}
 
 
 def _checkout(tmp_path: Path) -> Path:
@@ -69,6 +69,15 @@ async def test_v2_tools_over_stdio(tmp_path):
 
             impact = await _call(session, "inspect_impact", {"paths": ["src/sshpilot/demo/core.py"]})
             assert "tests/demo/test_core.py" in impact["tests"]["focused_files"]
+
+            trace = (
+                'Traceback (most recent call last):\n'
+                f'  File "{root}/src/sshpilot/demo/core.py", line 2, in helper\n'
+                "TypeError: can only concatenate str (not \"int\") to str\n"
+            )
+            diagnosis = await _call(session, "diagnose_bug", {"symptoms": "caller() fails", "traceback": trace})
+            assert diagnosis["candidates"][0]["id"] == "src/sshpilot/demo/core.py::helper"
+            assert diagnosis["candidates"][0]["confidence"] == "high"
 
             escape = await session.call_tool("get_context", {"reference": "../outside.py:1"})
             assert escape.is_error

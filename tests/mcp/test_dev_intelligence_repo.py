@@ -114,3 +114,21 @@ def test_cli_rejects_bad_input(tmp_path):
     result = _cli(["get-context", "../../etc/passwd:1"], tmp_path / "idx", tmp_path)
     assert result.returncode == 2
     assert "escapes" in result.stderr
+
+
+def test_cli_diagnose_bug_from_traceback_file(tmp_path):
+    trace = tmp_path / "trace.txt"
+    trace.write_text(
+        "Traceback (most recent call last):\n"
+        f'  File "{REPO_ROOT}/src/sshpilot/daemon/dispatch.py", line 1, in _handle_open_session\n'
+        "KeyError: 'connection_id'\n"
+    )
+    result = _cli(
+        ["--compact", "diagnose-bug", "--symptoms", "sessions.open fails", "--traceback-file", str(trace)],
+        tmp_path / "cli-index",
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["candidates"][0]["id"] == HANDLER
+    assert any("another revision" in u for u in payload["uncertainties"])  # line 1 is not in the handler

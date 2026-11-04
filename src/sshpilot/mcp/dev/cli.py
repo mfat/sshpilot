@@ -6,6 +6,7 @@ SDK. Examples::
     python -m sshpilot.mcp.dev.cli index-status
     python -m sshpilot.mcp.dev.cli get-context sshpilot.daemon.dispatch.RequestDispatcher._handle_open_session
     python -m sshpilot.mcp.dev.cli inspect-impact --base HEAD
+    python -m sshpilot.mcp.dev.cli diagnose-bug --symptoms "..." --traceback-file trace.txt
 
 Exit status: 0 on success, 2 for invalid input.
 """
@@ -53,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     impact.add_argument("--path", action="append", dest="paths")
     impact.add_argument("--depth", type=int, default=2)
 
+    diagnose = sub.add_parser("diagnose-bug", help="rank candidate locations for a failure")
+    diagnose.add_argument("--symptoms", default="")
+    diagnose.add_argument("--symptoms-file")
+    diagnose.add_argument("--traceback")
+    diagnose.add_argument("--traceback-file")
+    diagnose.add_argument("--test-name")
+    diagnose.add_argument("--changed-path", action="append", dest="changed_paths")
+    diagnose.add_argument("--base", help="use paths changed since this revision as evidence")
+    diagnose.add_argument("--max-items", type=int, default=8)
+
     return parser
 
 
@@ -72,6 +83,16 @@ def run(argv: Optional[List[str]] = None) -> int:
             result = service.get_context(args.reference, include_source=not args.no_source, depth=args.depth, budget=args.budget)
         elif args.command == "inspect-impact":
             result = service.inspect_impact(base=args.base, paths=args.paths, depth=args.depth, budget=args.budget)
+        elif args.command == "diagnose-bug":
+            result = service.diagnose_bug(
+                symptoms=_read_text_arg(args.symptoms, args.symptoms_file) or "",
+                traceback=_read_text_arg(args.traceback, args.traceback_file),
+                test_name=args.test_name,
+                changed_paths=args.changed_paths,
+                base=args.base,
+                max_items=args.max_items,
+                budget=args.budget,
+            )
         else:  # pragma: no cover - argparse enforces the choices
             raise EngineError(f"unknown command {args.command}")
     except (EngineError, ScopeError) as error:

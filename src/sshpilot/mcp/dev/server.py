@@ -86,6 +86,38 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         return _engine_call(intelligence.inspect_impact, base=base, paths=paths, depth=depth, budget=budget)
 
     @server.tool()
+    def diagnose_bug(
+        symptoms: str,
+        traceback: Optional[str] = None,
+        test_name: Optional[str] = None,
+        changed_paths: Optional[List[str]] = None,
+        base: Optional[str] = None,
+        max_items: int = 8,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Rank candidate code locations for a failure, with the evidence
+        behind each (traceback frame, failing test and its callees, wire
+        method or identifier mentions, changed files) and explicit
+        uncertainties and next steps. Low confidence is reported as such.
+
+        ``symptoms`` is free text (identifiers count when written as
+        ``name()`` or in backticks); ``traceback`` is a Python/pytest trace;
+        ``test_name`` a pytest id; ``base`` adds files changed since that
+        revision as evidence. Inputs are never stored; exception messages are
+        returned only as a short redacted preview.
+        """
+        return _engine_call(
+            intelligence.diagnose_bug,
+            symptoms,
+            traceback=traceback,
+            test_name=test_name,
+            changed_paths=changed_paths,
+            base=base,
+            max_items=max_items,
+            budget=budget,
+        )
+
+    @server.tool()
     def index_status(rebuild: bool = False) -> dict:
         """Refresh the local symbol index incrementally and report freshness
         (Git HEAD, files indexed, parse failures, timings). ``rebuild=True``

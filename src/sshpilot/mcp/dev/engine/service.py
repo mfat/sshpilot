@@ -63,6 +63,40 @@ class DevIntelligence:
         with self._lock:
             return inspect_impact(self._graph(), self.freshness, base=base, paths=paths, depth=depth, budget=budget)
 
+    def diagnose_bug(
+        self,
+        symptoms: str,
+        traceback: Optional[str] = None,
+        test_name: Optional[str] = None,
+        changed_paths: Optional[List[str]] = None,
+        base: Optional[str] = None,
+        max_items: int = 8,
+        budget: Optional[int] = None,
+    ) -> dict:
+        from .diagnosis import diagnose
+
+        with self._lock:
+            changed = list(changed_paths or [])
+            if base is not None:
+                from .._git import GitError, GitInspector
+
+                try:
+                    git = GitInspector(self.scope.root)
+                    git.validate_revision(base)
+                    changed.extend(git.changed_paths(base))
+                except GitError as error:
+                    raise EngineError(str(error)) from error
+            return diagnose(
+                self._graph(),
+                self.freshness,
+                symptoms,
+                traceback=traceback,
+                test_name=test_name,
+                changed_paths=changed,
+                max_items=max_items,
+                budget=budget,
+            )
+
     def close(self) -> None:
         self.index.close()
 
