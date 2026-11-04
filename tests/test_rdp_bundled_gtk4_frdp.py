@@ -24,9 +24,24 @@ def _build_config(monkeypatch, libdir):
     monkeypatch.setitem(sys.modules, "sshpilot.build_config", module)
 
 
-def test_no_meson_install_means_no_bundled_copy(monkeypatch):
+def _checkout(monkeypatch, tmp_path):
+    """Run as if rdp_tab.py lived in a checkout at tmp_path, no Meson install."""
     monkeypatch.setitem(sys.modules, "sshpilot.build_config", None)
+    module = tmp_path / "src" / "sshpilot" / "rdp_tab.py"
+    module.parent.mkdir(parents=True)
+    monkeypatch.setattr(rdp_tab, "__file__", str(module))
+    return tmp_path / "build" / "rdp-tab" / "lib" / "sshpilot"
+
+
+def test_a_checkout_without_build_rdp_tab_has_no_bundled_copy(monkeypatch, tmp_path):
+    _checkout(monkeypatch, tmp_path)
     assert rdp_tab._bundled_libdir() == ""
+
+
+def test_a_checkout_uses_the_copy_build_rdp_tab_made(monkeypatch, tmp_path):
+    libdir = _checkout(monkeypatch, tmp_path)
+    libdir.mkdir(parents=True)
+    assert rdp_tab._bundled_libdir() == str(libdir)
 
 
 def test_a_build_without_the_rdp_tab_has_no_bundled_copy(monkeypatch):

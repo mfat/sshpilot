@@ -39,13 +39,18 @@ _available: Optional[bool] = None
 
 
 def _bundled_libdir() -> str:
-    """The private gtk4-frdp the deb/rpm/Arch packages install, or ''."""
+    """The private gtk4-frdp to load, or '' to rely on GI's own search path.
+
+    Meson installs (deb, rpm, Arch, Flatpak) record where theirs went. A run
+    from a checkout uses the one scripts/build-rdp-tab.sh builds.
+    """
 
     try:
-        from .build_config import RDP_TAB_LIBDIR
-    except ImportError:  # checkout, pip: no Meson install
-        return ""
-    return RDP_TAB_LIBDIR if RDP_TAB_LIBDIR and os.path.isdir(RDP_TAB_LIBDIR) else ""
+        from .build_config import RDP_TAB_LIBDIR as libdir
+    except ImportError:  # checkout or pip install: no Meson install
+        checkout = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        libdir = os.path.join(checkout, "build", "rdp-tab", "lib", "sshpilot")
+    return libdir if libdir and os.path.isdir(libdir) else ""
 
 
 _BUNDLED_LIBRARY = "libgtk4-frdp-4.0.so.0"
