@@ -89,6 +89,9 @@ struct _FrdpDisplayPrivate
 
 
   gboolean     keyboard_grabbed;
+  /* The toplevel whose system shortcuts are inhibited (weak): the widget
+   * can move to another window while grabbed, so restore that one. */
+  GdkToplevel *grabbed_toplevel;
 
   double       last_x;
   double       last_y;
@@ -503,11 +506,24 @@ frdp_display_set_property (GObject      *object,
     }
 }
 
+/* Moving the widget to another window (a detached tab) unroots it: hand the
+ * old window its system shortcuts back. Entering the display in the new
+ * window inhibits them there. */
+static void
+frdp_display_unroot (GtkWidget *widget)
+{
+  frdp_display_keyboard_ungrab (FRDP_DISPLAY (widget));
+
+  GTK_WIDGET_CLASS (frdp_display_parent_class)->unroot (widget);
+}
+
 static void
 frdp_display_dispose (GObject *object)
 {
   FrdpDisplay *self = FRDP_DISPLAY (object);
   FrdpDisplayPrivate *priv = frdp_display_get_instance_private (self);
+
+  frdp_display_keyboard_ungrab (self);
 
   /* Upstream never released the session, so every widget leaked its
    * FreeRDP context and framebuffer. */
@@ -535,6 +551,7 @@ frdp_display_class_init (FrdpDisplayClass *klass)
 
   widget_class->snapshot = frdp_display_snapshot;
   widget_class->size_allocate = frdp_display_size_allocate;
+  widget_class->unroot = frdp_display_unroot;
 
   /**
    * FrdpDisplay:username:
@@ -1133,7 +1150,11 @@ frdp_display_keyboard_grab (FrdpDisplay *display)
   if (toplevel == NULL)
     return;
 
+  if (priv->grabbed_toplevel != NULL && priv->grabbed_toplevel != toplevel)
+    frdp_display_keyboard_ungrab (display);
+
   gdk_toplevel_inhibit_system_shortcuts (toplevel, NULL);
+  g_set_weak_pointer (&priv->grabbed_toplevel, toplevel);
   priv->keyboard_grabbed = TRUE;
 }
 
@@ -1141,11 +1162,13 @@ static void
 frdp_display_keyboard_ungrab (FrdpDisplay *display)
 {
   FrdpDisplayPrivate *priv = frdp_display_get_instance_private (display);
-  GdkToplevel        *toplevel = frdp_display_get_toplevel (display);
 
-  if (toplevel != NULL && priv->keyboard_grabbed)
-    gdk_toplevel_restore_system_shortcuts (toplevel);
+  /* The window that was inhibited, not the current one: they differ when
+   * the widget moved to another window while the pointer was over it. */
+  if (priv->grabbed_toplevel != NULL && priv->keyboard_grabbed)
+    gdk_toplevel_restore_system_shortcuts (priv->grabbed_toplevel);
 
+  g_clear_weak_pointer (&priv->grabbed_toplevel);
   priv->keyboard_grabbed = FALSE;
 }
 

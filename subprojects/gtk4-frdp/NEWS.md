@@ -5,6 +5,9 @@
 - `private_libdir` option: install the library and typelib into an
   application's own directory under libdir, without headers, pkg-config file
   or GIR XML, for applications that bundle gtk4-frdp in their package.
+- The display can move to another window while connected (a detached tab):
+  the session carries on, and system shortcuts inhibited on the old window
+  are restored on that window rather than the new one.
 
 ## 0.1.0 (2026-11-04)
 
