@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.6}
+Version:        %{?version}%{!?version:6.3.7}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -168,6 +168,45 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Wed Nov 04 2026 mFat <newmfat@gmail.com> - 6.3.7-1
+- Propose SSH Pilot-specific agent workflows for runtime MCP
+- Add a 'Backspace key sends' option to serial connections (#1366)
+- Recover the sidebar when finishing deferred rows fails (#1363)
+- Keep secrets out of the printed form of credential records (#1362)
+- Ask for trusted X11 forwarding in Windows terminal sessions (#1365)
+- Make X11 forwarding work on Windows (#1365)
+- Wake sleeping hosts before connecting; run pre-connect steps for RDP tabs
+- Ship gtk4-frdp 0.2.0 everywhere, updated in one step
+- Move an RDP tab to its own window and back without reconnecting
+- Update the bundled gtk4-frdp to 86f975c
+- RDP tab when running from a checkout
+- Deb content check: accept the gtk4-frdp soname symlink
+- Bundle gtk4-frdp in the deb, rpm and Arch packages for RDP tabs
+- Fix three Windows-only test failures
+- Keep the RDP "Open in" choice in backups
+- Pin gtk4-frdp at the 0.1.0 release
+- Bundle gtk4-frdp 0.1.0 in the Windows installer for RDP tabs
+- Pin gtk4-frdp at 2f4d96d
+- Ship gtk4-frdp for RDP tabs in the packages
+- Open RDP connections in an embedded tab (gtk4-frdp)
+- Cover restoring a Bitwarden attachment backup through the daemon.
+- Store oversized Bitwarden backups as a note attachment.
+- Stop ssh-add retrying a rejected saved passphrase.
+- Offer remember options on the key passphrase prompt.
+- Deliver large pastes whole instead of failing the terminal.
+- Send held terminal input in frame-sized pieces
+- Keep the main window forward when a dialog closes on Windows
+- ControlMaster checks: retry transient failures, never fall through to a real connection
+- Fix quit blocked by "multiplexed SSH connection could not be checked" (#1361)
+- GSSAPI Flatpak fix
+- Automatic backups are now disabled for files edited through Manage Files, including “Edit as root
+- Fix lost macOS clicks and terminal input flood on wheel scroll
+- Retry user plugins that read settings during activate
+- Add a View menu toggle for the tab overview button.
+- Revert "Show the tab bar new-tab button once a terminal is open."
+- Show the tab bar new-tab button once a terminal is open.
+- Update Arch PKGBUILD for v6.3.6
+
 * Mon Oct 19 2026 mFat <newmfat@gmail.com> - 6.3.6-1
 - New app icon on every platform
 - Sidebar: actions moved into a single title row, and they come along in the hover/search popup
