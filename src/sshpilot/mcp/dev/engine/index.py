@@ -294,22 +294,30 @@ class DevIndex:
         to_extract: List[Tuple[str, str, str, int, int]] = []  # path, source, sha, size, mtime
         rehashed = 0
         skipped: List[str] = []
+        unindexable: List[str] = []
         for path in candidates:
             full_path = self.scope.root / path
             try:
                 stat = full_path.stat()
-            except OSError:
+            except OSError as error:
+                # Every transition into a non-indexable state drops the file's
+                # old symbols and edges: a stale definition must never outlive
+                # the file contents it described.
+                self._mark_unindexable(db, path, "unreadable", f"stat failed: {error.strerror or error}")
+                unindexable.append(path)
                 continue
             previous = known.get(path)
             if previous and previous[1] == stat.st_size and previous[2] == stat.st_mtime_ns and path not in force:
                 continue
             if stat.st_size > MAX_INDEXED_FILE_BYTES:
-                self._store_file(db, path, "", stat.st_size, stat.st_mtime_ns, "skipped_too_large", "file exceeds index size cap")
+                self._mark_unindexable(db, path, "skipped_too_large", "file exceeds index size cap", stat.st_size, stat.st_mtime_ns)
                 skipped.append(path)
                 continue
             try:
                 raw = full_path.read_bytes()
-            except OSError:
+            except OSError as error:
+                self._mark_unindexable(db, path, "unreadable", f"read failed: {error.strerror or error}")
+                unindexable.append(path)
                 continue
             sha = hashlib.sha256(raw).hexdigest()
             rehashed += 1
@@ -344,6 +352,7 @@ class DevIndex:
             "removed_paths": removed[:20],
             "reindexed_paths": [item[0] for item in to_extract][:20],
             "skipped_too_large": skipped,
+            "unreadable": unindexable,
             "domain_rebuilt": domain_rebuilt,
         }
 
@@ -363,6 +372,15 @@ class DevIndex:
         except Exception:
             # Spawning can fail in constrained sandboxes; correctness first.
             return [extract_source(path, source) for path, source in items]
+
+    def _mark_unindexable(self, db, path, status, error, size=-1, mtime=-1) -> None:
+        """Drop *path*'s symbols/edges and record why it is not indexed.
+
+        size/mtime of -1 never match a real stat, so the file is retried (and
+        recovers) on the next refresh once it is readable again.
+        """
+        self._delete_file(db, path)
+        self._store_file(db, path, "", size, mtime, status, error)
 
     @staticmethod
     def _delete_file(db: sqlite3.Connection, path: str) -> None:

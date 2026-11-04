@@ -408,3 +408,72 @@ def test_index_timing_is_reported(service):
     rebuilt = service.index_status(rebuild=True)
     assert rebuilt["refresh"]["full"] is True
     assert rebuilt["refresh"]["reindexed"] == 4
+
+
+# --- review fixes: files that stop being indexable lose their rows ----------
+
+
+def _symbols_in(service, path):
+    return service.index.db.execute("SELECT COUNT(*) FROM symbols WHERE path=?", (path,)).fetchone()[0]
+
+
+def _status(service, path):
+    return service.index.db.execute("SELECT status FROM files WHERE path=?", (path,)).fetchone()[0]
+
+
+def test_indexed_file_that_grows_too_large_loses_its_symbols(service, repo, monkeypatch):
+    path = f"{PKG}/beta.py"
+    service.index.refresh()
+    assert _symbols_in(service, path) > 0
+    edges_before = service.index.db.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    monkeypatch.setattr(index_module, "MAX_INDEXED_FILE_BYTES", 50)
+    _write(repo, path, BETA + "\n# grown\n")
+    stats = service.index.refresh()
+    assert stats["skipped_too_large"] == [path]
+    assert _status(service, path) == "skipped_too_large"
+    assert _symbols_in(service, path) == 0
+    assert service.index.db.execute("SELECT COUNT(*) FROM edges").fetchone()[0] < edges_before
+    assert Graph(service.index).symbol(f"{PKG}/beta.py::helper") is None
+    assert [e["path"] for e in service.index.parse_errors()] == [path]
+    # Recovery: back under the cap -> indexed again.
+    monkeypatch.setattr(index_module, "MAX_INDEXED_FILE_BYTES", 2 * 1024 * 1024)
+    _write(repo, path, BETA)
+    service.index.refresh()
+    assert _status(service, path) == "ok"
+    assert Graph(service.index).symbol(f"{PKG}/beta.py::helper") is not None
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root can read mode-000 files")
+def test_indexed_file_that_becomes_unreadable_loses_its_symbols(service, repo):
+    path = f"{PKG}/beta.py"
+    service.index.refresh()
+    assert _symbols_in(service, path) > 0
+    target = repo / path
+    target.write_text(BETA + "\n# touched\n")  # new stat so refresh re-reads it
+    target.chmod(0)
+    try:
+        stats = service.index.refresh()
+        assert stats["unreadable"] == [path]
+        assert _status(service, path) == "unreadable"
+        assert _symbols_in(service, path) == 0
+        impact = service.inspect_impact(paths=[path])
+        assert impact["analysis_complete"] is False
+        assert any("unreadable" in warning for warning in impact["warnings"])
+    finally:
+        target.chmod(0o644)
+    # Recovery without touching the contents: the -1 stat sentinel forces a re-read.
+    service.index.refresh()
+    assert _status(service, path) == "ok"
+    assert _symbols_in(service, path) > 0
+
+
+def test_unindexable_domain_input_rebuilds_domain_edges(service, repo, monkeypatch):
+    service.index.refresh()
+    digest_before = service.index.db.execute("SELECT value FROM meta WHERE key='domain_digest'").fetchone()[0]
+    monkeypatch.setattr(index_module, "MAX_INDEXED_FILE_BYTES", 10)
+    _write(repo, "src/sshpilot/api/client.py", "class SshPilotClient:\n    pass\n")
+    stats = service.index.refresh()
+    assert "src/sshpilot/api/client.py" in stats["skipped_too_large"]
+    assert stats["domain_rebuilt"] is True
+    digest_after = service.index.db.execute("SELECT value FROM meta WHERE key='domain_digest'").fetchone()[0]
+    assert digest_after != digest_before
