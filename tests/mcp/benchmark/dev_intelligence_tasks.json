@@ -1,0 +1,177 @@
+{
+  "format": "sshpilot-dev-intel-benchmark/1",
+  "note": "Symptoms are written as a bug reporter would describe the problem; gold_files are the source files changed by the commit that fixed it (tests, docs and translations excluded). Written before measuring; do not tune them to the tool. Tasks marked set=design were visible while the keyword tier of diagnose_bug was designed; set=held-out tasks were written afterwards from commit titles only and run once.",
+  "tasks": [
+    {
+      "id": "auth-saved-passphrase-retry",
+      "category": "ssh-authentication-lifecycle",
+      "tool": "diagnose_bug",
+      "fix_commit": "ccc26c9a",
+      "symptoms": "After changing my key's passphrase, ssh-add keeps retrying the old saved passphrase from the keyring instead of showing the askpass prompt again.",
+      "gold_files": [
+        "src/sshpilot/askpass_utils.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "sidebar-drag-gap-crash",
+      "category": "gtk-frontend",
+      "tool": "diagnose_bug",
+      "fix_commit": "34d69c0d",
+      "symptoms": "SSH Pilot crashes when I drag a connection in the sidebar and the pointer leaves over the drop gap between two rows. Log shows Gtk-CRITICAL warnings just before the crash.",
+      "gold_files": [
+        "src/sshpilot/sidebar.py",
+        "src/sshpilot/dnd_payload.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "session-failure-echoed-in-terminal",
+      "category": "gtk-controller-to-daemon",
+      "tool": "diagnose_bug",
+      "fix_commit": "76a9e22b",
+      "symptoms": "When a daemon-owned terminal session fails to start, the failure text is also echoed into the terminal itself, so the error appears twice: once in the banner and once as terminal output.",
+      "gold_files": [
+        "src/sshpilot/terminal.py",
+        "src/sshpilot/terminal_session_controller.py",
+        "src/sshpilot/core/connection_evidence.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "daemon-results-behind-redraw",
+      "category": "frontend-daemon-interaction",
+      "tool": "diagnose_bug",
+      "fix_commit": "0ec819c6",
+      "symptoms": "Replies from the daemon reach the GTK window late while it is busy redrawing; results seem to be dispatched at idle priority behind the redraw in the client bridge.",
+      "gold_files": [
+        "src/sshpilot/gtk_client_bridge.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "quit-blocked-by-multiplex-check",
+      "category": "daemon-bug",
+      "tool": "diagnose_bug",
+      "fix_commit": "f904b650",
+      "symptoms": "Quitting is blocked with \"multiplexed SSH connection could not be checked\" whenever the ControlMaster socket check fails transiently.",
+      "gold_files": [
+        "src/sshpilot/daemon/control_masters.py",
+        "src/sshpilot/ssh_multiplex.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "config-reset-on-upgrade",
+      "category": "config-state",
+      "tool": "diagnose_bug",
+      "fix_commit": "64ed117e",
+      "symptoms": "After upgrading SSH Pilot all my settings were reset to defaults. The old config.json without a current config_version was replaced instead of being migrated.",
+      "gold_files": [
+        "src/sshpilot/config.py",
+        "src/sshpilot/core/settings/store.py",
+        "src/sshpilot/core/settings/versioning.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "sftp-short-read-slow",
+      "category": "daemon-sftp",
+      "tool": "diagnose_bug",
+      "fix_commit": "edf664e8",
+      "symptoms": "SFTP downloads from some servers are very slow: when the server answers a READ with fewer bytes than asked, the rest of the chunk is fetched one request at a time.",
+      "gold_files": [
+        "src/sshpilot/sftp/client.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "login-profiles-api",
+      "category": "typed-api-method-addition",
+      "tool": "plan_feature",
+      "fix_commit": "d9d82751",
+      "symptoms": "Add a daemon API for login profiles: list, create, update and delete them over the typed client.",
+      "gold_files": [
+        "src/sshpilot/api/client.py",
+        "src/sshpilot/api/daemon_client.py",
+        "src/sshpilot/daemon/dispatch.py",
+        "src/sshpilot/api/capabilities.py",
+        "src/sshpilot/api/transport/codec.py"
+      ],
+      "set": "design"
+    },
+    {
+      "id": "vague-report",
+      "category": "negative-insufficient-evidence",
+      "tool": "diagnose_bug",
+      "fix_commit": null,
+      "symptoms": "The app feels a bit off sometimes and I am not sure why.",
+      "gold_files": [],
+      "set": "design"
+    },
+    {
+      "id": "sidebar-deferred-rows-failure",
+      "set": "held-out",
+      "category": "gtk-frontend",
+      "tool": "diagnose_bug",
+      "fix_commit": "4b3b8781",
+      "symptoms": "The connection sidebar stays empty or half-built after an exception while the remaining deferred rows are being finished at startup; it never recovers until restart.",
+      "gold_files": [
+        "src/sshpilot/window.py"
+      ]
+    },
+    {
+      "id": "large-paste-fails-terminal",
+      "set": "held-out",
+      "category": "frontend-daemon-interaction",
+      "tool": "diagnose_bug",
+      "fix_commit": "f97a2daf",
+      "symptoms": "Pasting a large block of text into a daemon terminal fails and the terminal stops working instead of receiving the whole paste.",
+      "gold_files": [
+        "src/sshpilot/api/terminal_input.py",
+        "src/sshpilot/daemon/session_runtime.py",
+        "src/sshpilot/terminal_session_controller.py",
+        "src/sshpilot/gtk_client_bridge.py",
+        "src/sshpilot/daemon/pty_runner.py"
+      ]
+    },
+    {
+      "id": "closed-transport-reported-on-quit",
+      "set": "held-out",
+      "category": "gtk-controller-to-daemon",
+      "tool": "diagnose_bug",
+      "fix_commit": "cc04b976",
+      "symptoms": "When I quit, open terminals briefly report a failure because the daemon transport was closed, even though quitting is what closed it.",
+      "gold_files": [
+        "src/sshpilot/terminal.py"
+      ]
+    },
+    {
+      "id": "macos-wheel-scroll-input-flood",
+      "set": "held-out",
+      "category": "gtk-frontend",
+      "tool": "diagnose_bug",
+      "fix_commit": "433f9e89",
+      "symptoms": "On macOS some clicks are lost, and scrolling with the mouse wheel in the terminal floods the remote shell with input.",
+      "gold_files": [
+        "src/sshpilot/macos_click_guard.py",
+        "src/sshpilot/main.py",
+        "src/sshpilot/terminal.py",
+        "src/sshpilot/terminal_session_controller.py"
+      ]
+    },
+    {
+      "id": "stale-windows-daemon-endpoint",
+      "set": "held-out",
+      "category": "daemon-bug",
+      "tool": "diagnose_bug",
+      "fix_commit": "3a01b1af",
+      "symptoms": "On Windows the app hangs at startup when a stale daemon endpoint from a previous run is left behind.",
+      "gold_files": [
+        "src/sshpilot/daemon/launcher.py",
+        "src/sshpilot/daemon/lifecycle.py",
+        "src/sshpilot/daemon/server.py"
+      ]
+    }
+  ]
+}

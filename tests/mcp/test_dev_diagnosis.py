@@ -168,9 +168,14 @@ def test_changed_files_add_evidence(service):
     assert entry["score"] == 30 + 20
 
 
-def test_plain_english_words_are_not_identifiers(service):
+def test_plain_english_words_are_only_weak_leads(service):
     result = service.diagnose_bug("the lookup does not refresh")
-    assert result["candidates"] == []
+    assert result["candidates"], "keyword leads are offered"
+    assert {c["confidence"] for c in result["candidates"]} == {"low"}
+    assert {e["kind"] for c in result["candidates"] for e in c["evidence"]} == {"keyword-overlap"}
+    assert all(c["score"] <= 25 for c in result["candidates"])
+    assert result["confidence"] == "low"
+    assert any("weak evidence" in u for u in result["uncertainties"])
 
 
 def test_output_is_bounded(service, repo):
@@ -204,3 +209,12 @@ def test_input_validation(service):
         service.diagnose_bug("x" * 20000)
     with pytest.raises(EngineError):
         service.diagnose_bug("x", max_items=0)
+
+
+def test_quoted_message_is_found_literally(service, repo):
+    _write(repo, f"{PKG}/errors.py", 'def report():\n    raise RuntimeError("the vault could not be unlocked today")\n')
+    result = service.diagnose_bug('I get "the vault could not be unlocked today" on start')
+    top = result["candidates"][0]
+    assert top["id"] == f"{PKG}/errors.py::report"
+    assert top["evidence"][0]["kind"] == "message-literal"
+    assert top["confidence"] == "low"  # a message match alone is a lead, not proof

@@ -16,6 +16,8 @@ test-frame / failing-test     40   the failing test itself
 wire-method mention           45   ``sessions.open`` → its daemon handler
 client-method of wire         30   …and the client method that sends it
 identifier mention            30   exact symbol name in the symptoms (÷ matches)
+message-literal               35   a quoted phrase found verbatim in src/ (≤6 hits)
+keyword-overlap             ≤ 25   rare symptom words in symbol/module names (IDF)
 test-callee                   25   a symbol the failing test calls (resolved)
 changed-file                 +20   candidate lives in a changed file
 changed-dependency           +10   a callee/caller of the candidate changed
@@ -27,8 +29,9 @@ No candidate is invented: without evidence the result says so.
 
 from __future__ import annotations
 
+import math
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from ..architecture import _classify_path
 from .graph import Graph, compact_symbol
@@ -45,6 +48,25 @@ _EXCEPTION_RE = re.compile(
     re.M,
 )
 _IDENTIFIER_RE = re.compile(r"\b(?:[a-z_][a-z0-9]*_[a-z0-9_]+|_[a-z][a-z0-9_]*|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+)\b")
+#: Words too common in bug reports or English to identify code.
+_REPORT_STOPWORDS = frozenset(
+    """about after again also always and another any are because been before being between both but can
+    cannot could does doing down each either else even every fail failed fails failing failure from gets
+    have here instead into just keep keeps like many more most much must never once only other over same
+    seem seems should shows since some still such than that the their them then there these they thing
+    this those through time times very want what when where which while will with within without would
+    your sure feels app application error errors crash crashes crashed broken wrong issue problem bug
+    work works working happen happens happened sometimes using used user users""".split()
+)
+_KEYWORD_RE = re.compile(r"[A-Za-z][A-Za-z]{3,}")
+_STOPWORDS_EXTRA = frozenset({"sshpilot", "pilot", "window", "button", "click", "clicked", "open", "opens", "show", "shown"})
+_KEYWORD_MAX_SYMBOLS = 8
+_KEYWORD_PER_FILE = 2
+_KEYWORD_MAX_POINTS = 25
+#: Quoted phrases (error/UI messages) searched literally in src/ files.
+_QUOTED_RE = re.compile(r"[\"“”']([^\"“”'\n]{12,160})[\"“”']")
+_MAX_LITERAL_PHRASES = 4
+_MAX_LITERAL_HITS = 6
 #: Plain words count as identifiers only when written as code: `name` or name().
 _CODE_WORD_RE = re.compile(r"`([A-Za-z_][\w.]*)`|\b([A-Za-z_]\w*)\(\)")
 _WIRE_RE = re.compile(r"\b[a-z][a-z_]*(?:\.[a-z][a-z_]*)+\b")
@@ -297,7 +319,26 @@ def diagnose(
         for symbol in matches[:6]:
             ranker.add(symbol, share, {"kind": "identifier-mention", "token": token, "matches": len(matches)})
 
-    # 5. Changed files --------------------------------------------------------
+    # 5. Quoted messages: literal search in indexed src/ files -------------
+    phrases = [p.strip() for p in _QUOTED_RE.findall(symptoms) if len(p.strip()) >= 12]
+    phrases = list(dict.fromkeys(phrases))[:_MAX_LITERAL_PHRASES]
+    if phrases:
+        literal_hits = _literal_hits(graph, phrases)
+        observations["quoted_phrases"] = {"searched": len(phrases), "files_with_hits": len({h[0] for h in literal_hits})}
+        for path, line, phrase in literal_hits:
+            symbol = graph.symbol_at(path, line)
+            if symbol is not None:
+                ranker.add(symbol, 35, {"kind": "message-literal", "path": path, "line": line, "phrase": redact(phrase, limit=60)})
+
+    # 6. Weak tier: symptom words vs symbol and module names (heuristic) ---
+    credited = {token.lower() for token in identifiers} | {f["func"].lower() for f, _p in repo_frames}
+    keyword_hits = _keyword_candidates(graph, symptoms, exclude=credited)
+    if keyword_hits:
+        observations["keyword_leads"] = len(keyword_hits)
+    for symbol, matched, points in keyword_hits:
+        ranker.add(symbol, points, {"kind": "keyword-overlap", "words": matched})
+
+    # 7. Changed files --------------------------------------------------------
     changed = sorted({p.strip().replace("\\", "/") for p in (changed_paths or []) if isinstance(p, str) and p.strip()})
     for path in changed:
         graph.index.scope.resolve(path)  # confinement; raises ScopeError
@@ -354,6 +395,105 @@ def diagnose(
         ["candidates", "next_steps", "subsystems", "uncertainties"],
         next_context_ref=candidates[0]["id"] if candidates else None,
     )
+
+
+def _stem(word: str) -> str:
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def _keyword_candidates(graph: Graph, text: str, exclude: Set[str] = frozenset()) -> List[Tuple[dict, List[str], int]]:
+    """Symbols whose name or module path shares rare words with *text*.
+
+    Weak, explicitly labelled evidence for reports without traces or code
+    names. Words are weighted by inverse document frequency over symbol
+    names, at most two symbols per file are kept, and points are capped below
+    every strong evidence kind.
+    """
+    words = []
+    for raw in _KEYWORD_RE.findall(text):
+        word = raw.lower()
+        if word in _REPORT_STOPWORDS or word in _STOPWORDS_EXTRA or word in exclude:
+            continue
+        stem = _stem(word)
+        if stem not in words:
+            words.append(stem)
+    words = words[:16]
+    if not words:
+        return []
+    total = graph.db.execute("SELECT COUNT(*) FROM symbols WHERE path LIKE 'src/%'").fetchone()[0] or 1
+    matched: Dict[str, Set[str]] = {}
+    weights: Dict[str, float] = {}
+    rows_by_id: Dict[str, dict] = {}
+    for word in words:
+        like = f"%{word}%"
+        rows = graph.db.execute(
+            "SELECT sid, id, path, qualname, name, fqname, kind, line, end_line, signature, doc, parent FROM symbols "
+            "WHERE path LIKE 'src/%' AND kind IN ('class','function','async_function','method','async_method') "
+            "AND (name LIKE ? OR path LIKE ?) LIMIT 3000",
+            (like, like),
+        ).fetchall()
+        hits = []
+        for row in rows:
+            symbol = dict(zip(("sid", "id", "path", "qualname", "name", "fqname", "kind", "line", "end_line", "signature", "doc", "parent"), row))
+            parts = {_stem(p.lower()) for p in re.split(r"[_/.]|(?<=[a-z0-9])(?=[A-Z])", symbol["name"] + "/" + symbol["path"]) if p}
+            if word in parts:
+                hits.append(symbol)
+        if not hits:
+            continue
+        weights[word] = math.log(total / (1 + len(hits)))
+        if weights[word] <= 0.5:
+            continue  # matches a large share of the code base: not informative
+        for symbol in hits:
+            rows_by_id[symbol["id"]] = symbol
+            matched.setdefault(symbol["id"], set()).add(word)
+    scored = []
+    for symbol_id, found in matched.items():
+        score = sum(weights[word] for word in found)
+        scored.append((score, symbol_id, sorted(found)))
+    scored.sort(key=lambda item: (-item[0], rows_by_id[item[1]]["path"], rows_by_id[item[1]]["line"]))
+    per_file: Dict[str, int] = {}
+    results: List[Tuple[dict, List[str], int]] = []
+    for score, symbol_id, found in scored:
+        symbol = rows_by_id[symbol_id]
+        if per_file.get(symbol["path"], 0) >= _KEYWORD_PER_FILE:
+            continue
+        per_file[symbol["path"]] = per_file.get(symbol["path"], 0) + 1
+        results.append((symbol, found, min(_KEYWORD_MAX_POINTS, max(1, int(round(score * 2))))))
+        if len(results) >= _KEYWORD_MAX_SYMBOLS:
+            break
+    return results
+
+
+def _literal_hits(graph: Graph, phrases: Sequence[str]) -> List[Tuple[str, int, str]]:
+    """Exact (case-insensitive) phrase hits in indexed ``src/`` files.
+
+    Reads the files at query time; nothing is stored. A phrase matching more
+    than ``_MAX_LITERAL_HITS`` places is too generic to be evidence and is
+    dropped.
+    """
+    lowered = [phrase.lower() for phrase in phrases]
+    hits: Dict[str, List[Tuple[str, int, str]]] = {phrase: [] for phrase in phrases}
+    root = graph.index.scope.root
+    for (path,) in graph.db.execute("SELECT path FROM files WHERE status='ok' AND path LIKE 'src/%' ORDER BY path"):
+        try:
+            text = (root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        haystack = text.lower()
+        for phrase, needle in zip(phrases, lowered):
+            start = haystack.find(needle)
+            while start != -1 and len(hits[phrase]) <= _MAX_LITERAL_HITS:
+                line = haystack.count("\n", 0, start) + 1
+                hits[phrase].append((path, line, phrase))
+                start = haystack.find(needle, start + 1)
+    found: List[Tuple[str, int, str]] = []
+    for phrase in phrases:
+        if 0 < len(hits[phrase]) <= _MAX_LITERAL_HITS:
+            found.extend(hits[phrase])
+    return found
 
 
 def _next_steps(candidates, test_ids, native, exception, repo_frames) -> List[str]:

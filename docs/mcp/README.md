@@ -91,9 +91,28 @@ PYTHONPATH=/absolute/path/to/sshpilot/src \
 
 ## Agent workflow
 
-SSH Pilot MCP complements general code search and knowledge graphs. Use a graph
-or ordinary code-search tool to locate implementations and call relationships;
-use these tools for authoritative SSH Pilot contracts and validation.
+Start with the six development-intelligence tools. They work from a local,
+incrementally refreshed index of the checkout, and their replies are compact
+(about 1,200 estimated tokens by default), evidence-labelled and
+freshness-checked. Architecture, contracts, confidence labels and measured
+results are in [dev-intelligence.md](dev-intelligence.md).
+
+| Task | Call |
+| --- | --- |
+| A test or the app fails | `diagnose_bug(symptoms=..., traceback=...)`, then `get_context(reference=<top candidate id>)` |
+| Plan a feature | `plan_feature(request=..., subsystem=...)` |
+| Understand a change | `inspect_impact(base="origin/dev")` or `inspect_impact(paths=[...])` |
+| Check it before committing | `verify_change(base="origin/dev", mode="focused")`; add the `suites` it recommends |
+| Look closer at one symbol | `get_context(reference="path::Class.method")` (or `wire:sessions.open`) |
+| Rebuild or inspect the index | `index_status(rebuild=False)` |
+
+`verify_change` reports `overall: "passed"` only when tests actually ran and
+passed with no open gaps. Read `gaps` before claiming a change is verified.
+The same operations are available as `python -m sshpilot.mcp.dev.cli
+<command>` with JSON output, without the MCP SDK.
+
+The older tools remain available. For API work they are still the most direct
+view of the contract:
 
 Before changing an existing API method:
 
@@ -185,6 +204,17 @@ trusted frontend.
 - **A runtime tool is missing:** call `capabilities`; unsupported daemon capabilities are hidden at startup.
 - **Permission refused:** enable the required cumulative policy levels in the client configuration and restart the MCP server.
 - **Content is `<redacted>`:** this is expected; opt in with `SSHPILOT_MCP_CONTENT=1` only when appropriate.
+- **First V2 call is slow:** the first call builds the index (about 30 s on
+  this checkout, serial); later calls only re-stat the tree (about 0.1 s). Call
+  `index_status` once after configuring the server to warm it.
+- **Results look stale or odd:** `index_status(rebuild=true)` discards and
+  rebuilds the index. It lives in `$XDG_CACHE_HOME/sshpilot-mcp-dev/` (or
+  `SSHPILOT_MCP_INDEX_DIR`) and is safe to delete.
+- **`diagnose_bug` confidence is `low`:** only name or keyword matches were
+  found. Add the traceback, the failing pytest id, or the exact quoted error
+  message.
+- **`verify_change` says `incomplete`:** read `gaps`. Usually tests were not
+  selected, were skipped, or a recommended suite was not run.
 - **A controlled check returned normally but failed:** inspect its `success`, `returncode`, `stdout`, `stderr`, and `timed_out` fields.
 
 ## Developing the MCP servers
@@ -194,6 +224,7 @@ Run the smallest maintained checks first:
 ```bash
 pytest -q tests/mcp
 pytest -q tests/architecture/test_mcp_boundary.py
+python scripts/benchmark_dev_mcp.py   # tool-level benchmark; cold index build
 python scripts/generate_api_artifacts.py --check
 ruff check src/sshpilot/mcp tests/mcp tests/architecture/test_mcp_boundary.py
 ```
@@ -208,5 +239,7 @@ pytest -q -m integration tests/mcp
 Architectural decisions are in [decisions.md](decisions.md), current
 implementation status is in [status.md](status.md), and contributor rules are
 in [AGENTS.md](AGENTS.md).
+The development-intelligence engine (index, V2 tools, CLI, benchmark) is
+documented in [dev-intelligence.md](dev-intelligence.md).
 Proposed SSH Pilot–specific agent workflows (not implemented) are in
 [proposal-agent-workflows.md](proposal-agent-workflows.md).

@@ -127,6 +127,15 @@ entries are rewritten, not accumulated.
   repository README, contributor guide, and documentation index; drift tests
   ensure all dev tools and runtime policy variables remain documented.
 
+- **Dev MCP development intelligence (V2)**: `diagnose_bug`, `plan_feature`,
+  `inspect_impact`, `verify_change`, `get_context`, `index_status`, over an
+  incremental SQLite index (`src/sshpilot/mcp/dev/engine/`), with the same
+  operations as `python -m sshpilot.mcp.dev.cli`. The dev-MCP correctness
+  fixes landed with it: tests run in the repository root, parse failures are
+  reported as `unknown`, and executed and not-run checks are separated. The
+  tool-level benchmark is `scripts/benchmark_dev_mcp.py`. See
+  [dev-intelligence.md](dev-intelligence.md) for results and limits.
+
 ## What is being worked on
 
 - Nothing in progress; steps 1-5, the stdio round-trip, capability-driven tool
@@ -134,6 +143,14 @@ entries are rewritten, not accumulated.
   are complete.
 
 ## What is next
+
+0. Dev MCP V2 follow-ups, ranked by expected impact: an end-to-end agent
+   benchmark (pinned model, with and without the V2 tools) to measure task
+   success and tokens; `DaemonClient` receiver inference for GTK code
+   (`self._client.<m>`), so GTK callers of API methods become dependents
+   instead of possible callers; opt-in per-test coverage to strengthen test
+   selection; verified knowledge records for solved incidents; rename
+   tracking for symbol ids.
 
 1. Runtime security review follow-up complete: audited the runtime MCP result
    surface. `OperationSummary.result` was the free-form smuggling path because
