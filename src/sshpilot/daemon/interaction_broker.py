@@ -31,6 +31,7 @@ from sshpilot.api.events import (
     Subscription,
 )
 from sshpilot.api.interaction_identity import new_interaction_id
+from sshpilot.platform.windows.environment import fallback_display
 from sshpilot.api.models import (
     ChallengePrompt,
     ConfirmationPrompt,
@@ -383,7 +384,9 @@ class InteractionBroker:
         if askpass_active:
             environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
             environment["SSH_ASKPASS_REQUIRE"] = "force" if headless else "prefer"
-            environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
+            environment["DISPLAY"] = environment.get("DISPLAY") or fallback_display(
+                ":sshpilot-daemon"
+            )
             environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
             environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
@@ -478,7 +481,7 @@ class InteractionBroker:
         # broker (REQUIRE=force), never fall back to a missing terminal.
         env["SSH_ASKPASS"] = str(self._askpass_helper_path)
         env["SSH_ASKPASS_REQUIRE"] = "force"
-        env["DISPLAY"] = env.get("DISPLAY") or ":sshpilot-daemon"
+        env["DISPLAY"] = env.get("DISPLAY") or fallback_display(":sshpilot-daemon")
         env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
         env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(

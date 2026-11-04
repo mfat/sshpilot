@@ -45,3 +45,15 @@ def test_dbus_autolaunch_is_disabled_on_windows_only(monkeypatch):
     monkeypatch.setattr(environment.sys, "platform", "linux")
     other = {}
     assert not environment.disable_dbus_autolaunch(other) and other == {}
+
+
+def test_fallback_display_is_a_tcp_display_on_windows(monkeypatch):
+    # Issue #1365: with X11 forwarding on, ssh connects forwarded windows to
+    # this DISPLAY; a POSIX placeholder (":0", ":sshpilot-daemon") cannot be
+    # parsed or reached on Windows, so nothing reached Xming.
+    from sshpilot.platform.windows import environment
+
+    monkeypatch.setattr(environment.sys, "platform", "win32")
+    assert environment.fallback_display(":sshpilot-daemon") == "localhost:0.0"
+    monkeypatch.setattr(environment.sys, "platform", "linux")
+    assert environment.fallback_display(":sshpilot-daemon") == ":sshpilot-daemon"

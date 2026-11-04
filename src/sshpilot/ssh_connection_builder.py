@@ -845,9 +845,12 @@ def _build_base_ssh_command(
 
     # X11 forwarding only for ssh: scp -X selects transfer protocol and sftp -X
     # sets an sftp option, so a bare -X there would swallow the next argument.
+    # Windows has no xauth, so OpenSSH refuses untrusted (-X) forwarding there
+    # ("xauth key data not generated"); trusted (-Y) is the only mode that
+    # works, and is what PuTTY does with Xming/VcXsrv.
     forward_x11 = _get_ssh_config_value(config, 'forwardx11', '').lower()
     if forward_x11 in ('yes', 'true', '1') and command_type == 'ssh':
-        cmd.append('-X')
+        cmd.append('-Y' if os.name == 'nt' else '-X')
 
     forward_agent = _get_ssh_config_value(config, 'forwardagent', '').lower()
     if forward_agent in ('yes', 'true', '1') and not is_copy_id:

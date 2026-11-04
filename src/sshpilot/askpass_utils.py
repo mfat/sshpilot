@@ -1568,7 +1568,9 @@ def get_ssh_env_with_askpass(
     env["SSH_ASKPASS_REQUIRE"] = require
     # Ensure DISPLAY is set for SSH_ASKPASS to work properly
     if "DISPLAY" not in env:
-        env["DISPLAY"] = ":0"
+        from .platform.windows.environment import fallback_display
+
+        env["DISPLAY"] = fallback_display(":0")
     # Disable GNOME keyring interference with SSH but keep D-Bus for libsecret
     env["GNOME_KEYRING_CONTROL"] = ""
     env["GNOME_KEYRING_PID"] = ""

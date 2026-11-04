@@ -688,14 +688,31 @@ def test_base_command_copy_id_never_injects_identity(tmp_path):
     assert '-i' in scp_cmd and str(key) in scp_cmd
 
 
-def test_base_command_x11_flag_only_for_ssh():
+def test_base_command_x11_flag_only_for_ssh(monkeypatch):
     # scp -X selects the transfer protocol and sftp -X sets an sftp option, so
     # a bare -X must only ever be emitted for ssh.
+    import os
+
+    monkeypatch.setattr(os, "name", "posix")
     effective = {'forwardx11': 'yes'}
     assert '-X' in _base_cmd('ssh', effective_config=effective)
     assert '-X' not in _base_cmd('scp', effective_config=effective)
     assert '-X' not in _base_cmd('sftp', effective_config=effective)
     assert '-X' not in _base_cmd('ssh-copy-id', effective_config=effective)
+
+
+def test_base_command_x11_is_trusted_on_windows(monkeypatch):
+    # Issue #1365: Windows has no xauth, so OpenSSH refuses untrusted -X
+    # ("xauth key data not generated"); only -Y reaches Xming/VcXsrv.
+    import os
+
+    monkeypatch.setattr(os, "name", "nt")
+    effective = {'forwardx11': 'yes'}
+    cmd = _base_cmd('ssh', effective_config=effective)
+    assert '-Y' in cmd and '-X' not in cmd
+    for command_type in ('scp', 'sftp', 'ssh-copy-id'):
+        cmd = _base_cmd(command_type, effective_config=effective)
+        assert '-Y' not in cmd and '-X' not in cmd
 
 
 # ---------------------------------------------------------------------------
