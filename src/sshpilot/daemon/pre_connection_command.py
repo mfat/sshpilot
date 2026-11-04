@@ -76,6 +76,45 @@ logger = logging.getLogger(__name__)
 #: content, so it is never logged above DEBUG.
 _STDERR_LOG_LIMIT = 800
 
+#: How long a launch waits for a woken host to answer. Resuming from sleep is
+#: a few seconds; a cold boot of a laptop with disk encryption off is under a
+#: minute. Past this the host is not coming, and the connection's own error
+#: says more than a longer wait would.
+WAKE_TIMEOUT_SECONDS = 90.0
+#: The first check: an awake host on the local network answers in
+#: milliseconds, so this only bounds what a sleeping one costs.
+WAKE_PROBE_TIMEOUT_SECONDS = 1.5
+WAKE_POLL_INTERVAL_SECONDS = 2.0
+
+
+def probe_port(host: str, port: int, timeout: float) -> bool:
+    """Whether *host* is up: it accepts on *port*, or refuses it.
+
+    A refusal is an answer -- the machine is awake, just not listening there
+    -- so it counts. Silence or "no route to host" (no ARP reply on the local
+    network, which is what a sleeping machine gives) does not.
+    """
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except ConnectionRefusedError:
+        return True
+    except OSError:
+        return False
+
+
+def _send_wake(settings: PreCommandSettings) -> tuple:
+    from sshpilot import wol
+
+    return wol.send_wol(
+        settings.wake_mac,
+        broadcast_ip=settings.wake_broadcast_ip or None,
+        port=settings.wake_port or 9,
+        host=settings.hostname or None,
+    )
+
 #: How much of each stream is ever read into memory. The notice and the
 #: Test result are both bounded at this, so reading more would only be
 #: thrown away -- and a looping command can write without limit.
@@ -97,11 +136,17 @@ class PreConnectionCommandRunner:
         lookup: Callable[[ConnectionId], PreCommandSettings],
         runner: Callable[..., Any] = subprocess.run,
         clock: Callable[[], float] = time.monotonic,
+        probe: Callable[[str, int, float], bool] = probe_port,
+        send_wake: Callable[[PreCommandSettings], tuple] = _send_wake,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._settings = settings
         self._lookup = lookup
         self._runner = runner
         self._clock = clock
+        self._probe = probe
+        self._send_wake = send_wake
+        self._sleep = sleep
         self._publisher = EventPublisher()
         self._state_lock = threading.Lock()
         self._connection_locks: Dict[str, threading.Lock] = {}
@@ -163,7 +208,8 @@ class PreConnectionCommandRunner:
         # who needs a knock *and* a VPN writes that as one shell line.
         command = settings.command if settings.runs_command else ""
         steps = settings.knock_steps
-        if not command and not steps:
+        wake = settings.runs_wake
+        if not command and not steps and not wake:
             logger.debug("no pre-connection command configured kind=%s", kind.value)
             return True
 
@@ -185,6 +231,20 @@ class PreConnectionCommandRunner:
         try:
             if waited_ms:
                 logger.info("pre-connection command lock wait ms=%d", waited_ms)
+            if wake:
+                # Before the knock or the command, inside the lock: a sleeping
+                # host can be neither knocked nor reached through a VPN, and a
+                # burst of tabs must wake it once, not each wait on their own.
+                # Never refuses the launch -- the connection's error says more.
+                self._wake_stage(
+                    settings,
+                    waits=not (command or steps),
+                    connection_id=connection_id,
+                    scope_id=scope_id,
+                    kind=kind,
+                )
+            if not command and not steps:
+                return True
             age_ms = self._coalesce_age_ms(connection_id, coalesce)
             if age_ms is not None:
                 logger.info(
@@ -254,6 +314,88 @@ class PreConnectionCommandRunner:
             return not aborted
         finally:
             lock.release()
+
+    # -- waking ----------------------------------------------------------------
+
+    def _wake_stage(
+        self,
+        settings: PreCommandSettings,
+        *,
+        waits: bool,
+        connection_id: ConnectionId,
+        scope_id: str,
+        kind: PreCommandLaunchKind,
+    ) -> None:
+        """Wake the host if it does not answer, and wait until it does.
+
+        Silent when the host is already up: the probe is the whole cost. When
+        it is not, the wake packet goes out and the launch waits for the port
+        to answer -- unless *waits* is False, because a knock or a command
+        still has to run first and a port behind a knock stays closed until
+        then, so waiting for it would only ever time out.
+        """
+        port = settings.target_port
+        host = settings.hostname
+        if port and self._probe(host, port, WAKE_PROBE_TIMEOUT_SECONDS):
+            logger.debug("wake skipped: host answers kind=%s", kind.value)
+            return
+        logger.info("wake starting kind=%s waits=%s", kind.value, waits and bool(port))
+        self._publish(
+            connection_id,
+            scope_id=scope_id,
+            kind=kind,
+            phase=PreCommandPhase.RUNNING,
+            stage=PreCommandStage.WAKE,
+        )
+        started = self._clock()
+        try:
+            sent, detail = self._send_wake(settings)
+        except Exception as error:
+            logger.exception("wake packet failed unexpectedly")
+            sent, detail = False, str(error)
+        if not sent:
+            logger.warning("wake packet could not be sent kind=%s", kind.value)
+            logger.debug("wake packet failure: %s", detail)
+            self._publish(
+                connection_id,
+                scope_id=scope_id,
+                kind=kind,
+                phase=PreCommandPhase.FINISHED,
+                reason=PreCommandReason.START_FAILED,
+                stage=PreCommandStage.WAKE,
+                duration_ms=_elapsed_ms(started, self._clock()),
+                output=str(detail or ""),
+            )
+            return
+        if waits and port:
+            deadline = started + WAKE_TIMEOUT_SECONDS
+            while self._clock() < deadline:
+                if self._probe(host, port, WAKE_PROBE_TIMEOUT_SECONDS):
+                    break
+                self._sleep(WAKE_POLL_INTERVAL_SECONDS)
+            else:
+                duration_ms = _elapsed_ms(started, self._clock())
+                logger.warning("wake timed out duration_ms=%d kind=%s", duration_ms, kind.value)
+                self._publish(
+                    connection_id,
+                    scope_id=scope_id,
+                    kind=kind,
+                    phase=PreCommandPhase.FINISHED,
+                    reason=PreCommandReason.TIMED_OUT,
+                    stage=PreCommandStage.WAKE,
+                    duration_ms=duration_ms,
+                )
+                return
+        duration_ms = _elapsed_ms(started, self._clock())
+        logger.info("wake finished duration_ms=%d kind=%s", duration_ms, kind.value)
+        self._publish(
+            connection_id,
+            scope_id=scope_id,
+            kind=kind,
+            phase=PreCommandPhase.FINISHED,
+            stage=PreCommandStage.WAKE,
+            duration_ms=duration_ms,
+        )
 
     # -- knocking --------------------------------------------------------------
 

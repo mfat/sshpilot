@@ -126,6 +126,7 @@ DUPLICATED_METADATA_KEYS = (
     "wol_mac",
     "wol_broadcast_ip",
     "wol_port",
+    "wol_on_connect",
     *PRE_COMMAND_METADATA_KEYS,
 )
 

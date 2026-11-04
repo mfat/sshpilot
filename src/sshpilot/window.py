@@ -8726,7 +8726,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 {
                     key: meta[key]
                     for key in (
-                        "wol_mac", "wol_broadcast_ip", "wol_port",
+                        "wol_mac", "wol_broadcast_ip", "wol_port", "wol_on_connect",
                         *PRE_COMMAND_METADATA_KEYS,
                     )
                     if key in meta

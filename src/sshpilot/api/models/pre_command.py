@@ -126,6 +126,10 @@ def format_knock_sequence(steps) -> str:
 #: What ``%p`` means when a connection names no port, matching OpenSSH.
 DEFAULT_SSH_PORT = 22
 
+#: Wake-on-LAN's own switch for waking the host when a connection opens. The
+#: address keys (``wol_mac``, ``wol_broadcast_ip``, ``wol_port``) predate it.
+WAKE_ON_CONNECT_METADATA_KEY = "wol_on_connect"
+
 PRE_COMMAND_METADATA_KEYS = (
     "pre_command",
     "pre_command_knock",
@@ -181,6 +185,24 @@ class PreCommandSettings:
     #: SSH's own error tells the user far more than a pre-step veto, which is
     #: the behaviour this feature shipped with. On, it is a hard gate.
     abort_on_failure: bool = False
+    #: Wake-on-LAN, from the connection's ``wol_*`` metadata (the same values
+    #: the sidebar's Wake on LAN item uses). With a MAC address and
+    #: :attr:`wake_before_connect`, a launch first checks whether the host
+    #: answers and, if not, wakes it and waits for it.
+    wake_mac: str = ""
+    wake_broadcast_ip: str = ""
+    wake_port: int = 9
+    #: ``wol_on_connect``; on unless switched off, so saving a MAC address is
+    #: enough to have connections wake the host.
+    wake_before_connect: bool = True
+    #: The port the connection dials, probed to tell an awake host from a
+    #: sleeping one. Like :attr:`hostname`, resolved by the lookup; ``0`` when
+    #: unknown, which skips the probe.
+    target_port: int = 0
+    #: ``False`` when the connection reaches the host through a jump host or
+    #: proxy. Wake-on-LAN only works on the local network, and this machine
+    #: cannot probe a host it only reaches through another, so no wake then.
+    direct: bool = True
 
     def __post_init__(self) -> None:
         if type(self.command) is not str:
@@ -197,6 +219,16 @@ class PreCommandSettings:
             raise ValueError("pre-connection command timeout must not be negative")
         if type(self.abort_on_failure) is not bool:
             raise TypeError("pre-connection command abort flag must be a boolean")
+        for name in ("wake_mac", "wake_broadcast_ip"):
+            if type(getattr(self, name)) is not str:
+                raise TypeError(f"{name} must be a string")
+        for name in ("wake_port", "target_port"):
+            value = getattr(self, name)
+            if type(value) is not int or isinstance(value, bool) or not 0 <= value <= 65535:
+                raise ValueError(f"{name} must be a port number")
+        for name in ("wake_before_connect", "direct"):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"{name} must be a boolean")
 
     @property
     def runs_knock(self) -> bool:
@@ -209,6 +241,16 @@ class PreCommandSettings:
     @property
     def configured(self) -> bool:
         return self.runs_knock or self.runs_command
+
+    @property
+    def runs_wake(self) -> bool:
+        """Whether a launch should make sure the host is awake first."""
+        return (
+            self.wake_before_connect
+            and self.direct
+            and bool(self.wake_mac.strip())
+            and bool(self.hostname.strip())
+        )
 
     @property
     def knock_steps(self) -> tuple:
@@ -242,13 +284,30 @@ class PreCommandSettings:
         if type(timeout) is not int or isinstance(timeout, bool) or timeout < 0:
             timeout = 0
         abort = values.get("pre_command_abort")
+        mac = values.get("wol_mac")
+        broadcast = values.get("wol_broadcast_ip")
         return cls(
             command=command,
             knock_sequence=sequence,
             mode=_mode_from_metadata(values.get("pre_command_mode"), command, sequence),
             timeout=timeout,
             abort_on_failure=abort is True,
+            wake_mac=mac.strip() if isinstance(mac, str) else "",
+            wake_broadcast_ip=broadcast.strip() if isinstance(broadcast, str) else "",
+            wake_port=_port_from_metadata(values.get("wol_port"), default=9),
+            wake_before_connect=values.get("wol_on_connect") is not False,
         )
+
+
+def _port_from_metadata(value, *, default: int) -> int:
+    """A port stored as a number or a numeric string; *default* otherwise."""
+    if isinstance(value, bool):
+        return default
+    try:
+        port = int(str(value).strip()) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+    return port if 1 <= port <= 65535 else default
 
 
 def _mode_from_metadata(value, command: str, sequence: str) -> PreCommandMode:
@@ -353,6 +412,9 @@ class PreCommandStage(str, Enum):
 
     KNOCK = "knock"
     COMMAND = "command"
+    #: Wake-on-LAN, which runs before either: a sleeping host can be neither
+    #: knocked nor reached by a command's VPN.
+    WAKE = "wake"
 
 
 @dataclass(frozen=True)

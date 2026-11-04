@@ -366,3 +366,43 @@ def test_a_malformed_sequence_is_explained_by_test(tmp_path):
         client.close()
         server.shutdown()
         server.wait_stopped()
+
+
+def test_run_pre_connect_runs_the_step_for_a_frontend_owned_launch(tmp_path):
+    """The embedded RDP tab connects from the frontend, so it asks the daemon
+    to run the connection's pre-connection step first, under its own scope."""
+
+    marker = tmp_path / "knocked"
+    server = _daemon(tmp_path, f"touch {marker}")
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        notices = []
+        client.subscribe_events(
+            lambda event: (
+                notices.append(event.payload)
+                if event.type is EventType.PRE_CONNECTION_COMMAND
+                else None
+            )
+        )
+        connection_id = client.list_connections()[0].id
+
+        assert client.run_pre_connect(connection_id, "rdp-tab-1") is True
+        assert marker.exists(), "the pre-connection command did not run"
+        assert _wait(lambda: len(notices) >= 2), notices
+        assert {n.scope_id for n in notices} == {"rdp-tab-1"}
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
+
+
+def test_run_pre_connect_refuses_a_launch_gated_on_a_failing_command(tmp_path):
+    server = _daemon(tmp_path, "exit 3", metadata={"pre_command_abort": True})
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        connection_id = client.list_connections()[0].id
+        assert client.run_pre_connect(connection_id, "rdp-tab-1") is False
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()

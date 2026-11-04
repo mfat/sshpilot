@@ -19,6 +19,8 @@ instances: every read, mutation, and event flows through a
 
 from __future__ import annotations
 
+import dataclasses
+
 import logging
 import getpass
 import ipaddress
@@ -122,6 +124,15 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
 }
 
+
+
+def _target_port(record) -> int:
+    """The port a connection dials, or 0 when it has none worth probing."""
+    try:
+        port = int(getattr(record, "port", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return port if 1 <= port <= 65535 else 0
 
 class ConnectionApplicationService:
     """Provide daemon application operations over the connection repository.
@@ -305,40 +316,40 @@ class ConnectionApplicationService:
                 logger.debug("Connection metadata unavailable", exc_info=True)
         settings = PreCommandSettings.from_metadata(metadata)
         record = self._repository.get_editor_record(connection_id)
-        if not settings.configured:
-            if record is None:
-                return settings
-            legacy = (record.data or {}).get("pre_command")
-            if not isinstance(legacy, str) or not legacy.strip():
-                return settings
-            settings = PreCommandSettings(
-                command=legacy.strip(),
-                knock_sequence=settings.knock_sequence,
-                # A connection whose command still lives in the old config
-                # comment has no stored mode, and a command is what it has.
-                mode=PreCommandMode.COMMAND,
-                timeout=settings.timeout,
-                abort_on_failure=settings.abort_on_failure,
-            )
         if record is None:
             return settings
+        if not settings.configured:
+            legacy = (record.data or {}).get("pre_command")
+            if isinstance(legacy, str) and legacy.strip():
+                settings = dataclasses.replace(
+                    settings,
+                    command=legacy.strip(),
+                    # A connection whose command still lives in the old config
+                    # comment has no stored mode, and a command is what it has.
+                    mode=PreCommandMode.COMMAND,
+                )
         # Expanded here, where the connection's own values are, so the runner
-        # never has to know what a connection is. The hostname rides along for
-        # the same reason: the knock needs a target and nothing downstream can
-        # look one up.
+        # never has to know what a connection is. The hostname, port and
+        # route ride along for the same reason: the knock and the wake need a
+        # target and nothing downstream can look one up.
         hostname = getattr(record, "hostname", "") or ""
-        return PreCommandSettings(
+        data = record.data or {}
+        return dataclasses.replace(
+            settings,
             command=expand_pre_command_tokens(
                 settings.command,
                 hostname=hostname,
                 port=getattr(record, "port", "") or "",
                 username=getattr(record, "username", "") or "",
             ),
-            knock_sequence=settings.knock_sequence,
-            mode=settings.mode,
             hostname=hostname,
-            timeout=settings.timeout,
-            abort_on_failure=settings.abort_on_failure,
+            target_port=_target_port(record),
+            # Through a jump host, a proxy or an RD Gateway the host is not on
+            # this network: Wake-on-LAN cannot reach it and a probe from here
+            # says nothing about it.
+            direct=not any(
+                data.get(key) for key in ("proxy_jump", "proxy_command", "gateway")
+            ),
         )
 
     def prepare_external_terminal_launch(

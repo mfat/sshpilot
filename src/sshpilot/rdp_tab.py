@@ -105,6 +105,9 @@ def embedded_rdp_available() -> bool:
 class RdpTab(Gtk.Box):
     """A tab showing one RDP connection."""
 
+    #: Makes each connect attempt's pre-connect scope unique.
+    _scope_counter = 0
+
     def __init__(
         self,
         window: Any,
@@ -156,7 +159,7 @@ class RdpTab(Gtk.Box):
             self._target_text(),
             buttons=False,
         )
-        self._reveal_password(self._start)
+        self._run_pre_connect(lambda: self._reveal_password(self._start))
 
     def close_session(self) -> None:
         """End the session; used when the tab closes."""
@@ -178,6 +181,67 @@ class RdpTab(Gtk.Box):
         host, port = host_and_port(dict(self.data))
         host = host or str(getattr(self.connection, "hostname", "") or "")
         return f"{host}:{port}" if port != 3389 else host
+
+    def _run_pre_connect(self, then: Callable[[], None]) -> None:
+        """Run the connection's pre-connection steps in the daemon, then *then*.
+
+        The tab connects from here, not through a daemon launch, so without
+        this a connection's Wake-on-LAN, port knock or pre-connect command
+        would be skipped. The daemon's notices show on this tab's status page
+        while it runs; a failure also raises the app's usual toast.
+        """
+
+        client = getattr(self.window, "client", None)
+        ready = getattr(self.window, "_daemon_ready", None)
+        if client is None or not callable(getattr(client, "run_pre_connect", None)) \
+                or not (callable(ready) and ready()):
+            then()
+            return
+
+        RdpTab._scope_counter += 1
+        scope_id = f"rdp-tab-{id(self):x}-{RdpTab._scope_counter}"
+        app = Gtk.Application.get_default()
+        register = getattr(app, "register_pre_command_status", None)
+        unregister = getattr(app, "unregister_pre_command_status", None)
+        if callable(register):
+            register(scope_id, self._on_pre_connect_status)
+        connection = self.connection
+
+        def worker() -> None:
+            proceed = True
+            try:
+                from .api.connection_identity import connection_id_for
+
+                proceed = client.run_pre_connect(connection_id_for(connection), scope_id)
+            except Exception:
+                # An optional step must never strand a connection: an older
+                # daemon without the request, or any fault, just connects.
+                logger.debug("Pre-connect step unavailable for the RDP tab", exc_info=True)
+            GLib.idle_add(lambda: (finish(proceed), False)[1])
+
+        def finish(proceed: bool) -> None:
+            if callable(unregister):
+                unregister(scope_id)
+            if self._closing:
+                return
+            if proceed:
+                self._on_pre_connect_status(None)
+                then()
+                return
+            # The connection is gated on its pre-connect step and the step
+            # failed; the toast says which and why.
+            self._show_status("dialog-error-symbolic", _("Could Not Connect"),
+                              self._target_text())
+
+        threading.Thread(target=worker, name="rdp-pre-connect", daemon=True).start()
+
+    def _on_pre_connect_status(self, text: Optional[str]) -> None:
+        """The daemon's running line ("Waking the host…"), or back to connecting."""
+
+        if self._closing or self._connected:
+            return
+        self._show_status("network-transmit-receive-symbolic",
+                          text or _("Connecting…"), self._target_text(), buttons=False)
 
     def _reveal_password(self, then: Callable[[Optional[str]], None]) -> None:
         """Fetch the saved password off the UI thread (``None`` if none)."""

@@ -5,6 +5,18 @@ notes remain separate.
 
 ## Unreleased
 
+- New client method `run_pre_connect` with wire method
+  `connections.run_pre_connect` (capability `sessions.write`), taking a
+  `connection_id` and the `scope_id` its notices are published under and
+  returning `{"proceed": bool}`. It runs a connection's pre-connection steps
+  for a launch the frontend owns -- the embedded RDP tab -- which skipped them
+  until now. Pre-connection steps gain Wake-on-LAN: `PreCommandStage` gains
+  `wake`, published before a knock or command when the connection has a
+  `wol_mac` and its host does not answer (`wol_on_connect` metadata, on by
+  default, turns it off). A wake that timed out finishes with `timed_out`, one
+  whose packet could not be sent with `start_failed`; neither refuses the
+  launch. New method and enum value, so the API implementation version is 0.88;
+  Protocol remains 1.0.
 - Bitwarden backup exports too large for a secure note are now stored as an
   attachment on the note, when the account has attachments (Bitwarden Premium or
   Vaultwarden). The note limit is corrected to 7,439 characters, because the

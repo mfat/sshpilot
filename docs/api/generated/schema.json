@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.87",
+  "api_implementation_version": "0.88",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -473,6 +473,10 @@
       "capability": "connections.secrets.reveal",
       "status": "daemon-only"
     },
+    "run_pre_connect": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
     "save_ssh_config_text": {
       "capability": "connections.config.write",
       "status": "implemented"
@@ -776,6 +780,9 @@
     },
     "connections.reveal_password": {
       "capability": "connections.secrets.reveal"
+    },
+    "connections.run_pre_connect": {
+      "capability": "sessions.write"
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"

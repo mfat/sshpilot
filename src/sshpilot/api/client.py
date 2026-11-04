@@ -274,6 +274,10 @@ class SshPilotClient(Protocol):
     ) -> PreCommandTestResult:
         ...
 
+    def run_pre_connect(self, connection_id: ConnectionId, scope_id: str) -> bool:
+        """Run a connection's pre-connection steps for a frontend-owned launch."""
+        ...
+
     def save_ssh_config_text(
         self, request: SaveSshConfigTextRequest
     ) -> SshConfigText:

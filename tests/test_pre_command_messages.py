@@ -91,3 +91,35 @@ def test_an_unnamed_connection_falls_back_to_its_id():
 
 def test_the_running_line_is_not_empty():
     assert messages.format_pre_command_running().strip()
+
+
+
+def test_waking_names_itself_while_running():
+    from sshpilot.api.models.pre_command import PreCommandStage
+
+    assert messages.format_pre_command_running(PreCommandStage.WAKE) == "Waking the host…"
+
+
+@pytest.mark.parametrize(
+    "reason, needle",
+    [
+        (PreCommandReason.TIMED_OUT, "did not wake up"),
+        (PreCommandReason.START_FAILED, "Wake-on-LAN packet"),
+    ],
+)
+def test_a_failed_wake_names_the_wake_and_says_the_connection_goes_on(reason, needle):
+    from sshpilot.api.models.pre_command import PreCommandStage
+
+    notice = PreConnectionCommandNotice(
+        connection_id="conn-1",
+        scope_id="scope-1",
+        kind=PreCommandLaunchKind.TERMINAL,
+        phase=PreCommandPhase.FINISHED,
+        reason=reason,
+        stage=PreCommandStage.WAKE,
+        duration_ms=90_000,
+    )
+    text = messages.format_pre_command_failure(notice, display_name="thinkbook")
+    assert needle in text
+    assert "“thinkbook”" in text
+    assert text.endswith("Connecting anyway.")

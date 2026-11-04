@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.87",
+  "api_implementation_version": "0.88",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -569,6 +569,10 @@
       "capability": "connections.secrets.reveal",
       "status": "daemon-only"
     },
+    "run_pre_connect": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
     "save_ssh_config_text": {
       "capability": "connections.config.write",
       "status": "implemented"
@@ -894,6 +898,7 @@
     "restart_daemon",
     "reveal_connection_password",
     "reveal_key_passphrase",
+    "run_pre_connect",
     "save_ssh_config_text",
     "send_interaction_secret",
     "send_terminal_input",
@@ -2186,6 +2191,21 @@
       ],
       "return": "bytearray"
     },
+    "run_pre_connect": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "connection_id",
+          "type": "ConnectionId"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "scope_id",
+          "type": "str"
+        }
+      ],
+      "return": "bool"
+    },
     "save_ssh_config_text": {
       "parameters": [
         {
@@ -2905,6 +2925,9 @@
     },
     "connections.reveal_password": {
       "capability": "connections.secrets.reveal"
+    },
+    "connections.run_pre_connect": {
+      "capability": "sessions.write"
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"

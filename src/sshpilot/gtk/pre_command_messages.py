@@ -36,9 +36,27 @@ PRE_COMMAND_RUNNING = N_("Running pre-connect command…")
 #: never configured.
 PRE_COMMAND_KNOCKING = N_("Sending the port knock…")
 
+#: Wake-on-LAN: the host did not answer, so it was sent a wake packet and the
+#: launch waits for it -- up to a minute and a half, which without this line
+#: would look like a hang.
+PRE_COMMAND_WAKING = N_("Waking the host…")
+
 _RUNNING_TEXTS = {
     PreCommandStage.KNOCK: PRE_COMMAND_KNOCKING,
     PreCommandStage.COMMAND: PRE_COMMAND_RUNNING,
+    PreCommandStage.WAKE: PRE_COMMAND_WAKING,
+}
+
+#: A wake never refuses the launch (the connection's own error says more), so
+#: there is no "did not connect" variant. The hint is the usual reason.
+_WAKE_FAILURE_TEMPLATES = {
+    PreCommandReason.TIMED_OUT: N_(
+        "“{name}” did not wake up. Wake-on-LAN usually needs a wired "
+        "connection and to be enabled on the host. Connecting anyway."
+    ),
+    PreCommandReason.START_FAILED: N_(
+        "The Wake-on-LAN packet for “{name}” could not be sent. Connecting anyway."
+    ),
 }
 
 #: A knock has no process, so it cannot exit non-zero or time out; the only
@@ -132,6 +150,8 @@ def format_pre_command_failure(
             else _KNOCK_FAILURE_TEMPLATES
         )
         templates = {**templates, **knock_templates}
+    elif notice.stage is PreCommandStage.WAKE:
+        templates = {**templates, **_WAKE_FAILURE_TEMPLATES}
     template = templates[notice.reason]
     name = display_name.strip() or str(notice.connection_id)
     return _(template).format(
@@ -196,6 +216,7 @@ def format_pre_command_test(result: PreCommandTestResult) -> tuple:
 __all__ = [
     "PRE_COMMAND_KNOCKING",
     "PRE_COMMAND_RUNNING",
+    "PRE_COMMAND_WAKING",
     "format_pre_command_failure",
     "format_pre_command_running",
     "format_pre_command_test",
