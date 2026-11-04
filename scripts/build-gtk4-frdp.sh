@@ -6,11 +6,11 @@
 # Usage: scripts/build-gtk4-frdp.sh PREFIX [extra meson setup options...]
 # Needs FreeRDP 3 (freerdp3/winpr3 pkg-config files), GTK 4, meson, ninja,
 # git and gobject-introspection. Keep GTK4_FRDP_COMMIT in step with the
-# commit in io.github.mfat.sshpilot.yaml and packaging/windows.
+# commit in io.github.mfat.sshpilot.yaml and FRDP_VERSION in scripts/fetch-gtk.py.
 set -eu
 
 GTK4_FRDP_URL=${GTK4_FRDP_URL:-https://github.com/mfat/gtk4-frdp.git}
-GTK4_FRDP_COMMIT=${GTK4_FRDP_COMMIT:-2f4d96d199b06d94f88bb893450473433ec7b514}
+GTK4_FRDP_COMMIT=${GTK4_FRDP_COMMIT:-5f7f0a7e469e506a8fc66cc22c8665e87d0cdef5}
 
 prefix=${1:?usage: $0 PREFIX [meson options...]}
 shift
