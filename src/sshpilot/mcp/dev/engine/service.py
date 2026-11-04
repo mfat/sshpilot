@@ -97,6 +97,30 @@ class DevIntelligence:
                 budget=budget,
             )
 
+    def verify_change(
+        self,
+        base: str = "HEAD",
+        mode: str = "static",
+        suites: Optional[List[str]] = None,
+        max_test_files: int = 8,
+        budget: Optional[int] = None,
+        test_timeout: Optional[float] = None,
+    ) -> dict:
+        from .. import execution
+        from .verify import verify_change
+
+        with self._lock:
+            return verify_change(
+                self._graph(),
+                self.freshness,
+                base=base,
+                mode=mode,
+                suites=suites,
+                max_test_files=max_test_files,
+                budget=budget,
+                test_timeout=test_timeout or execution.EXECUTION_TIMEOUT_SECONDS,
+            )
+
     def close(self) -> None:
         self.index.close()
 

@@ -19,6 +19,8 @@ from typing import Dict, Iterable, List, Set, Tuple
 from .graph import Graph
 
 EVIDENCE_RANK = {"calls": 0, "references": 1, "connects_signal": 1, "imports-symbol": 2, "imports-module": 3}
+#: Evidence strong enough to call a changed symbol "mapped" to a test.
+STRONG_EVIDENCE = frozenset({"calls", "references", "connects_signal", "imports-symbol"})
 
 
 def pytest_id(path: str, qualname: str) -> str:
@@ -72,10 +74,12 @@ def related_tests(graph: Graph, symbols: Iterable[dict], limit: int = 40) -> Lis
         module_fq = symbol["fqname"] if symbol["kind"] == "module" else _module_of(graph, symbol)
         if module_fq and module_fq not in seen_modules:
             seen_modules.add(module_fq)
+            escaped = module_fq.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
             for path, line in graph.db.execute(
                 "SELECT s.path, e.line FROM edges e JOIN symbols s ON s.sid = e.src "
-                "WHERE e.kind='imports' AND e.target=? AND s.path LIKE 'tests/%' ORDER BY s.path",
-                (module_fq,),
+                "WHERE e.kind='imports' AND (e.target=? OR e.target LIKE ? ESCAPE '\\') "
+                "AND s.path LIKE 'tests/%' ORDER BY s.path, e.line",
+                (module_fq, escaped + ".%"),
             ):
                 offer(path, "imports-module", symbol, line)
     ranked = sorted(best.values(), key=lambda item: (item[0], item[1]["test"]))

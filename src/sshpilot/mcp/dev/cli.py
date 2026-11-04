@@ -7,8 +7,10 @@ SDK. Examples::
     python -m sshpilot.mcp.dev.cli get-context sshpilot.daemon.dispatch.RequestDispatcher._handle_open_session
     python -m sshpilot.mcp.dev.cli inspect-impact --base HEAD
     python -m sshpilot.mcp.dev.cli diagnose-bug --symptoms "..." --traceback-file trace.txt
+    python -m sshpilot.mcp.dev.cli verify-change --base HEAD --mode focused
 
-Exit status: 0 on success, 2 for invalid input.
+Exit status: 0 on success, 2 for invalid input, 1 when ``verify-change``
+reports anything other than ``passed``.
 """
 
 from __future__ import annotations
@@ -64,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--base", help="use paths changed since this revision as evidence")
     diagnose.add_argument("--max-items", type=int, default=8)
 
+    verify = sub.add_parser("verify-change", help="static checks plus optional focused tests")
+    verify.add_argument("--base", default="HEAD")
+    verify.add_argument("--mode", choices=("static", "focused"), default="static")
+    verify.add_argument("--suite", action="append", dest="suites")
+    verify.add_argument("--max-test-files", type=int, default=8)
     return parser
 
 
@@ -93,6 +100,15 @@ def run(argv: Optional[List[str]] = None) -> int:
                 max_items=args.max_items,
                 budget=args.budget,
             )
+        elif args.command == "verify-change":
+            result = service.verify_change(
+                base=args.base,
+                mode=args.mode,
+                suites=args.suites,
+                max_test_files=args.max_test_files,
+                budget=args.budget,
+            )
+            exit_code = 0 if result.get("overall") == "passed" else 1
         else:  # pragma: no cover - argparse enforces the choices
             raise EngineError(f"unknown command {args.command}")
     except (EngineError, ScopeError) as error:

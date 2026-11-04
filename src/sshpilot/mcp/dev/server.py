@@ -42,7 +42,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
     def _engine_call(function, *args, **kwargs) -> dict:
         try:
             return function(*args, **kwargs)
-        except (EngineError, ScopeError) as error:
+        except (EngineError, ScopeError, execution.ExecutionError) as error:
             raise ToolError(str(error)) from error
 
     # ------------------------------------------------------------------
@@ -114,6 +114,33 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
             changed_paths=changed_paths,
             base=base,
             max_items=max_items,
+            budget=budget,
+        )
+
+    @server.tool()
+    def verify_change(
+        base: str = "HEAD",
+        mode: str = "static",
+        suites: Optional[List[str]] = None,
+        max_test_files: int = 8,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Verify the working tree against ``base``: Python syntax,
+        frontend neutrality, API drift and generated artifacts (when the
+        change touches them) and — in ``mode='focused'`` — the test files
+        selected from static evidence, run through the allowlisted runner.
+
+        Each check reports ``state`` (passed/failed/skipped/not_run/unknown)
+        and whether it ``executed``. ``overall`` is ``passed`` only when tests
+        actually ran and passed with no open gaps; ``static`` mode reports
+        ``static-only``. ``suites`` (focused mode) adds allowlisted suites.
+        """
+        return _engine_call(
+            intelligence.verify_change,
+            base=base,
+            mode=mode,
+            suites=suites,
+            max_test_files=max_test_files,
             budget=budget,
         )
 

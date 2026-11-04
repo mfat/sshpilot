@@ -108,7 +108,7 @@ Useful developer tools are grouped below:
 
 | Purpose | Tools |
 | --- | --- |
-| Development intelligence (V2, indexed) | `diagnose_bug`, `get_context`, `inspect_impact`, `index_status` |
+| Development intelligence (V2, indexed) | `diagnose_bug`, `get_context`, `inspect_impact`, `verify_change`, `index_status` |
 | Checkout discovery | `repo_info`, `read_text_file`, `list_directory` |
 | Search | `search_source`, `find_symbol`, `find_tests` |
 | Read-only Git | `git_status`, `git_log`, `git_diff` |

@@ -11,7 +11,7 @@ from .domain import DOMAIN_INPUTS
 from .extract import module_name_for
 from .graph import Graph, compact_symbol
 from .models import EngineError, UNRESOLVED, envelope, fit_to_budget, normalize_budget
-from .tests import related_tests, unique_test_files
+from .tests import STRONG_EVIDENCE, related_tests, unique_test_files
 
 #: Lines examined per changed file (bounded work for huge diffs).
 MAX_LINES_PER_FILE = 5000
@@ -262,7 +262,12 @@ def inspect_impact(
         # Wire-protocol / registration changes are API contract changes even
         # when only daemon files moved.
         fallback_suites = sorted({*fallback_suites, "api"})
-    unmapped = [s["id"] for s in changed_symbols if not any(t["target"] == s["id"] for t in direct_tests)]
+    unmapped = [
+        s["id"]
+        for s in changed_symbols
+        if s["kind"] != "module"
+        and not any(t["target"] == s["id"] and t["evidence"] in STRONG_EVIDENCE for t in direct_tests)
+    ]
     test_plan = {
         "focused_files": focused_files[:20],
         "direct": direct_tests,
