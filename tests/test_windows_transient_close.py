@@ -77,7 +77,14 @@ def test_install_is_windows_only(monkeypatch):
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_install_attaches_in_a_fresh_process_once_a_window_exists():
     """Mirrors startup: nothing has initialised Gtk.Window's class beforehand."""
-    pytest.importorskip("gi")
+    # importorskip("gi") would see the unit tests' gi stand-in; ask a fresh
+    # process instead. The unit-test step has no GTK DLLs on PATH; the GUI
+    # step (vendor\gtk\bin on PATH) runs this file too.
+    probe = subprocess.run(
+        [sys.executable, "-c", "import gi"], capture_output=True, text=True, timeout=60
+    )
+    if probe.returncode != 0:
+        pytest.skip("GTK runtime not on PATH (the CI GUI step runs this)")
     code = (
         "import gi\n"
         "gi.require_version('Gtk', '4.0')\n"

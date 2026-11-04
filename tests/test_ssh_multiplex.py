@@ -120,6 +120,8 @@ def test_socket_dir_repairs_existing_loose_runtime_tree(monkeypatch, tmp_path):
     assert stat.S_IMODE((root / "cm").stat().st_mode) == 0o700
 
 
+@pytest.mark.skipif(not mux.MULTIPLEXING_SUPPORTED,
+                    reason="OpenSSH for Windows has no connection multiplexing")
 def test_expire_all_masters_overrides_user_controlmaster(monkeypatch, tmp_path):
     """Regression for issue #1361: with ``ControlMaster yes``/``ask`` in the
     user's ssh_config, a bare ``ssh -O`` never reaches the socket and fails --
