@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import sshpilot.window as window_module
 from sshpilot.sidebar import GroupRow
 from sshpilot.window import MainWindow
@@ -164,6 +166,46 @@ def test_a_failed_slice_raises_then_schedules_one_recovery(monkeypatch):
     assert completed == []
     assert window._pending_connection_rows is None
     assert window._staged_connection_rows is None
+    assert window._connection_rows_recovery_pending
+    idle.run()
+    assert recovered == [True]
+    assert not window._connection_rows_recovery_pending
+
+
+@pytest.mark.parametrize("drain", ["section_toggle", "group_toggle", "removal"])
+def test_a_failed_synchronous_drain_cleans_up_and_recovers(monkeypatch, drain):
+    """Finishing pending rows at once must fail as cleanly as the idle path."""
+    idle = _Idle(monkeypatch)
+    completed = []
+    recovered = []
+    window = _window([])
+    window.connection_list = []
+    window.connection_rows = {}
+    window._on_connection_rows_completed = lambda: completed.append(True)
+
+    def steps():
+        window._append_list_row("first")
+        yield True
+        window._append_list_row("deferred", "connection")
+        yield True
+        raise RuntimeError("row failed")
+
+    window._rebuild_connection_list_steps = steps
+    window.rebuild_connection_list(first_rows=1)
+    window.rebuild_connection_list = lambda: recovered.append(True)
+
+    with pytest.raises(RuntimeError):
+        if drain == "section_toggle":
+            window._on_section_toggled(None, "groups", False)
+        elif drain == "group_toggle":
+            window._on_group_toggled(object(), "group", True)
+        else:
+            window.on_connection_removed(None, type("C", (), {"nickname": "c"})())
+
+    assert completed == []
+    assert window._pending_connection_rows is None
+    assert window._staged_connection_rows is None
+    assert window._connection_rows_split is False
     assert window._connection_rows_recovery_pending
     idle.run()
     assert recovered == [True]
