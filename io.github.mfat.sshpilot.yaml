@@ -132,7 +132,8 @@ modules:
         url: https://download.gnome.org/sources/vte/0.84/vte-0.84.1.tar.xz
         sha256: aca1caa8478aebcdbb1d67897fb3511eb7601debae6810e16a15b6fa25f31ac8
 
-  # FreeRDP 3 libraries for the embedded RDP tab (gtk4-frdp below). Only the
+  # FreeRDP 3 libraries for the embedded RDP tab: sshPilot's own build compiles
+  # gtk4-frdp (subprojects/gtk4-frdp) against them into /app/lib/sshpilot. Only the
   # libraries and channels are built: no client programs, no server.
   - name: freerdp
     buildsystem: cmake-ninja
@@ -167,19 +168,6 @@ modules:
           type: anitya
           project-id: 10442
           url-template: https://pub.freerdp.com/releases/freerdp-$version.tar.xz
-
-  # gtk4-frdp: the GTK 4 RDP widget behind RDP tabs (GtkFrdp-4.0).
-  - name: gtk4-frdp
-    buildsystem: meson
-    config-opts:
-      - -Dtests=false
-      - -Dexamples=false
-      - -Ddocumentation=false
-    sources:
-      - type: git
-        url: https://github.com/mfat/gtk4-frdp.git
-        tag: v0.1.0
-        commit: 5f7f0a7e469e506a8fc66cc22c8665e87d0cdef5
 
   - flatpak/python3-deps.yml
 

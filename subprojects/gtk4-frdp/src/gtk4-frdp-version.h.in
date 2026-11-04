@@ -1,0 +1,98 @@
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
+/* gtk4-frdp-version.h.in
+ *
+ * Copyright (C) 2018 Felipe Borges
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef GTK4_FRDP_VERSION_H
+#define GTK4_FRDP_VERSION_H
+
+#if !defined(GTK4_FRDP_INSIDE) && !defined(GTK4_FRDP_COMPILATION)
+# error "Only <gtk4-frdp.h> can be included directly."
+#endif
+
+/**
+ * SECTION:gtk4-frdp-version
+ * @short_description: gtk4-frdp version checking
+ *
+ * gtk4-frdp provides macros to check the version of the library
+ * at compile-time
+ */
+
+/**
+ * GTK4_FRDP_MAJOR_VERSION:
+ *
+ * gtk4-frdp major version component (e.g. 1 if %GTK4_FRDP_VERSION is 1.2.3)
+ */
+#define GTK4_FRDP_MAJOR_VERSION (@MAJOR_VERSION@)
+
+/**
+ * GTK4_FRDP_MINOR_VERSION:
+ *
+ * gtk4-frdp minor version component (e.g. 2 if %GTK4_FRDP_VERSION is 1.2.3)
+ */
+#define GTK4_FRDP_MINOR_VERSION (@MINOR_VERSION@)
+
+/**
+ * GTK4_FRDP_MICRO_VERSION:
+ *
+ * gtk4-frdp micro version component (e.g. 3 if %GTK4_FRDP_VERSION is 1.2.3)
+ */
+#define GTK4_FRDP_MICRO_VERSION (@MICRO_VERSION@)
+
+/**
+ * GTK4_FRDP_VERSION
+ *
+ * gtk4-frdp version.
+ */
+#define GTK4_FRDP_VERSION (@VERSION@)
+
+/**
+ * GTK4_FRDP_VERSION_S:
+ *
+ * gtk4-frdp version, encoded as a string, useful for printing and
+ * concatenation.
+ */
+#define GTK4_FRDP_VERSION_S "@VERSION@"
+
+#define GTK4_FRDP_ENCODE_VERSION(major,minor,micro) \
+        ((major) << 24 | (minor) << 16 | (micro) << 8)
+
+/**
+ * GTK4_FRDP_VERSION_HEX:
+ *
+ * gtk4-frdp version, encoded as an hexadecimal number, useful for
+ * integer comparisons.
+ */
+#define GTK4_FRDP_VERSION_HEX \
+        (GTK4_FRDP_ENCODE_VERSION (GTK4_FRDP_MAJOR_VERSION, GTK4_FRDP_MINOR_VERSION, GTK4_FRDP_MICRO_VERSION))
+
+/**
+ * GTK4_FRDP_CHECK_VERSION:
+ * @major: required major version
+ * @minor: required minor version
+ * @micro: required micro version
+ *
+ * Compile-time version checking. Evaluates to %TRUE if the version
+ * of gtk4-frdp is greater than the required one.
+ */
+#define GTK4_FRDP_CHECK_VERSION(major,minor,micro)   \
+        (GTK4_FRDP_MAJOR_VERSION > (major) || \
+         (GTK4_FRDP_MAJOR_VERSION == (major) && GTK4_FRDP_MINOR_VERSION > (minor)) || \
+         (GTK4_FRDP_MAJOR_VERSION == (major) && GTK4_FRDP_MINOR_VERSION == (minor) && \
+          GTK4_FRDP_MICRO_VERSION >= (micro)))
+
+#endif /* GTK4_FRDP_VERSION_H */

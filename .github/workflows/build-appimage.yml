@@ -64,7 +64,7 @@ jobs:
             gobject-introspection \
             libgirepository1.0-dev
 
-      # gtk4-frdp is not in Ubuntu's archive: build it at the pinned commit so
+      # Build gtk4-frdp from subprojects/gtk4-frdp into /usr so
       # the bundle can open RDP connections in a tab.
       - name: Build gtk4-frdp
         run: sudo scripts/build-gtk4-frdp.sh /usr

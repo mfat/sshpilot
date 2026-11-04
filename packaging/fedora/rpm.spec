@@ -7,8 +7,8 @@ License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
 Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 
-
-BuildArch:      noarch
+# Not noarch: the RDP tab's gtk4-frdp library (subprojects/gtk4-frdp) is
+# compiled into the package, privately under %%{_libdir}/sshpilot.
 # 0.60 for the built-in python.purelibdir option used in %%build.
 BuildRequires:  meson >= 0.60
 BuildRequires:  ninja-build
@@ -28,6 +28,18 @@ BuildRequires:  appstream
 # gnome.post_install() resolves these at configure time (icon cache + desktop
 # database refresh); without them meson setup fails.
 BuildRequires:  gtk-update-icon-cache
+# gtk4-frdp, built into %%{_libdir}/sshpilot for RDP connections in a tab.
+BuildRequires:  gcc
+BuildRequires:  pkgconfig(freerdp3) >= 3.11
+BuildRequires:  pkgconfig(freerdp-client3) >= 3.11
+BuildRequires:  pkgconfig(winpr3) >= 3.11
+BuildRequires:  pkgconfig(gobject-introspection-1.0)
+
+# The bundled gtk4-frdp is private to the app: it provides nothing to other
+# packages, and what it links against is recommended below rather than
+# required -- where it cannot load, RDP opens in FreeRDP's window (rdp_tab.py).
+%global __provides_exclude_from ^%{_libdir}/%{name}/.*$
+%global __requires_exclude_from ^%{_libdir}/%{name}/.*$
 
 
 # Define _metainfodir for openSUSE compatibility (not defined by default on openSUSE)
@@ -64,9 +76,8 @@ Recommends:     telnet
 # For the built-in RDP protocol plugin: FreeRDP 3 (sdl-freerdp/xfreerdp);
 # degrades gracefully if absent
 Recommends:     freerdp
-# RDP connections in an sshPilot tab (gtk4-frdp, GtkFrdp-4.0); without it RDP
-# opens in FreeRDP's own window
-Recommends:     gtk4-frdp
+# What the bundled gtk4-frdp (RDP connections in a tab) links against.
+Recommends:     freerdp-libs >= 3.11
 # Deliberately absent: python3-certifi is only consulted by builds with no
 # system CA store (the macOS bundle); update_checker.py falls back to the stdlib
 # default context, which is the correct one here. python3-flask and
@@ -127,6 +138,9 @@ an alternative to Putty, Termius and Mobaxterm.
 # launch. Guarded so a distro without python-rpm-macros still builds.
 %{?py_byte_compile:%py_byte_compile %{python3} %{buildroot}%{_datadir}/%{name}}
 
+# The bundled gtk4-frdp's unversioned .so link is a development file.
+rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
+
 %find_lang %{name} || touch %{name}.lang
 
 # Runs the desktop-entry and AppStream validators defined in data/meson.build.
@@ -136,11 +150,14 @@ an alternative to Putty, Termius and Mobaxterm.
 
 %files -f %{name}.lang
 %license LICENSE*
+# The bundled gtk4-frdp: GPL-3.0-or-later, with FreeRDP-derived parts (NOTICE).
+%license subprojects/gtk4-frdp/NOTICE
 %doc README*
 %{_bindir}/sshpilot
 %{_bindir}/sshpilot-agent
 %{_bindir}/sshpilot-daemon
 %{_datadir}/%{name}/
+%{_libdir}/%{name}/
 %{_datadir}/io.github.mfat.sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml

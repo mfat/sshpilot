@@ -88,3 +88,6 @@ graphify-out/
 /vendor/GTK4_Gvsbuild_*.zip
 /vendor/gtk4-frdp-*.zip
 /vendor/*.part
+
+# Meson subproject lock file (created by meson setup)
+/subprojects/.wraplock

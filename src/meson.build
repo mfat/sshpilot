@@ -53,6 +53,7 @@ conf = configuration_data()
 conf.set('PKGDATADIR', pkgdatadir)
 conf.set('LOCALEDIR', localedir)
 conf.set('MODULEDIR', moduledir)
+conf.set('RDP_TAB_LIBDIR', rdp_tab_libdir)
 
 configure_file(
   input: 'build_config.py.in',

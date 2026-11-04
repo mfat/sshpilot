@@ -1,0 +1,46 @@
+gtk4-frdp — GTK 4 widget for embedding FreeRDP 3 remote desktops
+
+License: GPL-3.0-or-later (see COPYING / LICENSES/GPL-3.0-or-later.txt).
+Two inherited files remain LGPL-3.0-or-later as their authors released them
+(src/gtk4-frdp.h, src/gtk4-frdp-version.h.in — formerly gtk-frdp.h and
+gtk-frdp-version.h.in; LICENSES/LGPL-3.0-or-later.txt). LGPLv3 permits
+combining them into this GPL-3.0-or-later library.
+
+Provenance
+----------
+Derived from gtk-frdp (https://gitlab.gnome.org/GNOME/gtk-frdp), commit
+83854a2 (2026-07-24); its full history is kept in this repository.
+Upstream's COPYING file is LGPL-3.0, but its source files carry
+GPL-3.0-or-later headers; this project follows the per-file notices.
+
+Upstream copyright holders (notices kept in each file):
+  Felipe Borges, Marek Kasik, Armin Novak; further contributions to the
+  files used by Ondrej Holy, Martin Blanchard, Jason Gerecke and others
+  (see `git log 83854a2 -- src`).
+
+Changes since upstream (Copyright (C) 2026 mFat):
+  - GTK 4 port of FrdpDisplay and FrdpSession (event controllers,
+    snapshot()/GdkMemoryTexture rendering, GTK 4 cursors and shortcut
+    inhibition); FreeRDP 3 only.
+  - New GTK 4 clipboard channel replacing gtk-frdp's GTK 3/FUSE one.
+  - Per-session worker thread owning FreeRDP; prompts answered without a
+    nested main loop; non-blocking close.
+  - Public API limited to FrdpDisplay; write-only password property.
+  - Fixes: widget/session/FreeRDP-context leaks, use-after-free after a
+    failed connect, hang on synchronously answered certificate prompts,
+    stalled network processing for hidden widgets.
+  - New examples, tests and documentation.
+
+Imported code:
+  src/frdp-xkb-layout-ids.[ch] — FreeRDP 3.32.1 client/X11/xkb_layout_ids.[ch],
+  Copyright 2009-2012 Marc-Andre Moreau, Apache-2.0
+  (LICENSES/Apache-2.0.txt); table unchanged, lookup adapted (see header).
+  Apache-2.0 code may be combined into a GPL-3.0-or-later work.
+
+Design references (no code copied): Remmina's RDP plugin (GPL-2.0-or-later
+with OpenSSL exception) and FreeRDP's SDL3 client (Apache-2.0) for the
+session-thread model; CoffeeRDP (Apache-2.0) was reviewed.
+
+Runtime dependencies: FreeRDP 3 / WinPR 3 (Apache-2.0), GTK 4 and GLib
+(LGPL-2.1-or-later), OpenSSL 3 via FreeRDP (Apache-2.0) — all compatible
+with GPL-3.0-or-later.

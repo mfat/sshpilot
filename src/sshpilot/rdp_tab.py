@@ -11,6 +11,7 @@ FreeRDP's window is decided in ``rdp_view_policy``.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from gettext import gettext as _
 from typing import Any, Callable, Optional
@@ -37,19 +38,61 @@ _GTKFRDP_VERSION = "4.0"
 _available: Optional[bool] = None
 
 
+def _bundled_libdir() -> str:
+    """The private gtk4-frdp the deb/rpm/Arch packages install, or ''."""
+
+    try:
+        from .build_config import RDP_TAB_LIBDIR
+    except ImportError:  # checkout, pip: no Meson install
+        return ""
+    return RDP_TAB_LIBDIR if RDP_TAB_LIBDIR and os.path.isdir(RDP_TAB_LIBDIR) else ""
+
+
+_BUNDLED_LIBRARY = "libgtk4-frdp-4.0.so.0"
+
+
+def _use_bundled_gtk4_frdp(libdir: str) -> None:
+    """Put the packaged gtk4-frdp ahead of any system copy in GI's paths.
+
+    Raises OSError when the library cannot load -- FreeRDP 3 or GTK missing or
+    too old, since the packages only recommend them. GI would merely warn and
+    hand back a namespace whose widget fails when a tab opens.
+    """
+
+    import ctypes
+
+    ctypes.CDLL(os.path.join(libdir, _BUNDLED_LIBRARY))
+    typelibs = os.path.join(libdir, "girepository-1.0")
+    repository = gi._gi.Repository.get_default()
+    if hasattr(repository, "prepend_search_path"):  # PyGObject >= 3.52
+        repository.prepend_search_path(typelibs)
+        repository.prepend_library_path(libdir)
+        return
+    # Older PyGObject is built on libgirepository-1.0, where these are static.
+    gi.require_version("GIRepository", "2.0")
+    from gi.repository import GIRepository
+
+    GIRepository.Repository.prepend_search_path(typelibs)
+    GIRepository.Repository.prepend_library_path(libdir)
+
+
 def embedded_rdp_available() -> bool:
     """Whether gtk4-frdp (GtkFrdp-4.0) can be loaded. Cached."""
 
     global _available
     if _available is None:
+        libdir = _bundled_libdir()
         try:
+            if libdir:
+                _use_bundled_gtk4_frdp(libdir)
             gi.require_version(_GTKFRDP_NAMESPACE, _GTKFRDP_VERSION)
-            from gi.repository import GtkFrdp  # noqa: F401
+            from gi.repository import GtkFrdp
 
+            GtkFrdp.Display.__gtype__  # noqa: B018
             _available = True
-        except (ImportError, ValueError):
-            logger.info("gtk4-frdp (GtkFrdp-%s) not found; RDP opens in FreeRDP's window",
-                        _GTKFRDP_VERSION)
+        except Exception as error:  # ImportError, ValueError, GLib/RuntimeError
+            logger.info("gtk4-frdp (GtkFrdp-%s) not usable (%s); RDP opens in FreeRDP's window",
+                        _GTKFRDP_VERSION, error)
             _available = False
     return _available
 

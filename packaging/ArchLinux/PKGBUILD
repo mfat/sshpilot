@@ -6,7 +6,10 @@ pkgrel=1
 pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.'
 url='https://github.com/mfat/sshpilot'
 license=('GPL-3.0-only')
-arch=('any')
+# Not 'any': the RDP tab's gtk4-frdp library is compiled into the package.
+arch=('x86_64' 'aarch64')
+# freerdp: RDP connections, and what the bundled gtk4-frdp (RDP tab, in
+# /usr/lib/sshpilot) links against.
 # python-keyring is the secret backend the code imports (secret_storage.py);
 # python-psutil backs port_utils.py and wol.py; openssh provides the ssh/scp/
 # ssh-keygen/ssh-copy-id binaries every connection spawns.
@@ -15,17 +18,16 @@ arch=('any')
 # bridge.
 depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography'
          'python-keyring' 'python-psutil' 'python-yaml' 'openssh'
-         'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0')
+         'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0'
+         'freerdp')
 # Meson is the upstream build system: it compiles the Blueprint .blp sources into
 # the bundled GResource and installs the launcher, the Python package, the desktop
 # entry, the AppStream metainfo, the icon, sshpilot-agent, and sshpilot-daemon.
 makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gtk4' 'gettext'
-             'desktop-file-utils' 'appstream')
+             'desktop-file-utils' 'appstream' 'freerdp' 'gobject-introspection')
 # Built-in protocol plugins shell out to these; all degrade gracefully if absent.
 optdepends=('inetutils: Telnet protocol support'
             'mosh: Mosh protocol support'
-            'freerdp: RDP protocol support (FreeRDP 3)'
-            'gtk4-frdp: RDP connections in a tab (AUR)'
             'kubectl: Kubernetes protocol support'
             'docker: Docker/Podman protocol support'
             'picocom: Serial console protocol support'
@@ -45,4 +47,9 @@ check() {
 
 package() {
 	meson install -C build --destdir "${pkgdir}"
+	# The bundled gtk4-frdp (RDP tab) lives privately in /usr/lib/sshpilot;
+	# its unversioned .so link is a development file.
+	rm -f "${pkgdir}/usr/lib/sshpilot/libgtk4-frdp-4.0.so"
+	install -Dm644 "${pkgname}-${pkgver}/subprojects/gtk4-frdp/NOTICE" \
+		"${pkgdir}/usr/share/licenses/${pkgname}/gtk4-frdp-NOTICE"
 }
