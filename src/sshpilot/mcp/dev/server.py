@@ -13,9 +13,10 @@ from typing import Any, List, Optional
 from .._scope import RepoScope, ScopeError
 from . import api_surface, architecture, execution, search, symbols, test_discovery
 from ._git import GitInspector, GitError
+from .engine import DevIntelligence, EngineError
 
 SERVER_NAME = "sshpilot-mcp-dev"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 DEFAULT_MAX_FILE_BYTES = 64 * 1024
 
 
@@ -35,6 +36,61 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
             "read-only access to a single repository checkout."
         ),
     )
+
+    intelligence = DevIntelligence(scope)
+
+    def _engine_call(function, *args, **kwargs) -> dict:
+        try:
+            return function(*args, **kwargs)
+        except (EngineError, ScopeError) as error:
+            raise ToolError(str(error)) from error
+
+    # ------------------------------------------------------------------
+    # V2 development-intelligence tools (indexed, evidence-labelled,
+    # budgeted). See docs/mcp/dev-intelligence.md.
+    # ------------------------------------------------------------------
+    @server.tool()
+    def get_context(
+        reference: str,
+        include_source: bool = True,
+        depth: int = 1,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Bounded context for one symbol: source excerpt, callers, callees,
+        API wire chain and statically related tests, each edge labelled
+        verified_static / heuristic / unresolved.
+
+        ``reference``: a symbol id (``path::Qual.name``), ``path.py:LINE``,
+        a dotted name, a bare name, ``wire:<method>`` or ``capability:<value>``.
+        Append ``?lines=A-B`` or ``?offset=N`` to page. ``budget`` is the reply
+        size in bytes (default ~4800 ≈ 1,200 tokens); omissions are reported
+        in ``budget.omitted``.
+        """
+        return _engine_call(intelligence.get_context, reference, include_source=include_source, depth=depth, budget=budget)
+
+    @server.tool()
+    def inspect_impact(
+        base: Optional[str] = None,
+        paths: Optional[List[str]] = None,
+        depth: int = 2,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Impact of a change: changed symbols (from diff hunks), resolved
+        dependents, wire-protocol/API risks, dangling references and a test
+        plan with static evidence.
+
+        Give ``base`` (a Git revision; compares it with the working tree,
+        including staged, unstaged and untracked files) and/or ``paths``
+        (repository-relative; whole files). Read-only.
+        """
+        return _engine_call(intelligence.inspect_impact, base=base, paths=paths, depth=depth, budget=budget)
+
+    @server.tool()
+    def index_status(rebuild: bool = False) -> dict:
+        """Refresh the local symbol index incrementally and report freshness
+        (Git HEAD, files indexed, parse failures, timings). ``rebuild=True``
+        discards and rebuilds it. The index lives outside the checkout."""
+        return _engine_call(intelligence.index_status, rebuild=rebuild)
 
     @server.tool()
     def repo_info() -> dict:

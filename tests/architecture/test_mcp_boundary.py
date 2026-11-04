@@ -67,6 +67,10 @@ EXPECTED_TOOLS = frozenset(
         "plan_api_change",
         "recommend_tests",
         "validate_change",
+        # V2 development-intelligence tools (docs/mcp/dev-intelligence.md)
+        "get_context",
+        "inspect_impact",
+        "index_status",
     }
 )
 
@@ -169,6 +173,19 @@ def test_only_dev_execution_modules_may_use_subprocess():
         "only the read-only git helper (dev/_git.py) and the controlled "
         "execution module (dev/execution.py) may use subprocess in the dev MCP"
     )
+
+
+def test_dev_engine_stays_free_of_processes_and_network():
+    """The analysis engine is pure: no subprocess, sockets or HTTP. Git and
+    test execution stay in the two allowlisted modules."""
+    banned = ("import subprocess", "from subprocess", "import socket", "urllib", "http.client", "shell=True")
+    violations = []
+    for path, rel in _modules():
+        if not rel.startswith("dev/engine/") and rel != "dev/cli.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        violations.extend(f"{rel}: {marker}" for marker in banned if marker in text)
+    assert not violations, violations
 
 
 def test_execution_allowlists_are_authoritative():
