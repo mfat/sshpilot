@@ -73,7 +73,8 @@ jobs:
             ./usr/lib/$MULTIARCH/sshpilot/libgtk4-frdp-4.0.so.0 \
             ./usr/lib/$MULTIARCH/sshpilot/girepository-1.0/GtkFrdp-4.0.typelib \
           ; do
-            grep -q " $path\$" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
+            # Symlinks are listed as "path -> target".
+            grep -q -e " $path\$" -e " $path -> " <<<"$contents" || { echo "::error::missing $path"; exit 1; }
           done
           # ...and the build-time-only files must not be.
           for pattern in '[.]blp$' 'plugins/examples' 'vendor/pyxtermjs/xterm/' '__pycache__'; do
