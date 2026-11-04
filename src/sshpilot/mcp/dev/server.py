@@ -149,8 +149,11 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         selected from static evidence, run through the allowlisted runner.
 
         Each check reports ``state`` (passed/failed/skipped/not_run/unknown)
-        and whether it ``executed``. ``overall`` is ``passed`` only when tests
-        actually ran and passed with no open gaps; ``static`` mode reports
+        and whether it ``executed``. ``checks_passed`` says the executed
+        checks passed; ``coverage_confirmed`` is always false (no coverage is
+        collected); ``verification_gaps`` lists what is unproven (skipped
+        tests, changed code no test calls, unrun suites). ``overall`` is
+        ``checks-passed`` only with no gaps; ``static`` mode reports
         ``static-only``. ``suites`` (focused mode) adds allowlisted suites.
         """
         return _engine_call(

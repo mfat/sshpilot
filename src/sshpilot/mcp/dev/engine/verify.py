@@ -2,9 +2,19 @@
 
 Every check reports its own ``state`` — ``passed``, ``failed``, ``skipped``,
 ``not_run`` or ``unknown`` — with ``executed`` telling whether anything ran.
-``overall`` is ``passed`` only when the static checks passed *and* selected
-tests actually ran and passed *and* nothing the impact analysis asked for
-(a broad suite) was left out. ``mode="static"`` never yields ``passed``.
+Three separate answers, never one blurred "verified":
+
+* ``checks_passed`` — every check that executed passed and at least one
+  selected test ran and passed;
+* ``coverage_confirmed`` — always ``False``: no coverage is collected, so
+  nothing here proves the changed lines were exercised (a test that calls a
+  changed function may still miss the changed branch);
+* ``verification_gaps`` — every reason the run falls short: skipped tests
+  (even one, alongside passes), changed symbols without a test that calls
+  them, recommended suites not run, timeouts, incomplete impact analysis.
+
+``overall`` is ``checks-passed`` only when ``checks_passed`` and there are no
+gaps; otherwise ``failed``, ``incomplete`` or (static mode) ``static-only``.
 """
 
 from __future__ import annotations
@@ -196,7 +206,13 @@ def verify_change(
         if selected:
             try:
                 result = execution.run_test_files(scope, selected, timeout=test_timeout)
-                checks.append(_tests_check(result))
+                tests_check = _tests_check(result)
+                checks.append(tests_check)
+                skipped = tests_check.get("counts", {}).get("skipped", 0)
+                if skipped and tests_check["state"] == "passed":
+                    # Passing tests next to skipped ones: the skipped ones may be
+                    # exactly the ones that exercise the change.
+                    gaps.append(f"{skipped} selected test(s) were skipped; the run is not a full pass")
             except execution.ExecutionError as error:
                 checks.append({"name": "focused_tests", "kind": "tests", "executed": False, "state": "unknown", "reason": str(error)})
         else:
@@ -231,7 +247,7 @@ def verify_change(
         if plan["unmapped_changed_symbols"]:
             gaps.append(
                 f"{len(plan['unmapped_changed_symbols'])} changed symbol(s) have no direct test evidence "
-                "(no test calls or imports them); passing tests do not show they work"
+                "(no test calls or references them; an import alone does not count)"
             )
         missing_suites = [s for s in plan["suites_fallback"] if s not in requested_suites]
         if plan["broad_run_recommended"] and missing_suites:
@@ -252,7 +268,7 @@ def verify_change(
     else:
         tests_ran = any(c["kind"] == "tests" and c["state"] == "passed" for c in checks)
         if tests_ran and not gaps and set(states) <= {"passed", "not_run"}:
-            overall = "passed"
+            overall = "checks-passed"
         else:
             overall = "incomplete"
             if not tests_ran:
@@ -268,16 +284,24 @@ def verify_change(
         status="ok",
         input={"base": base, "mode": mode, "suites": requested_suites},
         overall=overall,
-        verified=overall == "passed",
+        checks_passed=(
+            mode == "focused"
+            and "failed" not in states
+            and "unknown" not in states
+            and any(c["kind"] == "tests" and c["state"] == "passed" for c in checks)
+        ),
+        coverage_confirmed=False,
+        coverage_note="No coverage is collected: passing selected tests do not prove the changed lines ran.",
+        verification_gaps=list(dict.fromkeys(gaps)),
         checks=checks,
         test_selection=selection,
-        gaps=list(dict.fromkeys(gaps)),
         changed_paths=changed_paths[:40],
     )
     return fit_to_budget(
         result,
         budget,
         # Checks are never trimmed: a dropped failure would read as a pass.
-        ["changed_paths", "test_selection.evidence", "test_selection.unmapped_changed_symbols", "gaps"],
+        # Neither are verification gaps: a dropped gap would overstate the result.
+        ["changed_paths", "test_selection.evidence", "test_selection.unmapped_changed_symbols"],
         min_keep=3,
     )

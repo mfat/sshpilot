@@ -83,7 +83,8 @@ def test_static_mode_never_claims_verification(service, repo):
     _change_add(repo)
     result = service.verify_change(base="HEAD", mode="static")
     assert result["overall"] == "static-only"
-    assert result["verified"] is False
+    assert result["checks_passed"] is False
+    assert result["coverage_confirmed"] is False
     tests = _check(result, "focused_tests")
     assert (tests["executed"], tests["state"]) == (False, "not_run")
     assert result["test_selection"]["selected_files"] == ["tests/demo/test_core.py"]
@@ -102,8 +103,10 @@ def test_covered_change_selects_and_runs_matching_test(service, repo, tmp_path, 
         "evidence": "calls",
         "target": "src/demo_app/core.py::add",
     }
-    assert result["overall"] == "passed"
-    assert result["verified"] is True
+    assert result["overall"] == "checks-passed"
+    assert result["checks_passed"] is True
+    assert result["coverage_confirmed"] is False  # never claimed without coverage data
+    assert result["verification_gaps"] == []
     assert not (repo / ".pytest_cache").exists()
 
 
@@ -115,7 +118,7 @@ def test_failing_test_is_reported_as_failed(service, repo):
     assert tests["counts"]["failed"] == 1
     assert tests["failures"][0]["test"].endswith("test_add")
     assert result["overall"] == "failed"
-    assert result["verified"] is False
+    assert result["checks_passed"] is False
 
 
 def test_skipped_tests_stay_skipped(service, repo):
@@ -126,7 +129,37 @@ def test_skipped_tests_stay_skipped(service, repo):
     assert tests["state"] == "skipped"
     assert tests["counts"]["skipped"] == 1 and tests["counts"]["passed"] == 0
     assert result["overall"] == "incomplete"
-    assert any("skipped" in gap for gap in result["gaps"])
+    assert any("skipped" in gap for gap in result["verification_gaps"])
+
+
+def test_mixed_passed_and_skipped_is_not_a_full_pass(service, repo):
+    """3 passed + 2 skipped must leave a gap: the skipped tests may be the
+    ones that exercise the change."""
+    body = "import pytest\nfrom demo_app.core import add\n\n\n"
+    for n in range(3):
+        body += f"def test_add_{n}():\n    assert add({n}, 1) == {n + 1}\n\n\n"
+    for n in range(2):
+        body += f"@pytest.mark.skip(reason='flaky')\ndef test_add_skipped_{n}():\n    assert add(1, 1) == 2\n\n\n"
+    _write(repo, "tests/demo/test_core.py", body)
+    _change_add(repo)
+    result = service.verify_change(base="HEAD", mode="focused")
+    tests = _check(result, "focused_tests")
+    assert tests["counts"] == {"passed": 3, "failed": 0, "errors": 0, "skipped": 2}
+    assert tests["state"] == "passed"  # the run itself had no failures
+    assert len(tests["skipped_tests"]) == 2
+    assert result["checks_passed"] is True
+    assert result["overall"] == "incomplete"
+    assert any("2 selected test(s) were skipped" in gap for gap in result["verification_gaps"])
+
+
+def test_import_alone_is_not_test_evidence(service, repo):
+    _write(repo, "tests/demo/test_core.py", "from demo_app.core import add, untested\n\n\ndef test_add():\n    assert add(1, 2) == 3\n")
+    text = (repo / "src/demo_app/core.py").read_text().replace('"no test imports this"', '"changed"')
+    (repo / "src/demo_app/core.py").write_text(text)
+    result = service.verify_change(base="HEAD", mode="focused")
+    assert result["test_selection"]["unmapped_changed_symbols"] == ["src/demo_app/core.py::untested"]
+    assert result["overall"] == "incomplete"
+    assert any("an import alone does not count" in gap for gap in result["verification_gaps"])
 
 
 def test_timeout_is_explicit(service, repo):
@@ -151,14 +184,14 @@ def test_unmatched_change_requests_broader_coverage(service, repo):
     assert selection["selected_files"] == ["tests/demo/test_core.py"]
     assert _check(result, "focused_tests")["state"] == "passed"
     assert result["overall"] == "incomplete"
-    assert result["verified"] is False
-    assert any("no direct test evidence" in gap for gap in result["gaps"])
+    assert result["checks_passed"] is True  # what ran passed ...
+    assert any("no direct test evidence" in gap for gap in result["verification_gaps"])
 
 
 def test_no_changes_is_not_a_pass(service):
     result = service.verify_change(base="HEAD", mode="focused")
     assert result["overall"] == "incomplete"
-    assert any("no focused tests" in gap or "not verified" in gap for gap in result["gaps"])
+    assert any("no focused tests" in gap or "not verified" in gap for gap in result["verification_gaps"])
 
 
 def test_syntax_error_fails_verification(service, repo):
@@ -226,4 +259,4 @@ def test_cli_verify_change_exit_codes(repo, tmp_path):
     assert json.loads(static.stdout)["overall"] == "static-only"
     focused = subprocess.run([*base, "--mode", "focused"], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=300)
     assert focused.returncode == 0, focused.stdout[-2000:] + focused.stderr[-2000:]
-    assert json.loads(focused.stdout)["overall"] == "passed"
+    assert json.loads(focused.stdout)["overall"] == "checks-passed"

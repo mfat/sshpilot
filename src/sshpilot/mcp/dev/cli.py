@@ -11,7 +11,7 @@ SDK. Examples::
     python -m sshpilot.mcp.dev.cli verify-change --base HEAD --mode focused
 
 Exit status: 0 on success, 2 for invalid input, 1 when ``verify-change``
-reports anything other than ``passed``.
+reports anything other than ``checks-passed``.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ def run(argv: Optional[List[str]] = None) -> int:
                 max_test_files=args.max_test_files,
                 budget=args.budget,
             )
-            exit_code = 0 if result.get("overall") == "passed" else 1
+            exit_code = 0 if result.get("overall") == "checks-passed" else 1
         else:  # pragma: no cover - argparse enforces the choices
             raise EngineError(f"unknown command {args.command}")
     except (EngineError, ScopeError) as error:

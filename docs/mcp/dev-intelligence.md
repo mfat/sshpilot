@@ -15,7 +15,7 @@ The runtime MCP server (`sshpilot-mcp-runtime`) is not affected by any of this.
 | `diagnose_bug` | `symptoms` | `traceback`, `test_name`, `changed_paths`, `base`, `max_items`, `budget` | ranked candidate symbols, the evidence and score for each, subsystem hints, uncertainties, next steps |
 | `plan_feature` | `request` | `subsystem`, `symbol`, `budget` | matching symbols and API methods, layers, API involvement, layer obligations tied to real paths, related tests |
 | `inspect_impact` | `base` or `paths` | `depth`, `budget` | changed symbols (from diff hunks), dependents, wire-protocol surfaces, dangling references, a test plan |
-| `verify_change` | — (`base` defaults to `HEAD`) | `mode` (`static`/`focused`), `suites`, `max_test_files`, `budget` | each check with `executed` and `state`, the test selection and its evidence, `overall`, `gaps` |
+| `verify_change` | — (`base` defaults to `HEAD`) | `mode` (`static`/`focused`), `suites`, `max_test_files`, `budget` | each check with `executed` and `state`, the test selection and its evidence, `checks_passed`, `coverage_confirmed`, `verification_gaps`, `overall` |
 | `get_context` | `reference` | `include_source`, `depth`, `budget` | a source excerpt, callers, callees, API chain and related tests for one symbol |
 | `index_status` | — | `rebuild` | refresh statistics, freshness, parse failures |
 
@@ -31,7 +31,7 @@ python -m sshpilot.mcp.dev.cli verify-change --base origin/dev --mode focused
 ```
 
 The CLI prints JSON. It exits 2 for invalid input; `verify-change` exits 0
-only when `overall` is `passed`.
+only when `overall` is `checks-passed`.
 
 ### Typical agent workflows
 
@@ -42,7 +42,7 @@ only when `overall` is `passed`.
   `get_context`, and treat `obligations` as a checklist. It never proposes code.
 - **Before committing.** Call `inspect_impact(base=...)`, fix what it flags,
   then `verify_change(base=..., mode="focused")`. Add the `suites` it
-  recommends when `gaps` asks for them.
+  recommends when `verification_gaps` asks for them.
 
 ## Result conventions
 
@@ -69,16 +69,24 @@ and `over_budget` if even the minimum does not fit. `verify_change` never
 trims its `checks`, because a dropped failure would read as a pass.
 
 **Run states** (`verify_change`): `passed`, `failed`, `skipped`, `not_run` or
-`unknown` (timeout or missing tool), each with `executed`. `overall` is:
+`unknown` (timeout or missing tool), each with `executed`. The result keeps
+three answers apart:
 
-- `passed` only when tests actually ran and passed and there are no `gaps`;
-- `static-only` in static mode;
-- `failed` if any check failed;
-- `incomplete` otherwise.
+- `checks_passed`: every executed check passed and at least one selected test
+  ran and passed.
+- `coverage_confirmed`: always `false`. No coverage is collected, so nothing
+  proves the changed lines ran; a test that calls a changed function can still
+  miss the changed branch.
+- `verification_gaps`: every reason the run falls short. A gap is recorded
+  when any selected test was skipped (even one next to passes), when a changed
+  symbol has no test that calls or references it (an import alone does not
+  count), when a run timed out, when a recommended suite was not run, or when
+  the impact analysis was incomplete. Gaps and checks are never trimmed by the
+  budget.
 
-A change counts as unverified when any of these hold: a changed symbol has no
-direct test evidence, the selected tests were all skipped, a run timed out,
-or a suite was recommended but not run.
+`overall` is `checks-passed` only when `checks_passed` holds and there are no
+gaps. Otherwise it is `failed` (a check failed), `static-only` (static mode)
+or `incomplete`.
 
 ## Architecture
 
@@ -183,8 +191,9 @@ test enforces this.
   monkeypatching are not modelled.
 - A call edge is not an execution path. Reverse dependencies say "names
   this", not "runs this".
-- Test association is static: a test calls, references or imports the
-  symbol. A module import is weak evidence and is labelled so. Coverage-based
+- Test association is static. Only a test that calls or references the
+  symbol counts as direct evidence; importing the symbol or its module is
+  weak evidence, labelled so, and still leaves a verification gap. Coverage-based
   association is not implemented.
 - `diagnose_bug` matches quoted messages literally in `src/` at query time.
   It cannot see strings that are built dynamically or translated at run time.

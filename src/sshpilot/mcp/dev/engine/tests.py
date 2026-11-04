@@ -4,7 +4,8 @@ Evidence levels, strongest first (all are *static* evidence, never coverage):
 
 ``calls``            a test function calls the symbol (resolved name)
 ``references``       a test function references it (callback, enum member…)
-``imports-symbol``   a test file imports the symbol by name
+``imports-symbol``   a test file imports the symbol by name — weak: an
+                     import does not show the test exercises it
 ``imports-module``   a test file imports the symbol's module — weak: it does
                      not imply the test exercises the changed lines.
 
@@ -19,8 +20,9 @@ from typing import Dict, Iterable, List, Set, Tuple
 from .graph import Graph
 
 EVIDENCE_RANK = {"calls": 0, "references": 1, "connects_signal": 1, "imports-symbol": 2, "imports-module": 3}
-#: Evidence strong enough to call a changed symbol "mapped" to a test.
-STRONG_EVIDENCE = frozenset({"calls", "references", "connects_signal", "imports-symbol"})
+#: Evidence strong enough to call a changed symbol "mapped" to a test: a test
+#: function calls or references it. Importing it proves nothing about use.
+STRONG_EVIDENCE = frozenset({"calls", "references", "connects_signal"})
 
 
 def pytest_id(path: str, qualname: str) -> str:
@@ -50,6 +52,8 @@ def related_tests(graph: Graph, symbols: Iterable[dict], limit: int = 40) -> Lis
         }
         if evidence == "imports-module":
             entry["note"] = "module import only; does not imply the changed lines are exercised"
+        elif evidence == "imports-symbol":
+            entry["note"] = "import only; does not show the test calls it"
         current = best.get(test_id)
         if current is None or rank < current[0]:
             best[test_id] = (rank, entry)

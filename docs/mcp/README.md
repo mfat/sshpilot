@@ -106,8 +106,10 @@ results are in [dev-intelligence.md](dev-intelligence.md).
 | Look closer at one symbol | `get_context(reference="path::Class.method")` (or `wire:sessions.open`) |
 | Rebuild or inspect the index | `index_status(rebuild=False)` |
 
-`verify_change` reports `overall: "passed"` only when tests actually ran and
-passed with no open gaps. Read `gaps` before claiming a change is verified.
+`verify_change` reports `overall: "checks-passed"` only when selected tests
+actually ran and passed with no open `verification_gaps` (skipped tests,
+changed code no test calls, unrun suites). `coverage_confirmed` is always
+false: passing tests are not proof the changed lines ran.
 The same operations are available as `python -m sshpilot.mcp.dev.cli
 <command>` with JSON output, without the MCP SDK.
 
