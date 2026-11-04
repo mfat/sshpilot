@@ -1405,6 +1405,19 @@ def build_ssh_connection(
         # its own argv via _build_base_ssh_command.
         executable = 'scp' if ctx.command_type == 'scp' else 'ssh'
 
+        # Windows has no xauth, so OpenSSH refuses untrusted X11 forwarding
+        # there ("xauth key data not generated"). ForwardX11 itself comes from
+        # the config file or an authored -o, so ask for trusted forwarding
+        # here; it only takes effect when forwarding is on (issue #1365).
+        if (
+            os.name == 'nt'
+            and executable == 'ssh'
+            and launch_mode is LaunchMode.INTERACTIVE
+        ):
+            authored_options = list(authored_options) + [
+                '-o', 'ForwardX11Trusted=yes',
+            ]
+
         # Authored options are appended after the auth layer's own options, so
         # a deliberate runtime decision (an agent bypass, say) still wins.
         req = SSHLaunchRequest(

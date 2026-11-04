@@ -701,6 +701,20 @@ def test_base_command_x11_flag_only_for_ssh(monkeypatch):
     assert '-X' not in _base_cmd('ssh-copy-id', effective_config=effective)
 
 
+def test_windows_terminal_asks_for_trusted_x11(monkeypatch):
+    # Issue #1365: terminal sessions take ForwardX11 from the config file or
+    # an authored -o, never from -X/-Y, so the trusted mode Windows needs
+    # (it has no xauth) must be requested on the terminal argv itself.
+    import os
+
+    conn = {'host': 'x11.example', 'hostname': 'x11.example'}
+    monkeypatch.setattr(os, "name", "nt")
+    assert _has_o_option(_build(conn)[0], 'ForwardX11Trusted=yes')
+    assert not _has_o_option(_build(conn, command_type='sftp')[0], 'ForwardX11Trusted')
+    monkeypatch.setattr(os, "name", "posix")
+    assert not _has_o_option(_build(conn)[0], 'ForwardX11Trusted')
+
+
 def test_base_command_x11_is_trusted_on_windows(monkeypatch):
     # Issue #1365: Windows has no xauth, so OpenSSH refuses untrusted -X
     # ("xauth key data not generated"); only -Y reaches Xming/VcXsrv.
