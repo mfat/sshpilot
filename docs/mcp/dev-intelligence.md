@@ -78,7 +78,8 @@ three answers apart:
   proves the changed lines ran; a test that calls a changed function can still
   miss the changed branch.
 - `verification_gaps`: every reason the run falls short. A gap is recorded
-  when any selected test was skipped (even one next to passes), when a changed
+  when any test in the focused run or in a requested suite was skipped (even
+  one next to passes; suites are run with per-test outcomes too), when a changed
   symbol has no test that calls or references it (an import alone does not
   count), when a run timed out, when a recommended suite was not run, or when
   the impact analysis was incomplete. Gaps and checks are never trimmed by the
@@ -137,7 +138,8 @@ mixed.
 
 **Freshness.**
 
-- Every tool call first stats the indexed tree (mtime and size). It re-hashes
+- Every tool call first stats the indexed tree (size, mtime and ctime;
+  ctime catches a `chmod` that leaves size and mtime unchanged). It re-hashes
   only changed stats and re-extracts only changed hashes. A warm check takes
   about 64–112 ms on this checkout.
 - Cross-file edges are stored by name and resolved at query time, so a change

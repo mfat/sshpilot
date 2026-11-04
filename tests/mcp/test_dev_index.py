@@ -477,3 +477,24 @@ def test_unindexable_domain_input_rebuilds_domain_edges(service, repo, monkeypat
     assert stats["domain_rebuilt"] is True
     digest_after = service.index.db.execute("SELECT value FROM meta WHERE key='domain_digest'").fetchone()[0]
     assert digest_after != digest_before
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root can read mode-000 files")
+def test_permission_only_change_invalidates_without_size_or_mtime_change(service, repo):
+    """chmod changes neither size nor mtime; ctime is what reveals it."""
+    path = f"{PKG}/beta.py"
+    service.index.refresh()
+    target = repo / path
+    before = target.stat()
+    target.chmod(0)
+    try:
+        after = target.stat()
+        assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+        stats = service.index.refresh()
+        assert stats["unreadable"] == [path]
+        assert _symbols_in(service, path) == 0
+    finally:
+        target.chmod(0o644)
+    service.index.refresh()
+    assert _status(service, path) == "ok"
+    assert _symbols_in(service, path) > 0

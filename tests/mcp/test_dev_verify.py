@@ -149,7 +149,7 @@ def test_mixed_passed_and_skipped_is_not_a_full_pass(service, repo):
     assert len(tests["skipped_tests"]) == 2
     assert result["checks_passed"] is True
     assert result["overall"] == "incomplete"
-    assert any("2 selected test(s) were skipped" in gap for gap in result["verification_gaps"])
+    assert any(gap.startswith("focused_tests: 2 test(s) were skipped") for gap in result["verification_gaps"])
 
 
 def test_import_alone_is_not_test_evidence(service, repo):
@@ -260,3 +260,22 @@ def test_cli_verify_change_exit_codes(repo, tmp_path):
     focused = subprocess.run([*base, "--mode", "focused"], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=300)
     assert focused.returncode == 0, focused.stdout[-2000:] + focused.stderr[-2000:]
     assert json.loads(focused.stdout)["overall"] == "checks-passed"
+
+
+def test_requested_suite_with_skips_is_not_a_full_pass(service, repo):
+    """Explicit suites get per-test outcomes too, not just an exit status."""
+    _write(
+        repo,
+        "tests/mcp/test_suite_part.py",
+        "import pytest\n\n\ndef test_ok():\n    assert True\n\n\n@pytest.mark.skip(reason='needs hardware')\ndef test_hw():\n    assert False\n",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "suite"], cwd=repo, check=True, env={**os.environ, **GIT_ENV})
+    _change_add(repo)
+    result = service.verify_change(base="HEAD", mode="focused", suites=["mcp"])
+    suite = _check(result, "suite:mcp")
+    assert suite["state"] == "passed"
+    assert suite["counts"] == {"passed": 1, "failed": 0, "errors": 0, "skipped": 1}
+    assert suite["skipped_tests"] and suite["skipped_tests"][0].endswith("test_hw")
+    assert any(gap.startswith("suite:mcp: 1 test(s) were skipped") for gap in result["verification_gaps"])
+    assert result["overall"] == "incomplete"

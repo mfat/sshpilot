@@ -231,13 +231,31 @@ def run_test_files(
     the checkout) and a JUnit report in a private temporary directory, so
     passed / failed / skipped are counted from pytest itself, not inferred.
     """
-    import tempfile
-
     if not paths:
         raise ExecutionError("no test files selected")
     if len(paths) > MAX_FOCUSED_FILES:
         raise ExecutionError(f"at most {MAX_FOCUSED_FILES} test files per focused run")
     targets = [_validate_test_file(scope, path) for path in dict.fromkeys(paths)]
+    return _pytest_with_report(scope, targets, timeout)
+
+
+def run_suite_with_outcomes(
+    scope: RepoScope,
+    suite: str,
+    timeout: float = EXECUTION_TIMEOUT_SECONDS,
+) -> dict:
+    """Run one allowlisted suite with per-test outcomes (JUnit), like
+    :func:`run_test_files`, so skipped tests are counted rather than hidden
+    behind a zero exit status. ``run_tests`` keeps its legacy result shape."""
+    target = _resolve_suite(scope, suite)
+    result = _pytest_with_report(scope, [target], timeout)
+    result["suite"] = suite
+    return result
+
+
+def _pytest_with_report(scope: RepoScope, targets: List[str], timeout: float) -> dict:
+    import tempfile
+
     with tempfile.TemporaryDirectory(prefix="sshpilot-mcp-junit-") as directory:
         report = Path(directory) / "junit.xml"
         argv = [

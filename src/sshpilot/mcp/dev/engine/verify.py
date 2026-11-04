@@ -41,10 +41,10 @@ def _excerpt(result: dict, limit: int = 600) -> str:
     return redact(text.strip(), limit=limit)
 
 
-def _tests_check(result: dict) -> dict:
+def _tests_check(result: dict, name: str = "focused_tests") -> dict:
     outcomes = result.get("outcomes")
     check = {
-        "name": "focused_tests",
+        "name": name,
         "kind": "tests",
         "executed": True,
         "command": result.get("command"),
@@ -206,13 +206,7 @@ def verify_change(
         if selected:
             try:
                 result = execution.run_test_files(scope, selected, timeout=test_timeout)
-                tests_check = _tests_check(result)
-                checks.append(tests_check)
-                skipped = tests_check.get("counts", {}).get("skipped", 0)
-                if skipped and tests_check["state"] == "passed":
-                    # Passing tests next to skipped ones: the skipped ones may be
-                    # exactly the ones that exercise the change.
-                    gaps.append(f"{skipped} selected test(s) were skipped; the run is not a full pass")
+                checks.append(_tests_check(result))
             except execution.ExecutionError as error:
                 checks.append({"name": "focused_tests", "kind": "tests", "executed": False, "state": "unknown", "reason": str(error)})
         else:
@@ -228,22 +222,16 @@ def verify_change(
             gaps.append("no focused tests were selected")
         for suite in requested_suites:
             try:
-                result = execution.run_tests(scope, suite)
-                checks.append(
-                    {
-                        "name": f"suite:{suite}",
-                        "kind": "tests",
-                        "executed": True,
-                        "state": _subprocess_state(result),
-                        "command": result["command"],
-                        "exit_code": result["returncode"],
-                        "duration_seconds": result.get("duration_seconds"),
-                        "timed_out": result["timed_out"],
-                        **({"output_excerpt": _excerpt(result)} if not result["success"] else {}),
-                    }
-                )
+                result = execution.run_suite_with_outcomes(scope, suite, timeout=test_timeout)
+                checks.append(_tests_check(result, name=f"suite:{suite}"))
             except execution.ExecutionError as error:
                 checks.append({"name": f"suite:{suite}", "kind": "tests", "executed": False, "state": "unknown", "reason": str(error)})
+        for check in checks:
+            skipped = check.get("counts", {}).get("skipped", 0)
+            if check["kind"] == "tests" and skipped and check["state"] == "passed":
+                # Passing tests next to skipped ones: the skipped ones may be
+                # exactly the ones that exercise the change.
+                gaps.append(f"{check['name']}: {skipped} test(s) were skipped; the run is not a full pass")
         if plan["unmapped_changed_symbols"]:
             gaps.append(
                 f"{len(plan['unmapped_changed_symbols'])} changed symbol(s) have no direct test evidence "

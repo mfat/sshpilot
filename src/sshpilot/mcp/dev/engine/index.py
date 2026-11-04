@@ -41,7 +41,7 @@ from .extract import FileExtract, extract_source
 #: Bump whenever the table layout or extraction semantics change. The version
 #: is part of the database file name, so different server versions never fight
 #: over one file; an old file is simply ignored (and can be deleted).
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 INDEX_DIR_ENV = "SSHPILOT_MCP_INDEX_DIR"
 EXCLUDE_ENV = "SSHPILOT_MCP_INDEX_EXCLUDE"
@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS files (
     sha256 TEXT NOT NULL,
     size INTEGER NOT NULL,
     mtime_ns INTEGER NOT NULL,
+    ctime_ns INTEGER NOT NULL,
     module TEXT NOT NULL,
     status TEXT NOT NULL,
     error TEXT NOT NULL DEFAULT '',
@@ -282,8 +283,8 @@ class DevIndex:
 
     def _refresh_locked(self, db: sqlite3.Connection, force: frozenset = frozenset()) -> Dict[str, object]:
         known = {
-            row[0]: (row[1], row[2], row[3])
-            for row in db.execute("SELECT path, sha256, size, mtime_ns FROM files")
+            row[0]: (row[1], row[2], row[3], row[4])
+            for row in db.execute("SELECT path, sha256, size, mtime_ns, ctime_ns FROM files")
         }
         candidates = self.candidate_files()
         present = set(candidates)
@@ -307,10 +308,18 @@ class DevIndex:
                 unindexable.append(path)
                 continue
             previous = known.get(path)
-            if previous and previous[1] == stat.st_size and previous[2] == stat.st_mtime_ns and path not in force:
+            # ctime is part of the signature: chmod/chown change it without
+            # touching size or mtime, and may make the file unreadable.
+            if (
+                previous
+                and previous[1] == stat.st_size
+                and previous[2] == stat.st_mtime_ns
+                and previous[3] == stat.st_ctime_ns
+                and path not in force
+            ):
                 continue
             if stat.st_size > MAX_INDEXED_FILE_BYTES:
-                self._mark_unindexable(db, path, "skipped_too_large", "file exceeds index size cap", stat.st_size, stat.st_mtime_ns)
+                self._mark_unindexable(db, path, "skipped_too_large", "file exceeds index size cap", stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
                 skipped.append(path)
                 continue
             try:
@@ -322,20 +331,23 @@ class DevIndex:
             sha = hashlib.sha256(raw).hexdigest()
             rehashed += 1
             if previous and previous[0] == sha:
-                db.execute("UPDATE files SET size=?, mtime_ns=? WHERE path=?", (stat.st_size, stat.st_mtime_ns, path))
+                db.execute(
+                    "UPDATE files SET size=?, mtime_ns=?, ctime_ns=? WHERE path=?",
+                    (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, path),
+                )
                 continue
             try:
                 source = raw.decode("utf-8")
             except UnicodeDecodeError:
                 self._delete_file(db, path)
-                self._store_file(db, path, sha, stat.st_size, stat.st_mtime_ns, "decode_error", "not UTF-8")
+                self._store_file(db, path, sha, stat.st_size, stat.st_mtime_ns, "decode_error", "not UTF-8", stat.st_ctime_ns)
                 continue
-            to_extract.append((path, source, sha, stat.st_size, stat.st_mtime_ns))
+            to_extract.append((path, source, sha, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
 
         results = self._extract_many([(item[0], item[1]) for item in to_extract])
-        for (path, _source, sha, size, mtime), extract in zip(to_extract, results):
+        for (path, _source, sha, size, mtime, ctime), extract in zip(to_extract, results):
             self._delete_file(db, path)
-            self._store_file(db, path, sha, size, mtime, extract.status, extract.error)
+            self._store_file(db, path, sha, size, mtime, extract.status, extract.error, ctime)
             self._store_extract(db, path, extract)
 
         domain_rebuilt = False
@@ -373,14 +385,14 @@ class DevIndex:
             # Spawning can fail in constrained sandboxes; correctness first.
             return [extract_source(path, source) for path, source in items]
 
-    def _mark_unindexable(self, db, path, status, error, size=-1, mtime=-1) -> None:
+    def _mark_unindexable(self, db, path, status, error, size=-1, mtime=-1, ctime=-1) -> None:
         """Drop *path*'s symbols/edges and record why it is not indexed.
 
         size/mtime of -1 never match a real stat, so the file is retried (and
         recovers) on the next refresh once it is readable again.
         """
         self._delete_file(db, path)
-        self._store_file(db, path, "", size, mtime, status, error)
+        self._store_file(db, path, "", size, mtime, status, error, ctime)
 
     @staticmethod
     def _delete_file(db: sqlite3.Connection, path: str) -> None:
@@ -389,12 +401,12 @@ class DevIndex:
         db.execute("DELETE FROM files WHERE path=?", (path,))
 
     @staticmethod
-    def _store_file(db, path, sha, size, mtime, status, error) -> None:
+    def _store_file(db, path, sha, size, mtime, status, error, ctime=-1) -> None:
         from .extract import module_name_for
 
         db.execute(
-            "INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?,?,?)",
-            (path, sha, size, mtime, module_name_for(path), status, error, int(path.startswith("tests/")), time.time()),
+            "INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (path, sha, size, mtime, ctime, module_name_for(path), status, error, int(path.startswith("tests/")), time.time()),
         )
 
     @staticmethod
