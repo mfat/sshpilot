@@ -7,6 +7,7 @@ SDK. Examples::
     python -m sshpilot.mcp.dev.cli get-context sshpilot.daemon.dispatch.RequestDispatcher._handle_open_session
     python -m sshpilot.mcp.dev.cli inspect-impact --base HEAD
     python -m sshpilot.mcp.dev.cli diagnose-bug --symptoms "..." --traceback-file trace.txt
+    python -m sshpilot.mcp.dev.cli plan-feature "rename a port forward" --subsystem daemon
     python -m sshpilot.mcp.dev.cli verify-change --base HEAD --mode focused
 
 Exit status: 0 on success, 2 for invalid input, 1 when ``verify-change``
@@ -66,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--base", help="use paths changed since this revision as evidence")
     diagnose.add_argument("--max-items", type=int, default=8)
 
+    plan = sub.add_parser("plan-feature", help="existing patterns and obligations for a feature")
+    plan.add_argument("request")
+    plan.add_argument("--subsystem", choices=("daemon", "api", "core", "gtk", "frontend", "cli", "mcp", "plugins"))
+    plan.add_argument("--symbol")
+
     verify = sub.add_parser("verify-change", help="static checks plus optional focused tests")
     verify.add_argument("--base", default="HEAD")
     verify.add_argument("--mode", choices=("static", "focused"), default="static")
@@ -100,6 +106,8 @@ def run(argv: Optional[List[str]] = None) -> int:
                 max_items=args.max_items,
                 budget=args.budget,
             )
+        elif args.command == "plan-feature":
+            result = service.plan_feature(args.request, subsystem=args.subsystem, symbol=args.symbol, budget=args.budget)
         elif args.command == "verify-change":
             result = service.verify_change(
                 base=args.base,

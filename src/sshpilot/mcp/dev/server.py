@@ -118,6 +118,24 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         )
 
     @server.tool()
+    def plan_feature(
+        request: str,
+        subsystem: Optional[str] = None,
+        symbol: Optional[str] = None,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Advisory plan for a feature: existing symbols and API methods whose
+        names match the request (with paths and matched words), the layers
+        they live in, whether the daemon/API is involved, and SSH Pilot's
+        layer obligations — each tied to a path in this checkout.
+
+        ``subsystem`` (daemon/api/core/gtk/frontend/cli/mcp/plugins) narrows
+        the pattern search; ``symbol`` anchors the plan on one symbol. Never
+        proposes code; unmatched requests are reported as uncertain.
+        """
+        return _engine_call(intelligence.plan_feature, request, subsystem=subsystem, symbol=symbol, budget=budget)
+
+    @server.tool()
     def verify_change(
         base: str = "HEAD",
         mode: str = "static",

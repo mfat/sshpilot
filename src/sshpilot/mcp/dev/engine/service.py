@@ -97,6 +97,18 @@ class DevIntelligence:
                 budget=budget,
             )
 
+    def plan_feature(
+        self,
+        request: str,
+        subsystem: Optional[str] = None,
+        symbol: Optional[str] = None,
+        budget: Optional[int] = None,
+    ) -> dict:
+        from .planning import plan_feature
+
+        with self._lock:
+            return plan_feature(self._graph(), self.freshness, request, subsystem=subsystem, symbol=symbol, budget=budget)
+
     def verify_change(
         self,
         base: str = "HEAD",

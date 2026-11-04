@@ -73,6 +73,7 @@ EXPECTED_TOOLS = frozenset(
         "index_status",
         "diagnose_bug",
         "verify_change",
+        "plan_feature",
     }
 )
 
