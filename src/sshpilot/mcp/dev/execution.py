@@ -21,6 +21,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
+from pathlib import Path
 from typing import List, Optional
 
 from .._scope import RepoScope
@@ -73,7 +75,7 @@ def _cap(text: str, max_bytes: int = MAX_OUTPUT_BYTES) -> str:
     if len(text.encode("utf-8", errors="replace")) <= max_bytes:
         return text
     return (
-        text[:MAX_OUTPUT_BYTES]
+        text[:max_bytes]
         + "\n...[output truncated by sshpilot-mcp-dev]..."
     )
 
@@ -98,7 +100,18 @@ def _subprocess_env() -> dict[str, str]:
     return env
 
 
-def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
+def _run(
+    argv: List[str],
+    timeout: float = EXECUTION_TIMEOUT_SECONDS,
+    cwd: Optional[Path] = None,
+) -> dict:
+    """Run fixed *argv* with captured, capped output.
+
+    ``cwd`` must be the repository root for every repository-relative argv
+    (pytest targets are relative); callers pass ``scope.root`` so results do
+    not depend on the MCP client's working directory.
+    """
+    started = time.monotonic()
     try:
         proc = subprocess.run(
             argv,
@@ -106,6 +119,7 @@ def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
             text=True,
             timeout=timeout,
             env=_subprocess_env(),
+            cwd=str(cwd) if cwd is not None else None,
         )
     except subprocess.TimeoutExpired as error:
         return {
@@ -114,6 +128,7 @@ def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
             "stdout": _cap(_output_text(error.stdout)),
             "stderr": _cap(_output_text(error.stderr)),
             "timed_out": True,
+            "duration_seconds": round(time.monotonic() - started, 3),
         }
 
     return {
@@ -122,6 +137,7 @@ def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
         "stdout": _cap(_output_text(proc.stdout)),
         "stderr": _cap(_output_text(proc.stderr)),
         "timed_out": False,
+        "duration_seconds": round(time.monotonic() - started, 3),
     }
 
 
@@ -147,7 +163,7 @@ def run_tests(scope: RepoScope, suite: str, path: Optional[str] = None) -> dict:
         target = path
     if not scope.is_within(scope.root / target):
         raise ExecutionError("test suite resolves outside the repository")
-    result = _run([_python(), "-m", "pytest", "-q", target])
+    result = _run([_python(), "-m", "pytest", "-q", target], cwd=scope.root)
     result["command"] = f"python -m pytest -q {target}"
     result["suite"] = suite
     return result
@@ -158,7 +174,7 @@ def check_api_artifacts(scope: RepoScope) -> dict:
     script = scope.resolve("scripts/generate_api_artifacts.py")
     if not script.is_file():
         raise ExecutionError("scripts/generate_api_artifacts.py not found")
-    result = _run([_python(), str(script), "--check"])
+    result = _run([_python(), str(script), "--check"], cwd=scope.root)
     result["command"] = "python scripts/generate_api_artifacts.py --check"
     return result
 
@@ -176,7 +192,7 @@ def run_lint(scope: RepoScope, path: Optional[str] = None) -> dict:
         if not (resolved.is_dir() or resolved.is_file()):
             raise ExecutionError(f"lint target not found: {path}")
         targets = [str(resolved)]
-    result = _run([_python(), "-m", "ruff", "check", *targets])
+    result = _run([_python(), "-m", "ruff", "check", *targets], cwd=scope.root)
     result["command"] = "python -m ruff check <targets>"
     return result
 

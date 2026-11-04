@@ -102,3 +102,27 @@ def test_run_reports_timeout_explicitly():
     assert result["returncode"] is None
     assert result["success"] is False
     assert result["timed_out"] is True
+
+
+def test_run_tests_is_independent_of_caller_cwd(repo, tmp_path, monkeypatch):
+    """pytest targets are repository-relative, so the subprocess must run in
+    the repository root even when the MCP client started elsewhere."""
+    monkeypatch.chdir(tmp_path)
+    result = execution.run_tests(repo, "mcp", path="tests/mcp/test_repo_scope.py")
+    assert result["success"] is True, result["stdout"][-500:] + result["stderr"][-500:]
+    assert result["returncode"] == 0
+    assert result["duration_seconds"] >= 0
+
+
+def test_run_passes_cwd_to_subprocess(tmp_path):
+    result = execution._run(
+        [sys.executable, "-c", "import os; print(os.getcwd())"], cwd=tmp_path
+    )
+    assert result["success"] is True
+    assert result["stdout"].strip() == str(tmp_path)
+
+
+def test_cap_honours_requested_limit():
+    capped = execution._cap("x" * 100, max_bytes=10)
+    assert capped.startswith("x" * 10)
+    assert not capped.startswith("x" * 11)
