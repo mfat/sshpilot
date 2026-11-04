@@ -636,7 +636,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
 class SecretResponseResult:
     """A deferred secret delivered outside the JSON response envelope."""
 
-    secret: Optional[bytearray]
+    secret: Optional[bytearray] = field(repr=False)
 
 
 @dataclass(frozen=True)

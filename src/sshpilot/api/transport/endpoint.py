@@ -23,7 +23,7 @@ import secrets
 import socket
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -44,7 +44,7 @@ class EndpointUnavailableError(ConnectionRefusedError):
 @dataclass(frozen=True)
 class TcpEndpoint:
     port: int
-    token: str
+    token: str = field(repr=False)
     pid: Optional[int] = None
 
 

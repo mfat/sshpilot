@@ -103,7 +103,7 @@ class Credential:
     type: str
     host: Optional[str] = None
     username: Optional[str] = None
-    secret: Optional[str] = None
+    secret: Optional[str] = field(default=None, repr=False)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

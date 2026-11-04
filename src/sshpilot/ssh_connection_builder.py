@@ -13,7 +13,7 @@ import os
 import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .ssh_config_document import split_config_lines
 from .api.models.common import validate_ssh_hostname
@@ -193,7 +193,7 @@ class SSHConnectionCommand:
     command: List[str]  # The SSH command to execute
     env: Dict[str, str]  # Environment variables
     use_sshpass: bool = False  # Whether to use sshpass
-    password: Optional[str] = None  # Password for sshpass (if needed)
+    password: Optional[str] = field(default=None, repr=False)  # Password for sshpass (if needed)
     use_askpass: bool = False  # Whether to use SSH_ASKPASS
 
 
@@ -212,7 +212,7 @@ class NativeAuth:
     env: Dict[str, str]            # Environment to spawn the command with
     extra_opts: List[str]          # Extra command options to pass to ssh/scp
     use_sshpass: bool = False      # Deprecated: always False (askpass replaced sshpass)
-    password: Optional[str] = None # Stored password (askpass context / UI messaging)
+    password: Optional[str] = field(default=None, repr=False) # Stored password (askpass context / UI messaging)
     use_askpass: bool = False      # SSH_ASKPASS is wired up
     password_mode: bool = False    # Password auth method selected (auth_method == 1)
 

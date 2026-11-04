@@ -173,7 +173,7 @@ from typing import Tuple  # noqa: E402
 class InteractionResponse:
     outcome: InteractionOutcome
     response_type: Optional[ResponseType] = None
-    secret: Optional[str] = None  # never logged by core
+    secret: Optional[str] = field(default=None, repr=False)  # never logged by core
     remember: bool = False
     username: Optional[str] = None
     message: str = ""

@@ -16,7 +16,7 @@ import sys
 import tempfile
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
@@ -104,7 +104,7 @@ class InteractionResult:
 
     decision: HostKeyDecision | SecretDecision
     remember_policy: RememberPolicy
-    secret: Optional[bytearray] = None
+    secret: Optional[bytearray] = field(default=None, repr=False)
 
     def clear(self) -> None:
         if self.secret is not None:
@@ -127,7 +127,7 @@ class _InteractionRecord:
 class _PendingRemember:
     interaction_type: InteractionType
     key: str
-    secret: bytearray
+    secret: bytearray = field(repr=False)
     # Set once this credential's loss has been reported, so the teardown
     # warning does not repeat what was already logged when it was queued.
     loss_reported: bool = False
@@ -141,7 +141,7 @@ class _PendingRemember:
 
 @dataclass
 class _AskpassContext:
-    token: str
+    token: str = field(repr=False)
     session_id: SessionId
     connection_id: ConnectionId
     hostname: str
@@ -157,7 +157,7 @@ class _AskpassContext:
     allow_stored_secrets: bool = True
     confirm_passphrase: bool = False
     interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
-    confirmation_secret: Optional[bytearray] = None
+    confirmation_secret: Optional[bytearray] = field(default=None, repr=False)
     cancelled: bool = False
     closed: bool = False
     # True once ``mark_authenticated`` has run for this session. Credentials
