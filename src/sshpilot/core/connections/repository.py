@@ -186,7 +186,7 @@ CONNECTION_STORE_SECTION_VERSION = 1
 _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "serial": (
         "device", "baud", "flow", "databits", "parity", "stopbits",
-        "send_newline", "recv_add_cr", "local_echo", "logfile",
+        "send_newline", "send_backspace", "recv_add_cr", "local_echo", "logfile",
     ),
     "docker": (
         "container", "command", "runtime", "docker_context", "docker_host",

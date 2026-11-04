@@ -33,6 +33,9 @@ _BAUDS = ("1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200",
 _BY_ID = "/dev/serial/by-id"
 # picocom --omap: what the Enter key's CR becomes on the wire.
 _PICOCOM_SEND = {"lf": "crlf", "crlf": "crcrlf"}
+# picocom --omap: what the Backspace key's DEL (0x7F, which the terminal
+# sends) becomes on the wire. Some switches and routers only erase on BS.
+_PICOCOM_BACKSPACE = {"bs": "delbs"}
 # picocom -f flag values keyed by our choice value
 _PICOCOM_FLOW = {"none": "n", "hard": "h", "soft": "x"}
 _PICOCOM_PARITY = {"none": "n", "even": "e", "odd": "o"}
@@ -168,12 +171,12 @@ def _plink_spawn(data, device: str, baud: str, flow: str, terminal_options: bool
             "connections on Windows.",
         )
     if terminal_options:
-        # plink -serial has no line-ending maps, local echo or logging; refuse
+        # plink -serial has no character maps, local echo or logging; refuse
         # rather than quietly behave differently, as for 'screen'.
         raise BuiltinProtocolError(
             PluginSessionFailureCode.SERIAL_PLINK_TERMINAL_OPTIONS_UNSUPPORTED,
-            "plink cannot change line endings, echo locally or log. Turn those "
-            "options off to use this connection.",
+            "plink cannot change line endings or the Backspace key, echo locally "
+            "or log. Turn those options off to use this connection.",
         )
     settings = ",".join([
         baud,
@@ -218,6 +221,9 @@ class SerialProtocolBackend(ProtocolBackend):
                       default="cr", group="terminal",
                       choices=[("cr", _("CR (default)")), ("lf", _("LF")),
                                ("crlf", _("CR LF"))]),
+            FieldSpec(key="send_backspace", label=_("Backspace key sends"), kind="choice",
+                      default="del", group="terminal",
+                      choices=[("del", _("DEL (default)")), ("bs", _("BS (Ctrl+H)"))]),
             FieldSpec(key="recv_add_cr", label=_("Start received lines at the left edge"),
                       kind="switch", default=False, group="terminal"),
             FieldSpec(key="local_echo", label=_("Local echo"), kind="switch",
@@ -258,8 +264,10 @@ class SerialProtocolBackend(ProtocolBackend):
         baud = str(data.get("baud") or "115200").strip()
         flow = str(data.get("flow") or "none")
         send_newline = str(data.get("send_newline") or "cr")
+        send_backspace = str(data.get("send_backspace") or "del")
         logfile = str(data.get("logfile") or "").strip()
-        terminal_options = (send_newline != "cr" or bool(data.get("recv_add_cr"))
+        terminal_options = (send_newline != "cr" or send_backspace != "del"
+                            or bool(data.get("recv_add_cr"))
                             or bool(data.get("local_echo")) or bool(logfile))
 
         if _windows():
@@ -289,8 +297,10 @@ class SerialProtocolBackend(ProtocolBackend):
             stopbits = str(data.get("stopbits") or "1")
             if stopbits != "1":
                 argv += ["--stopbits", stopbits]
-            if send_newline in _PICOCOM_SEND:
-                argv += ["--omap", _PICOCOM_SEND[send_newline]]
+            omap = [m for m in (_PICOCOM_SEND.get(send_newline),
+                                _PICOCOM_BACKSPACE.get(send_backspace)) if m]
+            if omap:
+                argv += ["--omap", ",".join(omap)]
             if data.get("recv_add_cr"):
                 argv += ["--imap", "lfcrlf"]
             if data.get("local_echo"):
@@ -302,13 +312,14 @@ class SerialProtocolBackend(ProtocolBackend):
 
         screen = resolve_host_binary("screen")
         if screen:
-            # screen has no line-ending maps or local echo; refused with the
+            # screen has no character maps or local echo; refused with the
             # line settings below rather than quietly behaving differently.
             if terminal_options:
                 raise BuiltinProtocolError(
                     PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED,
-                    "Only 'screen' is available, which cannot change line endings, "
-                    "echo locally or log. Install 'picocom' to use this connection.",
+                    "Only 'screen' is available, which cannot change line endings "
+                    "or the Backspace key, echo locally or log. Install 'picocom' "
+                    "to use this connection.",
                     parameters={
                         "fallback_program": "screen",
                         "preferred_program": "picocom",

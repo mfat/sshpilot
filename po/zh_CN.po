@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-04 12:51+0330\n"
+"POT-Creation-Date: 2026-11-04 13:54+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -145,8 +145,8 @@ msgstr "打开连接？"
 #: src/sshpilot/text_editor.py:1637 src/sshpilot/text_editor.py:1771
 #: src/sshpilot/window.py:1538 src/sshpilot/window.py:2129
 #: src/sshpilot/window.py:2143 src/sshpilot/window.py:4033
-#: src/sshpilot/window.py:6161 src/sshpilot/window.py:6392
-#: src/sshpilot/window.py:7876 src/sshpilot/window.py:8024
+#: src/sshpilot/window.py:6172 src/sshpilot/window.py:6403
+#: src/sshpilot/window.py:7887 src/sshpilot/window.py:8035
 #: src/sshpilot/window_dialogs.py:602 src/sshpilot/window_dialogs.py:1064
 #: src/sshpilot/window_dialogs.py:2106 src/sshpilot/window_dialogs.py:2228
 #: src/sshpilot/window_dialogs.py:2411 src/sshpilot/window_dialogs.py:2495
@@ -190,8 +190,8 @@ msgstr "分屏视图 — {name}"
 #: src/sshpilot/connection_dialog.py:6030 src/sshpilot/file_manager/pane.py:57
 #: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1162
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1832
-#: src/sshpilot/window.py:1637 src/sshpilot/window.py:6565
-#: src/sshpilot/window.py:8373 src/sshpilot/window.py:8397
+#: src/sshpilot/window.py:1637 src/sshpilot/window.py:6576
+#: src/sshpilot/window.py:8384 src/sshpilot/window.py:8408
 #: src/sshpilot/window_broadcast.py:160 src/sshpilot/window_dialogs.py:3341
 #: src/sshpilot/window_dialogs.py:3367 src/sshpilot/window_dialogs.py:3412
 #: src/sshpilot/window_dialogs.py:3447 src/sshpilot/window_dialogs.py:3483
@@ -200,7 +200,7 @@ msgstr "分屏视图 — {name}"
 msgid "Error"
 msgstr "错误"
 
-#: src/sshpilot/actions.py:520 src/sshpilot/window.py:6566
+#: src/sshpilot/actions.py:520 src/sshpilot/window.py:6577
 #, python-brace-format
 msgid ""
 "Could not open the Copy Key window.\n"
@@ -228,10 +228,10 @@ msgstr ""
 #: src/sshpilot/window.py:1539 src/sshpilot/window.py:1613
 #: src/sshpilot/window.py:1625 src/sshpilot/window.py:1640
 #: src/sshpilot/window.py:1655 src/sshpilot/window.py:1666
-#: src/sshpilot/window.py:6262 src/sshpilot/window.py:6309
-#: src/sshpilot/window.py:6329 src/sshpilot/window.py:6534
-#: src/sshpilot/window.py:6567 src/sshpilot/window.py:8566
-#: src/sshpilot/window.py:8627 src/sshpilot/window_broadcast.py:144
+#: src/sshpilot/window.py:6273 src/sshpilot/window.py:6320
+#: src/sshpilot/window.py:6340 src/sshpilot/window.py:6545
+#: src/sshpilot/window.py:6578 src/sshpilot/window.py:8577
+#: src/sshpilot/window.py:8638 src/sshpilot/window_broadcast.py:144
 #: src/sshpilot/window_broadcast.py:163 src/sshpilot/window_dialogs.py:586
 #: src/sshpilot/window_dialogs.py:995 src/sshpilot/window_dialogs.py:3149
 #: src/sshpilot/window_dialogs.py:3752
@@ -251,7 +251,7 @@ msgid_plural "Wake-on-LAN sent to {n} hosts"
 msgstr[0] "已向 {n} 台主机发送网络唤醒 (Wake-on-LAN)"
 
 #: src/sshpilot/actions.py:660 src/sshpilot/actions.py:811
-#: src/sshpilot/window.py:8316 src/sshpilot/window.py:8387
+#: src/sshpilot/window.py:8327 src/sshpilot/window.py:8398
 #: src/sshpilot/window_dialogs.py:3346 src/sshpilot/window_dialogs.py:3417
 #: src/sshpilot/window_dialogs.py:3535 src/sshpilot/window_dialogs.py:3587
 msgid "Service unavailable"
@@ -508,7 +508,7 @@ msgstr "需要认证"
 msgid "Response"
 msgstr "响应"
 
-#: src/sshpilot/askpass_utils.py:840 src/sshpilot/window.py:7833
+#: src/sshpilot/askpass_utils.py:840 src/sshpilot/window.py:7844
 msgid "Security Key"
 msgstr "安全密钥"
 
@@ -519,7 +519,7 @@ msgstr "安全密钥"
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:449
 #: src/sshpilot/preferences.py:5295 src/sshpilot/sshcopyid_window.py:678
 #: src/sshpilot/terminal.py:1199 src/sshpilot/window.py:3242
-#: src/sshpilot/window.py:7837 src/sshpilot/window_tabs.py:328
+#: src/sshpilot/window.py:7848 src/sshpilot/window_tabs.py:328
 #: src/sshpilot/window_tabs.py:1190 src/sshpilot/window_tabs.py:1366
 #: src/sshpilot/window_tabs.py:1416
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:27
@@ -527,17 +527,17 @@ msgstr "安全密钥"
 msgid "Close"
 msgstr "关闭"
 
-#: src/sshpilot/askpass_utils.py:870 src/sshpilot/window.py:7835
+#: src/sshpilot/askpass_utils.py:870 src/sshpilot/window.py:7846
 msgid "Touch your security key when it blinks."
 msgstr "在安全密钥闪烁时触摸它。"
 
 #: src/sshpilot/askpass_utils.py:917 src/sshpilot/connection_dialog.py:3588
 #: src/sshpilot/gtk/login_profile_messages.py:59
-#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/window.py:7872
+#: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/window.py:7883
 msgid "Confirm"
 msgstr "确认"
 
-#: src/sshpilot/askpass_utils.py:920 src/sshpilot/window.py:7877
+#: src/sshpilot/askpass_utils.py:920 src/sshpilot/window.py:7888
 msgid "Allow"
 msgstr "允许"
 
@@ -1993,8 +1993,8 @@ msgstr "IdentityAgent、PKCS#11 和 FIDO 安全密钥的可选来源。"
 #: src/sshpilot/file_manager/permissions.py:76
 #: src/sshpilot/login_profile_dialogs.py:659
 #: src/sshpilot/machine_info_dialog.py:2295
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:206
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:213
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:209
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:216
 #: src/sshpilot/preferences.py:3125 src/sshpilot/shortcut_editor.py:442
 #: src/sshpilot/shortcut_editor.py:456
 msgid "None"
@@ -3095,7 +3095,7 @@ msgid "{n} running session"
 msgid_plural "{n} running sessions"
 msgstr[0] "{n} 个正在运行的会话"
 
-#: src/sshpilot/daemon_quit_policy.py:623 src/sshpilot/window.py:8022
+#: src/sshpilot/daemon_quit_policy.py:623 src/sshpilot/window.py:8033
 msgid "Quit SSH Pilot?"
 msgstr "退出 SSH Pilot？"
 
@@ -4777,8 +4777,8 @@ msgstr "请求的主机信息探测不存在。"
 #: src/sshpilot/gtk/host_info_failure_messages.py:32
 #: src/sshpilot/gtk/identity_failure_messages.py:16
 #: src/sshpilot/gtk/scp_failure_messages.py:19
-#: src/sshpilot/gtk/transfer_error_messages.py:25 src/sshpilot/window.py:8510
-#: src/sshpilot/window.py:8535
+#: src/sshpilot/gtk/transfer_error_messages.py:25 src/sshpilot/window.py:8521
+#: src/sshpilot/window.py:8546
 msgid "The selected connection no longer exists in the daemon."
 msgstr "所选连接在守护进程中已不存在。"
 
@@ -5044,14 +5044,14 @@ msgstr ""
 "位。请安装“{preferred_program}”以使用此连接。"
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:57
-#, fuzzy, python-brace-format
+#, python-brace-format
 msgid ""
-"Only '{fallback_program}' is available, which cannot change line endings, "
-"echo locally or log to a file. Install '{preferred_program}' to use this "
-"connection."
+"Only '{fallback_program}' is available, which cannot change line endings or "
+"the Backspace key, echo locally or log to a file. Install "
+"'{preferred_program}' to use this connection."
 msgstr ""
-"仅“{fallback_program}”可用，它无法设置 {databits} 位数据位。请安"
-"装“{preferred_program}”以使用此连接。"
+"只有“{fallback_program}”可用，它无法更改行尾或退格键、本地回显或记录到文件。"
+"请安装“{preferred_program}”以使用此连接。"
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:62
 #, python-brace-format
@@ -5084,14 +5084,13 @@ msgid ""
 msgstr "未安装“{program}”程序。请安装它以使用 Kubernetes 连接。"
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:78
-#, fuzzy
 msgid ""
 "On Windows serial connections use PuTTY's 'plink', which cannot change line "
-"endings, echo locally or log to a file. Turn those options off to use this "
-"connection."
+"endings or the Backspace key, echo locally or log to a file. Turn those "
+"options off to use this connection."
 msgstr ""
-"仅“{fallback_program}”可用，它无法设置 {databits} 位数据位。请安"
-"装“{preferred_program}”以使用此连接。"
+"在 Windows 上串行连接使用 PuTTY 的“plink”，它无法更改行尾或退格键、本地回显或"
+"记录到文件。请关闭这些选项以使用此连接。"
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:83
 #, fuzzy, python-brace-format
@@ -6202,7 +6201,7 @@ msgstr "主机名"
 #: src/sshpilot/host_info_payload.py:238
 #: src/sshpilot/machine_info_dialog.py:1604
 #: src/sshpilot/machine_info_dialog.py:2021
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:200
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:203
 msgid "Device"
 msgstr "设备"
 
@@ -8143,7 +8142,7 @@ msgstr "启动 / 重新部署 (compose up -d)"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_compose.py:98
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:350
-#: src/sshpilot/window.py:5037
+#: src/sshpilot/window.py:5048
 msgid "Start"
 msgstr "开始"
 
@@ -9162,82 +9161,91 @@ msgstr "标签名称不能包含逗号。"
 msgid "The shared folder path cannot contain a comma."
 msgstr "标签名称不能包含逗号。"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:203
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:206
 msgid "Baud rate"
 msgstr "波特率"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:205
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:208
 msgid "Flow control"
 msgstr "流控"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:207
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:210
 msgid "Hardware (RTS/CTS)"
 msgstr "硬件 (RTS/CTS)"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:208
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:211
 msgid "Software (XON/XOFF)"
 msgstr "软件 (XON/XOFF)"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:209
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:212
 msgid "Data bits"
 msgstr "数据位"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:212
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:215
 msgid "Parity"
 msgstr "奇偶校验"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:213
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:216
 msgid "Even"
 msgstr "偶校验"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:214
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:217
 msgid "Odd"
 msgstr "奇校验"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:215
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:218
 msgid "Stop bits"
 msgstr "停止位"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:217
-msgid "Enter key sends"
-msgstr ""
-
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:219
-#, fuzzy
-msgid "CR (default)"
-msgstr "自适应（默认）"
-
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:219
-msgid "LF"
-msgstr ""
-
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:220
-msgid "CR LF"
-msgstr ""
+msgid "Enter key sends"
+msgstr "回车键发送"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:221
-msgid "Start received lines at the left edge"
-msgstr ""
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:222
+msgid "CR (default)"
+msgstr "CR（默认）"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:222
+msgid "LF"
+msgstr "LF"
 
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:223
-#, fuzzy
+msgid "CR LF"
+msgstr "CR LF"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:224
+msgid "Backspace key sends"
+msgstr "退格键发送"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:226
+msgid "DEL (default)"
+msgstr "DEL（默认）"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:226
+msgid "BS (Ctrl+H)"
+msgstr "BS (Ctrl+H)"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:227
+msgid "Start received lines at the left edge"
+msgstr "接收的行从左边缘开始"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:229
 msgid "Local echo"
-msgstr "本地端口"
+msgstr "本地回显"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:225
-#, fuzzy
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:231
 msgid "Log to file"
-msgstr "日志文件："
+msgstr "记录到文件"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:241
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:247
 msgid "A serial device is required."
 msgstr "串口设备为必填项。"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:245
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:251
 msgid "Baud rate must be a positive number."
 msgstr "波特率必须是正数。"
 
-#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:247
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:253
 msgid "Baud rate must be a number."
 msgstr "波特率必须是数字。"
 
@@ -12293,7 +12301,7 @@ msgid "Hide File Pane"
 msgstr "隐藏文件窗格"
 
 #: src/sshpilot/split_view.py:498 src/sshpilot/split_view.py:587
-#: src/sshpilot/window.py:4981 src/sshpilot/window.py:4984
+#: src/sshpilot/window.py:4992 src/sshpilot/window.py:4995
 msgid "Exit Fullscreen"
 msgstr "退出全屏"
 
@@ -12386,8 +12394,8 @@ msgstr "生成新密钥"
 msgid "Select key:"
 msgstr "选择密钥："
 
-#: src/sshpilot/sshcopyid_window.py:223 src/sshpilot/window.py:6361
-#: src/sshpilot/window.py:6369 src/sshpilot/window.py:6372
+#: src/sshpilot/sshcopyid_window.py:223 src/sshpilot/window.py:6372
+#: src/sshpilot/window.py:6380 src/sshpilot/window.py:6383
 msgid "Key file name"
 msgstr "密钥文件名"
 
@@ -12399,7 +12407,7 @@ msgstr "密钥类型："
 msgid "ssh-ed25519 AAAA… comment"
 msgstr "ssh-ed25519 AAAA… 注释"
 
-#: src/sshpilot/sshcopyid_window.py:336 src/sshpilot/window.py:6385
+#: src/sshpilot/sshcopyid_window.py:336 src/sshpilot/window.py:6396
 msgid "Encrypt with passphrase"
 msgstr "使用口令加密"
 
@@ -12467,17 +12475,17 @@ msgstr "粘贴公钥"
 msgid "Could not copy the pasted key to the server."
 msgstr "无法连接到服务器。"
 
-#: src/sshpilot/sshcopyid_window.py:823 src/sshpilot/window.py:6419
+#: src/sshpilot/sshcopyid_window.py:823 src/sshpilot/window.py:6430
 msgid "Enter a key file name (e.g. id_ed25519)"
 msgstr "输入密钥文件名（例如 id_ed25519）"
 
-#: src/sshpilot/sshcopyid_window.py:825 src/sshpilot/window.py:6421
+#: src/sshpilot/sshcopyid_window.py:825 src/sshpilot/window.py:6432
 msgid "Key file name must not contain '/' or start with '.'"
 msgstr "密钥文件名不能包含 “/” 或以 “.” 开头"
 
 #: src/sshpilot/sshcopyid_window.py:832 src/sshpilot/sshcopyid_window.py:881
 #: src/sshpilot/sshcopyid_window.py:927 src/sshpilot/sshcopyid_window.py:974
-#: src/sshpilot/window.py:6488 src/sshpilot/window.py:6504
+#: src/sshpilot/window.py:6499 src/sshpilot/window.py:6515
 msgid "Key Generation Failed"
 msgstr "生成密钥失败"
 
@@ -12507,8 +12515,8 @@ msgstr "同名密钥已存在。"
 msgid "The key name is invalid."
 msgstr "密钥名称无效。"
 
-#: src/sshpilot/sshcopyid_window.py:973 src/sshpilot/window.py:6489
-#: src/sshpilot/window.py:6505
+#: src/sshpilot/sshcopyid_window.py:973 src/sshpilot/window.py:6500
+#: src/sshpilot/window.py:6516
 msgid "Could not generate the SSH key."
 msgstr "无法生成 SSH 密钥。"
 
@@ -13607,46 +13615,46 @@ msgstr "备份/恢复"
 msgid "About"
 msgstr "关于"
 
-#: src/sshpilot/window.py:4695
+#: src/sshpilot/window.py:4706
 msgid "Groups"
 msgstr "分组"
 
-#: src/sshpilot/window.py:4721
+#: src/sshpilot/window.py:4732
 msgid "Ungrouped"
 msgstr "取消分组"
 
-#: src/sshpilot/window.py:4983
+#: src/sshpilot/window.py:4994
 #, python-brace-format
 msgid "Exit Fullscreen ({accels})"
 msgstr "退出全屏 ({accels})"
 
-#: src/sshpilot/window.py:5289
+#: src/sshpilot/window.py:5300
 #, python-brace-format
 msgid ""
 "Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new "
 "tab"
 msgstr "已切换到连接列表 — ↑/↓ 导航，Enter 打开，{modifier}+Enter 新标签页"
 
-#: src/sshpilot/window.py:5366 src/sshpilot/window.py:5630
+#: src/sshpilot/window.py:5377 src/sshpilot/window.py:5641
 msgid "Search mode — Type to filter connections, Esc to clear and hide"
 msgstr "搜索模式 — 键入以筛选连接，Esc 清除并隐藏"
 
-#: src/sshpilot/window.py:5648
+#: src/sshpilot/window.py:5659
 #, python-brace-format
 msgid "Search hidden — {modifier}+F to search again"
 msgstr "搜索已隐藏 — 按 {modifier}+F 重新搜索"
 
-#: src/sshpilot/window.py:6134
+#: src/sshpilot/window.py:6145
 msgid "Could not open the connection"
 msgstr "无法打开连接"
 
-#: src/sshpilot/window.py:6135
+#: src/sshpilot/window.py:6146
 msgid ""
 "SSH Pilot could not prepare this destination. Check the address and try "
 "again."
 msgstr "SSH Pilot 无法准备此目标。请检查地址后重试。"
 
-#: src/sshpilot/window.py:6153
+#: src/sshpilot/window.py:6164
 #, python-brace-format
 msgid ""
 "\"{host}\" is part of a configuration block with [{count}] other host. How "
@@ -13657,59 +13665,59 @@ msgid_plural ""
 msgstr[0] ""
 "“{host}”是包含 [{count}] 个其他主机的配置块的一部分。您希望如何应用更改？"
 
-#: src/sshpilot/window.py:6160
+#: src/sshpilot/window.py:6171
 msgid "Warning"
 msgstr "警告"
 
-#: src/sshpilot/window.py:6162
+#: src/sshpilot/window.py:6173
 msgid "Manually Edit SSH Configuration"
 msgstr "手动编辑 SSH 配置"
 
-#: src/sshpilot/window.py:6163
+#: src/sshpilot/window.py:6174
 msgid "Edit as Separate Connection"
 msgstr "作为独立连接编辑"
 
-#: src/sshpilot/window.py:6211
+#: src/sshpilot/window.py:6222
 msgid ""
 "SSH config editing requires the background service. Start it and try again."
 msgstr "编辑 SSH 配置需要后台服务。请启动服务并重试。"
 
 #. the daemon resolves the active config file
-#: src/sshpilot/window.py:6220 src/sshpilot/window.py:6232
+#: src/sshpilot/window.py:6231 src/sshpilot/window.py:6243
 msgid "SSH Config"
 msgstr "SSH 配置"
 
 #. Window/taskbar title; the header title shows the daemon-resolved
 #. display name as the subtitle automatically.
-#: src/sshpilot/window.py:6230
+#: src/sshpilot/window.py:6241
 msgid "Edit SSH Config"
 msgstr "编辑 SSH 配置"
 
-#: src/sshpilot/window.py:6237
+#: src/sshpilot/window.py:6248
 msgid "Could not open the SSH config editor."
 msgstr "无法打开 SSH 配置编辑器。"
 
-#: src/sshpilot/window.py:6274 src/sshpilot/window.py:7166
+#: src/sshpilot/window.py:6285 src/sshpilot/window.py:7177
 msgid "Daemon unavailable"
 msgstr "守护进程不可用"
 
-#: src/sshpilot/window.py:6275
+#: src/sshpilot/window.py:6286
 msgid "Connect to the SSH Pilot daemon and retry this operation."
 msgstr "连接到 SSH Pilot 守护进程并重试此操作。"
 
-#: src/sshpilot/window.py:6285
+#: src/sshpilot/window.py:6296
 msgid "Operation mode change rejected"
 msgstr "运行模式更改被拒绝"
 
-#: src/sshpilot/window.py:6286
+#: src/sshpilot/window.py:6297
 msgid "SSH Pilot could not change the active SSH configuration scope."
 msgstr "SSH Pilot 无法更改活动 SSH 配置的作用范围。"
 
-#: src/sshpilot/window.py:6296
+#: src/sshpilot/window.py:6307
 msgid "Operation mode recovery required"
 msgstr "需要恢复运行模式"
 
-#: src/sshpilot/window.py:6298
+#: src/sshpilot/window.py:6309
 msgid ""
 "The daemon could not restore a consistent SSH configuration mode. Do not "
 "start new operations until the daemon is restarted or the reported state is "
@@ -13718,170 +13726,170 @@ msgstr ""
 "守护进程无法恢复一致的 SSH 配置模式。在重启守护进程或修复所报告的状态之前，请"
 "勿启动新操作。"
 
-#: src/sshpilot/window.py:6323
+#: src/sshpilot/window.py:6334
 msgid "Key Service Unavailable"
 msgstr "密钥服务不可用"
 
-#: src/sshpilot/window.py:6325
+#: src/sshpilot/window.py:6336
 msgid ""
 "SSH keys require the background service. Restart the service and try again."
 msgstr "SSH 密钥需要后台服务。请重启服务并重试。"
 
-#: src/sshpilot/window.py:6346
+#: src/sshpilot/window.py:6357
 msgid "Generate SSH Key"
 msgstr "生成 SSH 密钥"
 
-#: src/sshpilot/window.py:6350
+#: src/sshpilot/window.py:6361
 msgid "New SSH Key"
 msgstr "新建 SSH 密钥"
 
-#: src/sshpilot/window.py:6378
+#: src/sshpilot/window.py:6389
 msgid "Key type"
 msgstr "密钥类型"
 
-#: src/sshpilot/window.py:6393
+#: src/sshpilot/window.py:6404
 msgid "Generate"
 msgstr "生成"
 
-#: src/sshpilot/window.py:6434
+#: src/sshpilot/window.py:6445
 #, python-brace-format
 msgid "A key named '{name}' already exists. Try '{suggestion}' instead."
 msgstr "名为 “{name}” 的密钥已存在。请尝试使用 “{suggestion}”。"
 
-#: src/sshpilot/window.py:6531
+#: src/sshpilot/window.py:6542
 msgid "No Server Selected"
 msgstr "未选择服务器"
 
-#: src/sshpilot/window.py:6532
+#: src/sshpilot/window.py:6543
 msgid "Select a server first!"
 msgstr "请先选择一台服务器！"
 
-#: src/sshpilot/window.py:6927
+#: src/sshpilot/window.py:6938
 #, python-brace-format
 msgid "Hide Sidebar (F9, {modifier}+B)"
 msgstr "隐藏侧边栏 (F9, {modifier}+B)"
 
-#: src/sshpilot/window.py:6933
+#: src/sshpilot/window.py:6944
 #, python-brace-format
 msgid "Show Sidebar (F9, {modifier}+B)"
 msgstr "显示侧边栏 (F9, {modifier}+B)"
 
-#: src/sshpilot/window.py:6935
+#: src/sshpilot/window.py:6946
 msgid "Hover to peek at the sidebar"
 msgstr "悬停以预览侧边栏"
 
-#: src/sshpilot/window.py:7167
+#: src/sshpilot/window.py:7178
 msgid "Connect to the SSH Pilot daemon and retry the deletion."
 msgstr "连接到 SSH Pilot 守护进程并重试删除。"
 
-#: src/sshpilot/window.py:7201
+#: src/sshpilot/window.py:7212
 msgid "Failed to delete connection"
 msgstr "删除连接失败"
 
-#: src/sshpilot/window.py:7203
+#: src/sshpilot/window.py:7214
 msgid "The connection could not be deleted. No list changes were applied."
 msgstr "无法删除该连接。未对列表应用任何更改。"
 
-#: src/sshpilot/window.py:7830
+#: src/sshpilot/window.py:7841
 msgid "Touch your security key to continue."
 msgstr "触摸您的安全密钥以继续。"
 
-#: src/sshpilot/window.py:7874
+#: src/sshpilot/window.py:7885
 msgid "Allow this key operation?"
 msgstr "是否允许此密钥操作？"
 
-#: src/sshpilot/window.py:7997
+#: src/sshpilot/window.py:8008
 #, python-brace-format
 msgid "You have {count} open terminal tab."
 msgid_plural "You have {count} open terminal tabs."
 msgstr[0] "您有 {count} 个打开的终端标签页。"
 
-#: src/sshpilot/window.py:8002
+#: src/sshpilot/window.py:8013
 msgid "Closing the application will disconnect this connection."
 msgstr "关闭应用程序将断开此连接。"
 
-#: src/sshpilot/window.py:8004
+#: src/sshpilot/window.py:8015
 msgid "Closing the application will disconnect all connections."
 msgstr "关闭应用程序将断开所有连接。"
 
-#: src/sshpilot/window.py:8007
+#: src/sshpilot/window.py:8018
 #, python-brace-format
 msgid "You have {count} local terminal with an active job."
 msgid_plural "You have {count} local terminals with active jobs."
 msgstr[0] "您有 {count} 个带有活动任务的本地终端。"
 
-#: src/sshpilot/window.py:8012
+#: src/sshpilot/window.py:8023
 msgid "Closing the application will terminate the running process."
 msgstr "关闭应用程序将终止正在运行的进程。"
 
-#: src/sshpilot/window.py:8014
+#: src/sshpilot/window.py:8025
 msgid "Closing the application will terminate all running processes."
 msgstr "关闭应用程序将终止所有正在运行的进程。"
 
-#: src/sshpilot/window.py:8024
+#: src/sshpilot/window.py:8035
 msgid "Quit Anyway"
 msgstr "仍然退出"
 
-#: src/sshpilot/window.py:8193
+#: src/sshpilot/window.py:8204
 msgid "SSH command copied"
 msgstr "已复制 SSH 命令"
 
-#: src/sshpilot/window.py:8202 src/sshpilot/window.py:8208
+#: src/sshpilot/window.py:8213 src/sshpilot/window.py:8219
 msgid "SSH command unavailable"
 msgstr "SSH 命令不可用"
 
-#: src/sshpilot/window.py:8203
+#: src/sshpilot/window.py:8214
 msgid "This daemon cannot prepare the SSH command for this connection."
 msgstr "此守护进程无法为此连接准备 SSH 命令。"
 
-#: src/sshpilot/window.py:8209
+#: src/sshpilot/window.py:8220
 msgid "The SSH command for this connection could not be prepared."
 msgstr "无法为此连接准备 SSH 命令。"
 
-#: src/sshpilot/window.py:8317 src/sshpilot/window.py:8388
+#: src/sshpilot/window.py:8328 src/sshpilot/window.py:8399
 msgid "Connect to the SSH Pilot daemon before moving connections."
 msgstr "移动连接前请先连接到 SSH Pilot 守护进程。"
 
-#: src/sshpilot/window.py:8374 src/sshpilot/window.py:8398
+#: src/sshpilot/window.py:8385 src/sshpilot/window.py:8409
 #, python-brace-format
 msgid "Failed to move connection: {error}"
 msgstr "移动连接失败：{error}"
 
-#: src/sshpilot/window.py:8467 src/sshpilot/window.py:8504
-#: src/sshpilot/window.py:8524
+#: src/sshpilot/window.py:8478 src/sshpilot/window.py:8515
+#: src/sshpilot/window.py:8535
 msgid "External terminal unavailable"
 msgstr "外部终端不可用"
 
-#: src/sshpilot/window.py:8468 src/sshpilot/window.py:8505
+#: src/sshpilot/window.py:8479 src/sshpilot/window.py:8516
 msgid "This daemon cannot prepare an external SSH launch."
 msgstr "此守护进程无法准备外部 SSH 启动。"
 
-#: src/sshpilot/window.py:8509 src/sshpilot/window.py:8534
+#: src/sshpilot/window.py:8520 src/sshpilot/window.py:8545
 msgid "Connection unavailable"
 msgstr "连接不可用"
 
-#: src/sshpilot/window.py:8525
+#: src/sshpilot/window.py:8536
 msgid "The daemon could not prepare this SSH launch."
 msgstr "守护进程无法准备此 SSH 启动。"
 
-#: src/sshpilot/window.py:8537 src/sshpilot/window.py:8547
-#: src/sshpilot/window.py:9519
+#: src/sshpilot/window.py:8548 src/sshpilot/window.py:8558
+#: src/sshpilot/window.py:9530
 msgid "Effective configuration unavailable"
 msgstr "生效配置不可用"
 
-#: src/sshpilot/window.py:8538
+#: src/sshpilot/window.py:8549
 msgid "This daemon does not provide effective SSH configuration comparison."
 msgstr "此守护进程不提供生效 SSH 配置的对比。"
 
-#: src/sshpilot/window.py:8548
+#: src/sshpilot/window.py:8559
 msgid "SSH Pilot could not resolve or compare the effective SSH configuration."
 msgstr "SSH Pilot 无法解析或对比生效的 SSH 配置。"
 
-#: src/sshpilot/window.py:8558
+#: src/sshpilot/window.py:8569
 msgid "No Terminal Found"
 msgstr "未找到终端"
 
-#: src/sshpilot/window.py:8560
+#: src/sshpilot/window.py:8571
 #, fuzzy
 msgid ""
 "Could not find a suitable terminal application. Please install Windows "
@@ -13890,7 +13898,7 @@ msgstr ""
 "找不到合适的终端应用程序。请安装诸如 gnome-terminal、konsole 或 xterm 等终"
 "端。"
 
-#: src/sshpilot/window.py:8562
+#: src/sshpilot/window.py:8573
 msgid ""
 "Could not find a suitable terminal application. Please install a terminal "
 "like gnome-terminal, konsole, or xterm."
@@ -13898,68 +13906,68 @@ msgstr ""
 "找不到合适的终端应用程序。请安装诸如 gnome-terminal、konsole 或 xterm 等终"
 "端。"
 
-#: src/sshpilot/window.py:8582
+#: src/sshpilot/window.py:8593
 msgid "SSH Connection Failed"
 msgstr "SSH 连接失败"
 
-#: src/sshpilot/window.py:8583
+#: src/sshpilot/window.py:8594
 msgid "Could not establish SSH connection to the server. Please check:"
 msgstr "无法建立到服务器的 SSH 连接。请检查："
 
-#: src/sshpilot/window.py:8586
+#: src/sshpilot/window.py:8597
 msgid "• Server is running and accessible"
 msgstr "• 服务器正在运行且可访问"
 
-#: src/sshpilot/window.py:8587
+#: src/sshpilot/window.py:8598
 msgid "• SSH service is enabled on the server"
 msgstr "• 服务器上已启用 SSH 服务"
 
-#: src/sshpilot/window.py:8588
+#: src/sshpilot/window.py:8599
 msgid "• Firewall allows SSH connections"
 msgstr "• 防火墙允许 SSH 连接"
 
-#: src/sshpilot/window.py:8589
+#: src/sshpilot/window.py:8600
 msgid "• Your SSH keys or credentials are correct"
 msgstr "• 您的 SSH 密钥或凭据正确"
 
-#: src/sshpilot/window.py:8590
+#: src/sshpilot/window.py:8601
 msgid "• Network connectivity to the server"
 msgstr "• 到服务器的网络连通性"
 
-#: src/sshpilot/window.py:8593
+#: src/sshpilot/window.py:8604
 msgid "File Manager Error"
 msgstr "文件管理器错误"
 
-#: src/sshpilot/window.py:8594
+#: src/sshpilot/window.py:8605
 msgid "Failed to open file manager for remote server."
 msgstr "无法打开远程服务器的文件管理器。"
 
-#: src/sshpilot/window.py:8596
+#: src/sshpilot/window.py:8607
 msgid "• Try again in a moment"
 msgstr "• 请稍后重试"
 
-#: src/sshpilot/window.py:8597
+#: src/sshpilot/window.py:8608
 msgid "• Check if the server is accessible"
 msgstr "• 检查服务器是否可访问"
 
-#: src/sshpilot/window.py:8598
+#: src/sshpilot/window.py:8609
 msgid "• Ensure you have proper permissions"
 msgstr "• 确保您拥有适当的权限"
 
-#: src/sshpilot/window.py:8751 src/sshpilot/window.py:9233
-#: src/sshpilot/window.py:9243
+#: src/sshpilot/window.py:8762 src/sshpilot/window.py:9244
+#: src/sshpilot/window.py:9254
 msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr "已保存，但无法存储标签/局域网唤醒 (Wake-on-LAN) 设置。"
 
-#: src/sshpilot/window.py:8829 src/sshpilot/window.py:9487
+#: src/sshpilot/window.py:8840 src/sshpilot/window.py:9498
 msgid "Failed to save connection"
 msgstr "保存连接失败"
 
-#: src/sshpilot/window.py:9198
+#: src/sshpilot/window.py:9209
 msgid "Saved, but the login profile could not be applied."
 msgstr "无法替换远程文件。"
 
-#: src/sshpilot/window.py:9520
+#: src/sshpilot/window.py:9531
 msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."

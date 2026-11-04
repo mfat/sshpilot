@@ -123,6 +123,55 @@ def test_build_spawn_omits_default_line_params(monkeypatch):
     assert '--stopbits' not in spec.argv
 
 
+def _picocom_only(monkeypatch):
+    import sshpilot.plugins.builtin.serial_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which',
+                        lambda name: '/usr/bin/picocom' if name == 'picocom' else None)
+
+
+def test_backspace_field_sits_with_the_terminal_options():
+    by_key = {f.key: f for f in SerialProtocolBackend().connection_fields()}
+    field = by_key['send_backspace']
+    assert field.group == by_key['send_newline'].group == 'terminal'
+    assert field.default == 'del'
+    assert [value for value, _label in field.choices] == ['del', 'bs']
+
+
+def test_backspace_default_sends_del_unmapped(monkeypatch):
+    _picocom_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyUSB0', 'send_backspace': 'del'})
+    assert '--omap' not in SerialProtocolBackend().build_spawn(conn, _ctx()).argv
+
+
+def test_backspace_bs_maps_del_to_bs(monkeypatch):
+    _picocom_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyUSB0', 'send_backspace': 'bs'})
+    argv = SerialProtocolBackend().build_spawn(conn, _ctx()).argv
+    assert argv[argv.index('--omap') + 1] == 'delbs'
+
+
+def test_backspace_and_enter_maps_share_one_omap(monkeypatch):
+    """picocom keeps only the last --omap, so both maps go in one list."""
+    _picocom_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial', 'device': '/dev/ttyUSB0',
+                       'send_newline': 'crlf', 'send_backspace': 'bs'})
+    argv = SerialProtocolBackend().build_spawn(conn, _ctx()).argv
+    assert argv.count('--omap') == 1
+    assert argv[argv.index('--omap') + 1] == 'crcrlf,delbs'
+
+
+def test_screen_fallback_refuses_backspace_mapping(monkeypatch):
+    _screen_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'send_backspace': 'bs'})
+    with pytest.raises(BuiltinProtocolError) as raised:
+        SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert (raised.value.failure.code
+            is PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED)
+
+
 def _screen_only(monkeypatch):
     import sshpilot.plugins.builtin.serial_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which',
