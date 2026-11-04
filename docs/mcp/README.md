@@ -207,3 +207,5 @@ pytest -q -m integration tests/mcp
 Architectural decisions are in [decisions.md](decisions.md), current
 implementation status is in [status.md](status.md), and contributor rules are
 in [AGENTS.md](AGENTS.md).
+Proposed SSH Pilot–specific agent workflows (not implemented) are in
+[proposal-agent-workflows.md](proposal-agent-workflows.md).
