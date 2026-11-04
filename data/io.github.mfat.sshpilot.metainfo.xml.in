@@ -61,6 +61,47 @@
 
 
 
+    <release version="6.3.7" date="2026-11-04">
+      <description>
+        <p>Propose SSH Pilot-specific agent workflows for runtime MCP</p>
+        <p>Add a &#x27;Backspace key sends&#x27; option to serial connections (#1366)</p>
+        <p>Recover the sidebar when finishing deferred rows fails (#1363)</p>
+        <p>Keep secrets out of the printed form of credential records (#1362)</p>
+        <p>Ask for trusted X11 forwarding in Windows terminal sessions (#1365)</p>
+        <p>Make X11 forwarding work on Windows (#1365)</p>
+        <p>Wake sleeping hosts before connecting; run pre-connect steps for RDP tabs</p>
+        <p>Ship gtk4-frdp 0.2.0 everywhere, updated in one step</p>
+        <p>Move an RDP tab to its own window and back without reconnecting</p>
+        <p>Update the bundled gtk4-frdp to 86f975c</p>
+        <p>RDP tab when running from a checkout</p>
+        <p>Deb content check: accept the gtk4-frdp soname symlink</p>
+        <p>Bundle gtk4-frdp in the deb, rpm and Arch packages for RDP tabs</p>
+        <p>Fix three Windows-only test failures</p>
+        <p>Keep the RDP &quot;Open in&quot; choice in backups</p>
+        <p>Pin gtk4-frdp at the 0.1.0 release</p>
+        <p>Bundle gtk4-frdp 0.1.0 in the Windows installer for RDP tabs</p>
+        <p>Pin gtk4-frdp at 2f4d96d</p>
+        <p>Ship gtk4-frdp for RDP tabs in the packages</p>
+        <p>Open RDP connections in an embedded tab (gtk4-frdp)</p>
+        <p>Cover restoring a Bitwarden attachment backup through the daemon.</p>
+        <p>Store oversized Bitwarden backups as a note attachment.</p>
+        <p>Stop ssh-add retrying a rejected saved passphrase.</p>
+        <p>Offer remember options on the key passphrase prompt.</p>
+        <p>Deliver large pastes whole instead of failing the terminal.</p>
+        <p>Send held terminal input in frame-sized pieces</p>
+        <p>Keep the main window forward when a dialog closes on Windows</p>
+        <p>ControlMaster checks: retry transient failures, never fall through to a real connection</p>
+        <p>Fix quit blocked by &quot;multiplexed SSH connection could not be checked&quot; (#1361)</p>
+        <p>GSSAPI Flatpak fix</p>
+        <p>Automatic backups are now disabled for files edited through Manage Files, including “Edit as root</p>
+        <p>Fix lost macOS clicks and terminal input flood on wheel scroll</p>
+        <p>Retry user plugins that read settings during activate</p>
+        <p>Add a View menu toggle for the tab overview button.</p>
+        <p>Revert &quot;Show the tab bar new-tab button once a terminal is open.&quot;</p>
+        <p>Show the tab bar new-tab button once a terminal is open.</p>
+        <p>Update Arch PKGBUILD for v6.3.6</p>
+      </description>
+    </release>
     <release version="6.3.6" date="2026-10-19">
       <description>
         <p>New app icon on every platform</p>
