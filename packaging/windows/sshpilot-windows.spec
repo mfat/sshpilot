@@ -9,13 +9,15 @@
 #                     (--internal-rbw-pinentry). A windowed exe has no console
 #                     to hand OpenSSH's children, and no stdout for helpers.
 # Bundled beside them: the patched libvterm-0.dll, and Microsoft's conpty.dll
-# with its OpenConsole.exe (both from vendor/, see docs/running-on-windows.md).
+# with its OpenConsole.exe (both from vendor/, see docs/running-on-windows.md),
+# and gtk4-frdp for RDP connections in a tab (vendor/gtk, from fetch-gtk.py).
 
 import os
 import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks.gi import GiModuleInfo
 
 ROOT = Path(SPECPATH).resolve().parents[1]
 VENDOR = ROOT / "vendor"
@@ -53,7 +55,22 @@ try:
 except Exception:
     pass
 
+# gtk4-frdp: no PyInstaller hook knows the GtkFrdp namespace, so collect its
+# typelib and DLL here. The dependency scan brings FreeRDP, WinPR and OpenSSL
+# from vendor/gtk/bin (build.ps1 puts it on PATH).
+frdp = GiModuleInfo("GtkFrdp", "4.0")
+if not frdp.available:
+    raise SystemExit("missing GtkFrdp-4.0 typelib: run scripts/fetch-gtk.py")
+frdp_binaries, frdp_datas, frdp_hiddenimports = frdp.collect_typelib_data()
+binaries += frdp_binaries
+datas += frdp_datas
+datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "NOTICE",
+                       "run scripts/fetch-gtk.py"), "share/licenses/gtk4-frdp"))
+datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "COPYING",
+                       "run scripts/fetch-gtk.py"), "share/licenses/gtk4-frdp"))
+
 hiddenimports = collect_submodules("gi")
+hiddenimports += frdp_hiddenimports
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 hiddenimports += ["sshpilot.daemon.cli", "sshpilot.daemon.askpass_helper"]
 hiddenimports += collect_submodules("sshpilot")

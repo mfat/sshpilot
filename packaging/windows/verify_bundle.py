@@ -19,8 +19,16 @@ REQUIRED_FILES = [
     "_internal/libvterm-0.dll",
     "_internal/conpty.dll",
     "_internal/OpenConsole.exe",
+    # gtk4-frdp and what it loads, for RDP connections in a tab.
+    "_internal/gtk4-frdp-4.0-0.dll",
+    "_internal/freerdp3.dll",
+    "_internal/freerdp-client3.dll",
+    "_internal/winpr3.dll",
+    "_internal/libssl-3-x64.dll",
+    "_internal/libcrypto-3-x64.dll",
+    "_internal/share/licenses/gtk4-frdp/NOTICE",
 ]
-REQUIRED_TYPELIBS = ["Gtk-4.0", "Gdk-4.0", "Adw-1", "GtkSource-5", "Pango-1.0", "GdkPixbuf-2.0", "Gio-2.0"]
+REQUIRED_TYPELIBS = ["Gtk-4.0", "Gdk-4.0", "Adw-1", "GtkSource-5", "Pango-1.0", "GdkPixbuf-2.0", "Gio-2.0", "GtkFrdp-4.0"]
 REQUIRED_GLOBS = [
     ("GSettings schemas", "_internal/share/glib-2.0/schemas/gschemas.compiled"),
     ("pixbuf loaders cache", "_internal/lib/gdk-pixbuf/loaders.cache"),

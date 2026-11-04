@@ -42,7 +42,10 @@ The setup script:
 1. creates `.venv-win` with `py -3.14`;
 2. downloads the pinned [gvsbuild](https://github.com/wingtk/gvsbuild) GTK 4
    runtime (GTK, libadwaita, GtkSourceView, PyGObject), checks its SHA-256,
-   and unpacks it into `vendor\gtk` (`scripts\fetch-gtk.py`);
+   and unpacks it into `vendor\gtk` (`scripts\fetch-gtk.py`). The same
+   script adds the pinned [gtk4-frdp](https://github.com/mfat/gtk4-frdp)
+   release built for that gvsbuild (with FreeRDP and OpenSSL), so RDP
+   connections open in a tab;
 3. downloads Microsoft's current console host (`conpty.dll` and
    `OpenConsole.exe` from the `Microsoft.Windows.Console.ConPTY` NuGet
    package), checks its hash and signatures, and puts it in `vendor\conpty`
