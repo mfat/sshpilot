@@ -176,6 +176,8 @@ from ..models.terminal import (
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     TerminalDimensions,
 )
 from ..models.operations import (
@@ -3707,6 +3709,50 @@ def resize_terminal_request_from_wire(value: Any) -> ResizeTerminalRequest:
         session_id=_session_id(data["session_id"], "session id"),
         attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
         dimensions=terminal_dimensions_from_wire(data["dimensions"]),
+    )
+
+
+def terminal_input_status_request_to_wire(
+    request: TerminalInputStatusRequest,
+) -> Dict[str, Any]:
+    if type(request) is not TerminalInputStatusRequest:
+        raise TypeError("terminal input status request is required")
+    return {
+        "session_id": request.session_id,
+        "attachment_id": request.attachment_id,
+    }
+
+
+def terminal_input_status_request_from_wire(value: Any) -> TerminalInputStatusRequest:
+    data = _strict_fields(
+        value,
+        required={"session_id", "attachment_id"},
+        context="terminal input status request",
+    )
+    return TerminalInputStatusRequest(
+        session_id=_session_id(data["session_id"], "session id"),
+        attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
+    )
+
+
+def terminal_input_status_to_wire(status: TerminalInputStatus) -> Dict[str, Any]:
+    if type(status) is not TerminalInputStatus:
+        raise TypeError("terminal input status is required")
+    return {
+        "queued_bytes": status.queued_bytes,
+        "capacity_bytes": status.capacity_bytes,
+    }
+
+
+def terminal_input_status_from_wire(value: Any) -> TerminalInputStatus:
+    data = _strict_fields(
+        value,
+        required={"queued_bytes", "capacity_bytes"},
+        context="terminal input status",
+    )
+    return TerminalInputStatus(
+        queued_bytes=_integer(data["queued_bytes"], "queued bytes"),
+        capacity_bytes=_integer(data["capacity_bytes"], "capacity bytes"),
     )
 
 

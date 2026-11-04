@@ -325,6 +325,10 @@ class SecretTransferMessageCode(str, Enum):
     BITWARDEN_BACKUP_UNAVAILABLE = "bitwarden_backup_unavailable"
     BITWARDEN_NOTE_TOO_LARGE = "bitwarden_note_too_large"
     BITWARDEN_BACKUP_TOO_LARGE = "bitwarden_backup_too_large"
+    BITWARDEN_ATTACHMENT_NEEDS_PREMIUM = "bitwarden_attachment_needs_premium"
+    BITWARDEN_ATTACHMENT_RESTORE_NEEDS_PREMIUM = (
+        "bitwarden_attachment_restore_needs_premium"
+    )
     BITWARDEN_NOTE_LARGEST_SECTION = "bitwarden_note_largest_section"
     BITWARDEN_NOTE_REDUCE = "bitwarden_note_reduce"
     EXPORT_SPBK_INSTEAD = "export_spbk_instead"

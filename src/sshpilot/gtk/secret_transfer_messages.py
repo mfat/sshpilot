@@ -28,6 +28,12 @@ _MESSAGE_TEMPLATES = {
     SecretTransferMessageCode.BITWARDEN_BACKUP_TOO_LARGE: N_(
         "The backup is too large for a Bitwarden note."
     ),
+    SecretTransferMessageCode.BITWARDEN_ATTACHMENT_NEEDS_PREMIUM: N_(
+        "Backups this large are stored as an attachment, which needs Bitwarden Premium."
+    ),
+    SecretTransferMessageCode.BITWARDEN_ATTACHMENT_RESTORE_NEEDS_PREMIUM: N_(
+        "This backup is stored as an attachment, which needs Bitwarden Premium to restore."
+    ),
     SecretTransferMessageCode.BITWARDEN_NOTE_REDUCE: N_(
         "Leaving out the largest part, or exporting fewer connections, may bring it under the limit."
     ),

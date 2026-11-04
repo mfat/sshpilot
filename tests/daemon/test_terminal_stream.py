@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import socket
@@ -15,11 +16,13 @@ from sshpilot.api.models.sessions import (
     OpenSessionRequest,
     SessionState,
 )
+from sshpilot.api.terminal_input import send_paced_terminal_input
 from sshpilot.api.models.terminal import (
     ReplayRequest,
     ResizeTerminalRequest,
     TerminalDimensions,
     TerminalInput,
+    TerminalInputStatusRequest,
 )
 from sshpilot.daemon.pty_runner import (
     DEFAULT_TERMINAL_INPUT_BYTES,
@@ -319,6 +322,80 @@ def test_owned_pty_streams_from_isolated_local_openssh(tmp_path):
             daemon.wait(timeout=1)
 
 
+def test_paced_input_reaches_a_slow_reader_whole_and_in_order(daemon_factory):
+    # 1 MiB is four times the daemon's input queue, and the child reads slowly
+    # enough that frames sent unpaced would be rejected from the middle.
+    data = bytes(index % 251 for index in range(1024 * 1024))
+    script = (
+        "import hashlib,os,time,tty;tty.setraw(0);"
+        "os.write(1,b'READY\\n');"
+        "digest=hashlib.sha256();remaining=%d\n"
+        "while remaining:\n"
+        "    chunk=os.read(0,min(4096,remaining));remaining-=len(chunk)\n"
+        "    digest.update(chunk);time.sleep(0.001)\n"
+        "os.write(1,digest.hexdigest().encode()+b'\\n');os.read(0,1)\n"
+    ) % len(data)
+    runner = PtySessionProcessRunner(
+        lambda _spec: (
+            (sys.executable, "-u", "-c", script),
+            {"PATH": os.environ.get("PATH", "")},
+        )
+    )
+    server, _manager = daemon_factory(session_runner=runner)
+    client = DaemonClient(socket_path=server.socket_path)
+    outputs = []
+    input_errors = []
+    try:
+        opened = client.open_session(
+            OpenSessionRequest(
+                connection_id=client.list_connections()[0].id,
+                dimensions=TerminalDimensions(rows=24, columns=80),
+            )
+        )
+        subscription = client.subscribe_terminal(
+            opened.id,
+            outputs.append,
+            on_error=input_errors.append,
+        )
+        attached = client.attach_session(
+            AttachSessionRequest(
+                session_id=opened.id,
+                request_input=True,
+                want_terminal_output=True,
+                from_sequence=0,
+            )
+        )
+        assert _wait_until(
+            lambda: b"READY" in b"".join(item.data for item in outputs)
+        )
+
+        sent = send_paced_terminal_input(
+            client,
+            opened.id,
+            attached.attachment.id,
+            data,
+            should_stop=lambda: False,
+        )
+
+        assert sent == len(data)
+        expected = hashlib.sha256(data).hexdigest().encode()
+        assert _wait_until(
+            lambda: expected in b"".join(item.data for item in outputs)
+        )
+        assert input_errors == []
+        client.send_terminal_input(
+            TerminalInput(
+                session_id=opened.id,
+                attachment_id=attached.attachment.id,
+                data=b"q",
+            )
+        )
+        subscription.close()
+    finally:
+        client.close()
+        runner.close()
+
+
 def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
     # The final read parks the child until the test says so. Without it the
     # child exits the moment it has echoed AFTER:ping, and everything below
@@ -434,6 +511,22 @@ def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
             )
         )
         assert replay.next_sequence >= len(b"BEFORE\nAFTER:ping\n")
+        status = client.get_terminal_input_status(
+            TerminalInputStatusRequest(
+                session_id=opened.id,
+                attachment_id=attached.attachment.id,
+            )
+        )
+        assert status.queued_bytes == 0
+        assert status.capacity_bytes == DEFAULT_TERMINAL_INPUT_BYTES
+        with pytest.raises(SshPilotError) as not_owner:
+            viewer.get_terminal_input_status(
+                TerminalInputStatusRequest(
+                    session_id=opened.id,
+                    attachment_id=viewer_attachment.attachment.id,
+                )
+            )
+        assert not_owner.value.code is ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED
         client.send_terminal_input(
             TerminalInput(
                 session_id=opened.id,

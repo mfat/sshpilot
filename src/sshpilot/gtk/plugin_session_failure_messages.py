@@ -55,7 +55,7 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
     ),
     PluginSessionFailureCode.SERIAL_SCREEN_TERMINAL_OPTIONS_UNSUPPORTED: N_(
         "Only '{fallback_program}' is available, which cannot change line "
-        "endings, echo locally or log to a file. Install '{preferred_program}' "
+        "endings or the Backspace key, echo locally or log to a file. Install '{preferred_program}' "
         "to use this connection."
     ),
     PluginSessionFailureCode.SERIAL_DEVICE_ACCESS_DENIED: N_(
@@ -76,8 +76,8 @@ _PLUGIN_SESSION_FAILURE_TEMPLATES = {
     ),
     PluginSessionFailureCode.SERIAL_PLINK_TERMINAL_OPTIONS_UNSUPPORTED: N_(
         "On Windows serial connections use PuTTY's 'plink', which cannot "
-        "change line endings, echo locally or log to a file. Turn those "
-        "options off to use this connection."
+        "change line endings or the Backspace key, echo locally or log to a "
+        "file. Turn those options off to use this connection."
     ),
     PluginSessionFailureCode.TELNET_UNAVAILABLE: N_(
         "The '{program}' program is not installed. Install it to use telnet connections."

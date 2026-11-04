@@ -126,6 +126,7 @@ DUPLICATED_METADATA_KEYS = (
     "wol_mac",
     "wol_broadcast_ip",
     "wol_port",
+    "wol_on_connect",
     *PRE_COMMAND_METADATA_KEYS,
 )
 
@@ -185,7 +186,7 @@ CONNECTION_STORE_SECTION_VERSION = 1
 _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "serial": (
         "device", "baud", "flow", "databits", "parity", "stopbits",
-        "send_newline", "recv_add_cr", "local_echo", "logfile",
+        "send_newline", "send_backspace", "recv_add_cr", "local_echo", "logfile",
     ),
     "docker": (
         "container", "command", "runtime", "docker_context", "docker_host",
@@ -194,7 +195,7 @@ _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "k8s": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
     "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port", "server_path"),
     "rdp": (
-        "domain", "display_mode", "size", "scale", "multimon", "clipboard",
+        "domain", "viewer", "display_mode", "size", "scale", "multimon", "clipboard",
         "sound", "microphone", "printer", "shared_folder", "security",
         "cert_policy", "admin", "gateway", "gateway_username",
         "gateway_domain", "client", "extra_rdp_args",

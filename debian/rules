@@ -6,6 +6,8 @@
 
 #export DH_VERBOSE = 1
 
+include /usr/share/dpkg/architecture.mk
+
 %:
 	dh $@ --with python3 --buildsystem=meson
 
@@ -21,3 +23,16 @@
 # embedded JavaScript.
 execute_after_dh_python3:
 	rm -rf debian/sshpilot/usr/lib/python3*/dist-packages/sshpilot/vendor/pyxtermjs/xterm
+
+# The bundled gtk4-frdp in /usr/lib/<triplet>/sshpilot is private to the app:
+# no shlibs file for it, its libraries go into Recommends rather than Depends
+# (rdp_tab.py falls back to FreeRDP's window when it cannot load), and the
+# unversioned .so link is a development file nothing here uses.
+override_dh_makeshlibs:
+	dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/sshpilot
+
+override_dh_shlibdeps:
+	dh_shlibdeps -- -dRecommends
+
+execute_after_dh_auto_install:
+	rm -f debian/sshpilot/usr/lib/$(DEB_HOST_MULTIARCH)/sshpilot/libgtk4-frdp-4.0.so

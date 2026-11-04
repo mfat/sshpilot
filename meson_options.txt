@@ -1,0 +1,3 @@
+option('rdp_tab',
+       type: 'feature', value: 'auto',
+       description: 'Build the bundled gtk4-frdp (subprojects/gtk4-frdp) into <libdir>/sshpilot so RDP connections open in a tab. Needs FreeRDP >= 3.11 and GObject Introspection; auto builds it when they are found.')

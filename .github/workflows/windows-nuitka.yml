@@ -30,6 +30,7 @@ jobs:
         with:
           path: |
             vendor/GTK4_Gvsbuild_*.zip
+            vendor/gtk4-frdp-*.zip
           key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
 
       - name: Fetch GTK 4 and ConPTY

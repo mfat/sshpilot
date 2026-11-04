@@ -160,6 +160,8 @@ from .models.terminal import (
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     TerminalInput,
     TerminalOutput,
 )
@@ -251,6 +253,8 @@ from .transport.codec import (
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
+    terminal_input_status_from_wire,
+    terminal_input_status_request_to_wire,
     restart_daemon_request_to_wire,
     set_daemon_log_level_request_to_wire,
     session_summary_from_wire,
@@ -328,6 +332,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 DEFAULT_REQUEST_TIMEOUT = 5.0
+#: ``connections.run_pre_connect``: a woken host's boot (up to 90 s) plus a
+#: pre-connection command's own timeout.
+RUN_PRE_CONNECT_REQUEST_TIMEOUT = 240.0
 # Key generation can wait for the broker's protected human interaction and
 # then run native ssh-keygen.  Keep this narrower than a global timeout change
 # while allowing the daemon's bounded operation to finish normally.
@@ -403,6 +410,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
     "open_transient_connection": Capability.SESSIONS_WRITE,
     "broadcast_terminal_input": Capability.TERMINAL_INPUT,
+    "get_terminal_input_status": Capability.TERMINAL_INPUT,
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
@@ -416,6 +424,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
+    "run_pre_connect": Capability.SESSIONS_WRITE,
     "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
@@ -914,6 +923,23 @@ class DaemonClient:
             },
         )
         return pre_command_test_result_from_wire(result)
+
+    def run_pre_connect(self, connection_id: ConnectionId, scope_id: str) -> bool:
+        """Run the connection's pre-connection steps before a frontend-owned
+        launch (an embedded RDP tab): wake, knock or command. Returns whether
+        the launch may proceed. Blocks while a woken host boots, so call it off
+        the UI thread."""
+        self._require_capability(Capability.SESSIONS_WRITE)
+        result = self._request(
+            "connections.run_pre_connect",
+            {"connection_id": str(connection_id), "scope_id": str(scope_id)},
+            # The daemon waits up to WAKE_TIMEOUT_SECONDS for a woken host,
+            # then a knock or command may run with its own timeout.
+            request_timeout=RUN_PRE_CONNECT_REQUEST_TIMEOUT,
+        )
+        if not isinstance(result, dict) or type(result.get("proceed")) is not bool:
+            self._fail_protocol("The daemon returned an invalid pre-connect result")
+        return result["proceed"]
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId
@@ -2652,6 +2678,20 @@ class DaemonClient:
                     )
                 )
                 raise self._closed_error() from None
+
+    def get_terminal_input_status(
+        self,
+        request: TerminalInputStatusRequest,
+    ) -> TerminalInputStatus:
+        self._require_capability(Capability.TERMINAL_INPUT)
+        result = self._request(
+            "terminal.input_status",
+            terminal_input_status_request_to_wire(request),
+        )
+        try:
+            return terminal_input_status_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid terminal input status")
 
     def broadcast_terminal_input(self, request: BroadcastTerminalInputRequest) -> None:
         self._require_capability(Capability.TERMINAL_INPUT)

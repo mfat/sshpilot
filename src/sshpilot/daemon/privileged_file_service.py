@@ -40,7 +40,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -131,7 +131,7 @@ class _CommandResult:
 
 @dataclass
 class _PromptResult:
-    password: Optional[str]
+    password: Optional[str] = field(repr=False)
     remember_policy: RememberPolicy
     from_stored: bool = False
 

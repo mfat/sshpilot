@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.6}
+Version:        %{?version}%{!?version:6.3.7}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -7,8 +7,8 @@ License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
 Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 
-
-BuildArch:      noarch
+# Not noarch: the RDP tab's gtk4-frdp library (subprojects/gtk4-frdp) is
+# compiled into the package, privately under %%{_libdir}/sshpilot.
 # 0.60 for the built-in python.purelibdir option used in %%build.
 BuildRequires:  meson >= 0.60
 BuildRequires:  ninja-build
@@ -28,6 +28,18 @@ BuildRequires:  appstream
 # gnome.post_install() resolves these at configure time (icon cache + desktop
 # database refresh); without them meson setup fails.
 BuildRequires:  gtk-update-icon-cache
+# gtk4-frdp, built into %%{_libdir}/sshpilot for RDP connections in a tab.
+BuildRequires:  gcc
+BuildRequires:  pkgconfig(freerdp3) >= 3.11
+BuildRequires:  pkgconfig(freerdp-client3) >= 3.11
+BuildRequires:  pkgconfig(winpr3) >= 3.11
+BuildRequires:  pkgconfig(gobject-introspection-1.0)
+
+# The bundled gtk4-frdp is private to the app: it provides nothing to other
+# packages, and what it links against is recommended below rather than
+# required -- where it cannot load, RDP opens in FreeRDP's window (rdp_tab.py).
+%global __provides_exclude_from ^%{_libdir}/%{name}/.*$
+%global __requires_exclude_from ^%{_libdir}/%{name}/.*$
 
 
 # Define _metainfodir for openSUSE compatibility (not defined by default on openSUSE)
@@ -64,6 +76,8 @@ Recommends:     telnet
 # For the built-in RDP protocol plugin: FreeRDP 3 (sdl-freerdp/xfreerdp);
 # degrades gracefully if absent
 Recommends:     freerdp
+# What the bundled gtk4-frdp (RDP connections in a tab) links against.
+Recommends:     freerdp-libs >= 3.11
 # Deliberately absent: python3-certifi is only consulted by builds with no
 # system CA store (the macOS bundle); update_checker.py falls back to the stdlib
 # default context, which is the correct one here. python3-flask and
@@ -124,6 +138,9 @@ an alternative to Putty, Termius and Mobaxterm.
 # launch. Guarded so a distro without python-rpm-macros still builds.
 %{?py_byte_compile:%py_byte_compile %{python3} %{buildroot}%{_datadir}/%{name}}
 
+# The bundled gtk4-frdp's unversioned .so link is a development file.
+rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
+
 %find_lang %{name} || touch %{name}.lang
 
 # Runs the desktop-entry and AppStream validators defined in data/meson.build.
@@ -133,11 +150,14 @@ an alternative to Putty, Termius and Mobaxterm.
 
 %files -f %{name}.lang
 %license LICENSE*
+# The bundled gtk4-frdp: GPL-3.0-or-later, with FreeRDP-derived parts (NOTICE).
+%license subprojects/gtk4-frdp/NOTICE
 %doc README*
 %{_bindir}/sshpilot
 %{_bindir}/sshpilot-agent
 %{_bindir}/sshpilot-daemon
 %{_datadir}/%{name}/
+%{_libdir}/%{name}/
 %{_datadir}/io.github.mfat.sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
@@ -148,6 +168,45 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Wed Nov 04 2026 mFat <newmfat@gmail.com> - 6.3.7-1
+- Propose SSH Pilot-specific agent workflows for runtime MCP
+- Add a 'Backspace key sends' option to serial connections (#1366)
+- Recover the sidebar when finishing deferred rows fails (#1363)
+- Keep secrets out of the printed form of credential records (#1362)
+- Ask for trusted X11 forwarding in Windows terminal sessions (#1365)
+- Make X11 forwarding work on Windows (#1365)
+- Wake sleeping hosts before connecting; run pre-connect steps for RDP tabs
+- Ship gtk4-frdp 0.2.0 everywhere, updated in one step
+- Move an RDP tab to its own window and back without reconnecting
+- Update the bundled gtk4-frdp to 86f975c
+- RDP tab when running from a checkout
+- Deb content check: accept the gtk4-frdp soname symlink
+- Bundle gtk4-frdp in the deb, rpm and Arch packages for RDP tabs
+- Fix three Windows-only test failures
+- Keep the RDP "Open in" choice in backups
+- Pin gtk4-frdp at the 0.1.0 release
+- Bundle gtk4-frdp 0.1.0 in the Windows installer for RDP tabs
+- Pin gtk4-frdp at 2f4d96d
+- Ship gtk4-frdp for RDP tabs in the packages
+- Open RDP connections in an embedded tab (gtk4-frdp)
+- Cover restoring a Bitwarden attachment backup through the daemon.
+- Store oversized Bitwarden backups as a note attachment.
+- Stop ssh-add retrying a rejected saved passphrase.
+- Offer remember options on the key passphrase prompt.
+- Deliver large pastes whole instead of failing the terminal.
+- Send held terminal input in frame-sized pieces
+- Keep the main window forward when a dialog closes on Windows
+- ControlMaster checks: retry transient failures, never fall through to a real connection
+- Fix quit blocked by "multiplexed SSH connection could not be checked" (#1361)
+- GSSAPI Flatpak fix
+- Automatic backups are now disabled for files edited through Manage Files, including “Edit as root
+- Fix lost macOS clicks and terminal input flood on wheel scroll
+- Retry user plugins that read settings during activate
+- Add a View menu toggle for the tab overview button.
+- Revert "Show the tab bar new-tab button once a terminal is open."
+- Show the tab bar new-tab button once a terminal is open.
+- Update Arch PKGBUILD for v6.3.6
+
 * Mon Oct 19 2026 mFat <newmfat@gmail.com> - 6.3.6-1
 - New app icon on every platform
 - Sidebar: actions moved into a single title row, and they come along in the hover/search popup

@@ -78,6 +78,32 @@ class TerminalInput:
 
 
 @dataclass(frozen=True)
+class TerminalInputStatusRequest:
+    """Ask how much of the session's bounded input queue is in use."""
+
+    session_id: SessionId
+    attachment_id: AttachmentId
+
+    def __post_init__(self) -> None:
+        require_identifier(self.session_id, "session id")
+        require_identifier(self.attachment_id, "attachment id")
+
+
+@dataclass(frozen=True)
+class TerminalInputStatus:
+    """Input queue occupancy, covering every frame sent before the request."""
+
+    queued_bytes: int
+    capacity_bytes: int
+
+    def __post_init__(self) -> None:
+        if type(self.queued_bytes) is not int or self.queued_bytes < 0:
+            raise ValueError("queued terminal input must not be negative")
+        if type(self.capacity_bytes) is not int or self.capacity_bytes < 1:
+            raise ValueError("terminal input capacity must be positive")
+
+
+@dataclass(frozen=True)
 class BroadcastTerminalInputRequest:
     """Write one command to the existing interactive terminal sessions."""
 

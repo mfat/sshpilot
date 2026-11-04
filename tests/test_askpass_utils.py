@@ -323,6 +323,37 @@ def test_handle_askpass_cli_session_backend_falls_back_to_local(monkeypatch):
     assert askpass_utils.handle_askpass_cli(prompt) == "vialocal"
 
 
+@pytest.mark.parametrize("autofill_only", [False, True])
+def test_handle_askpass_cli_declines_ssh_add_retry(monkeypatch, autofill_only):
+    # ssh-add re-asks forever until askpass fails, so answering its retry from
+    # storage would feed it the same rejected passphrase until it is killed.
+    from sshpilot import askpass_utils
+
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
+    monkeypatch.delenv("SSHPILOT_ASKPASS_NO_UI", raising=False)
+    if autofill_only:
+        monkeypatch.setenv("SSHPILOT_ASKPASS_AUTOFILL_ONLY", "1")
+    else:
+        monkeypatch.delenv("SSHPILOT_ASKPASS_AUTOFILL_ONLY", raising=False)
+
+    def _must_not_run(*_a, **_k):
+        raise AssertionError("a rejected passphrase must not be looked up again")
+
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", _must_not_run)
+    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", _must_not_run)
+
+    prompt = "Bad passphrase, try again for /home/u/.ssh/id_ed25519: "
+    assert askpass_utils.handle_askpass_cli(prompt) is None
+
+
+def test_run_askpass_fails_on_ssh_add_retry_so_ssh_add_stops(monkeypatch):
+    from sshpilot import askpass_utils
+
+    monkeypatch.setattr(askpass_utils, "handle_askpass_cli", lambda _prompt: None)
+
+    assert askpass_utils.run_askpass_and_write("Bad passphrase, try again for k: ") == 1
+
+
 def test_frozen_build_native_askpass_script_dispatches_via_internal_flag(monkeypatch):
     # sys.executable is this application's own binary in a frozen build, not
     # a Python interpreter — "exec sys.executable helper.py" would relaunch

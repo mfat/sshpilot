@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -1029,8 +1030,12 @@ class _Result:
 class FakeBw:
     """In-memory stand-in for the ``bw`` CLI, installed as ``ss.subprocess.run``."""
 
-    def __init__(self, status="locked", items=None, *, unlock_ok=True, folders=None):
+    def __init__(self, status="locked", items=None, *, unlock_ok=True, folders=None,
+                 premium=True):
         self.status = status
+        self.premium = premium
+        self.attachment_data = {}  # attachment id -> bytes
+        self.fail_attachment_delete = False
         self.items = [dict(i) for i in (items or [])]
         self.folders = [dict(f) for f in (folders or [])]
         self.unlock_ok = unlock_ok
@@ -1143,12 +1148,46 @@ class FakeBw:
             item = json.loads(base64.b64decode(input).decode())
             for idx, it in enumerate(self.items):
                 if it.get("id") == iid:
+                    # Like real ``bw edit``: attachments are not editable fields.
+                    item.pop("attachments", None)
+                    if "attachments" in it:
+                        item["attachments"] = it["attachments"]
                     self.items[idx] = item
             return _Result(0, json.dumps(item).encode())
         if cmd[:2] == ['delete', 'item']:
             iid = cmd[2]
             self.items = [it for it in self.items if it.get("id") != iid]
             return _Result(0, b'')
+        if cmd[:2] == ['create', 'attachment']:
+            if not self.premium:
+                return _Result(1, b'', b'Premium status is required to use this feature.')
+            path = cmd[cmd.index('--file') + 1]
+            iid = cmd[cmd.index('--itemid') + 1]
+            item = next(it for it in self.items if it.get("id") == iid)
+            self._n += 1
+            with open(path, 'rb') as fh:
+                self.attachment_data[f"ATT{self._n}"] = fh.read()
+            item.setdefault("attachments", []).append(
+                {"id": f"ATT{self._n}", "fileName": os.path.basename(path)})
+            return _Result(0, json.dumps(item).encode())
+        if cmd[:2] == ['delete', 'attachment']:
+            if self.fail_attachment_delete:
+                return _Result(1, b'', b'Server error.')
+            aid, iid = cmd[2], cmd[cmd.index('--itemid') + 1]
+            item = next(it for it in self.items if it.get("id") == iid)
+            item["attachments"] = [a for a in item.get("attachments", []) if a["id"] != aid]
+            self.attachment_data.pop(aid, None)
+            return _Result(0, b'')
+        if cmd[:2] == ['get', 'attachment']:
+            if not self.premium:
+                return _Result(1, b'', b'Premium status is required to use this feature.')
+            name, iid = cmd[2], cmd[cmd.index('--itemid') + 1]
+            item = next((it for it in self.items if it.get("id") == iid), {})
+            found = [a for a in item.get("attachments", []) if a["fileName"] == name]
+            if len(found) != 1:
+                return _Result(1, b'', b'Not found.')
+            assert '--raw' in cmd
+            return _Result(0, self.attachment_data[found[0]["id"]])
         return _Result(1, b'', b'unknown')
 
 
@@ -1678,3 +1717,124 @@ def test_bitwarden_secure_note_filed_in_sshpilot_folder(monkeypatch):
     note = next(i for i in fake.items if i.get('id') == item_id)
     assert note.get('folderId') == fake.folders[0]['id']
     assert note.get('type') == 2
+
+
+def _attachment_backend(monkeypatch, tmp_path, fake):
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path / 'data'))
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv('BW_SESSION', 'TOK')
+    return b
+
+
+def _temp_root(tmp_path):
+    return tmp_path / 'data' / 'sshpilot' / 'bw-tmp'
+
+
+def test_bitwarden_secure_note_attachment_roundtrip(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    item_id = b.store_secure_note_attachment("sshPilot Backup X", "pointer",
+                                             "backup.txt", b"payload")
+    note = next(i for i in fake.items if i.get('id') == item_id)
+    assert note["notes"] == "pointer"
+    assert [a["fileName"] for a in note["attachments"]] == ["backup.txt"]
+    assert b.read_secure_note_attachment(item_id, "backup.txt") == b"payload"
+    # The plaintext payload never outlives the bw call.
+    assert os.listdir(_temp_root(tmp_path)) == []
+
+
+def test_bitwarden_attachment_without_premium_removes_the_new_note(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[], premium=False)
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    with pytest.raises(ss.BitwardenPremiumRequired):
+        b.store_secure_note_attachment("sshPilot Backup X", "pointer", "backup.txt", b"x")
+    assert [i for i in fake.items if i.get("type") == 2] == []
+    assert any(c[:2] == ['delete', 'item'] and '--permanent' in c for c in fake.calls)
+    assert os.listdir(_temp_root(tmp_path)) == []
+
+
+def test_bitwarden_attachment_without_premium_keeps_an_existing_note(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", premium=False, folders=[],
+                  items=[{"id": "N1", "type": 2, "name": "sshPilot Backup X",
+                          "notes": "old backup"}])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    with pytest.raises(ss.BitwardenPremiumRequired):
+        b.store_secure_note_attachment("sshPilot Backup X", "pointer", "backup.txt", b"x")
+    assert fake.items == [{"id": "N1", "type": 2, "name": "sshPilot Backup X",
+                           "notes": "old backup"}]
+
+
+def test_bitwarden_attachment_upload_failure_removes_the_new_note(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    real_run = fake.run
+
+    def run(argv, **kwargs):
+        if 'attachment' in argv:
+            return _Result(1, b'', b'Not enough storage available.')
+        return real_run(argv, **kwargs)
+
+    fake.run = run
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    monkeypatch.setattr(ss.subprocess, 'run', run)
+    assert b.store_secure_note_attachment("sshPilot Backup X", "p", "backup.txt", b"x") is None
+    assert [i for i in fake.items if i.get("type") == 2] == []
+
+
+def test_bitwarden_attachment_replaces_the_previous_upload(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    item_id = b.store_secure_note_attachment("sshPilot Backup X", "p1", "one.txt", b"one")
+    assert b.store_secure_note_attachment("sshPilot Backup X", "p2", "two.txt", b"two") == item_id
+    note = next(i for i in fake.items if i.get('id') == item_id)
+    assert note["notes"] == "p2"
+    assert [a["fileName"] for a in note["attachments"]] == ["two.txt"]
+    assert b.read_secure_note_attachment(item_id, "two.txt") == b"two"
+
+
+def test_bitwarden_failed_attachment_cleanup_leaves_the_new_backup_readable(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    item_id = b.store_secure_note_attachment("sshPilot Backup X", "p1", "one.txt", b"one")
+    fake.fail_attachment_delete = True
+    assert b.store_secure_note_attachment("sshPilot Backup X", "p2", "two.txt", b"two") == item_id
+    assert b.read_secure_note_attachment(item_id, "two.txt") == b"two"
+
+
+def test_bitwarden_inline_note_drops_an_earlier_attachment(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    item_id = b.store_secure_note_attachment("sshPilot Backup X", "p", "one.txt", b"one")
+    assert b.create_or_update_secure_note("sshPilot Backup X", "small") == item_id
+    note = next(i for i in fake.items if i.get('id') == item_id)
+    assert note["notes"] == "small"
+    assert note["attachments"] == []
+    assert fake.attachment_data == {}
+
+
+def test_bitwarden_read_attachment_without_premium_raises(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    item_id = b.store_secure_note_attachment("sshPilot Backup X", "p", "one.txt", b"one")
+    fake.premium = False
+    with pytest.raises(ss.BitwardenPremiumRequired):
+        b.read_secure_note_attachment(item_id, "one.txt")
+
+
+def test_bitwarden_read_attachment_failure_returns_none(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    item_id = b.store_secure_note_attachment("sshPilot Backup X", "p", "one.txt", b"one")
+    assert b.read_secure_note_attachment(item_id, "gone.txt") is None
+
+
+def test_bitwarden_attachment_upload_sweeps_a_crashed_export_only(monkeypatch, tmp_path):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _attachment_backend(monkeypatch, tmp_path, fake)
+    root = _temp_root(tmp_path)
+    (root / 'crashed').mkdir(parents=True)
+    (root / 'crashed' / 'backup.txt').write_text('secret')
+    (root / 'in-use').mkdir()
+    old = time.time() - b._STALE_TEMPDIR_SECONDS - 60
+    os.utime(root / 'crashed', (old, old))
+    b.store_secure_note_attachment("sshPilot Backup X", "p", "one.txt", b"one")
+    assert os.listdir(root) == ['in-use']

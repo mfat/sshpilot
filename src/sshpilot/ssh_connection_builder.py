@@ -13,7 +13,7 @@ import os
 import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .ssh_config_document import split_config_lines
 from .api.models.common import validate_ssh_hostname
@@ -193,7 +193,7 @@ class SSHConnectionCommand:
     command: List[str]  # The SSH command to execute
     env: Dict[str, str]  # Environment variables
     use_sshpass: bool = False  # Whether to use sshpass
-    password: Optional[str] = None  # Password for sshpass (if needed)
+    password: Optional[str] = field(default=None, repr=False)  # Password for sshpass (if needed)
     use_askpass: bool = False  # Whether to use SSH_ASKPASS
 
 
@@ -212,7 +212,7 @@ class NativeAuth:
     env: Dict[str, str]            # Environment to spawn the command with
     extra_opts: List[str]          # Extra command options to pass to ssh/scp
     use_sshpass: bool = False      # Deprecated: always False (askpass replaced sshpass)
-    password: Optional[str] = None # Stored password (askpass context / UI messaging)
+    password: Optional[str] = field(default=None, repr=False) # Stored password (askpass context / UI messaging)
     use_askpass: bool = False      # SSH_ASKPASS is wired up
     password_mode: bool = False    # Password auth method selected (auth_method == 1)
 
@@ -845,9 +845,12 @@ def _build_base_ssh_command(
 
     # X11 forwarding only for ssh: scp -X selects transfer protocol and sftp -X
     # sets an sftp option, so a bare -X there would swallow the next argument.
+    # Windows has no xauth, so OpenSSH refuses untrusted (-X) forwarding there
+    # ("xauth key data not generated"); trusted (-Y) is the only mode that
+    # works, and is what PuTTY does with Xming/VcXsrv.
     forward_x11 = _get_ssh_config_value(config, 'forwardx11', '').lower()
     if forward_x11 in ('yes', 'true', '1') and command_type == 'ssh':
-        cmd.append('-X')
+        cmd.append('-Y' if os.name == 'nt' else '-X')
 
     forward_agent = _get_ssh_config_value(config, 'forwardagent', '').lower()
     if forward_agent in ('yes', 'true', '1') and not is_copy_id:
@@ -1401,6 +1404,19 @@ def build_ssh_connection(
         # ``ssh -s <alias> sftp`` (subsystem request), and ssh-copy-id composes
         # its own argv via _build_base_ssh_command.
         executable = 'scp' if ctx.command_type == 'scp' else 'ssh'
+
+        # Windows has no xauth, so OpenSSH refuses untrusted X11 forwarding
+        # there ("xauth key data not generated"). ForwardX11 itself comes from
+        # the config file or an authored -o, so ask for trusted forwarding
+        # here; it only takes effect when forwarding is on (issue #1365).
+        if (
+            os.name == 'nt'
+            and executable == 'ssh'
+            and launch_mode is LaunchMode.INTERACTIVE
+        ):
+            authored_options = list(authored_options) + [
+                '-o', 'ForwardX11Trusted=yes',
+            ]
 
         # Authored options are appended after the auth layer's own options, so
         # a deliberate runtime decision (an agent bypass, say) still wins.

@@ -4419,24 +4419,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if time.perf_counter() >= deadline:
                     return GLib.SOURCE_CONTINUE
         except Exception:
-            # Not a completed sidebar: drop what is pending and let the error
-            # surface, as it does from a rebuild that is not split. Also make
-            # one later, synchronous attempt: the failure may have come from
-            # transient model state, and a stable partial sidebar is worse.
-            self._take_pending_connection_rows()
-            self._staged_connection_rows = None
-            self._connection_rows_split = False
-            if (
-                not getattr(self, '_is_quitting', False)
-                and not getattr(self, '_connection_rows_recovery_pending', False)
-            ):
-                self._connection_rows_recovery_pending = True
-                GLib.idle_add(self._recover_failed_connection_rows)
+            self._abandon_failed_connection_rows()
             raise
         self._pending_connection_rows = None
         self._pending_connection_rows_source = None
         self._on_connection_rows_completed()
         return GLib.SOURCE_REMOVE
+
+    def _abandon_failed_connection_rows(self):
+        """Clean up after a split rebuild's remaining steps raised.
+
+        Not a completed sidebar: drop what is pending and let the caller
+        re-raise, as a rebuild that is not split does. Also make one later,
+        synchronous attempt: the failure may have come from transient model
+        state, and a stable partial sidebar is worse. Shared by the idle
+        builder and :meth:`complete_pending_connection_rows`.
+        """
+        self._take_pending_connection_rows()
+        self._staged_connection_rows = None
+        self._connection_rows_split = False
+        if (
+            not getattr(self, '_is_quitting', False)
+            and not getattr(self, '_connection_rows_recovery_pending', False)
+        ):
+            self._connection_rows_recovery_pending = True
+            GLib.idle_add(self._recover_failed_connection_rows)
 
     def _recover_failed_connection_rows(self):
         """Make one full rebuild attempt after a deferred slice failed."""
@@ -4472,8 +4479,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         steps = self._take_pending_connection_rows()
         if steps is None:
             return
-        for _visible in steps:
-            pass
+        try:
+            for _visible in steps:
+                pass
+        except Exception:
+            self._abandon_failed_connection_rows()
+            raise
         self._on_connection_rows_completed()
 
     def _append_list_row(self, row, connection=None) -> None:
@@ -8726,7 +8737,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 {
                     key: meta[key]
                     for key in (
-                        "wol_mac", "wol_broadcast_ip", "wol_port",
+                        "wol_mac", "wol_broadcast_ip", "wol_port", "wol_on_connect",
                         *PRE_COMMAND_METADATA_KEYS,
                     )
                     if key in meta

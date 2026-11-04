@@ -13,7 +13,14 @@ permissions:
 
 jobs:
   build-deb:
-    runs-on: ubuntu-latest
+    # One build per architecture: the package carries the compiled gtk4-frdp
+    # library behind RDP tabs (debian/rules). Built on Ubuntu 24.04, the oldest
+    # release the APT repository supports.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -52,8 +59,9 @@ jobs:
       - name: Verify package contents
         run: |
           set -eu
-          DEB=$(ls artifacts/*.deb | head -1)
+          DEB=$(ls artifacts/sshpilot_*.deb | head -1)
           contents=$(dpkg-deb --contents "$DEB")
+          MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
           # Everything the app needs at runtime must be present...
           for path in \
             ./usr/bin/sshpilot \
@@ -62,8 +70,11 @@ jobs:
             ./usr/share/applications/io.github.mfat.sshpilot.desktop \
             ./usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml \
             ./usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
+            ./usr/lib/$MULTIARCH/sshpilot/libgtk4-frdp-4.0.so.0 \
+            ./usr/lib/$MULTIARCH/sshpilot/girepository-1.0/GtkFrdp-4.0.typelib \
           ; do
-            grep -q " $path\$" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
+            # Symlinks are listed as "path -> target".
+            grep -q -e " $path\$" -e " $path -> " <<<"$contents" || { echo "::error::missing $path"; exit 1; }
           done
           # ...and the build-time-only files must not be.
           for pattern in '[.]blp$' 'plugins/examples' 'vendor/pyxtermjs/xterm/' '__pycache__'; do
@@ -86,7 +97,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: debian-packages-${{ steps.version.outputs.version }}
+          name: debian-packages-${{ steps.version.outputs.version }}-${{ matrix.runner }}
           path: artifacts/*.deb
 
       - name: Create Release

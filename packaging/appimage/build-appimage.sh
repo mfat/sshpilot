@@ -87,8 +87,12 @@ mkdir -p "$BUILD_DIR" "$OUTDIR"
 log "Installing with Meson"
 # Prepend PYTHON_BIN's directory so python.find_installation() cannot pick a
 # different interpreter than the one being bundled.
+# rdp_tab=disabled: the private copy records an absolute /usr/lib path, which
+# would point outside the AppImage; the bundle carries the gtk4-frdp that
+# scripts/build-gtk4-frdp.sh installed system-wide, like its other typelibs.
 PATH="$(dirname "$PY_REAL"):$PATH" \
-    meson setup "$BUILD_DIR/meson" "$ROOT" --prefix=/usr --buildtype=release
+    meson setup "$BUILD_DIR/meson" "$ROOT" --prefix=/usr --buildtype=release \
+    -Drdp_tab=disabled
 meson install -C "$BUILD_DIR/meson" --destdir "$APPDIR"
 
 # Where Meson put the Python package. Asking the AppDir rather than sysconfig:
@@ -266,6 +270,10 @@ WANTED = [
     # Pulls JavaScriptCore with it; both the PyXterm.js terminal backend and
     # the Host Info tab need them.
     ("WebKit", "6.0"),
+    # gtk4-frdp, for RDP connections in a tab; brings FreeRDP 3 along through
+    # the library closure below. Skipped (RDP then opens in FreeRDP's own
+    # window) when the build machine does not have it.
+    ("GtkFrdp", "4.0"),
     ("Gio", "2.0"),
     ("GLib", "2.0"),
     ("GLibUnix", "2.0"),

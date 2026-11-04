@@ -350,7 +350,9 @@ def daemon_export_backup(
             )
             # The message names the part that dominates this particular backup
             # (see ``largest_note_section``), so the warning stays generic.
-            too_large = []
+            too_large = [
+                _message(SecretTransferMessageCode.BITWARDEN_ATTACHMENT_NEEDS_PREMIUM)
+            ]
             section = getattr(exc, "largest_section", "")
             cost = getattr(exc, "largest_section_cost", 0)
             if section and cost:
@@ -873,9 +875,8 @@ def daemon_preview_bitwarden_backup(
         return (
             SecretTransferPreview(
                 kind="bitwarden",
-                error=_message(
-                    SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED
-                ),
+                error=getattr(exc, "transfer_message", None)
+                or _message(SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED),
             ),
             None,
         )
@@ -1113,9 +1114,8 @@ def daemon_import_bitwarden_backup(
                 counts={},
                 warnings=(),
                 status=SecretOperationState.FAILED,
-                message=_message(
-                    SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED
-                ),
+                message=getattr(exc, "transfer_message", None)
+                or _message(SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED),
             )
     if not isinstance(manifest, dict):
         return SecretTransferResult(

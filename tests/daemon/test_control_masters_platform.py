@@ -50,7 +50,19 @@ def unparseable_ssh(monkeypatch):
         )
 
     monkeypatch.setattr(subprocess, "run", _run)
+    # Unrecognised output is re-asked a few times; don't sleep through it.
+    monkeypatch.setattr(control_masters.time, "sleep", lambda _delay: None)
     return calls
+
+
+def _probed_paths(calls):
+    """Distinct ControlPaths asked, in order (retries ask the same one again)."""
+    paths = []
+    for argv in calls:
+        path = next(a for a in argv if a.startswith("ControlPath="))
+        if path not in paths:
+            paths.append(path)
+    return paths
 
 
 def _no_multiplexing(monkeypatch):
@@ -137,7 +149,7 @@ def test_survey_probes_every_file_with_multiplexing(
     probes = survey_control_masters()
     assert [p.path.name for p in probes] == ["aaa", "bbb", "stale"]
     assert all(p.state is MasterState.UNKNOWN for p in probes)
-    assert len(unparseable_ssh) == 3
+    assert len(_probed_paths(unparseable_ssh)) == 3
 
 
 def test_survey_with_multiplexing_still_refuses_an_unresolved_directory(monkeypatch):

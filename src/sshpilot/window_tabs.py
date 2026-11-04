@@ -246,7 +246,7 @@ class WindowTabsMixin:
         'tabmenu-show-files-panel', 'tabmenu-hide-files-panel',
         'tabmenu-show-terminal-panel', 'tabmenu-hide-terminal-panel',
         'tabmenu-open-system-terminal', 'tabmenu-new-local',
-        'tabmenu-fm-new-window',
+        'tabmenu-fm-new-window', 'tabmenu-rdp-detach',
         'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
         'tabmenu-layout-default', 'tabmenu-layout-compact',
         'tabmenu-close', 'tabmenu-close-others', 'tabmenu-close-right',
@@ -274,6 +274,7 @@ class WindowTabsMixin:
             'tabmenu-open-system-terminal': self._on_tabmenu_open_system_terminal,
             'tabmenu-new-local': self._on_tabmenu_new_local,
             'tabmenu-fm-new-window': self._on_tabmenu_fm_new_window,
+            'tabmenu-rdp-detach': self._on_tabmenu_rdp_detach,
             'tabmenu-layout-horizontal': self._on_tabmenu_layout_horizontal,
             'tabmenu-layout-vertical': self._on_tabmenu_layout_vertical,
             'tabmenu-layout-default': self._on_tabmenu_layout_default,
@@ -313,6 +314,7 @@ class WindowTabsMixin:
         sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
         sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
         sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
+        sec2.append_item(_item(_('Move to New Window'), 'tabmenu-rdp-detach'))
         menu.append_section(None, sec2)
 
         sec3 = Gio.Menu()
@@ -536,6 +538,10 @@ class WindowTabsMixin:
             if getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options():
                 enabled.add('tabmenu-open-system-terminal')
             return enabled
+
+        from .rdp_tab import RdpTab
+        if isinstance(child, RdpTab):
+            return common | {'tabmenu-rdp-detach'}
 
         embed = self._file_manager_embed_for_child(child)
         if embed is not None:
@@ -995,6 +1001,15 @@ class WindowTabsMixin:
         except Exception as exc:
             logger.error("Tab file manager new window failed: %s", exc)
 
+    def _on_tabmenu_rdp_detach(self, action, param=None):
+        try:
+            _page, child = self._tab_menu_target()
+            from .rdp_tab import RdpTab
+            if isinstance(child, RdpTab):
+                self.detach_rdp_tab(child)
+        except Exception as exc:
+            logger.error("Moving the RDP tab to a new window failed: %s", exc)
+
     def _launch_external_file_manager(self, connection) -> None:
         """Open a standalone (external) file manager window for connection.
 
@@ -1192,11 +1207,134 @@ class WindowTabsMixin:
             # without a dialog.
             close_fn()
 
+    def existing_rdp_tab(self, connection):
+        """The open RDP tab of ``connection``, if any (in a tab or detached)."""
+        tab = self.__dict__.get('_rdp_tabs', {}).get(connection)
+        if tab is not None and tab.get_parent() is not None:
+            return tab
+        return None
+
+    def focus_rdp_tab(self, tab) -> None:
+        """Bring ``tab`` forward: its detached window, or its page here."""
+        window = getattr(tab, 'detached_window', None)
+        if window is not None:
+            window.present()
+            return
+        page = self.tab_view.get_page(tab)
+        if page is not None:
+            self.tab_view.set_selected_page(page)
+
+    def detach_rdp_tab(self, tab) -> None:
+        """Move a live RDP tab into a window of its own. The page moves
+        between tab views, so the session carries on without reconnecting."""
+        from .rdp_window import RdpWindow
+
+        page = self.tab_view.get_page(tab)
+        if page is None:
+            return
+        window = RdpWindow(self, page.get_title(),
+                           on_move_back=self._attach_rdp_window,
+                           on_close=self._close_rdp_window)
+        # Keep the remote desktop its current size: the header bar is extra.
+        width, height = tab.get_width(), tab.get_height()
+        window.set_default_size(max(width, 640), max(height + 47, 480))
+        self.tab_view.transfer_page(page, window.tab_view, 0)
+        tab.detached_window = window
+        windows = self.__dict__.setdefault('_rdp_windows', [])
+        windows.append(window)
+        if not getattr(self, '_rdp_windows_close_hooked', False):
+            # Closing the main window takes its detached RDP windows with it:
+            # "Move Back to Tab" would have nowhere to go.
+            self._rdp_windows_close_hooked = True
+            self.connect('destroy', lambda *_a: self._close_all_rdp_windows())
+        window.present()
+
+    def _attach_rdp_window(self, window) -> None:
+        tab = window.tab
+        page = window.tab_view.get_page(tab) if tab is not None else None
+        if page is None:
+            return
+        tab.detached_window = None
+        self._forget_rdp_window(window)
+        if hasattr(self, 'show_tab_view'):
+            self.show_tab_view()
+        # The detached window's view hands the page over, not this one.
+        window.tab_view.transfer_page(page, self.tab_view, self.tab_view.get_n_pages())
+        self.tab_view.set_selected_page(page)
+        self.present()
+
+    def _close_rdp_window(self, window) -> None:
+        """The detached window was closed: end its session like a tab close."""
+        tab = window.tab
+        self._forget_rdp_window(window)
+        if tab is None:
+            return
+        tab.detached_window = None
+        tab.close_session()
+        tabs = self.__dict__.get('_rdp_tabs', {})
+        for connection, open_tab in list(tabs.items()):
+            if open_tab is tab:
+                del tabs[connection]
+
+    def _forget_rdp_window(self, window) -> None:
+        windows = self.__dict__.get('_rdp_windows', [])
+        if window in windows:
+            windows.remove(window)
+
+    def _close_all_rdp_windows(self) -> None:
+        for window in list(self.__dict__.get('_rdp_windows', [])):
+            window.close()
+
+    def open_rdp_tab(self, connection, data, *, force_new: bool = False):
+        """Show an RDP connection in an embedded tab (gtk4-frdp), reusing the
+        connection's open tab unless ``force_new``. The caller has already
+        decided the tab is the right view (``rdp_view_policy``)."""
+        from .rdp_tab import RdpTab
+
+        tabs = self.__dict__.setdefault('_rdp_tabs', {})
+        existing = tabs.get(connection)
+        if existing is not None and not force_new and existing.get_parent() is not None:
+            self.focus_rdp_tab(existing)
+            if not existing.connected:
+                existing.connect_session()
+            return existing
+
+        tab = RdpTab(self, connection, data, open_in_window=self._open_rdp_in_window)
+        if hasattr(self, 'show_tab_view'):
+            self.show_tab_view()
+        page = self.tab_view.append(tab)
+        page.set_title(get_connection_alias(connection) or get_connection_host(connection) or "RDP")
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name("computer-symbolic"))
+        except Exception:
+            pass
+        self.tab_view.set_selected_page(page)
+        tabs[connection] = tab
+        tab.connect_session()
+        return tab
+
+    def _open_rdp_in_window(self, connection):
+        """The tab's "Open in FreeRDP Window" button: the usual external
+        route, bypassing the tab choice."""
+        self.terminal_manager.connect_to_host(connection, force_new=True, rdp_view='window')
+
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         if self._is_start_tab_page(page):
             # Only _remove_start_tab may close it; the user cannot.
             return not getattr(self, '_closing_start_tab', False)
+
+        # Embedded RDP: end the session; the widget frees itself once its
+        # session thread has stopped.
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        from .rdp_tab import RdpTab
+        if isinstance(child, RdpTab):
+            child.close_session()
+            tabs = self.__dict__.get('_rdp_tabs', {})
+            for connection, tab in list(tabs.items()):
+                if tab is child:
+                    del tabs[connection]
+            return False
 
         # If we are closing pages programmatically (e.g., after deleting a
         # connection), suppress the confirmation dialog and allow the default

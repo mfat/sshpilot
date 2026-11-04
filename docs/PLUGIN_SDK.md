@@ -150,7 +150,10 @@ quit    │  app_shutdown event  then deactivate()
   returning your `default`**: a silent default is indistinguishable from "unset",
   so a plugin that loads a store at `activate()` and writes the whole store back
   on the next edit would erase it. Read your settings in the `app_started`
-  handler and keep a plain in-memory default until then.
+  handler and keep a plain in-memory default until then. The GTK loader still
+  finishes a user plugin that hits this during `activate()`: it retries that
+  activation once, just before `app_started`, instead of leaving the plugin
+  unloaded. The daemon process does not retry — it has no client.
 - **`app_started`** fires once the window is presented *and* daemon client
   selection has resolved — your cue that live UI/terminal calls and
   daemon-backed calls are safe. It is deliberately held for the backend, so it

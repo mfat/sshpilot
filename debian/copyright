@@ -23,6 +23,26 @@ Files: sshpilot/vendor/pyxtermjs/xterm/*
 Copyright: 2017 The xterm.js authors
 License: Expat
 
+Files: subprojects/gtk4-frdp/*
+Copyright: 2018 Felipe Borges
+           2019 Armin Novak
+           2023 Marek Kasik
+           2026 mFat
+Comment: gtk4-frdp, vendored from https://github.com/mfat/gtk4-frdp
+ (scripts/update-gtk4-frdp.sh); provenance in subprojects/gtk4-frdp/NOTICE.
+License: GPL-3+
+
+Files: subprojects/gtk4-frdp/src/gtk4-frdp.h
+       subprojects/gtk4-frdp/src/gtk4-frdp-version.h.in
+Copyright: 2018 Felipe Borges
+License: LGPL-3+
+
+Files: subprojects/gtk4-frdp/src/frdp-xkb-layout-ids.c
+       subprojects/gtk4-frdp/src/frdp-xkb-layout-ids.h
+Copyright: 2009-2012 Marc-Andre Moreau
+           2026 mFat
+License: Apache-2.0
+
 License: GPL-3+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -66,3 +86,24 @@ License: Expat
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
+
+License: LGPL-3+
+ This library is free software: you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or (at your
+ option) any later version.
+ .
+ On Debian systems, the complete text of the GNU Lesser General Public
+ License version 3 can be found in "/usr/share/common-licenses/LGPL-3".
+
+License: Apache-2.0
+ Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ use this file except in compliance with the License. You may obtain a copy
+ of the License at http://www.apache.org/licenses/LICENSE-2.0
+ .
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ .
+ On Debian systems, the complete text of the Apache License, Version 2.0 can
+ be found in "/usr/share/common-licenses/Apache-2.0".

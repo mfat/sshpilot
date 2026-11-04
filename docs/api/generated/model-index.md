@@ -6233,6 +6233,54 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: TerminalInputStatus -->
+## `TerminalInputStatus`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Input queue occupancy, covering every frame sent before the request.
+
+**Related methods:** `get_terminal_input_status`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `queued_bytes` | `int` | Yes | — | No |
+| `capacity_bytes` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "capacity_bytes": 0,
+  "queued_bytes": 0
+}
+```
+
+<!-- api-model: TerminalInputStatusRequest -->
+## `TerminalInputStatusRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Ask how much of the session's bounded input queue is in use.
+
+**Related methods:** `get_terminal_input_status`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `session_id` | `SessionId` | Yes | — | No |
+| `attachment_id` | `AttachmentId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attachment_id": "attachment-2",
+  "session_id": "session-12"
+}
+```
+
 <!-- api-model: TerminalOutput -->
 ## `TerminalOutput`
 

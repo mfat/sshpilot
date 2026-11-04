@@ -696,6 +696,7 @@ administrator). Adding and removing keys through the UI is still untested.
 | Secret backend "auto" tried libsecret first | Windows uses `keyring` first (Credential Manager); KeePass stays available |
 | Several OpenSSH builds on PATH (see section 8) | `platform/windows/openssh.prefer_builtin_openssh()` puts `System32\OpenSSH` first |
 | Windows OpenSSH has no `ssh-copy-id` (Git for Windows' copy is a shell script `shutil.which` cannot resolve, and it would run the MSYS `ssh`), so key deployment reported "unavailable" | `platform/windows/copy_id.py` runs `ssh-copy-id`'s own remote install script (including the OpenWrt/Dropbear path) over the built-in `ssh`, with the key embedded in the command |
+| `Gtk.Window.close()` hides without activating the transient parent, so Windows can bring another application forward and leave the main window behind it (GH #1339). It happens when the parent was not active just before the dialog: a dialog opened from the sidebar row menu (non-autohide, so its popup takes activation when clicked), or one the user returned to from another application | `platform/windows/transient_close.py` presents the parent from a `close-request` emission hook, as GDK's own `WM_CLOSE` handler does. Install it after the first window exists: the signal is not registered before |
 
 ### 10. A self-inflicted bug worth remembering
 

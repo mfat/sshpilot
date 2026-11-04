@@ -23,7 +23,7 @@ The result:
 | --- | --- |
 | `build\windows\dist\sshPilot\sshPilot.exe` | the GUI (windowed) |
 | `build\windows\dist\sshPilot\sshpilot-cli.exe` | the daemon (`--daemon`), askpass (`--internal-askpass`) and rbw's pinentry (`--internal-rbw-pinentry`); console subsystem |
-| `build\windows\dist\sshPilot\_internal\` | Python, GTK 4, typelibs, `libvterm-0.dll`, `conpty.dll`, `OpenConsole.exe` |
+| `build\windows\dist\sshPilot\_internal\` | Python, GTK 4, typelibs, `libvterm-0.dll`, `conpty.dll`, `OpenConsole.exe`, gtk4-frdp with FreeRDP and OpenSSL (RDP tabs) |
 | `build\windows\SSHPilot-<version>-windows-<arch>-setup.exe` | the installer (about 60 MiB) |
 
 `build.ps1` runs `verify_bundle.py`, which fails the build when a file the app

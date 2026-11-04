@@ -79,7 +79,9 @@ def test_cleanup_orphaned_skips_recent_processes(pm, monkeypatch):
 def test_cleanup_orphaned_removes_dead_old_process(pm, monkeypatch):
     killed = []
     monkeypatch.setattr(pm, "_terminate_process_by_pid", lambda pid: killed.append(pid))
-    monkeypatch.setattr(os, "kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()))
+    # The liveness probe, not os.kill: Windows probes with OpenProcess.
+    import sshpilot.ssh_process_manager as manager_mod
+    monkeypatch.setattr(manager_mod, "pid_alive", lambda pid, on_error=None: False)
     with pm.lock:
         pm.processes[556] = {"start_time": datetime.now() - timedelta(hours=1)}
     pm._cleanup_orphaned_processes()

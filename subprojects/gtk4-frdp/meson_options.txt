@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+option('introspection',
+       type: 'boolean', value: true,
+       description: 'Generate GObject Introspection data (needed for Python, JavaScript, ...)')
+
+option('examples',
+       type: 'boolean', value: false,
+       description: 'Build the example viewer')
+
+option('tests',
+       type: 'boolean', value: true,
+       description: 'Build and register the test suite')
+
+option('documentation',
+       type: 'boolean', value: false,
+       description: 'Build the API reference with gi-docgen (requires introspection)')
+
+option('private_libdir',
+       type: 'string', value: '',
+       description: 'Install for one application only: put the library and its typelib in this directory under libdir (e.g. "myapp", giving <libdir>/myapp and <libdir>/myapp/girepository-1.0), and install no headers, pkg-config file or GIR XML. The application adds both directories to its GObject Introspection search paths.')

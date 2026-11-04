@@ -90,9 +90,12 @@ def test_passphrase_key_login_asks_and_runs_a_remote_command(phase14_harness):
     h.stop_auth_helper()
     conn = h.add_key_connection("BasicPassphraseKey", encrypted=True)
 
+    # The prompt runs a nested main loop; the responder must be armed first.
+    answer = h.answer_password_dialog(h.openssh.encrypted_key_passphrase)
+
     _open_ssh_terminal(h, conn)
-    dialog = h.wait_for_passphrase_dialog(timeout=45.0)
-    h.respond_password_dialog(dialog, h.openssh.encrypted_key_passphrase)
+    h.pump_until(lambda: answer["answered"], timeout=45.0, label="passphrase dialog")
+    assert answer["title"] == "Passphrase Required"
 
     assert MARKER in _run_command(h, h.find_terminal_widget(conn))
 

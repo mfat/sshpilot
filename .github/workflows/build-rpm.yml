@@ -13,7 +13,13 @@ permissions:
 
 jobs:
   build-rpm:
-    runs-on: ubuntu-latest
+    # One build per architecture: the package carries the compiled gtk4-frdp
+    # library behind RDP tabs (packaging/fedora/rpm.spec).
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     container: fedora:latest
 
     steps:
@@ -74,7 +80,7 @@ jobs:
       - name: Verify package contents
         run: |
           set -eu
-          RPM=$(ls artifacts/*.noarch.rpm | head -1)
+          RPM=$(ls artifacts/sshpilot-[0-9]*.$(uname -m).rpm | head -1)
           contents=$(rpm -qlp "$RPM")
           # Everything the app needs at runtime must be present. The two
           # /usr/share/sshpilot entries are the Python payload and the bundled
@@ -90,6 +96,8 @@ jobs:
             /usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
             /usr/share/sshpilot/sshpilot/main.py \
             /usr/share/sshpilot/sshpilot/vendor/pyxtermjs/xterm/xterm.js \
+            /usr/lib64/sshpilot/libgtk4-frdp-4.0.so.0 \
+            /usr/lib64/sshpilot/girepository-1.0/GtkFrdp-4.0.typelib \
           ; do
             grep -qx "$path" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
           done
@@ -107,7 +115,7 @@ jobs:
       # inapplicable belongs in the rpmlintrc, with the reason written down.
       - name: Rpmlint
         run: |
-          rpmlint -r packaging/fedora/sshpilot.rpmlintrc artifacts/*.noarch.rpm
+          rpmlint -r packaging/fedora/sshpilot.rpmlintrc artifacts/sshpilot-[0-9]*.$(uname -m).rpm
           # The SRPM covers the spec itself, which the binary package cannot.
           # Informational until it has been clean for a while.
           rpmlint -r packaging/fedora/sshpilot.rpmlintrc artifacts/*.src.rpm \
@@ -127,17 +135,17 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rpm-packages-${{ steps.version.outputs.version }}
+          name: rpm-packages-${{ steps.version.outputs.version }}-${{ matrix.runner }}
           path: |
-            artifacts/*.noarch.rpm
-            artifacts/*.src.rpm
+            artifacts/sshpilot-[0-9]*.rpm
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/*.noarch.rpm
+            artifacts/sshpilot-[0-9]*.x86_64.rpm
+            artifacts/sshpilot-[0-9]*.aarch64.rpm
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

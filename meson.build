@@ -1,5 +1,5 @@
 project('sshpilot',
-  version: '6.3.6',  # keep in sync with src/sshpilot/__init__.py (scripts/bump-version.sh bumps both)
+  version: '6.3.7',  # keep in sync with src/sshpilot/__init__.py (scripts/bump-version.sh bumps both)
   license: 'GPL-3.0-or-later',
   meson_version: '>= 0.59.0',
 )
@@ -30,6 +30,32 @@ pkgdatadir = datadir / app_id
 # it. The launcher and build_config.py both read the path from here either way.
 moduledir = py.get_install_dir()
 
+# RDP connections in a tab: gtk4-frdp, built from the copy in
+# subprojects/gtk4-frdp (scripts/update-gtk4-frdp.sh) and installed privately
+# into <libdir>/sshpilot, where rdp_tab.py looks for it. Without it RDP opens
+# in FreeRDP's own window. Private so the package never clashes with a system
+# gtk4-frdp and needs no separate package.
+rdp_tab_libdir = ''
+rdp_tab_deps_found = true
+foreach dep : [['freerdp3', '>= 3.11.0'], ['freerdp-client3', '>= 3.11.0'],
+               ['winpr3', '>= 3.11.0'], ['gtk4', '>= 4.14'],
+               ['gobject-introspection-1.0', '>= 1.66']]
+  if rdp_tab_deps_found
+    rdp_tab_deps_found = dependency(dep[0], version: dep[1],
+      required: get_option('rdp_tab')).found()
+  endif
+endforeach
+if rdp_tab_deps_found and not get_option('rdp_tab').disabled()
+  subproject('gtk4-frdp', default_options: [
+    'private_libdir=sshpilot',
+    'introspection=true',
+    'tests=false',
+    'examples=false',
+    'documentation=false',
+  ])
+  rdp_tab_libdir = prefix / get_option('libdir') / 'sshpilot'
+endif
+
 subdir('data')
 subdir('src')
 subdir('po')
@@ -49,6 +75,9 @@ install_data('sshpilot-daemon',
 install_data('packaging/systemd/sshpilot-daemon.service',
   install_dir: datadir / 'sshpilot' / 'systemd',
 )
+
+summary({'RDP tab (bundled gtk4-frdp)': rdp_tab_libdir != '' ? rdp_tab_libdir : 'no'},
+  section: 'Features')
 
 gnome.post_install(
   gtk_update_icon_cache: true,

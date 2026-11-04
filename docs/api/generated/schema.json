@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.85",
+  "api_implementation_version": "0.88",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -269,6 +269,10 @@
       "capability": "connections.config.read",
       "status": "implemented"
     },
+    "get_terminal_input_status": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
     "get_transfer": {
       "capability": "transfers.read",
       "status": "daemon-only"
@@ -467,6 +471,10 @@
     },
     "reveal_key_passphrase": {
       "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "run_pre_connect": {
+      "capability": "sessions.write",
       "status": "daemon-only"
     },
     "save_ssh_config_text": {
@@ -772,6 +780,9 @@
     },
     "connections.reveal_password": {
       "capability": "connections.secrets.reveal"
+    },
+    "connections.run_pre_connect": {
+      "capability": "sessions.write"
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
@@ -1194,6 +1205,9 @@
       "capability": "terminal.input"
     },
     "terminal.claim_input": {
+      "capability": "terminal.input"
+    },
+    "terminal.input_status": {
       "capability": "terminal.input"
     },
     "terminal.release_input": {
@@ -9720,6 +9734,44 @@
           "required": true,
           "sensitive": true,
           "type": "bytes"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "TerminalInputStatus": {
+      "fields": [
+        {
+          "default": null,
+          "name": "queued_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "capacity_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "TerminalInputStatusRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
         }
       ],
       "status": "Implemented"

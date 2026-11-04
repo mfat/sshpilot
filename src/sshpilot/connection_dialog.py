@@ -3829,7 +3829,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Wake-on-LAN Group
         wol_group = Adw.PreferencesGroup(
             title=_("Wake on LAN"),
-            description=_("Optional. Set MAC address to wake this host from the context menu. Host must be on the same subnet for detection.")
+            description=_("Optional. With a MAC address, opening this connection wakes the host when it does not answer, and the context menu wakes it on demand. Host must be on the same subnet for detection.")
         )
         self.wol_mac_row = Adw.EntryRow(title=_("MAC address"))
         _set_entry_row_hint(self.wol_mac_row, "aa:bb:cc:dd:ee:ff")
@@ -3841,6 +3841,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         _set_entry_row_hint(self.wol_port_row, digits=True, max_length=5)
         self.wol_port_row.set_text("9")
         wol_group.add(self.wol_port_row)
+        # On by default: saving a MAC address is the user saying the host
+        # sleeps. Off leaves waking to the context menu.
+        self.wol_on_connect_row = Adw.SwitchRow(
+            title=_("Wake before connecting"),
+            subtitle=_("Wake the host and wait for it when it does not answer"),
+        )
+        self.wol_on_connect_row.set_active(True)
+        wol_group.add(self.wol_on_connect_row)
         # Detect MAC button (run in thread, update row from main thread)
         wol_detect_row = Adw.ActionRow(title=_("Detect MAC from network"))
         wol_detect_row.set_subtitle(_("Host must be on and reachable on the same subnet"))
@@ -5192,6 +5200,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     if meta:
                         self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
                         self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
+                        self.wol_on_connect_row.set_active(meta.get('wol_on_connect') is not False)
                         port_val = meta.get('wol_port')
                         if port_val is not None:
                             try:
@@ -5451,6 +5460,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if hasattr(self, 'wol_mac_row'):
             meta['wol_mac'] = (self.wol_mac_row.get_text() or '').strip()
             meta['wol_broadcast_ip'] = (self.wol_broadcast_row.get_text() or '').strip()
+            meta['wol_on_connect'] = bool(self.wol_on_connect_row.get_active())
             try:
                 meta['wol_port'] = int((self.wol_port_row.get_text() or '9').strip() or '9')
             except ValueError:

@@ -248,6 +248,20 @@ ruff check sshpilot/ tests/           # lint (as CI runs it)
 in CI. Some unit tests are marked `xfail` (see `tests/conftest.py`) — that is
 expected.
 
+### RDP connections in a tab
+
+Packaged builds compile the bundled gtk4-frdp themselves. A checkout opens RDP
+in FreeRDP's own window until you build it once:
+
+```bash
+scripts/build-rdp-tab.sh   # into build/rdp-tab; the app finds it there
+```
+
+It needs FreeRDP 3 (≥ 3.11) development files and GObject Introspection
+(Debian/Ubuntu: `freerdp3-dev libwinpr3-dev libgirepository1.0-dev`; Fedora:
+`freerdp-devel gobject-introspection-devel`). Re-run it after
+`scripts/update-gtk4-frdp.sh`.
+
 ---
 
 ## Troubleshooting

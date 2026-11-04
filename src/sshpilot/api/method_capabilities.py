@@ -2,6 +2,9 @@
 from .capabilities import Capability
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
+    # The daemon runs the pre-connection steps; there is nothing in process to
+    # wake, knock or run them for.
+    "run_pre_connect": Capability.SESSIONS_WRITE,
     "start_broadcast_command": Capability.BROADCAST_WRITE,
     "get_broadcast_command": Capability.BROADCAST_READ,
     "cancel_broadcast_command": Capability.BROADCAST_WRITE,
@@ -45,6 +48,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_copy": Capability.SFTP_MUTATE,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "broadcast_terminal_input": Capability.TERMINAL_INPUT,
+    "get_terminal_input_status": Capability.TERMINAL_INPUT,
     "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "list_sftp_services": Capability.SFTP_READ,

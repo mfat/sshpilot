@@ -5,15 +5,18 @@ Three transports, same manifest dict:
 - :class:`SpbkFileBackend` — the local ``.spbk`` file (existing behaviour), via
   :func:`backup_archive.write_spbk` / :func:`backup_archive.read_spbk`.
 - :class:`BitwardenBackupBackend` — a single Bitwarden **secure note** holding
-  ``SSHPILOT-BACKUP-v1\\n<base64(gzip(json(manifest)))>``. No attachments (premium/Flatpak
-  issues) and no extra passphrase envelope — the note relies on Bitwarden's own vault encryption.
-  If the encoded note would exceed the field limit, :class:`BackupTooLargeForNote` is raised so
-  the caller can fall back to a ``.spbk`` file.
+  ``SSHPILOT-BACKUP-v1\\n<base64(gzip(json(manifest)))>``. No extra passphrase envelope — the
+  note relies on Bitwarden's own vault encryption. If the encoded note would exceed the field
+  limit, the same payload goes into an **attachment** on the note, which then holds only
+  ``SSHPILOT-BACKUP-v1-ATTACHMENT\\n<filename>``. Attachments need Premium (or Vaultwarden);
+  without it :class:`BackupTooLargeForNote` is raised so the caller can fall back to a ``.spbk``
+  file.
 - :class:`SSHServerBackupBackend` — a ``.spbk`` file in a directory on one of the user's own SSH
   servers, transferred over the plain ssh exec channel (``cat``) via a duck-typed ``runner``.
 
 GTK-free. The Bitwarden backend depends only on a small duck-typed object exposing
-``create_or_update_secure_note`` / ``list_secure_notes`` / ``read_secure_note`` (implemented by
+``create_or_update_secure_note`` / ``list_secure_notes`` / ``read_secure_note`` and, for oversized
+backups, ``store_secure_note_attachment`` / ``read_secure_note_attachment`` (implemented by
 ``secret_storage.BitwardenBackend``), so it is trivially fakeable in tests.
 """
 
@@ -24,6 +27,7 @@ import gzip
 import json
 import os
 import re
+import secrets
 import tempfile
 from dataclasses import dataclass
 from typing import List, Mapping, Optional, Protocol
@@ -34,10 +38,12 @@ from .api.models.secrets import (
 )
 
 BACKUP_NOTE_MAGIC = "SSHPILOT-BACKUP-v1"
+# A note whose payload lives in an attachment: this line, then the attachment's filename.
+BACKUP_ATTACHMENT_MAGIC = "SSHPILOT-BACKUP-v1-ATTACHMENT"
 BACKUP_ITEM_PREFIX = "sshPilot Backup"
-# Bitwarden's note field caps around 10k characters (Vaultwarden may allow more). We refuse
-# rather than silently truncate.
-BW_NOTE_MAX_CHARS = 10_000
+# The server's 10,000 limit applies to the note after encryption: AES-CBC blocks, base64, and the
+# ``2.<iv>|<data>|<mac>`` envelope. 7,439 plain characters come to 9,992; 7,440 come to 10,016.
+BW_NOTE_MAX_CHARS = 7_439
 
 
 class BackupError(Exception):
@@ -64,7 +70,8 @@ class BackupError(Exception):
 
 
 class BackupTooLargeForNote(BackupError):
-    """The encoded manifest exceeds the Bitwarden note field limit — use a ``.spbk`` file."""
+    """The encoded manifest exceeds the Bitwarden note field limit and the account cannot hold
+    it as an attachment — use a ``.spbk`` file."""
 
     def __init__(
         self,
@@ -184,7 +191,7 @@ class SpbkFileBackend:
 
 class BitwardenBackupBackend:
     """Bitwarden secure-note destination. ``bw`` is a duck-typed object (the ``bitwarden``
-    ``SecretBackend``) exposing the three secure-note methods. ``item_name`` is the name for a new
+    ``SecretBackend``) exposing the secure-note methods. ``item_name`` is the name for a new
     export (the caller supplies the timestamp so this class stays clock-free / testable)."""
     name = "bitwarden"
 
@@ -195,6 +202,29 @@ class BitwardenBackupBackend:
     def export(self, manifest: dict, *, passphrase: Optional[str] = None) -> BackupEntry:
         content = encode_manifest_note(manifest)
         if len(content) > BW_NOTE_MAX_CHARS:
+            item_id = self._export_attachment(manifest, content)
+        else:
+            item_id = self._bw.create_or_update_secure_note(self._item_name, content)
+        if not item_id:
+            raise BackupError(SecretTransferMessageCode.BITWARDEN_NOTE_SAVE_FAILED)
+        return BackupEntry(id=item_id, name=self._item_name)
+
+    def _export_attachment(self, manifest: dict, content: str) -> Optional[str]:
+        # A fresh filename per upload: ``bw get attachment`` refuses a name that two
+        # attachments share, so a failed cleanup can never make a backup unreadable.
+        filename = f"sshpilot-backup-{secrets.token_hex(8)}.txt"
+        try:
+            return self._bw.store_secure_note_attachment(
+                self._item_name,
+                f"{BACKUP_ATTACHMENT_MAGIC}\n{filename}",
+                filename,
+                content.encode("ascii"),
+            )
+        except Exception as exc:
+            # Duck-typed like ``self._bw`` itself, so this module need not import
+            # ``secret_storage`` for its exception class.
+            if not getattr(exc, "premium_required", False):
+                raise
             # Name what is actually big. Guessing wastes the user's time: which
             # part dominates depends entirely on the vault — app settings can
             # outweigh private keys several times over.
@@ -204,11 +234,7 @@ class BitwardenBackupBackend:
                 limit=BW_NOTE_MAX_CHARS,
                 largest_section=label,
                 largest_section_cost=cost,
-            )
-        item_id = self._bw.create_or_update_secure_note(self._item_name, content)
-        if not item_id:
-            raise BackupError(SecretTransferMessageCode.BITWARDEN_NOTE_SAVE_FAILED)
-        return BackupEntry(id=item_id, name=self._item_name)
+            ) from None
 
     def list_exports(self) -> List[BackupEntry]:
         entries: List[BackupEntry] = []
@@ -225,7 +251,27 @@ class BitwardenBackupBackend:
         note = self._bw.read_secure_note(entry.id)
         if note is None:
             raise BackupError(SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED)
+        head, _, filename = note.partition("\n")
+        if head.strip() == BACKUP_ATTACHMENT_MAGIC:
+            note = self._read_attachment(entry.id, filename.strip())
         return decode_manifest_note(note)
+
+    def _read_attachment(self, item_id: str, filename: str) -> str:
+        try:
+            data = self._bw.read_secure_note_attachment(item_id, filename)
+        except Exception as exc:
+            if not getattr(exc, "premium_required", False):
+                raise
+            raise BackupError(
+                SecretTransferMessageCode.BITWARDEN_ATTACHMENT_RESTORE_NEEDS_PREMIUM,
+                diagnostic=str(exc),
+            ) from None
+        if data is None:
+            raise BackupError(
+                SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED,
+                diagnostic="backup attachment could not be downloaded",
+            )
+        return data.decode("ascii", "replace")
 
 
 # --- SSH server (the user's own host) ----------------------------------------

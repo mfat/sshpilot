@@ -41,6 +41,7 @@ jobs:
         with:
           path: |
             vendor/GTK4_Gvsbuild_*.zip
+            vendor/gtk4-frdp-*.zip
           key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
 
       - name: Fetch GTK 4 and ConPTY
@@ -77,7 +78,7 @@ jobs:
           SSHPILOT_GUI_TESTS: "1"
         run: |
           $env:PATH = "$PWD\vendor\gtk\bin;$env:PATH"
-          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_preferences_backend_choices.py tests/gui/test_gtk_client_bridge_dispatch.py
+          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_preferences_backend_choices.py tests/gui/test_gtk_client_bridge_dispatch.py tests/test_windows_transient_close.py
 
   package:
     # Builds the app folder and installer; signs when SignPath is configured
@@ -113,6 +114,7 @@ jobs:
         with:
           path: |
             vendor/GTK4_Gvsbuild_*.zip
+            vendor/gtk4-frdp-*.zip
           key: gvsbuild-${{ hashFiles('scripts/fetch-gtk.py') }}
 
       - name: Fetch GTK 4 and ConPTY

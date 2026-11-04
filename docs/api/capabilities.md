@@ -243,6 +243,8 @@ Daemon-only raw-byte input from the single daemon-authoritative input owner.
 Input is bounded, ordered, never decoded, and never logged. The typed
 `terminal.broadcast_input` method uses the same capability to fan out one
 command to existing owned sessions; it never starts a new SSH process.
+`terminal.input_status` reports queue occupancy to the input owner so input
+larger than one 64 KiB frame can be paced instead of rejected.
 
 <!-- api-capability: terminal.resize -->
 ## `terminal.resize`

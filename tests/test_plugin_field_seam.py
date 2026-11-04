@@ -55,13 +55,13 @@ CASES = {
         "fields": {
             "device": "/dev/ttyUSB0", "baud": "9600", "flow": "hard",
             "databits": "7", "parity": "even", "stopbits": "2",
-            "send_newline": "crlf", "recv_add_cr": True, "local_echo": True,
+            "send_newline": "crlf", "send_backspace": "bs", "recv_add_cr": True, "local_echo": True,
             "logfile": "/tmp/serial.log",
         },
         "argv": [
             f"{BIN}/picocom", "-b", "9600", "-f", "h",
             "--databits", "7", "--parity", "e", "--stopbits", "2",
-            "--omap", "crcrlf", "--imap", "lfcrlf", "--echo",
+            "--omap", "crcrlf,delbs", "--imap", "lfcrlf", "--echo",
             "--logfile", "/tmp/serial.log", "/dev/ttyUSB0",
         ],
     },
@@ -106,7 +106,9 @@ CASES = {
         "fields": {
             "host": "win.example", "port": 3390, "username": "alice",
             # Secure storage, not plugin_data: nothing to round-trip here.
-            "domain": "CORP", "password": "", "display_mode": "fullscreen",
+            # "window": the launch command below is FreeRDP's own window.
+            "domain": "CORP", "password": "", "viewer": "window",
+            "display_mode": "fullscreen",
             "size": "1600x900", "scale": "150", "multimon": True,
             "clipboard": False, "sound": True, "microphone": True, "printer": True,
             "shared_folder": "/srv/share", "security": "nla",

@@ -129,6 +129,8 @@ from sshpilot.api.transport.codec import (
     split_connection_request_from_wire,
     ssh_config_text_to_wire,
     resize_terminal_request_from_wire,
+    terminal_input_status_request_from_wire,
+    terminal_input_status_to_wire,
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
     sftp_copy_request_from_wire,
@@ -225,6 +227,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.run_pre_connect": Capability.SESSIONS_WRITE,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.set_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -279,6 +282,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "terminal.replay": Capability.TERMINAL_REPLAY,
     "terminal.resize": Capability.TERMINAL_RESIZE,
     "terminal.broadcast_input": Capability.TERMINAL_INPUT,
+    "terminal.input_status": Capability.TERMINAL_INPUT,
     "terminal.claim_input": Capability.TERMINAL_INPUT,
     "terminal.release_input": Capability.TERMINAL_INPUT,
     "sftp.list_services": Capability.SFTP_READ,
@@ -499,6 +503,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.prepare_external_terminal_launch",
         "connections.get_launch_command",
         "connections.test_pre_command",
+        "connections.run_pre_connect",
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
         "daemon.set_operation_mode",
@@ -631,7 +636,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
 class SecretResponseResult:
     """A deferred secret delivered outside the JSON response envelope."""
 
-    secret: Optional[bytearray]
+    secret: Optional[bytearray] = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -783,6 +788,7 @@ class RequestDispatcher:
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.get_launch_command": self._handle_get_launch_command,
             "connections.test_pre_command": self._handle_test_pre_command,
+            "connections.run_pre_connect": self._handle_run_pre_connect,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
         "connections.set_session_password": self._handle_set_session_connection_password,
@@ -832,6 +838,7 @@ class RequestDispatcher:
             "terminal.replay": self._handle_replay_terminal,
             "terminal.resize": self._handle_resize_terminal,
             "terminal.broadcast_input": self._handle_broadcast_terminal_input,
+            "terminal.input_status": self._handle_terminal_input_status,
             "terminal.claim_input": self._handle_claim_terminal_input,
             "terminal.release_input": self._handle_release_terminal_input,
             "sftp.list_services": self._handle_list_sftp_services,
@@ -1579,6 +1586,52 @@ class RequestDispatcher:
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
+        )
+
+    def _handle_run_pre_connect(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        """Run a connection's pre-connection steps for a frontend-owned launch.
+
+        For connections the daemon does not launch itself -- an embedded RDP
+        tab connects from the frontend through gtk4-frdp -- so the wake, knock
+        or command still runs first, exactly as for a daemon launch. Notices
+        go out under *scope_id*, which the frontend surface registered for
+        its status line. Answers whether the launch may proceed.
+
+        Its own command lane per connection: waking a host can take a minute,
+        and the configuration lane must not wait on it.
+        """
+        params = dict(request.params)
+        if set(params) != {"connection_id", "scope_id"}:
+            raise ValueError(
+                "connections.run_pre_connect requires connection_id and scope_id"
+            )
+        connection_id = params["connection_id"]
+        scope_id = params["scope_id"]
+        for name, value in (("connection_id", connection_id), ("scope_id", scope_id)):
+            if type(value) is not str or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        runner = self._pre_command_runner
+        from sshpilot.api.models.pre_command import PreCommandLaunchKind
+
+        def _run():
+            if runner is None:
+                return {"proceed": True}
+            # A tab, like a terminal: the notice belongs on it.
+            proceed = runner.run(
+                typed_id, scope_id=scope_id, kind=PreCommandLaunchKind.TERMINAL
+            )
+            return {"proceed": bool(proceed)}
+
+        return DeferredResult(
+            operation=_run,
+            command_key=f"pre-connect:{typed_id}",
+            on_rejected=lambda: None,
+            connection_id=typed_id,
         )
 
     def _run_pre_connection_command(self, connection_id: ConnectionId) -> None:
@@ -2337,6 +2390,18 @@ class RequestDispatcher:
             client_id=self._required_client_id(state),
         )
         return None
+
+    def _handle_terminal_input_status(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        return terminal_input_status_to_wire(
+            self._session_runtime.terminal_input_status(
+                terminal_input_status_request_from_wire(request.params),
+                client_id=self._required_client_id(state),
+            )
+        )
 
     def _handle_broadcast_terminal_input(
         self,

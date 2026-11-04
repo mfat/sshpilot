@@ -688,14 +688,45 @@ def test_base_command_copy_id_never_injects_identity(tmp_path):
     assert '-i' in scp_cmd and str(key) in scp_cmd
 
 
-def test_base_command_x11_flag_only_for_ssh():
+def test_base_command_x11_flag_only_for_ssh(monkeypatch):
     # scp -X selects the transfer protocol and sftp -X sets an sftp option, so
     # a bare -X must only ever be emitted for ssh.
+    import os
+
+    monkeypatch.setattr(os, "name", "posix")
     effective = {'forwardx11': 'yes'}
     assert '-X' in _base_cmd('ssh', effective_config=effective)
     assert '-X' not in _base_cmd('scp', effective_config=effective)
     assert '-X' not in _base_cmd('sftp', effective_config=effective)
     assert '-X' not in _base_cmd('ssh-copy-id', effective_config=effective)
+
+
+def test_windows_terminal_asks_for_trusted_x11(monkeypatch):
+    # Issue #1365: terminal sessions take ForwardX11 from the config file or
+    # an authored -o, never from -X/-Y, so the trusted mode Windows needs
+    # (it has no xauth) must be requested on the terminal argv itself.
+    import os
+
+    conn = {'host': 'x11.example', 'hostname': 'x11.example'}
+    monkeypatch.setattr(os, "name", "nt")
+    assert _has_o_option(_build(conn)[0], 'ForwardX11Trusted=yes')
+    assert not _has_o_option(_build(conn, command_type='sftp')[0], 'ForwardX11Trusted')
+    monkeypatch.setattr(os, "name", "posix")
+    assert not _has_o_option(_build(conn)[0], 'ForwardX11Trusted')
+
+
+def test_base_command_x11_is_trusted_on_windows(monkeypatch):
+    # Issue #1365: Windows has no xauth, so OpenSSH refuses untrusted -X
+    # ("xauth key data not generated"); only -Y reaches Xming/VcXsrv.
+    import os
+
+    monkeypatch.setattr(os, "name", "nt")
+    effective = {'forwardx11': 'yes'}
+    cmd = _base_cmd('ssh', effective_config=effective)
+    assert '-Y' in cmd and '-X' not in cmd
+    for command_type in ('scp', 'sftp', 'ssh-copy-id'):
+        cmd = _base_cmd(command_type, effective_config=effective)
+        assert '-Y' not in cmd and '-X' not in cmd
 
 
 # ---------------------------------------------------------------------------

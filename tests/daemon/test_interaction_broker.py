@@ -2103,6 +2103,193 @@ def test_remember_after_authentication_is_logged_immediately(
         instance.close()
 
 
+PASSPHRASE_PROMPT = "Enter passphrase for key '/home/alice/.ssh/id_test': "
+
+
+def _passphrase_broker(monkeypatch) -> tuple[InteractionBroker, list]:
+    stored: list[tuple[str, str]] = []
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        passphrase_store=lambda key_path, value: (
+            stored.append((key_path, value)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        instance, "_effective_ssh_config", lambda _argv, _environment=None: {}
+    )
+    return instance, stored
+
+
+def _launch_token(instance: InteractionBroker) -> str:
+    _argv, environment = instance.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
+            },
+        ),
+    )
+    return environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+
+
+def _answer_passphrase_prompt(
+    instance: InteractionBroker,
+    token: str,
+    value: bytes,
+    policy: RememberPolicy,
+):
+    """Answer one askpass passphrase prompt; return its interaction summary."""
+    seen = {item.id for item in instance.list(CLIENT_A)}
+    resolved = []
+    waiter = threading.Thread(
+        target=lambda: resolved.append(
+            instance._resolve_askpass_secret(token, PASSPHRASE_PROMPT)
+        )
+    )
+    waiter.start()
+    deadline = time.monotonic() + 1
+    interactions: list = []
+    while time.monotonic() < deadline and not interactions:
+        interactions = [
+            item for item in instance.list(CLIENT_A) if item.id not in seen
+        ]
+        time.sleep(0.005)
+    interaction = interactions[0]
+    claim = instance.claim(interaction.id, CLIENT_A)
+    instance.respond(
+        InteractionDecisionRequest(
+            interaction_id=interaction.id,
+            secret_decision=SecretDecision.SUBMIT,
+            remember_policy=policy,
+        ),
+        CLIENT_A,
+    )
+    instance.submit_secret(
+        SecretFrame(
+            kind=SecretFrameKind.RESPONSE,
+            interaction_id=interaction.id,
+            nonce=bytes.fromhex(claim.nonce),
+            secret=bytearray(value),
+        ),
+        CLIENT_A,
+    )
+    waiter.join(1)
+    assert not waiter.is_alive()
+    assert resolved == [bytearray(value)]
+    resolved[0][:] = b"\0" * len(resolved[0])
+    resolved[0].clear()
+    return interaction
+
+
+def test_remembered_passphrase_commits_after_authentication(monkeypatch) -> None:
+    instance, stored = _passphrase_broker(monkeypatch)
+    try:
+        token = _launch_token(instance)
+        interaction = _answer_passphrase_prompt(
+            instance, token, b"right", RememberPolicy.STORE_AFTER_SUCCESS
+        )
+
+        assert interaction.prompt.can_remember is True
+        assert stored == []
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == [("/home/alice/.ssh/id_test", "right")]
+    finally:
+        instance.close()
+
+
+def test_rejected_passphrase_is_not_stored_when_retry_is_not_remembered(
+    monkeypatch,
+) -> None:
+    """Ticking Remember on a typo must not store it once a retry succeeds."""
+    instance, stored = _passphrase_broker(monkeypatch)
+    try:
+        token = _launch_token(instance)
+        _answer_passphrase_prompt(
+            instance, token, b"typo", RememberPolicy.STORE_AFTER_SUCCESS
+        )
+        _answer_passphrase_prompt(
+            instance, token, b"right", RememberPolicy.DO_NOT_STORE
+        )
+
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == []
+    finally:
+        instance.close()
+
+
+def test_rejected_passphrase_is_replaced_by_remembered_retry(monkeypatch) -> None:
+    instance, stored = _passphrase_broker(monkeypatch)
+    try:
+        token = _launch_token(instance)
+        _answer_passphrase_prompt(
+            instance, token, b"typo", RememberPolicy.STORE_AFTER_SUCCESS
+        )
+        _answer_passphrase_prompt(
+            instance, token, b"right", RememberPolicy.STORE_AFTER_SUCCESS
+        )
+
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == [("/home/alice/.ssh/id_test", "right")]
+    finally:
+        instance.close()
+
+
+def test_session_passphrase_autofills_the_next_launch_without_storing(
+    monkeypatch,
+) -> None:
+    """"Remember until quit" reaches ssh through askpass, so no agent is needed."""
+    instance, stored = _passphrase_broker(monkeypatch)
+    try:
+        token = _launch_token(instance)
+        _answer_passphrase_prompt(
+            instance, token, b"right", RememberPolicy.REMEMBER_FOR_SESSION
+        )
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == []
+
+        next_token = _launch_token(instance)
+        resolved = instance._resolve_askpass_secret(next_token, PASSPHRASE_PROMPT)
+        assert resolved == bytearray(b"right")
+        resolved[:] = b"\0" * len(resolved)
+        resolved.clear()
+    finally:
+        instance.close()
+
+
+def test_key_operation_passphrase_prompt_cannot_be_remembered(monkeypatch) -> None:
+    """Key operations never authenticate, so nothing would commit the answer."""
+    instance, stored = _passphrase_broker(monkeypatch)
+    try:
+        _argv, environment = instance.prepare_operation_launch(
+            ("/usr/bin/ssh-keygen", "-y", "-f", "/home/alice/.ssh/id_test"),
+            {"PATH": os.environ.get("PATH", "")},
+            scope_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            hostname="key",
+            allow_stored_secrets=False,
+        )
+        interaction = _answer_passphrase_prompt(
+            instance,
+            environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"],
+            b"right",
+            RememberPolicy.DO_NOT_STORE,
+        )
+
+        assert interaction.prompt.can_remember is False
+    finally:
+        instance.close()
+
+
 def test_mark_authenticated_commits_every_context_sharing_a_session_id(
     monkeypatch,
 ) -> None:

@@ -121,6 +121,13 @@ class PtyIoManager:
                 return False
         return True
 
+    def input_status(self, handle: "PtyProcessHandle") -> tuple[int, int]:
+        """Return ``(queued_bytes, capacity_bytes)`` for this handle's input."""
+        with self._state_lock:
+            state = self._states.get(handle.master_fd)
+            queued = self._input_limit if state is None else state.queued_input_bytes
+        return queued, self._input_limit
+
     def resize(self, handle: "PtyProcessHandle", dimensions: TerminalDimensions) -> None:
         handle.last_dimensions = dimensions
         self._submit(("resize", handle, dimensions))
@@ -368,6 +375,9 @@ class PtyProcessHandle(SessionProcessHandle):
 
     def write(self, data: bytes) -> bool:
         return self._manager.write(self, data)
+
+    def input_status(self) -> tuple[int, int]:
+        return self._manager.input_status(self)
 
     def resize(self, dimensions: TerminalDimensions) -> None:
         self.last_dimensions = dimensions

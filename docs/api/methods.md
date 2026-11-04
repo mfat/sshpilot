@@ -10,6 +10,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-method: prepare_external_terminal_launch -->
 <!-- api-method: get_launch_command -->
 <!-- api-method: test_pre_command -->
+<!-- api-method: run_pre_connect -->
 <!-- api-method: get_effective_config -->
 <!-- api-method: check_unsaved_host -->
 <!-- api-method: set_operation_mode -->
@@ -67,6 +68,7 @@ direct core service compositions are test-only and are not client choices.
 | `prepare_external_terminal_launch` | Daemon only | `terminal.external_launch` |
 | `get_launch_command` | Implemented | `terminal.external_launch` |
 | `test_pre_command` | Implemented | `connections.config.read` |
+| `run_pre_connect` | Daemon only | `sessions.write` |
 | `get_effective_config` | Implemented | `connections.config.read` |
 | `store_connection_password` | Implemented | `connections.secrets.write` |
 | `clear_session_connection_password` | Daemon only | `connections.secrets.write` |
@@ -90,6 +92,7 @@ direct core service compositions are test-only and are not client choices.
 | `detach_session` | Daemon only | `sessions.write` |
 | `close_session` | Daemon only | `sessions.write` |
 | `send_terminal_input` | Daemon only | `terminal.input` |
+| `get_terminal_input_status` | Daemon only | `terminal.input` |
 | `broadcast_terminal_input` | Daemon only | `terminal.input` |
 | `resize_terminal` | Daemon only | `terminal.resize` |
 | `replay_terminal` | Daemon only | `terminal.replay` |
@@ -182,6 +185,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: prepare_external_terminal_launch status=implemented capability=terminal.external_launch -->
 <!-- api-method-contract: get_launch_command status=implemented capability=terminal.external_launch -->
 <!-- api-method-contract: test_pre_command status=implemented capability=connections.config.read -->
+<!-- api-method-contract: run_pre_connect status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: get_effective_config status=implemented capability=connections.config.read -->
 <!-- api-method-contract: check_unsaved_host status=implemented capability=connections.read -->
 <!-- api-method-contract: set_operation_mode status=daemon-only capability=operation.mode -->
@@ -212,6 +216,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: get_terminal_input_status status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: set_plugin_setting status=daemon-only capability=plugins.settings.write -->
 <!-- api-method-contract: sftp_chmod status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_list_directory status=daemon-only capability=sftp.read -->
@@ -400,6 +405,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `terminal.replay` | `terminal.replay` | Implemented |
 | `terminal.resize` | `terminal.resize` | Implemented |
 | `terminal.broadcast_input` | `terminal.input` | Implemented |
+| `terminal.input_status` | `terminal.input` | Implemented |
 | `hostinfo.start` | `host_info.read` | Implemented |
 | `hostinfo.get` | `host_info.read` | Implemented |
 | `hostinfo.cancel` | `host_info.read` | Implemented |
@@ -480,6 +486,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.prepare_external_terminal_launch capability=terminal.external_launch -->
 <!-- api-daemon-method: connections.get_launch_command capability=terminal.external_launch -->
 <!-- api-daemon-method: connections.test_pre_command capability=connections.config.read -->
+<!-- api-daemon-method: connections.run_pre_connect capability=sessions.write -->
 <!-- api-daemon-method: connections.get_effective_config capability=connections.config.read -->
 <!-- api-daemon-method: connections.check_unsaved_host capability=connections.read -->
 <!-- api-daemon-method: daemon.set_operation_mode capability=operation.mode -->
@@ -559,6 +566,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sftp.symlink capability=sftp.mutate -->
 <!-- api-daemon-method: terminal.replay capability=terminal.replay -->
 <!-- api-daemon-method: terminal.resize capability=terminal.resize -->
+<!-- api-daemon-method: terminal.input_status capability=terminal.input -->
 <!-- api-daemon-method: terminal.claim_input capability=terminal.input -->
 <!-- api-daemon-method: terminal.release_input capability=terminal.input -->
 <!-- api-daemon-method: transfers.cancel capability=transfers.write -->
@@ -1734,9 +1742,37 @@ assert session.state is SessionState.STARTING
   by the daemon's per-session PTY input queue. Partial non-blocking PTY writes
   preserve order.
 - **Side effects / security:** Bytes are never decoded or logged.
+- **Size:** One call carries at most 64 KiB; more raises `ValueError` locally.
+  Split larger input and pace it with `get_terminal_input_status`: a frame that
+  does not fit the queue is rejected whole while later frames may still be
+  accepted, so unpaced frames can lose bytes from the middle of the input.
 
 ```python
 client.send_terminal_input(TerminalInput(session_id, attachment_id, b"ls\r"))
+```
+
+<!-- api-method: get_terminal_input_status -->
+## `get_terminal_input_status`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.86.
+- **Capability / purpose:** `terminal.input`; report how much of the session's
+  bounded input queue is in use, so a large input can be sent no faster than
+  the remote reads it.
+- **Parameters / return:** `TerminalInputStatusRequest`; returns
+  `TerminalInputStatus` with `queued_bytes` and `capacity_bytes`.
+- **Errors:** `terminal_attachment_required`, `terminal_input_owner_required`,
+  `session_invalid_state` (also while a session gated on authentication would
+  drop input), `terminal_unavailable`, and transport errors.
+- **Ordering / threading:** Answered after every input frame this connection
+  sent earlier, so the result includes them. Only the input owner writes, so
+  room reported to it can shrink only through `broadcast_terminal_input`.
+- **Side effects / security:** Read-only. Carries byte counts, never input.
+
+```python
+status = client.get_terminal_input_status(
+    TerminalInputStatusRequest(session_id=session_id, attachment_id=attachment_id)
+)
+room = status.capacity_bytes - status.queued_bytes
 ```
 
 <!-- api-method: broadcast_terminal_input -->

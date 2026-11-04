@@ -47,6 +47,12 @@ gtk_libs_patterns = [
     "libvte-2.91.*.dylib",
     "libvte-2.91-gtk4.*.dylib",
     "libgtksourceview-5.*.dylib",
+    # gtk4-frdp and FreeRDP 3, for RDP connections in a tab (present only
+    # when the workflow's gtk4-frdp step succeeded).
+    "libgtk4-frdp-4.0.*.dylib",
+    "libfreerdp3.*.dylib",
+    "libfreerdp-client3.*.dylib",
+    "libwinpr3.*.dylib",
     "libwebkitgtk-6.*.dylib",
     "libjavascriptcoregtk-6.*.dylib",
     "libgraphene-1.0.*.dylib",

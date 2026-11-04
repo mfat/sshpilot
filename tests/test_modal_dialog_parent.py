@@ -107,3 +107,35 @@ def test_show_ssh_password_dialog_delegates_to_shared_helper(monkeypatch):
     assert calls["display_name"] == "demo"
     assert calls["host"] == "example.com"
     assert calls["username"] == "alice"
+
+
+def test_show_ssh_passphrase_dialog_delegates_to_shared_helper(monkeypatch):
+    from sshpilot.window_dialogs import show_ssh_passphrase_dialog
+
+    calls = {}
+
+    def fake_dialog(parent, **kwargs):
+        calls["parent"] = parent
+        calls.update(kwargs)
+        return "secret"
+
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs._show_password_passphrase_dialog", fake_dialog
+    )
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    main = MainWindow()
+    on_session_remember = MagicMock()
+    result = show_ssh_passphrase_dialog(
+        parent_window=main,
+        key_name="id_ed25519",
+        on_session_remember=on_session_remember,
+    )
+
+    assert result == "secret"
+    assert calls["parent"] is main
+    assert calls["prompt_type"] == "passphrase"
+    assert calls["key_path"] == "id_ed25519"
+    assert calls["on_session_remember"] is on_session_remember

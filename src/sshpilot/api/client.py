@@ -116,6 +116,8 @@ from .models.terminal import (
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
+    TerminalInputStatus,
+    TerminalInputStatusRequest,
     TerminalInput,
 )
 from .models.common import (
@@ -270,6 +272,10 @@ class SshPilotClient(Protocol):
         port: int = 0,
         username: str = "",
     ) -> PreCommandTestResult:
+        ...
+
+    def run_pre_connect(self, connection_id: ConnectionId, scope_id: str) -> bool:
+        """Run a connection's pre-connection steps for a frontend-owned launch."""
         ...
 
     def save_ssh_config_text(
@@ -444,6 +450,12 @@ class SshPilotClient(Protocol):
         ...
 
     def send_terminal_input(self, request: TerminalInput) -> None:
+        ...
+
+    def get_terminal_input_status(
+        self,
+        request: TerminalInputStatusRequest,
+    ) -> TerminalInputStatus:
         ...
 
     def broadcast_terminal_input(self, request: BroadcastTerminalInputRequest) -> None:

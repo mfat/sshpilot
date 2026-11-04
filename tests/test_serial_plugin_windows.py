@@ -52,7 +52,8 @@ def test_missing_plink_is_reported(monkeypatch):
     assert raised.value.failure.code is PluginSessionFailureCode.SERIAL_PLINK_UNAVAILABLE
 
 
-@pytest.mark.parametrize("option", [{"local_echo": True}, {"send_newline": "lf"}, {"logfile": "x.log"}])
+@pytest.mark.parametrize("option", [{"local_echo": True}, {"send_newline": "lf"}, {"send_backspace": "bs"},
+                                    {"logfile": "x.log"}])
 def test_terminal_options_plink_cannot_do_are_refused(monkeypatch, option):
     monkeypatch.setattr(mod, "_find_plink", lambda: "plink.exe")
     with pytest.raises(BuiltinProtocolError) as raised:

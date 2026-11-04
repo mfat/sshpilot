@@ -6,3 +6,7 @@ via a guarded try/except and fall back to package-relative discovery.
 
 PKGDATADIR = '@PKGDATADIR@'
 LOCALEDIR = '@LOCALEDIR@'
+
+#: Where the bundled gtk4-frdp is installed (library, and its typelib under
+#: girepository-1.0); empty when the build has no RDP tab (meson option rdp_tab).
+RDP_TAB_LIBDIR = '@RDP_TAB_LIBDIR@'

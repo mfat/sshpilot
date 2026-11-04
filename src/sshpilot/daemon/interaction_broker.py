@@ -16,7 +16,7 @@ import sys
 import tempfile
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
@@ -31,6 +31,7 @@ from sshpilot.api.events import (
     Subscription,
 )
 from sshpilot.api.interaction_identity import new_interaction_id
+from sshpilot.platform.windows.environment import fallback_display
 from sshpilot.api.models import (
     ChallengePrompt,
     ConfirmationPrompt,
@@ -103,7 +104,7 @@ class InteractionResult:
 
     decision: HostKeyDecision | SecretDecision
     remember_policy: RememberPolicy
-    secret: Optional[bytearray] = None
+    secret: Optional[bytearray] = field(default=None, repr=False)
 
     def clear(self) -> None:
         if self.secret is not None:
@@ -126,7 +127,7 @@ class _InteractionRecord:
 class _PendingRemember:
     interaction_type: InteractionType
     key: str
-    secret: bytearray
+    secret: bytearray = field(repr=False)
     # Set once this credential's loss has been reported, so the teardown
     # warning does not repeat what was already logged when it was queued.
     loss_reported: bool = False
@@ -140,7 +141,7 @@ class _PendingRemember:
 
 @dataclass
 class _AskpassContext:
-    token: str
+    token: str = field(repr=False)
     session_id: SessionId
     connection_id: ConnectionId
     hostname: str
@@ -156,7 +157,7 @@ class _AskpassContext:
     allow_stored_secrets: bool = True
     confirm_passphrase: bool = False
     interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
-    confirmation_secret: Optional[bytearray] = None
+    confirmation_secret: Optional[bytearray] = field(default=None, repr=False)
     cancelled: bool = False
     closed: bool = False
     # True once ``mark_authenticated`` has run for this session. Credentials
@@ -383,7 +384,9 @@ class InteractionBroker:
         if askpass_active:
             environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
             environment["SSH_ASKPASS_REQUIRE"] = "force" if headless else "prefer"
-            environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
+            environment["DISPLAY"] = environment.get("DISPLAY") or fallback_display(
+                ":sshpilot-daemon"
+            )
             environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
             environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
@@ -478,7 +481,7 @@ class InteractionBroker:
         # broker (REQUIRE=force), never fall back to a missing terminal.
         env["SSH_ASKPASS"] = str(self._askpass_helper_path)
         env["SSH_ASKPASS_REQUIRE"] = "force"
-        env["DISPLAY"] = env.get("DISPLAY") or ":sshpilot-daemon"
+        env["DISPLAY"] = env.get("DISPLAY") or fallback_display(":sshpilot-daemon")
         env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
         env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
@@ -1773,6 +1776,20 @@ class InteractionBroker:
             port = context.port
             confirmation_required = context.confirm_passphrase
             interaction_mode = context.interaction_mode
+            allow_stored_secrets = context.allow_stored_secrets
+            if attempt > 1:
+                # A repeated prompt proves the previous answer failed, whether
+                # or not the next one asks to be remembered.
+                retained = []
+                for pending in context.pending_remember:
+                    if (
+                        pending.interaction_type is interaction_type
+                        and pending.key == key_path
+                    ):
+                        pending.clear()
+                    else:
+                        retained.append(pending)
+                context.pending_remember[:] = retained
         stored: Optional[str] = None
         session_key = self._session_secret_key(interaction_type, connection_id, key_path)
         if not try_stored and attempt > 1:
@@ -1877,7 +1894,13 @@ class InteractionBroker:
                 key_display_name=Path(key_path).name if key_path else "SSH key",
                 key_fingerprint=None,
                 attempt=attempt,
-                can_remember=self._passphrase_store is not None and bool(key_path),
+                # Key operations (allow_stored_secrets=False) never authenticate,
+                # so nothing would commit a remembered passphrase.
+                can_remember=(
+                    self._passphrase_store is not None
+                    and bool(key_path)
+                    and allow_stored_secrets
+                ),
                 stored_secret_available=bool(stored),
                 confirmation_required=confirmation_required,
             )
@@ -1933,16 +1956,6 @@ class InteractionBroker:
             with self._condition:
                 current = self._askpass_contexts.get(token)
                 if current is not None and not current.closed:
-                    # A repeated prompt proves the previous password failed.
-                    if interaction_type is InteractionType.PASSWORD:
-                        retained = []
-                        for pending in current.pending_remember:
-                            if pending.interaction_type is InteractionType.PASSWORD:
-                                pending.clear()
-                            else:
-                                retained.append(pending)
-                        current.pending_remember.clear()
-                        current.pending_remember.extend(retained)
                     if current.commit_point_passed:
                         # ``mark_authenticated`` already ran for this session,
                         # and it never runs twice. Nothing will commit this

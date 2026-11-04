@@ -118,3 +118,51 @@ def test_socket_dir_repairs_existing_loose_runtime_tree(monkeypatch, tmp_path):
 
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
     assert stat.S_IMODE((root / "cm").stat().st_mode) == 0o700
+
+
+@pytest.mark.skipif(not mux.MULTIPLEXING_SUPPORTED,
+                    reason="OpenSSH for Windows has no connection multiplexing")
+def test_expire_all_masters_overrides_user_controlmaster(monkeypatch, tmp_path):
+    """Regression for issue #1361: with ``ControlMaster yes``/``ask`` in the
+    user's ssh_config, a bare ``ssh -O`` never reaches the socket and fails --
+    which this function reads as "stale" and unlinks a *live* master's socket.
+    The command line must override it with ``ControlMaster=no``."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    sock_dir = mux.socket_dir()
+    open(os.path.join(sock_dir, "aaa"), "w").close()
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(mux.subprocess, "run", fake_run)
+    mux.expire_all_masters(mode="exit", background=False)
+
+    (argv,) = calls
+    head = argv[: argv.index("-O")]
+    assert head[0] == "ssh"
+    assert head[head.index("-F") + 1] == os.devnull
+    assert "ControlMaster=no" in head and "ProxyCommand=false" in head
+    assert argv[argv.index("-O") + 1] == "exit"
+
+
+def test_expire_all_masters_keeps_a_socket_that_failed_the_handshake(
+    monkeypatch, tmp_path
+):
+    """Only positive evidence of absence unlinks. A failed mux handshake (or
+    the placeholder's DNS error after it) may be a live master; removing its
+    socket would strand it with no way left to close it."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    sock_dir = mux.socket_dir()
+    path = os.path.join(sock_dir, "busy")
+    open(path, "w").close()
+    monkeypatch.setattr(
+        mux.subprocess, "run",
+        lambda argv, **kw: types.SimpleNamespace(
+            returncode=255, stdout=b"",
+            stderr=b"muxclient: master hello exchange failed\r\n"
+                   b"ssh: Could not resolve hostname sshpilot-invalidate\r\n"),
+    )
+    mux.expire_all_masters(mode="exit", background=False)
+    assert os.path.exists(path)

@@ -1118,32 +1118,6 @@ class Phase14Harness:
         GLib.timeout_add(100, _try_answer)
         return state
 
-    def wait_for_passphrase_dialog(self, *, timeout: float = 30.0):
-        """Wait for the key passphrase Adw.AlertDialog ("Passphrase for <key>")."""
-
-        def _find():
-            for dialog in self.find_adw_alert_dialogs():
-                try:
-                    heading = dialog.get_heading() or ""
-                except Exception:
-                    heading = ""
-                if heading.startswith("Passphrase for"):
-                    return dialog
-            for terms in (self.gui.window.connection_to_terminals or {}).values():
-                for term in terms:
-                    di = getattr(term, "_daemon_interaction_dialogs", None)
-                    for dialog in (getattr(di, "_dialogs", {}) or {}).values():
-                        try:
-                            heading = dialog.get_heading() or ""
-                        except Exception:
-                            heading = ""
-                        if heading.startswith("Passphrase for"):
-                            return dialog
-            return None
-
-        self.pump_until(lambda: _find() is not None, timeout=timeout, label="passphrase dialog")
-        return _find()
-
     def wait_for_host_key_dialog(self, *, timeout: float = 30.0):
         def _find():
             for terms in (self.gui.window.connection_to_terminals or {}).values():
