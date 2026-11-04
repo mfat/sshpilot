@@ -148,9 +148,12 @@ entries are rewritten, not accumulated.
    1. The pre-fix historical benchmark (frozen v2 dataset, `selective` and
       `search_all` baselines) is in place. Grow the held-out set before tuning
       ranking further.
-   2. Run an end-to-end agent experiment: the same pinned model with no MCP,
-      the original MCP, the V2 MCP and the CLI. Measure completed fixes, test
-      outcomes, billed tokens, tool calls, time and cost.
+   2. The end-to-end pilot is done (`scripts/agent_experiment/`; results in
+      `dev-intelligence.md`). Six bugs, one run per arm: same outcomes (5/6
+      adapted) and the same cost. Agents called the tool at most once per run,
+      always `diagnose_bug`. Next: test whether instructions or tool
+      descriptions get agents to use `get_context` and `inspect_impact`, then
+      rerun with several runs per arm and harder localisation tasks.
    3. Add `DaemonClient` receiver inference for GTK code (`self._client.<m>`),
       so GTK callers of API methods become dependents.
    4. Add opt-in per-test coverage, so `coverage_confirmed` can become true.

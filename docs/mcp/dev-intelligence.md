@@ -286,10 +286,49 @@ How to read these numbers:
   it says nothing about retrieval quality.
 - **Small sample.** These are 13 graded tasks, and the baselines are
   emulations, not an agent.
-- **Not measured:** end-to-end agent task success, billed tokens, cost and
-  agent wall-clock time. That needs the same pinned model run with no MCP,
-  the original MCP, the V2 MCP and the CLI. No token, time or success
-  improvement is claimed.
+- **Agent level:** see the end-to-end pilot below. It showed no difference
+  between the arms, and agents rarely used the tool.
+
+### End-to-end agent experiment (pilot, 2026-11-05)
+
+This pilot asks one question: does the engine change whether an agent fixes a real bug, and at what cost? The protocol and harness are in `scripts/agent_experiment/`.
+
+**Setup:**
+
+- **Tasks.** Six historical bugs whose fixing commits added tests that fail on the pre-fix tree by an assertion and pass on the fix. Each agent worked in a `git archive` of the pre-fix commit with no history, and got only the frozen v2 symptom text.
+- **Arms.** "plain" (shell, search, file tools) and "devintel" (the same tools plus the engine's CLI).
+- **Model and conditions.** The same model in both arms, one run per task and arm, all 12 runs started together.
+- **Grading.** The fixing commit's own tests, applied in a clean copy. The grader was checked in both directions: the real fixes resolve 6/6 and the untouched trees 0/6.
+- **Audit.** A transcript audit found no forbidden access (main checkout, `git`, MCP, web).
+
+| Arm | Resolved (fix commit's tests) | Resolved (adapted tests) | Tokens reported | Tool calls | Wall time | Output tokens | `devintel` calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain | 3/6 | 5/6 | 480k | 124 | 1,081 s | 68.6k | 0 |
+| devintel | 3/6 | 5/6 | 460k | 121 | 1,067 s | 68.2k | 4 |
+
+Per task, the two arms reached the same outcome on all six bugs:
+
+| Task | Resolved by both | Note |
+| --- | --- | --- |
+| saved-passphrase retry | yes | |
+| SFTP short reads | yes | |
+| sidebar recovery | yes | |
+| quit transport error | adapted only | |
+| daemon reply priority | adapted only | |
+| Windows stale endpoint | neither | plain passed 7/8 adapted assertions, devintel 6/8 |
+
+Paired differences per task were small in both directions: tokens −30% to +11%, tool calls −11 to +7.
+
+**Reading the result:**
+
+- **No effect on outcomes or cost was shown.** Both arms solved the same bugs. Total tokens (−4%), tool calls (−2%) and wall time (−1%) differ by less than the run-to-run variation between tasks. With one run per arm on six tasks, this cannot separate a small effect from noise.
+- **Agents barely used the tool.** In four of six runs the agent called `diagnose_bug` exactly once, usually as its first action. In the other two it never called the tool. No agent called `get-context`, `inspect-impact` or `plan-feature`. The pilot therefore measures "one `diagnose_bug` call", not the tool suite.
+- **The hard parts were not about finding code.** Plain search found the right file in every run. Where agents fell short, it was design (the Windows endpoint fix missed the slow-refusal and PID-reuse cases), not locating the bug.
+- **Strict grading under-counted.** Three of the six fix commits' tests encode implementation details: a private constant, exact log wording, or a test double without new helper methods. Two of those caused correct fixes to be graded as failures. The "adapted" column keeps every behavioural assertion and drops only that coupling. Every adapted test fails on the pre-fix tree and passes on the real fix.
+
+**Limits.** The `devintel` arm uses the CLI, not MCP; access rules were instructed and audited, not sandboxed; the sample is one run per arm on six tasks; and these are tasks where plain search already localises the bug.
+
+**What this means.** Making the engine smarter is not the bottleneck right now; agents getting value from it is. Before adding capability such as receiver inference, test whether agents use `get_context` and `inspect_impact` when prompted to (for example by their instructions or by tool descriptions), and repeat the experiment with several runs per arm and harder localisation tasks.
 
 ## Compatibility and migration
 
