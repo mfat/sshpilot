@@ -106,7 +106,9 @@ CASES = {
         "fields": {
             "host": "win.example", "port": 3390, "username": "alice",
             # Secure storage, not plugin_data: nothing to round-trip here.
-            "domain": "CORP", "password": "", "display_mode": "fullscreen",
+            # "window": the launch command below is FreeRDP's own window.
+            "domain": "CORP", "password": "", "viewer": "window",
+            "display_mode": "fullscreen",
             "size": "1600x900", "scale": "150", "multimon": True,
             "clipboard": False, "sound": True, "microphone": True, "printer": True,
             "shared_folder": "/srv/share", "security": "nla",
