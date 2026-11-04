@@ -115,6 +115,8 @@ class RdpTab(Gtk.Box):
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.window = window
+        #: The RdpWindow holding this tab once moved out of the main window.
+        self.detached_window = None
         self.connection = connection
         # Full settings from the daemon (rdp_view_policy.connection_data_from_details).
         self.data = dict(data)
@@ -323,7 +325,7 @@ class RdpTab(Gtk.Box):
         answers = {"reject": CERT_REJECT, "once": CERT_ACCEPT_ONCE, "store": CERT_ACCEPT_AND_STORE}
         # The session thread waits for the answer; the UI keeps running.
         dialog.connect("response", lambda _d, response: finish(answers.get(response, CERT_REJECT)))
-        dialog.present(self.window)
+        dialog.present(self)
 
     def _on_changed_certificate(self, display, host, port, common_name, subject, issuer,
                                 fingerprint, old_subject, old_issuer, old_fingerprint,
@@ -360,6 +362,6 @@ class RdpTab(Gtk.Box):
                 display.authenticate_finish(None, None, None)  # cancels
 
         dialog.connect("response", on_response)
-        dialog.present(self.window)
+        dialog.present(self)
         if user.get_text():
             password.grab_focus()

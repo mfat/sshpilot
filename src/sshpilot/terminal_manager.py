@@ -274,7 +274,7 @@ class TerminalManager:
         if not force_new:
             existing = window.existing_rdp_tab(connection)
             if existing is not None:
-                window.tab_view.set_selected_page(window.tab_view.get_page(existing))
+                window.focus_rdp_tab(existing)
                 if not existing.connected:
                     existing.connect_session()
                 return

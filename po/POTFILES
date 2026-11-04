@@ -82,6 +82,7 @@ src/sshpilot/port_utils.py
 src/sshpilot/layout_preset_chooser.py
 src/sshpilot/preferences.py
 src/sshpilot/rdp_tab.py
+src/sshpilot/rdp_window.py
 src/sshpilot/sidebar_peek_hint.py
 src/sshpilot/sidebar_peek_preview.py
 src/sshpilot/rbw_setup.py

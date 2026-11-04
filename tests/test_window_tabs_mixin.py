@@ -57,6 +57,11 @@ _TAB_METHODS = (
     "_on_tabmenu_layout_compact",
     "_on_tabmenu_fm_new_window",
     "_launch_external_file_manager",
+    "_on_tabmenu_rdp_detach",
+    "focus_rdp_tab",
+    "detach_rdp_tab",
+    "_attach_rdp_window",
+    "_close_rdp_window",
     "_bulk_close_target_pages",
     "_count_sessions_in_pages",
     "_run_suppressed_close",
@@ -113,6 +118,17 @@ def test_enabled_tab_actions_for_plugin_like_page():
         "tabmenu-close-others",
         "tabmenu-close-right",
     }
+
+
+def test_rdp_tab_context_menu_offers_move_to_new_window():
+    """An RDP tab can be detached into its own window (rdp_window.RdpWindow)."""
+    rdp_tab = pytest.importorskip("sshpilot.rdp_tab")
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    tab = rdp_tab.RdpTab.__new__(rdp_tab.RdpTab)  # type check only, no widget
+    enabled = WindowTabsMixin()._enabled_tab_actions(tab)
+    assert "tabmenu-rdp-detach" in enabled
+    assert "tabmenu-rdp-detach" in WindowTabsMixin._TAB_MENU_ACTIONS
 
 
 def test_terminal_tab_context_menu_exposes_split_layout_actions(monkeypatch):
