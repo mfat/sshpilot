@@ -144,13 +144,17 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-0. Dev MCP V2 follow-ups, ranked by expected impact: an end-to-end agent
-   benchmark (pinned model, with and without the V2 tools) to measure task
-   success and tokens; `DaemonClient` receiver inference for GTK code
-   (`self._client.<m>`), so GTK callers of API methods become dependents
-   instead of possible callers; opt-in per-test coverage to strengthen test
-   selection; verified knowledge records for solved incidents; rename
-   tracking for symbol ids.
+0. Dev MCP V2 follow-ups, in review order:
+   1. The pre-fix historical benchmark (frozen v2 dataset, `selective` and
+      `search_all` baselines) is in place. Grow the held-out set before tuning
+      ranking further.
+   2. Run an end-to-end agent experiment: the same pinned model with no MCP,
+      the original MCP, the V2 MCP and the CLI. Measure completed fixes, test
+      outcomes, billed tokens, tool calls, time and cost.
+   3. Add `DaemonClient` receiver inference for GTK code (`self._client.<m>`),
+      so GTK callers of API methods become dependents.
+   4. Add opt-in per-test coverage, so `coverage_confirmed` can become true.
+   5. Add knowledge records and rename tracking.
 
 1. Runtime security review follow-up complete: audited the runtime MCP result
    surface. `OperationSummary.result` was the free-form smuggling path because

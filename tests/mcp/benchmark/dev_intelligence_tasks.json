@@ -1,6 +1,8 @@
 {
   "format": "sshpilot-dev-intel-benchmark/1",
-  "note": "Symptoms are written as a bug reporter would describe the problem; gold_files are the source files changed by the commit that fixed it (tests, docs and translations excluded). Written before measuring; do not tune them to the tool. Tasks marked set=design were visible while the keyword tier of diagnose_bug was designed; set=held-out tasks were written afterwards from commit titles only and run once.",
+  "version": 2,
+  "frozen": "2026-11-05",
+  "note": "Symptoms are written as a bug reporter would describe the problem; gold_files are the source files changed by the commit that fixed it (tests, docs and translations excluded). Written before measuring; do not tune them to the tool. Tasks marked set=design were visible while the keyword tier of diagnose_bug was designed; set=held-out tasks were written afterwards from commit titles only and run once. Frozen at version 2: do not edit symptoms or answer keys; add new tasks under a new version. The harness runs each task on its fix_commit's parent (git archive), indexed from that snapshot only.",
   "tasks": [
     {
       "id": "auth-saved-passphrase-retry",

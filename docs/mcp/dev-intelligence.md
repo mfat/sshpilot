@@ -202,10 +202,8 @@ test enforces this.
 
 ## Measurements
 
-Measured on this machine (Linux, Python 3.14, 1,298 indexed files,
-~470k lines) at commit `62c4534e` with the keyword tier applied in the
-working tree. Times vary with load. The cold build was 27.0 s, 41.9 s and
-32.3 s in three runs.
+Measured on this machine (Linux, Python 3.14; about 1,300 indexed files and
+470k lines at HEAD). Times vary with load.
 
 ### Baseline before the change (Phase 0)
 
@@ -225,54 +223,71 @@ The existing dev-MCP tests were 99 passing before any change.
 
 | | |
 | --- | --- |
-| Cold build (serial) | 27–42 s |
-| Warm freshness check | 64–112 ms (median of 5) |
-| Index size | 48 MB; 37.9k symbols, 168k edges, 895 domain edges |
+| Cold build, serial (MCP server default) | 27–42 s (three runs, varies with load) |
+| Cold build, `SSHPILOT_MCP_INDEX_WORKERS=8` (benchmark script) | 6.4–7.8 s (six snapshots, 1,194–1,299 files) |
+| Warm freshness check | 43–112 ms |
+| Index size | 45–48 MB; 37.9k symbols, 168k edges, 895 domain edges (HEAD) |
 | In-process V2 call latency | median 0.49 s (0.09–0.81 s) |
 | CLI call (new process, warm index) | 1.6–4.0 s |
 
 ### Tool-level benchmark
 
-Run it with `python scripts/benchmark_dev_mcp.py [--json out.json]`. The
-tasks are in `tests/mcp/benchmark/dev_intelligence_tasks.json`.
+Run it with `python scripts/benchmark_dev_mcp.py [--checkout prefix|head]
+[--json out.json]`. The dataset, `tests/mcp/benchmark/dev_intelligence_tasks.json`,
+is frozen at version 2 (14 tasks). Its answer keys are the source files
+changed by the real commit that fixed each problem, and the symptoms are
+written as a reporter would write them, without paths.
 
-- The answer keys are the source files changed by the real commit that fixed
-  each problem.
-- The symptoms are written as a reporter would write them, without paths.
-- The baseline is what the existing `search_source` tool returns when every
-  term of the same text is searched, one call per term, with files ranked by
-  distinct terms matched.
-- A trivial baseline that always returns the five largest files hits 1/8
-  (design) and 1/5 (held-out).
+**Every task runs on the checkout immediately before its fix.** The harness
+extracts `git archive <fix>^` into a temporary directory and indexes that
+snapshot from scratch, so names and code introduced by the fix cannot leak
+into the answer. `--checkout head` reproduces the earlier run on the current
+tree for comparison.
 
-| Set | Tasks | V2 hit@5 | Baseline hit@5 | V2 hit@3 | Baseline hit@3 | V2 mean recall@5 | Baseline mean recall@5 | V2 median reply | Baseline median reply | Calls V2 / baseline |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| design | 8 | 7/8 | 4/8 | 7/8 | 2/8 | 0.59 | 0.35 | 4.1 KB | 143 KB | 9 / 103 |
-| held-out | 5 | 5/5 | 1/5 | 4/5 | 1/5 | 0.61 | 0.05 | 4.2 KB | 118 KB | 5 / 59 |
+Each task is answered three ways, all measured on the same pre-fix snapshot:
 
-Plus one negative task (a vague report): V2 returned no candidates and
-confidence `none`. No misleading-confidence events occurred in 14 tasks.
+- `v2`: one `diagnose_bug` (or `plan_feature`) call at the default budget.
+- `search_all`: the original dev MCP `search_source` tool, run once per term
+  of the symptom text. This is a mechanical upper bound on search output, not
+  how a good agent searches.
+- `selective`: an emulation of an efficient searcher. It probes every term
+  for matching file names only (like `rg -l -i`), keeps the three rarest terms
+  that hit 1–30 files, reads their match lines, and ranks files by distinct
+  kept terms.
 
-How to read these numbers honestly:
+Pre-fix results, measured 2026-11-05 at `e076181b`:
 
-- **Evidence-only first run.** Before the weak keyword tier existed, V2 hit
-  1/8 on the design set; it ignored plain-language symptoms entirely. The
-  keyword tier was designed after seeing those eight tasks (it has no
-  task-specific words). The held-out five were written afterwards from commit
-  titles only and run once. Held-out first-gold ranks were 3, 1, 2, 2 and 5,
-  worse than the design set's 1, 1, 2, 1, 2, 1 and 2. Expect some
-  over-fitting.
-- **Small sample.** These are 13 graded tasks. The answer keys come from
-  commits that are already in HEAD, so the fixed code is present.
-- **Weak baseline.** The baseline is a mechanical grep. A capable agent greps
-  more selectively, so the reply-size gap overstates the saving for a real
-  agent.
-- **Planning task.** `login-profiles-api` is weak evidence: that API already
-  exists, and the obligations are a fixed checklist.
-- **Not measured:** end-to-end agent task success, model tokens and agent
-  wall-clock time. That needs a pinned agent and model running the same tasks
-  with and without these tools. The harness does not do it, so no token or
-  time saving is claimed.
+| Set | Tasks | `v2` hit@5 | `search_all` hit@5 | `selective` hit@5 | `v2` hit@3 | `selective` hit@3 | `v2` recall@5 | `selective` recall@5 | Median reply `v2` / `search_all` / `selective` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| design | 8 | 7/8 | 3/8 | 2/8 | 7/8 | 1/8 | 0.59 | 0.17 | 4.1 / 139 / 58 KB |
+| held-out | 5 | 4/5 | 1/5 | 3/5 | 3/5 | 2/5 | 0.36 | 0.38 | 4.2 / 117 / 53 KB |
+| all | 13 | 11/13 | 4/13 | 5/13 | 10/13 | 3/13 | 0.50 | 0.25 | 4.1 / 125 / 55 KB |
+
+Calls across all 14 tasks: `v2` 14, `search_all` 162, `selective` 192 (one
+probe per term; a real agent may batch these). On the vague negative task V2
+returned no candidates and confidence `none`. There were no
+misleading-confidence events.
+
+How to read these numbers:
+
+- **Leakage was small but real.** On the current tree V2 hit 12/13; on
+  pre-fix snapshots it hits 11/13. `closed-transport-reported-on-quit` was
+  only found with the fix present.
+- **On unseen tasks the advantage is modest.** On the held-out five, V2
+  (4/5 hit@5, recall 0.36) is close to the selective searcher (3/5, recall
+  0.38), at about a twelfth of the reply bytes in one call. The larger gap on
+  the design set is partly over-fitting: the keyword tier of `diagnose_bug`
+  was designed after seeing those eight tasks, and the first, evidence-only
+  version hit 1/8 there.
+- **The planning task is not evidence.** `login-profiles-api` counts as a
+  hit because `plan_feature`'s obligations are a fixed checklist of API paths;
+  it says nothing about retrieval quality.
+- **Small sample.** These are 13 graded tasks, and the baselines are
+  emulations, not an agent.
+- **Not measured:** end-to-end agent task success, billed tokens, cost and
+  agent wall-clock time. That needs the same pinned model run with no MCP,
+  the original MCP, the V2 MCP and the CLI. No token, time or success
+  improvement is claimed.
 
 ## Compatibility and migration
 
@@ -315,5 +330,7 @@ clients have migrated.
 - **Coverage-based test association.** There is no opt-in coverage
   collection; association is static only.
 - **End-to-end agent benchmark.** Not run (see Measurements).
+- **Parallel builds in the MCP server.** The server builds serially by
+  default; the 6–8 s parallel build is measured only in the benchmark script.
 - **Rename tracking.** A renamed symbol appears as a new id. The old id
   disappears; it is not linked.
