@@ -76,7 +76,9 @@ gtk4_frdp_lib = shared_library(package_api_name,
   soversion: '0',
   gnu_symbol_visibility: 'default',
   install: true,
-  install_dir: lib_install_dir,
+  # Only a private install moves it: by default Meson puts the DLL in bindir
+  # on Windows, where it is found, and the library in libdir elsewhere.
+  kwargs: private_install ? {'install_dir': lib_install_dir} : {},
 )
 
 if not private_install

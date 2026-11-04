@@ -1,6 +1,6 @@
 # gtk4-frdp releases
 
-## Unreleased
+## 0.2.0 (2026-11-04)
 
 - `private_libdir` option: install the library and typelib into an
   application's own directory under libdir, without headers, pkg-config file
@@ -8,6 +8,8 @@
 - The display can move to another window while connected (a detached tab):
   the session carries on, and system shortcuts inhibited on the old window
   are restored on that window rather than the new one.
+- Windows build: FreeRDP no longer takes gtk4-frdp's git tag as its own
+  version, and the DLL is installed to bin/ again.
 
 ## 0.1.0 (2026-11-04)
 
