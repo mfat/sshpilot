@@ -17358,92 +17358,48 @@ msgstr "Transmission directe"
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
 
+
+#: src/sshpilot/preferences.py:754 src/sshpilot/settings_index.py:123
+#: src/sshpilot/settings_index.py:126
+msgid "Highlighting"
+msgstr ""
+
+#: src/sshpilot/preferences.py:757 src/sshpilot/settings_index.py:123
+msgid "Highlight Network Output"
+msgstr ""
+
+#: src/sshpilot/preferences.py:759
+msgid "Colour IP and MAC addresses, VLANs, interfaces and link status"
+msgstr ""
+
+#: src/sshpilot/preferences.py:768 src/sshpilot/settings_index.py:126
+msgid "Highlight Profile"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Generic"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Cisco IOS"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Junos"
+msgstr ""
+
+#: src/sshpilot/preferences.py:770
+msgid "Huawei VRP"
+msgstr ""
+
+#: src/sshpilot/settings_index.py:124
+msgid "syntax;color;colour;cisco;junos;huawei;ip;mac;vlan"
+msgstr ""
+
+#: src/sshpilot/settings_index.py:126
+msgid "cisco;junos;huawei"
+msgstr ""
+
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "Tentative d’authentification {attempt}"
-
-#~ msgid "Connection list actions"
-#~ msgstr "Actions de la liste des connexions"
-
-#, python-brace-format
-#~ msgid "New Connection ({shortcut}+Shift+N)"
-#~ msgstr "Nouvelle connexion ({shortcut}+Shift+N)"
-
-#~ msgid "Show hostnames"
-#~ msgstr "Afficher les noms d’hôte"
-
-#~ msgid "Hide hostnames"
-#~ msgstr "Masquer les noms d’hôte"
-
-#~ msgid "Hostnames are hidden"
-#~ msgstr "Les noms d’hôte sont masqués"
-
-#~ msgid "Hostnames are shown"
-#~ msgstr "Les noms d’hôte sont affichés"
-
-#~ msgid "Filter by tag"
-#~ msgstr "Filtrer par étiquette"
-
-#, python-brace-format
-#~ msgid "Settings ({accels})"
-#~ msgstr "Paramètres ({accels})"
-
-#~ msgid "Sort Connections"
-#~ msgstr "Trier les connexions"
-
-#~ msgid "With the start page or a terminal"
-#~ msgstr "Avec la page d’accueil ou un terminal"
-
-#~ msgid "Sidebar and Start Page"
-#~ msgstr "Barre latérale et page d’accueil"
-
-#~ msgid "Plain Terminal"
-#~ msgstr "Terminal simple"
-
-#~ msgid ""
-#~ "What happens to the sidebar when any session opens, including local "
-#~ "terminals"
-#~ msgstr ""
-#~ "Comportement de la barre latérale lors de l’ouverture d’une session, y "
-#~ "compris d’un terminal local"
-
-#~ msgid "Do Nothing"
-#~ msgstr "Ne rien faire"
-
-#~ msgid "Close Settings"
-#~ msgstr "Fermer les paramètres"
-
-#~ msgid "Flat Sidebar Rows"
-#~ msgstr "Présentation en liste"
-
-#~ msgid "Use flat list rows instead of cards in the connection sidebar"
-#~ msgstr "Afficher les connexions sous forme de liste plutôt que de cartes"
-
-#~ msgid "Group Layout"
-#~ msgstr "Disposition des groupes"
-
-#~ msgid "Group Display"
-#~ msgstr "Affichage des groupes"
-
-#~ msgid "Fullwidth"
-#~ msgstr "Pleine largeur"
-
-#~ msgid "Nested"
-#~ msgstr "Imbriqué"
-
-#~ msgid "Layout Preview"
-#~ msgstr "Aperçu de la disposition"
-
-#~ msgid "3 connections"
-#~ msgstr "3 connexions"
-
-#~ msgid "appearance;language;tabs;sidebar settings;start page;interface"
-#~ msgstr ""
-#~ "apparence;langue;onglets;paramètres de la barre latérale;page "
-#~ "d’accueil;interface"
-
-#~ msgid "Sidebar behavior"
-#~ msgstr "Comportement de la barre latérale"
-
-#~ msgid "Show Hostnames"
-#~ msgstr "Afficher les noms d’hôte"
