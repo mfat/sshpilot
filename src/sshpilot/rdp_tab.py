@@ -418,16 +418,17 @@ class RdpTab(Gtk.Box):
     def _can_retry_password(self, was_connected: bool) -> bool:
         """Whether a typed password could still get this session up.
 
-        gtk4-frdp reports connection-level failures on the authentication
-        signal as well, and FreeRDP forgets a logon refusal that happened
-        during the security handshake (see ``rdp_failure``), so both kinds
-        are worth a password prompt.
+        gtk4-frdp 0.2.2 reports a refused logon on the authentication signal,
+        but FreeRDP drops the first error when a server refuses one by closing
+        the connection (see ``rdp_failure``), leaving a plain connection
+        failure. Both kinds are worth a password prompt.
         """
 
         if was_connected or self._failure_kind is RdpFailureKind.CANCELLED:
             return False
         return (self._failure_was_authentication
-                or self._failure_kind is RdpFailureKind.AUTHENTICATION)
+                or self._failure_kind in (RdpFailureKind.AUTHENTICATION,
+                                          RdpFailureKind.UNREACHABLE))
 
     def _show_status(self, icon: str, title: str, description: str, *, buttons: bool = True) -> None:
         self._status.set_icon_name(icon)
