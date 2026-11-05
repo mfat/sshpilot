@@ -261,6 +261,8 @@ class Highlighter:
         self._hold = b""
         self._in_string: Optional[bytes] = None  # terminator kind: b"osc" or b"st"
         self._alt_modes: Set[bytes] = set()
+        # Cursor save slots belong to the normal/alternate screen buffers.
+        self._saved_sgr: Dict[bool, tuple[bool, bool, bool, bool]] = {}
         self._carry = b""
         self._ctx = b""  # plain text before the carry: lookbehind for validators
         self._shown = 0  # leading bytes of _hold already displayed
@@ -268,6 +270,16 @@ class Highlighter:
 
     def _reset_sgr(self) -> None:
         self._fg = self._bg = self._reverse = self._conceal = False
+
+    def _save_sgr(self) -> None:
+        self._saved_sgr[bool(self._alt_modes)] = (
+            self._fg, self._bg, self._reverse, self._conceal,
+        )
+
+    def _restore_sgr(self) -> None:
+        self._fg, self._bg, self._reverse, self._conceal = self._saved_sgr.get(
+            bool(self._alt_modes), (False, False, False, False),
+        )
 
     def feed(self, data: bytes) -> bytes:
         if (
@@ -332,6 +344,10 @@ class Highlighter:
                 if m is not None:
                     if m.group() == b"\x1bc":
                         self.reset()
+                    elif m.group() == b"\x1b7":
+                        self._save_sgr()
+                    elif m.group() == b"\x1b8":
+                        self._restore_sgr()
                 elif _PARTIAL_ESC_RE.match(buf, i):
                     self._hold = buf[i:]
                     return len(buf)
@@ -346,9 +362,18 @@ class Highlighter:
             self._sgr(params)
         elif final == b"p" and inter == b"!":  # DECSTR resets SGR, not the screen
             self._reset_sgr()
+        elif not params and not inter and final in (b"s", b"u"):
+            (self._save_sgr if final == b"s" else self._restore_sgr)()
         elif final in (b"h", b"l") and params.startswith(b"?"):
-            for mode in set(params[1:].split(b";")) & _ALT_SCREEN_MODES:
-                (self._alt_modes.add if final == b"h" else self._alt_modes.discard)(mode)
+            for mode in params[1:].split(b";"):
+                if mode == b"1048":
+                    (self._save_sgr if final == b"h" else self._restore_sgr)()
+                elif mode in _ALT_SCREEN_MODES:
+                    if mode == b"1049" and final == b"h":
+                        self._save_sgr()
+                    (self._alt_modes.add if final == b"h" else self._alt_modes.discard)(mode)
+                    if mode == b"1049" and final == b"l":
+                        self._restore_sgr()
 
     def _sgr(self, params: bytes) -> None:
         it = iter(params.split(b";") if params else [b"0"])
@@ -356,7 +381,12 @@ class Highlighter:
             # Colon sub-parameters (38:2::R:G:B, 4:3) belong to their own
             # code: take the code, consume nothing else.
             head, colon, _ = raw.partition(b":")
-            code = int(head) if head.isdigit() else 0
+            # Remote parameters are untrusted and can exceed Python's integer
+            # conversion limit. No supported SGR code needs more than 3 digits.
+            number = head.lstrip(b"0") or b"0"
+            if not number.isdigit() or len(number) > 3:
+                continue
+            code = int(number)
             if code == 0:
                 self._reset_sgr()
             elif code == 7:

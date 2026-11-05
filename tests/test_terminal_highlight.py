@@ -803,3 +803,62 @@ def test_apply_highlight_settings_logs_state_at_debug(caplog):
     with caplog.at_level(logging.DEBUG, logger="sshpilot.terminal"):
         TerminalWidget._apply_highlight_settings(w)
     assert "Output highlighting enabled=True profile=junos" in caplog.text
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+@pytest.mark.parametrize('split', [False, True])
+def test_oversized_sgr_preserves_output_and_remote_colour(enabled, split):
+    h = Highlighter(enabled=enabled)
+    data = b'prefix\x1b[31;' + b'1' * 5000 + b'm192.0.2.1 suffix'
+    chunks = [data[:2500], data[2500:]] if split else [data]
+    assert b''.join(h.feed(chunk) for chunk in chunks) == data
+    h.configure(True, 'generic')
+    assert h.feed(b' 192.0.2.2') == b' 192.0.2.2'
+
+
+def test_zero_padded_sgr_does_not_require_unbounded_integer_conversion():
+    data = b'\x1b[' + b'0' * 5000 + b'31m192.0.2.1'
+    assert Highlighter().feed(data) == data
+
+
+@pytest.mark.parametrize('save,restore', [
+    (b'\x1b7', b'\x1b8'),
+    (b'\x1b[s', b'\x1b[u'),
+    (b'\x1b[?1048h', b'\x1b[?1048l'),
+    (b'\x1b[?1049h', b'\x1b[?1049l'),
+])
+@pytest.mark.parametrize('attribute', [b'31', b'44', b'7', b'8'])
+def test_cursor_restore_preserves_remote_attributes(save, restore, attribute):
+    data = b'\x1b[' + attribute + b'm' + save + b'\x1b[0m' + restore + b'192.0.2.1 tail'
+    # Exercise every chunk boundary, including splits inside the save/restore.
+    for cut in range(len(data) + 1):
+        h = Highlighter()
+        assert h.feed(data[:cut]) + h.feed(data[cut:]) == data
+
+
+@pytest.mark.parametrize('save,restore', [
+    (b'\x1b7', b'\x1b8'),
+    (b'\x1b[s', b'\x1b[u'),
+    (b'\x1b[?1048h', b'\x1b[?1048l'),
+    (b'\x1b[?1049h', b'\x1b[?1049l'),
+])
+def test_restoring_default_attributes_resumes_highlighting(save, restore):
+    h = Highlighter()
+    setup = save + b'\x1b[31m' + restore
+    assert h.feed(setup + b'192.0.2.1') == setup + colour(b'192.0.2.1', 36)
+
+
+def test_alternate_screen_save_does_not_replace_normal_saved_attributes():
+    h = Highlighter()
+    setup = b'\x1b[31m\x1b[?1049h\x1b[0m\x1b7\x1b[?1049l'
+    assert h.feed(setup + b'192.0.2.1') == setup + b'192.0.2.1'
+
+
+def test_saved_attributes_tracked_while_disabled_and_cleared_on_reset():
+    h = Highlighter(enabled=False)
+    setup = b'\x1b[31m\x1b7\x1b[0m'
+    assert h.feed(setup) == setup
+    h.configure(True, 'generic')
+    assert h.feed(b'\x1b8 192.0.2.1') == b'\x1b8 192.0.2.1'
+    h.reset()
+    assert h.feed(b'\x1b8 192.0.2.1') == b'\x1b8 ' + colour(b'192.0.2.1', 36)
