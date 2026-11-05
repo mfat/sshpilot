@@ -1,5 +1,12 @@
 # gtk4-frdp releases
 
+## 0.2.3 (2026-11-06)
+
+- Windows arrow keys, Home/End, Page Up/Down, Insert and Delete now carry
+  WinPR's extended-key marker before scan-code lookup, so their press and
+  release events reach the remote desktop instead of being dropped.
+  Keypad digits keep their existing mapping.
+
 ## 0.2.2 (2026-11-06)
 
 - `rdp-auth-failure` now reports only a refused logon (wrong password,

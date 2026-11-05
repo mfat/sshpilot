@@ -17,15 +17,6 @@ records the repository, commit and release tag it came from.
 
 ## Updating it
 
-The bundled source currently carries a local Windows navigation-key fix in
-`frdp_session_send_key`: Win32 virtual keys for arrows, Home/End, Page Up/Down,
-Insert and Delete need WinPR's `KBDEXT` marker before scan-code lookup.
-Preserve this fix when updating until it is included upstream. Windows uses
-the prebuilt DLL, so source edits alone do not fix Windows installations:
-release gtk4-frdp with the fix and update the Windows zip pin using the steps
-below. Verify both key presses and releases against a Linux RDP host, with
-Num Lock on and off, as well as ordinary typing and keypad digits.
-
 1. In gtk4-frdp: date the release in `NEWS.md`, bump `version` in
    `meson.build`, and publish the release (e.g. `gh release create v0.2.0`).
    Its CI builds the Windows zip and attaches it to the release.
