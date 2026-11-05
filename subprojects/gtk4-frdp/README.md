@@ -82,9 +82,15 @@ Complete viewers with a certificate dialog and a login prompt are in
 | `open_host(host, port)` | connect (asynchronous) |
 | `close()` | disconnect or cancel (asynchronous) |
 | `is_open()` | whether a session is established |
-| properties | `username`, `password` (write-only), `domain`, `keyboard-layout` (0 = detect), `clipboard`, `audio-playback`, `scaling`, `allow-resize`, `resize-supported` (read-only) |
+| properties | `username`, `password` (write-only), `domain`, `keyboard-layout` (0 = detect), `clipboard`, `audio-playback`, `scaling`, `allow-resize`, `resize-supported` (read-only), `last-error-code` (read-only) |
 | signals | `rdp-connected`, `rdp-disconnected`, `rdp-error`, `rdp-auth-failure`, `rdp-needs-certificate-verification`, `rdp-needs-certificate-change-verification`, `rdp-needs-authentication` |
 | answering prompts | `certificate_verify_ex_finish()`, `certificate_change_verify_ex_finish()`, `authenticate_finish()` |
+
+`rdp-error` reports a connection failure (unreachable host, DNS, TLS, the
+security negotiation, the transport breaking); `rdp-auth-failure` only the
+server refusing the logon. `last-error-code` carries FreeRDP's code for
+either (for example `FREERDP_ERROR_CONNECT_LOGON_FAILURE`), so an application
+does not have to parse FreeRDP's English sentence.
 
 The keyboard layout announced to the server is detected automatically: the
 active layout on Windows, GNOME's input sources, the GTK keyboard device

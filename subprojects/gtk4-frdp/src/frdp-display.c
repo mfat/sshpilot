@@ -110,7 +110,8 @@ enum
   PROP_DOMAIN,
   PROP_KEYBOARD_LAYOUT,
   PROP_CLIPBOARD,
-  PROP_AUDIO_PLAYBACK
+  PROP_AUDIO_PLAYBACK,
+  PROP_LAST_ERROR_CODE
 };
 
 enum
@@ -456,6 +457,14 @@ frdp_display_get_property (GObject      *object,
       case PROP_RESIZE_SUPPORTED:
         g_value_set_boolean (value, priv->resize_supported);
         break;
+      case PROP_LAST_ERROR_CODE:
+        {
+          guint code = 0;
+
+          g_object_get (session, "last-error-code", &code, NULL);
+          g_value_set_uint (value, code);
+        }
+        break;
       default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
         break;
@@ -683,12 +692,34 @@ frdp_display_class_init (FrdpDisplayClass *klass)
                                                          G_PARAM_READWRITE));
 
   /**
+   * FrdpDisplay:last-error-code:
+   *
+   * FreeRDP's code for the error that ended the last connection attempt, or
+   * 0 when none did. Read it from the `rdp-error` and `rdp-auth-failure`
+   * handlers: it names the failure exactly
+   * (`FREERDP_ERROR_CONNECT_LOGON_FAILURE`, `FREERDP_ERROR_CONNECT_FAILED`,
+   * ...), where the signal's @message is FreeRDP's own English sentence.
+   * Read-only, and reset by the next
+   * [method@GtkFrdp.Display.open_host].
+   */
+  g_object_class_install_property (gobject_class,
+                                   PROP_LAST_ERROR_CODE,
+                                   g_param_spec_uint ("last-error-code",
+                                                      "last-error-code",
+                                                      "FreeRDP error code of the last failure",
+                                                      0, G_MAXUINT32, 0,
+                                                      G_PARAM_STATIC_STRINGS | G_PARAM_READABLE));
+
+  /**
    * FrdpDisplay::rdp-error:
    * @display: the display
    * @message: a description of the error
    *
-   * Emitted when the connection fails for a reason other than
-   * authentication, or ends because of an error.
+   * Emitted when the connection fails for a reason other than the logon
+   * being refused (the host was unreachable, DNS or TLS failed, the security
+   * negotiation or the transport broke), or when a live session ends because
+   * of an error. [property@GtkFrdp.Display:last-error-code] names the
+   * failure.
    */
   signals[RDP_ERROR] = g_signal_new ("rdp-error",
                                      G_TYPE_FROM_CLASS (klass),
@@ -741,8 +772,11 @@ frdp_display_class_init (FrdpDisplayClass *klass)
    * @display: the display
    * @message: a description of the failure
    *
-   * Emitted when connecting fails because of authentication, the transport
-   * or name resolution (wrong password, unreachable host, ...).
+   * Emitted when the server refused the credentials (wrong password, expired
+   * account, logon not permitted, ...). Failures that say nothing about the
+   * logon — an unreachable host, DNS, TLS, the security negotiation or the
+   * transport — are reported on [signal@GtkFrdp.Display.rdp-error] instead.
+   * [property@GtkFrdp.Display:last-error-code] carries FreeRDP's code.
    */
   signals[RDP_AUTH_FAILURE] = g_signal_new ("rdp-auth-failure",
                                             G_TYPE_FROM_CLASS (klass),
@@ -813,6 +847,16 @@ frdp_display_class_init (FrdpDisplayClass *klass)
                                                                      G_TYPE_UINT);
 }
 
+/* The session owns the value; the widget forwards its notification so that
+ * bindings and property watchers see it too. */
+static void
+frdp_display_last_error_code_changed (FrdpSession *session,
+                                      GParamSpec  *pspec,
+                                      FrdpDisplay *self)
+{
+  g_object_notify (G_OBJECT (self), "last-error-code");
+}
+
 static void
 frdp_display_init (FrdpDisplay *self)
 {
@@ -848,6 +892,8 @@ frdp_display_init (FrdpDisplay *self)
   priv->session = frdp_session_new (self);
 
   g_object_bind_property (priv->session, "monitor-layout-supported", self, "resize-supported", 0);
+  g_signal_connect (priv->session, "notify::last-error-code",
+                    G_CALLBACK (frdp_display_last_error_code_changed), self);
 }
 
 /**

@@ -45,6 +45,7 @@
 #include <freerdp/input.h>
 #include <freerdp/locale/keyboard.h>
 #include <freerdp/freerdp.h>
+#include <freerdp/version.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/video.h>
 #include <freerdp/gdi/gfx.h>
@@ -190,6 +191,7 @@ struct _FrdpSessionPrivate
   guint         keyboard_layout;    /* 0 = detect */
   gboolean      clipboard;
   gboolean      audio_playback;
+  guint32       last_error_code;    /* 0 = no failure */
 
   /* ---- framebuffer: frame_lock ---- */
   GMutex        frame_lock;
@@ -238,7 +240,8 @@ enum
   PROP_DOMAIN,
   PROP_KEYBOARD_LAYOUT,
   PROP_CLIPBOARD,
-  PROP_AUDIO_PLAYBACK
+  PROP_AUDIO_PLAYBACK,
+  PROP_LAST_ERROR_CODE
 };
 
 enum
@@ -1465,31 +1468,92 @@ frdp_session_worker (gpointer data)
   return NULL;
 }
 
+/* FreeRDP 3.26 added the setting that records an automatic retry (see
+ * frdp_session_first_connect_error()). Older builds keep the code they got. */
+#if FREERDP_VERSION_MAJOR > 3 || \
+    (FREERDP_VERSION_MAJOR == 3 && FREERDP_VERSION_MINOR >= 26)
+#define FRDP_HAVE_RECONNECT_SETTING 1
+#endif
+
+static void
+frdp_session_set_last_error_code (FrdpSession *self,
+                                  guint32      error_code)
+{
+  if (self->priv->last_error_code == error_code)
+    return;
+
+  self->priv->last_error_code = error_code;
+  g_object_notify (G_OBJECT (self), "last-error-code");
+}
+
+/* freerdp_connect() retries a failed connect once when the first attempt
+ * ended in FREERDP_ERROR_CONNECT_TRANSPORT_FAILED (freerdp.c). The retry
+ * clears the recorded error (rdp_client_disconnect_and_clear()), so a retry
+ * that then fails at the TCP layer leaves only the generic
+ * FREERDP_ERROR_CONNECT_FAILED: a server that refused the logon by closing
+ * the connection looks like a host that cannot be reached. The retry itself
+ * proves what the first error was, so report that one. */
+static guint32
+frdp_session_first_connect_error (FrdpSession *self,
+                                  guint32      error_code)
+{
+#ifdef FRDP_HAVE_RECONNECT_SETTING
+  FrdpSessionPrivate *priv = self->priv;
+
+  if (error_code == FREERDP_ERROR_CONNECT_FAILED &&
+      priv->freerdp_session != NULL &&
+      freerdp_settings_get_bool (priv->freerdp_session->context->settings,
+                                 FreeRDP_SessionHasBeenReconnected))
+    return FREERDP_ERROR_CONNECT_TRANSPORT_FAILED;
+#else
+  (void) self;
+#endif
+  return error_code;
+}
+
+/* Only the server refusing the credentials is an authentication failure.
+ * The rest of FreeRDP's connect errors (unreachable host, DNS, TLS, security
+ * negotiation, the transport breaking) say nothing about the logon and are
+ * reported on rdp-error. */
+static gboolean
+frdp_error_is_authentication (guint32 error_code)
+{
+  switch (error_code) {
+  case FREERDP_ERROR_AUTHENTICATION_FAILED:
+  case FREERDP_ERROR_CONNECT_NO_OR_MISSING_CREDENTIALS:
+  case FREERDP_ERROR_CONNECT_LOGON_FAILURE:
+  case FREERDP_ERROR_CONNECT_WRONG_PASSWORD:
+  case FREERDP_ERROR_CONNECT_ACCESS_DENIED:
+  case FREERDP_ERROR_CONNECT_ACCOUNT_DISABLED:
+  case FREERDP_ERROR_CONNECT_ACCOUNT_RESTRICTION:
+  case FREERDP_ERROR_CONNECT_ACCOUNT_LOCKED_OUT:
+  case FREERDP_ERROR_CONNECT_ACCOUNT_EXPIRED:
+  case FREERDP_ERROR_CONNECT_PASSWORD_EXPIRED:
+  case FREERDP_ERROR_CONNECT_PASSWORD_CERTAINLY_EXPIRED:
+  case FREERDP_ERROR_CONNECT_PASSWORD_MUST_CHANGE:
+  case FREERDP_ERROR_CONNECT_LOGON_TYPE_NOT_GRANTED:
+    return TRUE;
+  default:
+    return FALSE;
+  }
+}
+
 static void
 frdp_session_report_connect_failure (FrdpSession *self,
                                      guint32      error_code)
 {
-  const gchar *message = freerdp_get_last_error_string (error_code);
+  const gchar *message;
 
-  switch (error_code) {
-  case FREERDP_ERROR_AUTHENTICATION_FAILED:
-  case FREERDP_ERROR_CONNECT_FAILED:
-  case FREERDP_ERROR_SERVER_DENIED_CONNECTION:
-  case FREERDP_ERROR_CONNECT_NO_OR_MISSING_CREDENTIALS:
-  case FREERDP_ERROR_CONNECT_LOGON_FAILURE:
-  case STATUS_LOGON_FAILURE:
-  case STATUS_PASSWORD_EXPIRED:
-  case FREERDP_ERROR_CONNECT_ACCOUNT_EXPIRED:
-  case FREERDP_ERROR_CONNECT_TRANSPORT_FAILED:
-  case FREERDP_ERROR_TLS_CONNECT_FAILED:
-  case FREERDP_ERROR_DNS_NAME_NOT_FOUND:
+  error_code = frdp_session_first_connect_error (self, error_code);
+  frdp_session_set_last_error_code (self, error_code);
+  message = freerdp_get_last_error_string (error_code);
+
+  if (frdp_error_is_authentication (error_code)) {
+    g_debug ("RDP host refused the logon: '%s'", message);
     g_signal_emit (self, signals[RDP_AUTH_FAILURE], 0, message);
-    g_debug ("Failed to connect RDP host with error '%s'", message);
-    break;
-  default:
+  } else {
+    g_debug ("RDP connection failed: '%s'", message);
     g_signal_emit (self, signals[RDP_ERROR], 0, message);
-    g_debug ("Unexpected RDP error: '%s'", message);
-    break;
   }
 }
 
@@ -1582,8 +1646,10 @@ frdp_session_worker_done_cb (gpointer user_data)
 
   g_atomic_int_set (&priv->closing, 0);
 
-  if (was_connected && !cancelled && error != FREERDP_ERROR_SUCCESS)
+  if (was_connected && !cancelled && error != FREERDP_ERROR_SUCCESS) {
+    frdp_session_set_last_error_code (self, error);
     g_signal_emit (self, signals[RDP_ERROR], 0, freerdp_get_last_error_string (error));
+  }
 
   g_signal_emit (self, signals[RDP_DISCONNECTED], 0);
   g_debug ("RDP client disconnected");
@@ -1644,6 +1710,9 @@ frdp_session_get_property (GObject    *object,
         break;
       case PROP_MONITOR_LAYOUT_SUPPORTED:
         g_value_set_boolean (value, self->priv->monitor_layout_supported);
+        break;
+      case PROP_LAST_ERROR_CODE:
+        g_value_set_uint (value, self->priv->last_error_code);
         break;
       default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
@@ -1824,6 +1893,22 @@ frdp_session_class_init (FrdpSessionClass *klass)
                                                          FALSE,
                                                          G_PARAM_READWRITE));
 
+  /**
+   * FrdpSession:last-error-code:
+   *
+   * FreeRDP's code for the error that ended the last connection attempt, or
+   * 0 when none did. It is set before `rdp-error` and `rdp-auth-failure` are
+   * emitted, so a handler can name the failure exactly instead of parsing
+   * the message.
+   */
+  g_object_class_install_property (gobject_class,
+                                   PROP_LAST_ERROR_CODE,
+                                   g_param_spec_uint ("last-error-code",
+                                                      "last-error-code",
+                                                      "FreeRDP error code of the last failure",
+                                                      0, G_MAXUINT32, 0,
+                                                      G_PARAM_STATIC_STRINGS | G_PARAM_READABLE));
+
   signals[RDP_ERROR] = g_signal_new ("rdp-error",
                                      FRDP_TYPE_SESSION,
                                      G_SIGNAL_RUN_FIRST,
@@ -1901,6 +1986,8 @@ frdp_session_connect (FrdpSession         *self,
     g_object_unref (task);
     return;
   }
+
+  frdp_session_set_last_error_code (self, FREERDP_ERROR_SUCCESS);
 
   g_free (priv->hostname);
   priv->hostname = g_strdup (hostname);
