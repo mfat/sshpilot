@@ -66,6 +66,7 @@ class WelcomePage(Gtk.Overlay):
 
         self.connection_manager.connect_after('connection-added', self._on_connection_added)
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
+        self.connection_manager.connect_after('connection-updated', self._on_connection_updated)
 
         current_shortcuts = self._get_safe_current_shortcuts()
         self._shortcuts = current_shortcuts
@@ -282,6 +283,14 @@ class WelcomePage(Gtk.Overlay):
         return outer
 
     # --- Shared row/section widgets ---
+
+    @staticmethod
+    def _connection_title(connection) -> str:
+        """Sidebar-matching label: display name when set, else nickname."""
+        display = getattr(connection, 'display_name', None)
+        if isinstance(display, str) and display.strip():
+            return display.strip()
+        return str(getattr(connection, 'nickname', '') or '')
 
     def _min_row(self, title, subtitle, on_click, *, on_info=None):
         """A single Recent/Pinned row: title left, subtitle (mono) right.
@@ -543,7 +552,8 @@ class WelcomePage(Gtk.Overlay):
         hide = hosts_hidden(getattr(self, 'window', None))
         rows = [
             self._min_row(
-                conn.nickname, mask_host_display(conn.display_target, hide),
+                self._connection_title(conn),
+                mask_host_display(conn.display_target, hide),
                 lambda _b, c=conn: self._connect_connection_summary(c),
                 on_info=self._dashboard_callback(conn),
             )
@@ -593,6 +603,7 @@ class WelcomePage(Gtk.Overlay):
             self._event_refresh_follow_up = True
             return False
         self._populate_recent_box()
+        self._populate_pinned_box()
         return False
 
     def mark_connection_data_unavailable(self):
@@ -712,7 +723,8 @@ class WelcomePage(Gtk.Overlay):
             rows = []
             for conn in pinned:
                 row = self._min_row(
-                    conn.nickname, mask_host_display(self._conn_target(conn), hide),
+                    self._connection_title(conn),
+                    mask_host_display(self._conn_target(conn), hide),
                     lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c),
                     on_info=self._dashboard_callback(conn),
                 )
@@ -765,6 +777,11 @@ class WelcomePage(Gtk.Overlay):
     def _on_connection_added(self, _manager, _connection):
         """Refresh empty-state / Recent when a host is added to the inventory."""
         self.refresh_recent()
+        self.refresh_pinned()
+
+    def _on_connection_updated(self, _manager, _connection):
+        """Refresh Recent/Pinned when a connection is renamed or edited."""
+        self.schedule_connection_refresh()
 
     def _on_connection_removed(self, _manager, connection):
         """Auto-unpin a connection when it is deleted from the inventory."""
@@ -776,6 +793,7 @@ class WelcomePage(Gtk.Overlay):
         except Exception:
             pass
         self.refresh_recent()
+        self.refresh_pinned()
 
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
