@@ -1,3 +1,10 @@
+sshpilot (6.3.9-1) unstable; urgency=medium
+
+  * Release v6.3.9.
+  * more rdp fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 05 Nov 2026 23:02:28 +0000
+
 sshpilot (6.3.8-1) unstable; urgency=medium
 
   * Release v6.3.8.

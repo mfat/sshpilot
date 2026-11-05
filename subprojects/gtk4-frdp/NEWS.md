@@ -1,5 +1,29 @@
 # gtk4-frdp releases
 
+## 0.2.3 (2026-11-06)
+
+- Windows arrow keys, Home/End, Page Up/Down, Insert and Delete now carry
+  WinPR's extended-key marker before scan-code lookup, so their press and
+  release events reach the remote desktop instead of being dropped.
+  Keypad digits keep their existing mapping.
+
+## 0.2.2 (2026-11-06)
+
+- `rdp-auth-failure` now reports only a refused logon (wrong password,
+  expired or disabled account, logon not permitted, ...). Connection
+  failures — an unreachable host, DNS, TLS, the security negotiation, the
+  transport breaking — are reported on `rdp-error` instead, where they say
+  nothing about the credentials. An application that treated
+  `rdp-auth-failure` as "could not connect" should listen to both signals.
+- New read-only `last-error-code` property carries FreeRDP's error code for
+  the failure, so applications do not have to parse FreeRDP's English
+  sentence.
+- A server that closes the connection during the security handshake makes
+  FreeRDP retry once and clear the error it recorded, which left only the
+  generic `FREERDP_ERROR_CONNECT_FAILED`. The code now names the first error,
+  the transport failure, on FreeRDP 3.26 and later (older builds keep the
+  generic code).
+
 ## 0.2.1 (2026-11-05)
 
 - A password entered in the authentication prompt sets auto-logon, the same
