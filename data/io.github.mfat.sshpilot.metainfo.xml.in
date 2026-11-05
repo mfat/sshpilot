@@ -35,6 +35,11 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.3.9" date="2026-11-05">
+      <description>
+        <p>more rdp fixes</p>
+      </description>
+    </release>
     <release version="6.3.8" date="2026-11-05">
       <description>
         <p>Added terminal output highlighter - network addresses and important debug messages are now highlighted with profiles for several network devices</p>
