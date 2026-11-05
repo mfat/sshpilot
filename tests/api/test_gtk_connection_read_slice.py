@@ -46,6 +46,7 @@ class _AsyncPage:
         WelcomePage._recent_read_error_message
     )
     _render_recent_connections = WelcomePage._render_recent_connections
+    _connection_title = staticmethod(WelcomePage._connection_title)
     _dashboard_callback = WelcomePage._dashboard_callback
     schedule_connection_refresh = WelcomePage.schedule_connection_refresh
     _run_scheduled_connection_refresh = WelcomePage._run_scheduled_connection_refresh
@@ -78,6 +79,7 @@ def test_recent_listing_reads_dtos_from_client_not_manager():
                 get_metadata=lambda nickname: {"last_used": 10},
             ),
         ),
+        _connection_title=WelcomePage._connection_title,
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle, callback),
         _min_section=lambda title, rows: (title, rows),
         _dashboard_callback=lambda connection: None,
@@ -336,6 +338,7 @@ def test_connection_event_refreshes_are_coalesced_into_one_idle(monkeypatch):
     page._event_refresh_source = None
     page._event_refresh_follow_up = False
     page._populate_recent_box = lambda: callbacks.append("refresh")
+    page._populate_pinned_box = lambda: callbacks.append("pinned")
 
     page.schedule_connection_refresh()
     page.schedule_connection_refresh()
@@ -343,7 +346,7 @@ def test_connection_event_refreshes_are_coalesced_into_one_idle(monkeypatch):
 
     assert callbacks == [page._run_scheduled_connection_refresh]
     assert callbacks[0]() is False
-    assert callbacks[-1] == "refresh"
+    assert callbacks[-2:] == ["refresh", "pinned"]
     assert page._event_refresh_source is None
 
 

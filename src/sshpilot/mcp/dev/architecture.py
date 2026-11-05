@@ -16,7 +16,9 @@ All checks are read-only and never mutate the repository.
 from __future__ import annotations
 
 import ast
-from typing import Dict, Iterable, List, Set, Tuple
+import re
+import warnings
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from .._scope import RepoScope, ScopeError
 
@@ -50,8 +52,17 @@ class ArchitectureError(RuntimeError):
     """Raised for invalid architecture-intelligence input."""
 
 
-def _python_files(scope: RepoScope, prefixes: Iterable[str]) -> Iterable[Tuple[str, str]]:
-    """Yield (relative path, source text) for Python files under *prefixes*."""
+def _python_files(
+    scope: RepoScope,
+    prefixes: Iterable[str],
+    unreadable: Optional[List[dict]] = None,
+) -> Iterable[Tuple[str, str]]:
+    """Yield (relative path, source text) for Python files under *prefixes*.
+
+    Files that cannot be read (too large, not UTF-8, vanished) are not
+    silently dropped: when *unreadable* is given they are appended to it so
+    callers can report the scan as incomplete.
+    """
     targets = tuple(
         f"src/sshpilot/{prefix}/" for prefix in prefixes
     )
@@ -61,9 +72,18 @@ def _python_files(scope: RepoScope, prefixes: Iterable[str]) -> Iterable[Tuple[s
             continue
         try:
             source = scope.read_text(text, max_bytes=2 * 1024 * 1024)
-        except ScopeError:
+        except (ScopeError, OSError, UnicodeDecodeError) as error:
+            if unreadable is not None:
+                unreadable.append({"file": text, "error": str(error)})
             continue
         yield text, source
+
+
+def _parse(source: str, path: str) -> ast.Module:
+    """Parse *source* without leaking SyntaxWarnings into server output."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return ast.parse(source, filename=path)
 
 
 def check_frontend_neutrality(scope: RepoScope) -> dict:
@@ -74,10 +94,12 @@ def check_frontend_neutrality(scope: RepoScope) -> dict:
     quick GTK/GI scan over every internal layer).
     """
     violations: List[dict] = []
-    for path, source in _python_files(scope, GTK_FREE_PACKAGES):
+    unscanned: List[dict] = []
+    for path, source in _python_files(scope, GTK_FREE_PACKAGES, unscanned):
         try:
-            tree = ast.parse(source, filename=path)
-        except SyntaxError:
+            tree = _parse(source, path)
+        except (SyntaxError, ValueError) as error:
+            unscanned.append({"file": path, "error": f"{type(error).__name__}: {error}"})
             continue
         for node in ast.walk(tree):
             imported = set()
@@ -88,10 +110,21 @@ def check_frontend_neutrality(scope: RepoScope) -> dict:
             for name in imported:
                 if name in GTK_FORBIDDEN or name.startswith(("gi.", "Gtk", "GLib")):
                     violations.append({"file": path, "import": name})
+    # ``status`` distinguishes a verified-clean scan from one that could not
+    # inspect every file: an unparseable module might hide a GTK import, so the
+    # result is "unknown", never "clean".
+    if violations:
+        status = "invalid"
+    elif unscanned:
+        status = "unknown"
+    else:
+        status = "valid"
     return {
         "check": "frontend-neutrality",
-        "clean": not violations,
+        "status": status,
+        "clean": status == "valid",
         "violations": violations,
+        "unscanned": unscanned,
         "scanned_packages": sorted(GTK_FREE_PACKAGES),
     }
 
@@ -113,12 +146,12 @@ def review_public_api(scope: RepoScope) -> dict:
     client_contract = schema["client_method_contract"]
     daemon_contract = schema["daemon_method_contract"]
 
-    used_models: Set[str] = set()
+    capabilities_referenced: Set[str] = set()
     for contract in (client_contract, daemon_contract):
         for entry in contract.values():
             capability = entry.get("capability")
             if isinstance(capability, str):
-                used_models.add(capability)
+                capabilities_referenced.add(capability)
 
     # ``api.models`` re-exports its public surface through ``__all__``.  Scan
     # the model modules for class definitions, then intersect with that
@@ -126,15 +159,17 @@ def review_public_api(scope: RepoScope) -> dict:
     # validators and conversion helpers, which are not models.
     exported_names: Set[str] = set()
     model_classes: Set[str] = set()
+    unscanned: List[dict] = []
     for relative in scope.iter_files(include_suffixes={".py"}):
         text = str(relative)
         if not text.startswith("src/sshpilot/api/models/"):
             continue
         try:
             source = scope.read_text(text, max_bytes=2 * 1024 * 1024)
-        except ScopeError:
+            tree = _parse(source, text)
+        except (ScopeError, OSError, UnicodeDecodeError, SyntaxError, ValueError) as error:
+            unscanned.append({"file": text, "error": f"{type(error).__name__}: {error}"})
             continue
-        tree = ast.parse(source, filename=text)
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
                 model_classes.add(node.name)
@@ -157,6 +192,26 @@ def review_public_api(scope: RepoScope) -> dict:
 
     exported = sorted(exported_names & model_classes)
 
+    # Which exported models a client signature actually names (request
+    # parameter or return annotation). Capability names are *not* models; the
+    # old ``model_citations`` field counted capabilities and is kept only as a
+    # deprecated alias of ``capabilities_referenced``.
+    referenced_models: Set[str] = set()
+    try:
+        signatures = api_surface.client_signatures(scope)
+    except (ScopeError, SyntaxError, ValueError) as error:
+        signatures = {}
+        unscanned.append({"file": api_surface.CLIENT_RELPATH, "error": str(error)})
+    annotation_text = " ".join(
+        " ".join(
+            [entry.get("return", "")]
+            + [param.get("type", "") for param in entry.get("parameters", [])]
+        )
+        for entry in signatures.values()
+    )
+    annotation_tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_text))
+    referenced_models = set(exported) & annotation_tokens
+
     status_counts: Dict[str, int] = {}
     for entry in client_contract.values():
         status_counts[entry["status"]] = status_counts.get(entry["status"], 0) + 1
@@ -170,7 +225,14 @@ def review_public_api(scope: RepoScope) -> dict:
         "client_status": status_counts,
         "models_defined": len(exported),
         "models": exported,
-        "model_citations": len(used_models),
+        "models_referenced_by_client_signatures": len(referenced_models),
+        "models_not_referenced_by_client_signatures": sorted(set(exported) - referenced_models),
+        "capabilities_referenced": len(capabilities_referenced),
+        # Deprecated: historically mislabeled; equals capabilities_referenced.
+        "model_citations": len(capabilities_referenced),
+        "deprecated_fields": {"model_citations": "use capabilities_referenced"},
+        "complete": not unscanned,
+        "unscanned": unscanned,
     }
 
 
@@ -468,16 +530,81 @@ def validate_change(scope: RepoScope, base: str = "HEAD") -> dict:
     neutrality = check_frontend_neutrality(scope)
     api_drift = None
     artifacts = None
-    clean = neutrality["clean"]
+    checks: List[dict] = [
+        {
+            "name": "frontend_neutrality",
+            "kind": "static",
+            "executed": True,
+            "state": {"valid": "passed", "invalid": "failed"}.get(
+                neutrality["status"], "unknown"
+            ),
+        }
+    ]
     if review["recommend_api_drift_check"]:
         api_drift = api_surface.check_drift(scope)
         artifacts = execution.check_api_artifacts(scope)
-        clean = clean and api_drift["clean"] and artifacts["success"]
+        checks.append(
+            {
+                "name": "api_drift",
+                "kind": "static",
+                "executed": True,
+                "state": "passed" if api_drift["clean"] else "failed",
+            }
+        )
+        checks.append(
+            {
+                "name": "api_artifacts",
+                "kind": "subprocess",
+                "executed": True,
+                "state": (
+                    "passed"
+                    if artifacts["success"]
+                    else ("unknown" if artifacts.get("timed_out") else "failed")
+                ),
+                "command": artifacts.get("command"),
+            }
+        )
+    else:
+        for name in ("api_drift", "api_artifacts"):
+            checks.append(
+                {
+                    "name": name,
+                    "kind": "static" if name == "api_drift" else "subprocess",
+                    "executed": False,
+                    "state": "not_run",
+                    "reason": "No API or generated-artifact paths changed.",
+                }
+            )
+    checks.append(
+        {
+            "name": "tests",
+            "kind": "tests",
+            "executed": False,
+            "state": "not_run",
+            "reason": (
+                "validate_change never executes tests; run the recommended "
+                "commands (run_tests / verify_change mode='focused')."
+            ),
+        }
+    )
+    executed = [check for check in checks if check["executed"]]
+    static_clean = all(check["state"] == "passed" for check in executed)
 
     return {
         "check": "change-validation",
         "base": base,
-        "clean": clean,
+        # ``clean`` historically meant "the static checks that ran passed". It
+        # is kept for compatibility and *never* implies tests ran: read
+        # ``tests_executed`` / ``verdict`` before claiming a change is verified.
+        "clean": static_clean,
+        "static_clean": static_clean,
+        "tests_executed": False,
+        "verdict": (
+            "static-checks-passed-tests-not-run"
+            if static_clean
+            else "static-checks-failed-or-incomplete"
+        ),
+        "checks": checks,
         "review": review,
         "frontend_neutrality": neutrality,
         "api_drift": api_drift,

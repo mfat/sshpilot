@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.7}
+Version:        %{?version}%{!?version:6.3.8}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -168,6 +168,11 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Nov 05 2026 mFat <newmfat@gmail.com> - 6.3.8-1
+- Added terminal output highlighter - network addresses and important debug messages are now highlighted with profiles for several network devices
+- RDP tab ships gtk4-frdp 0.2.1 everywhere
+- Recent and Pinned titles stay in sync when a connection is renamed
+
 * Wed Nov 04 2026 mFat <newmfat@gmail.com> - 6.3.7-1
 - Propose SSH Pilot-specific agent workflows for runtime MCP
 - Add a 'Backspace key sends' option to serial connections (#1366)

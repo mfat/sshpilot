@@ -1,0 +1,205 @@
+{
+ "ccc26c9a": {
+  "tests": [
+   "tests/test_askpass_utils.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 18,
+  "n_after": 18,
+  "fail_before": {
+   "tests.test_askpass_utils::test_handle_askpass_cli_declines_ssh_add_retry[False]": "AssertionError: a rejected passphrase must not be looked up again",
+   "tests.test_askpass_utils::test_handle_askpass_cli_declines_ssh_add_retry[True]": "AssertionError: a rejected passphrase must not be looked up again"
+  },
+  "fail_before_that_pass_after": [
+   "tests.test_askpass_utils::test_handle_askpass_cli_declines_ssh_add_retry[False]",
+   "tests.test_askpass_utils::test_handle_askpass_cli_declines_ssh_add_retry[True]"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "34d69c0d": {
+  "tests": [
+   "tests/test_dnd_payload.py",
+   "tests/test_sidebar_dnd_leave.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 15,
+  "n_after": 15,
+  "fail_before": {
+   "tests.test_dnd_payload::test_accept_only_in_app_drops_wires_the_in_app_check": "ImportError: cannot import name 'accept_only_in_app_drops' from 'sshpilot.dnd_payload' (/tmp/val-34d69c0d-3v4nxe95/pre/src/sshpilot/dnd_payload.py)",
+   "tests.test_sidebar_dnd_leave::test_leave_defers_row_removal_until_idle": "AssertionError: assert ['clear', 'hide', 'stop'] == ['stop']\n  \n  At index 0 diff: 'clear' != 'stop'\n  Left contains 2 more items, first extra item: 'hide'\n  Use -v to get more diff",
+   "tests.test_sidebar_dnd_leave::test_repeated_leave_schedules_one_cleanup": "assert 0 == 1\n +  where 0 = len({})\n +    where {} = <test_sidebar_dnd_leave._FakeGLib object at 0x7e2b03069f90>.pending",
+   "tests.test_sidebar_dnd_leave::test_motion_cancels_pending_leave_cleanup": "assert [] == [0]\n  \n  Right contains one more item: 0\n  Use -v to get more diff",
+   "tests.test_sidebar_dnd_leave::test_connection_list_ignores_drags_from_other_apps": "AttributeError: <module 'sshpilot.sidebar' from '/tmp/val-34d69c0d-3v4nxe95/pre/src/sshpilot/sidebar.py'> has no attribute 'accept_only_in_app_drops'"
+  },
+  "fail_before_that_pass_after": [
+   "tests.test_dnd_payload::test_accept_only_in_app_drops_wires_the_in_app_check",
+   "tests.test_sidebar_dnd_leave::test_connection_list_ignores_drags_from_other_apps",
+   "tests.test_sidebar_dnd_leave::test_leave_defers_row_removal_until_idle",
+   "tests.test_sidebar_dnd_leave::test_motion_cancels_pending_leave_cleanup",
+   "tests.test_sidebar_dnd_leave::test_repeated_leave_schedules_one_cleanup"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "76a9e22b": {
+  "tests": [
+   "tests/test_terminal_failure_echo.py"
+  ],
+  "before_rc": 2,
+  "after_rc": 0,
+  "n_before": 1,
+  "n_after": 5,
+  "fail_before": {
+   "::tests.test_terminal_failure_echo": "collection failure"
+  },
+  "fail_before_that_pass_after": [],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "0ec819c6": {
+  "tests": [
+   "tests/gui/test_gtk_client_bridge_dispatch.py",
+   "tests/test_gtk_client_bridge.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 10,
+  "n_after": 10,
+  "fail_before": {
+   "tests.test_gtk_client_bridge::test_default_dispatcher_queues_at_default_priority": "AssertionError: assert [(<function t...ority': 100})] == [(<function t...ority': 100})]\n  \n  At index 0 diff: (<function test_default_dispatcher_queues_at_default_priority.<locals>.callback at 0x7fb13"
+  },
+  "fail_before_that_pass_after": [
+   "tests.test_gtk_client_bridge::test_default_dispatcher_queues_at_default_priority"
+  ],
+  "after_not_passing": {
+   "::tests.gui.test_gtk_client_bridge_dispatch": [
+    "skipped",
+    "collection skipped"
+   ]
+  },
+  "before_tail": ""
+ },
+ "f904b650": {
+  "tests": [
+   "tests/daemon/test_control_master_probing.py",
+   "tests/test_ssh_multiplex.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 24,
+  "n_after": 24,
+  "fail_before": {
+   "tests.daemon.test_control_master_probing::test_probe_overrides_user_controlmaster_setting": "AssertionError: assert 'ControlMaster=no' in ['ssh', '-o', 'ControlPath=/tmp/pytest-of-mahdi/pytest-103/test_probe_overrides_user_cont0/abcdef', '-O', 'check', 'sshpilot-controlmaster']",
+   "tests.daemon.test_control_master_probing::test_terminate_exit_overrides_user_controlmaster_setting": "AssertionError: assert 'ControlMaster=no' in ['ssh', '-o', 'ControlPath=/tmp/pytest-of-mahdi/pytest-103/test_terminate_exit_overrides_0/cm/abcdef', '-O', 'check', 'sshpilot-controlmaster']",
+   "tests.test_ssh_multiplex::test_expire_all_masters_overrides_user_controlmaster": "AssertionError: assert ['ssh', '-o',...pilot/cm/aaa'] == ['ssh', '-o',...rolMaster=no']\n  \n  At index 2 diff: 'ControlPath=/tmp/pytest-of-mahdi/pytest-103/test_expire_all_masters_overri0/sshpilot/cm/a"
+  },
+  "fail_before_that_pass_after": [
+   "tests.daemon.test_control_master_probing::test_probe_overrides_user_controlmaster_setting",
+   "tests.daemon.test_control_master_probing::test_terminate_exit_overrides_user_controlmaster_setting",
+   "tests.test_ssh_multiplex::test_expire_all_masters_overrides_user_controlmaster"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "edf664e8": {
+  "tests": [
+   "tests/test_sftp_client_large_files.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 37,
+  "n_after": 37,
+  "fail_before": {
+   "tests.test_sftp_client_large_files::test_read_capped_below_the_advertised_limit_follows_up_in_parallel": "AssertionError: capped read took 19.3 round trips\nassert 19.26252254997962 < 9"
+  },
+  "fail_before_that_pass_after": [
+   "tests.test_sftp_client_large_files::test_read_capped_below_the_advertised_limit_follows_up_in_parallel"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "4b3b8781": {
+  "tests": [
+   "tests/test_sidebar_split_rebuild.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 20,
+  "n_after": 20,
+  "fail_before": {
+   "tests.test_sidebar_split_rebuild::test_a_failed_synchronous_drain_cleans_up_and_recovers[section_toggle]": "AssertionError: assert [('deferred', 'connection')] is None\n +  where [('deferred', 'connection')] = <sshpilot.window.MainWindow object at 0x703294307a10>._staged_connection_rows",
+   "tests.test_sidebar_split_rebuild::test_a_failed_synchronous_drain_cleans_up_and_recovers[group_toggle]": "AssertionError: assert [('deferred', 'connection')] is None\n +  where [('deferred', 'connection')] = <sshpilot.window.MainWindow object at 0x703294307b60>._staged_connection_rows",
+   "tests.test_sidebar_split_rebuild::test_a_failed_synchronous_drain_cleans_up_and_recovers[removal]": "AssertionError: assert [('deferred', 'connection')] is None\n +  where [('deferred', 'connection')] = <sshpilot.window.MainWindow object at 0x703293ce8590>._staged_connection_rows"
+  },
+  "fail_before_that_pass_after": [
+   "tests.test_sidebar_split_rebuild::test_a_failed_synchronous_drain_cleans_up_and_recovers[group_toggle]",
+   "tests.test_sidebar_split_rebuild::test_a_failed_synchronous_drain_cleans_up_and_recovers[removal]",
+   "tests.test_sidebar_split_rebuild::test_a_failed_synchronous_drain_cleans_up_and_recovers[section_toggle]"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "cc04b976": {
+  "tests": [
+   "tests/test_terminal_interactive_risks.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 12,
+  "n_after": 12,
+  "fail_before": {
+   "tests.test_terminal_interactive_risks::test_transport_closed_during_quit_is_not_a_connection_failure": "AssertionError: assert ['The daemon ...rt is closed'] == []\n  \n  Left contains one more item: 'The daemon transport is closed'\n  Use -v to get more diff"
+  },
+  "fail_before_that_pass_after": [
+   "tests.test_terminal_interactive_risks::test_transport_closed_during_quit_is_not_a_connection_failure"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "433f9e89": {
+  "tests": [
+   "tests/test_macos_click_guard.py",
+   "tests/test_terminal_interactive_risks.py"
+  ],
+  "before_rc": 2,
+  "after_rc": 0,
+  "n_before": 1,
+  "n_after": 18,
+  "fail_before": {
+   "::tests.test_macos_click_guard": "collection failure"
+  },
+  "fail_before_that_pass_after": [],
+  "after_not_passing": {},
+  "before_tail": ""
+ },
+ "3a01b1af": {
+  "tests": [
+   "tests/daemon/test_tcp_endpoint_staleness.py"
+  ],
+  "before_rc": 1,
+  "after_rc": 0,
+  "n_before": 8,
+  "n_after": 8,
+  "fail_before": {
+   "tests.daemon.test_tcp_endpoint_staleness::test_endpoint_of_dead_daemon_is_stale_without_probing_port": "AssertionError: a dead publisher must not need a port probe",
+   "tests.daemon.test_tcp_endpoint_staleness::test_endpoint_of_dead_daemon_is_stale_even_if_port_was_reused": "assert (True, None) == (False, None)\n  \n  At index 0 diff: True != False\n  Use -v to get more diff",
+   "tests.daemon.test_tcp_endpoint_staleness::test_recycled_pid_does_not_make_endpoint_live": "AssertionError: recycled publisher must not need a port probe",
+   "tests.daemon.test_tcp_endpoint_staleness::test_slow_windows_refusal_is_not_mistaken_for_a_live_daemon": "assert (True, None) == (False, None)\n  \n  At index 0 diff: True != False\n  Use -v to get more diff",
+   "tests.daemon.test_tcp_endpoint_staleness::test_prepare_replaces_stale_endpoint_from_crashed_daemon": "sshpilot.daemon.lifecycle.DaemonAlreadyRunningError: The daemon is already running",
+   "tests.daemon.test_tcp_endpoint_staleness::test_prepare_still_refuses_a_live_daemon": "AssertionError: assert 'a live peer answers' in ''\n +  where '' = <_pytest.logging.LogCaptureFixture object at 0x73dfc5ee7c50>.text"
+  },
+  "fail_before_that_pass_after": [
+   "tests.daemon.test_tcp_endpoint_staleness::test_endpoint_of_dead_daemon_is_stale_even_if_port_was_reused",
+   "tests.daemon.test_tcp_endpoint_staleness::test_endpoint_of_dead_daemon_is_stale_without_probing_port",
+   "tests.daemon.test_tcp_endpoint_staleness::test_prepare_replaces_stale_endpoint_from_crashed_daemon",
+   "tests.daemon.test_tcp_endpoint_staleness::test_prepare_still_refuses_a_live_daemon",
+   "tests.daemon.test_tcp_endpoint_staleness::test_recycled_pid_does_not_make_endpoint_live",
+   "tests.daemon.test_tcp_endpoint_staleness::test_slow_windows_refusal_is_not_mistaken_for_a_live_daemon"
+  ],
+  "after_not_passing": {},
+  "before_tail": ""
+ }
+}

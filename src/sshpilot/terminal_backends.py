@@ -926,6 +926,12 @@ class VTETerminalBackend:
                 palette_colors = palette_colors[:16]
 
             self.vte.set_colors(fg_color, bg_color, palette_colors)
+            highlighter = getattr(owner, "_highlighter", None)
+            if highlighter is not None:
+                highlighter.set_theme(
+                    (bg_color.red, bg_color.green, bg_color.blue),
+                    [(c.red, c.green, c.blue) for c in (palette_colors or [])],
+                )
             self.vte.set_color_cursor(cursor_color)
             self._reset_highlight()
 
@@ -1806,6 +1812,9 @@ class PyXtermTerminalBackend:
             # sync with the theme so that gap matches (VTE paints the full widget).
             bg = profile.get("background", "#000000")
             fg = profile.get("foreground", "#FFFFFF")
+            highlighter = getattr(owner, "_highlighter", None)
+            if highlighter is not None:
+                highlighter.set_theme_hex(bg, palette)
             cursor = profile.get("cursor_color", fg)
             # xterm.js cannot draw selections reversed the way VTE does, so the
             # VTE backend's unset highlight is approximated: a translucent tint

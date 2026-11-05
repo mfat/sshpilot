@@ -13,9 +13,10 @@ from typing import Any, List, Optional
 from .._scope import RepoScope, ScopeError
 from . import api_surface, architecture, execution, search, symbols, test_discovery
 from ._git import GitInspector, GitError
+from .engine import DevIntelligence, EngineError
 
 SERVER_NAME = "sshpilot-mcp-dev"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 DEFAULT_MAX_FILE_BYTES = 64 * 1024
 
 
@@ -35,6 +36,141 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
             "read-only access to a single repository checkout."
         ),
     )
+
+    intelligence = DevIntelligence(scope)
+
+    def _engine_call(function, *args, **kwargs) -> dict:
+        try:
+            return function(*args, **kwargs)
+        except (EngineError, ScopeError, execution.ExecutionError) as error:
+            raise ToolError(str(error)) from error
+
+    # ------------------------------------------------------------------
+    # V2 development-intelligence tools (indexed, evidence-labelled,
+    # budgeted). See docs/mcp/dev-intelligence.md.
+    # ------------------------------------------------------------------
+    @server.tool()
+    def get_context(
+        reference: str,
+        include_source: bool = True,
+        depth: int = 1,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Bounded context for one symbol: source excerpt, callers, callees,
+        API wire chain and statically related tests, each edge labelled
+        verified_static / heuristic / unresolved.
+
+        ``reference``: a symbol id (``path::Qual.name``), ``path.py:LINE``,
+        a dotted name, a bare name, ``wire:<method>`` or ``capability:<value>``.
+        Append ``?lines=A-B`` or ``?offset=N`` to page. ``budget`` is the reply
+        size in bytes (default ~4800 ≈ 1,200 tokens); omissions are reported
+        in ``budget.omitted``.
+        """
+        return _engine_call(intelligence.get_context, reference, include_source=include_source, depth=depth, budget=budget)
+
+    @server.tool()
+    def inspect_impact(
+        base: Optional[str] = None,
+        paths: Optional[List[str]] = None,
+        depth: int = 2,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Impact of a change: changed symbols (from diff hunks), resolved
+        dependents, wire-protocol/API risks, dangling references and a test
+        plan with static evidence.
+
+        Give ``base`` (a Git revision; compares it with the working tree,
+        including staged, unstaged and untracked files) and/or ``paths``
+        (repository-relative; whole files). Read-only.
+        """
+        return _engine_call(intelligence.inspect_impact, base=base, paths=paths, depth=depth, budget=budget)
+
+    @server.tool()
+    def diagnose_bug(
+        symptoms: str,
+        traceback: Optional[str] = None,
+        test_name: Optional[str] = None,
+        changed_paths: Optional[List[str]] = None,
+        base: Optional[str] = None,
+        max_items: int = 8,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Rank candidate code locations for a failure, with the evidence
+        behind each (traceback frame, failing test and its callees, wire
+        method or identifier mentions, changed files) and explicit
+        uncertainties and next steps. Low confidence is reported as such.
+
+        ``symptoms`` is free text (identifiers count when written as
+        ``name()`` or in backticks); ``traceback`` is a Python/pytest trace;
+        ``test_name`` a pytest id; ``base`` adds files changed since that
+        revision as evidence. Inputs are never stored; exception messages are
+        returned only as a short redacted preview.
+        """
+        return _engine_call(
+            intelligence.diagnose_bug,
+            symptoms,
+            traceback=traceback,
+            test_name=test_name,
+            changed_paths=changed_paths,
+            base=base,
+            max_items=max_items,
+            budget=budget,
+        )
+
+    @server.tool()
+    def plan_feature(
+        request: str,
+        subsystem: Optional[str] = None,
+        symbol: Optional[str] = None,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Advisory plan for a feature: existing symbols and API methods whose
+        names match the request (with paths and matched words), the layers
+        they live in, whether the daemon/API is involved, and SSH Pilot's
+        layer obligations — each tied to a path in this checkout.
+
+        ``subsystem`` (daemon/api/core/gtk/frontend/cli/mcp/plugins) narrows
+        the pattern search; ``symbol`` anchors the plan on one symbol. Never
+        proposes code; unmatched requests are reported as uncertain.
+        """
+        return _engine_call(intelligence.plan_feature, request, subsystem=subsystem, symbol=symbol, budget=budget)
+
+    @server.tool()
+    def verify_change(
+        base: str = "HEAD",
+        mode: str = "static",
+        suites: Optional[List[str]] = None,
+        max_test_files: int = 8,
+        budget: Optional[int] = None,
+    ) -> dict:
+        """Verify the working tree against ``base``: Python syntax,
+        frontend neutrality, API drift and generated artifacts (when the
+        change touches them) and — in ``mode='focused'`` — the test files
+        selected from static evidence, run through the allowlisted runner.
+
+        Each check reports ``state`` (passed/failed/skipped/not_run/unknown)
+        and whether it ``executed``. ``checks_passed`` says the executed
+        checks passed; ``coverage_confirmed`` is always false (no coverage is
+        collected); ``verification_gaps`` lists what is unproven (skipped
+        tests, changed code no test calls, unrun suites). ``overall`` is
+        ``checks-passed`` only with no gaps; ``static`` mode reports
+        ``static-only``. ``suites`` (focused mode) adds allowlisted suites.
+        """
+        return _engine_call(
+            intelligence.verify_change,
+            base=base,
+            mode=mode,
+            suites=suites,
+            max_test_files=max_test_files,
+            budget=budget,
+        )
+
+    @server.tool()
+    def index_status(rebuild: bool = False) -> dict:
+        """Refresh the local symbol index incrementally and report freshness
+        (Git HEAD, files indexed, parse failures, timings). ``rebuild=True``
+        discards and rebuilds it. The index lives outside the checkout."""
+        return _engine_call(intelligence.index_status, rebuild=rebuild)
 
     @server.tool()
     def repo_info() -> dict:

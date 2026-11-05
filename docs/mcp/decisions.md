@@ -155,3 +155,29 @@ maintaining a second secret-field list keeps redaction mechanically derived
 (D004). Free-form operation payloads are treated as opaque because they may
 contain content that has lost a nested DTO's marker. Content is restored only
 by an explicit, named operator decision.
+
+## D011 — Dev MCP development intelligence is an indexed engine behind thin adapters
+
+Status: Accepted
+
+Decision: Project-aware analysis for the dev MCP lives in
+`sshpilot.mcp.dev.engine`, a pure stdlib (`ast` + `sqlite3`) package with no
+MCP SDK, subprocess or network use. The MCP server and the
+`python -m sshpilot.mcp.dev.cli` JSON CLI are thin adapters over
+`DevIntelligence`. The engine keeps a versioned SQLite index outside the
+checkout (XDG cache, or `SSHPILOT_MCP_INDEX_DIR`). It stores names,
+locations and provenance-labelled edges, never file contents or tool inputs.
+Edges are stored by name and resolved at query time, and every query first
+refreshes the index incrementally. Results carry one of three confidence
+labels (`verified_static` / `heuristic` / `unresolved`), freshness metadata
+and a byte budget that reports what it omitted. Verification states whether
+each check executed, and never reports `passed` without a test run.
+
+Reason: Re-parsing the tree on every call cost 3–22 s per tool. Answers
+without provenance invited false confidence. Resolving at query time makes
+stale cross-file edges impossible without a dependency-invalidation scheme,
+and keeping the engine transport-free lets CI and local scripts use exactly
+what agents see. The six V2 tools are the recommended interface. The generic
+repository tools stay for compatibility; removing them needs its own decision
+after clients migrate.
+

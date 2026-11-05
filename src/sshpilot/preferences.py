@@ -35,6 +35,7 @@ from .terminal_cursor import (
     normalize_cursor_blink,
     normalize_cursor_shape,
 )
+from .terminal_highlight import PROFILES, normalize_profile
 
 
 import gi
@@ -748,6 +749,42 @@ class PreferencesWindow(Adw.Window):
 
         terminal_page.add(cursor_group)
 
+    def _add_terminal_highlight_group(self, terminal_page):
+        """Add the network-output highlighting group."""
+        group = Adw.PreferencesGroup(title=_("Highlighting"))
+
+        self.highlight_switch = Adw.SwitchRow()
+        self.highlight_switch.set_title(_("Highlight Network Output"))
+        self.highlight_switch.set_subtitle(
+            _("Colour IP and MAC addresses, VLANs, interfaces and link status")
+        )
+        self.highlight_switch.set_active(
+            bool(self.config.get_setting('terminal.highlight_enabled', False))
+        )
+        self.highlight_switch.connect('notify::active', self.on_highlight_enabled_changed)
+        group.add(self.highlight_switch)
+
+        self.highlight_profile_row = Adw.ComboRow()
+        self.highlight_profile_row.set_title(_("Highlight Profile"))
+        profile_model = Gtk.StringList()
+        for label in (_("Generic"), _("Cisco IOS"), _("Junos"), _("Huawei VRP")):
+            profile_model.append(label)
+        self.highlight_profile_row.set_model(profile_model)
+        current = normalize_profile(self.config.get_setting('terminal.highlight_profile', None))
+        self.highlight_profile_row.set_selected(PROFILES.index(current))
+        self.highlight_profile_row.connect('notify::selected', self.on_highlight_profile_changed)
+        group.add(self.highlight_profile_row)
+
+        terminal_page.add(group)
+
+    def on_highlight_enabled_changed(self, switch_row, _param):
+        self.config.set_setting('terminal.highlight_enabled', switch_row.get_active())
+
+    def on_highlight_profile_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if 0 <= index < len(PROFILES):
+            self.config.set_setting('terminal.highlight_profile', PROFILES[index])
+
     def on_cursor_shape_changed(self, combo_row, _param):
         index = combo_row.get_selected()
         if not 0 <= index < len(CURSOR_SHAPES):
@@ -1257,6 +1294,7 @@ class PreferencesWindow(Adw.Window):
 
         self._add_terminal_appearance_groups(terminal_page)
         self._add_terminal_cursor_group(terminal_page)
+        self._add_terminal_highlight_group(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
         self._add_terminal_daemon_group(terminal_page)

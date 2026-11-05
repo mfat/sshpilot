@@ -1029,6 +1029,9 @@ class PyteTerminalBackend:
             logger.debug("Group color override failed", exc_info=True)
         palette = [_parse_rgb(c) for c in (profile.get("palette") or _DEFAULT_PALETTE)]
         self.view.set_colors(fg, bg, palette, cursor)
+        highlighter = getattr(owner, "_highlighter", None)
+        if highlighter is not None:
+            highlighter.set_theme(bg, palette)
         font = profile.get("font")
         if font:
             self.view.set_font(Pango.FontDescription.from_string(font))

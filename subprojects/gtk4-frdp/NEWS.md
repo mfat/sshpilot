@@ -1,5 +1,11 @@
 # gtk4-frdp releases
 
+## 0.2.1 (2026-11-05)
+
+- A password entered in the authentication prompt sets auto-logon, the same
+  as a password known before connect. Without that, Windows authenticated
+  and then stayed on its own logon screen, which some hosts draw black.
+
 ## 0.2.0 (2026-11-04)
 
 - `private_libdir` option: install the library and typelib into an

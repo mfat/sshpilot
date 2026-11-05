@@ -199,3 +199,93 @@ def test_classify_path():
     assert architecture._classify_path("tests/x.py") == "tests"
     assert architecture._classify_path("scripts/generate_api.py") == "scripts"
     assert architecture._classify_path("src/sshpilot/mcp/dev/x.py") == "mcp"
+
+
+# --- Phase 0 regressions: honest reporting -------------------------------
+
+
+def test_frontend_neutrality_reports_unparseable_file_as_unknown(tmp_path):
+    root = tmp_path / "repo"
+    core = root / "src" / "sshpilot" / "core"
+    core.mkdir(parents=True)
+    (core / "ok.py").write_text("import os\n")
+    # A syntax error could hide a GTK import; it must not read as clean.
+    (core / "broken.py").write_text("def broken(:\n    import gi\n")
+    result = architecture.check_frontend_neutrality(RepoScope(root))
+    assert result["status"] == "unknown"
+    assert result["clean"] is False
+    assert result["violations"] == []
+    assert [entry["file"] for entry in result["unscanned"]] == [
+        "src/sshpilot/core/broken.py"
+    ]
+    assert "SyntaxError" in result["unscanned"][0]["error"]
+
+
+def test_frontend_neutrality_violation_wins_over_unknown(tmp_path):
+    root = tmp_path / "repo"
+    core = root / "src" / "sshpilot" / "core"
+    core.mkdir(parents=True)
+    (core / "gtk.py").write_text("import gi\n")
+    (core / "broken.py").write_text("def broken(:\n")
+    result = architecture.check_frontend_neutrality(RepoScope(root))
+    assert result["status"] == "invalid"
+    assert result["clean"] is False
+
+
+def test_review_public_api_separates_capabilities_from_models(repo):
+    result = architecture.review_public_api(repo)
+    # Capabilities are not models: the metric is named for what it counts.
+    assert result["capabilities_referenced"] >= 1
+    assert result["model_citations"] == result["capabilities_referenced"]
+    assert result["deprecated_fields"] == {"model_citations": "use capabilities_referenced"}
+    assert 0 < result["models_referenced_by_client_signatures"] <= result["models_defined"]
+    assert "OpenSessionRequest" not in result["models_not_referenced_by_client_signatures"]
+    assert result["complete"] is True
+
+
+def test_validate_change_never_claims_tests_ran(repo, monkeypatch):
+    monkeypatch.setattr(
+        architecture,
+        "review_commit",
+        lambda scope, base="HEAD": {
+            "check": "commit-review",
+            "base": base,
+            "changed_total": 1,
+            "by_layer": {"core": ["src/sshpilot/core/identity_service.py"]},
+            "boundary_crossed": False,
+            "api_surface_changed": False,
+            "generated_artifacts_changed": False,
+            "diff_stat": "",
+            "recommend_api_drift_check": False,
+        },
+    )
+    result = architecture.validate_change(repo)
+    assert result["tests_executed"] is False
+    assert result["verdict"] == "static-checks-passed-tests-not-run"
+    states = {check["name"]: (check["executed"], check["state"]) for check in result["checks"]}
+    assert states == {
+        "frontend_neutrality": (True, "passed"),
+        "api_drift": (False, "not_run"),
+        "api_artifacts": (False, "not_run"),
+        "tests": (False, "not_run"),
+    }
+
+
+def test_validate_change_is_not_clean_when_neutrality_unknown(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    core = root / "src" / "sshpilot" / "core"
+    core.mkdir(parents=True)
+    (core / "broken.py").write_text("def broken(:\n")
+    monkeypatch.setattr(
+        architecture,
+        "review_commit",
+        lambda scope, base="HEAD": {
+            "by_layer": {},
+            "recommend_api_drift_check": False,
+        },
+    )
+    result = architecture.validate_change(RepoScope(root))
+    assert result["clean"] is False
+    assert result["verdict"] == "static-checks-failed-or-incomplete"
+    neutrality = next(c for c in result["checks"] if c["name"] == "frontend_neutrality")
+    assert neutrality["state"] == "unknown"

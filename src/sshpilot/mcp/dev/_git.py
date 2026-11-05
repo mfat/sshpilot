@@ -8,10 +8,11 @@ the repository.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 #: Hard cap on how much diff/log text is returned to the model.
 MAX_OUTPUT_BYTES = 512 * 1024
@@ -25,6 +26,13 @@ _SAFE_GIT_ARGS = {
 
 #: Safe characters for a user-supplied revision (never a leading "-").
 _REVISION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/^~-]*$")
+
+
+#: Flags that keep ``git diff`` from running user-configured external diff
+#: drivers or textconv filters (arbitrary programs) during inspection.
+_SAFE_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color")
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 class GitError(RuntimeError):
@@ -57,9 +65,15 @@ class GitInspector:
     def _run(self, args: List[str], timeout: float = 15.0) -> subprocess.CompletedProcess:
         if not args or args[0] not in _SAFE_GIT_ARGS:
             raise GitError(f"refusing git command: {args!r}")
-        argv = ["git", "-C", str(self._root), *args]
+        # --no-pager plus GIT_OPTIONAL_LOCKS=0: inspection must not take the
+        # index lock or refresh its stat cache (``git status`` otherwise may
+        # write .git/index).
+        argv = ["git", "--no-pager", "-C", str(self._root), *args]
+        env = dict(os.environ)
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        env.pop("GIT_EXTERNAL_DIFF", None)
         try:
-            return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+            return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
         except FileNotFoundError:
             raise GitError("git executable not found") from None
         except subprocess.TimeoutExpired:
@@ -114,7 +128,7 @@ class GitInspector:
             base = "HEAD"
         if not isinstance(base, str) or not _REVISION_RE.match(base):
             raise GitError(f"invalid revision: {base!r}")
-        output = self._require(["diff", "--name-only", "-z", base, "--"])
+        output = self._require(["diff", *_SAFE_DIFF_FLAGS, "--name-only", "-z", base, "--"])
         paths = [path for path in output.split("\x00") if path]
         for entry in self.status()["entries"]:
             path = entry["path"]
@@ -141,7 +155,7 @@ class GitInspector:
             # to the caller's RepoScope for validation of the same path.
             if "\x00" in path:
                 raise GitError("path contains a null byte")
-        argv: List[str] = ["diff"]
+        argv: List[str] = ["diff", *_SAFE_DIFF_FLAGS]
         if stat_only:
             argv.append("--stat")
         argv.append(base)
@@ -154,3 +168,55 @@ class GitInspector:
             "bytes": len(text.encode("utf-8")),
             "truncated": truncated,
         }
+
+    def head(self) -> Optional[str]:
+        """Return the full SHA of HEAD, or None in a repository without commits."""
+        proc = self._run(["rev-parse", "--verify", "--quiet", "HEAD"])
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.strip() or None
+
+    def validate_revision(self, base: str) -> str:
+        """Check *base* is a syntactically safe revision that resolves."""
+        if not isinstance(base, str) or not _REVISION_RE.match(base):
+            raise GitError(f"invalid revision: {base!r}")
+        proc = self._run(["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"])
+        if proc.returncode != 0:
+            raise GitError(f"unknown revision: {base!r}")
+        return proc.stdout.strip()
+
+    def changed_line_ranges(self, base: str = "HEAD") -> Dict[str, List[Tuple[int, int]]]:
+        """Map each changed path to new-side line ranges (inclusive) vs *base*.
+
+        Covers committed-since-base, staged and unstaged changes in tracked
+        files (``git diff <base>`` compares against the working tree). A pure
+        deletion is reported as a zero-length range at the following line so
+        the enclosing symbol is still found. Untracked files are not listed
+        here; :meth:`changed_paths` reports them.
+        """
+        self.validate_revision(base)
+        output = self._require(["diff", *_SAFE_DIFF_FLAGS, "-U0", "--no-renames", base, "--"])
+        ranges: Dict[str, List[Tuple[int, int]]] = {}
+        current: Optional[str] = None
+        for line in output.splitlines():
+            if line.startswith("+++ "):
+                target = line[4:]
+                current = target[2:] if target.startswith("b/") else None
+                if current is not None:
+                    ranges.setdefault(current, [])
+                continue
+            if line.startswith("--- "):
+                source = line[4:]
+                if source.startswith("a/"):
+                    # Deleted files only have a "--- a/path" header.
+                    ranges.setdefault(source[2:], [])
+                continue
+            match = _HUNK_RE.match(line)
+            if match and current is not None:
+                start = int(match.group(3))
+                count = int(match.group(4)) if match.group(4) is not None else 1
+                if count == 0:
+                    ranges[current].append((max(1, start), max(1, start)))
+                else:
+                    ranges[current].append((start, start + count - 1))
+        return ranges

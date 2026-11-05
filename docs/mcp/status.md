@@ -127,6 +127,15 @@ entries are rewritten, not accumulated.
   repository README, contributor guide, and documentation index; drift tests
   ensure all dev tools and runtime policy variables remain documented.
 
+- **Dev MCP development intelligence (V2)**: `diagnose_bug`, `plan_feature`,
+  `inspect_impact`, `verify_change`, `get_context`, `index_status`, over an
+  incremental SQLite index (`src/sshpilot/mcp/dev/engine/`), with the same
+  operations as `python -m sshpilot.mcp.dev.cli`. The dev-MCP correctness
+  fixes landed with it: tests run in the repository root, parse failures are
+  reported as `unknown`, and executed and not-run checks are separated. The
+  tool-level benchmark is `scripts/benchmark_dev_mcp.py`. See
+  [dev-intelligence.md](dev-intelligence.md) for results and limits.
+
 ## What is being worked on
 
 - Nothing in progress; steps 1-5, the stdio round-trip, capability-driven tool
@@ -134,6 +143,21 @@ entries are rewritten, not accumulated.
   are complete.
 
 ## What is next
+
+0. Dev MCP V2 follow-ups, in review order:
+   1. The pre-fix historical benchmark (frozen v2 dataset, `selective` and
+      `search_all` baselines) is in place. Grow the held-out set before tuning
+      ranking further.
+   2. The end-to-end pilot is done (`scripts/agent_experiment/`; results in
+      `dev-intelligence.md`). Six bugs, one run per arm: same outcomes (5/6
+      adapted) and the same cost. Agents called the tool at most once per run,
+      always `diagnose_bug`. Next: test whether instructions or tool
+      descriptions get agents to use `get_context` and `inspect_impact`, then
+      rerun with several runs per arm and harder localisation tasks.
+   3. Add `DaemonClient` receiver inference for GTK code (`self._client.<m>`),
+      so GTK callers of API methods become dependents.
+   4. Add opt-in per-test coverage, so `coverage_confirmed` can become true.
+   5. Add knowledge records and rename tracking.
 
 1. Runtime security review follow-up complete: audited the runtime MCP result
    surface. `OperationSummary.result` was the free-form smuggling path because
