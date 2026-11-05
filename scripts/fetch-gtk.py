@@ -36,10 +36,10 @@ URL = f"https://github.com/wingtk/gvsbuild/releases/download/{VERSION}/{ASSET}"
 #: The digest GitHub publishes for this release asset.
 SHA256 = "1f95a92d037f5292da05e6ab1037032ff21ddb7b20d4ac8e83e3674c864c07b0"
 
-FRDP_VERSION = "0.2.0"
+FRDP_VERSION = "0.2.1"
 FRDP_ASSET = f"gtk4-frdp-{FRDP_VERSION}-gvsbuild-{VERSION}-x64.zip"
 FRDP_URL = f"https://github.com/mfat/gtk4-frdp/releases/download/v{FRDP_VERSION}/{FRDP_ASSET}"
-FRDP_SHA256 = "f1442bd82a91f18fdb1dafbb02a749da4bb9fbf3f73981be735fb4133ce97f9f"
+FRDP_SHA256 = "de640c7efb21d2276615bb67148a4daa9b90f7e643fa2599478735f47323badb"
 #: Files at the top of the gtk4-frdp zip that are not part of the prefix.
 FRDP_LICENCE_FILES = ("COPYING", "NOTICE")
 

@@ -1049,6 +1049,15 @@ frdp_authenticate_ex (freerdp          *freerdp_session,
                 "domain", domain,
                 NULL);
 
+  /* This runs during NLA, before the client-info PDU. A password typed into
+   * the prompt is enough for network authentication, but Windows still draws
+   * its own logon screen — black, in the framebuffer — unless INFO_AUTOLOGON
+   * is set. A password known before connect sets the flag in
+   * frdp_session_create_instance(); one that arrives here has to as well. */
+  if (password != NULL && *password != NULL && **password != '\0')
+    freerdp_settings_set_bool (freerdp_session->context->settings,
+                               FreeRDP_AutoLogonEnabled, TRUE);
+
   return TRUE;
 }
 
@@ -1325,8 +1334,9 @@ frdp_session_create_instance (FrdpSession       *self,
 
   /* Without INFO_AUTOLOGON Windows authenticates the connection (NLA) and
    * then stops at its own logon screen; some hosts draw that black and drop
-   * the session after ~55 s (ERRINFO_RPC_INITIATED_DISCONNECT). FreeRDP's
-   * own clients never set it; Remmina does when a password is known. */
+   * the session after ~55 s (ERRINFO_RPC_INITIATED_DISCONNECT). A password
+   * entered later, in the authentication prompt, sets the same flag from
+   * frdp_authenticate_ex(). */
   if (params->password != NULL && *params->password != '\0')
     freerdp_settings_set_bool (settings, FreeRDP_AutoLogonEnabled, TRUE);
 
