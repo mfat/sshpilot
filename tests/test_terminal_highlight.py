@@ -862,3 +862,196 @@ def test_saved_attributes_tracked_while_disabled_and_cleared_on_reset():
     assert h.feed(b'\x1b8 192.0.2.1') == b'\x1b8 192.0.2.1'
     h.reset()
     assert h.feed(b'\x1b8 192.0.2.1') == b'\x1b8 ' + colour(b'192.0.2.1', 36)
+
+
+@pytest.mark.parametrize('profile', PROFILES)
+@pytest.mark.parametrize('level,code', [
+    (b'EMERGENCY', 31), (b'EMERG', 31), (b'ALERT', 31),
+    (b'CRITICAL', 31), (b'CRIT', 31), (b'FATAL', 31), (b'ERROR', 31), (b'ERR', 31),
+    (b'WARNING', 33), (b'WARN', 33), (b'NOTICE', 36), (b'INFO', 36),
+    (b'DEBUG', 35), (b'TRACE', 35),
+])
+def test_log_severity_labels_in_all_profiles(profile, level, code):
+    data = b'2026-11-05 12:00:00 ' + level + b': message\r\n'
+    assert run(profile, data) == b'2026-11-05 12:00:00 ' + colour(level, code) + b': message\r\n'
+
+
+@pytest.mark.parametrize('prefix,label,suffix,code', [
+    (b'[', b'warn', b'] retrying', 33),
+    (b'[', b'Error', b'] failed', 31),
+    (b'level=', b'error', b' msg=failed', 31),
+    (b'level=', b'Info', b' msg=ready', 36),
+    (b'level=', b'debug', b' msg=trace', 35),
+])
+def test_structured_log_severity_labels(prefix, label, suffix, code):
+    assert run('generic', prefix + label + suffix) == prefix + colour(label, code) + suffix
+
+
+@pytest.mark.parametrize('text', [
+    b'no error found', b'please warn the operator', b'debug information',
+    b'ERROR_COUNT', b'WARNING_ENABLED', b'/var/log/ERROR.log', b'INFO.txt',
+    b'NOT-ERROR', b'logger.ERROR', b'level=errors', b'loglevel=error', b'[warning_count]',
+])
+def test_log_rules_avoid_prose_and_identifiers(text):
+    assert run('generic', text) == text
+
+
+def test_log_label_keeps_network_tokens_independently_coloured():
+    assert run('generic', b'ERROR host 192.0.2.1 unreachable') == (
+        colour(b'ERROR', 31) + b' host ' + colour(b'192.0.2.1', 36) + b' unreachable'
+    )
+
+
+@pytest.mark.parametrize('setup', [
+    b'\x1b[31m', b'\x1b[44m', b'\x1b[7m', b'\x1b[8m', b'\x1b[?1049h', b'\x1b]0;',
+])
+def test_log_highlighting_respects_remote_terminal_state(setup):
+    data = setup + b'ERROR [warn] level=info'
+    assert run('generic', data) == data
+
+
+def test_log_label_split_across_chunks_and_disabled_passthrough():
+    assert run('generic', b'ER', b'ROR failed') == b'ER' + colour(b'ROR', 31) + b' failed'
+    data = b'[warn] level=error INFO: ready\r\n'
+    for cut in range(len(data) + 1):
+        h = Highlighter(enabled=False)
+        assert h.feed(data[:cut]) + h.feed(data[cut:]) == data
+        assert strip(run('generic', data[:cut], data[cut:])) == data
+
+
+def auth_colour(text, restore=b'\x1b[22m'):
+    return b'\x1b[1m\x1b[32m' + text + b'\x1b[39m' + restore
+
+
+@pytest.mark.parametrize('profile', PROFILES)
+@pytest.mark.parametrize('line', [
+    b'Authenticated to router ([192.0.2.1]:22) using "publickey".',
+    b'debug1: Authenticated to router ([192.0.2.1]:22) using "publickey".',
+    b'debug1: Authentication succeeded (publickey).',
+    b'Authentication successful.',
+])
+def test_authentication_success_emphasizes_the_entire_line(profile, line):
+    assert run(profile, line + b'\r\nnext line') == auth_colour(line) + b'\r\nnext line'
+
+
+@pytest.mark.parametrize('line', [
+    b'debug1: Server accepts key: /home/user/.ssh/id_ed25519 ED25519 SHA256:example explicit',
+    b'Using private key: /home/user/.ssh/key with spaces',
+])
+def test_accepted_key_identification_highlights_the_path_and_fingerprint(line):
+    assert run('generic', line + b'\r\nnext') == colour(line, 36) + b'\r\nnext'
+
+
+def test_authentication_line_emphasis_continues_across_large_chunks():
+    h = Highlighter()
+    first = b'debug1: Authentication succeeded (publickey).' + b' ' * 100
+    assert h.feed(first) == auth_colour(first)
+    assert h.feed(b'additional detail\r') == auth_colour(b'additional detail') + b'\r'
+    assert h.feed(b'\nnormal text') == b'\nnormal text'
+
+
+def test_authentication_prefix_split_keeps_text_and_styles_remaining_line():
+    h = Highlighter()
+    assert h.feed(b'debug1: Authentication ') == b'debug1: Authentication '
+    assert h.feed(b'succeeded (publickey).') == auth_colour(b'succeeded (publickey).')
+
+
+@pytest.mark.parametrize('setup,restore', [
+    (b'\x1b[1m', b''),
+    (b'\x1b[2m', b'\x1b[22m\x1b[2m'),
+    (b'\x1b[1;2m', b''),
+    (b'\x1b[4m', b'\x1b[22m'),
+    (b'\x1b[1m\x1b7\x1b[22m\x1b8', b''),
+])
+def test_authentication_emphasis_restores_remote_intensity(setup, restore):
+    line = b'Authentication succeeded (password).'
+    assert run('generic', setup + line + b'\nnext') == (
+        setup + auth_colour(line, restore) + b'\nnext'
+    )
+
+
+@pytest.mark.parametrize('setup', [
+    b'\x1b[31m', b'\x1b[44m', b'\x1b[7m', b'\x1b[8m', b'\x1b[?1049h', b'\x1b]0;',
+])
+def test_authentication_messages_preserve_remote_styling(setup):
+    data = setup + b'Authentication succeeded (publickey).\r\nServer accepts key: path'
+    assert run('generic', data) == data
+
+
+@pytest.mark.parametrize('line', [
+    b'Authentication failed.', b'Authentication unsuccessful.',
+    b'Not Authenticated to router', b'echo Authentication succeeded',
+    b'-----BEGIN OPENSSH PRIVATE KEY-----',
+])
+def test_authentication_rules_do_not_infer_success_or_match_key_material(line):
+    assert run('generic', line) == line
+
+
+def test_authentication_emphasis_is_cleared_on_disable_and_reset():
+    h = Highlighter()
+    h.feed(b'Authentication succeeded')
+    h.configure(False, 'generic')
+    data = b'Authentication succeeded\r\nServer accepts key: path'
+    assert h.feed(data) == data
+    h.configure(True, 'generic')
+    assert h.feed(b'normal text') == b'normal text'
+    h.feed(b'\nAuthentication succeeded')
+    h.reset()
+    assert h.feed(b'normal text') == b'normal text'
+
+
+def _assert_readable_highlights(h, background):
+    def luminance(rgb):
+        channels = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+        return sum(c * w for c, w in zip(channels, (0.2126, 0.7152, 0.0722)))
+
+    bg = luminance(background)
+    data = b'ERROR WARNING INFO DEBUG 192.0.2.1 vlan 10\nAuthentication succeeded\n'
+    output = h.feed(data)
+    colours = re.findall(rb'\x1b\[38;2;(\d+);(\d+);(\d+)m', output)
+    assert len(colours) >= 7
+    for colour in colours:
+        fg = luminance([int(c) / 255 for c in colour])
+        assert (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05) >= 4.5
+    assert re.sub(rb'\x1b\[[0-9;]*m', b'', output) == data
+
+
+def test_highlight_contrast_for_every_builtin_theme():
+    from sshpilot.config import Config
+
+    for theme in Config.load_builtin_themes(None).values():
+        h = Highlighter()
+        h.set_theme_hex(theme['background'], theme['palette'])
+        bg = tuple(int(theme['background'][i:i + 2], 16) / 255 for i in (1, 3, 5))
+        _assert_readable_highlights(h, bg)
+
+
+@pytest.mark.parametrize('background', [
+    (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), (0.46, 0.46, 0.46),
+    (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+])
+def test_low_contrast_custom_palette_is_corrected(background):
+    h = Highlighter()
+    h.set_theme(background, [background] * 16)
+    _assert_readable_highlights(h, background)
+
+
+def test_readable_theme_colour_is_preserved_exactly():
+    h = Highlighter()
+    h.set_theme_hex('#000', ['#000', '#ffaaaa'] + ['#fff'] * 14)
+    assert h.feed(b'ERROR') == b'\x1b[38;2;255;170;170mERROR\x1b[39m'
+
+
+def test_theme_change_updates_new_output_without_resetting_remote_state():
+    h = Highlighter()
+    h.set_theme_hex('#000', ['#888'] * 16)
+    dark = h.feed(b'ERROR\n')
+    h.feed(b'\x1b[31m')
+    h.set_theme_hex('#fff', ['#888'] * 16)
+    assert h.feed(b'ERROR\n') == b'ERROR\n'
+    h.feed(b'\x1b[39m')
+    light = h.feed(b'ERROR\n')
+    assert light != dark
+    h.reset()
+    h.set_profile('junos')
+    assert h.feed(b'ERROR\n') == light

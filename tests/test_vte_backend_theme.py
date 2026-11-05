@@ -50,6 +50,9 @@ def test_vte_backend_applies_palette_cursor_and_font_and_unsets_selection(monkey
     styled = {"owner": [], "container": [], "scrolled": [], "vte": []}
     vte.add_css_class = lambda name: styled["vte"].append(name)
     owner = types.SimpleNamespace(
+        _highlighter=types.SimpleNamespace(set_theme=lambda bg, palette: calls.update(
+            highlight_bg=bg, highlight_palette=palette,
+        )),
         config=types.SimpleNamespace(
             get_terminal_profile=lambda _name: profile,
             get_setting=lambda _key, default=None: default,
@@ -72,6 +75,8 @@ def test_vte_backend_applies_palette_cursor_and_font_and_unsets_selection(monkey
     backend.apply_theme("dark")
 
     assert len(calls["colors"][2]) == 16
+    assert calls["highlight_bg"] == tuple(c / 255 for c in (46, 52, 54))
+    assert len(calls["highlight_palette"]) == 16
     assert calls["cursor"].value == "#ffffff"
     # The profile's highlight pair is deliberately ignored: VTE only falls back
     # to reverse video when neither highlight color is set, which is what keeps
@@ -105,6 +110,9 @@ def test_group_theme_leaves_selection_reversed(monkeypatch):
     group = Color()
     group.parse("#203040")
     owner = types.SimpleNamespace(
+        _highlighter=types.SimpleNamespace(set_theme=lambda bg, palette: calls.update(
+            highlight_bg=bg,
+        )),
         config=types.SimpleNamespace(
             get_terminal_profile=lambda _name: {
                 "foreground": "#ffffff", "background": "#000000",
@@ -141,6 +149,7 @@ def test_group_theme_leaves_selection_reversed(monkeypatch):
     )
     assert calls["selection_bg"] is None
     assert calls["selection_fg"] is None
+    assert calls["highlight_bg"] == (group.red, group.green, group.blue)
 
 
 def test_optional_vte_configuration_and_links_are_non_fatal(monkeypatch):

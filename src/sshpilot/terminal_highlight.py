@@ -1,8 +1,10 @@
 """Colour network-device terminal output (IPs, MACs, VLANs, interfaces, ...).
 
 ``Highlighter.feed`` rewrites a display byte stream, adding zero-width SGR
-escapes around recognised tokens. It uses palette indices (``ESC[31m``..
-``ESC[36m``) so colours follow the terminal theme, and restores the default
+escapes around recognised tokens. Authentication success also adds bold.
+Colours follow the terminal theme, adjusted for background contrast when the
+backend supplies its effective colours. Without a theme, ANSI palette indices
+are used. The highlighter restores the default
 foreground with ``ESC[39m`` so no other attribute is disturbed. Visible text
 is never changed: stripping SGR from the output gives back the input.
 
@@ -27,11 +29,53 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Callable, Dict, List, NamedTuple, Optional, Set
+from typing import Callable, Dict, List, NamedTuple, Optional, Set, Sequence
+
+from .custom_terminal_themes import normalize_color
 
 PROFILES = ("generic", "cisco-ios", "junos", "huawei-vrp")
 
 _RED, _GREEN, _YELLOW, _BLUE, _MAGENTA, _CYAN = 31, 32, 33, 34, 35, 36
+
+RGB = tuple[float, float, float]
+
+
+def _luminance(rgb: RGB) -> float:
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    return sum(c * weight for c, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+
+def _readable_colour(rgb: RGB, background: RGB) -> tuple[int, ...]:
+    """Keep the theme hue, mixing toward black/white only to reach 4.5:1.
+
+    Check the quantized RGB actually sent to the emulator, not rounded ratios.
+    At least one of black/white meets this target for any opaque sRGB background.
+    """
+    bg = _luminance(background)
+
+    def quantize(ratio: float, target: float) -> tuple[int, ...]:
+        return tuple(round(255 * (c * (1 - ratio) + target * ratio)) for c in rgb)
+
+    def readable(colour: tuple[int, ...]) -> bool:
+        fg = _luminance(tuple(c / 255 for c in colour))
+        return (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05) >= 4.5
+
+    original = quantize(0, 0)
+    if readable(original):
+        return original
+    candidates = []
+    for target in (0.0, 1.0):
+        if not readable(quantize(1, target)):
+            continue
+        low, high = 0.0, 1.0
+        for _ in range(20):
+            mid = (low + high) / 2
+            if readable(quantize(mid, target)):
+                high = mid
+            else:
+                low = mid
+        candidates.append((high, quantize(high, target)))
+    return min(candidates)[1]
 
 _MAX_VLAN = 4094
 _MAX_MPLS_LABEL = 1048575
@@ -168,9 +212,45 @@ _ERROR = Rule(
     _RED,
 )
 
+# Uppercase labels are conventional log fields. Lowercase words need an
+# explicit bracket or level= context to avoid colouring ordinary prose.
+_LOG_LEVELS = [
+    ("log_error", "EMERGENCY|EMERG|ALERT|CRITICAL|CRIT|FATAL|ERROR|ERR", _RED),
+    ("log_warning", "WARNING|WARN", _YELLOW),
+    ("log_info", "NOTICE|INFO", _CYAN),
+    ("log_debug", "DEBUG|TRACE", _MAGENTA),
+]
+
+
+def _log_rules() -> List[Rule]:
+    return [
+        Rule(
+            name,
+            rf"(?<![\w./-])(?:{levels})(?![\w./-])"
+            rf"|(?<=\[)(?i:{levels})(?=\])"
+            rf"|(?<=\blevel=)(?i:{levels})(?![\w./-])",
+            colour,
+        )
+        for name, levels, colour in _LOG_LEVELS
+    ]
+
 
 def _rules(profile: str) -> List[Rule]:
-    rules = [*_MAC, *_IP, _IFACE]
+    rules = [
+        Rule(
+            "auth_success",
+            r"(?m:^(?:debug[123]:[ \t]*)?(?i:Authenticated to|Authentication succeeded"
+            r"|Authentication successful)\b[^\r\n]*)",
+            _GREEN,
+        ),
+        Rule(
+            "auth_key",
+            r"(?m:^(?:debug[123]:[ \t]*)?(?:Server accepts key:|Using private key:)"
+            r"[^\r\n]*)",
+            _CYAN,
+        ),
+        *_MAC, *_IP, _IFACE,
+    ]
     if profile in _EXTRA_IFACE:
         rules.append(Rule("iface_x", rf"{_BEFORE}{_EXTRA_IFACE[profile]}(?![0-9A-Za-z])", _YELLOW))
     rules += [_VLAN, _MPLS]
@@ -182,6 +262,7 @@ def _rules(profile: str) -> List[Rule]:
         rules.append(Rule("state_ok_x", rf"{_WORD}(?:{good}){suffix}{_NOT_WORD}", _GREEN))
         rules.append(Rule("state_bad_x", rf"{_WORD}{prefix}(?:{bad}){suffix}{_NOT_WORD}", _RED))
     rules += _STATE
+    rules += _log_rules()
     rules.append(_ERROR)
     return rules
 
@@ -218,7 +299,7 @@ _ST_END_RE = re.compile(rb"\x1b\\|\xc2\x9c|[\x18\x1a]|\x1b(?!\\|\Z)")
 _TAIL_RE = re.compile(rb"[^\x00-\x20\x7f]*\Z")  # trailing run of non-break bytes
 _ALT_SCREEN_MODES = {b"47", b"1047", b"1049"}
 _CARRY_MAX = 64
-_CTX_MAX = 16  # bytes of look-behind kept for _not_a_version across chunks
+_CTX_MAX = 64  # context for validators and authentication prefixes across chunks
 
 
 def normalize_profile(value: object) -> str:
@@ -230,8 +311,32 @@ class Highlighter:
 
     def __init__(self, profile: str = "generic", enabled: bool = True) -> None:
         self.enabled = enabled
+        self._theme_colours: Dict[bytes, bytes] = {}
         self.set_profile(profile)
         self.reset()
+
+    def set_theme(self, background: RGB, palette: Sequence[RGB]) -> None:
+        """Use the emulator's effective background, including group overrides."""
+        self._theme_colours = {}
+        for index, fallback in enumerate((
+            (0.8, 0.2, 0.2), (0.2, 0.65, 0.3), (0.8, 0.6, 0.1),
+            (0.25, 0.4, 0.8), (0.65, 0.3, 0.7), (0.1, 0.6, 0.65),
+        ), 1):
+            rgb = palette[index] if index < len(palette) else fallback
+            colour = _readable_colour(rgb, background)
+            self._theme_colours[b"\x1b[%dm" % (30 + index)] = b"\x1b[38;2;%d;%d;%dm" % colour
+
+    def set_theme_hex(self, background: str, palette: Sequence[str]) -> None:
+        """Adapter for backends whose theme is represented as CSS hex colours."""
+        def rgb(value: str, fallback: str) -> RGB:
+            value = normalize_color(value) or fallback
+            return tuple(int(value[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+        self.set_theme(rgb(background, "#000000"), [rgb(c, "#000000") for c in palette])
+
+    def _colour(self, rule: str) -> bytes:
+        colour = self._compiled.colours[rule]
+        return self._theme_colours.get(colour, colour)
 
     def set_profile(self, profile: str) -> None:
         self.profile = normalize_profile(profile)
@@ -249,6 +354,7 @@ class Highlighter:
         flushed = b""
         if self.enabled != enabled:
             self._carry = self._ctx = b""
+            self._line_rule = None
             # The held bytes are on screen after this call either way; keep them
             # for parsing (the rest of the sequence may follow) but never re-emit.
             flushed = self._hold[self._shown:] if self.enabled else b""
@@ -262,7 +368,8 @@ class Highlighter:
         self._in_string: Optional[bytes] = None  # terminator kind: b"osc" or b"st"
         self._alt_modes: Set[bytes] = set()
         # Cursor save slots belong to the normal/alternate screen buffers.
-        self._saved_sgr: Dict[bool, tuple[bool, bool, bool, bool]] = {}
+        self._saved_sgr: Dict[bool, tuple[bool, ...]] = {}
+        self._line_rule: Optional[str] = None
         self._carry = b""
         self._ctx = b""  # plain text before the carry: lookbehind for validators
         self._shown = 0  # leading bytes of _hold already displayed
@@ -270,15 +377,17 @@ class Highlighter:
 
     def _reset_sgr(self) -> None:
         self._fg = self._bg = self._reverse = self._conceal = False
+        self._bold = self._faint = False
 
     def _save_sgr(self) -> None:
         self._saved_sgr[bool(self._alt_modes)] = (
-            self._fg, self._bg, self._reverse, self._conceal,
+            self._fg, self._bg, self._reverse, self._conceal, self._bold, self._faint,
         )
 
     def _restore_sgr(self) -> None:
-        self._fg, self._bg, self._reverse, self._conceal = self._saved_sgr.get(
-            bool(self._alt_modes), (False, False, False, False),
+        (self._fg, self._bg, self._reverse, self._conceal,
+         self._bold, self._faint) = self._saved_sgr.get(
+            bool(self._alt_modes), (False,) * 6,
         )
 
     def feed(self, data: bytes) -> bytes:
@@ -389,6 +498,12 @@ class Highlighter:
             code = int(number)
             if code == 0:
                 self._reset_sgr()
+            elif code == 1:
+                self._bold = True
+            elif code == 2:
+                self._faint = True
+            elif code == 22:
+                self._bold = self._faint = False
             elif code == 7:
                 self._reverse = True
             elif code == 27:
@@ -416,7 +531,6 @@ class Highlighter:
                         next(it, None)
 
     def _text(self, text: bytes, last: bool) -> bytes:
-        ctx, carry, self._ctx, self._carry = self._ctx, self._carry, b"", b""
         if (
             not self.enabled
             or self._alt_modes
@@ -425,8 +539,37 @@ class Highlighter:
             or self._reverse
             or self._conceal
         ):
+            self._carry = self._ctx = b""
+            self._line_rule = None
             return text
-        regex, colours, validators = self._compiled
+        parts = []
+        # Keep full-message emphasis through output chunks, but never let it
+        # leak onto the next line. Do not buffer output awaiting a newline.
+        for part in re.split(rb"([\r\n]+)", text):
+            if not part:
+                continue
+            if part.startswith((b"\r", b"\n")):
+                parts.append(part)
+                self._carry = self._ctx = b""
+                self._line_rule = None
+            elif self._line_rule:
+                parts.append(self._emphasize_line(part, self._line_rule))
+            else:
+                parts.append(self._tokens(part, last))
+        return b"".join(parts)
+
+    def _emphasize_line(self, text: bytes, rule: str) -> bytes:
+        colour = self._colour(rule)
+        if rule != "auth_success":
+            return colour + text + b"\x1b[39m"
+        # SGR 22 clears both bold and faint. Restore remote faint explicitly,
+        # and leave pre-existing bold intact; never use a blanket SGR reset.
+        restore = b"" if self._bold else b"\x1b[22m" + (b"\x1b[2m" if self._faint else b"")
+        return b"\x1b[1m" + colour + text + b"\x1b[39m" + restore
+
+    def _tokens(self, text: bytes, last: bool) -> bytes:
+        ctx, carry, self._ctx, self._carry = self._ctx, self._carry, b"", b""
+        regex, _colours, validators = self._compiled
         full = ctx + carry + text
         skip = len(ctx) + len(carry)
         parts: List[bytes] = []
@@ -439,9 +582,13 @@ class Highlighter:
                 continue
             start = max(m.start(), skip)
             parts.append(full[max(pos, skip):start])
-            parts.append(colours[m.lastgroup])
-            parts.append(full[start:m.end()])
-            parts.append(b"\x1b[39m")
+            if m.lastgroup in ("auth_success", "auth_key"):
+                self._line_rule = m.lastgroup
+                parts.append(self._emphasize_line(full[start:m.end()], m.lastgroup))
+            else:
+                parts.append(self._colour(m.lastgroup))
+                parts.append(full[start:m.end()])
+                parts.append(b"\x1b[39m")
             pos = m.end()
         if last:
             tail = _TAIL_RE.search(full, max(0, len(full) - _CARRY_MAX - 1)).group()

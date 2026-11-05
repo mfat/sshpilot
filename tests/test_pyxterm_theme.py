@@ -5,9 +5,13 @@ from sshpilot.terminal_backends import PyXtermTerminalBackend
 
 
 def test_apply_theme_syncs_page_background():
+    highlight_themes = []
     b = object.__new__(PyXtermTerminalBackend)
     b.available = True
     b.owner = SimpleNamespace(
+        _highlighter=SimpleNamespace(set_theme_hex=lambda bg, palette: highlight_themes.append(
+            (bg, palette),
+        )),
         config=SimpleNamespace(
             get_setting=lambda key, default=None: "default",
             get_terminal_profile=lambda _name: {
@@ -26,6 +30,7 @@ def test_apply_theme_syncs_page_background():
     b.apply_theme("default")
 
     assert len(scripts) == 1
+    assert highlight_themes == [("#112233", [])]
     js = scripts[0]
     assert '"#112233"' in js
     assert "document.body.style.background" in js
