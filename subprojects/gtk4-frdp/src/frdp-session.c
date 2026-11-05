@@ -2213,6 +2213,26 @@ frdp_session_send_key (FrdpSession  *self,
 
 #if defined(G_OS_WIN32)
   virtual_code = keycode;
+  /* GDK's Win32 hardware keycode is a virtual key without WinPR's
+   * KBDEXT marker. Navigation keys live in WinPR's extended table;
+   * looking them up without it returns RDP_SCANCODE_UNKNOWN and drops
+   * the event. Keypad digits have separate VK_NUMPAD* codes. */
+  switch (virtual_code) {
+  case VK_LEFT:
+  case VK_UP:
+  case VK_RIGHT:
+  case VK_DOWN:
+  case VK_HOME:
+  case VK_END:
+  case VK_PRIOR:
+  case VK_NEXT:
+  case VK_INSERT:
+  case VK_DELETE:
+    virtual_code |= KBDEXT;
+    break;
+  default:
+    break;
+  }
 #elif defined(__APPLE__)
   virtual_code = GetVirtualKeyCodeFromKeycode (keycode, WINPR_KEYCODE_TYPE_APPLE);
 #else
