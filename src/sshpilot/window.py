@@ -3398,16 +3398,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _apply_app_theme(self, theme: str) -> None:
         """Apply application light/dark/system theme and persist app-theme."""
         theme_key = str(theme).lower()
-        if theme_key not in {'default', 'light', 'dark'}:
+        if theme_key not in {'default', 'light', 'dark', 'black'}:
             theme_key = 'default'
 
         style_manager = Adw.StyleManager.get_default()
         if theme_key == 'light':
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-        elif theme_key == 'dark':
+        elif theme_key in ('dark', 'black'):
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+
+        try:
+            from .oled_theme_css import apply_oled_theme_override
+            apply_oled_theme_override(theme_key == 'black')
+        except Exception:
+            pass
 
         self.config.set_setting('app-theme', theme_key)
         action = self.lookup_action('set-app-theme')
@@ -3428,6 +3434,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         menu.append(_('Follow System'), 'win.set-app-theme::default')
         menu.append(_('Light'), 'win.set-app-theme::light')
         menu.append(_('Dark'), 'win.set-app-theme::dark')
+        menu.append(_('OLED Black'), 'win.set-app-theme::black')
         return menu
 
     def _sync_theme_menu_button(self) -> None:
@@ -3439,6 +3446,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             'default': _('Follow System'),
             'light': _('Light'),
             'dark': _('Dark'),
+            'black': _('OLED Black'),
         }
         saved = str(self.config.get_setting('app-theme', 'default'))
         current = labels.get(saved, labels['default'])
