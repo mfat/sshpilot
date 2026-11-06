@@ -34,16 +34,12 @@ def _require(path: Path, hint: str) -> str:
 
 
 binaries = [
-    (_require(VENDOR / "openssl" / ARCH / "ossl-modules" / "legacy.dll",
-              "run packaging/windows/openssl/build.py"), "ossl-modules"),
     (_require(VENDOR / "libvterm" / ARCH / "libvterm-0.dll",
               "run packaging/windows/libvterm/build.py --compiler msvc"), "."),
     (_require(VENDOR / "conpty" / ARCH / "conpty.dll", "run scripts/fetch-conpty.py"), "."),
     (_require(VENDOR / "conpty" / ARCH / "OpenConsole.exe", "run scripts/fetch-conpty.py"), "."),
 ]
 datas = [
-    (_require(VENDOR / "openssl" / ARCH / "LICENSE.txt",
-              "run packaging/windows/openssl/build.py"), "share/licenses/openssl"),
     (str(ROOT / "src" / "sshpilot" / "resources"), "sshpilot/resources"),
     (str(ROOT / "data" / "icons" / "hicolor" / "scalable" / "apps" / "io.github.mfat.sshpilot.svg"), "share/icons"),
 ]

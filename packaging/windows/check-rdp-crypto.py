@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
-"""Check MD4 and RC4 through the actual bundled WinPR/OpenSSL runtime.
+"""Verify staged WinPR MD4/RC4 support without an OpenSSL legacy provider."""
 
-Run in a fresh process so another loaded OpenSSL cannot mask missing files.
-    python packaging/windows/openssl/check.py --runtime vendor/gtk/bin
-"""
-
-import argparse
+import contextlib
 import ctypes
-from pathlib import Path
 import os
+from pathlib import Path
 import sys
-
-ROOT = Path(__file__).resolve().parents[3]
+import tempfile
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runtime", type=Path, required=True)
-    parser.add_argument("--provider", type=Path,
-                        default=ROOT / "vendor/openssl/x64/ossl-modules")
-    args = parser.parse_args()
-    sys.path.insert(0, str(ROOT / "src"))
-    from sshpilot.platform.windows.rdp_crypto import prepare_rdp_crypto
-
-    with os.add_dll_directory(str(args.runtime.resolve())):
-        if not prepare_rdp_crypto(args.provider.resolve()):
-            raise SystemExit("RDP provider configuration failed")
-        winpr = ctypes.CDLL(str(args.runtime.resolve() / "winpr3.dll"))
+    runtime = Path(sys.argv[1]).resolve()
+    dependencies = Path(sys.argv[2]).resolve()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(os.add_dll_directory(str(runtime)))
+        stack.enter_context(os.add_dll_directory(str(dependencies)))
+        empty = stack.enter_context(tempfile.TemporaryDirectory())
+        # Override build-machine module locations and inherited environment.
+        os.environ["OPENSSL_MODULES"] = empty
+        crypto = ctypes.CDLL(str(runtime / "libcrypto-3-x64.dll"))
+        crypto.OSSL_PROVIDER_set_default_search_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        crypto.OSSL_PROVIDER_set_default_search_path.restype = ctypes.c_int
+        if not crypto.OSSL_PROVIDER_set_default_search_path(None, empty.encode("utf-8")):
+            raise SystemExit("Could not isolate OpenSSL providers")
+        winpr = ctypes.CDLL(str(runtime / "winpr3.dll"))
+        winpr.winpr_get_build_config.argtypes = []
+        winpr.winpr_get_build_config.restype = ctypes.c_char_p
+        config = winpr.winpr_get_build_config().decode("ascii", "replace")
+        for option in ("WITH_INTERNAL_MD4=ON", "WITH_INTERNAL_RC4=ON"):
+            if option not in config.split():
+                raise SystemExit(f"Staged WinPR is missing {option}")
         winpr.winpr_InitializeSSL.argtypes = [ctypes.c_uint32]
         winpr.winpr_InitializeSSL.restype = ctypes.c_int
         if not winpr.winpr_InitializeSSL(0):
@@ -57,7 +60,7 @@ def main():
                 raise SystemExit("WinPR RC4 returned incorrect ciphertext")
         finally:
             winpr.winpr_RC4_Free(context)
-    print("RDP crypto OK: WinPR MD4 and RC4 known-answer checks passed")
+    print("Staged WinPR MD4/RC4 checks passed without the OpenSSL legacy provider")
 
 
 if __name__ == "__main__":

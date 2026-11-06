@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 project('gtk4-frdp', 'c',
-  version: '0.2.3',
+  version: '0.2.4',
   license: 'GPL-3.0-or-later',
   meson_version: '>= 0.62.0',
   default_options: [ 'warning_level=2', 'c_std=gnu11' ],

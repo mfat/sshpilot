@@ -27,8 +27,6 @@ REQUIRED_FILES = [
     "_internal/winpr3.dll",
     "_internal/libssl-3-x64.dll",
     "_internal/libcrypto-3-x64.dll",
-    "_internal/ossl-modules/legacy.dll",
-    "_internal/share/licenses/openssl/LICENSE.txt",
     "_internal/share/licenses/gtk4-frdp/NOTICE",
 ]
 REQUIRED_TYPELIBS = ["Gtk-4.0", "Gdk-4.0", "Adw-1", "GtkSource-5", "Pango-1.0", "GdkPixbuf-2.0", "Gio-2.0", "GtkFrdp-4.0"]
@@ -57,9 +55,9 @@ def main(argv=None) -> int:
         print("Bundle check failed:\n  " + "\n  ".join(problems))
         return 1
     if sys.platform == "win32":
-        check = Path(__file__).resolve().parent / "openssl" / "check.py"
-        result = subprocess.run([sys.executable, str(check), "--runtime", str(root / "_internal"),
-                                 "--provider", str(root / "_internal" / "ossl-modules")])
+        check = Path(__file__).resolve().parent / "check-rdp-crypto.py"
+        result = subprocess.run([sys.executable, str(check), str(root / "_internal"),
+                                 str(root / "_internal")])
         if result.returncode:
             print("Bundle check failed: RDP MD4/RC4 support unavailable")
             return 1

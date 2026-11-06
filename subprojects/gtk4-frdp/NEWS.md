@@ -1,5 +1,12 @@
 # gtk4-frdp releases
 
+## 0.2.4 (2026-11-06)
+
+- Windows portable builds use WinPR's built-in MD4 and RC4 for NTLM and
+  RDP crypto instead of depending on an unshipped OpenSSL legacy provider.
+  Packaging verifies both algorithms against the staged DLLs with no
+  legacy provider available.
+
 ## 0.2.3 (2026-11-06)
 
 - Windows arrow keys, Home/End, Page Up/Down, Insert and Delete now carry
