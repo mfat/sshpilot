@@ -298,9 +298,13 @@ class RdpTab(Gtk.Box):
         host = host or str(getattr(self.connection, "hostname", "") or "")
 
         if self._display is not None:
+            self._display.close()
             self._overlay.set_child(None)
             self._display = None
 
+        from .rdp_logging import install_native_log_capture
+
+        install_native_log_capture()
         display = GtkFrdp.Display()
         for name, value in display_properties(data).items():
             display.set_property(name.replace("_", "-"), value)
@@ -329,6 +333,8 @@ class RdpTab(Gtk.Box):
         self._failure_was_authentication = False
         self._password_button.set_visible(False)
         self._overlay.set_child(display)
+        logger.info("RDP connecting to %s (domain=%s, password supplied=%s)",
+                    self._target_text(), domain or "(none)", bool(password))
         display.open_host(host, port)
 
     # ---- widget signals ---------------------------------------------------
@@ -337,6 +343,8 @@ class RdpTab(Gtk.Box):
         if display is not self._display:
             return
         self._connected = True
+        logger.info("RDP connected to %s (display %sx%s)", self._target_text(),
+                    display.get_width(), display.get_height())
         self._password_button.set_visible(False)
         pending, self._pending_password = self._pending_password, None
         if pending:
@@ -370,6 +378,8 @@ class RdpTab(Gtk.Box):
         if display is not self._display or self._closing:
             return
         was_connected = self._connected
+        logger.info("RDP disconnected from %s (established=%s)",
+                    self._target_text(), was_connected)
         self._connected = False
         self._pending_password = None
         if self._last_error:
