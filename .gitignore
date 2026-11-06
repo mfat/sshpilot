@@ -83,6 +83,8 @@ graphify-out/
 /vendor/conpty/
 # Patched libvterm built by packaging/windows/libvterm/build.py. Never committed.
 /vendor/libvterm/
+# OpenSSL legacy provider built from pinned source for Windows RDP.
+/vendor/openssl/
 # gvsbuild GTK 4 runtime fetched by scripts/fetch-gtk.py. Never committed.
 /vendor/gtk/
 /vendor/GTK4_Gvsbuild_*.zip

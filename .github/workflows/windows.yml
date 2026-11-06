@@ -55,6 +55,9 @@ jobs:
       - name: Build patched libvterm
         run: python packaging/windows/libvterm/build.py --compiler msvc
 
+      - name: Build OpenSSL legacy provider for RDP
+        run: python packaging/windows/openssl/build.py --perl C:/Strawberry/perl/bin/perl.exe
+
       - name: Install
         shell: pwsh
         run: |
@@ -126,6 +129,9 @@ jobs:
 
       - name: Build patched libvterm
         run: python packaging/windows/libvterm/build.py --compiler msvc
+
+      - name: Build OpenSSL legacy provider for RDP
+        run: python packaging/windows/openssl/build.py --perl C:/Strawberry/perl/bin/perl.exe
 
       - name: Install
         shell: pwsh

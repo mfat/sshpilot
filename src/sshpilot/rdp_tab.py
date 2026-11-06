@@ -305,6 +305,14 @@ class RdpTab(Gtk.Box):
         from .rdp_logging import install_native_log_capture
 
         install_native_log_capture()
+        from .platform.windows.rdp_crypto import prepare_rdp_crypto
+
+        if not prepare_rdp_crypto():
+            self._connected = False
+            self._show_status("dialog-error-symbolic", _("Could Not Connect"),
+                              _("The bundled RDP cryptography support is missing or incompatible. "
+                                "See View Logs for details."))
+            return
         display = GtkFrdp.Display()
         for name, value in display_properties(data).items():
             display.set_property(name.replace("_", "-"), value)

@@ -13,6 +13,21 @@ and `vendor\conpty`; libvterm needs a compiler, see below):
 .venv-win\Scripts\python.exe -m pip install pyinstaller
 ```
 
+RDP also requires OpenSSL's legacy provider (MD4/RC4 used by NTLM and RDP).
+The pinned gtk4-frdp zip omits it. Build the matching OpenSSL 3.6.5 provider
+from checksum-verified official source in an x64 Visual Studio developer
+shell with native Windows Perl (for example Strawberry Perl):
+
+```powershell
+.venv-win\Scripts\python.exe packaging\windows\openssl\build.py --perl C:/Strawberry/perl/bin/perl.exe
+```
+
+This writes `vendor/openssl/x64/ossl-modules/legacy.dll` and its license.
+CI builds it before packaging. The app selects this provider directory only
+for the bundled OpenSSL runtime; it does not alter system OpenSSL settings.
+
+Then build the installer:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
 ```
