@@ -1,3 +1,21 @@
+sshpilot (6.3.9-1) unstable; urgency=medium
+
+  * Release v6.3.9.
+  * more rdp fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 05 Nov 2026 23:02:28 +0000
+
+sshpilot (6.3.8-1) unstable; urgency=medium
+
+  * Release v6.3.8.
+  * Added terminal output highlighter - network addresses and important
+    debug messages are now highlighted with profiles for several network
+    devices
+  * RDP tab ships gtk4-frdp 0.2.1 everywhere
+  * Recent and Pinned titles stay in sync when a connection is renamed
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 05 Nov 2026 19:00:36 +0000
+
 sshpilot (6.3.7-1) unstable; urgency=medium
 
   * Release v6.3.7.

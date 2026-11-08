@@ -35,6 +35,18 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.3.9" date="2026-11-05">
+      <description>
+        <p>more rdp fixes</p>
+      </description>
+    </release>
+    <release version="6.3.8" date="2026-11-05">
+      <description>
+        <p>Added terminal output highlighter - network addresses and important debug messages are now highlighted with profiles for several network devices</p>
+        <p>RDP tab ships gtk4-frdp 0.2.1 everywhere</p>
+        <p>Recent and Pinned titles stay in sync when a connection is renamed</p>
+      </description>
+    </release>
     <release version="6.3.7" date="2026-11-04">
       <description>
         <p>RDP connections can open in an embedded tab, and the tab can move to its own window and back without reconnecting</p>

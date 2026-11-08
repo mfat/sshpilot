@@ -22,6 +22,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
+from .rdp_failure import RdpFailureKind, classify_failure  # noqa: E402
 from .rdp_view_policy import (  # noqa: E402
     CERT_ACCEPT_AND_STORE,
     CERT_ACCEPT_ONCE,
@@ -128,6 +129,12 @@ class RdpTab(Gtk.Box):
         self._connected = False
         self._closing = False
         self._last_error: Optional[str] = None
+        self._failure_kind = RdpFailureKind.OTHER
+        #: Whether FreeRDP reported the failure on its authentication signal
+        #: (which also carries connection failures; see ``rdp_failure``).
+        self._failure_was_authentication = False
+        #: A typed password to store once the session comes up.
+        self._pending_password: Optional[str] = None
 
         self._overlay = Gtk.Overlay(hexpand=True, vexpand=True)
         self.append(self._overlay)
@@ -139,10 +146,16 @@ class RdpTab(Gtk.Box):
         self._reconnect_button.add_css_class("pill")
         self._reconnect_button.add_css_class("suggested-action")
         self._reconnect_button.connect("clicked", lambda *_a: self.connect_session())
+        #: Shown only when a typed password could still get the session up.
+        self._password_button = Gtk.Button(label=_("Enter Password…"))
+        self._password_button.add_css_class("pill")
+        self._password_button.set_visible(False)
+        self._password_button.connect("clicked", lambda *_a: self._enter_password())
         self._window_button = Gtk.Button(label=_("Open in FreeRDP Window"))
         self._window_button.add_css_class("pill")
         self._window_button.connect("clicked", self._on_open_in_window)
         buttons.append(self._reconnect_button)
+        buttons.append(self._password_button)
         buttons.append(self._window_button)
         self._status.set_child(buttons)
         self._overlay.add_overlay(self._status)
@@ -153,6 +166,7 @@ class RdpTab(Gtk.Box):
         """Connect (or reconnect). Fetches the saved password first."""
 
         self._closing = False
+        self._pending_password = None
         self._show_status(
             "network-transmit-receive-symbolic",
             _("Connecting…"),
@@ -284,9 +298,13 @@ class RdpTab(Gtk.Box):
         host = host or str(getattr(self.connection, "hostname", "") or "")
 
         if self._display is not None:
+            self._display.close()
             self._overlay.set_child(None)
             self._display = None
 
+        from .rdp_logging import install_native_log_capture
+
+        install_native_log_capture()
         display = GtkFrdp.Display()
         for name, value in display_properties(data).items():
             display.set_property(name.replace("_", "-"), value)
@@ -302,7 +320,7 @@ class RdpTab(Gtk.Box):
         display.connect("rdp-connected", self._on_connected)
         display.connect("rdp-disconnected", self._on_disconnected)
         display.connect("rdp-error", self._on_error)
-        display.connect("rdp-auth-failure", self._on_error)
+        display.connect("rdp-auth-failure", self._on_auth_failure)
         display.connect("rdp-needs-certificate-verification", self._on_certificate, False)
         display.connect("rdp-needs-certificate-change-verification",
                         self._on_changed_certificate)
@@ -311,7 +329,12 @@ class RdpTab(Gtk.Box):
         self._display = display
         self._connected = False
         self._last_error: Optional[str] = None
+        self._failure_kind = RdpFailureKind.OTHER
+        self._failure_was_authentication = False
+        self._password_button.set_visible(False)
         self._overlay.set_child(display)
+        logger.info("RDP connecting to %s (domain=%s, password supplied=%s)",
+                    self._target_text(), domain or "(none)", bool(password))
         display.open_host(host, port)
 
     # ---- widget signals ---------------------------------------------------
@@ -320,26 +343,102 @@ class RdpTab(Gtk.Box):
         if display is not self._display:
             return
         self._connected = True
+        logger.info("RDP connected to %s (display %sx%s)", self._target_text(),
+                    display.get_width(), display.get_height())
+        self._password_button.set_visible(False)
+        pending, self._pending_password = self._pending_password, None
+        if pending:
+            # Only a password that actually worked is worth keeping.
+            self._store_password(pending)
         self._status.set_visible(False)
         display.grab_focus()
 
     def _on_error(self, display, message: str) -> None:
-        if display is self._display:
-            self._last_error = message
+        self._record_failure(display, message, authentication=False)
+
+    def _on_auth_failure(self, display, message: str) -> None:
+        self._record_failure(display, message, authentication=True)
+
+    def _record_failure(self, display, message: str, *, authentication: bool) -> None:
+        """Keep FreeRDP's sentence, what it means, and which signal said it."""
+
+        if display is not self._display or self._closing:
+            return
+        self._last_error = message
+        self._failure_kind = classify_failure(message)
+        self._failure_was_authentication = authentication
+        logger.warning(
+            "RDP connection to %s failed (%s): %s",
+            self._target_text(),
+            "authentication" if authentication else "error",
+            message,
+        )
 
     def _on_disconnected(self, display) -> None:
         if display is not self._display or self._closing:
             return
         was_connected = self._connected
+        logger.info("RDP disconnected from %s (established=%s)",
+                    self._target_text(), was_connected)
         self._connected = False
+        self._pending_password = None
         if self._last_error:
-            # FreeRDP's text is shown unchanged as the diagnostic.
-            self._show_status("dialog-error-symbolic",
-                              _("Could Not Connect") if not was_connected else _("Connection Lost"),
-                              self._last_error)
+            title, description = self._failure_status(was_connected)
+            self._show_status("dialog-error-symbolic", title, description)
+            self._password_button.set_visible(self._can_retry_password(was_connected))
         else:
+            self._password_button.set_visible(False)
             self._show_status("network-offline-symbolic", _("Disconnected"),
                               _("The remote session ended."))
+
+    def _failure_status(self, was_connected: bool) -> tuple[str, str]:
+        """The status page's title and description for FreeRDP's sentence.
+
+        FreeRDP's text stays as the diagnostic; the title and the first line
+        say what it means, so a refused logon is not shown as a plain
+        connection failure (and the other way round).
+        """
+
+        target = self._target_text()
+        detail = self._last_error or ""
+        if not was_connected:
+            if self._failure_kind is RdpFailureKind.AUTHENTICATION:
+                return (
+                    _("Authentication Failed"),
+                    _("The server rejected the logon for {target}.").format(target=target)
+                    + "\n\n" + detail,
+                )
+            if self._failure_kind is RdpFailureKind.UNREACHABLE:
+                # FreeRDP reports "The connection failed." for a host that is
+                # off *and* for a logon the server refused by closing the
+                # connection: the sentence does not say which (rdp_failure).
+                return (
+                    _("Could Not Connect"),
+                    _("Could not connect to {target}: the host may be unreachable, or the "
+                      "user name and password may have been rejected.").format(target=target)
+                    + "\n\n" + detail,
+                )
+            if self._failure_kind is RdpFailureKind.CANCELLED:
+                return (
+                    _("Connection Cancelled"),
+                    _("The connection to {target} was cancelled.").format(target=target),
+                )
+        return (_("Connection Lost") if was_connected else _("Could Not Connect"), detail)
+
+    def _can_retry_password(self, was_connected: bool) -> bool:
+        """Whether a typed password could still get this session up.
+
+        gtk4-frdp 0.2.2 reports a refused logon on the authentication signal,
+        but FreeRDP drops the first error when a server refuses one by closing
+        the connection (see ``rdp_failure``), leaving a plain connection
+        failure. Both kinds are worth a password prompt.
+        """
+
+        if was_connected or self._failure_kind is RdpFailureKind.CANCELLED:
+            return False
+        return (self._failure_was_authentication
+                or self._failure_kind in (RdpFailureKind.AUTHENTICATION,
+                                          RdpFailureKind.UNREACHABLE))
 
     def _show_status(self, icon: str, title: str, description: str, *, buttons: bool = True) -> None:
         self._status.set_icon_name(icon)
@@ -351,6 +450,63 @@ class RdpTab(Gtk.Box):
     def _on_open_in_window(self, _button) -> None:
         self.close_session()
         self._open_in_window(self.connection)
+
+    def _enter_password(self) -> None:
+        """Ask for a password after FreeRDP refused the saved one."""
+
+        self._closing = False
+        dialog = Adw.AlertDialog(
+            heading=_("Enter Password"),
+            body=_("Enter the password for {host}.").format(host=self._target_text()),
+        )
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        password = Gtk.PasswordEntry(placeholder_text=_("Password"), show_peek_icon=True,
+                                     activates_default=True)
+        save = Gtk.CheckButton(label=_("Save this password on the connection"))
+        save.set_active(True)
+        box.append(password)
+        box.append(save)
+        dialog.set_extra_child(box)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("connect", _("Connect"))
+        dialog.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("connect")
+        dialog.set_close_response("cancel")
+
+        def on_response(_dialog, response: str) -> None:
+            value = password.get_text()
+            if response != "connect" or not value:
+                return
+            # Stored once the session comes up, so a typo is never saved.
+            self._pending_password = value if save.get_active() else None
+            self._show_status("network-transmit-receive-symbolic", _("Connecting…"),
+                              self._target_text(), buttons=False)
+            self._run_pre_connect(lambda: self._start(value))
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
+
+    def _store_password(self, password: str) -> None:
+        """Save a corrected password on the connection, off the UI thread."""
+
+        client = getattr(self.window, "client", None)
+        ready = getattr(self.window, "_daemon_ready", None)
+        if client is None or not callable(getattr(client, "store_connection_password", None)) \
+                or not (callable(ready) and ready()):
+            return
+        connection = self.connection
+
+        def worker() -> None:
+            try:
+                from .api.connection_identity import connection_id_for
+                from .api.models.connections import StoreConnectionPasswordRequest
+
+                client.store_connection_password(StoreConnectionPasswordRequest(
+                    connection_id=connection_id_for(connection), password=password))
+            except Exception:
+                logger.warning("Could not save the new RDP password", exc_info=True)
+
+        threading.Thread(target=worker, name="rdp-store-password", daemon=True).start()
 
     # ---- prompts -----------------------------------------------------------
 

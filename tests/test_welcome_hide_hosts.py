@@ -26,6 +26,7 @@ def _recent_page(hide):
                 get_metadata=lambda nickname: {"last_used": 10},
             ),
         ),
+        _connection_title=WelcomePage._connection_title,
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
         _min_section=lambda title, rows: (title, rows),
         # Masking is what is under test; the Dashboard gate has its own tests.
@@ -51,6 +52,7 @@ def _pinned_page(hide):
             terminal_manager=SimpleNamespace(connect_to_host=lambda c: None),
         ),
         _conn_target=WelcomePage._conn_target,
+        _connection_title=WelcomePage._connection_title,
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
         _min_section=lambda title, rows: (title, rows),
         _dashboard_callback=lambda connection: None,
@@ -108,3 +110,28 @@ def test_toggle_re_renders_recent_from_the_last_snapshot():
 
     _title, rows = page._recent_box.items[-1]
     assert rows[0] == ("demo", HIDDEN_HOST_PLACEHOLDER)
+
+
+def test_recent_rows_prefer_display_name_over_nickname():
+    """Renaming the optional Name field must update Recent like the sidebar."""
+    summary = SimpleNamespace(
+        nickname="host-alias",
+        display_name="Friendly Name",
+        display_target="alice@example.test",
+    )
+    page = _recent_page(False)
+
+    WelcomePage._render_recent_connections(page, [summary], False)
+
+    _title, rows = page._recent_box.items[0]
+    assert rows[0] == ("Friendly Name", "alice@example.test")
+
+
+def test_pinned_rows_prefer_display_name_over_nickname():
+    page = _pinned_page(False)
+    page.connection_manager.connections[0].display_name = "Pinned Label"
+
+    WelcomePage._populate_pinned_box(page)
+
+    _title, rows = page._pinned_box.items[0]
+    assert rows[0] == ("Pinned Label", "alice@example.test")
