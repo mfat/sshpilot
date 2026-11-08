@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.89",
+  "api_implementation_version": "0.90",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -4093,7 +4093,8 @@
       "groups",
       "root_connection_ids",
       "metadata",
-      "ssh_config_read_only"
+      "ssh_config_read_only",
+      "ssh_config_missing_link_target"
     ],
     "ConnectionSummary": [
       "id",

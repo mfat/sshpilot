@@ -137,14 +137,28 @@ def config_file_writable(path: Path) -> bool:
         return False
 
 
-def _flatpak_grant_hint(target: Path) -> str:
-    """The override that lets the Flatpak sandbox read a linked config."""
+# Mirrored by gtk/ssh_config_access_messages.flatpak_override_command (core and
+# frontend may not import each other); a test keeps the two identical.
+def flatpak_override_command(target) -> str:
+    """The command that lets the Flatpak sandbox read a linked SSH config.
+
+    A NixOS Home Manager link names one file deep in ``/nix/store``; sharing
+    the store read-only keeps working across rebuilds, which change the
+    hash. Anything else shares the directory holding the target.
+    """
     app_id = os.environ.get("FLATPAK_ID") or "io.github.mfat.sshpilot"
     text = str(target)
-    shared = "/nix/store" if text.startswith("/nix/store/") else str(target.parent)
+    shared = "/nix/store" if text.startswith("/nix/store/") else str(Path(text).parent)
+    return (
+        f"flatpak override --user --filesystem={shlex.quote(shared + ':ro')} "
+        f"{app_id}"
+    )
+
+
+def _flatpak_grant_hint(target: Path) -> str:
     return (
         "Inside the Flatpak sandbox only ~/.ssh is shared; grant read-only "
-        f"access with: flatpak override --user --filesystem={shared}:ro {app_id}"
+        f"access with: {flatpak_override_command(target)}"
     )
 
 

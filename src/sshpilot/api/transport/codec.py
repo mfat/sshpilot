@@ -1284,6 +1284,11 @@ def connection_store_snapshot_to_wire(
         "metadata": [connection_metadata_summary_to_wire(item) for item in snapshot.metadata],
         # Additive: sent only when set, like a summary's target_summary.
         **({"ssh_config_read_only": True} if snapshot.ssh_config_read_only else {}),
+        **(
+            {"ssh_config_missing_link_target": snapshot.ssh_config_missing_link_target}
+            if snapshot.ssh_config_missing_link_target
+            else {}
+        ),
     }
 
 
@@ -1291,7 +1296,7 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
     data = _strict_fields(
         value,
         required={"generation", "connections", "groups", "root_connection_ids", "metadata"},
-        optional={"ssh_config_read_only"},
+        optional={"ssh_config_read_only", "ssh_config_missing_link_target"},
         context="connection store snapshot",
     )
     connections = data["connections"]
@@ -1316,6 +1321,11 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
         metadata=tuple(connection_metadata_summary_from_wire(item) for item in metadata),
         ssh_config_read_only=_boolean(
             data.get("ssh_config_read_only", False), "store ssh config read-only"
+        ),
+        ssh_config_missing_link_target=_text(
+            data.get("ssh_config_missing_link_target", ""),
+            "store ssh config missing link target",
+            allow_empty=True,
         ),
     )
 

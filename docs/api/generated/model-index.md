@@ -989,6 +989,7 @@ Synthetic representation:
 | `root_connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
 | `metadata` | `Tuple[ConnectionMetadataSummary, ...]` | Yes | — | No |
 | `ssh_config_read_only` | `bool` | No | `false` | No |
+| `ssh_config_missing_link_target` | `str` | No | `` | No |
 
 Synthetic representation:
 
@@ -999,6 +1000,7 @@ Synthetic representation:
   "groups": {},
   "metadata": {},
   "root_connection_ids": {},
+  "ssh_config_missing_link_target": "",
   "ssh_config_read_only": false
 }
 ```

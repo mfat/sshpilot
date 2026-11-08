@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.89",
+  "api_implementation_version": "0.90",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -3263,6 +3263,13 @@
           "required": false,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "ssh_config_missing_link_target",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"

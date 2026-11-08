@@ -93,6 +93,7 @@ from .ssh_config_store import (
     _atomic_write_text,
     _source_of,
     config_file_writable,
+    describe_config_access,
     resolve_config_link,
 )
 from .transient import TransientConnections, is_transient_connection_id
@@ -1264,12 +1265,21 @@ class ConnectionRepository:
             else summary
             for summary in snapshot.connections
         )
+        # A root config that is a link to a file this process cannot see (a
+        # Home Manager link into /nix/store from inside the Flatpak sandbox)
+        # loads as empty; name its target so the frontend can say why.
+        missing_target = ""
+        if root_read_only:
+            root = Path(self._ssh_store.root_path)
+            if describe_config_access(root)[0] == "dangling":
+                missing_target = str(resolve_config_link(root))
         if not root_read_only and connections == snapshot.connections:
             return snapshot
         return replace(
             snapshot,
             connections=connections,
             ssh_config_read_only=root_read_only,
+            ssh_config_missing_link_target=missing_target,
         )
 
     def _assemble_uuid_snapshot_locked(self) -> ConnectionStoreSnapshot:

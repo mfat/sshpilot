@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- `ConnectionStoreSnapshot.ssh_config_missing_link_target` (wire field
+  `ssh_config_missing_link_target`, sent only when set) is the absolute target
+  of a root SSH config that is a link the daemon cannot see -- inside the
+  Flatpak usually a NixOS Home Manager link into `/nix/store` -- so a frontend
+  can explain an empty list instead of showing nothing. New field, so the API
+  implementation version is 0.90; Protocol remains 1.0.
 - A linked `~/.ssh/config` (Home Manager, GNU Stow, chezmoi) is followed the
   way OpenSSH follows it: writes go to the file the link names, in place, and
   the link survives. A file the daemon cannot write is now reported instead of

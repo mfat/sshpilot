@@ -4638,6 +4638,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if self._config_read_only and getattr(self, '_read_only_banner', None) is None:
             from .gtk.ssh_config_access_messages import read_only_body
             banner = Adw.Banner()
+            try:
+                banner.set_use_markup(False)
+            except Exception:
+                pass
             banner.set_title(read_only_body())
             banner.set_revealed(False)
             self._read_only_banner = banner

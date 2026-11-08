@@ -326,6 +326,7 @@ class ConnectionPresentationStore:
             root_connection_ids=root_ids,
             metadata=metadata,
             ssh_config_read_only=current.ssh_config_read_only,
+            ssh_config_missing_link_target=current.ssh_config_missing_link_target,
         )
         return True
 

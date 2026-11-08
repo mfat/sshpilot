@@ -480,3 +480,30 @@ def test_gtk_editor_service_source_never_touches_the_config_file():
     source = inspect.getsource(module)
     for banned in ("atomic_write_text", "os.replace", "shutil.", "write_text", "os.open"):
         assert banned not in source, f"GTK SSH config service must not use {banned!r}"
+
+
+def test_snapshot_names_a_linked_root_that_cannot_be_seen(tmp_path):
+    # #1373: inside the Flatpak a Home Manager link into /nix/store dangles;
+    # the snapshot names the target so the window can say why it is empty.
+    root = tmp_path / ".ssh" / "config"
+    root.parent.mkdir()
+    root.symlink_to("/nix/store/abc-home-manager-files/.ssh/config")
+    snapshot = _make_repository(root, state_dir=tmp_path / "state").snapshot()
+    assert snapshot.connections == ()
+    assert snapshot.ssh_config_read_only is True
+    assert (
+        snapshot.ssh_config_missing_link_target
+        == "/nix/store/abc-home-manager-files/.ssh/config"
+    )
+
+
+def test_snapshot_names_no_target_for_a_missing_or_readable_config(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    repo = _make_repository(root, state_dir=tmp_path / "state")
+    assert repo.snapshot().ssh_config_missing_link_target == ""
+    target = tmp_path / "dotfiles" / "config"
+    _write_config(target, "Host a\n")
+    root.parent.mkdir(exist_ok=True)
+    root.symlink_to(target)
+    repo = _make_repository(root, state_dir=tmp_path / "state2")
+    assert repo.snapshot().ssh_config_missing_link_target == ""

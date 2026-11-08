@@ -2221,6 +2221,88 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
 
+    def _sync_ssh_config_link_notice(self, manager=None):
+        """Explain an empty list caused by a linked SSH config we can't see.
+
+        The daemon names the link's target when ``~/.ssh/config`` points at
+        a file it cannot read -- inside the Flatpak usually a NixOS Home
+        Manager link into /nix/store. Without this the list is just empty.
+        """
+        try:
+            snapshot = (manager or self.connection_manager).snapshot()
+            target = str(getattr(snapshot, 'ssh_config_missing_link_target', '') or '')
+        except Exception:
+            target = ''
+        self._ssh_config_missing_link_target = target
+        container = getattr(self, 'ssh_config_banner_container', None)
+        if container is None:
+            return
+        banner = self.ssh_config_link_banner
+        if not target:
+            if banner is not None:
+                banner.set_revealed(False)
+            container.set_visible(False)
+            return
+        from .gtk.ssh_config_access_messages import (
+            details_button_label,
+            link_banner_title,
+        )
+        from .platform.detect import is_flatpak
+        if banner is None:
+            banner = Adw.Banner()
+            try:
+                banner.set_use_markup(False)
+            except Exception:
+                pass
+            banner.set_button_label(details_button_label())
+            banner.connect('button-clicked', self._on_ssh_config_link_details)
+            container.append(banner)
+            self.ssh_config_link_banner = banner
+        banner.set_title(link_banner_title(is_flatpak()))
+        container.set_visible(True)
+        banner.set_revealed(True)
+
+    def _on_ssh_config_link_details(self, *_args):
+        from pathlib import Path
+
+        from .gtk.ssh_config_access_messages import flatpak_override_command
+        from .gtk.ssh_config_access_messages import (
+            copy_command_label,
+            link_details_body,
+            link_details_heading,
+        )
+        from .platform.detect import is_flatpak
+
+        target = self._ssh_config_missing_link_target
+        if not target:
+            return
+        flatpak = is_flatpak()
+        command = flatpak_override_command(Path(target)) if flatpak else ''
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=link_details_heading(),
+            body=link_details_body(target, command, flatpak),
+        )
+        if flatpak:
+            dialog.add_response('copy', copy_command_label())
+            dialog.set_response_appearance('copy', Adw.ResponseAppearance.SUGGESTED)
+        dialog.add_response('close', _('_Close'))
+        dialog.set_default_response('copy' if flatpak else 'close')
+        dialog.set_close_response('close')
+
+        def _on_response(_dialog, response):
+            if response != 'copy':
+                return
+            try:
+                self.get_clipboard().set(command)
+                self.toast_overlay.add_toast(Adw.Toast.new(_('Copied to clipboard')))
+            except Exception:
+                logger.warning("Could not copy the Flatpak override command")
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
     def _ensure_update_banner(self):
         """Build the update banner only when an update is ready to display."""
         if getattr(self, 'update_banner', None) is not None:
@@ -2289,6 +2371,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.update_banner_container.set_visible(False)
+        # Linked SSH config the daemon cannot see (#1373); built on first use.
+        self.ssh_config_link_banner = None
+        self._ssh_config_missing_link_target = ''
+        self.ssh_config_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.ssh_config_banner_container.set_visible(False)
         self.tips_revealer = None
         self.tips_label = None
         self.tips_next_button = None
@@ -4074,6 +4163,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._add_content_top_bars(content_box)
             # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.ssh_config_banner_container)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
@@ -4090,6 +4180,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         else:
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.ssh_config_banner_container)
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
@@ -7334,6 +7425,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         mutation runs when it finishes -- then costs a single rebuild.
         """
         self.group_manager.bind_connections(manager.connections)
+        self._sync_ssh_config_link_notice(manager)
         # A rebuild that runs after this reset, before the idle one, already
         # shows this state; the idle callback then has nothing left to do.
         self._projection_rebuild_mark = getattr(

@@ -93,6 +93,9 @@ class _ProjectionWindow:
     on_projection_reset = MainWindow.on_projection_reset
     _flush_projection_rebuild = MainWindow._flush_projection_rebuild
 
+    def _sync_ssh_config_link_notice(self, manager=None):
+        self.notice_syncs = getattr(self, "notice_syncs", 0) + 1
+
     def __init__(self):
         self.group_manager = _ProjectionGroupManager()
         self.rebuilds = 0
@@ -3026,3 +3029,76 @@ def test_dialog_blocks_save_only_while_ssh_is_selected():
     dialog.protocol = "docker"
     dialog._sync_config_read_only_ui()
     assert (dialog.revealed, dialog.sensitive) == (False, True)
+
+
+def test_main_window_explains_a_linked_config_it_cannot_see(monkeypatch):
+    from sshpilot.gtk import ssh_config_access_messages as messages
+    from sshpilot.platform import detect
+
+    class _Widget:
+        def __init__(self):
+            self.visible = None
+            self.revealed = None
+            self.title = None
+
+        def set_visible(self, value):
+            self.visible = value
+
+        def set_revealed(self, value):
+            self.revealed = value
+
+        def set_title(self, value):
+            self.title = value
+
+    class _NoticeWindow:
+        _sync_ssh_config_link_notice = MainWindow._sync_ssh_config_link_notice
+
+    window = _NoticeWindow()
+    window.ssh_config_banner_container = _Widget()
+    window.ssh_config_link_banner = _Widget()
+    state = {"target": "/nix/store/abc-hm/.ssh/config"}
+    manager = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            ssh_config_missing_link_target=state["target"]
+        )
+    )
+    monkeypatch.setattr(detect, "is_flatpak", lambda: True)
+
+    window._sync_ssh_config_link_notice(manager)
+    banner = window.ssh_config_link_banner
+    assert (banner.revealed, window.ssh_config_banner_container.visible) == (True, True)
+    assert banner.title == messages.link_banner_title(True)
+    assert window._ssh_config_missing_link_target == state["target"]
+
+    # Access granted and SSH Pilot restarted: the next snapshot has no target.
+    state["target"] = ""
+    window._sync_ssh_config_link_notice(manager)
+    assert (banner.revealed, window.ssh_config_banner_container.visible) == (False, False)
+
+
+def test_flatpak_details_offer_the_read_only_override_for_the_nix_store():
+    from pathlib import Path
+
+    from sshpilot.gtk.ssh_config_access_messages import flatpak_override_command
+    from sshpilot.gtk.ssh_config_access_messages import link_details_body
+
+    command = flatpak_override_command(
+        Path("/nix/store/bkl8yxnzx2ish3fjgrkn89k29zcpmzhn-home-manager-files/.ssh/config")
+    )
+    assert command.startswith("flatpak override --user --filesystem=/nix/store:ro ")
+    body = link_details_body("/nix/store/x/.ssh/config", command, True)
+    assert command in body and "/nix/store/x/.ssh/config" in body
+
+
+def test_window_and_daemon_log_give_the_same_flatpak_command():
+    from sshpilot.core.connections import ssh_config_store as core_side
+    from sshpilot.gtk import ssh_config_access_messages as gtk_side
+
+    for target in (
+        "/nix/store/bkl8-home-manager-files/.ssh/config",
+        "/home/me/dotfiles/ssh/config",
+        "/home/me/my dotfiles/config",
+    ):
+        assert gtk_side.flatpak_override_command(target) == (
+            core_side.flatpak_override_command(target)
+        )

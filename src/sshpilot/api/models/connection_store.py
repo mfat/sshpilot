@@ -201,12 +201,22 @@ class ConnectionStoreSnapshot:
     #: The selected SSH config file cannot be written, so a new SSH
     #: connection (always appended there) cannot be saved.
     ssh_config_read_only: bool = False
+    #: The selected SSH config is a link whose target this daemon cannot
+    #: see (a Home Manager link into /nix/store from inside the Flatpak
+    #: sandbox, or a broken link): the absolute target path, else "". Its
+    #: connections load as empty; the frontend explains why.
+    ssh_config_missing_link_target: str = ""
 
     def __post_init__(self) -> None:
         from .connections import ConnectionSummary  # deferred: avoid import cycle
 
         if type(self.ssh_config_read_only) is not bool:
             raise TypeError("store ssh_config_read_only must be a boolean")
+        target = self.ssh_config_missing_link_target
+        if type(target) is not str or "\x00" in target or len(target) > 4096:
+            raise TypeError(
+                "store ssh_config_missing_link_target must be a path string"
+            )
 
         if type(self.generation) is not int or self.generation < 0:
             raise ValueError("store generation must be a non-negative integer")
