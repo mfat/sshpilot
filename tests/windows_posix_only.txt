@@ -77,9 +77,12 @@ tests/core/test_ssh_config_store.py::test_parent_directory_fsync  # assumes POSI
 tests/core/test_ssh_config_store.py::test_parent_fsync_failure_is_reported_after_replacement  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_ssh_config_store.py::test_split_allows_recreating_removed_source_token[True]  # path separators
 tests/core/test_ssh_config_store.py::test_symlink_swap_detected_before_replacement  # POSIX-only API
-tests/core/test_ssh_config_store.py::test_symlink_target_refused  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_linked_root_is_edited_in_place_like_openssh  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_linked_root_into_read_only_store_is_not_writable  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_dangling_linked_root_reads_empty_and_creates_nothing  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_daemon_resolves_normal_config_root  # path separators
-tests/core/test_ssh_config_text_editor.py::test_store_refuses_symlinked_root_and_reports_not_writable  # POSIX-only API
+tests/core/test_ssh_config_text_editor.py::test_store_saves_linked_root_in_place  # POSIX-only API
+tests/core/test_ssh_config_text_editor.py::test_repository_edits_linked_root_through_daemon_transaction  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_store_save_writes_exact_text_and_updates_revision  # POSIX file modes
 tests/core/test_transient_connections.py::test_issue_1320_jump_host_sees_the_users_config  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_transient_connections.py::test_issue_1320_save_dialog_sees_what_the_target_inherited  # assumes POSIX behaviour (reviewed by sample)

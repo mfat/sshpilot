@@ -81,6 +81,17 @@ def _already_exists_error() -> CoreError:
 # Hardened atomic writer
 # ---------------------------------------------------------------------------
 
+def resolve_config_link(path: Path) -> Path:
+    """Return the file an SSH config path names, following links like OpenSSH.
+
+    OpenSSH reads ``~/.ssh/config`` through any symbolic link, so a config
+    managed by Home Manager, GNU Stow or chezmoi is simply that file. The
+    daemon edits it in the same place. A dangling link resolves to its
+    (missing) target, which then reads as empty and is never writable.
+    """
+    return Path(os.path.realpath(path))
+
+
 def _atomic_write_text(
     path: Path,
     text: str,
@@ -90,8 +101,11 @@ def _atomic_write_text(
     """Atomically replace *path* with *text* using a same-directory temp file.
 
     - Rejects exact ``str`` input only.
-    - Refuses symbolic-link targets (checked before and immediately before
-      replacement, so a target swapped into a symlink mid-write aborts).
+    - Follows symbolic links the way OpenSSH reads them: a linked config
+      (Home Manager, GNU Stow, chezmoi) is written in place at the file the
+      link names, in that file's directory, so the link itself survives.
+      The resolved file must not turn into a link before the replacement
+      (a swap mid-write aborts).
     - Existing-file metadata failure is an error; mode 0600 is used only for
       genuinely new files; an existing safe mode is preserved.
     - Creates one ``.bak`` of the first prior good file (never overwrites an
@@ -107,7 +121,11 @@ def _atomic_write_text(
     if type(text) is not str:
         raise TypeError("SSH configuration content must be exact text")
 
-    target = Path(path)
+    requested = Path(path)
+    try:
+        target = resolve_config_link(requested)
+    except OSError as exc:
+        raise _store_error("The connection configuration could not be saved") from exc
     directory = target.parent
 
     # Existing-file metadata must be readable; a failure is an error.
@@ -121,7 +139,13 @@ def _atomic_write_text(
         raise _store_error("Refusing to write through a symbolic link")
 
     try:
-        makedirs_private(directory)
+        # Only the config's own directory is ever created. A link whose
+        # target directory is gone stays an error rather than conjuring
+        # that directory into existence.
+        if target == Path(os.path.abspath(requested)):
+            makedirs_private(directory)
+        elif not directory.is_dir():
+            raise FileNotFoundError(str(directory))
     except OSError as exc:
         raise _store_error("The connection configuration could not be saved") from exc
 
@@ -298,7 +322,6 @@ class PreparedSshMutation:
         """Commit after rechecking the base revision and expected bytes."""
         if not isinstance(store, SshConfigStore):
             raise TypeError("prepared mutation needs its owning SshConfigStore")
-        store._refuse_symlinked_root()
         if not store._revision_matches(self.base_revision):
             raise _stale_error()
         # Re-evaluate the exact target source tree immediately before the
@@ -388,9 +411,10 @@ class SshConfigStore:
         roots are never mutated.
         """
         try:
-            root = Path(self._root_path)
-            if os.path.islink(root):
-                return False
+            # Follow links like OpenSSH: what matters is the file the link
+            # names. A Home Manager link into /nix/store (or a dangling one
+            # inside a sandbox) resolves to a read-only or missing directory.
+            root = resolve_config_link(self._root_path)
             if not os.access(root.parent, os.W_OK | os.X_OK):
                 return False
             if root.exists():
@@ -444,7 +468,6 @@ class SshConfigStore:
             raise TypeError("SSH configuration content must be exact text")
         if type(expected_revision) is not str or not expected_revision.strip():
             raise TypeError("an expected SSH config revision is required")
-        self._refuse_symlinked_root()
         current_bytes = (
             self._root_path.read_bytes() if self._root_path.exists() else None
         )
@@ -470,7 +493,6 @@ class SshConfigStore:
             raise TypeError("SSH configuration content must be exact text")
         if type(expected_revision) is not str or not expected_revision.strip():
             raise TypeError("an expected SSH config revision is required")
-        self._refuse_symlinked_root()
         expected_bytes = (
             self._root_path.read_bytes() if self._root_path.exists() else None
         )
@@ -577,7 +599,6 @@ class SshConfigStore:
 
     def prepare_create(self, data: Mapping[str, Any]) -> PreparedSshMutation:
         """Prepare a new Host block without touching the SSH config."""
-        self._refuse_symlinked_root()
         config = self.load()
         payload = dict(data)
         payload.pop("uuid", None)
@@ -610,7 +631,6 @@ class SshConfigStore:
         expected_generation: Optional[int],
     ) -> PreparedSshMutation:
         """Prepare an existing Host-block update without writing it."""
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -673,7 +693,6 @@ class SshConfigStore:
         ids = tuple(dict.fromkeys(str(item) for item in connection_ids))
         if not ids:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "No connections to delete")
-        self._refuse_symlinked_root()
         config = self.load()
         sources = set()
         for connection_id in ids:
@@ -716,7 +735,6 @@ class SshConfigStore:
 
     def prepare_duplicate(self, connection_id: str) -> PreparedSshMutation:
         """Prepare a duplicate Host block without writing it."""
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         source = _source_of(record)
@@ -752,7 +770,6 @@ class SshConfigStore:
         expected_generation: Optional[int],
     ) -> PreparedSshMutation:
         """Prepare a split without changing the real SSH tree."""
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -828,21 +845,6 @@ class SshConfigStore:
         return _compute_revision(files, {target: target_bytes})
 
     # -- lookups -----------------------------------------------------------
-
-    def _refuse_symlinked_root(self) -> None:
-        """Refuse mutations when the selected root config is a symlink.
-
-        The loader resolves symbolic links while reading, so a symlinked root
-        would otherwise silently redirect writes to its target; the daemon
-        never mutates a configuration through a symlink.
-        """
-        try:
-            if os.path.islink(self._root_path):
-                raise _store_error("Refusing to write through a symbolic link")
-        except OSError as exc:
-            raise _store_error(
-                "The connection configuration could not be saved"
-            ) from exc
 
     def _find(self, config: LoadedSshConfiguration, connection_id: str) -> ConnectionRecord:
         for record in config.connections:
@@ -958,7 +960,6 @@ class SshConfigStore:
     # -- mutations ---------------------------------------------------------
 
     def create(self, data: Mapping[str, Any]) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         payload = dict(data)
         payload.pop("uuid", None)
@@ -993,7 +994,6 @@ class SshConfigStore:
         *,
         expected_generation: Optional[int],
     ) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -1056,7 +1056,6 @@ class SshConfigStore:
         return SshConfigMutationResult(config=fresh, connection_id=new_name, touched_path=source)
 
     def delete(self, connection_id: str) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._ensure_unique_managed_declaration(connection_id, allow_shared=True)
@@ -1102,7 +1101,6 @@ class SshConfigStore:
         return SshConfigMutationResult(config=fresh, connection_id=connection_id, touched_path=source)
 
     def duplicate(self, connection_id: str) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         source = _source_of(record)
@@ -1145,7 +1143,6 @@ class SshConfigStore:
         *,
         expected_generation: Optional[int],
     ) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)

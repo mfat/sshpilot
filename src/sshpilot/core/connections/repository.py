@@ -88,7 +88,12 @@ from .identity_state_v2 import (
 from .service import ConnectionService
 from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
-from .ssh_config_store import SshConfigStore, _atomic_write_text, _source_of
+from .ssh_config_store import (
+    SshConfigStore,
+    _atomic_write_text,
+    _source_of,
+    resolve_config_link,
+)
 from .transient import TransientConnections, is_transient_connection_id
 from .state_file import (
     ConnectionStateFileKind,
@@ -1805,9 +1810,12 @@ class ConnectionRepository:
         several SSH sources in one transaction.
         """
         paths = {self._state_path}
+        # SSH config files are keyed by the file a link names, the same file
+        # the config store writes, so a Home Manager / Stow / chezmoi link is
+        # captured, verified and rolled back like a regular file.
         if ssh_target is not None:
-            paths.add(Path(ssh_target))
-        paths.update(Path(target) for target in more_ssh_targets)
+            paths.add(resolve_config_link(Path(ssh_target)))
+        paths.update(resolve_config_link(Path(t)) for t in more_ssh_targets)
         captured = {}
         for path in paths:
             path = Path(path)
@@ -1883,7 +1891,9 @@ class ConnectionRepository:
         ``MUTATION_AMBIGUOUS``.
         """
         if path not in captured:
-            return
+            path = resolve_config_link(Path(path))
+            if path not in captured:
+                return
         try:
             flags = _RAW_READ_FLAGS
             fd = os.open(str(path), flags)

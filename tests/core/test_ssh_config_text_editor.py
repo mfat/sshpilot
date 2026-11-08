@@ -159,18 +159,49 @@ def test_store_rejects_save_when_included_file_changed(tmp_path):
     assert exc_info.value.code is ErrorCode.STALE_CONNECTION_STATE
 
 
-def test_store_refuses_symlinked_root_and_reports_not_writable(tmp_path):
-    target = tmp_path / "real-config"
+def test_store_saves_linked_root_in_place(tmp_path):
+    target = tmp_path / "dotfiles" / "config"
     _write_config(target, "Host a\n")
     link = tmp_path / "config-link"
     link.symlink_to(target)
 
     store = SshConfigStore(link)
     text = store.get_text()
-    assert text.writable is False
-    with pytest.raises(CoreError):
-        store.replace_text("Host b\n", text.revision)
-    assert target.read_text(encoding="utf-8") == "Host a\n"
+    assert text.writable is True
+    store.replace_text("Host b\n", text.revision)
+    assert target.read_text(encoding="utf-8") == "Host b\n"
+    assert link.is_symlink()
+
+
+def test_repository_edits_linked_root_through_daemon_transaction(tmp_path):
+    # The full daemon path: capture, write, post-write record. A linked
+    # ~/.ssh/config (Home Manager, Stow, chezmoi) must save like a file.
+    target = tmp_path / "dotfiles" / "config"
+    _write_config(target, "Host one\n    HostName one.example.com\n")
+    root = tmp_path / ".ssh" / "config"
+    root.parent.mkdir()
+    root.symlink_to(target)
+    repo = _make_repository(root, state_dir=tmp_path / "state")
+    assert [c.id for c in repo.snapshot().connections] == ["one"]
+
+    repo.create_connection(
+        {"nickname": "two", "hostname": "two.example.com", "protocol": "ssh"}
+    )
+    repo.update_connection(
+        "one",
+        {"nickname": "one", "hostname": "uno.example.com", "protocol": "ssh"},
+    )
+    loaded = repo.get_ssh_config_text()
+    repo.save_ssh_config_text(
+        SaveSshConfigTextRequest(
+            text=loaded.text + "# raw\n", expected_revision=loaded.revision
+        )
+    )
+
+    assert root.is_symlink() and os.readlink(root) == str(target)
+    body = target.read_text(encoding="utf-8")
+    assert "Host two" in body and "uno.example.com" in body and "# raw" in body
+    assert {c.id for c in repo.snapshot().connections} == {"one", "two"}
 
 
 # ---------------------------------------------------------------------------

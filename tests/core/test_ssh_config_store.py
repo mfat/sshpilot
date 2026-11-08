@@ -930,20 +930,75 @@ def test_stale_editor_generation_rejected(tmp_path):
     assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
 
 
-def test_symlink_target_refused(tmp_path):
-    real = _write(tmp_path / "real", "Host web\n    HostName example.com\n")
-    link = tmp_path / "config"
+def test_linked_root_is_edited_in_place_like_openssh(tmp_path):
+    # Home Manager / GNU Stow / chezmoi: ~/.ssh/config is a link into a
+    # dotfiles tree. OpenSSH reads through it; so do we, and edits land in
+    # the file it names while the link itself survives.
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = _write(dotfiles / "config", "Host web\n    HostName example.com\n")
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    link = ssh_dir / "config"
     link.symlink_to(real)
     store = _store(link)
-    store.load()  # reads through the symlink fine
-    with pytest.raises(CoreError) as exc:
-        store.update(
-            "web",
-            {"nickname": "web", "hostname": "x", "protocol": "ssh"},
-            expected_generation=0,
-        )
-    assert exc.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
-    assert str(tmp_path) not in str(exc.value)
+    assert _ids(store.load()) == ["web"]
+    assert store.get_text().writable is True
+
+    store.update(
+        "web",
+        {"nickname": "web", "hostname": "x.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    store.create({"nickname": "db", "hostname": "db.example", "protocol": "ssh"})
+    text = store.get_text()
+    store.replace_text(text.text + "# edited\n", text.revision)
+
+    assert link.is_symlink() and os.readlink(link) == str(real)
+    body = real.read_text()
+    assert "x.example" in body and "Host db" in body and "# edited" in body
+    # The one-shot backup sits next to the real file, not next to the link.
+    assert (dotfiles / "config.bak").exists()
+    assert not (ssh_dir / "config.bak").exists()
+    assert [p.name for p in ssh_dir.iterdir()] == ["config"]
+
+
+def test_linked_root_into_read_only_store_is_not_writable(tmp_path):
+    # NixOS Home Manager links into /nix/store, which is read-only.
+    store_dir = tmp_path / "nix-store"
+    store_dir.mkdir()
+    real = _write(store_dir / "config", "Host web\n    HostName example.com\n")
+    os.chmod(real, 0o444)
+    os.chmod(store_dir, 0o555)
+    link = tmp_path / "config"
+    link.symlink_to(real)
+    try:
+        store = _store(link)
+        assert _ids(store.load()) == ["web"]
+        assert store.get_text().writable is False
+        with pytest.raises(CoreError) as exc:
+            store.create({"nickname": "db", "hostname": "d", "protocol": "ssh"})
+        assert exc.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
+        assert real.read_text() == "Host web\n    HostName example.com\n"
+        assert link.is_symlink()
+    finally:
+        os.chmod(store_dir, 0o755)
+
+
+def test_dangling_linked_root_reads_empty_and_creates_nothing(tmp_path):
+    # Inside the Flatpak sandbox a /nix/store target is invisible, so the
+    # link dangles: OpenSSH would see no config, and so do we. A save must
+    # not conjure the missing target directory into existence.
+    missing = tmp_path / "nix" / "store" / "abc-home-manager-files" / "config"
+    link = tmp_path / "config"
+    link.symlink_to(missing)
+    store = _store(link)
+    assert _ids(store.load()) == []
+    assert store.get_text().writable is False
+    with pytest.raises(CoreError):
+        store.create({"nickname": "db", "hostname": "d", "protocol": "ssh"})
+    assert not (tmp_path / "nix").exists()
+    assert link.is_symlink()
 
 
 def test_symlink_swap_detected_before_replacement(tmp_path, monkeypatch):
@@ -1126,21 +1181,17 @@ def test_split_client_path_matching_accepted(tmp_path):
 
 
 def test_no_path_in_public_errors(tmp_path):
-    root = _write(tmp_path / "config", "Host web\n    HostName example.com\n")
+    missing = tmp_path / "gone" / "config"
     link = tmp_path / "evil-link"
-    link.symlink_to(root)
+    link.symlink_to(missing)
     linked_store = _store(link)
     try:
-        linked_store.update(
-            "web",
-            {"nickname": "web", "hostname": "x", "protocol": "ssh"},
-            expected_generation=0,
-        )
+        linked_store.create({"nickname": "web", "hostname": "x", "protocol": "ssh"})
     except CoreError as exc:
         message = str(exc)
         assert str(tmp_path) not in message
-        assert str(root) not in message
-        assert "config" not in message.split(":")[1][:60]
+        assert str(missing) not in message
+        assert "evil-link" not in message and "gone" not in message
     else:
         pytest.fail("expected a CoreError")
 
