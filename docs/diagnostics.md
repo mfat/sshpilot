@@ -41,6 +41,23 @@ new daemon records are also forwarded into the frontend console/master stream
 using a `daemon.forwarded.*` logger namespace, while the Log Viewer continues
 to read `daemon.log` directly.
 
+## Tracing an empty or read-only connection list
+
+The daemon reads and writes `~/.ssh/config`, so `daemon.log` says why the list
+is empty or view-only. Each state is logged once when it changes, not on every
+reload, under `sshpilot.core.connections.ssh_config_store`:
+
+| Log line contains | Meaning |
+| --- | --- |
+| `does not exist; no connections are loaded from it` | No config file yet (INFO). Adding a connection creates it. |
+| `(a link to …) points to a file that does not exist or is not visible here` | A dangling link (WARNING). Inside the Flatpak this is a link out of `~/.ssh` (a NixOS Home Manager link into `/nix/store`, a dotfiles repo); the line ends with the `flatpak override … --filesystem=…:ro` command that shares it. |
+| `exists but cannot be read (permission denied)` | Unreadable config (WARNING). `ssh_config_loader` also names any unreadable `Include`d file and the OS reason. |
+| `is read-only because …; its connections are view-only` | The file (or the one a link names) cannot be written: read-only filesystem, directory not writable, or file mode. The GUI offers those connections view-only (INFO). |
+| `Not saving the SSH config:` | A save was refused, with the same reason (WARNING). |
+
+Links are followed like OpenSSH follows them: a save edits the file the link
+names, in place, and the link survives.
+
 ## Tracing a pre-connection command
 
 A connection's **port knock sequence** and **Pre-Connection Command** (a VPN

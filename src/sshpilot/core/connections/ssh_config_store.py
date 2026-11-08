@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import errno
+import logging
 import os
 import shlex
 import stat
@@ -50,6 +51,9 @@ from .ssh_config_loader import (
 )
 
 _SSH_CONFIG_HEADER = "# SSH configuration file\n\n"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _store_error(message: str) -> CoreError:
@@ -133,6 +137,67 @@ def config_file_writable(path: Path) -> bool:
         return False
 
 
+def _flatpak_grant_hint(target: Path) -> str:
+    """The override that lets the Flatpak sandbox read a linked config."""
+    app_id = os.environ.get("FLATPAK_ID") or "io.github.mfat.sshpilot"
+    text = str(target)
+    shared = "/nix/store" if text.startswith("/nix/store/") else str(target.parent)
+    return (
+        "Inside the Flatpak sandbox only ~/.ssh is shared; grant read-only "
+        f"access with: flatpak override --user --filesystem={shared}:ro {app_id}"
+    )
+
+
+def describe_config_access(path: Path) -> Tuple[str, str]:
+    """Classify an SSH config file for the daemon log: ``(state, reason)``.
+
+    ``state`` is one of ``ok``, ``missing``, ``dangling``, ``unreadable`` or
+    ``read_only``; ``reason`` is a log sentence naming the file, the file a
+    link points to, and what is wrong. Log text only: public errors never
+    carry paths.
+    """
+    requested = Path(os.path.abspath(path))
+    try:
+        is_link = os.path.islink(requested)
+        target = resolve_config_link(requested)
+    except OSError as exc:
+        return "unreadable", f"{requested} cannot be inspected ({exc.strerror})"
+    shown = f"{requested} (a link to {target})" if is_link else str(requested)
+    if not os.path.lexists(requested):
+        return "missing", f"{shown} does not exist; no connections are loaded from it"
+    if not target.exists():
+        reason = (
+            f"{shown} points to a file that does not exist or is not visible "
+            "here, so no connections are loaded from it"
+        )
+        if os.path.exists("/.flatpak-info"):
+            reason += ". " + _flatpak_grant_hint(target)
+        return "dangling", reason
+    if not os.access(target, os.R_OK):
+        return "unreadable", f"{shown} exists but cannot be read (permission denied)"
+    if config_file_writable(requested):
+        return "ok", f"{shown} is readable and writable"
+    directory = target.parent
+    try:
+        read_only_mount = bool(os.statvfs(directory).f_flag & os.ST_RDONLY)
+    except (OSError, AttributeError):
+        read_only_mount = False
+    if read_only_mount:
+        why = f"{directory} is on a read-only filesystem"
+    elif not os.access(directory, os.W_OK | os.X_OK):
+        why = f"its directory {directory} is not writable"
+    else:
+        try:
+            mode = oct(stat.S_IMODE(os.stat(target).st_mode))
+        except OSError:
+            mode = "unknown"
+        why = f"the file itself is not writable (mode {mode})"
+    return (
+        "read_only",
+        f"{shown} is read-only because {why}; its connections are view-only",
+    )
+
+
 def _atomic_write_text(
     path: Path,
     text: str,
@@ -183,6 +248,9 @@ def _atomic_write_text(
     # read-only /nix/store, a read-only mount, plain permissions) gets its
     # own code so the frontend can say why instead of "could not be saved".
     if not config_file_writable(requested):
+        logger.warning(
+            "Not saving the SSH config: %s", describe_config_access(requested)[1]
+        )
         raise _read_only_error()
 
     try:
@@ -219,6 +287,16 @@ def _atomic_write_text(
             raise _store_error("The connection configuration could not be saved") from exc
         if st_now is not None and stat.S_ISLNK(st_now.st_mode):
             raise _store_error("Refusing to write through a symbolic link")
+        # The link itself must still name the file we checked and read: a
+        # link retargeted mid-write (even at a file with identical bytes,
+        # which the content check below cannot tell apart) must not be
+        # followed to a destination nobody validated.
+        if resolve_config_link(requested) != target:
+            logger.warning(
+                "Not saving the SSH config: %s was retargeted during the save",
+                requested,
+            )
+            raise _stale_error()
         if expected_bytes is not None:
             try:
                 current = target.read_bytes() if st_now is not None else None
@@ -249,6 +327,9 @@ def _atomic_write_text(
         # The pre-check can race a chmod/remount, and access(2) can disagree
         # with the real call (ACLs, some FUSE mounts): report what happened.
         if exc.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+            logger.warning(
+                "Not saving the SSH config %s: %s", target, exc.strerror
+            )
             raise _read_only_error() from exc
         raise _store_error("The connection configuration could not be saved") from exc
     finally:
@@ -406,8 +487,30 @@ class SshConfigStore:
     # -- loading -----------------------------------------------------------
 
     def load(self) -> LoadedSshConfiguration:
+        self._log_root_access()
         config = load_ssh_configuration(self._root_path, isolated=self._isolated)
         return self._overlay_generations(config)
+
+    def _log_root_access(self) -> None:
+        """Say in the daemon log why the root config gives no/RO connections.
+
+        Logged when the state changes, not on every reload: an empty list
+        from a link the Flatpak sandbox cannot follow, a missing file and an
+        unreadable one otherwise all look the same to the user.
+        """
+        try:
+            state, reason = describe_config_access(self._root_path)
+        except Exception:  # pragma: no cover - diagnostics must never break a load
+            logger.debug("Could not classify SSH config access", exc_info=True)
+            return
+        previous = getattr(self, "_logged_access", None)
+        if previous == (state, reason):
+            return
+        self._logged_access = (state, reason)
+        if state in ("dangling", "unreadable"):
+            logger.warning("SSH config: %s", reason)
+        elif state != "ok" or previous is not None:
+            logger.info("SSH config: %s", reason)
 
     def _overlay_generations(
         self, config: LoadedSshConfiguration

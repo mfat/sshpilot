@@ -1217,3 +1217,132 @@ def test_generation_increments_only_after_successful_writes(tmp_path, monkeypatc
     )
     config = store.load()
     assert next(c for c in config.connections if c.id == "web").generation == 1
+
+
+def test_link_retargeted_at_identical_content_is_not_followed(tmp_path, monkeypatch):
+    # Review of #1373: the content check cannot tell two files with the same
+    # bytes apart, so the writer must notice the link itself changed.
+    body = "Host web\n    HostName example.com\n"
+    real = _write(tmp_path / "real", body)
+    twin = _write(tmp_path / "twin", body)
+    link = tmp_path / "config"
+    link.symlink_to(real)
+    store = _store(link)
+
+    import sshpilot.core.connections.ssh_config_store as store_mod
+
+    real_mkstemp = store_mod.tempfile.mkstemp
+
+    def _retarget_then_mkstemp(*args, **kwargs):
+        link.unlink()
+        link.symlink_to(twin)
+        return real_mkstemp(*args, **kwargs)
+
+    text = store.get_text()
+    monkeypatch.setattr(store_mod.tempfile, "mkstemp", _retarget_then_mkstemp)
+    # The raw editor and new connections write through the link itself.
+    with pytest.raises(CoreError) as exc:
+        store.replace_text(text.text + "# edited\n", text.revision)
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert real.read_text() == body
+    assert twin.read_text() == body
+    assert not list(tmp_path.glob(".sshpilot-*"))
+
+
+def test_edit_writes_the_file_it_read_even_if_the_link_moves(tmp_path, monkeypatch):
+    # An edit targets the resolved file its Host block was read from, so a
+    # retargeted link cannot redirect it to an unvalidated destination.
+    body = "Host web\n    HostName example.com\n"
+    real = _write(tmp_path / "real", body)
+    twin = _write(tmp_path / "twin", body)
+    link = tmp_path / "config"
+    link.symlink_to(real)
+    store = _store(link)
+
+    import sshpilot.core.connections.ssh_config_store as store_mod
+
+    real_mkstemp = store_mod.tempfile.mkstemp
+
+    def _retarget_then_mkstemp(*args, **kwargs):
+        link.unlink()
+        link.symlink_to(twin)
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(store_mod.tempfile, "mkstemp", _retarget_then_mkstemp)
+    try:
+        store.update(
+            "web",
+            {"nickname": "web", "hostname": "x.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    except CoreError:
+        pass
+    assert twin.read_text() == body
+
+
+def test_access_reasons_name_the_file_and_the_problem(tmp_path, caplog):
+    import logging
+
+    from sshpilot.core.connections.ssh_config_store import describe_config_access
+
+    assert describe_config_access(tmp_path / "none")[0] == "missing"
+
+    dangling = tmp_path / "dangling"
+    dangling.symlink_to("/nix/store/abc-home-manager-files/.ssh/config")
+    state, reason = describe_config_access(dangling)
+    assert state == "dangling"
+    assert "/nix/store/abc-home-manager-files/.ssh/config" in reason
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    ro = _write(locked / "config", "Host a\n")
+    os.chmod(ro, 0o444)
+    os.chmod(locked, 0o555)
+    try:
+        state, reason = describe_config_access(ro)
+        assert state == "read_only"
+        assert f"its directory {locked} is not writable" in reason
+
+        store = _store(ro)
+        with caplog.at_level(logging.INFO, logger="sshpilot.core.connections"):
+            store.load()
+            store.load()  # unchanged state: logged once, not on every reload
+            with pytest.raises(CoreError):
+                store.create({"nickname": "n", "hostname": "x", "protocol": "ssh"})
+        messages = [r.getMessage() for r in caplog.records]
+        assert sum("view-only" in m and "Not saving" not in m for m in messages) == 1
+        assert any(m.startswith("Not saving the SSH config:") for m in messages)
+    finally:
+        os.chmod(locked, 0o755)
+
+
+def test_dangling_root_warns_with_the_link_target(tmp_path, caplog):
+    import logging
+
+    link = tmp_path / "config"
+    link.symlink_to("/nix/store/abc-home-manager-files/.ssh/config")
+    with caplog.at_level(logging.WARNING, logger="sshpilot.core.connections"):
+        assert _ids(_store(link).load()) == []
+    assert any(
+        "points to a file that does not exist or is not visible here" in r.getMessage()
+        and "/nix/store/abc-home-manager-files/.ssh/config" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_unreadable_included_file_is_named_in_the_log(tmp_path, caplog):
+    import logging
+
+    secret = _write(tmp_path / "secret.conf", "Host hidden\n")
+    os.chmod(secret, 0)
+    root = _write(tmp_path / "config", f"Include {secret}\nHost web\n")
+    try:
+        with caplog.at_level(logging.WARNING, logger="sshpilot.core.connections"):
+            with pytest.raises(CoreError):
+                _store(root).load()
+        assert any(
+            str(secret) in r.getMessage() and "Permission denied" in r.getMessage()
+            for r in caplog.records
+        )
+    finally:
+        os.chmod(secret, 0o600)

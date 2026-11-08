@@ -19,6 +19,7 @@ from __future__ import annotations
 import getpass
 import glob
 import hashlib
+import logging
 import os
 import re
 import shlex
@@ -99,6 +100,9 @@ def _expand_ssh_tokens(value: str) -> str:
     return _TOKEN_RE.sub(_repl, value)
 
 
+
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Include resolution (headless; unreadable files are fatal)
 # ---------------------------------------------------------------------------
@@ -133,14 +137,17 @@ def _resolve_config_files(
             try:
                 return split_config_lines(override.decode("utf-8"))
             except UnicodeDecodeError:
-                unreadable.append(path)
+                unreadable.append((path, "it is not valid UTF-8 text"))
                 return None
         try:
             return split_config_lines(path.read_bytes().decode("utf-8"))
         except FileNotFoundError:
             return _MISSING  # missing include -> tolerated, treated as empty
-        except (OSError, UnicodeError):
-            unreadable.append(path)
+        except UnicodeError:
+            unreadable.append((path, "it is not valid UTF-8 text"))
+            return None
+        except OSError as exc:
+            unreadable.append((path, exc.strerror or type(exc).__name__))
             return None
 
     def _resolve(path: Path, depth: int, stack: List[Path]) -> None:
@@ -207,7 +214,15 @@ def _resolve_config_files(
 
     _resolve(root_path, 1, [])
     if unreadable:
-        # Never surface the offending path in the public message.
+        # The public error never names a path; the daemon log must, or
+        # "could not be read completely" is undiagnosable.
+        for path, reason in unreadable:
+            logger.warning(
+                "SSH config file %s could not be read (%s); no connections "
+                "are loaded until it can be",
+                path,
+                reason,
+            )
         raise _config_error("SSH configuration could not be read completely")
     return resolved
 

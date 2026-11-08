@@ -80,6 +80,11 @@ tests/core/test_ssh_config_store.py::test_symlink_swap_detected_before_replaceme
 tests/core/test_ssh_config_store.py::test_linked_root_is_edited_in_place_like_openssh  # POSIX-only API
 tests/core/test_ssh_config_store.py::test_linked_root_into_read_only_store_is_not_writable  # POSIX-only API
 tests/core/test_ssh_config_store.py::test_dangling_linked_root_reads_empty_and_creates_nothing  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_link_retargeted_at_identical_content_is_not_followed  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_edit_writes_the_file_it_read_even_if_the_link_moves  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_access_reasons_name_the_file_and_the_problem  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_dangling_root_warns_with_the_link_target  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_unreadable_included_file_is_named_in_the_log  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_daemon_resolves_normal_config_root  # path separators
 tests/core/test_ssh_config_text_editor.py::test_store_saves_linked_root_in_place  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_repository_edits_linked_root_through_daemon_transaction  # POSIX-only API
