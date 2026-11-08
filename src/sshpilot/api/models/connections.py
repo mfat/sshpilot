@@ -267,9 +267,16 @@ class ConnectionSummary:
     #: (``web · podman``, ``/dev/ttyUSB0 @ 115200``); empty for SSH and for
     #: a protocol the daemon cannot describe.
     target_summary: str = ""
+    #: An SSH connection whose config file the daemon cannot write (a Home
+    #: Manager link into the read-only /nix/store, a read-only mount, plain
+    #: permissions). Frontends offer it view-only; non-SSH connections live
+    #: in the daemon's own state and are never read-only.
+    config_read_only: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.id, "connection id")
+        if type(self.config_read_only) is not bool:
+            raise TypeError("connection config_read_only must be a boolean")
         if not self.nickname.strip():
             raise ValueError("connection nickname must not be empty")
         if type(self.display_name) is not str:

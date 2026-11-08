@@ -19,6 +19,7 @@ class ErrorCode(str, Enum):
     CONNECTION_ALREADY_EXISTS = "connection_already_exists"
     CONNECTION_NOT_FOUND = "connection_not_found"
     PERSISTENCE_FAILED = "persistence_failed"
+    SSH_CONFIG_READ_ONLY = "ssh_config_read_only"
     MUTATION_AMBIGUOUS = "mutation_ambiguous"
     SESSION_NOT_FOUND = "session_not_found"
     SESSION_ALREADY_CLOSED = "session_already_closed"

@@ -699,6 +699,7 @@ Synthetic representation:
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
 | `target_summary` | `str` | No | `` | No |
+| `config_read_only` | `bool` | No | `false` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -715,6 +716,7 @@ Synthetic representation:
   "aliases": [],
   "authentication_method": "key",
   "certificate_configured": false,
+  "config_read_only": false,
   "display_name": "",
   "forwarding_rule_count": 0,
   "groups": [],
@@ -794,6 +796,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
 | `target_summary` | `str` | No | `` | No |
+| `config_read_only` | `bool` | No | `false` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -838,6 +841,7 @@ Synthetic representation:
   "authored_directives": [],
   "certificate_configured": false,
   "certificate_files": [],
+  "config_read_only": false,
   "display_name": "",
   "extra_ssh_config": "",
   "forward_agent": false,
@@ -984,6 +988,7 @@ Synthetic representation:
 | `groups` | `Tuple[GroupSummary, ...]` | Yes | — | No |
 | `root_connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
 | `metadata` | `Tuple[ConnectionMetadataSummary, ...]` | Yes | — | No |
+| `ssh_config_read_only` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -993,7 +998,8 @@ Synthetic representation:
   "generation": {},
   "groups": {},
   "metadata": {},
-  "root_connection_ids": {}
+  "root_connection_ids": {},
+  "ssh_config_read_only": false
 }
 ```
 
@@ -1020,11 +1026,13 @@ Synthetic representation:
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
 | `target_summary` | `str` | No | `` | No |
+| `config_read_only` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "config_read_only": false,
   "display_name": "",
   "groups": [],
   "health": "unknown",

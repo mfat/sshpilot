@@ -34,6 +34,7 @@ the validated internal envelope.
 | `connection_already_exists` | Implemented | No until nickname changes | `create_connection`, `update_connection` | Keep the editor open and request another nickname |
 | `connection_not_found` | Implemented | No without refreshed ID | Connection get/update/delete | Refresh the snapshot; transitional aliases may expire after rename |
 | `persistence_failed` | Implemented | No automatic retry | Connection writes | Keep current UI state and let the user retry explicitly |
+| `ssh_config_read_only` | Implemented | No until the file becomes writable | SSH connection writes and raw SSH config saves | The SSH config file (or the one a link names, such as a Home Manager link into `/nix/store`) cannot be written; explain that it is managed elsewhere and offer the connection view-only |
 | `mutation_ambiguous` | Implemented locally | No automatic retry | Daemon connection writes and session open/close | Refresh the corresponding snapshot before explicit retry |
 | `session_not_found` | Implemented | No without refreshed state | Session get/attach/detach/close | Refresh `sessions.list` |
 | `session_already_closed` | Implemented | No | Attach to exited/failed/closed session | Refresh session state; do not attach |
@@ -121,6 +122,18 @@ record data.
 The existing connection manager could not commit a create, update, or delete.
 It is not automatically retryable. Internal logs may record only the safe
 exception type; the public error contains no path, parser output, or payload.
+
+<!-- api-error: ssh_config_read_only -->
+## `ssh_config_read_only`
+
+An SSH connection write or raw SSH config save targeted a file the daemon
+cannot replace: the file a `~/.ssh/config` link names lives in a read-only
+tree (a NixOS Home Manager link into `/nix/store`), on a read-only mount, or
+without write permission. Nothing was changed. Snapshots mark such
+connections in advance (`ConnectionSummary.config_read_only`,
+`ConnectionStoreSnapshot.ssh_config_read_only`) so a frontend can offer them
+view-only; the error is the fallback when the file became read-only later.
+It carries no path; the frontend owns the explanation.
 
 <!-- api-error: mutation_ambiguous -->
 ## `mutation_ambiguous`

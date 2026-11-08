@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- A linked `~/.ssh/config` (Home Manager, GNU Stow, chezmoi) is followed the
+  way OpenSSH follows it: writes go to the file the link names, in place, and
+  the link survives. A file the daemon cannot write is now reported instead of
+  failing generically: new error code `ssh_config_read_only` on SSH connection
+  writes and raw SSH config saves; `ConnectionSummary.config_read_only` (wire
+  field `config_read_only`, sent only when true) marks an SSH connection whose
+  Host block lives in such a file; and `ConnectionStoreSnapshot.ssh_config_read_only`
+  (sent only when true) says the root config cannot take a new SSH
+  connection. Non-SSH connections are never marked. New error code and
+  fields, so the API implementation version is 0.89; Protocol remains 1.0.
 - New client method `run_pre_connect` with wire method
   `connections.run_pre_connect` (capability `sessions.write`), taking a
   `connection_id` and the `scope_id` its notices are published under and

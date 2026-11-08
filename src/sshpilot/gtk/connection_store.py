@@ -325,6 +325,7 @@ class ConnectionPresentationStore:
             groups=groups,
             root_connection_ids=root_ids,
             metadata=metadata,
+            ssh_config_read_only=current.ssh_config_read_only,
         )
         return True
 

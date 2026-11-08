@@ -977,7 +977,7 @@ def test_linked_root_into_read_only_store_is_not_writable(tmp_path):
         assert store.get_text().writable is False
         with pytest.raises(CoreError) as exc:
             store.create({"nickname": "db", "hostname": "d", "protocol": "ssh"})
-        assert exc.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
+        assert exc.value.code is ErrorCode.SSH_CONFIG_READ_ONLY
         assert real.read_text() == "Host web\n    HostName example.com\n"
         assert link.is_symlink()
     finally:

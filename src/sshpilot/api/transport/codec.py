@@ -1282,6 +1282,8 @@ def connection_store_snapshot_to_wire(
         "groups": [group_summary_to_wire(item) for item in snapshot.groups],
         "root_connection_ids": list(snapshot.root_connection_ids),
         "metadata": [connection_metadata_summary_to_wire(item) for item in snapshot.metadata],
+        # Additive: sent only when set, like a summary's target_summary.
+        **({"ssh_config_read_only": True} if snapshot.ssh_config_read_only else {}),
     }
 
 
@@ -1289,6 +1291,7 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
     data = _strict_fields(
         value,
         required={"generation", "connections", "groups", "root_connection_ids", "metadata"},
+        optional={"ssh_config_read_only"},
         context="connection store snapshot",
     )
     connections = data["connections"]
@@ -1311,6 +1314,9 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
             ConnectionId(_identifier(item, "root connection id")) for item in root_ids
         ),
         metadata=tuple(connection_metadata_summary_from_wire(item) for item in metadata),
+        ssh_config_read_only=_boolean(
+            data.get("ssh_config_read_only", False), "store ssh config read-only"
+        ),
     )
 
 
@@ -1829,6 +1835,7 @@ def connection_summary_to_wire(summary: ConnectionSummary) -> Dict[str, Any]:
         # validates fields strictly still reads SSH-only lists.
         **({"target_summary": summary.target_summary}
            if summary.target_summary else {}),
+        **({"config_read_only": True} if summary.config_read_only else {}),
     }
 
 
@@ -1849,7 +1856,7 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS,
-        optional={"display_name", "target_summary"},
+        optional={"display_name", "target_summary", "config_read_only"},
         context="connection summary",
     )
     try:
@@ -1877,6 +1884,9 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
         display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
         target_summary=_text(
             data.get("target_summary", ""), "connection target summary", allow_empty=True
+        ),
+        config_read_only=_boolean(
+            data.get("config_read_only", False), "connection config read-only"
         ),
     )
 
@@ -1945,11 +1955,11 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS | detail_fields,
-        optional={"display_name", "target_summary", "plugin_data"},
+        optional={"display_name", "target_summary", "config_read_only", "plugin_data"},
         context="connection details",
     )
     summary_payload = {key: data[key] for key in _SUMMARY_FIELDS}
-    for key in ("display_name", "target_summary"):
+    for key in ("display_name", "target_summary", "config_read_only"):
         if key in data:
             summary_payload[key] = data[key]
     summary = connection_summary_from_wire(summary_payload)
@@ -1978,6 +1988,7 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
         # and a plugin editor saved that back over the user's own name.
         display_name=summary.display_name,
         target_summary=summary.target_summary,
+        config_read_only=summary.config_read_only,
         aliases=aliases,
         authentication_method=authentication_method,
         identity_configured=_boolean(
@@ -2272,11 +2283,17 @@ def connection_editor_details_from_wire(
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
         # Additive: a daemon predating authorship evidence simply omits it, and
         # an empty tuple already means "no evidence".
-        optional={"display_name", "target_summary", "authored_directives", "plugin_data"},
+        optional={
+            "display_name",
+            "target_summary",
+            "config_read_only",
+            "authored_directives",
+            "plugin_data",
+        },
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
-    for key in ("display_name", "target_summary"):
+    for key in ("display_name", "target_summary", "config_read_only"):
         if key in data:
             summary_payload[key] = data[key]
     summary = connection_summary_from_wire(summary_payload)
@@ -2319,6 +2336,7 @@ def connection_editor_details_from_wire(
         health=summary.health,
         groups=summary.groups,
         display_name=summary.display_name,
+        config_read_only=summary.config_read_only,
         aliases=aliases,
         authentication_method=authentication_method,
         identity_configured=_boolean(data["identity_configured"], "identity configured"),

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.88",
+  "api_implementation_version": "0.89",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1399,6 +1399,7 @@
       "connection_already_exists",
       "connection_not_found",
       "persistence_failed",
+      "ssh_config_read_only",
       "mutation_ambiguous",
       "session_not_found",
       "session_already_closed",
@@ -2681,6 +2682,13 @@
           "type": "str"
         },
         {
+          "default": false,
+          "name": "config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
           "default": [],
           "name": "aliases",
           "required": false,
@@ -2857,6 +2865,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": false,
+          "name": "config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         },
         {
           "default": [],
@@ -3241,6 +3256,13 @@
           "required": true,
           "sensitive": false,
           "type": "Tuple[ConnectionMetadataSummary, ...]"
+        },
+        {
+          "default": false,
+          "name": "ssh_config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -3323,6 +3345,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": false,
+          "name": "config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

@@ -20,6 +20,7 @@ exception text, or file contents.
 from __future__ import annotations
 
 import copy
+import errno
 import os
 import shlex
 import stat
@@ -53,6 +54,15 @@ _SSH_CONFIG_HEADER = "# SSH configuration file\n\n"
 
 def _store_error(message: str) -> CoreError:
     return CoreError(ErrorCode.CONNECTION_STATE_IO_ERROR, message)
+
+
+def _read_only_error() -> CoreError:
+    return CoreError(
+        ErrorCode.SSH_CONFIG_READ_ONLY,
+        "The SSH configuration file is read-only",
+        diagnostic_category="permission",
+        diagnostic_reason="ssh config file not writable",
+    )
 
 
 def _stale_error() -> CoreError:
@@ -89,6 +99,38 @@ def resolve_config_link(path: Path) -> Path:
     (missing) target, which then reads as empty and is never writable.
     """
     return Path(os.path.realpath(path))
+
+
+def config_file_writable(path: Path) -> bool:
+    """Whether the hardened writer can replace the SSH config file at *path*.
+
+    The writer renames a same-directory temporary file over the file a link
+    names, so that file's directory needs write+execute access and an
+    existing file must itself be writable. A config that does not exist yet
+    counts as writable when its own directory can still be created; a link
+    whose target directory is missing (a sandbox hiding ``/nix/store``)
+    does not. ``os.access`` also reports a read-only mount.
+    """
+    try:
+        requested = Path(os.path.abspath(path))
+        target = resolve_config_link(requested)
+        directory = target.parent
+        if not directory.exists():
+            if target != requested:
+                return False
+            # The writer creates the config's own directory: look for the
+            # nearest existing ancestor it would create it in.
+            ancestor = directory
+            while not ancestor.exists() and ancestor.parent != ancestor:
+                ancestor = ancestor.parent
+            return os.access(ancestor, os.W_OK | os.X_OK)
+        if not os.access(directory, os.W_OK | os.X_OK):
+            return False
+        if target.exists():
+            return os.access(target, os.W_OK)
+        return True
+    except OSError:
+        return False
 
 
 def _atomic_write_text(
@@ -137,6 +179,11 @@ def _atomic_write_text(
         raise _store_error("The connection configuration could not be saved") from exc
     if st is not None and stat.S_ISLNK(st.st_mode):
         raise _store_error("Refusing to write through a symbolic link")
+    # A file the daemon cannot replace (a Home Manager link into the
+    # read-only /nix/store, a read-only mount, plain permissions) gets its
+    # own code so the frontend can say why instead of "could not be saved".
+    if not config_file_writable(requested):
+        raise _read_only_error()
 
     try:
         # Only the config's own directory is ever created. A link whose
@@ -199,6 +246,10 @@ def _atomic_write_text(
     except CoreError:
         raise
     except OSError as exc:
+        # The pre-check can race a chmod/remount, and access(2) can disagree
+        # with the real call (ACLs, some FUSE mounts): report what happened.
+        if exc.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise _read_only_error() from exc
         raise _store_error("The connection configuration could not be saved") from exc
     finally:
         if fd is not None:
@@ -397,22 +448,11 @@ class SshConfigStore:
     def _is_writable(self) -> bool:
         """True when the daemon's hardened write path can replace the root.
 
-        Mirrors ``_atomic_write_text``: same-directory temp file + atomic
-        rename, so directory write+execute access is required and symlinked
-        roots are never mutated.
+        Follows links like OpenSSH: what matters is the file the link names.
+        A Home Manager link into /nix/store (or a dangling one inside a
+        sandbox) resolves to a read-only or missing directory.
         """
-        try:
-            # Follow links like OpenSSH: what matters is the file the link
-            # names. A Home Manager link into /nix/store (or a dangling one
-            # inside a sandbox) resolves to a read-only or missing directory.
-            root = resolve_config_link(self._root_path)
-            if not os.access(root.parent, os.W_OK | os.X_OK):
-                return False
-            if root.exists():
-                return os.access(root, os.W_OK)
-            return True
-        except OSError:
-            return False
+        return config_file_writable(self._root_path)
 
     def _read_root_text(self) -> str:
         try:

@@ -92,6 +92,7 @@ from .ssh_config_store import (
     SshConfigStore,
     _atomic_write_text,
     _source_of,
+    config_file_writable,
     resolve_config_link,
 )
 from .transient import TransientConnections, is_transient_connection_id
@@ -1228,8 +1229,48 @@ class ConnectionRepository:
 
     def _build_snapshot_locked(self) -> ConnectionStoreSnapshot:
         if self._identity_state is None:
-            return self._assemble(self._service, self._metadata, self._generation)
-        return self._assemble_uuid_snapshot_locked()
+            snapshot = self._assemble(self._service, self._metadata, self._generation)
+        else:
+            snapshot = self._assemble_uuid_snapshot_locked()
+        return self._with_write_access_locked(snapshot)
+
+    def _with_write_access_locked(
+        self, snapshot: ConnectionStoreSnapshot
+    ) -> ConnectionStoreSnapshot:
+        """Mark what the daemon cannot write, so a frontend can say so first.
+
+        An SSH connection is read-only when the file its Host block lives in
+        cannot be replaced (a Home Manager link into /nix/store, a read-only
+        mount); a new SSH connection is appended to the root config, so the
+        snapshot carries the root's state too. Non-SSH connections live in
+        the daemon's own state file and are never marked.
+        """
+        writable: Dict[str, bool] = {}
+
+        def _writable(path: str) -> bool:
+            if path not in writable:
+                writable[path] = config_file_writable(Path(path))
+            return writable[path]
+
+        root_read_only = not _writable(str(self._ssh_store.root_path))
+        sources = {
+            record.id: _source_of(record)
+            for record in self._service.ordered_records()
+            if (record.protocol or "ssh") == "ssh"
+        }
+        connections = tuple(
+            replace(summary, config_read_only=True)
+            if sources.get(summary.id) and not _writable(sources[summary.id])
+            else summary
+            for summary in snapshot.connections
+        )
+        if not root_read_only and connections == snapshot.connections:
+            return snapshot
+        return replace(
+            snapshot,
+            connections=connections,
+            ssh_config_read_only=root_read_only,
+        )
 
     def _assemble_uuid_snapshot_locked(self) -> ConnectionStoreSnapshot:
         """Build an alias-compatible snapshot from UUID-owned sidecar state."""

@@ -3504,7 +3504,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             snapshot_ok = True
             load_failed = False
             
-        sensitive = form_is_valid and not secret_busy and snapshot_ok and not load_failed
+        sensitive = (
+            form_is_valid and not secret_busy and snapshot_ok and not load_failed
+            and not self._config_read_only_active()
+        )
 
         for button in getattr(self, '_save_buttons', ()):
             try:
@@ -4620,6 +4623,46 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _on_protocol_changed(self, *_args):
         self._apply_protocol_to_ui()
+        self._sync_config_read_only_ui()
+
+    def set_config_read_only(self, read_only):
+        """Offer an SSH connection view-only: its config file is read-only.
+
+        The daemon marks a connection whose Host block lives in a file it
+        cannot write (a Home Manager link into /nix/store), and a store
+        whose root config cannot take a new connection. The banner says so
+        up front and Save stays off while SSH is selected; a plugin
+        protocol saves to the daemon's own state and is unaffected.
+        """
+        self._config_read_only = bool(read_only)
+        if self._config_read_only and getattr(self, '_read_only_banner', None) is None:
+            from .gtk.ssh_config_access_messages import read_only_body
+            banner = Adw.Banner()
+            banner.set_title(read_only_body())
+            banner.set_revealed(False)
+            self._read_only_banner = banner
+            try:
+                self.content_mount.prepend(banner)
+            except Exception:
+                logger.debug("Could not mount the read-only banner", exc_info=True)
+        self._sync_config_read_only_ui()
+
+    def _config_read_only_active(self):
+        if not getattr(self, '_config_read_only', False):
+            return False
+        try:
+            return self._selected_protocol_id() == 'ssh'
+        except Exception:
+            return True
+
+    def _sync_config_read_only_ui(self):
+        banner = getattr(self, '_read_only_banner', None)
+        if banner is not None:
+            try:
+                banner.set_revealed(self._config_read_only_active())
+            except Exception:
+                pass
+        self._refresh_save_sensitivity()
 
     def _apply_protocol_to_ui(self):
         """Show only what the selected protocol uses.
@@ -5475,6 +5518,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle save button click or dialog save response"""
         if getattr(self, '_secret_save_in_progress', False):
             return
+        # Ctrl+S bypasses the insensitive Save button: a read-only SSH config
+        # explains itself again instead of failing at the daemon.
+        if self._config_read_only_active():
+            from .gtk.ssh_config_access_messages import (
+                read_only_body,
+                read_only_heading,
+            )
+            self.show_error(read_only_body(), heading=read_only_heading())
+            return
         # Daemon edits: never save before the authoritative editor snapshot
         # arrived, and never save after a terminal load failure.
         if self.is_daemon_editor():
@@ -6015,7 +6067,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return None
         return controller.load_state()
 
-    def show_error(self, message):
+    def show_error(self, message, heading=None):
         """Show error message"""
         try:
             if hasattr(self, 'present'):
@@ -6027,7 +6079,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         parent_window = self.parent_window if hasattr(self, 'parent_window') else None
         dialog = Adw.MessageDialog.new(
             parent_window,
-            _("Error"),
+            heading or _("Error"),
             message
         )
         dialog.add_response("ok", _("OK"))

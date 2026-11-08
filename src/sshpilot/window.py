@@ -2108,6 +2108,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not unique_connections:
             return
 
+        # A connection in a read-only SSH config (Home Manager) cannot be
+        # removed here: explain that instead of asking to confirm a delete
+        # that can only fail.
+        from .gtk.ssh_config_access_messages import (
+            is_config_read_only,
+            read_only_body,
+            read_only_heading,
+        )
+        if any(is_config_read_only(c) for c in unique_connections):
+            self._error_dialog(read_only_heading(), read_only_body())
+            return
+
         active_connections = [
             connection
             for connection in unique_connections
@@ -5731,6 +5743,25 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
         dialog.connect('connection-saved', self.on_connection_saved)
 
+        # Read-only SSH config (Home Manager link into /nix/store): open the
+        # editor view-only with the reason up front. An existing connection
+        # carries its own file's state; a new or duplicated one is appended
+        # to the root config.
+        from .gtk.ssh_config_access_messages import is_config_read_only
+        if connection is None or as_new:
+            try:
+                read_only = bool(getattr(
+                    self.connection_manager.snapshot(),
+                    'ssh_config_read_only',
+                    False,
+                ))
+            except Exception:
+                read_only = False
+        else:
+            read_only = is_config_read_only(connection)
+        if read_only:
+            dialog.set_config_read_only(True)
+
         # The authoritative daemon editor snapshot gates existing SSH edits.  A
         # blank/new connection (``connection is None`` or ``as_new``) needs no
         # generation and must never enter the load-failed state; an existing
@@ -7208,6 +7239,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     type(error).__name__,
                 )
             if not self._is_quitting:
+                from .gtk.ssh_config_access_messages import (
+                    is_read_only_error,
+                    read_only_body,
+                    read_only_heading,
+                )
+                if is_read_only_error(error):
+                    self._error_dialog(read_only_heading(), read_only_body())
+                    return
                 self._error_dialog(
                     _("Failed to delete connection"),
                     _(
@@ -9270,6 +9309,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     type(error).__name__,
                     exc_info=error,
                 )
+            from .gtk.ssh_config_access_messages import (
+                is_read_only_error,
+                read_only_body,
+            )
+            if is_read_only_error(error):
+                # The file turned read-only after the editor opened (or the
+                # daemon's access check disagreed): say why, not "failed".
+                complete_save(False, None, meta_error=read_only_body())
+                return
             complete_save(False)
 
         if checkpoint is not None:

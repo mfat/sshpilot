@@ -198,9 +198,15 @@ class ConnectionStoreSnapshot:
     groups: Tuple[GroupSummary, ...]
     root_connection_ids: Tuple[ConnectionId, ...]
     metadata: Tuple[ConnectionMetadataSummary, ...]
+    #: The selected SSH config file cannot be written, so a new SSH
+    #: connection (always appended there) cannot be saved.
+    ssh_config_read_only: bool = False
 
     def __post_init__(self) -> None:
         from .connections import ConnectionSummary  # deferred: avoid import cycle
+
+        if type(self.ssh_config_read_only) is not bool:
+            raise TypeError("store ssh_config_read_only must be a boolean")
 
         if type(self.generation) is not int or self.generation < 0:
             raise ValueError("store generation must be a non-negative integer")

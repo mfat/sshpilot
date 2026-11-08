@@ -45,6 +45,13 @@ class DaemonSshConfigTextService:
 
     # -- editor-facing interface -------------------------------------------
 
+    @staticmethod
+    def read_only_notice() -> str:
+        """Why the SSH config opened read-only (worded by the GTK presenter)."""
+        from .gtk.ssh_config_access_messages import read_only_body
+
+        return read_only_body()
+
     def load(self) -> Future:
         """Load the daemon-selected SSH config text off the GTK thread."""
 

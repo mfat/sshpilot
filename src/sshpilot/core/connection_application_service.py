@@ -2330,6 +2330,11 @@ def _map_core_error(error: Any) -> SshPilotError:
             ErrorCode.PERSISTENCE_FAILED,
             "The connection state could not be stored",
         )
+    if code is CoreErrorCode.SSH_CONFIG_READ_ONLY:
+        return SshPilotError(
+            ErrorCode.SSH_CONFIG_READ_ONLY,
+            "The SSH configuration file is read-only",
+        )
     return SshPilotError(
         ErrorCode.PERSISTENCE_FAILED,
         "The connection change could not be saved",

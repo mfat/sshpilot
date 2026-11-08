@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.88",
+  "api_implementation_version": "0.89",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3457,6 +3457,7 @@
     "sftp_protocol_lost",
     "sftp_service_not_found",
     "sftp_service_not_ready",
+    "ssh_config_read_only",
     "stale_editor",
     "terminal_attachment_required",
     "terminal_continuity_lost",
@@ -4002,6 +4003,7 @@
       "groups",
       "display_name",
       "target_summary",
+      "config_read_only",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -4030,6 +4032,7 @@
       "groups",
       "display_name",
       "target_summary",
+      "config_read_only",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -4089,7 +4092,8 @@
       "connections",
       "groups",
       "root_connection_ids",
-      "metadata"
+      "metadata",
+      "ssh_config_read_only"
     ],
     "ConnectionSummary": [
       "id",
@@ -4102,7 +4106,8 @@
       "health",
       "groups",
       "display_name",
-      "target_summary"
+      "target_summary",
+      "config_read_only"
     ],
     "ConnectionValidationError": [
       "field",
@@ -5491,6 +5496,7 @@
       "connection_already_exists",
       "connection_not_found",
       "persistence_failed",
+      "ssh_config_read_only",
       "mutation_ambiguous",
       "session_not_found",
       "session_already_closed",

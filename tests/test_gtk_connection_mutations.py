@@ -2860,3 +2860,169 @@ def test_projection_rebuild_does_nothing_once_the_window_is_quitting(monkeypatch
     assert window.rebuilds == 0
     assert window.focus_calls == 0
     assert window._projection_rebuild_pending is False
+
+
+# ---------------------------------------------------------------------------
+# Read-only SSH config (#1373: NixOS Home Manager links into /nix/store)
+# ---------------------------------------------------------------------------
+
+
+class _ReadOnlyAwareDialog(_FakeDialog):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config_read_only = None
+
+    def set_config_read_only(self, read_only):
+        self.config_read_only = read_only
+
+
+def _patch_read_only_dialog(monkeypatch):
+    from sshpilot import connection_dialog as connection_dialog_module
+
+    created = []
+
+    class _Patched(_ReadOnlyAwareDialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(connection_dialog_module, "ConnectionDialog", _Patched)
+    return created
+
+
+def _read_only_body():
+    from sshpilot.gtk.ssh_config_access_messages import read_only_body
+
+    return read_only_body()
+
+
+def test_edit_of_read_only_connection_opens_view_only(monkeypatch):
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=3, nickname="demo")
+    created = _patch_read_only_dialog(monkeypatch)
+
+    window.show_connection_dialog(
+        connection=SimpleNamespace(
+            nickname="demo", connection_id="demo", config_read_only=True
+        ),
+    )
+
+    assert created[0].config_read_only is True
+    assert created[0].presented is True
+
+
+def test_edit_of_writable_connection_is_not_gated(monkeypatch):
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=3, nickname="demo")
+    created = _patch_read_only_dialog(monkeypatch)
+
+    window.show_connection_dialog(
+        connection=SimpleNamespace(nickname="demo", connection_id="demo"),
+    )
+
+    assert created[0].config_read_only is None
+
+
+def test_new_connection_follows_the_root_config_state(monkeypatch):
+    window = _MutationWindow()
+    window.connection_manager.snapshot = lambda: SimpleNamespace(
+        ssh_config_read_only=True
+    )
+    created = _patch_read_only_dialog(monkeypatch)
+
+    window.show_connection_dialog(connection=None)
+    window.show_connection_dialog(
+        connection=SimpleNamespace(
+            nickname="demo", connection_id="demo", config_read_only=False
+        ),
+        as_new=True,
+    )
+
+    assert [dialog.config_read_only for dialog in created] == [True, True]
+
+
+def test_save_rejected_as_read_only_explains_why():
+    window = _MutationWindow()
+    completed = []
+    data = _basic_data(
+        __save_completion=lambda ok, result=None, meta_error=None: completed.append(
+            (ok, meta_error)
+        )
+    )
+    window.on_connection_saved(SimpleNamespace(is_editing=False, connection=None), data)
+    _operation, _success, failure = window.client_bridge.calls[0]
+
+    failure(SshPilotError(ErrorCode.SSH_CONFIG_READ_ONLY, "read-only"))
+
+    assert completed == [(False, _read_only_body())]
+
+
+def test_delete_of_read_only_connection_explains_instead_of_confirming():
+    class _DeleteWindow(_MutationWindow):
+        _prompt_delete_connections = MainWindow._prompt_delete_connections
+
+    window = _DeleteWindow()
+    connections = _two_connections()
+    connections[1].config_read_only = True
+
+    window._prompt_delete_connections(connections)
+
+    from sshpilot.gtk.ssh_config_access_messages import read_only_heading
+
+    assert window.errors == [(read_only_heading(), _read_only_body())]
+    assert window.client_bridge.calls == []
+
+
+def test_delete_rejected_as_read_only_explains_why():
+    window = _MutationWindow()
+    connections = _two_connections()
+
+    window._delete_connections_via_client(connections)
+    _operation, _success, failure = window.client_bridge.calls[0]
+    failure(SshPilotError(ErrorCode.SSH_CONFIG_READ_ONLY, "read-only"))
+
+    assert [message for _title, message in window.errors] == [_read_only_body()]
+
+
+def test_dialog_blocks_save_only_while_ssh_is_selected():
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    class _Dialog:
+        _config_read_only_active = ConnectionDialog._config_read_only_active
+        _sync_config_read_only_ui = ConnectionDialog._sync_config_read_only_ui
+        _refresh_save_sensitivity = ConnectionDialog._refresh_save_sensitivity
+        set_config_read_only = ConnectionDialog.set_config_read_only
+
+        def __init__(self):
+            self.protocol = "ssh"
+            self.validation_results = {}
+            self.revealed = None
+            self.sensitive = None
+            dialog = self
+
+            class _Banner:
+                def set_revealed(self, value):
+                    dialog.revealed = value
+
+            class _Button:
+                def set_sensitive(self, value):
+                    dialog.sensitive = value
+
+            self._read_only_banner = _Banner()
+            self._save_buttons = [_Button()]
+
+        def _selected_protocol_id(self):
+            return self.protocol
+
+        def is_daemon_editor(self):
+            return False
+
+    dialog = _Dialog()
+    dialog.set_config_read_only(True)
+    assert (dialog.revealed, dialog.sensitive) == (True, False)
+
+    # A plugin protocol (docker, serial, ...) saves to the daemon's own
+    # state, which a read-only SSH config does not affect.
+    dialog.protocol = "docker"
+    dialog._sync_config_read_only_ui()
+    assert (dialog.revealed, dialog.sensitive) == (False, True)
