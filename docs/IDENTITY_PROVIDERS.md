@@ -172,7 +172,7 @@ Two seams carry a selected provider into a connection, by nature of the value:
 - **ssh config (source of truth) — fixed-socket agents.** When the selected provider
   returns `ssh_config_directives()` (e.g. 1Password → `IdentityAgent ~/.1password/agent.sock`),
   `connection_manager.apply_global_identity_agent()` writes a **sentinel-delimited managed
-  `Host *` block** at the end of `~/.ssh/config` (atomic write + `.bak`, never touching
+  `Host *` block** at the end of `~/.ssh/config` (atomic write, never touching
   other user content). It is idempotent: re-selecting updates it, switching to Automatic
   removes it. End-of-file placement means a per-connection `IdentityAgent` still wins.
 - **Environment — the OS/desktop agent.** `get_identity_manager().apply_selected_to_env(env)`

@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 import stat
-import shutil
 import subprocess
 import tempfile
 from typing import Optional
@@ -48,7 +47,6 @@ def atomic_write_text(
     text: str,
     *,
     mode: Optional[int] = None,
-    backup: bool = False,
 ) -> None:
     """Atomically write editor text, preserving permissions when requested."""
     directory = os.path.dirname(path) or "."
@@ -59,13 +57,6 @@ def atomic_write_text(
             final_mode = stat.S_IMODE(os.stat(path).st_mode)
         except OSError:
             final_mode = None
-    if backup and exists:
-        try:
-            shutil.copy2(path, f"{path}.bak")
-            if final_mode is not None:
-                os.chmod(f"{path}.bak", final_mode)
-        except Exception as exc:  # noqa: BLE001 - backup is best effort
-            logger.warning("Could not back up %s before writing: %s", path, exc)
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".sshpilot-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:

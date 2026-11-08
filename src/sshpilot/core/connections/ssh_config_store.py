@@ -4,8 +4,8 @@
 configuration: it decides the owning source file from *loaded daemon state*,
 never from client-supplied paths, and persists every mutation through one
 hardened atomic writer (same-directory temporary file, ``fsync``, atomic
-replace, parent-directory ``fsync``, one-shot ``.bak`` backup, symlink
-refusal, mode preservation).
+replace, parent-directory ``fsync``, links followed like OpenSSH, mode
+preservation, no ``.bak`` copies).
 
 Optimistic concurrency: every mutation compares the loaded configuration
 revision immediately before commit and raises a dedicated stale-state
@@ -22,7 +22,6 @@ from __future__ import annotations
 import copy
 import os
 import shlex
-import shutil
 import stat
 import tempfile
 from dataclasses import dataclass, field, replace
@@ -108,8 +107,9 @@ def _atomic_write_text(
       (a swap mid-write aborts).
     - Existing-file metadata failure is an error; mode 0600 is used only for
       genuinely new files; an existing safe mode is preserved.
-    - Creates one ``.bak`` of the first prior good file (never overwrites an
-      existing backup).
+    - Leaves no ``.bak`` copy behind: rollback restores from the bytes the
+      repository captured in memory, and a ``.bak`` would litter dotfiles
+      repositories that a linked config lives in.
     - Flushes and ``fsync``s the temporary file, then the parent directory.
     - When *expected_bytes* is supplied, the target's current bytes must
       equal it immediately before replacement or a stale-state error is
@@ -148,15 +148,6 @@ def _atomic_write_text(
             raise FileNotFoundError(str(directory))
     except OSError as exc:
         raise _store_error("The connection configuration could not be saved") from exc
-
-    # One-shot backup of the first prior good file.
-    backup = target.with_name(target.name + ".bak")
-    if st is not None and not backup.exists():
-        try:
-            shutil.copy2(target, backup)
-            os.chmod(backup, 0o600)
-        except OSError as exc:
-            raise _store_error("The connection configuration could not be backed up") from exc
 
     fd: Optional[int] = None
     tmp_name: Optional[str] = None
@@ -460,8 +451,7 @@ class SshConfigStore:
         """Replace the daemon-selected root config text atomically.
 
         Reuses the hardened writer (same-directory temp, fsync, atomic
-        replace, one-shot ``.bak`` backup, mode preservation, symlink
-        refusal) and rejects stale saves when any participating file changed
+        replace, mode preservation, links followed like OpenSSH) and rejects stale saves when any participating file changed
         since the editor loaded it. The text is written exactly as provided.
         """
         if type(text) is not str:

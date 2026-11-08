@@ -957,9 +957,8 @@ def test_linked_root_is_edited_in_place_like_openssh(tmp_path):
     assert link.is_symlink() and os.readlink(link) == str(real)
     body = real.read_text()
     assert "x.example" in body and "Host db" in body and "# edited" in body
-    # The one-shot backup sits next to the real file, not next to the link.
-    assert (dotfiles / "config.bak").exists()
-    assert not (ssh_dir / "config.bak").exists()
+    # Nothing is left in the dotfiles tree or beside the link.
+    assert sorted(p.name for p in dotfiles.iterdir()) == ["config"]
     assert [p.name for p in ssh_dir.iterdir()] == ["config"]
 
 
@@ -1029,7 +1028,7 @@ def test_symlink_swap_detected_before_replacement(tmp_path, monkeypatch):
     assert victim.read_text() == "private\n"
 
 
-def test_backup_created_once(tmp_path):
+def test_no_backup_copy_is_left_behind(tmp_path):
     root = _write(tmp_path / "config", "Host web\n    HostName example.com\n")
     store = _store(root)
     store.update(
@@ -1037,17 +1036,9 @@ def test_backup_created_once(tmp_path):
         {"nickname": "web", "hostname": "a", "protocol": "ssh"},
         expected_generation=0,
     )
-    backup = tmp_path / "config.bak"
-    assert backup.exists()
-    assert "HostName example.com" in backup.read_text()
-    backup_before = backup.read_bytes()
-    store.update(
-        "web",
-        {"nickname": "web", "hostname": "b", "protocol": "ssh"},
-        expected_generation=1,
-    )
-    # One-shot: the backup is never overwritten.
-    assert backup.read_bytes() == backup_before
+    text = store.get_text()
+    store.replace_text(text.text + "# edited\n", text.revision)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config"]
 
 
 def test_new_file_mode_0600_and_existing_mode_preserved(tmp_path):

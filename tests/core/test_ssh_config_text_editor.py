@@ -121,9 +121,8 @@ def test_store_save_writes_exact_text_and_updates_revision(tmp_path):
     assert saved.revision != loaded.revision
     # Exact text as entered — no reformatting.
     assert root.read_text(encoding="utf-8") == edited
-    # One-shot backup of the first prior good file.
-    backup = tmp_path / ".ssh" / "config.bak"
-    assert backup.read_text(encoding="utf-8") == original
+    # No .bak copy is left beside the config.
+    assert not (tmp_path / ".ssh" / "config.bak").exists()
     # Permissions preserved (0600).
     assert stat.S_IMODE(os.stat(root).st_mode) == 0o600
 

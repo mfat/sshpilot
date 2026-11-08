@@ -4,8 +4,8 @@ Protective guarantees for writing ~/.ssh/config.
 SSH config is precious user data. ``SshConfigStore`` does an in-place,
 block-targeted rewrite, and these tests pin the safety properties:
 
-  * writes are atomic (temp file + os.replace) with a one-shot .bak backup, so a
-    crash mid-write can never truncate the file;
+  * writes are atomic (temp file + os.replace), so a crash mid-write can never
+    truncate the file, and no .bak copy is left behind;
   * everything we don't own is preserved verbatim — comments, Match blocks,
     other hosts, and per-host options the app doesn't model (extra_ssh_config);
   * the edited block is found and replaced regardless of separator form
@@ -27,7 +27,7 @@ def _store(tmp_path, text: str) -> SshConfigStore:
 
 
 class TestWriteSafety:
-    def test_write_creates_backup_and_no_temp_leftovers(self, tmp_path):
+    def test_write_leaves_no_backup_or_temp_files(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.write_text("Host edit\n    HostName old.example.com\n    Port 22\n")
         store = _store(tmp_path, cfg.read_text())
@@ -37,8 +37,8 @@ class TestWriteSafety:
              "auth_method": 0, "protocol": "ssh"},
             expected_generation=0,
         )
-        assert (tmp_path / "config.bak").exists(), "a .bak backup must be created"
-        assert (tmp_path / "config.bak").read_text().count("old.example.com") == 1
+        assert not (tmp_path / "config.bak").exists(), "no .bak copy is kept"
+        assert "new.example.com" in cfg.read_text()
         # No temp scratch files left behind.
         leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith(".sshpilot-")]
         assert leftovers == [], f"temp files left behind: {leftovers}"
