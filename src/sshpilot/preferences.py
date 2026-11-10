@@ -2959,10 +2959,13 @@ class PreferencesWindow(Adw.Window):
         # suppresses it.
         self.apply_default_keepalive_row = Adw.SwitchRow()
         self.apply_default_keepalive_row.set_title(_("Apply default keepalive"))
+        # Only the values it sends: directive names are not translated, so
+        # the template is the same sentence in every language.
         self.apply_default_keepalive_row.set_subtitle(
-            _("Send keepalives so dropped connections are detected. Overrides "
-              "Host * in ~/.ssh/config; a host's own ServerAlive value, or one "
-              "set below, wins.")
+            _("ServerAliveInterval {interval}, ServerAliveCountMax {count}").format(
+                interval=int(self.config.get_setting('ssh.default_keepalive_interval', 15) or 15),
+                count=int(self.config.get_setting('ssh.default_keepalive_count', 3) or 3),
+            )
         )
         self.apply_default_keepalive_row.set_active(
             bool(self.config.get_setting('ssh.apply_default_keepalive', True))
@@ -2986,9 +2989,6 @@ class PreferencesWindow(Adw.Window):
         # Strict host key checking
         self.strict_host_row = Adw.ComboRow()
         self.strict_host_row.set_title(_("StrictHostKeyChecking"))
-        self.strict_host_row.set_subtitle(
-            _("“Do not configure” leaves this to your SSH config")
-        )
         strict_model = Gtk.StringList()
         strict_options = list(_STRICT_HOST_KEY_VALUES)
         for item in strict_options:
@@ -3006,10 +3006,6 @@ class PreferencesWindow(Adw.Window):
         # BatchMode (non-interactive)
         self.batch_mode_row = Adw.SwitchRow()
         self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
-        self.batch_mode_row.set_subtitle(
-            _("Turns off all password and passphrase prompts, including "
-              "saved passwords")
-        )
         self.batch_mode_row.set_active(bool(values['batch_mode']))
         advanced_group.add(self.batch_mode_row)
 
@@ -3017,7 +3013,6 @@ class PreferencesWindow(Adw.Window):
         self.compression_row = Adw.SwitchRow()
         # Off sends nothing, so it is "do not configure", not "disabled".
         self.compression_row.set_title(_("Force compression"))
-        self.compression_row.set_subtitle(_("Off leaves this to your SSH config"))
         self.compression_row.set_active(bool(values['compression']))
         advanced_group.add(self.compression_row)
 
@@ -3026,9 +3021,6 @@ class PreferencesWindow(Adw.Window):
         # reuse (no re-handshake) — faster reconnects and chatty operations.
         self.controlmaster_row = Adw.SwitchRow()
         self.controlmaster_row.set_title(_("Enable SSH connection multiplexing"))
-        self.controlmaster_row.set_subtitle(
-            _("Reuse one connection per host (ControlMaster) for faster reconnects")
-        )
         self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
         advanced_group.add(self.controlmaster_row)
         if is_windows():
