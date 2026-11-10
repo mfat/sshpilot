@@ -2928,14 +2928,17 @@ class PreferencesWindow(Adw.Window):
         self.connection_attempts_row.set_value(int(values['connection_attempts']))
         advanced_group.add(self.connection_attempts_row)
 
-        # Default keepalive opt-out. When on (default) and the user hasn't
-        # set an explicit ServerAlive interval below or in ~/.ssh/config,
-        # SSH Pilot applies a sane default so dropped links are detected.
+        # Default keepalive opt-out. When on (default), SSH Pilot sends a
+        # default ServerAlive so dropped links are detected. It is a
+        # command-line option, so it beats a `Host *` value in ~/.ssh/config;
+        # only an interval set below or authored in the host's own block
+        # suppresses it.
         self.apply_default_keepalive_row = Adw.SwitchRow()
         self.apply_default_keepalive_row.set_title(_("Apply default keepalive"))
         self.apply_default_keepalive_row.set_subtitle(
-            _("Detect dropped connections automatically when no ServerAlive "
-            "value is set here or in ~/.ssh/config. Explicit values always win.")
+            _("Send keepalives so dropped connections are detected. Overrides "
+              "Host * in ~/.ssh/config; a host's own ServerAlive value, or one "
+              "set below, wins.")
         )
         self.apply_default_keepalive_row.set_active(
             bool(self.config.get_setting('ssh.apply_default_keepalive', True))
