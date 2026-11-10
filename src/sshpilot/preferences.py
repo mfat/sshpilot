@@ -2941,11 +2941,11 @@ class PreferencesWindow(Adw.Window):
         # Group description wraps fully; ActionRow subtitles ellipsize at one
         # line by default, which is too tight for this precedence note.
         help_group = Adw.PreferencesGroup()
-        help_group.set_title(_("Custom SSH Options"))
+        help_group.set_title(_("Override SSH Configuration"))
         help_group.set_description(
-            _("Options you set here are sent with every connection and "
-              "override Host * in ~/.ssh/config. Options left as “Do not "
-              "configure” are not sent. A connection's own settings always win.")
+            _("Options you set here are injected into the SSH command and "
+              "win over what is set in your SSH configuration file. "
+              "Per-connection settings always win over these.")
         )
 
         # Two groups, because a switch means different things in each. Under

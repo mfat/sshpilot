@@ -155,7 +155,7 @@ SETTINGS = (
                  N_("uploads;downloads;sftp")),
     SettingEntry("file-management", N_("Terminal Panes"), N_("Visible Terminals")),
     SettingEntry("file-management", N_("Terminal Panes"), N_("Follow Folder Navigation")),
-    SettingEntry("ssh-options", None, N_("Custom SSH Options"),
+    SettingEntry("ssh-options", None, N_("Override SSH Configuration"),
                  N_("ssh config;ssh_config;override")),
     SettingEntry("ssh-options", N_("Overrides"), N_("Connect Timeout (s)")),
     SettingEntry("ssh-options", N_("Overrides"), N_("Connection Attempts"), N_("retries")),

@@ -10527,17 +10527,17 @@ msgid "Do not configure"
 msgstr "不配置"
 
 #: src/sshpilot/preferences.py:2944 src/sshpilot/settings_index.py:158
-msgid "Custom SSH Options"
-msgstr "自定义 SSH 选项"
+msgid "Override SSH Configuration"
+msgstr "覆盖 SSH 配置"
 
 #: src/sshpilot/preferences.py:2946
 msgid ""
-"Options you set here are sent with every connection and override Host * in "
-"~/.ssh/config. Options left as “Do not configure” are not sent. A "
-"connection's own settings always win."
+"Options you set here are injected into the SSH command and win over what is "
+"set in your SSH configuration file. Per-connection settings always win over "
+"these."
 msgstr ""
-"在此设置的选项会随每个连接发送，并覆盖 ~/.ssh/config 中的 Host *。保持“不配"
-"置”的选项不会发送。连接自身的设置始终优先。"
+"您在此设置的选项会注入到 SSH 命令中，并优先于 SSH 配置文件中的设置。每连接设"
+"置始终优先于这些选项。"
 
 #. Two groups, because a switch means different things in each. Under
 #. Overrides, off is "not sent, the SSH config decides", so every

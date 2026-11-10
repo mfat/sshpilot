@@ -10823,18 +10823,18 @@ msgid "Do not configure"
 msgstr "پیکربندی نشود"
 
 #: src/sshpilot/preferences.py:2944 src/sshpilot/settings_index.py:158
-msgid "Custom SSH Options"
-msgstr "گزینه‌های SSH سفارشی"
+msgid "Override SSH Configuration"
+msgstr "بازنویسی پیکربندی SSH"
 
 #: src/sshpilot/preferences.py:2946
 msgid ""
-"Options you set here are sent with every connection and override Host * in "
-"~/.ssh/config. Options left as “Do not configure” are not sent. A "
-"connection's own settings always win."
+"Options you set here are injected into the SSH command and win over what is "
+"set in your SSH configuration file. Per-connection settings always win over "
+"these."
 msgstr ""
-"گزینه‌هایی که اینجا تنظیم می‌کنید با هر اتصال فرستاده می‌شوند و Host * در "
-"‎~/.ssh/config را بازنویسی می‌کنند. گزینه‌هایی که روی «پیکربندی نشود» بمانند "
-"فرستاده نمی‌شوند. تنظیمات خودِ هر اتصال همیشه اولویت دارد."
+"گزینه‌هایی که اینجا تنظیم می‌کنید به فرمان SSH تزریق می‌شوند و بر آنچه در "
+"پروندهٔ پیکربندی SSH شما تنظیم شده اولویت دارند. تنظیمات هر اتصال همیشه بر "
+"این‌ها اولویت دارد."
 
 #. Two groups, because a switch means different things in each. Under
 #. Overrides, off is "not sent, the SSH config decides", so every

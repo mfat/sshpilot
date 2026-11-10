@@ -10911,18 +10911,18 @@ msgid "Do not configure"
 msgstr "Não configurar"
 
 #: src/sshpilot/preferences.py:2944 src/sshpilot/settings_index.py:158
-msgid "Custom SSH Options"
-msgstr "Opções personalizadas do SSH"
+msgid "Override SSH Configuration"
+msgstr "Substituir a configuração SSH"
 
 #: src/sshpilot/preferences.py:2946
 msgid ""
-"Options you set here are sent with every connection and override Host * in "
-"~/.ssh/config. Options left as “Do not configure” are not sent. A "
-"connection's own settings always win."
+"Options you set here are injected into the SSH command and win over what is "
+"set in your SSH configuration file. Per-connection settings always win over "
+"these."
 msgstr ""
-"As opções definidas aqui são enviadas com cada ligação e substituem Host * "
-"em ~/.ssh/config. As opções deixadas em «Não configurar» não são enviadas. "
-"As definições próprias de uma ligação prevalecem sempre."
+"As opções definidas aqui são injetadas no comando SSH e prevalecem sobre o "
+"que está definido no seu ficheiro de configuração SSH. As definições por "
+"ligação prevalecem sempre sobre estas."
 
 #. Two groups, because a switch means different things in each. Under
 #. Overrides, off is "not sent, the SSH config decides", so every

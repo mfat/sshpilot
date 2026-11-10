@@ -752,20 +752,18 @@ def test_max_concurrent_transfers_changed_persists_immediately(tmp_path, monkeyp
 
 
 def test_ssh_options_help_explains_per_connection_precedence():
-    """Preferences ▸ SSH Options must say these are app-wide defaults that
-    lose to an explicit per-connection setting, not only that they override
-    ~/.ssh/config.
+    """Preferences ▸ SSH Options must say these are injected into the SSH
+    command (winning over the SSH config file) and lose to an explicit
+    per-connection setting.
     """
     import inspect
 
     src = inspect.getsource(PreferencesWindow._build_ssh_settings_preferences_page)
-    assert "~/.ssh/config" in src
-    assert "A connection's own settings always win" in src
-    # And that an untouched option is not sent at all, so an off switch is
-    # not read as "this is disabled".
-    assert "are not sent" in src
+    assert "Override SSH Configuration" in src
+    assert "injected into the SSH command" in src
+    assert "SSH configuration file" in src
+    assert "Per-connection settings always win over these" in src
     assert "help_group.set_description(" in src
-    assert "These settings override values from your ~/.ssh/config." not in src
 
 
 # ---------------------------------------------------------------------------
