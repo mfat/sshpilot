@@ -760,7 +760,10 @@ def test_ssh_options_help_explains_per_connection_precedence():
 
     src = inspect.getsource(PreferencesWindow._build_ssh_settings_preferences_page)
     assert "~/.ssh/config" in src
-    assert "per-connection" in src
+    assert "A connection's own settings always win" in src
+    # And that an untouched option is not sent at all, so an off switch is
+    # not read as "this is disabled".
+    assert "are not sent" in src
     assert "help_group.set_description(" in src
     assert "These settings override values from your ~/.ssh/config." not in src
 

@@ -2898,6 +2898,19 @@ class PreferencesWindow(Adw.Window):
             row.set_sensitive(True)
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
+    @staticmethod
+    def _show_unset_when_off(row):
+        """Label an override switch "Do not configure" while it is off.
+
+        Off sends nothing and leaves the option to the SSH config; without
+        the label it reads as "this is disabled".
+        """
+        def _sync(*_args):
+            row.set_subtitle("" if row.get_active() else _("Do not configure"))
+
+        row.connect('notify::active', _sync)
+        _sync()
+
     def _optional_ssh_number_row(self, title, field, *, step, initial, value):
         """A number row that is off ("Do not configure") until switched on.
 
@@ -2930,11 +2943,18 @@ class PreferencesWindow(Adw.Window):
         help_group = Adw.PreferencesGroup()
         help_group.set_title(_("Custom SSH Options"))
         help_group.set_description(
-            _("These settings apply to all connections and override values from "
-              "~/.ssh/config. Explicit per-connection settings always win.")
+            _("Options you set here are sent with every connection and "
+              "override Host * in ~/.ssh/config. Options left as “Do not "
+              "configure” are not sent. A connection's own settings always win.")
         )
 
-        advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
+        # Two groups, because a switch means different things in each. Under
+        # Overrides, off is "not sent, the SSH config decides", so every
+        # untouched row reads "Do not configure". Under Application Behavior
+        # a switch is the app's own feature and off simply means off.
+        advanced_group = Adw.PreferencesGroup(title=_("Overrides"))
+        app_group = Adw.PreferencesGroup(title=_("Application Behavior"))
+        reset_group = Adw.PreferencesGroup()
 
         values = self._ssh_override_page_values()
 
@@ -2970,7 +2990,7 @@ class PreferencesWindow(Adw.Window):
         self.apply_default_keepalive_row.set_active(
             bool(self.config.get_setting('ssh.apply_default_keepalive', True))
         )
-        advanced_group.add(self.apply_default_keepalive_row)
+        app_group.add(self.apply_default_keepalive_row)
 
         # Keepalive interval
         self.keepalive_interval_row = self._optional_ssh_number_row(
@@ -3007,6 +3027,7 @@ class PreferencesWindow(Adw.Window):
         self.batch_mode_row = Adw.SwitchRow()
         self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
         self.batch_mode_row.set_active(bool(values['batch_mode']))
+        self._show_unset_when_off(self.batch_mode_row)
         advanced_group.add(self.batch_mode_row)
 
         # Compression
@@ -3014,6 +3035,7 @@ class PreferencesWindow(Adw.Window):
         # Off sends nothing, so it is "do not configure", not "disabled".
         self.compression_row.set_title(_("Force compression"))
         self.compression_row.set_active(bool(values['compression']))
+        self._show_unset_when_off(self.compression_row)
         advanced_group.add(self.compression_row)
 
         # Connection multiplexing (ControlMaster). When on, the first
@@ -3022,7 +3044,7 @@ class PreferencesWindow(Adw.Window):
         self.controlmaster_row = Adw.SwitchRow()
         self.controlmaster_row.set_title(_("Enable SSH connection multiplexing"))
         self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
-        advanced_group.add(self.controlmaster_row)
+        app_group.add(self.controlmaster_row)
         if is_windows():
             # OpenSSH for Windows cannot multiplex connections.
             self.controlmaster_row.set_visible(False)
@@ -3032,19 +3054,16 @@ class PreferencesWindow(Adw.Window):
             _("SSH Verbosity (-v)"), 'verbosity', step=1, initial=1,
             value=values['verbosity'],
         )
-        advanced_group.add(self.verbosity_row)
+        app_group.add(self.verbosity_row)
 
         # Debug logging toggle
         self.debug_enabled_row = Adw.SwitchRow()
         self.debug_enabled_row.set_title(_("Enable SSH Debug Logging"))
         self.debug_enabled_row.set_active(bool(values['debug_enabled']))
-        advanced_group.add(self.debug_enabled_row)
+        app_group.add(self.debug_enabled_row)
 
 
         # Reset button
-        # Add spacing before reset button
-        advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-
         # Use Adw.ActionRow for proper spacing and layout
         reset_row = Adw.ActionRow()
         reset_row.set_title(_("Reset Advanced SSH Settings"))
@@ -3056,10 +3075,12 @@ class PreferencesWindow(Adw.Window):
         reset_btn.connect('clicked', self.on_reset_advanced_ssh)
         reset_row.add_suffix(reset_btn)
 
-        advanced_group.add(reset_row)
+        reset_group.add(reset_row)
 
         ssh_settings_page.add(help_group)
         ssh_settings_page.add(advanced_group)
+        ssh_settings_page.add(app_group)
+        ssh_settings_page.add(reset_group)
 
         if self.ssh_overrides_controller is None:
             # No daemon overrides service: there is no authoritative owner for
