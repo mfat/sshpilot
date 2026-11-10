@@ -175,13 +175,17 @@ class WindowHelpMixin:
         for action_name, title in terminal_actions:
             shortcuts = current_shortcuts.get(action_name)
             if action_name == 'toggle-command-blocks':
-                shortcut = Gtk.ShortcutsShortcut(
-                    title=title,
-                    action_name='win.toggle-command-blocks',
-                )
-                if not shortcuts:
-                    shortcut.set_subtitle(_('No shortcut assigned'))
-                group_terminal.add_shortcut(shortcut)
+                # Always list Command Snippets (default has no accelerator).
+                # ShortcutsShortcut exposes subtitle as a GObject property only —
+                # there is no set_subtitle() helper.
+                if shortcuts:
+                    group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+                        title=title, accelerator=' '.join(shortcuts)))
+                else:
+                    group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+                        title=title,
+                        subtitle=_('No shortcut assigned'),
+                    ))
             elif shortcuts:
                 accelerator = ' '.join(shortcuts)
                 group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
