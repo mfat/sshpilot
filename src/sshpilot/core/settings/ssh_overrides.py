@@ -47,7 +47,7 @@ INTEGER_RANGES: Dict[str, tuple[int, int]] = {
     "verbosity": (0, 3),
 }
 
-# "Do not configure": no ``StrictHostKeyChecking`` option is sent, so OpenSSH
+# Unset (empty string): no ``StrictHostKeyChecking`` option is sent, so OpenSSH
 # resolves it from the user's SSH configuration (and falls back to its own
 # default, ``ask``). Persisted as the empty string, which builds older than
 # this value already read as "no explicit choice".

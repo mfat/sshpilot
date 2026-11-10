@@ -1,8 +1,8 @@
-"""GUI tests for the "may be left unset" number rows on Settings > SSH options.
+"""GUI tests for Don't-set dropdown rows on Settings > SSH options.
 
-A number row used to show a bare ``0`` for "this option is not sent". It is now
-a switch that is off ("Do not configure") with the number field hidden; the
-stored value is unchanged (0 = not sent).
+Unset is the first dropdown choice ("Don't set"), never an off switch or a
+bare selected OpenSSH keyword. Stored values are unchanged
+(0 / False / \"\" = not sent).
 
 Opt-in only: SSHPILOT_GUI_TESTS=1 pytest -m gui
 """
@@ -16,33 +16,60 @@ requires_gui()
 pytestmark = pytest.mark.gui
 
 
-def _row(**overrides):
+def _int_row(**overrides):
     from sshpilot.optional_int_row import OptionalIntRow
 
     options = dict(
-        title="Connect Timeout (s)", lower=1, upper=600, step=1, initial=30,
-        unset_subtitle="Do not configure",
+        title="Connect Timeout (s)",
+        lower=1,
+        upper=600,
+        step=1,
+        initial=30,
+        dont_set_label="Don't set",
+        custom_label="Custom",
     )
     options.update(overrides)
     return OptionalIntRow(**options)
 
 
-def test_row_starts_unset_with_no_number_shown(gui):
-    row = _row()
+def _bool_row(**overrides):
+    from sshpilot.optional_int_row import OptionalBoolRow
+
+    options = dict(
+        title="Force compression",
+        dont_set_label="Don't set",
+        on_label="On",
+    )
+    options.update(overrides)
+    return OptionalBoolRow(**options)
+
+
+def _choice_row(**overrides):
+    from sshpilot.optional_int_row import OptionalChoiceRow
+
+    options = dict(
+        title="StrictHostKeyChecking",
+        choices=("accept-new", "yes", "no", "ask"),
+        dont_set_label="Don't set",
+    )
+    options.update(overrides)
+    return OptionalChoiceRow(**options)
+
+
+def test_int_row_starts_unset_with_no_number_shown(gui):
+    row = _int_row()
     assert row.get_value() == 0
     assert row.get_enabled() is False
     assert row.number_field_visible() is False
-    assert row.get_subtitle() == "Do not configure"
 
 
-def test_switching_on_reveals_the_number_and_reports_it(gui):
-    row = _row()
+def test_int_row_custom_reveals_the_number_and_dont_set_unsets(gui):
+    row = _int_row()
     seen = []
     row.connect("notify::value", lambda *_a: seen.append(row.get_value()))
 
     row.set_enabled(True)
     assert row.number_field_visible() is True
-    assert row.get_subtitle() == ""
     assert row.get_value() == 30
     assert seen == [30]
 
@@ -52,25 +79,57 @@ def test_switching_on_reveals_the_number_and_reports_it(gui):
     assert seen == [30, 0]
 
 
-def test_a_saved_value_is_shown_and_zero_switches_it_off(gui):
-    row = _row()
+def test_int_row_saved_value_is_shown_and_zero_clears(gui):
+    row = _int_row()
     row.set_value(45)
     assert (row.get_enabled(), row.get_value(), row.number_field_visible()) == (True, 45, True)
     row.set_value(0)
     assert (row.get_enabled(), row.get_value(), row.number_field_visible()) == (False, 0, False)
-    # Switching back on returns to the last number, not to a bare minimum.
+    # Setting again returns to the last number, not to a bare minimum.
     row.set_enabled(True)
     assert row.get_value() == 45
 
 
-def test_a_large_saved_value_is_not_clamped(gui):
-    row = _row()
+def test_int_row_large_saved_value_is_not_clamped(gui):
+    row = _int_row()
     row.set_value(600)
     assert row.get_value() == 600
 
 
-def test_ssh_options_page_uses_unset_rows_for_every_number(gui):
-    from sshpilot.optional_int_row import OptionalIntRow
+def test_bool_row_dont_set_and_on(gui):
+    row = _bool_row()
+    assert row.get_active() is False
+    assert row.get_selected() == 0
+
+    row.set_active(True)
+    assert row.get_active() is True
+    assert row.get_selected() == 1
+
+    row.set_active(False)
+    assert row.get_active() is False
+    assert row.get_selected() == 0
+
+
+def test_choice_row_dont_set_and_keywords(gui):
+    row = _choice_row()
+    assert row.get_value() == ""
+    assert row.get_selected() == 0
+
+    row.set_value("yes")
+    assert row.get_value() == "yes"
+    assert row.get_selected() == 2
+
+    row.set_value("")
+    assert row.get_value() == ""
+    assert row.get_selected() == 0
+
+
+def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
+    from sshpilot.optional_int_row import (
+        OptionalBoolRow,
+        OptionalChoiceRow,
+        OptionalIntRow,
+    )
 
     gui.window.show_preferences("ssh-options")
     gui.pump(500)
@@ -87,4 +146,12 @@ def test_ssh_options_page_uses_unset_rows_for_every_number(gui):
         assert isinstance(row, OptionalIntRow), name
         if row.get_value() == 0:
             assert row.number_field_visible() is False
-            assert row.get_subtitle() != ""
+            assert row.get_enabled() is False
+
+    assert isinstance(prefs.batch_mode_row, OptionalBoolRow)
+    assert isinstance(prefs.compression_row, OptionalBoolRow)
+    assert isinstance(prefs.strict_host_row, OptionalChoiceRow)
+    if not prefs.batch_mode_row.get_active():
+        assert prefs.batch_mode_row.get_selected() == 0
+    if prefs.strict_host_row.get_value() == "":
+        assert prefs.strict_host_row.get_selected() == 0

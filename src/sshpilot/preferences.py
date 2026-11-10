@@ -48,10 +48,10 @@ from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 logger = logging.getLogger(__name__)
 
 
-# StrictHostKeyChecking choices in row order. The empty value is "Do not
-# configure": no option is sent and OpenSSH resolves it from the SSH config.
-# It is first so every "unknown value" fallback lands on it.
-_STRICT_HOST_KEY_VALUES = ("", "accept-new", "yes", "no", "ask")
+# StrictHostKeyChecking choices after the leading "Don't set" dropdown entry.
+# Unset (empty string in storage) sends no option; OpenSSH then resolves it
+# from the SSH config.
+_STRICT_HOST_KEY_CHOICES = ("accept-new", "yes", "no", "ask")
 
 # Presentation-only values used while daemon-owned SSH overrides are
 # unavailable. They must never be written back to Config.
@@ -2898,25 +2898,12 @@ class PreferencesWindow(Adw.Window):
             row.set_sensitive(True)
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
-    @staticmethod
-    def _show_unset_when_off(row):
-        """Label an override switch "Do not configure" while it is off.
-
-        Off sends nothing and leaves the option to the SSH config; without
-        the label it reads as "this is disabled".
-        """
-        def _sync(*_args):
-            row.set_subtitle("" if row.get_active() else _("Do not configure"))
-
-        row.connect('notify::active', _sync)
-        _sync()
-
     def _optional_ssh_number_row(self, title, field, *, step, initial, value):
-        """A number row that is off ("Do not configure") until switched on.
+        """A number row with a Don't-set dropdown until the user opts in.
 
         Stored as before: 0 means the option is not sent. The row never shows
-        that 0 -- the switch does -- and its range is the model's own, so a
-        saved value is never clamped by the widget.
+        that 0 -- unset is the first dropdown choice -- and its range is the
+        model's own, so a saved value is never clamped by the widget.
         """
         from .optional_int_row import OptionalIntRow
 
@@ -2927,7 +2914,8 @@ class PreferencesWindow(Adw.Window):
             upper=upper,
             step=step,
             initial=initial,
-            unset_subtitle=_("Do not configure"),
+            dont_set_label=_("Don't set"),
+            custom_label=_("Custom"),
         )
         row.set_value(value)
         return row
@@ -2948,15 +2936,17 @@ class PreferencesWindow(Adw.Window):
               "Per-connection settings always win over these.")
         )
 
-        # Two groups, because a switch means different things in each. Under
-        # Overrides, off is "not sent, the SSH config decides", so every
-        # untouched row reads "Do not configure". Under Application Behavior
-        # a switch is the app's own feature and off simply means off.
+        # Two groups, because unset means different things in each. Under
+        # Overrides, unset is "Don't set" in a dropdown (nothing injected).
+        # Under Application Behavior a switch is the app's own feature and
+        # off simply means off.
         advanced_group = Adw.PreferencesGroup(title=_("Overrides"))
         app_group = Adw.PreferencesGroup(title=_("Application Behavior"))
         reset_group = Adw.PreferencesGroup()
 
         values = self._ssh_override_page_values()
+        dont_set_label = _("Don't set")
+        on_label = _("On")
 
         # Connect timeout
         self.connect_timeout_row = self._optional_ssh_number_row(
@@ -3006,36 +2996,34 @@ class PreferencesWindow(Adw.Window):
         )
         advanced_group.add(self.keepalive_count_row)
 
-        # Strict host key checking
-        self.strict_host_row = Adw.ComboRow()
-        self.strict_host_row.set_title(_("StrictHostKeyChecking"))
-        strict_model = Gtk.StringList()
-        strict_options = list(_STRICT_HOST_KEY_VALUES)
-        for item in strict_options:
-            # OpenSSH keywords stay as they are; only the unset choice is text.
-            strict_model.append(item or _("Do not configure"))
-        self.strict_host_row.set_model(strict_model)
-        current_strict = str(values['strict_host_key_checking'])
-        try:
-            idx = strict_options.index(current_strict)
-        except ValueError:
-            idx = 0
-        self.strict_host_row.set_selected(idx)
+        # Strict host key checking — dropdown with Don't set first, so an
+        # OpenSSH keyword is only shown after the user opts in.
+        from .optional_int_row import OptionalBoolRow, OptionalChoiceRow
+
+        self.strict_host_row = OptionalChoiceRow(
+            title=_("StrictHostKeyChecking"),
+            choices=_STRICT_HOST_KEY_CHOICES,
+            dont_set_label=dont_set_label,
+        )
+        self.strict_host_row.set_value(str(values['strict_host_key_checking']))
         advanced_group.add(self.strict_host_row)
 
-        # BatchMode (non-interactive)
-        self.batch_mode_row = Adw.SwitchRow()
-        self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
+        # BatchMode (non-interactive) — Don't set / On, not an off switch.
+        self.batch_mode_row = OptionalBoolRow(
+            title=_("BatchMode (disable prompts)"),
+            dont_set_label=dont_set_label,
+            on_label=on_label,
+        )
         self.batch_mode_row.set_active(bool(values['batch_mode']))
-        self._show_unset_when_off(self.batch_mode_row)
         advanced_group.add(self.batch_mode_row)
 
-        # Compression
-        self.compression_row = Adw.SwitchRow()
-        # Off sends nothing, so it is "do not configure", not "disabled".
-        self.compression_row.set_title(_("Force compression"))
+        # Compression — Don't set / On, not an off switch.
+        self.compression_row = OptionalBoolRow(
+            title=_("Force compression"),
+            dont_set_label=dont_set_label,
+            on_label=on_label,
+        )
         self.compression_row.set_active(bool(values['compression']))
-        self._show_unset_when_off(self.compression_row)
         advanced_group.add(self.compression_row)
 
         # Connection multiplexing (ControlMaster). When on, the first
@@ -3120,9 +3108,9 @@ class PreferencesWindow(Adw.Window):
             self.keepalive_interval_row,
             self.keepalive_count_row,
             self.verbosity_row,
+            self.strict_host_row,
         ):
             row.connect('notify::value', self._on_advanced_ssh_field_changed)
-        self.strict_host_row.connect('notify::selected', self._on_advanced_ssh_field_changed)
 
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
@@ -5983,15 +5971,12 @@ class PreferencesWindow(Adw.Window):
 
     def _collect_ssh_override_patch(self):
         """Read the nine SSH override fields from the page rows."""
-        options = list(_STRICT_HOST_KEY_VALUES)
-        idx = self.strict_host_row.get_selected()
-        strict_value = options[idx] if 0 <= idx < len(options) else ''
         return {
             "connect_timeout": int(self.connect_timeout_row.get_value()),
             "connection_attempts": int(self.connection_attempts_row.get_value()),
             "server_alive_interval": int(self.keepalive_interval_row.get_value()),
             "server_alive_count_max": int(self.keepalive_count_row.get_value()),
-            "strict_host_key_checking": strict_value,
+            "strict_host_key_checking": str(self.strict_host_row.get_value() or ""),
             "batch_mode": bool(self.batch_mode_row.get_active()),
             "compression": bool(self.compression_row.get_active()),
             "verbosity": int(self.verbosity_row.get_value()),
@@ -6010,11 +5995,7 @@ class PreferencesWindow(Adw.Window):
             self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
             self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
             self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
-            options = list(_STRICT_HOST_KEY_VALUES)
-            try:
-                self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
-            except ValueError:
-                self.strict_host_row.set_selected(0)
+            self.strict_host_row.set_value(str(snapshot.strict_host_key_checking or ""))
             self.batch_mode_row.set_active(bool(snapshot.batch_mode))
             self.compression_row.set_active(bool(snapshot.compression))
             self.verbosity_row.set_value(int(snapshot.verbosity))
@@ -6042,11 +6023,7 @@ class PreferencesWindow(Adw.Window):
             self.connection_attempts_row.set_value(snapshot['connection_attempts'])
             self.keepalive_interval_row.set_value(snapshot['server_alive_interval'])
             self.keepalive_count_row.set_value(snapshot['server_alive_count_max'])
-            options = list(_STRICT_HOST_KEY_VALUES)
-            try:
-                self.strict_host_row.set_selected(options.index(snapshot['strict_host_key_checking']))
-            except ValueError:
-                self.strict_host_row.set_selected(0)
+            self.strict_host_row.set_value(str(snapshot.get('strict_host_key_checking') or ""))
             self.batch_mode_row.set_active(snapshot['batch_mode'])
             self.compression_row.set_active(snapshot['compression'])
             self.verbosity_row.set_value(snapshot['verbosity'])

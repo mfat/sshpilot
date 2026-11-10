@@ -53,16 +53,18 @@ class _Switch:
         self._sensitive = sensitive
 
 
-class _Combo:
-    def __init__(self, selected=0):
-        self._selected = selected
+class _Choice:
+    """Stand-in for OptionalChoiceRow (get_value/set_value, \"\" = unset)."""
+
+    def __init__(self, value=""):
+        self._value = value
         self._sensitive = True
 
-    def get_selected(self):
-        return self._selected
+    def get_value(self):
+        return self._value
 
-    def set_selected(self, index):
-        self._selected = index
+    def set_value(self, value):
+        self._value = "" if value is None else str(value)
 
     def set_sensitive(self, sensitive):
         self._sensitive = sensitive
@@ -133,7 +135,7 @@ def _make_prefs(config, controller):
     prefs.connection_attempts_row = _Spin(value=0)
     prefs.keepalive_interval_row = _Spin(value=0)
     prefs.keepalive_count_row = _Spin(value=0)
-    prefs.strict_host_row = _Combo(selected=0)
+    prefs.strict_host_row = _Choice(value="")
     prefs.batch_mode_row = _Switch(active=False)
     prefs.compression_row = _Switch(active=False)
     prefs.verbosity_row = _Spin(value=0)
@@ -699,7 +701,7 @@ def test_snapshot_round_trip_restores_values_and_clears_suppress_flag(tmp_path, 
 
     prefs.connect_timeout_row.set_value(99)
     prefs.compression_row.set_active(True)
-    prefs.strict_host_row.set_selected(2)
+    prefs.strict_host_row.set_value("yes")
 
     prefs._restore_advanced_ssh_rows(snapshot)
 
@@ -971,29 +973,26 @@ def test_successful_reset_still_advances_the_snapshot(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Host key checking: "Do not configure" is the first row and the default
+# Host key checking: unset (\"\") is the default; set values round-trip
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "index, value",
-    [(0, ""), (1, "accept-new"), (2, "yes"), (3, "no"), (4, "ask")],
-)
-def test_strict_host_row_maps_each_choice_to_its_value(tmp_path, monkeypatch, index, value):
+@pytest.mark.parametrize("value", ["", "accept-new", "yes", "no", "ask"])
+def test_strict_host_row_maps_each_choice_to_its_value(tmp_path, monkeypatch, value):
     config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
     service = SshOverridesService(tmp_path / "config.json")
     prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
     _expiry_record(monkeypatch)
 
-    prefs.strict_host_row.set_selected(index)
+    prefs.strict_host_row.set_value(value)
     assert prefs._collect_ssh_override_patch()["strict_host_key_checking"] == value
     assert prefs.save_advanced_ssh_settings() is True
     assert service.get().strict_host_key_checking == value
 
-    # And the saved value selects the same row again when the page reloads.
-    prefs.strict_host_row.set_selected(4 if index != 4 else 0)
+    # And the saved value restores the same choice when the page reloads.
+    prefs.strict_host_row.set_value("ask" if value != "ask" else "yes")
     prefs._apply_ssh_override_values_to_rows(service.get())
-    assert prefs.strict_host_row.get_selected() == index
+    assert prefs.strict_host_row.get_value() == value
 
 
 def test_untouched_page_does_not_configure_host_key_checking(tmp_path, monkeypatch):
