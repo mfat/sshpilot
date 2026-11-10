@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.90",
+  "api_implementation_version": "0.91",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1880,6 +1880,13 @@
       "incoming",
       "outgoing"
     ],
+    "SshConfigUnavailableReason": [
+      "dangling_link",
+      "permission_denied",
+      "sandbox_hidden",
+      "unreadable",
+      "invalid"
+    ],
     "TransferBackend": [
       "sftp",
       "native_scp"
@@ -3265,8 +3272,15 @@
           "type": "bool"
         },
         {
+          "default": null,
+          "name": "ssh_config_unavailable",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SshConfigUnavailableReason]"
+        },
+        {
           "default": "",
-          "name": "ssh_config_missing_link_target",
+          "name": "ssh_config_unavailable_path",
           "required": false,
           "sensitive": false,
           "type": "str"

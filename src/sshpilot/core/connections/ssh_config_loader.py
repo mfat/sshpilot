@@ -223,7 +223,15 @@ def _resolve_config_files(
                 path,
                 reason,
             )
-        raise _config_error("SSH configuration could not be read completely")
+        # ``details`` stays inside the daemon (the API mapping drops it): it
+        # lets a startup that cannot read the config name the file instead
+        # of failing to start.
+        raise CoreError(
+            ErrorCode.CONFIG_PARSE_ERROR,
+            "SSH configuration could not be read completely",
+            details={"unreadable_path": str(unreadable[0][0])},
+            diagnostic_category="unreadable",
+        )
     return resolved
 
 

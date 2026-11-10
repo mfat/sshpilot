@@ -5,6 +5,22 @@ notes remain separate.
 
 ## Unreleased
 
+- `ConnectionStoreSnapshot.ssh_config_unavailable` (new enum
+  `SshConfigUnavailableReason`: `dangling_link`, `permission_denied`,
+  `sandbox_hidden`, `unreadable`, `invalid`) and
+  `ConnectionStoreSnapshot.ssh_config_unavailable_path` (wire fields sent only
+  when a reason is set) say why the daemon could not read the selected SSH
+  config and which path is at fault: a link it cannot follow (inside the
+  Flatpak usually a NixOS Home Manager link into `/nix/store`), a folder or
+  file that refuses access, a folder the Flatpak sandbox does not share, an
+  included file it cannot read, or a config it cannot parse. While a reason
+  is set the store holds no SSH connections and refuses every change with
+  `ssh_config_read_only`, instead of reconciling saved identities, groups and
+  metadata against an empty config; a config that cannot be read at startup
+  no longer stops the daemon. These replace the unreleased
+  `ssh_config_missing_link_target` (0.90), now `dangling_link` with its
+  target as the path. New fields and enum, so the API implementation version
+  is 0.91; Protocol remains 1.0.
 - `ConnectionStoreSnapshot.ssh_config_missing_link_target` (wire field
   `ssh_config_missing_link_target`, sent only when set) is the absolute target
   of a root SSH config that is a link the daemon cannot see -- inside the

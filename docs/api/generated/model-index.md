@@ -989,7 +989,8 @@ Synthetic representation:
 | `root_connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
 | `metadata` | `Tuple[ConnectionMetadataSummary, ...]` | Yes | — | No |
 | `ssh_config_read_only` | `bool` | No | `false` | No |
-| `ssh_config_missing_link_target` | `str` | No | `` | No |
+| `ssh_config_unavailable` | `Optional[SshConfigUnavailableReason]` | No | `null` | No |
+| `ssh_config_unavailable_path` | `str` | No | `` | No |
 
 Synthetic representation:
 
@@ -1000,8 +1001,9 @@ Synthetic representation:
   "groups": {},
   "metadata": {},
   "root_connection_ids": {},
-  "ssh_config_missing_link_target": "",
-  "ssh_config_read_only": false
+  "ssh_config_read_only": false,
+  "ssh_config_unavailable": null,
+  "ssh_config_unavailable_path": ""
 }
 ```
 

@@ -89,6 +89,8 @@ tests/core/test_ssh_config_text_editor.py::test_daemon_resolves_normal_config_ro
 tests/core/test_ssh_config_text_editor.py::test_store_saves_linked_root_in_place  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_repository_edits_linked_root_through_daemon_transaction  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_store_save_writes_exact_text_and_updates_revision  # POSIX file modes
+tests/core/test_ssh_config_text_editor.py::test_flatpak_grant_list_is_parsed_like_flatpak_writes_it  # path separators
+tests/core/test_ssh_config_text_editor.py::test_a_flatpak_without_ssh_folder_access_says_so  # path separators
 tests/core/test_transient_connections.py::test_issue_1320_jump_host_sees_the_users_config  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_transient_connections.py::test_issue_1320_save_dialog_sees_what_the_target_inherited  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_connection_launch_provider.py::test_builtin_plugin_failure_survives_provider_and_session_runtime  # assumes POSIX behaviour (reviewed by sample)

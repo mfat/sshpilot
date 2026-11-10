@@ -2874,9 +2874,11 @@ class _ReadOnlyAwareDialog(_FakeDialog):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config_read_only = None
+        self.config_unavailable = None
 
-    def set_config_read_only(self, read_only):
+    def set_config_read_only(self, read_only, unavailable=False):
         self.config_read_only = read_only
+        self.config_unavailable = unavailable
 
 
 def _patch_read_only_dialog(monkeypatch):
@@ -3030,6 +3032,44 @@ def test_dialog_blocks_save_only_while_ssh_is_selected():
     dialog._sync_config_read_only_ui()
     assert (dialog.revealed, dialog.sensitive) == (False, True)
 
+    # While the SSH config can't be read the daemon refuses every change,
+    # so every protocol is view-only.
+    dialog.set_config_read_only(True, unavailable=True)
+    assert (dialog.revealed, dialog.sensitive) == (True, False)
+
+
+def test_editor_is_view_only_for_any_protocol_while_config_is_unreadable(monkeypatch):
+    window = _MutationWindow()
+    window._ssh_config_unavailable = ("permission_denied", "/home/me/.ssh")
+    window.connection_manager.snapshot = lambda: SimpleNamespace(
+        ssh_config_read_only=True
+    )
+    created = _patch_read_only_dialog(monkeypatch)
+
+    window.show_connection_dialog(connection=None)
+
+    assert (created[0].config_read_only, created[0].config_unavailable) == (True, True)
+
+
+def test_unreadable_config_explains_a_refused_save_without_blaming_home_manager():
+    from sshpilot.gtk.ssh_config_access_messages import read_only_body
+
+    window = _MutationWindow()
+    window._ssh_config_unavailable = ("sandbox_hidden", "/home/me/.ssh")
+    completed = []
+    data = _basic_data(
+        __save_completion=lambda ok, result=None, meta_error=None: completed.append(
+            (ok, meta_error)
+        )
+    )
+    window.on_connection_saved(SimpleNamespace(is_editing=False, connection=None), data)
+    _operation, _success, failure = window.client_bridge.calls[0]
+
+    failure(SshPilotError(ErrorCode.SSH_CONFIG_READ_ONLY, "read-only"))
+
+    assert completed == [(False, read_only_body(True))]
+    assert "Home Manager" not in read_only_body(True)
+
 
 def test_main_window_explains_a_linked_config_it_cannot_see(monkeypatch):
     from sshpilot.gtk import ssh_config_access_messages as messages
@@ -3056,10 +3096,11 @@ def test_main_window_explains_a_linked_config_it_cannot_see(monkeypatch):
     window = _NoticeWindow()
     window.ssh_config_banner_container = _Widget()
     window.ssh_config_link_banner = _Widget()
-    state = {"target": "/nix/store/abc-hm/.ssh/config"}
+    state = {"reason": "dangling_link", "path": "/nix/store/abc-hm/.ssh/config"}
     manager = SimpleNamespace(
         snapshot=lambda: SimpleNamespace(
-            ssh_config_missing_link_target=state["target"]
+            ssh_config_unavailable=state["reason"],
+            ssh_config_unavailable_path=state["path"],
         )
     )
     monkeypatch.setattr(detect, "is_flatpak", lambda: True)
@@ -3067,11 +3108,18 @@ def test_main_window_explains_a_linked_config_it_cannot_see(monkeypatch):
     window._sync_ssh_config_link_notice(manager)
     banner = window.ssh_config_link_banner
     assert (banner.revealed, window.ssh_config_banner_container.visible) == (True, True)
-    assert banner.title == messages.link_banner_title(True)
-    assert window._ssh_config_missing_link_target == state["target"]
+    assert banner.title == messages.unavailable_banner_title("dangling_link", True)
+    assert "Flatpak sandbox can't follow" in banner.title
+    assert window._ssh_config_unavailable == ("dangling_link", state["path"])
 
-    # Access granted and SSH Pilot restarted: the next snapshot has no target.
-    state["target"] = ""
+    # A locked ~/.ssh reuses the same notice with its own wording.
+    state.update(reason="permission_denied", path="/home/me/.ssh")
+    window._sync_ssh_config_link_notice(manager)
+    assert banner.title == messages.unavailable_banner_title("permission_denied", True)
+    assert "isn't allowed" in banner.title
+
+    # Access granted and SSH Pilot restarted: the next snapshot has no reason.
+    state.update(reason=None, path="")
     window._sync_ssh_config_link_notice(manager)
     assert (banner.revealed, window.ssh_config_banner_container.visible) == (False, False)
 
@@ -3079,15 +3127,53 @@ def test_main_window_explains_a_linked_config_it_cannot_see(monkeypatch):
 def test_flatpak_details_offer_the_read_only_override_for_the_nix_store():
     from pathlib import Path
 
-    from sshpilot.gtk.ssh_config_access_messages import flatpak_override_command
-    from sshpilot.gtk.ssh_config_access_messages import link_details_body
+    from sshpilot.gtk.ssh_config_access_messages import (
+        fix_command,
+        flatpak_override_command,
+        unavailable_details_body,
+    )
 
     command = flatpak_override_command(
         Path("/nix/store/bkl8yxnzx2ish3fjgrkn89k29zcpmzhn-home-manager-files/.ssh/config")
     )
     assert command.startswith("flatpak override --user --filesystem=/nix/store:ro ")
-    body = link_details_body("/nix/store/x/.ssh/config", command, True)
-    assert command in body and "/nix/store/x/.ssh/config" in body
+    target = "/nix/store/x/.ssh/config"
+    assert fix_command("dangling_link", target, True) == flatpak_override_command(target)
+    body = unavailable_details_body("dangling_link", target, True)
+    assert flatpak_override_command(target) in body and target in body
+    # Outside the Flatpak a dangling link is just broken: no command.
+    assert fix_command("dangling_link", target, False) == ""
+
+
+def test_access_details_offer_a_fix_only_where_one_is_safe(monkeypatch):
+    from sshpilot.gtk.ssh_config_access_messages import (
+        fix_command,
+        unavailable_details_body,
+    )
+
+    monkeypatch.setenv("HOME", "/home/me")
+    monkeypatch.delenv("FLATPAK_ID", raising=False)
+    # The Flatpak's own ~/.ssh permission was removed: restore it.
+    assert fix_command("sandbox_hidden", "/home/me/.ssh", True) == (
+        "flatpak override --user --filesystem=~/.ssh:create io.github.mfat.sshpilot"
+    )
+    # A refused ~/.ssh or a file in it can be given back to the user.
+    assert fix_command("permission_denied", "/home/me/.ssh", False) == (
+        'sudo chown -R "$USER": /home/me/.ssh && chmod 700 /home/me/.ssh'
+    )
+    assert fix_command("permission_denied", "/home/me/.ssh/config", False) == (
+        'sudo chown "$USER": /home/me/.ssh/config && chmod 600 /home/me/.ssh/config'
+    )
+    # Never a recursive chown of a home directory or a system folder.
+    assert fix_command("permission_denied", "/home/me", False) == ""
+    assert fix_command("permission_denied", "/srv", False) == ""
+    body = unavailable_details_body("permission_denied", "/home/me", False)
+    assert "/home/me" in body and "AppArmor" in body and "chown" not in body
+    # An unreadable include or a parse error has nothing to run.
+    assert fix_command("unreadable", "/home/me/.ssh/extra", True) == ""
+    assert fix_command("invalid", "/home/me/.ssh/config", True) == ""
+    for reason in ("unreadable", "invalid", "sandbox_hidden"):
+        assert "/home/me/.ssh" in unavailable_details_body(reason, "/home/me/.ssh", True)
 
 
 def test_window_and_daemon_log_give_the_same_flatpak_command():

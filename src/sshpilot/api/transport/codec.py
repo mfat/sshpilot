@@ -88,6 +88,7 @@ from ..models.connection_store import (
     ReorderConnectionRequest,
     SetConnectionLayoutRequest,
     SetGroupColorRequest,
+    SshConfigUnavailableReason,
     thaw_safe_metadata,
     validate_safe_metadata,
 )
@@ -1285,8 +1286,11 @@ def connection_store_snapshot_to_wire(
         # Additive: sent only when set, like a summary's target_summary.
         **({"ssh_config_read_only": True} if snapshot.ssh_config_read_only else {}),
         **(
-            {"ssh_config_missing_link_target": snapshot.ssh_config_missing_link_target}
-            if snapshot.ssh_config_missing_link_target
+            {
+                "ssh_config_unavailable": snapshot.ssh_config_unavailable.value,
+                "ssh_config_unavailable_path": snapshot.ssh_config_unavailable_path,
+            }
+            if snapshot.ssh_config_unavailable is not None
             else {}
         ),
     }
@@ -1296,7 +1300,11 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
     data = _strict_fields(
         value,
         required={"generation", "connections", "groups", "root_connection_ids", "metadata"},
-        optional={"ssh_config_read_only", "ssh_config_missing_link_target"},
+        optional={
+            "ssh_config_read_only",
+            "ssh_config_unavailable",
+            "ssh_config_unavailable_path",
+        },
         context="connection store snapshot",
     )
     connections = data["connections"]
@@ -1311,6 +1319,15 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
         raise ValueError("connection store root ids must be an array")
     if type(metadata) is not list:
         raise ValueError("connection store metadata must be an array")
+    unavailable = data.get("ssh_config_unavailable")
+    if unavailable is not None:
+        try:
+            unavailable = SshConfigUnavailableReason(unavailable)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "connection store snapshot contains an unknown ssh config "
+                "unavailable reason"
+            ) from None
     return ConnectionStoreSnapshot(
         generation=_integer(data["generation"], "connection store generation"),
         connections=tuple(connection_summary_from_wire(item) for item in connections),
@@ -1322,9 +1339,10 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
         ssh_config_read_only=_boolean(
             data.get("ssh_config_read_only", False), "store ssh config read-only"
         ),
-        ssh_config_missing_link_target=_text(
-            data.get("ssh_config_missing_link_target", ""),
-            "store ssh config missing link target",
+        ssh_config_unavailable=unavailable,
+        ssh_config_unavailable_path=_text(
+            data.get("ssh_config_unavailable_path", ""),
+            "store ssh config unavailable path",
             allow_empty=True,
         ),
     )

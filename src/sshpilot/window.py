@@ -2116,8 +2116,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             read_only_body,
             read_only_heading,
         )
-        if any(is_config_read_only(c) for c in unique_connections):
-            self._error_dialog(read_only_heading(), read_only_body())
+        unavailable = bool(getattr(self, '_ssh_config_unavailable', None))
+        if unavailable or any(is_config_read_only(c) for c in unique_connections):
+            self._error_dialog(
+                read_only_heading(unavailable), read_only_body(unavailable)
+            )
             return
 
         active_connections = [
@@ -2222,30 +2225,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
 
     def _sync_ssh_config_link_notice(self, manager=None):
-        """Explain an empty list caused by a linked SSH config we can't see.
+        """Explain an empty list caused by an SSH config the daemon can't read.
 
-        The daemon names the link's target when ``~/.ssh/config`` points at
-        a file it cannot read -- inside the Flatpak usually a NixOS Home
-        Manager link into /nix/store. Without this the list is just empty.
+        The daemon names why (a link it can't follow -- inside the Flatpak
+        usually a NixOS Home Manager link into /nix/store --, a folder or
+        file that refuses access, a folder the sandbox doesn't share, an
+        unreadable include, a config it can't parse) and the path at fault.
+        Without this the list is just empty.
         """
         try:
             snapshot = (manager or self.connection_manager).snapshot()
-            target = str(getattr(snapshot, 'ssh_config_missing_link_target', '') or '')
+            reason = getattr(snapshot, 'ssh_config_unavailable', None)
+            path = str(getattr(snapshot, 'ssh_config_unavailable_path', '') or '')
         except Exception:
-            target = ''
-        self._ssh_config_missing_link_target = target
+            reason, path = None, ''
+        self._ssh_config_unavailable = (reason, path) if reason is not None else None
         container = getattr(self, 'ssh_config_banner_container', None)
         if container is None:
             return
         banner = self.ssh_config_link_banner
-        if not target:
+        if reason is None:
             if banner is not None:
                 banner.set_revealed(False)
             container.set_visible(False)
             return
         from .gtk.ssh_config_access_messages import (
             details_button_label,
-            link_banner_title,
+            unavailable_banner_title,
         )
         from .platform.detect import is_flatpak
         if banner is None:
@@ -2258,37 +2264,35 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             banner.connect('button-clicked', self._on_ssh_config_link_details)
             container.append(banner)
             self.ssh_config_link_banner = banner
-        banner.set_title(link_banner_title(is_flatpak()))
+        banner.set_title(unavailable_banner_title(reason, is_flatpak()))
         container.set_visible(True)
         banner.set_revealed(True)
 
     def _on_ssh_config_link_details(self, *_args):
-        from pathlib import Path
-
-        from .gtk.ssh_config_access_messages import flatpak_override_command
         from .gtk.ssh_config_access_messages import (
             copy_command_label,
-            link_details_body,
-            link_details_heading,
+            fix_command,
+            unavailable_details_body,
+            unavailable_details_heading,
         )
         from .platform.detect import is_flatpak
 
-        target = self._ssh_config_missing_link_target
-        if not target:
+        if not self._ssh_config_unavailable:
             return
+        reason, path = self._ssh_config_unavailable
         flatpak = is_flatpak()
-        command = flatpak_override_command(Path(target)) if flatpak else ''
+        command = fix_command(reason, path, flatpak)
         dialog = Adw.MessageDialog(
             transient_for=self,
             modal=True,
-            heading=link_details_heading(),
-            body=link_details_body(target, command, flatpak),
+            heading=unavailable_details_heading(reason),
+            body=unavailable_details_body(reason, path, flatpak),
         )
-        if flatpak:
+        if command:
             dialog.add_response('copy', copy_command_label())
             dialog.set_response_appearance('copy', Adw.ResponseAppearance.SUGGESTED)
         dialog.add_response('close', _('_Close'))
-        dialog.set_default_response('copy' if flatpak else 'close')
+        dialog.set_default_response('copy' if command else 'close')
         dialog.set_close_response('close')
 
         def _on_response(_dialog, response):
@@ -2298,7 +2302,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.get_clipboard().set(command)
                 self.toast_overlay.add_toast(Adw.Toast.new(_('Copied to clipboard')))
             except Exception:
-                logger.warning("Could not copy the Flatpak override command")
+                logger.warning("Could not copy the SSH config fix command")
 
         dialog.connect('response', _on_response)
         dialog.present()
@@ -2371,9 +2375,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.update_banner_container.set_visible(False)
-        # Linked SSH config the daemon cannot see (#1373); built on first use.
+        # SSH config the daemon cannot read (#1373); built on first use.
         self.ssh_config_link_banner = None
-        self._ssh_config_missing_link_target = ''
+        self._ssh_config_unavailable = None
         self.ssh_config_banner_container = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL
         )
@@ -5850,8 +5854,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 read_only = False
         else:
             read_only = is_config_read_only(connection)
-        if read_only:
-            dialog.set_config_read_only(True)
+        # Nothing saves while the SSH config can't be read, whatever the
+        # protocol: the daemon refuses every change rather than guess.
+        unavailable = bool(getattr(self, '_ssh_config_unavailable', None))
+        if read_only or unavailable:
+            dialog.set_config_read_only(True, unavailable=unavailable)
 
         # The authoritative daemon editor snapshot gates existing SSH edits.  A
         # blank/new connection (``connection is None`` or ``as_new``) needs no
@@ -7336,7 +7343,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     read_only_heading,
                 )
                 if is_read_only_error(error):
-                    self._error_dialog(read_only_heading(), read_only_body())
+                    unavailable = bool(getattr(self, '_ssh_config_unavailable', None))
+                    self._error_dialog(
+                        read_only_heading(unavailable), read_only_body(unavailable)
+                    )
                     return
                 self._error_dialog(
                     _("Failed to delete connection"),
@@ -9408,7 +9418,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if is_read_only_error(error):
                 # The file turned read-only after the editor opened (or the
                 # daemon's access check disagreed): say why, not "failed".
-                complete_save(False, None, meta_error=read_only_body())
+                complete_save(
+                    False,
+                    None,
+                    meta_error=read_only_body(
+                        bool(getattr(self, '_ssh_config_unavailable', None))
+                    ),
+                )
                 return
             complete_save(False)
 

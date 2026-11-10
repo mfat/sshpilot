@@ -162,33 +162,160 @@ def _flatpak_grant_hint(target: Path) -> str:
     )
 
 
-def describe_config_access(path: Path) -> Tuple[str, str]:
-    """Classify an SSH config file for the daemon log: ``(state, reason)``.
+#: Access states in which the root config's real content cannot be known.
+UNAVAILABLE_ACCESS_STATES = frozenset(
+    {"dangling", "no_access", "sandbox_hidden", "unreadable"}
+)
 
-    ``state`` is one of ``ok``, ``missing``, ``dangling``, ``unreadable`` or
-    ``read_only``; ``reason`` is a log sentence naming the file, the file a
-    link points to, and what is wrong. Log text only: public errors never
-    carry paths.
+
+def _denied_directory(path: Path) -> Optional[Path]:
+    """The first directory on the way to *path* this process may not enter.
+
+    A folder owned by another user (often left behind by ``sudo``), a mode
+    of 000, or an AppArmor/SELinux rule all make a config that exists look
+    missing: ``lexists`` swallows the permission error. Walking the parents
+    tells the two apart.
     """
+    for directory in reversed(Path(path).parents):
+        try:
+            if directory.is_dir() and not os.access(directory, os.X_OK):
+                return directory
+        except OSError:
+            return directory
+    return None
+
+
+def _flatpak_shared_paths() -> Optional[List[Path]]:
+    """Host paths the Flatpak sandbox shares, or ``None`` outside one.
+
+    ``/.flatpak-info`` lists the effective ``filesystems`` grant after user
+    overrides (a removed grant is simply absent). ``host`` and ``home``
+    cover the home directory; ``xdg-*`` names never cover ``~/.ssh``.
+    """
+    if not os.path.exists("/.flatpak-info"):
+        return None
+    import configparser
+
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read("/.flatpak-info", encoding="utf-8")
+        entries = parser.get("Context", "filesystems", fallback="")
+    except (OSError, configparser.Error, UnicodeError):
+        return None
+    home = Path(os.path.expanduser("~"))
+    # The app's own data is always there, though the grant never lists it:
+    # the isolated-mode SSH config lives in it.
+    shared: List[Path] = [
+        Path(os.environ[name])
+        for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
+        if os.environ.get(name)
+    ]
+    app_id = os.environ.get("FLATPAK_ID")
+    if app_id:
+        shared.append(home / ".var" / "app" / app_id)
+    for entry in entries.split(";"):
+        name, _, mode = entry.strip().rpartition(":")
+        if mode not in ("ro", "rw", "create"):
+            name = entry.strip()
+        if name in ("host", "home", "~"):
+            shared.append(Path("/") if name == "host" else home)
+        elif name.startswith("~/"):
+            shared.append(home / name[2:])
+        elif name.startswith("/"):
+            shared.append(Path(name))
+    return shared
+
+
+def flatpak_hides(path: Path) -> bool:
+    """Whether the Flatpak sandbox gives no access to *path* at all.
+
+    Inside the sandbox a folder that is not shared simply is not there, so
+    a config in it reads as missing. The grant list is the only way to tell
+    that from a home directory without the folder.
+    """
+    shared = _flatpak_shared_paths()
+    if shared is None:
+        return False
+    target = Path(os.path.abspath(path))
+    return not any(target == base or base in target.parents for base in shared)
+
+
+def _classify_config_access(path: Path) -> Tuple[str, str, Path]:
+    """``(state, reason, subject)``: :func:`describe_config_access` plus the
+    path the state is about (the denied folder, the hidden folder, the link
+    target), for the snapshot's ``ssh_config_unavailable_path``."""
     requested = Path(os.path.abspath(path))
     try:
         is_link = os.path.islink(requested)
         target = resolve_config_link(requested)
     except OSError as exc:
-        return "unreadable", f"{requested} cannot be inspected ({exc.strerror})"
+        return "unreadable", f"{requested} cannot be inspected ({exc.strerror})", requested
     shown = f"{requested} (a link to {target})" if is_link else str(requested)
     if not os.path.lexists(requested):
-        return "missing", f"{shown} does not exist; no connections are loaded from it"
+        denied = _denied_directory(requested)
+        if denied is not None:
+            return (
+                "no_access",
+                f"{requested} cannot be opened: permission denied on the "
+                f"folder {denied}, so no connections are loaded",
+                denied,
+            )
+        if flatpak_hides(requested.parent):
+            return (
+                "sandbox_hidden",
+                f"{requested} is not visible because the Flatpak sandbox has "
+                f"no access to {requested.parent}; grant it with: flatpak "
+                "override --user --filesystem=~/.ssh:create "
+                f"{os.environ.get('FLATPAK_ID') or 'io.github.mfat.sshpilot'}",
+                requested.parent,
+            )
+        return (
+            "missing",
+            f"{shown} does not exist; no connections are loaded from it",
+            requested,
+        )
     if not target.exists():
+        denied = _denied_directory(target)
+        if denied is not None:
+            return (
+                "no_access",
+                f"{shown} cannot be opened: permission denied on the folder "
+                f"{denied}, so no connections are loaded",
+                denied,
+            )
         reason = (
             f"{shown} points to a file that does not exist or is not visible "
             "here, so no connections are loaded from it"
         )
         if os.path.exists("/.flatpak-info"):
             reason += ". " + _flatpak_grant_hint(target)
-        return "dangling", reason
+        return "dangling", reason, target
     if not os.access(target, os.R_OK):
-        return "unreadable", f"{shown} exists but cannot be read (permission denied)"
+        return (
+            "unreadable",
+            f"{shown} exists but cannot be read (permission denied)",
+            target,
+        )
+    state, reason = _describe_writable_config(requested, target, shown)
+    return state, reason, target
+
+
+def describe_config_access(path: Path) -> Tuple[str, str]:
+    """Classify an SSH config file for the daemon log: ``(state, reason)``.
+
+    ``state`` is one of ``ok``, ``missing``, ``dangling``, ``no_access``
+    (a folder on the way cannot be entered), ``sandbox_hidden`` (the
+    Flatpak does not share its folder), ``unreadable`` or ``read_only``;
+    ``reason`` is a log sentence naming the file, the file a link points
+    to, and what is wrong. Log text only: public errors never carry paths.
+    """
+    state, reason, _subject = _classify_config_access(path)
+    return state, reason
+
+
+def _describe_writable_config(
+    requested: Path, target: Path, shown: str
+) -> Tuple[str, str]:
     if config_file_writable(requested):
         return "ok", f"{shown} is readable and writable"
     directory = target.parent
@@ -521,10 +648,33 @@ class SshConfigStore:
         if previous == (state, reason):
             return
         self._logged_access = (state, reason)
-        if state in ("dangling", "unreadable"):
+        if state in UNAVAILABLE_ACCESS_STATES:
             logger.warning("SSH config: %s", reason)
         elif state != "ok" or previous is not None:
             logger.info("SSH config: %s", reason)
+
+    def unavailable_access(self) -> Optional[Tuple[Any, Path]]:
+        """``(state, subject)`` when the root config cannot be seen, else None.
+
+        A config the daemon is refused, cannot see from inside the Flatpak,
+        or that is a link to a file it cannot see is *not* an empty config:
+        loading it as empty would retire every saved connection's identity
+        (and its groups) the next time the sidecar is reconciled. The
+        repository holds still instead and the frontend explains why.
+        """
+        from ...api.models.connection_store import SshConfigUnavailableReason
+
+        self._log_root_access()
+        state, _reason, subject = _classify_config_access(self._root_path)
+        reason = {
+            "dangling": SshConfigUnavailableReason.DANGLING_LINK,
+            "no_access": SshConfigUnavailableReason.PERMISSION_DENIED,
+            "unreadable": SshConfigUnavailableReason.PERMISSION_DENIED,
+            "sandbox_hidden": SshConfigUnavailableReason.SANDBOX_HIDDEN,
+        }.get(state)
+        if reason is None:
+            return None
+        return reason, subject
 
     def _overlay_generations(
         self, config: LoadedSshConfiguration

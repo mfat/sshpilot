@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.90",
+  "api_implementation_version": "0.91",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3819,6 +3819,7 @@
     "SocketDirection",
     "SplitConnectionRequest",
     "SshConfigText",
+    "SshConfigUnavailableReason",
     "StartScpTransferRequest",
     "StartTransferBatchRequest",
     "StartTransferRequest",
@@ -4094,7 +4095,8 @@
       "root_connection_ids",
       "metadata",
       "ssh_config_read_only",
-      "ssh_config_missing_link_target"
+      "ssh_config_unavailable",
+      "ssh_config_unavailable_path"
     ],
     "ConnectionSummary": [
       "id",
@@ -5977,6 +5979,13 @@
     "SocketDirection": [
       "incoming",
       "outgoing"
+    ],
+    "SshConfigUnavailableReason": [
+      "dangling_link",
+      "permission_denied",
+      "sandbox_hidden",
+      "unreadable",
+      "invalid"
     ],
     "TransferBackend": [
       "sftp",

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         ReorderConnectionRequest,
         SetConnectionLayoutRequest,
         SetGroupColorRequest,
+        SshConfigUnavailableReason,
     )
     from .connections import (
         AsbruImportMessage,
@@ -632,6 +633,7 @@ __all__ = [
     "SetConnectionLayoutRequest",
     "SetDaemonLogLevelRequest",
     "SetGroupColorRequest",
+    "SshConfigUnavailableReason",
     "SetGroupLoginProfileRequest",
     "SetLoginProfileSecretRequest",
     "SetOperationModeRequest",
@@ -971,6 +973,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "SetDaemonLogLevelRequest": ("daemon", "SetDaemonLogLevelRequest"),
     "SetConnectionLayoutRequest": ("connection_store", "SetConnectionLayoutRequest"),
     "SetGroupColorRequest": ("connection_store", "SetGroupColorRequest"),
+    "SshConfigUnavailableReason": ("connection_store", "SshConfigUnavailableReason"),
     "SetOperationModeRequest": ("daemon", "SetOperationModeRequest"),
     "SetSessionConnectionPasswordRequest": ("connections", "SetSessionConnectionPasswordRequest"),
     "SftpChmodRequest": ("operations", "SftpChmodRequest"),

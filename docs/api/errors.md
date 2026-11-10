@@ -34,7 +34,7 @@ the validated internal envelope.
 | `connection_already_exists` | Implemented | No until nickname changes | `create_connection`, `update_connection` | Keep the editor open and request another nickname |
 | `connection_not_found` | Implemented | No without refreshed ID | Connection get/update/delete | Refresh the snapshot; transitional aliases may expire after rename |
 | `persistence_failed` | Implemented | No automatic retry | Connection writes | Keep current UI state and let the user retry explicitly |
-| `ssh_config_read_only` | Implemented | No until the file becomes writable | SSH connection writes and raw SSH config saves | The SSH config file (or the one a link names, such as a Home Manager link into `/nix/store`) cannot be written; explain that it is managed elsewhere and offer the connection view-only |
+| `ssh_config_read_only` | Implemented | No until the file becomes writable | SSH connection writes and raw SSH config saves | The SSH config file (or the one a link names, such as a Home Manager link into `/nix/store`) cannot be written, or cannot be read at all (`ssh_config_unavailable` set); explain why and offer the connection view-only |
 | `mutation_ambiguous` | Implemented locally | No automatic retry | Daemon connection writes and session open/close | Refresh the corresponding snapshot before explicit retry |
 | `session_not_found` | Implemented | No without refreshed state | Session get/attach/detach/close | Refresh `sessions.list` |
 | `session_already_closed` | Implemented | No | Attach to exited/failed/closed session | Refresh session state; do not attach |
@@ -134,6 +134,13 @@ connections in advance (`ConnectionSummary.config_read_only`,
 `ConnectionStoreSnapshot.ssh_config_read_only`) so a frontend can offer them
 view-only; the error is the fallback when the file became read-only later.
 It carries no path; the frontend owns the explanation.
+
+The same code refuses *every* store change, SSH or not, while
+`ConnectionStoreSnapshot.ssh_config_unavailable` is set: the daemon could not
+read the SSH config at all, and writing anything then would reconcile saved
+identities, groups and metadata against a config it cannot see. The
+snapshot's reason and path say why; the change succeeds once the config
+loads again.
 
 <!-- api-error: mutation_ambiguous -->
 ## `mutation_ambiguous`

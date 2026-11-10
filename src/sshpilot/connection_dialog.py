@@ -4625,16 +4625,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._apply_protocol_to_ui()
         self._sync_config_read_only_ui()
 
-    def set_config_read_only(self, read_only):
+    def set_config_read_only(self, read_only, unavailable=False):
         """Offer an SSH connection view-only: its config file is read-only.
 
         The daemon marks a connection whose Host block lives in a file it
         cannot write (a Home Manager link into /nix/store), and a store
         whose root config cannot take a new connection. The banner says so
         up front and Save stays off while SSH is selected; a plugin
-        protocol saves to the daemon's own state and is unaffected.
+        protocol saves to the daemon's own state and is unaffected -- unless
+        *unavailable*: while the SSH config can't be read at all the daemon
+        refuses every change, so every protocol is view-only.
         """
         self._config_read_only = bool(read_only)
+        self._config_unavailable = bool(read_only and unavailable)
         if self._config_read_only and getattr(self, '_read_only_banner', None) is None:
             from .gtk.ssh_config_access_messages import read_only_body
             banner = Adw.Banner()
@@ -4642,7 +4645,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 banner.set_use_markup(False)
             except Exception:
                 pass
-            banner.set_title(read_only_body())
+            banner.set_title(read_only_body(self._config_unavailable))
             banner.set_revealed(False)
             self._read_only_banner = banner
             try:
@@ -4654,6 +4657,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _config_read_only_active(self):
         if not getattr(self, '_config_read_only', False):
             return False
+        if getattr(self, '_config_unavailable', False):
+            return True
         try:
             return self._selected_protocol_id() == 'ssh'
         except Exception:
@@ -5529,7 +5534,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 read_only_body,
                 read_only_heading,
             )
-            self.show_error(read_only_body(), heading=read_only_heading())
+            unavailable = getattr(self, '_config_unavailable', False)
+            self.show_error(
+                read_only_body(unavailable), heading=read_only_heading(unavailable)
+            )
             return
         # Daemon edits: never save before the authoritative editor snapshot
         # arrived, and never save after a terminal load failure.
