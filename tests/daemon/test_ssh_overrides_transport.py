@@ -53,7 +53,7 @@ def test_get_round_trip_over_real_daemon(tmp_path, overrides_server):
     try:
         result = client.get_global_ssh_overrides()
         assert type(result) is GlobalSshOverrides
-        assert result.strict_host_key_checking == "accept-new"
+        assert result.strict_host_key_checking == ""
         assert result.connect_timeout == 0
         assert result.revision
     finally:

@@ -132,7 +132,7 @@ def test_get_returns_wire_snapshot(tmp_path):
         "debug_enabled",
         "applies_immediately",
     }
-    assert result.value["strict_host_key_checking"] == "accept-new"
+    assert result.value["strict_host_key_checking"] == ""
 
 
 def test_get_requires_empty_params(tmp_path):

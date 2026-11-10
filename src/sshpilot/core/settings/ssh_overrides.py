@@ -47,8 +47,17 @@ INTEGER_RANGES: Dict[str, tuple[int, int]] = {
     "verbosity": (0, 3),
 }
 
-# Valid host-key-checking values accepted by OpenSSH.
-VALID_HOST_KEY_VALUES = frozenset({"accept-new", "yes", "no", "ask"})
+# "Do not configure": no ``StrictHostKeyChecking`` option is sent, so OpenSSH
+# resolves it from the user's SSH configuration (and falls back to its own
+# default, ``ask``). Persisted as the empty string, which builds older than
+# this value already read as "no explicit choice".
+HOST_KEY_UNSET = ""
+
+# Explicit host-key-checking values accepted by OpenSSH.
+EXPLICIT_HOST_KEY_VALUES = frozenset({"accept-new", "yes", "no", "ask"})
+
+# Every value the setting may hold: an explicit OpenSSH value, or unset.
+VALID_HOST_KEY_VALUES = EXPLICIT_HOST_KEY_VALUES | {HOST_KEY_UNSET}
 
 # Canonical semantic defaults. A missing raw key normalizes to exactly these
 # values, so "field absent" and "field set to its default" are equivalent for
@@ -58,7 +67,7 @@ DEFAULT_SSH_OVERRIDES: Dict[str, Any] = {
     "connection_attempts": 0,
     "server_alive_interval": 0,
     "server_alive_count_max": 0,
-    "strict_host_key_checking": "accept-new",
+    "strict_host_key_checking": HOST_KEY_UNSET,
     "batch_mode": False,
     "compression": False,
     "verbosity": 0,
@@ -75,7 +84,7 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
 
     Returns exactly the nine public field names with canonical values. Missing
     keys normalize to :data:`DEFAULT_SSH_OVERRIDES`; ``strict_host_key_checking``
-    missing or blank normalizes to ``"accept-new"``.
+    missing or blank normalizes to :data:`HOST_KEY_UNSET` ("do not configure").
 
     Raises ``TypeError`` for non-boolean booleans / non-integer integers and
     ``ValueError`` for out-of-range integers or an unknown host-key value.
@@ -101,13 +110,13 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
             semantic[field] = value
         elif field == "strict_host_key_checking":
             if value is None or not isinstance(value, str) or not value.strip():
-                semantic[field] = "accept-new"
+                semantic[field] = HOST_KEY_UNSET
                 continue
             normalized = value.strip()
-            if normalized not in VALID_HOST_KEY_VALUES:
+            if normalized not in EXPLICIT_HOST_KEY_VALUES:
                 raise ValueError(
                     f"strict_host_key_checking must be one of "
-                    f"{sorted(VALID_HOST_KEY_VALUES)}, got {value!r}"
+                    f"{sorted(EXPLICIT_HOST_KEY_VALUES)} or empty, got {value!r}"
                 )
             semantic[field] = normalized
         else:  # boolean fields
@@ -127,7 +136,7 @@ def compute_ssh_overrides_revision(semantic: Mapping[str, Any]) -> str:
 
     The revision is a hex SHA-256 prefix (12 chars) of the canonical JSON of
     the sorted field set, so two semantically equal states (including a missing
-    ``strict_host_key_checking`` vs an explicit ``"accept-new"``) always share
+    ``strict_host_key_checking`` vs an explicit empty one) always share
     a revision and no-op updates keep it stable.
     """
     canonical = json.dumps(
@@ -233,7 +242,7 @@ def ssh_settings_from_values(
     connection_attempts: Optional[int] = None,
     keepalive_interval: Optional[int] = None,
     keepalive_count_max: Optional[int] = None,
-    strict_host_key_checking: str = "accept-new",
+    strict_host_key_checking: str = HOST_KEY_UNSET,
     batch_mode: bool = False,
     compression: bool = False,
     verbosity: int = 0,
@@ -274,7 +283,7 @@ def ssh_config_from_settings(get_setting: Callable[[str, Any], Any]) -> Dict[str
         'batch_mode': False,
         'compression': False,
         'debug_enabled': False,
-        'strict_host_key_checking': 'accept-new',
+        'strict_host_key_checking': HOST_KEY_UNSET,
         'use_isolated_config': False,
         'verbosity': 0,
         'ssh_overrides': [],

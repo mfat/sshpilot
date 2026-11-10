@@ -823,6 +823,29 @@ def test_ssh_copy_id_leaves_unauthored_values_to_the_config():
     assert "-p" not in argv
 
 
+def test_ssh_copy_id_sends_no_host_key_option_when_not_configured():
+    """"Do not configure" must not fall back to accept-new on this path."""
+    import types
+
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    conn = _config_connection(hostname="web.example.com", authored=("hostname",))
+    for settings in ({}, {"strict_host_key_checking": ""},
+                     {"strict_host_key_checking": "", "auto_add_host_keys": True}):
+        argv = _build_base_ssh_command(
+            conn, {}, types.SimpleNamespace(get_ssh_config=lambda s=settings: dict(s)),
+            "ssh-copy-id",
+        )
+        assert not any("StrictHostKeyChecking" in token for token in argv)
+
+    argv = _build_base_ssh_command(
+        conn, {},
+        types.SimpleNamespace(get_ssh_config=lambda: {"strict_host_key_checking": "yes"}),
+        "ssh-copy-id",
+    )
+    assert "StrictHostKeyChecking=yes" in argv
+
+
 def test_ssh_copy_id_does_not_emit_session_directives():
     # A config RemoteCommand must not replace ssh-copy-id's own remote script.
     import types

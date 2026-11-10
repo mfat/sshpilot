@@ -79,7 +79,7 @@ def test_direct_core_service_reads_global_overrides(tmp_path):
     snapshot = client.get_global_ssh_overrides()
     assert isinstance(snapshot, GlobalSshOverrides)
     assert snapshot.connect_timeout == 0
-    assert snapshot.strict_host_key_checking == "accept-new"
+    assert snapshot.strict_host_key_checking == ""
 
 
 def test_direct_core_service_updates_global_overrides(tmp_path):

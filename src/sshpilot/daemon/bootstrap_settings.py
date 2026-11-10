@@ -23,7 +23,7 @@ DEFAULT_SSH_CONFIG: Dict[str, Any] = {
     "batch_mode": False,
     "compression": False,
     "debug_enabled": False,
-    "strict_host_key_checking": "accept-new",
+    "strict_host_key_checking": "",
     "use_isolated_config": False,
     "verbosity": 0,
     "ssh_overrides": [],

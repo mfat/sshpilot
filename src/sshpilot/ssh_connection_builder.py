@@ -736,12 +736,11 @@ def _append_app_ssh_overrides(cmd: List[str], app_ssh_config: dict, *, is_copy_i
     for cfg_key, option_name in _APP_POSITIVE_INT_OPTIONS:
         _append_positive_int_option(cmd, app_ssh_config.get(cfg_key), option_name)
 
+    # Empty means "do not configure": send nothing and let OpenSSH resolve
+    # the option from the user's SSH configuration.
     strict_host = str(app_ssh_config.get('strict_host_key_checking', '') or '').strip()
-    auto_add = bool(app_ssh_config.get('auto_add_host_keys', True))
     if strict_host:
         cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-    elif auto_add:
-        cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
 
 
 def _append_identity_and_proxy(

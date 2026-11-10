@@ -65,11 +65,27 @@ def _v2_to_v3(tree: Dict[str, Any]) -> None:
         tree["shortcuts"] = {}
 
 
+def _v3_to_v4(tree: Dict[str, Any]) -> None:
+    # Version 4 made "do not configure" the host-key-checking default. Until
+    # then every install carried ``accept-new`` -- the untouched default and a
+    # deliberate choice were stored identically -- and it was sent on every
+    # launch, overriding the user's own SSH configuration. Everyone on
+    # ``accept-new`` moves to unset; an explicit yes/no/ask is a choice only
+    # the user could have made and is kept.
+    ssh = tree.get("ssh")
+    if not isinstance(ssh, dict):
+        return
+    value = ssh.get("strict_host_key_checking")
+    if isinstance(value, str) and value.strip().lower() == "accept-new":
+        ssh["strict_host_key_checking"] = ""
+
+
 #: ``MIGRATIONS[n]`` upgrades a version-``n`` tree in place to version ``n + 1``.
 MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], None]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
     2: _v2_to_v3,
+    3: _v3_to_v4,
 }
 
 

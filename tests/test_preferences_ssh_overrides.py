@@ -335,7 +335,7 @@ def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
         "connection_attempts": 0,
         "server_alive_interval": 0,
         "server_alive_count_max": 0,
-        "strict_host_key_checking": "accept-new",
+        "strict_host_key_checking": "",
         "batch_mode": False,
         "compression": False,
         "verbosity": 0,
@@ -967,3 +967,38 @@ def test_successful_reset_still_advances_the_snapshot(tmp_path, monkeypatch):
     assert failures == []
     assert prefs.controlmaster_row.get_active() is False
     assert prefs._advanced_ssh_last_good_snapshot["controlmaster"] is False
+
+
+# ---------------------------------------------------------------------------
+# Host key checking: "Do not configure" is the first row and the default
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "index, value",
+    [(0, ""), (1, "accept-new"), (2, "yes"), (3, "no"), (4, "ask")],
+)
+def test_strict_host_row_maps_each_choice_to_its_value(tmp_path, monkeypatch, index, value):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    _expiry_record(monkeypatch)
+
+    prefs.strict_host_row.set_selected(index)
+    assert prefs._collect_ssh_override_patch()["strict_host_key_checking"] == value
+    assert prefs.save_advanced_ssh_settings() is True
+    assert service.get().strict_host_key_checking == value
+
+    # And the saved value selects the same row again when the page reloads.
+    prefs.strict_host_row.set_selected(4 if index != 4 else 0)
+    prefs._apply_ssh_override_values_to_rows(service.get())
+    assert prefs.strict_host_row.get_selected() == index
+
+
+def test_untouched_page_does_not_configure_host_key_checking(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+
+    assert prefs._ssh_override_page_values()["strict_host_key_checking"] == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []

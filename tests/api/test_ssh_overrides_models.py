@@ -153,10 +153,30 @@ def test_missing_strict_host_key_and_explicit_default_share_revision():
     from sshpilot.core.settings.ssh_overrides import normalize_ssh_overrides
 
     without = normalize_ssh_overrides({})
-    with_default = normalize_ssh_overrides(
-        {"strict_host_key_checking": "accept-new"}
-    )
+    with_default = normalize_ssh_overrides({"strict_host_key_checking": ""})
+    assert without["strict_host_key_checking"] == ""
     assert _compute_revision(without) == _compute_revision(with_default)
+    # An explicit OpenSSH value is a different state from "do not configure".
+    explicit = normalize_ssh_overrides({"strict_host_key_checking": "accept-new"})
+    assert _compute_revision(without) != _compute_revision(explicit)
+
+
+def test_unset_strict_host_key_is_a_valid_snapshot_and_patch_value():
+    snapshot = GlobalSshOverrides(
+        revision="abc",
+        connect_timeout=0,
+        connection_attempts=0,
+        server_alive_interval=0,
+        server_alive_count_max=0,
+        strict_host_key_checking="",
+        batch_mode=False,
+        compression=False,
+        verbosity=0,
+        debug_enabled=False,
+    )
+    assert snapshot.to_dict()["strict_host_key_checking"] == ""
+    request = UpdateGlobalSshOverridesRequest(patch={"strict_host_key_checking": ""})
+    assert request.patch["strict_host_key_checking"] == ""
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """The settings-file version policy (core.settings.versioning + store).
 
-Fixtures cover every version this build has shipped (0-3), a future
+Fixtures cover every version this build has shipped (0-4), a future
 version, malformed input, a failing upgrade step, a failing backup, and
 repeated execution. The rule under test throughout: the user's file is
 either upgraded with its original bytes kept in a new backup, or left
@@ -39,6 +39,7 @@ VERSION_FIXTURES = {
     1: {"config_version": 1, **USER_VALUES},
     2: {"config_version": 2, **USER_VALUES},
     3: {"config_version": 3, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
+    4: {"config_version": 4, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
 }
 
 
@@ -148,7 +149,7 @@ def test_older_file_is_upgraded_with_exact_backup(tmp_path, version):
 
 def test_current_file_is_not_touched(tmp_path):
     path = tmp_path / "config.json"
-    original = _write(path, VERSION_FIXTURES[3])
+    original = _write(path, VERSION_FIXTURES[CONFIG_VERSION])
     assert migrate_settings_file(path) is False
     assert path.read_bytes() == original
     assert _backups(tmp_path) == []
@@ -346,3 +347,56 @@ def test_daemon_startup_leaves_unusable_config_and_continues(unusable_file, monk
     monkeypatch.setattr(cli, "get_config_dir", lambda: path.parent)
     cli._upgrade_config_file()  # must not raise
     assert path.read_bytes() == original
+
+
+# -- version 4: host key checking is no longer configured by default ----------
+
+
+def _v3_tree(**ssh):
+    return {"config_version": 3, "shortcuts": {}, "ssh": dict(ssh)}
+
+
+def test_v3_saved_accept_new_becomes_do_not_configure():
+    """accept-new was both the untouched default and a choice; all of it moves."""
+    tree, stored = upgrade_settings(
+        _v3_tree(strict_host_key_checking="accept-new", batch_mode=True)
+    )
+    assert stored == 3
+    assert tree["ssh"]["strict_host_key_checking"] == ""
+    assert tree["ssh"]["batch_mode"] is True
+
+
+@pytest.mark.parametrize("value", ["yes", "no", "ask"])
+def test_v3_explicit_host_key_choice_is_kept(value):
+    tree, _stored = upgrade_settings(_v3_tree(strict_host_key_checking=value))
+    assert tree["ssh"]["strict_host_key_checking"] == value
+
+
+@pytest.mark.parametrize(
+    "tree",
+    [
+        {"config_version": 3},
+        {"config_version": 3, "ssh": {}},
+        {"config_version": 3, "ssh": "not-a-mapping"},
+        {"config_version": 3, "ssh": {"strict_host_key_checking": None}},
+    ],
+)
+def test_v3_without_a_saved_host_key_value_upgrades_cleanly(tree):
+    upgraded, _stored = upgrade_settings(tree)
+    assert upgraded["config_version"] == CONFIG_VERSION
+
+
+def test_accept_new_chosen_after_the_upgrade_survives(tmp_path):
+    """The move is one-time: a current file is never rewritten again."""
+    path = tmp_path / "config.json"
+    _write(path, _v3_tree(strict_host_key_checking="accept-new"))
+    assert migrate_settings_file(path) is True
+    tree = json.loads(path.read_text(encoding="utf-8"))
+    assert tree["ssh"]["strict_host_key_checking"] == ""
+    tree["ssh"]["strict_host_key_checking"] = "accept-new"
+    _write(path, tree)
+    assert migrate_settings_file(path) is False
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["ssh"]["strict_host_key_checking"]
+        == "accept-new"
+    )

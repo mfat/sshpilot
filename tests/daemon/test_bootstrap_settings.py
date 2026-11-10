@@ -34,7 +34,7 @@ def test_missing_config_uses_defaults(tmp_path):
 def test_malformed_config_uses_defaults(tmp_path):
     settings = _settings(tmp_path, raw_text="{not valid json")
     assert settings.use_isolated_config is False
-    assert settings.get_ssh_config()["strict_host_key_checking"] == "accept-new"
+    assert settings.get_ssh_config()["strict_host_key_checking"] == ""
 
 
 def test_non_dict_config_uses_defaults(tmp_path):

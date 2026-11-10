@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 # Lines moved per discrete mouse-wheel notch (VTE history scroll).  macOS
 # already accelerates wheel deltas, so one line per unit matches Terminal.app;
@@ -163,7 +163,9 @@ def get_default_config() -> Dict[str, Any]:
             'debug_enabled': False,
             'use_isolated_config': False,
             'ssh_overrides': [],
-            'strict_host_key_checking': 'accept-new',
+            # Empty = "do not configure": no StrictHostKeyChecking option is
+            # sent and OpenSSH resolves it from the user's SSH config.
+            'strict_host_key_checking': '',
             # Global SSH override fields (daemon-owned). 0 disables the
             # corresponding ``-o`` option (matching compose_ssh_overrides).
             'connection_timeout': 0,

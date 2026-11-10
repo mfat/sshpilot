@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- `GlobalSshOverrides.strict_host_key_checking` and the matching
+  `UpdateGlobalSshOverridesRequest` patch field accept the empty string, which
+  means "do not configure": no `StrictHostKeyChecking` option is sent and
+  OpenSSH resolves it from the user's SSH configuration. It is the new default
+  (previously `accept-new`, which was sent on every launch and overrode a
+  `Host *` value). The settings file moves to `config_version` 4; the upgrade
+  turns a saved `accept-new` into the empty value once and keeps an explicit
+  `yes`/`no`/`ask`. New accepted value and default, so the API implementation
+  version is 0.92; Protocol remains 1.0.
 - `ConnectionStoreSnapshot.ssh_config_unavailable` (new enum
   `SshConfigUnavailableReason`: `dangling_link`, `permission_denied`,
   `sandbox_hidden`, `unreadable`, `invalid`) and

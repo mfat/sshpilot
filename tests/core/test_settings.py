@@ -17,7 +17,7 @@ from sshpilot.core.settings import (
 def test_default_config_has_version():
     cfg = get_default_config()
     assert cfg["config_version"] == CONFIG_VERSION
-    assert cfg["ssh"]["strict_host_key_checking"] == "accept-new"
+    assert cfg["ssh"]["strict_host_key_checking"] == ""
 
 
 def test_ensure_config_defaults_backfills_encoding():

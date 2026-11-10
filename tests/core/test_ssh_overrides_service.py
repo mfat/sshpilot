@@ -66,7 +66,7 @@ def test_missing_file_returns_canonical_defaults(tmp_path):
     assert snapshot.connection_attempts == 0
     assert snapshot.server_alive_interval == 0
     assert snapshot.server_alive_count_max == 0
-    assert snapshot.strict_host_key_checking == "accept-new"
+    assert snapshot.strict_host_key_checking == ""
     assert snapshot.batch_mode is False
     assert snapshot.compression is False
     assert snapshot.verbosity == 0
@@ -75,19 +75,19 @@ def test_missing_file_returns_canonical_defaults(tmp_path):
     assert not (tmp_path / "config.json").exists()
 
 
-def test_missing_strict_host_key_equates_to_explicit_accept_new(tmp_path):
+def test_missing_strict_host_key_equates_to_explicit_unset(tmp_path):
     path = _write(
         tmp_path / "config.json",
         {"ssh": {"connection_timeout": 5}},
     )
     service = _service(path)
     snapshot = service.get()
-    assert snapshot.strict_host_key_checking == "accept-new"
+    assert snapshot.strict_host_key_checking == ""
 
     explicit = _write(
         tmp_path / "config.json",
         {
-            "ssh": {"connection_timeout": 5, "strict_host_key_checking": "accept-new"},
+            "ssh": {"connection_timeout": 5, "strict_host_key_checking": ""},
         },
     )
     other = _service(explicit).get()
@@ -347,8 +347,31 @@ def test_get_ssh_config_includes_derived_overrides(tmp_path):
     assert ssh["ssh_overrides"] == [
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=7",
-        "-o", "StrictHostKeyChecking=accept-new",
     ]
+
+
+def test_unset_host_key_checking_sends_no_option(tmp_path):
+    """"Do not configure" leaves StrictHostKeyChecking to the SSH config."""
+    service = _service(_write(tmp_path / "config.json", {"ssh": {}}))
+    assert service.get().strict_host_key_checking == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []
+
+
+@pytest.mark.parametrize("value", ["accept-new", "yes", "no", "ask"])
+def test_explicit_host_key_checking_is_sent_and_can_be_unset_again(tmp_path, value):
+    service = _service(_write(tmp_path / "config.json", {"ssh": {}}))
+    changed = service.update(
+        UpdateGlobalSshOverridesRequest(patch={"strict_host_key_checking": value})
+    )
+    assert changed.strict_host_key_checking == value
+    assert service.get_ssh_config()["ssh_overrides"] == [
+        "-o", f"StrictHostKeyChecking={value}",
+    ]
+    cleared = service.update(
+        UpdateGlobalSshOverridesRequest(patch={"strict_host_key_checking": ""})
+    )
+    assert cleared.strict_host_key_checking == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []
 
 
 def test_get_setting_reads_namespaced_and_top_level(tmp_path):
@@ -368,7 +391,7 @@ def test_get_ssh_config_degrades_to_defaults_on_malformed(tmp_path):
     service = _service(path)
     ssh = service.get_ssh_config()
     assert ssh["batch_mode"] is False
-    assert ssh["ssh_overrides"] == ["-o", "StrictHostKeyChecking=accept-new"]
+    assert ssh["ssh_overrides"] == []
     # The malformed file is untouched.
     assert path.read_text(encoding="utf-8") == "{ not json"
 
@@ -431,7 +454,7 @@ def test_controlmaster_fragment_only_injected_when_enabled(tmp_path):
     service = SshOverridesService(path, controlmaster_extra=_MUX_ARGS)
 
     ssh = service.get_ssh_config()
-    assert ssh["ssh_overrides"] == ["-o", "StrictHostKeyChecking=accept-new"]
+    assert ssh["ssh_overrides"] == []
 
     _write(path, {"ssh": {"controlmaster": True}})
     ssh = service.get_ssh_config()

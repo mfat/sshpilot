@@ -75,7 +75,8 @@ def _validate_strict_host_key(value: Any) -> None:
     if not isinstance(value, str) or value not in _VALID_HK_VALUES:
         raise ValueError(
             f"strict_host_key_checking must be one of "
-            f"{sorted(_VALID_HK_VALUES)}, got {value!r}"
+            f"{sorted(_VALID_HK_VALUES)} (empty = do not configure), "
+            f"got {value!r}"
         )
 
 

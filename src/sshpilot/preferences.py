@@ -47,6 +47,11 @@ from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 logger = logging.getLogger(__name__)
 
 
+# StrictHostKeyChecking choices in row order. The empty value is "Do not
+# configure": no option is sent and OpenSSH resolves it from the SSH config.
+# It is first so every "unknown value" fallback lands on it.
+_STRICT_HOST_KEY_VALUES = ("", "accept-new", "yes", "no", "ask")
+
 # Presentation-only values used while daemon-owned SSH overrides are
 # unavailable. They must never be written back to Config.
 _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
@@ -54,7 +59,7 @@ _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "connection_attempts": 0,
     "server_alive_interval": 0,
     "server_alive_count_max": 0,
-    "strict_host_key_checking": "accept-new",
+    "strict_host_key_checking": "",
     "batch_mode": False,
     "compression": False,
     "verbosity": 0,
@@ -2952,10 +2957,14 @@ class PreferencesWindow(Adw.Window):
         # Strict host key checking
         self.strict_host_row = Adw.ComboRow()
         self.strict_host_row.set_title(_("StrictHostKeyChecking"))
+        self.strict_host_row.set_subtitle(
+            _("“Do not configure” leaves this to your SSH config")
+        )
         strict_model = Gtk.StringList()
-        strict_options = ["accept-new", "yes", "no", "ask"]
+        strict_options = list(_STRICT_HOST_KEY_VALUES)
         for item in strict_options:
-            strict_model.append(item)
+            # OpenSSH keywords stay as they are; only the unset choice is text.
+            strict_model.append(item or _("Do not configure"))
         self.strict_host_row.set_model(strict_model)
         current_strict = str(values['strict_host_key_checking'])
         try:
@@ -5925,9 +5934,9 @@ class PreferencesWindow(Adw.Window):
 
     def _collect_ssh_override_patch(self):
         """Read the nine SSH override fields from the page rows."""
-        options = ["accept-new", "yes", "no", "ask"]
+        options = list(_STRICT_HOST_KEY_VALUES)
         idx = self.strict_host_row.get_selected()
-        strict_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+        strict_value = options[idx] if 0 <= idx < len(options) else ''
         return {
             "connect_timeout": int(self.connect_timeout_row.get_value()),
             "connection_attempts": int(self.connection_attempts_row.get_value()),
@@ -5952,7 +5961,7 @@ class PreferencesWindow(Adw.Window):
             self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
             self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
             self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
-            options = ["accept-new", "yes", "no", "ask"]
+            options = list(_STRICT_HOST_KEY_VALUES)
             try:
                 self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
             except ValueError:
@@ -5984,7 +5993,7 @@ class PreferencesWindow(Adw.Window):
             self.connection_attempts_row.set_value(snapshot['connection_attempts'])
             self.keepalive_interval_row.set_value(snapshot['server_alive_interval'])
             self.keepalive_count_row.set_value(snapshot['server_alive_count_max'])
-            options = ["accept-new", "yes", "no", "ask"]
+            options = list(_STRICT_HOST_KEY_VALUES)
             try:
                 self.strict_host_row.set_selected(options.index(snapshot['strict_host_key_checking']))
             except ValueError:
