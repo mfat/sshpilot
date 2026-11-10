@@ -897,7 +897,7 @@ def test_failed_reset_is_surfaced_to_the_user(tmp_path, monkeypatch):
     prefs._show_ssh_save_failure = lambda: failures.append(True)
     _expiry_record(monkeypatch)
 
-    prefs.on_reset_advanced_ssh()
+    prefs.reset_advanced_ssh()
 
     assert failures == [True]
 
@@ -938,7 +938,7 @@ def test_failed_edit_after_failed_reset_keeps_row_and_file_agreed(
     prefs._show_ssh_save_failure = lambda: None
     _expiry_record(monkeypatch)
 
-    prefs.on_reset_advanced_ssh()
+    prefs.reset_advanced_ssh()
 
     # Any later edit that the daemon also rejects.
     prefs.ssh_overrides_controller = SshOverridesController(_FailingClient(service))
@@ -962,7 +962,7 @@ def test_successful_reset_still_advances_the_snapshot(tmp_path, monkeypatch):
     prefs._show_ssh_save_failure = lambda: failures.append(True)
     _expiry_record(monkeypatch)
 
-    prefs.on_reset_advanced_ssh()
+    prefs.reset_advanced_ssh()
 
     assert failures == []
     assert prefs.controlmaster_row.get_active() is False
@@ -1002,3 +1002,47 @@ def test_untouched_page_does_not_configure_host_key_checking(tmp_path, monkeypat
 
     assert prefs._ssh_override_page_values()["strict_host_key_checking"] == ""
     assert service.get_ssh_config()["ssh_overrides"] == []
+
+
+# ---------------------------------------------------------------------------
+# Reset touches only the settings on the SSH options page
+# ---------------------------------------------------------------------------
+
+
+def test_reset_leaves_file_manager_settings_alone(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "ssh": {"connection_timeout": 30, "controlmaster": True},
+            "file_manager": {"open_externally": True, "max_concurrent_transfers": 8},
+        },
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs.open_file_manager_externally_row = _Switch(active=True)
+    prefs.max_concurrent_transfers_row = _Spin(value=8)
+    _expiry_record(monkeypatch)
+
+    assert prefs._apply_default_advanced_settings() is True
+
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["connection_timeout"] == 0
+    assert on_disk["ssh"]["controlmaster"] is False
+    assert on_disk["file_manager"]["open_externally"] is True
+    assert on_disk["file_manager"]["max_concurrent_transfers"] == 8
+    assert prefs.open_file_manager_externally_row.get_active() is True
+    assert prefs.max_concurrent_transfers_row.get_value() == 8
+
+
+def test_reset_asks_first_and_does_nothing_when_cancelled(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {"connection_timeout": 30}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    _expiry_record(monkeypatch)
+
+    prefs._on_reset_advanced_ssh_response(None, "cancel")
+    assert service.get().connect_timeout == 30
+
+    prefs._on_reset_advanced_ssh_response(None, "reset")
+    assert service.get().connect_timeout == 0

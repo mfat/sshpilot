@@ -168,7 +168,7 @@ SETTINGS = (
     SettingEntry("ssh-options", N_("SSH Settings"), N_("StrictHostKeyChecking"),
                  N_("host key;known hosts")),
     SettingEntry("ssh-options", N_("SSH Settings"), N_("BatchMode (disable prompts)")),
-    SettingEntry("ssh-options", N_("SSH Settings"), N_("Enable Compression (-C)")),
+    SettingEntry("ssh-options", N_("SSH Settings"), N_("Force compression")),
     SettingEntry("ssh-options", N_("SSH Settings"), N_("Enable SSH connection multiplexing"),
                  N_("controlmaster;controlpersist")),
     SettingEntry("ssh-options", N_("SSH Settings"), N_("SSH Verbosity (-v)"),

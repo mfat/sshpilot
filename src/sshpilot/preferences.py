@@ -2919,12 +2919,14 @@ class PreferencesWindow(Adw.Window):
         # Connect timeout
         self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
         self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
+        self.connect_timeout_row.set_subtitle(_("0 = not set (use SSH config)"))
         self.connect_timeout_row.set_value(int(values['connect_timeout']))
         advanced_group.add(self.connect_timeout_row)
 
         # Connection attempts
         self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
         self.connection_attempts_row.set_title(_("Connection Attempts"))
+        self.connection_attempts_row.set_subtitle(_("0 = not set (use SSH config)"))
         self.connection_attempts_row.set_value(int(values['connection_attempts']))
         advanced_group.add(self.connection_attempts_row)
 
@@ -2948,12 +2950,14 @@ class PreferencesWindow(Adw.Window):
         # Keepalive interval
         self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
         self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
+        self.keepalive_interval_row.set_subtitle(_("0 = not set (use SSH config)"))
         self.keepalive_interval_row.set_value(int(values['server_alive_interval']))
         advanced_group.add(self.keepalive_interval_row)
 
         # Keepalive count max
         self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
         self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
+        self.keepalive_count_row.set_subtitle(_("0 = not set (use SSH config)"))
         self.keepalive_count_row.set_value(int(values['server_alive_count_max']))
         advanced_group.add(self.keepalive_count_row)
 
@@ -2980,12 +2984,18 @@ class PreferencesWindow(Adw.Window):
         # BatchMode (non-interactive)
         self.batch_mode_row = Adw.SwitchRow()
         self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
+        self.batch_mode_row.set_subtitle(
+            _("Turns off all password and passphrase prompts, including "
+              "saved passwords")
+        )
         self.batch_mode_row.set_active(bool(values['batch_mode']))
         advanced_group.add(self.batch_mode_row)
 
         # Compression
         self.compression_row = Adw.SwitchRow()
-        self.compression_row.set_title(_("Enable Compression (-C)"))
+        # Off sends nothing, so it is "do not configure", not "disabled".
+        self.compression_row.set_title(_("Force compression"))
+        self.compression_row.set_subtitle(_("Off leaves this to your SSH config"))
         self.compression_row.set_active(bool(values['compression']))
         advanced_group.add(self.compression_row)
 
@@ -6219,21 +6229,6 @@ class PreferencesWindow(Adw.Window):
             finally:
                 self._suppress_advanced_ssh_autosave = False
 
-            file_manager_defaults = self.config.get_default_config().get('file_manager', {})
-            default_open_external = bool(file_manager_defaults.get('open_externally', False))
-            self.config.set_setting('file_manager.open_externally', default_open_external)
-            if getattr(self, 'open_file_manager_externally_row', None) is not None:
-                self.open_file_manager_externally_row.set_active(default_open_external)
-            concurrent_default = int(
-                file_manager_defaults.get('max_concurrent_transfers', 4) or 4
-            )
-            concurrent_default = max(1, min(10, concurrent_default))
-            self.config.set_setting(
-                'file_manager.max_concurrent_transfers', concurrent_default
-            )
-            if getattr(self, 'max_concurrent_transfers_row', None) is not None:
-                self.max_concurrent_transfers_row.set_value(concurrent_default)
-
             if controller is None:
                 # No Preferences row exists for this Config-owned key, but the
                 # legacy no-controller reset restored it to its default.
@@ -6293,6 +6288,27 @@ class PreferencesWindow(Adw.Window):
             )
 
     def on_reset_advanced_ssh(self, *args):
+        """Ask before resetting: the button wipes every value on the page."""
+        dialog = Adw.AlertDialog(
+            heading=_("Reset SSH options?"),
+            body=_(
+                "All settings on this page return to their defaults. "
+                "Per-connection settings are not changed."
+            ),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('reset', _("Reset"))
+        dialog.set_response_appearance('reset', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_reset_advanced_ssh_response)
+        dialog.present(self._dialog_parent())
+
+    def _on_reset_advanced_ssh_response(self, _dialog, response):
+        if response == 'reset':
+            self.reset_advanced_ssh()
+
+    def reset_advanced_ssh(self):
         """Reset only advanced SSH keys to defaults and update UI.
 
         A failed reset is a *partial* reset — the Config-owned keys are
