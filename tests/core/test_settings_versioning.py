@@ -1,6 +1,6 @@
 """The settings-file version policy (core.settings.versioning + store).
 
-Fixtures cover every version this build has shipped (0-4), a future
+Fixtures cover every version this build has shipped (0-5), a future
 version, malformed input, a failing upgrade step, a failing backup, and
 repeated execution. The rule under test throughout: the user's file is
 either upgraded with its original bytes kept in a new backup, or left
@@ -29,7 +29,7 @@ from sshpilot.core.settings import store, versioning
 USER_VALUES = {
     "terminal": {"theme": "solarized", "font": "Iosevka 13"},
     "ui": {"language": "de"},
-    "ssh": {"batch_mode": True},
+    "ssh": {"batch_mode": "yes"},
 }
 
 # One tree per shipped version. Version 0 is a file from before
@@ -40,6 +40,7 @@ VERSION_FIXTURES = {
     2: {"config_version": 2, **USER_VALUES},
     3: {"config_version": 3, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
     4: {"config_version": 4, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
+    5: {"config_version": 5, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
 }
 
 
@@ -363,7 +364,7 @@ def test_v3_saved_accept_new_becomes_do_not_configure():
     )
     assert stored == 3
     assert tree["ssh"]["strict_host_key_checking"] == ""
-    assert tree["ssh"]["batch_mode"] is True
+    assert tree["ssh"]["batch_mode"] == "yes"
 
 
 @pytest.mark.parametrize("value", ["yes", "no", "ask"])
@@ -400,3 +401,31 @@ def test_accept_new_chosen_after_the_upgrade_survives(tmp_path):
         json.loads(path.read_text(encoding="utf-8"))["ssh"]["strict_host_key_checking"]
         == "accept-new"
     )
+
+
+# -- version 5: BatchMode / Compression are tri-state yes/no/unset ----------
+
+
+def _v4_tree(**ssh):
+    return {"config_version": 4, "shortcuts": {}, "ssh": dict(ssh)}
+
+
+@pytest.mark.parametrize(
+    "key, before, after",
+    [
+        ("batch_mode", True, "yes"),
+        ("batch_mode", False, ""),
+        ("compression", True, "yes"),
+        ("compression", False, ""),
+    ],
+)
+def test_v4_bool_batch_or_compression_becomes_yes_no_unset(key, before, after):
+    tree, stored = upgrade_settings(_v4_tree(**{key: before}))
+    assert stored == 4
+    assert tree["ssh"][key] == after
+
+
+@pytest.mark.parametrize("value", ["yes", "no", ""])
+def test_v4_string_batch_mode_is_kept(value):
+    tree, _stored = upgrade_settings(_v4_tree(batch_mode=value))
+    assert tree["ssh"]["batch_mode"] == value

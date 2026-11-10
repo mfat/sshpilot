@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- `GlobalSshOverrides.batch_mode` and `GlobalSshOverrides.compression` (and the
+  matching `UpdateGlobalSshOverridesRequest` patch fields) are tri-state
+  strings: empty means don't set (nothing injected), `yes` / `no` inject the
+  matching `-o BatchMode=` / `-o Compression=` value. They were booleans where
+  `false` meant unset and `true` meant force-yes, so force-no was impossible.
+  The settings file moves to `config_version` 5; the upgrade maps `true` →
+  `yes` and `false` → empty. Type and accepted values change, so the API
+  implementation version is 0.93; Protocol remains 1.0.
 - `GlobalSshOverrides.strict_host_key_checking` and the matching
   `UpdateGlobalSshOverridesRequest` patch field accept the empty string, which
   means "do not configure": no `StrictHostKeyChecking` option is sent and

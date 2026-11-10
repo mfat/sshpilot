@@ -22,8 +22,8 @@ def _overrides(**overrides):
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
@@ -36,7 +36,7 @@ def test_global_ssh_overrides_round_trip():
         revision="rev-123",
         connect_timeout=30,
         server_alive_interval=45,
-        batch_mode=True,
+        batch_mode="yes",
         strict_host_key_checking="yes",
         verbosity=2,
     )
@@ -46,7 +46,7 @@ def test_global_ssh_overrides_round_trip():
     assert restored.revision == "rev-123"
     assert restored.connect_timeout == 30
     assert restored.server_alive_interval == 45
-    assert restored.batch_mode is True
+    assert restored.batch_mode == "yes"
     assert restored.strict_host_key_checking == "yes"
     assert restored.verbosity == 2
     assert restored.applies_immediately is True
@@ -71,12 +71,12 @@ def test_global_ssh_overrides_from_wire_rejects_missing_keys():
 
 def test_update_request_round_trip_with_expected_revision():
     request = UpdateGlobalSshOverridesRequest(
-        patch={"connect_timeout": 12, "batch_mode": True},
+        patch={"connect_timeout": 12, "batch_mode": "yes"},
         expected_revision="rev-abc",
     )
     wire = update_global_ssh_overrides_request_to_wire(request)
     restored = update_global_ssh_overrides_request_from_wire(wire)
-    assert restored.patch == {"connect_timeout": 12, "batch_mode": True}
+    assert restored.patch == {"connect_timeout": 12, "batch_mode": "yes"}
     assert restored.expected_revision == "rev-abc"
 
 

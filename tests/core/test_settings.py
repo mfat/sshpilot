@@ -88,8 +88,8 @@ def test_compose_ssh_overrides_verbosity_and_timeouts():
             keepalive_interval=30,
             keepalive_count_max=3,
             verbosity=2,
-            compression=True,
-            batch_mode=True,
+            compression="yes",
+            batch_mode="yes",
             strict_host_key_checking="accept-new",
         )
     )

@@ -7,7 +7,6 @@ switch or a bare ``0``. That keeps "not injected" from reading as
 Stored values match the preferences/daemon surface:
 
 * int rows: ``0`` while unset, otherwise the number shown
-* bool rows: ``False`` while unset, ``True`` while forced on
 * choice rows: ``""`` while unset, otherwise the selected keyword
 
 No text of its own: the caller passes title and dropdown labels so every
@@ -107,47 +106,6 @@ class OptionalIntRow(Adw.ActionRow):
         new_value = int(self._spin.get_value()) if enabled else 0
         if new_value != self.value:
             self.value = new_value
-
-
-class OptionalBoolRow(Adw.ComboRow):
-    """Don't-set / On dropdown; ``active`` is False while unset."""
-
-    __gtype_name__ = "SshPilotOptionalBoolRow"
-
-    active = GObject.Property(type=bool, default=False)
-
-    def __init__(
-        self,
-        *,
-        title: str,
-        dont_set_label: str,
-        on_label: str,
-    ) -> None:
-        super().__init__(title=title)
-        self._syncing = False
-        self.set_model(Gtk.StringList.new([dont_set_label, on_label]))
-        self.set_selected(0)
-        self.connect("notify::selected", self._on_selected)
-
-    def get_active(self) -> bool:
-        return bool(self.active)
-
-    def set_active(self, active) -> None:
-        self._syncing = True
-        try:
-            self.set_selected(1 if active else 0)
-        finally:
-            self._syncing = False
-        self._refresh()
-
-    def _on_selected(self, *_args) -> None:
-        if not self._syncing:
-            self._refresh()
-
-    def _refresh(self) -> None:
-        new_active = int(self.get_selected()) == 1
-        if new_active != self.active:
-            self.active = new_active
 
 
 class OptionalChoiceRow(Adw.ComboRow):

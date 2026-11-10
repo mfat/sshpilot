@@ -87,12 +87,12 @@ def test_direct_core_service_updates_global_overrides(tmp_path):
     before = client.get_global_ssh_overrides()
     updated = client.update_global_ssh_overrides(
         UpdateGlobalSshOverridesRequest(
-            patch={"connect_timeout": 30, "batch_mode": True},
+            patch={"connect_timeout": 30, "batch_mode": "yes"},
             expected_revision=before.revision,
         )
     )
     assert updated.connect_timeout == 30
-    assert updated.batch_mode is True
+    assert updated.batch_mode == "yes"
     assert updated.revision != before.revision
 
     # A second read reflects the same daemon-owned state.
@@ -114,7 +114,7 @@ def test_direct_core_service_reset_restores_defaults(tmp_path):
         expected_revision=changed.revision
     )
     assert reset.server_alive_interval == 0
-    assert reset.batch_mode is False
+    assert reset.batch_mode == ""
 
 
 def test_direct_core_service_rejects_stale_revision(tmp_path):

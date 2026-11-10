@@ -2,7 +2,7 @@
 
 Unset is the first dropdown choice ("Don't set"), never an off switch or a
 bare selected OpenSSH keyword. Stored values are unchanged
-(0 / False / \"\" = not sent).
+(0 / \"\" = not sent).
 
 Opt-in only: SSHPILOT_GUI_TESTS=1 pytest -m gui
 """
@@ -30,18 +30,6 @@ def _int_row(**overrides):
     )
     options.update(overrides)
     return OptionalIntRow(**options)
-
-
-def _bool_row(**overrides):
-    from sshpilot.optional_int_row import OptionalBoolRow
-
-    options = dict(
-        title="Force compression",
-        dont_set_label="Don't set",
-        on_label="On",
-    )
-    options.update(overrides)
-    return OptionalBoolRow(**options)
 
 
 def _choice_row(**overrides):
@@ -85,7 +73,6 @@ def test_int_row_saved_value_is_shown_and_zero_clears(gui):
     assert (row.get_enabled(), row.get_value(), row.number_field_visible()) == (True, 45, True)
     row.set_value(0)
     assert (row.get_enabled(), row.get_value(), row.number_field_visible()) == (False, 0, False)
-    # Setting again returns to the last number, not to a bare minimum.
     row.set_enabled(True)
     assert row.get_value() == 45
 
@@ -96,27 +83,17 @@ def test_int_row_large_saved_value_is_not_clamped(gui):
     assert row.get_value() == 600
 
 
-def test_bool_row_dont_set_and_on(gui):
-    row = _bool_row()
-    assert row.get_active() is False
-    assert row.get_selected() == 0
-
-    row.set_active(True)
-    assert row.get_active() is True
-    assert row.get_selected() == 1
-
-    row.set_active(False)
-    assert row.get_active() is False
-    assert row.get_selected() == 0
-
-
-def test_choice_row_dont_set_and_keywords(gui):
-    row = _choice_row()
+def test_choice_row_dont_set_yes_and_no(gui):
+    row = _choice_row(title="Compression", choices=("yes", "no"))
     assert row.get_value() == ""
     assert row.get_selected() == 0
 
     row.set_value("yes")
     assert row.get_value() == "yes"
+    assert row.get_selected() == 1
+
+    row.set_value("no")
+    assert row.get_value() == "no"
     assert row.get_selected() == 2
 
     row.set_value("")
@@ -125,11 +102,7 @@ def test_choice_row_dont_set_and_keywords(gui):
 
 
 def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
-    from sshpilot.optional_int_row import (
-        OptionalBoolRow,
-        OptionalChoiceRow,
-        OptionalIntRow,
-    )
+    from sshpilot.optional_int_row import OptionalChoiceRow, OptionalIntRow
 
     gui.window.show_preferences("ssh-options")
     gui.pump(500)
@@ -148,10 +121,8 @@ def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
             assert row.number_field_visible() is False
             assert row.get_enabled() is False
 
-    assert isinstance(prefs.batch_mode_row, OptionalBoolRow)
-    assert isinstance(prefs.compression_row, OptionalBoolRow)
-    assert isinstance(prefs.strict_host_row, OptionalChoiceRow)
-    if not prefs.batch_mode_row.get_active():
-        assert prefs.batch_mode_row.get_selected() == 0
-    if prefs.strict_host_row.get_value() == "":
-        assert prefs.strict_host_row.get_selected() == 0
+    for name in ("batch_mode_row", "compression_row", "strict_host_row"):
+        row = getattr(prefs, name)
+        assert isinstance(row, OptionalChoiceRow), name
+        if row.get_value() == "":
+            assert row.get_selected() == 0

@@ -18,6 +18,8 @@ from sshpilot.core.settings.ssh_overrides import (
     FIELD_TO_CONFIG_KEY,
     INTEGER_RANGES,
     VALID_HOST_KEY_VALUES,
+    VALID_YES_NO_VALUES,
+    YES_NO_FIELDS,
     compute_ssh_overrides_revision,
 )
 
@@ -29,6 +31,8 @@ EDITABLE_FIELDS = EDITABLE_FIELDS
 _FIELD_TO_CONFIG_KEY: Dict[str, str] = dict(FIELD_TO_CONFIG_KEY)
 _INTEGER_RANGES: Dict[str, tuple[int, int]] = dict(INTEGER_RANGES)
 _VALID_HK_VALUES = VALID_HOST_KEY_VALUES
+_VALID_YES_NO_VALUES = VALID_YES_NO_VALUES
+_YES_NO_FIELDS = YES_NO_FIELDS
 
 
 def _compute_revision(data: Dict[str, Any]) -> str:
@@ -80,6 +84,14 @@ def _validate_strict_host_key(value: Any) -> None:
         )
 
 
+def _validate_yes_no(value: Any, field: str) -> None:
+    if not isinstance(value, str) or value not in _VALID_YES_NO_VALUES:
+        raise ValueError(
+            f"{field} must be one of {sorted(_VALID_YES_NO_VALUES)} "
+            f"(empty = don't set), got {value!r}"
+        )
+
+
 def _validate_patch_fields(patch: Mapping[str, Any]) -> None:
     """Reject unknown patch fields and type-check values."""
     unknown = set(patch.keys()) - EDITABLE_FIELDS
@@ -88,8 +100,10 @@ def _validate_patch_fields(patch: Mapping[str, Any]) -> None:
             f"unknown patch fields: {sorted(unknown)}"
         )
     for key, value in patch.items():
-        if key in ("batch_mode", "compression", "debug_enabled"):
+        if key == "debug_enabled":
             _validate_boolean(value, key)
+        elif key in _YES_NO_FIELDS:
+            _validate_yes_no(value, key)
         elif key == "strict_host_key_checking":
             _validate_strict_host_key(value)
         elif key in _INTEGER_RANGES:
@@ -110,8 +124,8 @@ class GlobalSshOverrides:
     server_alive_interval: int
     server_alive_count_max: int
     strict_host_key_checking: str
-    batch_mode: bool
-    compression: bool
+    batch_mode: str
+    compression: str
     verbosity: int
     debug_enabled: bool
     applies_immediately: bool = True
@@ -139,8 +153,8 @@ class GlobalSshOverrides:
         _validate_integer(self.server_alive_interval, "server_alive_interval")
         _validate_integer(self.server_alive_count_max, "server_alive_count_max")
         _validate_strict_host_key(self.strict_host_key_checking)
-        _validate_boolean(self.batch_mode, "batch_mode")
-        _validate_boolean(self.compression, "compression")
+        _validate_yes_no(self.batch_mode, "batch_mode")
+        _validate_yes_no(self.compression, "compression")
         _validate_integer(self.verbosity, "verbosity")
         _validate_boolean(self.debug_enabled, "debug_enabled")
         _validate_boolean(self.applies_immediately, "applies_immediately")

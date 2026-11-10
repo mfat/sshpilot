@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from .ssh_config_document import split_config_lines
 from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
+from .core.settings.ssh_overrides import coerce_yes_no_unset, is_yes_no_enabled
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
 
 
@@ -727,11 +728,22 @@ def _append_app_ssh_overrides(cmd: List[str], app_ssh_config: dict, *, is_copy_i
     if verbosity > 0 and not is_copy_id:
         cmd.extend(['-v'] * min(verbosity, 3))
 
-    if bool(app_ssh_config.get('compression', False)) and not is_copy_id:
-        cmd.append('-C')
+    if not is_copy_id:
+        try:
+            compression = coerce_yes_no_unset(app_ssh_config.get('compression'))
+        except (TypeError, ValueError):
+            compression = ''
+        if compression:
+            # Prefer ``-o Compression=`` over ``-C`` so force-no works and a
+            # connection's own Compression can still win (first-value-wins).
+            cmd.extend(['-o', f'Compression={compression}'])
 
-    if bool(app_ssh_config.get('batch_mode', False)) and not is_copy_id:
-        cmd.extend(['-o', 'BatchMode=yes'])
+        try:
+            batch_mode = coerce_yes_no_unset(app_ssh_config.get('batch_mode'))
+        except (TypeError, ValueError):
+            batch_mode = ''
+        if batch_mode:
+            cmd.extend(['-o', f'BatchMode={batch_mode}'])
 
     for cfg_key, option_name in _APP_POSITIVE_INT_OPTIONS:
         _append_positive_int_option(cmd, app_ssh_config.get(cfg_key), option_name)
@@ -1366,7 +1378,8 @@ def build_ssh_connection(
             batch_mode = True
             host_key_mode = HostKeyMode.YES
         elif (
-            bool(app_ssh_config.get('batch_mode', False))
+            # Force-yes only; force-no is already in ssh_overrides as BatchMode=no.
+            is_yes_no_enabled(app_ssh_config.get('batch_mode'))
             and not auth.password_mode
             and not auth.use_askpass
             and not auth.password

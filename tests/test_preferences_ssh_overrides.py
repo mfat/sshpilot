@@ -136,8 +136,8 @@ def _make_prefs(config, controller):
     prefs.keepalive_interval_row = _Spin(value=0)
     prefs.keepalive_count_row = _Spin(value=0)
     prefs.strict_host_row = _Choice(value="")
-    prefs.batch_mode_row = _Switch(active=False)
-    prefs.compression_row = _Switch(active=False)
+    prefs.batch_mode_row = _Choice(value="")
+    prefs.compression_row = _Choice(value="")
     prefs.verbosity_row = _Spin(value=0)
     prefs.debug_enabled_row = _Switch(active=False)
     prefs.open_file_manager_externally_row = _Switch(active=False)
@@ -165,12 +165,12 @@ def test_config_owned_writes_cannot_clobber_daemon_overrides(
     config = _make_config(
         tmp_path,
         monkeypatch,
-        {"ssh": {"connection_timeout": 5, "batch_mode": False}},
+        {"ssh": {"connection_timeout": 5, "batch_mode": ""}},
     )
     service = SshOverridesService(tmp_path / "config.json")
     prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
     prefs.connect_timeout_row = _Spin(value=30)
-    prefs.batch_mode_row = _Switch(active=True)
+    prefs.batch_mode_row = _Choice(value="yes")
     prefs.open_file_manager_externally_row = _Switch(active=True)
     expires = _expiry_record(monkeypatch)
 
@@ -179,7 +179,7 @@ def test_config_owned_writes_cannot_clobber_daemon_overrides(
     on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     # Daemon-owned values persisted through the controller survive.
     assert on_disk["ssh"]["connection_timeout"] == 30
-    assert on_disk["ssh"]["batch_mode"] is True
+    assert on_disk["ssh"]["batch_mode"] == "yes"
     # The derived list reflects the daemon-composed state.
     assert "ConnectTimeout=30" in on_disk["ssh"]["ssh_overrides"]
     assert "BatchMode=yes" in on_disk["ssh"]["ssh_overrides"]
@@ -266,7 +266,7 @@ def test_save_without_controller_does_not_persist_daemon_fields(
     )
     prefs = _make_prefs(config, None)
     prefs.connect_timeout_row = _Spin(value=99)
-    prefs.batch_mode_row = _Switch(active=True)
+    prefs.batch_mode_row = _Choice(value="yes")
     expires = _expiry_record(monkeypatch)
 
     assert prefs.save_advanced_ssh_settings() is True
@@ -274,7 +274,7 @@ def test_save_without_controller_does_not_persist_daemon_fields(
     on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     # The nine daemon-owned fields were NOT mutated through the local config.
     assert on_disk["ssh"].get("connection_timeout") == 5
-    assert on_disk["ssh"].get("batch_mode") is not True
+    assert on_disk["ssh"].get("batch_mode") != "yes"
     assert "ssh_overrides" not in on_disk["ssh"]
     # Config-owned rows still persist through Config.
     assert on_disk["ssh"]["apply_default_keepalive"] is True
@@ -338,8 +338,8 @@ def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
         "server_alive_interval": 0,
         "server_alive_count_max": 0,
         "strict_host_key_checking": "",
-        "batch_mode": False,
-        "compression": False,
+        "batch_mode": "",
+        "compression": "",
         "verbosity": 0,
         "debug_enabled": False,
     }
@@ -493,7 +493,7 @@ def test_stale_snapshot_save_conflicts_without_manual_refresh(
     loaded = controller.load()
     prefs = _make_prefs(config, controller)
     prefs.connect_timeout_row = _Spin(value=60)
-    prefs.batch_mode_row = _Switch(active=True)
+    prefs.batch_mode_row = _Choice(value="yes")
     expires = _expiry_record(monkeypatch)
 
     # Another SshOverridesService changes connection_timeout to revision B
@@ -628,12 +628,12 @@ def test_field_changed_persists_and_advances_snapshot_on_success(tmp_path, monke
     prefs = _make_prefs(config, controller)
     prefs._advanced_ssh_last_good_snapshot = prefs._snapshot_advanced_ssh_rows()
 
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)
 
     # Actually landed on the daemon, not just marked as if it did.
-    assert service.get().compression is True
-    assert prefs._advanced_ssh_last_good_snapshot['compression'] is True
+    assert service.get().compression == "yes"
+    assert prefs._advanced_ssh_last_good_snapshot['compression'] == "yes"
 
 
 def test_field_changed_reverts_all_rows_on_daemon_failure(tmp_path, monkeypatch):
@@ -685,7 +685,7 @@ def test_field_changed_is_noop_while_suppressed(tmp_path, monkeypatch):
 
     prefs.save_advanced_ssh_settings = _fail_if_called
 
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)  # must not raise
 
 
@@ -700,7 +700,7 @@ def test_snapshot_round_trip_restores_values_and_clears_suppress_flag(tmp_path, 
     snapshot = prefs._snapshot_advanced_ssh_rows()
 
     prefs.connect_timeout_row.set_value(99)
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs.strict_host_row.set_value("yes")
 
     prefs._restore_advanced_ssh_rows(snapshot)
@@ -945,7 +945,7 @@ def test_failed_edit_after_failed_reset_keeps_row_and_file_agreed(
 
     # Any later edit that the daemon also rejects.
     prefs.ssh_overrides_controller = SshOverridesController(_FailingClient(service))
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)
 
     config.reload_json_cache_strict()

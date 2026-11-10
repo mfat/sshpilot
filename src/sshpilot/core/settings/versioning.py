@@ -80,12 +80,28 @@ def _v3_to_v4(tree: Dict[str, Any]) -> None:
         ssh["strict_host_key_checking"] = ""
 
 
+def _v4_to_v5(tree: Dict[str, Any]) -> None:
+    # Version 5 made BatchMode and Compression tri-state ("", yes, no) so the
+    # user can force either value, not only force-on. The old boolean False
+    # meant "not sent" (same as ""), and True meant force-yes.
+    ssh = tree.get("ssh")
+    if not isinstance(ssh, dict):
+        return
+    for key in ("batch_mode", "compression"):
+        value = ssh.get(key)
+        if value is True:
+            ssh[key] = "yes"
+        elif value is False:
+            ssh[key] = ""
+
+
 #: ``MIGRATIONS[n]`` upgrades a version-``n`` tree in place to version ``n + 1``.
 MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], None]] = {
     0: _v0_to_v1,
     1: _v1_to_v2,
     2: _v2_to_v3,
     3: _v3_to_v4,
+    4: _v4_to_v5,
 }
 
 

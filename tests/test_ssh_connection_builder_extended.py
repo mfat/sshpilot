@@ -671,7 +671,7 @@ def test_base_command_copy_id_skips_unsupported_flags():
     # ...while scp still honors the app-level flags.
     scp_cmd = _base_cmd('scp', app_config=cfg)
     assert '-v' in scp_cmd
-    assert '-C' in scp_cmd
+    assert _has_o_option(scp_cmd, 'Compression=yes')
     assert _has_o_option(scp_cmd, 'BatchMode=yes')
 
 

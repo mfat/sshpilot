@@ -32,8 +32,8 @@ def test_default_snapshot_is_valid():
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
@@ -70,8 +70,8 @@ def test_out_of_range_integer_rejected(kwargs):
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
@@ -86,8 +86,6 @@ def test_out_of_range_integer_rejected(kwargs):
         dict(connect_timeout=0.5),
         dict(connection_attempts="10"),
         dict(server_alive_interval=True),
-        dict(batch_mode=1),
-        dict(compression="yes"),
         dict(debug_enabled="true"),
     ],
 )
@@ -99,13 +97,40 @@ def test_wrong_type_rejected(kwargs):
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
     base.update(kwargs)
     with pytest.raises(TypeError):
+        GlobalSshOverrides(**base)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(batch_mode=True),
+        dict(compression=1),
+        dict(batch_mode="true"),
+        dict(compression="maybe"),
+    ],
+)
+def test_invalid_yes_no_override_rejected(kwargs):
+    base = dict(
+        revision="r",
+        connect_timeout=0,
+        connection_attempts=0,
+        server_alive_interval=0,
+        server_alive_count_max=0,
+        strict_host_key_checking="accept-new",
+        batch_mode="",
+        compression="",
+        verbosity=0,
+        debug_enabled=False,
+    )
+    base.update(kwargs)
+    with pytest.raises(ValueError):
         GlobalSshOverrides(**base)
 
 
@@ -118,8 +143,8 @@ def test_unknown_strict_host_value_rejected():
             server_alive_interval=0,
             server_alive_count_max=0,
             strict_host_key_checking="maybe",
-            batch_mode=False,
-            compression=False,
+            batch_mode="",
+            compression="",
             verbosity=0,
             debug_enabled=False,
         )
@@ -131,8 +156,10 @@ def test_update_request_rejects_unknown_fields():
 
 
 def test_update_request_rejects_wrong_typed_value():
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError):
         UpdateGlobalSshOverridesRequest(patch={"batch_mode": "true"})
+    with pytest.raises(ValueError):
+        UpdateGlobalSshOverridesRequest(patch={"compression": True})
 
 
 def test_update_request_accepts_partial_patch():
@@ -169,8 +196,8 @@ def test_unset_strict_host_key_is_a_valid_snapshot_and_patch_value():
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
@@ -226,8 +253,8 @@ def test_snapshot_revision_must_be_non_empty_string():
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
@@ -244,8 +271,8 @@ def test_snapshot_applies_immediately_must_be_boolean():
         server_alive_interval=0,
         server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        batch_mode="",
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )

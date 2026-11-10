@@ -59,10 +59,10 @@ def test_proxy_jump_agent_forwards_hostkey():
                 ForwardSpec("dynamic", "1080"),
             ],
             host_key_mode=HostKeyMode.YES,
-            compression=True,
+            compression="yes",
             keepalive_interval=30,
             keepalive_count_max=3,
-            batch_mode=True,
+            batch_mode="yes",
             remote_command="uptime",
         )
     )
@@ -110,7 +110,7 @@ def test_local_command_and_contradictions():
         )
     with pytest.raises(CoreError):
         build_ssh_process_spec(
-            SSHLaunchRequest(destination="demo", batch_mode=True, askpass_required=True)
+            SSHLaunchRequest(destination="demo", batch_mode="yes", askpass_required=True)
         )
     with pytest.raises(CoreError):
         build_ssh_process_spec(
@@ -180,7 +180,7 @@ def test_scp_binary_keeps_safe_flags_when_launch_mode_is_batch():
             username="alice",
             port=2222,
             launch_mode=LaunchMode.BATCH,
-            batch_mode=True,
+            batch_mode="yes",
         )
     )
     assert spec.argv[0] == "/usr/bin/scp"

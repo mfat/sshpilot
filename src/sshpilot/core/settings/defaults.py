@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 # Lines moved per discrete mouse-wheel notch (VTE history scroll).  macOS
 # already accelerates wheel deltas, so one line per unit matches Terminal.app;
@@ -156,9 +156,11 @@ def get_default_config() -> Dict[str, Any]:
         },
         'connections_meta': {},  # per-connection metadata
         'ssh': {
-            'compression': False,
+            # Empty = "Don't set": no Compression/BatchMode option is sent.
+            # ``yes`` / ``no`` inject the matching ``-o`` value.
+            'compression': '',
             'auto_add_host_keys': True,
-            'batch_mode': False,
+            'batch_mode': '',
             'verbosity': 0,
             'debug_enabled': False,
             'use_isolated_config': False,

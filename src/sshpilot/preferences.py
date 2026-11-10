@@ -61,8 +61,9 @@ _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "server_alive_interval": 0,
     "server_alive_count_max": 0,
     "strict_host_key_checking": "",
-    "batch_mode": False,
-    "compression": False,
+    "batch_mode": "",
+    "compression": "",
+
     "verbosity": 0,
     "debug_enabled": False,
 }
@@ -2946,7 +2947,6 @@ class PreferencesWindow(Adw.Window):
 
         values = self._ssh_override_page_values()
         dont_set_label = _("Don't set")
-        on_label = _("On")
 
         # Connect timeout
         self.connect_timeout_row = self._optional_ssh_number_row(
@@ -2996,9 +2996,9 @@ class PreferencesWindow(Adw.Window):
         )
         advanced_group.add(self.keepalive_count_row)
 
-        # Strict host key checking — dropdown with Don't set first, so an
-        # OpenSSH keyword is only shown after the user opts in.
-        from .optional_int_row import OptionalBoolRow, OptionalChoiceRow
+        # Strict host key / BatchMode / Compression — Don't set / OpenSSH
+        # keywords, so force-yes and force-no are both possible.
+        from .optional_int_row import OptionalChoiceRow
 
         self.strict_host_row = OptionalChoiceRow(
             title=_("StrictHostKeyChecking"),
@@ -3008,22 +3008,20 @@ class PreferencesWindow(Adw.Window):
         self.strict_host_row.set_value(str(values['strict_host_key_checking']))
         advanced_group.add(self.strict_host_row)
 
-        # BatchMode (non-interactive) — Don't set / On, not an off switch.
-        self.batch_mode_row = OptionalBoolRow(
-            title=_("BatchMode (disable prompts)"),
+        self.batch_mode_row = OptionalChoiceRow(
+            title=_("BatchMode"),
+            choices=("yes", "no"),
             dont_set_label=dont_set_label,
-            on_label=on_label,
         )
-        self.batch_mode_row.set_active(bool(values['batch_mode']))
+        self.batch_mode_row.set_value(str(values['batch_mode'] or ""))
         advanced_group.add(self.batch_mode_row)
 
-        # Compression — Don't set / On, not an off switch.
-        self.compression_row = OptionalBoolRow(
-            title=_("Force compression"),
+        self.compression_row = OptionalChoiceRow(
+            title=_("Compression"),
+            choices=("yes", "no"),
             dont_set_label=dont_set_label,
-            on_label=on_label,
         )
-        self.compression_row.set_active(bool(values['compression']))
+        self.compression_row.set_value(str(values['compression'] or ""))
         advanced_group.add(self.compression_row)
 
         # Connection multiplexing (ControlMaster). When on, the first
@@ -3097,8 +3095,6 @@ class PreferencesWindow(Adw.Window):
         for row in (
             self.apply_default_keepalive_row,
             self.controlmaster_row,
-            self.batch_mode_row,
-            self.compression_row,
             self.debug_enabled_row,
         ):
             row.connect('notify::active', self._on_advanced_ssh_field_changed)
@@ -3109,6 +3105,8 @@ class PreferencesWindow(Adw.Window):
             self.keepalive_count_row,
             self.verbosity_row,
             self.strict_host_row,
+            self.batch_mode_row,
+            self.compression_row,
         ):
             row.connect('notify::value', self._on_advanced_ssh_field_changed)
 
@@ -5977,8 +5975,8 @@ class PreferencesWindow(Adw.Window):
             "server_alive_interval": int(self.keepalive_interval_row.get_value()),
             "server_alive_count_max": int(self.keepalive_count_row.get_value()),
             "strict_host_key_checking": str(self.strict_host_row.get_value() or ""),
-            "batch_mode": bool(self.batch_mode_row.get_active()),
-            "compression": bool(self.compression_row.get_active()),
+            "batch_mode": str(self.batch_mode_row.get_value() or ""),
+            "compression": str(self.compression_row.get_value() or ""),
             "verbosity": int(self.verbosity_row.get_value()),
             "debug_enabled": bool(self.debug_enabled_row.get_active()),
         }
@@ -5996,8 +5994,8 @@ class PreferencesWindow(Adw.Window):
             self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
             self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
             self.strict_host_row.set_value(str(snapshot.strict_host_key_checking or ""))
-            self.batch_mode_row.set_active(bool(snapshot.batch_mode))
-            self.compression_row.set_active(bool(snapshot.compression))
+            self.batch_mode_row.set_value(str(snapshot.batch_mode or ""))
+            self.compression_row.set_value(str(snapshot.compression or ""))
             self.verbosity_row.set_value(int(snapshot.verbosity))
             self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
         finally:
@@ -6024,8 +6022,8 @@ class PreferencesWindow(Adw.Window):
             self.keepalive_interval_row.set_value(snapshot['server_alive_interval'])
             self.keepalive_count_row.set_value(snapshot['server_alive_count_max'])
             self.strict_host_row.set_value(str(snapshot.get('strict_host_key_checking') or ""))
-            self.batch_mode_row.set_active(snapshot['batch_mode'])
-            self.compression_row.set_active(snapshot['compression'])
+            self.batch_mode_row.set_value(str(snapshot.get('batch_mode') or ""))
+            self.compression_row.set_value(str(snapshot.get('compression') or ""))
             self.verbosity_row.set_value(snapshot['verbosity'])
             self.debug_enabled_row.set_active(snapshot['debug_enabled'])
             self.apply_default_keepalive_row.set_active(snapshot['apply_default_keepalive'])

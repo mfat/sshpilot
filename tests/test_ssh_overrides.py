@@ -101,10 +101,10 @@ def test_update_without_load_uses_explicit_revision():
     controller = _controller(client)
 
     updated = controller.update(
-        {"batch_mode": True}, expected_revision="explicit-rev"
+        {"batch_mode": "yes"}, expected_revision="explicit-rev"
     )
-    assert client.calls[-1] == ("update", {"batch_mode": True}, "explicit-rev")
-    assert updated.batch_mode is True
+    assert client.calls[-1] == ("update", {"batch_mode": "yes"}, "explicit-rev")
+    assert updated.batch_mode == "yes"
 
 
 def test_reset_calls_client_reset_with_loaded_revision():
@@ -176,13 +176,13 @@ class _Connection:
 
 def _service_config():
     ssh = {
-        "batch_mode": True,
+        "batch_mode": "yes",
         "connection_timeout": 12,
         "connection_attempts": 4,
         "keepalive_interval": 45,
         "keepalive_count_max": 6,
         "strict_host_key_checking": "accept-new",
-        "compression": True,
+        "compression": "yes",
         "verbosity": 2,
         "debug_enabled": False,
         "controlmaster": False,
