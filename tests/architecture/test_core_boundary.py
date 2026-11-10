@@ -111,6 +111,10 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- pure enum of file_manager.terminal_panes values ---------------
         ("config.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
         ("preferences.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
+        # -- pure valid-range table for the SSH option number rows ----------
+        # The widget bounds come from the model's own ranges so a saved value
+        # can never be clamped by the row. Read-only constant; no I/O.
+        ("preferences.py", "settings", "INTEGER_RANGES"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --
         ("config.py", "settings", "SettingsFileError"),
         ("config.py", "settings", "upgrade_settings"),

@@ -21,6 +21,7 @@ from .gtk.secret_status_messages import format_secret_error, format_secret_messa
 from .shortcut_editor import ShortcutsPreferencesPage
 from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
+from .core.settings import INTEGER_RANGES as _SSH_OVERRIDE_RANGES
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 from .terminal_osc52 import (
     OSC52_MAX_MAX_KIB,
@@ -2897,6 +2898,27 @@ class PreferencesWindow(Adw.Window):
             row.set_sensitive(True)
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
+    def _optional_ssh_number_row(self, title, field, *, step, initial, value):
+        """A number row that is off ("Do not configure") until switched on.
+
+        Stored as before: 0 means the option is not sent. The row never shows
+        that 0 -- the switch does -- and its range is the model's own, so a
+        saved value is never clamped by the widget.
+        """
+        from .optional_int_row import OptionalIntRow
+
+        _lower, upper = _SSH_OVERRIDE_RANGES[field]
+        row = OptionalIntRow(
+            title=title,
+            lower=1,
+            upper=upper,
+            step=step,
+            initial=initial,
+            unset_subtitle=_("Do not configure"),
+        )
+        row.set_value(value)
+        return row
+
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
         ssh_settings_page = Adw.PreferencesPage()
@@ -2917,17 +2939,17 @@ class PreferencesWindow(Adw.Window):
         values = self._ssh_override_page_values()
 
         # Connect timeout
-        self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
-        self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
-        self.connect_timeout_row.set_subtitle(_("0 = not set (use SSH config)"))
-        self.connect_timeout_row.set_value(int(values['connect_timeout']))
+        self.connect_timeout_row = self._optional_ssh_number_row(
+            _("Connect Timeout (s)"), 'connect_timeout', step=1, initial=30,
+            value=values['connect_timeout'],
+        )
         advanced_group.add(self.connect_timeout_row)
 
         # Connection attempts
-        self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
-        self.connection_attempts_row.set_title(_("Connection Attempts"))
-        self.connection_attempts_row.set_subtitle(_("0 = not set (use SSH config)"))
-        self.connection_attempts_row.set_value(int(values['connection_attempts']))
+        self.connection_attempts_row = self._optional_ssh_number_row(
+            _("Connection Attempts"), 'connection_attempts', step=1, initial=3,
+            value=values['connection_attempts'],
+        )
         advanced_group.add(self.connection_attempts_row)
 
         # Default keepalive opt-out. When on (default), SSH Pilot sends a
@@ -2948,17 +2970,17 @@ class PreferencesWindow(Adw.Window):
         advanced_group.add(self.apply_default_keepalive_row)
 
         # Keepalive interval
-        self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
-        self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
-        self.keepalive_interval_row.set_subtitle(_("0 = not set (use SSH config)"))
-        self.keepalive_interval_row.set_value(int(values['server_alive_interval']))
+        self.keepalive_interval_row = self._optional_ssh_number_row(
+            _("ServerAlive Interval (s)"), 'server_alive_interval', step=5, initial=15,
+            value=values['server_alive_interval'],
+        )
         advanced_group.add(self.keepalive_interval_row)
 
         # Keepalive count max
-        self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
-        self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
-        self.keepalive_count_row.set_subtitle(_("0 = not set (use SSH config)"))
-        self.keepalive_count_row.set_value(int(values['server_alive_count_max']))
+        self.keepalive_count_row = self._optional_ssh_number_row(
+            _("ServerAlive CountMax"), 'server_alive_count_max', step=1, initial=3,
+            value=values['server_alive_count_max'],
+        )
         advanced_group.add(self.keepalive_count_row)
 
         # Strict host key checking
@@ -3014,9 +3036,10 @@ class PreferencesWindow(Adw.Window):
             self.controlmaster_row.set_visible(False)
 
         # SSH verbosity (-v levels)
-        self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
-        self.verbosity_row.set_title(_("SSH Verbosity (-v)"))
-        self.verbosity_row.set_value(int(values['verbosity']))
+        self.verbosity_row = self._optional_ssh_number_row(
+            _("SSH Verbosity (-v)"), 'verbosity', step=1, initial=1,
+            value=values['verbosity'],
+        )
         advanced_group.add(self.verbosity_row)
 
         # Debug logging toggle
