@@ -17,7 +17,7 @@ pytestmark = pytest.mark.gui
 
 
 def _int_row(**overrides):
-    from sshpilot.optional_int_row import OptionalIntRow
+    from sshpilot.optional_rows import OptionalIntRow
 
     options = dict(
         title="Connect Timeout (s)",
@@ -33,7 +33,7 @@ def _int_row(**overrides):
 
 
 def _choice_row(**overrides):
-    from sshpilot.optional_int_row import OptionalChoiceRow
+    from sshpilot.optional_rows import OptionalChoiceRow
 
     options = dict(
         title="StrictHostKeyChecking",
@@ -102,7 +102,7 @@ def test_choice_row_dont_set_yes_and_no(gui):
 
 
 def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
-    from sshpilot.optional_int_row import OptionalChoiceRow, OptionalIntRow
+    from sshpilot.optional_rows import OptionalChoiceRow, OptionalIntRow
 
     gui.window.show_preferences("ssh-options")
     gui.pump(500)

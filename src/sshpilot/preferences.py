@@ -63,7 +63,6 @@ _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "strict_host_key_checking": "",
     "batch_mode": "",
     "compression": "",
-
     "verbosity": 0,
     "debug_enabled": False,
 }
@@ -2906,7 +2905,7 @@ class PreferencesWindow(Adw.Window):
         that 0 -- unset is the first dropdown choice -- and its range is the
         model's own, so a saved value is never clamped by the widget.
         """
-        from .optional_int_row import OptionalIntRow
+        from .optional_rows import OptionalIntRow
 
         _lower, upper = _SSH_OVERRIDE_RANGES[field]
         row = OptionalIntRow(
@@ -2998,7 +2997,7 @@ class PreferencesWindow(Adw.Window):
 
         # Strict host key / BatchMode / Compression — Don't set / OpenSSH
         # keywords, so force-yes and force-no are both possible.
-        from .optional_int_row import OptionalChoiceRow
+        from .optional_rows import OptionalChoiceRow
 
         self.strict_host_row = OptionalChoiceRow(
             title=_("StrictHostKeyChecking"),

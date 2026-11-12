@@ -115,6 +115,9 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # The widget bounds come from the model's own ranges so a saved value
         # can never be clamped by the row. Read-only constant; no I/O.
         ("preferences.py", "settings", "INTEGER_RANGES"),
+        # -- pure normalisers for the tri-state BatchMode/Compression value --
+        ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),
+        ("ssh_connection_builder.py", "settings.ssh_overrides", "is_yes_no_enabled"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --
         ("config.py", "settings", "SettingsFileError"),
         ("config.py", "settings", "upgrade_settings"),
