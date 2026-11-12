@@ -377,6 +377,9 @@ class ConnectionDialogOverridesMixin:
                 _("Settings ▸ SSH Options override some settings of this "
                   "connection. They are marked below.")
             )
+            # Solid error colours (style.css): a muted grey banner was easy to
+            # miss above the form.
+            banner.add_css_class("error")
             self._override_banner = banner
             try:
                 self.content_mount.prepend(banner)
