@@ -1927,7 +1927,7 @@ for the host whatever the host's own block says. ``block`` is the header
 of the block that holds the line (``Host *``, ``Match all``), empty for a
 line above every block; ``file`` and ``line`` locate it.
 
-**Related methods:** `get_effective_config`
+**Related methods:** `get_earlier_directives`, `get_effective_config`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

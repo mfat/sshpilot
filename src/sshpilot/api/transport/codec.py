@@ -2154,6 +2154,48 @@ _EDITOR_DETAIL_FIELDS = frozenset(
 )
 
 
+def earlier_directives_to_wire(value: Any) -> Dict[str, Any]:
+    if type(value) is not tuple or any(
+        not isinstance(item, EarlierDirective) for item in value
+    ):
+        raise TypeError("value must be a tuple of EarlierDirective")
+    return {
+        "earlier": [
+            {
+                "key": item.key,
+                "value": item.value,
+                "block": item.block,
+                "file": item.file,
+                "line": item.line,
+            }
+            for item in value
+        ]
+    }
+
+
+def earlier_directives_from_wire(value: Any) -> Tuple[EarlierDirective, ...]:
+    data = _strict_fields(value, required={"earlier"}, context="earlier directives")
+    if type(data["earlier"]) is not list:
+        raise ValueError("earlier directives must be a list")
+    found = []
+    for item in data["earlier"]:
+        fields = _strict_fields(
+            item,
+            required={"key", "value", "block", "file", "line"},
+            context="earlier directive",
+        )
+        found.append(
+            EarlierDirective(
+                key=fields["key"],
+                value=fields["value"],
+                block=fields["block"],
+                file=fields["file"],
+                line=fields["line"],
+            )
+        )
+    return tuple(found)
+
+
 def effective_config_comparison_to_wire(
     value: EffectiveConfigComparison,
 ) -> Dict[str, Any]:
@@ -2168,16 +2210,7 @@ def effective_config_comparison_to_wire(
         "own": list(value.own),
         "full": list(value.full),
         "generation": value.generation,
-        "earlier": [
-            {
-                "key": item.key,
-                "value": item.value,
-                "block": item.block,
-                "file": item.file,
-                "line": item.line,
-            }
-            for item in value.earlier
-        ],
+        "earlier": earlier_directives_to_wire(value.earlier)["earlier"],
     }
 
 
@@ -2194,25 +2227,7 @@ def effective_config_comparison_from_wire(
         optional={"earlier"},
         context="effective config comparison",
     )
-    earlier_wire = data.get("earlier", [])
-    if type(earlier_wire) is not list:
-        raise ValueError("effective config earlier directives must be a list")
-    earlier = []
-    for item in earlier_wire:
-        fields = _strict_fields(
-            item,
-            required={"key", "value", "block", "file", "line"},
-            context="earlier directive",
-        )
-        earlier.append(
-            EarlierDirective(
-                key=fields["key"],
-                value=fields["value"],
-                block=fields["block"],
-                file=fields["file"],
-                line=fields["line"],
-            )
-        )
+    earlier = earlier_directives_from_wire({"earlier": data.get("earlier", [])})
     if type(data["changes"]) is not list:
         raise ValueError("effective config changes must be a list")
     if any(type(item) is not dict for item in data["changes"]):
@@ -2228,7 +2243,7 @@ def effective_config_comparison_from_wire(
         own=tuple(data["own"]),
         full=tuple(data["full"]),
         generation=data["generation"],
-        earlier=tuple(earlier),
+        earlier=earlier,
     )
 
 

@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- `connections.get_earlier_directives(host)` returns the `EarlierDirective`
+  values the SSH configuration already decides for a host that has no block
+  yet. A new Host block is appended to the end of the root file, so every
+  applicable line precedes it. The connection editor asks it for the alias of
+  a new connection, to mark a field whose value would not be used. Requires
+  `connections.config.read`; an alias that is not a valid Host name yields an
+  empty list. The API implementation version is 0.99; Protocol remains 1.0.
 - A launch of a saved SSH host now resolves exactly as `ssh <alias>` does.
   Nothing from the connection's own Host block is repeated on the command
   line, so OpenSSH's first-value-wins precedence applies between that block

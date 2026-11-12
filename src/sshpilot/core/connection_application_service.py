@@ -91,6 +91,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection": Capability.CONNECTIONS_READ,
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
@@ -1148,6 +1149,56 @@ class ConnectionApplicationService:
             full=tuple(result.get("full") or ()),
             generation=max(0, int(after_generation)),
             earlier=earlier,
+        )
+
+    def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
+        """What the configuration already decides for a host not saved yet.
+
+        A new Host block is appended to the end of the root file, so every
+        line that applies to *host* comes before it, and OpenSSH keeps the
+        first value it obtains. The connection editor asks this for the
+        alias being typed, to mark a field whose value would not be used.
+        An alias that is not a valid ``Host`` name yields nothing. For a
+        saved host see ``EffectiveConfigComparison.earlier``.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from ..api.models.common import validate_ssh_host_alias
+        from .ssh_config_effective import (
+            earlier_directives,
+            get_effective_ssh_config,
+            launch_config_file,
+        )
+
+        try:
+            validate_ssh_host_alias(host)
+        except (TypeError, ValueError):
+            return ()
+        # One literal Host token: no blanks, patterns or negation.
+        if not host or host != host.strip() or any(
+            char.isspace() or char in "*?!" for char in host
+        ):
+            return ()
+        root = str(self._repository.root_config_path)
+        try:
+            resolved = get_effective_ssh_config(
+                host,
+                config_file=launch_config_file(root),
+                overrides=self._forced_ssh_option_args(),
+            )
+            found = earlier_directives(host, root, resolved, new_host=True)
+        except Exception:
+            logger.debug("Earlier-directive lookup failed", exc_info=True)
+            return ()
+        return tuple(
+            EarlierDirective(
+                key=str(item["key"]),
+                value=str(item["value"]),
+                block=str(item["block"]),
+                file=str(item["file"]),
+                line=int(item["line"]),
+            )
+            for item in found
         )
 
     def check_unsaved_host(

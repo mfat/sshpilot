@@ -1160,3 +1160,31 @@ def test_effective_config_reports_what_an_earlier_block_decides(tmp_path):
     assert earlier["user"].block == "Host *"
     assert earlier["user"].file == str(root)
     assert earlier["user"].line == 2
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_earlier_directives_for_a_host_not_saved_yet(tmp_path):
+    """A new block is appended to the end of the root file, so every line that
+    applies to the alias comes before it: both `Host *` blocks decide."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *.lab\n    User labuser\n\n"
+        "Host saved\n    User admin\n\n"
+        "Host *\n    User deploy\n    Port 2222\n",
+        encoding="utf-8",
+    )
+    repo = FakeRepository([])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    found = {item.key: item for item in service.get_earlier_directives("new.lab")}
+    assert (found["user"].value, found["user"].block) == ("labuser", "Host *.lab")
+    assert (found["port"].value, found["port"].line) == ("2222", 9)
+
+    plain = {item.key: item.value for item in service.get_earlier_directives("newhost")}
+    assert plain == {"user": "deploy", "port": "2222"}
+
+    # Not a Host name: nothing to ask OpenSSH about.
+    assert service.get_earlier_directives("-oProxyCommand=x") == ()
+    assert service.get_earlier_directives("two words") == ()

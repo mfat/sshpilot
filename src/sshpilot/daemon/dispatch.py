@@ -76,6 +76,7 @@ from sshpilot.api.transport.codec import (
     close_sftp_request_from_wire,
     connection_details_to_wire,
     connection_editor_details_to_wire,
+    earlier_directives_to_wire,
     effective_config_comparison_to_wire,
     set_operation_mode_request_from_wire,
     operation_mode_result_to_wire,
@@ -220,6 +221,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
     "daemon.set_operation_mode": Capability.OPERATION_MODE,
     "daemon.get_operation_mode": Capability.OPERATION_MODE,
@@ -499,6 +501,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.split",
         "connections.get_editor",
         "connections.get_effective_config",
+        "connections.get_earlier_directives",
         "connections.check_unsaved_host",
         "connections.prepare_external_terminal_launch",
         "connections.get_launch_command",
@@ -781,6 +784,7 @@ class RequestDispatcher:
             "connections.delete_many": self._handle_delete_connections,
             "connections.get_editor": self._handle_get_connection_editor,
             "connections.get_effective_config": self._handle_get_effective_config,
+            "connections.get_earlier_directives": self._handle_get_earlier_directives,
             "connections.check_unsaved_host": self._handle_check_unsaved_host,
             "daemon.set_operation_mode": self._handle_set_operation_mode,
             "daemon.get_operation_mode": self._handle_get_operation_mode,
@@ -1416,6 +1420,24 @@ class RequestDispatcher:
             command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_id,
+        )
+
+    def _handle_get_earlier_directives(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"host"}:
+            raise ValueError("connections.get_earlier_directives requires host")
+        host = request.params["host"]
+        if type(host) is not str or not host.strip():
+            raise ValueError("host must be a non-empty string")
+        return DeferredResult(
+            operation=lambda: earlier_directives_to_wire(
+                self._connections.get_earlier_directives(host)
+            ),
+            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_check_unsaved_host(

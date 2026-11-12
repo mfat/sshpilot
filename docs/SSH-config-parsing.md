@@ -164,8 +164,10 @@ plain one.
   keeps the *first* value it obtains: a `Host *` (or `Match`) block placed
   before a host's own block decides every option it sets. The connection
   editor marks a field that loses this way and names the value that is used
-  and the line it comes from (`EffectiveConfigComparison.earlier`). It never
-  reorders the file.
+  and the line it comes from (`EffectiveConfigComparison.earlier`). A new
+  connection is checked the same way against the alias being typed
+  (`get_earlier_directives`): its block is appended to the end of the file,
+  so every applicable block precedes it. The editor never reorders the file.
 - **Which file is read.** For the user's own `~/.ssh/config` the launch
   passes no `-F`, so OpenSSH also reads `/etc/ssh/ssh_config` as it does in a
   terminal. Any other root (`SSHPILOT_SSH_DIR`, Isolated Mode) is passed

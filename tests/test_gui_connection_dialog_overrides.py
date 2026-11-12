@@ -203,3 +203,55 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     dialog.username_row.set_text("deploy")
     assert not icon.get_visible()
     assert not dialog._override_banner.get_revealed()
+
+
+def test_new_connection_is_checked_against_the_alias_being_typed(gui):
+    """A new block goes to the end of the file, so `Host *` anywhere in it
+    decides first. The editor asks for the typed alias and marks the field."""
+    from gi.repository import Gtk
+    from sshpilot.api.models.connections import EarlierDirective
+    from sshpilot.connection_dialog import ConnectionDialog
+    from sshpilot.plugins.loader import ensure_builtin_protocols
+
+    ensure_builtin_protocols()
+    asked = []
+
+    def earlier(host):
+        asked.append(host)
+        if not host.endswith(".lab"):
+            return ()
+        return (
+            EarlierDirective(
+                key="user", value="labuser", block="Host *.lab",
+                file="/home/me/.ssh/config", line=2,
+            ),
+        )
+
+    snapshot = GlobalSshOverrides(
+        revision="r1", connect_timeout=0, strict_host_key_checking="",
+        compression="", verbosity=0, debug_enabled=False, forced_options=(),
+    )
+    parent = Gtk.Window()
+    parent.connection_manager = _Manager()
+    parent._daemon_ready = lambda: True
+    parent.client = types.SimpleNamespace(
+        get_global_ssh_overrides=lambda: snapshot,
+        get_earlier_directives=earlier,
+    )
+    dialog = ConnectionDialog(
+        parent, connection=None, connection_manager=parent.connection_manager
+    )
+    dialog.username_row.set_text("admin")
+    dialog.nickname_row.set_text("web.lab")
+    _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+
+    assert asked[-1] == "web.lab"
+    tooltip = dialog.username_row.get_tooltip_text()
+    assert "labuser" in tooltip and "Host *.lab" in tooltip
+    assert dialog._override_banner.get_revealed()
+
+    # Another alias, another answer: the mark goes away.
+    dialog.nickname_row.set_text("web.prod")
+    _pump(lambda: asked[-1] == "web.prod" and not dialog._earlier_directives)
+    assert not dialog.username_row._sshpilot_override_icon.get_visible()
+    assert not dialog._override_banner.get_revealed()

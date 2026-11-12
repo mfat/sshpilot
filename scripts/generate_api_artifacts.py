@@ -239,7 +239,7 @@ RELATED_METHODS = {
         "open_transient_connection",
     ),
     "ConnectionSummary": ("list_connections",),
-    "EarlierDirective": ("get_effective_config",),
+    "EarlierDirective": ("get_effective_config", "get_earlier_directives"),
     "EffectiveConfigComparison": ("get_effective_config",),
     "UnsavedHostCheckRequest": ("check_unsaved_host",),
     "UnsavedHostCheckResult": ("check_unsaved_host",),

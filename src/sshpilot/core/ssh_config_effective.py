@@ -550,6 +550,7 @@ def earlier_directives(
     effective: Optional[Dict[str, Union[str, List[str]]]] = None,
     *,
     max_depth: int = 32,
+    new_host: bool = False,
 ) -> List[Dict[str, object]]:
     """Options OpenSSH obtains for *host* before it reaches the host's own block.
 
@@ -566,6 +567,10 @@ def earlier_directives(
     ``block`` is empty for a line above every ``Host``/``Match`` line. The
     walk stops at the first ``Host`` line that names *host* literally; when
     there is none, nothing is "earlier" and the result is empty.
+
+    *new_host* asks about a host that has no block yet. The app appends a
+    new block at the end of the root file, so every applicable line of the
+    whole configuration comes before it.
 
     A ``Match`` block whose criteria cannot be judged here is reported only
     when *effective* (``ssh -G`` for the host) shows the value its line sets,
@@ -663,6 +668,6 @@ def earlier_directives(
             }
 
     walk(root, True, "", 1, [])
-    if not reached_own:
+    if not reached_own and not new_host:
         return []
     return [found[key] for key in sorted(found)]

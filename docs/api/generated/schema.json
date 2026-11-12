@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.98",
+  "api_implementation_version": "0.99",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -196,6 +196,10 @@
     "get_daemon_status": {
       "capability": "daemon.status",
       "status": "daemon-only"
+    },
+    "get_earlier_directives": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "get_effective_config": {
       "capability": "connections.config.read",
@@ -723,6 +727,9 @@
     },
     "connections.get": {
       "capability": "connections.read"
+    },
+    "connections.get_earlier_directives": {
+      "capability": "connections.config.read"
     },
     "connections.get_editor": {
       "capability": "connections.config.read"

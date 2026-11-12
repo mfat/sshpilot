@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.98",
+  "api_implementation_version": "0.99",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -292,6 +292,10 @@
     "get_daemon_status": {
       "capability": "daemon.status",
       "status": "daemon-only"
+    },
+    "get_earlier_directives": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "get_effective_config": {
       "capability": "connections.config.read",
@@ -819,6 +823,7 @@
     "get_connection_store_snapshot",
     "get_daemon_diagnostics",
     "get_daemon_status",
+    "get_earlier_directives",
     "get_effective_config",
     "get_forward",
     "get_global_ssh_overrides",
@@ -1486,6 +1491,16 @@
     "get_daemon_status": {
       "parameters": [],
       "return": "DaemonStatus"
+    },
+    "get_earlier_directives": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "host",
+          "type": "str"
+        }
+      ],
+      "return": "tuple[EarlierDirective, ...]"
     },
     "get_effective_config": {
       "parameters": [
@@ -2868,6 +2883,9 @@
     },
     "connections.get": {
       "capability": "connections.read"
+    },
+    "connections.get_earlier_directives": {
+      "capability": "connections.config.read"
     },
     "connections.get_editor": {
       "capability": "connections.config.read"

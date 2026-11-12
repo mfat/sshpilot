@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import types
 from gettext import gettext as _
 from typing import Dict, Optional, Tuple
 
@@ -300,25 +301,39 @@ class ConnectionDialogOverridesMixin:
         threading.Thread(target=worker, daemon=True).start()
 
     def _load_earlier_directives_async(self) -> None:
-        """Ask which options an earlier block decides for the edited host.
+        """Ask which options an earlier block decides for this host.
 
-        Only a saved SSH host has a block with something before it. A new
-        connection is not in the file yet, so there is nothing to ask about.
+        A saved host is asked about by id: what precedes its own block. A
+        new connection has no block yet; it is asked about by the alias in
+        the form, since its block will be appended after everything else.
+        The alias is watched, as the answer depends on which ``Host``
+        patterns it matches.
         """
         parent = getattr(self, "parent_window", None)
         client = getattr(parent, "client", None)
-        connection = getattr(self, "connection", None)
-        if connection is None or not getattr(self, "is_editing", False):
-            return
         if not (
             callable(getattr(parent, "_daemon_ready", None))
             and parent._daemon_ready()
-            and callable(getattr(client, "get_effective_config", None))
         ):
             return
+        connection = getattr(self, "connection", None)
+        editing = connection is not None and getattr(self, "is_editing", False)
+        alias = ""
+        if editing:
+            if not callable(getattr(client, "get_effective_config", None)):
+                return
+        else:
+            if not callable(getattr(client, "get_earlier_directives", None)):
+                return
+            self._watch_alias_for_earlier_directives()
+            row = getattr(self, "nickname_row", None)
+            alias = row.get_text().strip() if row is not None else ""
         self._earlier_fetch_serial = serial = (
             getattr(self, "_earlier_fetch_serial", 0) + 1
         )
+        if not editing and not alias:
+            self._set_earlier_directives({})
+            return
 
         def apply(earlier):
             if earlier is None or serial != getattr(self, "_earlier_fetch_serial", 0):
@@ -329,16 +344,51 @@ class ConnectionDialogOverridesMixin:
         def worker():
             earlier = None
             try:
-                from .api.connection_identity import connection_id_for
+                if editing:
+                    from .api.connection_identity import connection_id_for
 
-                result = client.get_effective_config(connection_id_for(connection))
-                if getattr(result, "available", False):
-                    earlier = earlier_map(result)
+                    result = client.get_effective_config(connection_id_for(connection))
+                    if getattr(result, "available", False):
+                        earlier = earlier_map(result)
+                else:
+                    earlier = earlier_map(
+                        types.SimpleNamespace(
+                            earlier=client.get_earlier_directives(alias)
+                        )
+                    )
             except Exception:
                 logger.debug("Earlier SSH directives unavailable", exc_info=True)
             GLib.idle_add(apply, earlier)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _watch_alias_for_earlier_directives(self) -> None:
+        """Ask again, shortly after the alias of a new connection changes."""
+        if getattr(self, "_earlier_alias_watched", False):
+            return
+        row = getattr(self, "nickname_row", None)
+        if row is None:
+            return
+        self._earlier_alias_watched = True
+
+        def fire():
+            self._earlier_alias_timer = 0
+            if not getattr(self, "is_editing", False):
+                self._load_earlier_directives_async()
+            return False
+
+        def on_changed(*_args):
+            if getattr(self, "is_editing", False):
+                return
+            pending = getattr(self, "_earlier_alias_timer", 0)
+            if pending:
+                GLib.source_remove(pending)
+            self._earlier_alias_timer = GLib.timeout_add(350, fire)
+
+        try:
+            row.connect("changed", on_changed)
+        except Exception:
+            logger.debug("Cannot watch the alias row", exc_info=True)
 
     # -- presenting -------------------------------------------------------
 
