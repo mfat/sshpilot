@@ -223,7 +223,7 @@ class SshOverridesService:
         """
         return self._forced_option_args(self._load_view())
 
-    def keepalive_fallback_args(self, effective) -> tuple:
+    def keepalive_fallback_args(self, effective, configured=None) -> tuple:
         """The keepalive ``-o`` pairs a launch adds for a host, or nothing.
 
         *effective* is what OpenSSH resolved for that host without them; the
@@ -231,7 +231,9 @@ class SshOverridesService:
         """
         try:
             return tuple(
-                keepalive_fallback_args(self._ssh_view(self._load_view()), effective)
+                keepalive_fallback_args(
+                    self._ssh_view(self._load_view()), effective, configured
+                )
             )
         except (TypeError, ValueError):
             logger.debug("Keepalive settings unreadable; no fallback applied")

@@ -38,7 +38,10 @@ FORWARD_SSH_CONFIG_ROOT_ENV = "SSHPILOT_FORWARD_SSH_CONFIG_ROOT"
 
 
 def default_user_ssh_config_path() -> str:
-    return os.path.expanduser("~/.ssh/config")
+    """``~/.ssh/config`` as OpenSSH finds it (home from the password database)."""
+    from ..platform.paths import openssh_user_dir
+
+    return str(openssh_user_dir() / "config")
 
 
 def materialize_ssh_config_without_port_forwards(
@@ -72,11 +75,19 @@ def materialize_ssh_config_without_port_forwards(
 
         restrict_directory_to_current_user(root)
 
+    from ..platform.paths import include_base_dir, is_openssh_user_config
+
     mapping: Dict[str, str] = {}
     seen: Set[str] = set()
     root_out = root / "config"
+    user_config = is_openssh_user_config(source_path)
     if source_path.is_file():
-        _materialize_file(source_path, root_out, root, mapping, seen)
+        # A relative Include resolves where OpenSSH looks for it: ~/.ssh for
+        # the user's own configuration, whichever file holds the line.
+        _materialize_file(
+            source_path, root_out, root, mapping, seen,
+            base_for=lambda path: Path(include_base_dir(source_path, path)),
+        )
     else:
         root_out.write_text(
             "# sshpilot: no source ssh config; daemon forward launch\n",
@@ -86,7 +97,41 @@ def materialize_ssh_config_without_port_forwards(
             os.chmod(root_out, 0o600)
         except OSError:
             pass
+    if user_config:
+        _append_system_config(root_out, root, mapping, seen)
     return str(root_out)
+
+
+def _append_system_config(
+    root_out: Path, tree_root: Path, mapping: Dict[str, str], seen: Set[str]
+) -> None:
+    """Read the system-wide file last, as `ssh host` does without ``-F``.
+
+    The copy has to be passed with ``-F``, which makes OpenSSH skip
+    ``/etc/ssh/ssh_config``. Including a stripped copy of it at the end
+    restores the order OpenSSH uses: the user's file first, so its values
+    win, then the system's. ``Match all`` makes the Include unconditional;
+    after a ``Host`` block it would apply to that block's hosts only. A
+    relative Include inside the system file resolves in its own directory.
+    """
+    from .ssh_config_effective import openssh_system_config
+
+    system = openssh_system_config()
+    if not system:
+        return
+    system_path = Path(system).resolve()
+    destination = tree_root / "system" / "ssh_config"
+    _materialize_file(
+        system_path, destination, tree_root, mapping, seen,
+        base_for=lambda _path: system_path.parent,
+    )
+    if not destination.is_file():
+        return
+    with open(root_out, "a", encoding="utf-8") as handle:
+        handle.write(
+            "\n# sshpilot: the system-wide file, which -F would skip\n"
+            f"Match all\nInclude \"{destination}\"\n"
+        )
 
 
 def _materialize_file(
@@ -95,6 +140,8 @@ def _materialize_file(
     tree_root: Path,
     mapping: Dict[str, str],
     seen: Set[str],
+    *,
+    base_for=None,
 ) -> None:
     key = str(source)
     if key in seen:
@@ -132,10 +179,11 @@ def _materialize_file(
             prefix, keyword, sep, pattern = include_match.groups()
             rewritten = _rewrite_include(
                 pattern.strip().strip('"'),
-                source.parent,
+                base_for(source) if base_for is not None else source.parent,
                 tree_root,
                 mapping,
                 seen,
+                base_for=base_for,
             )
             out_lines.append(f"{prefix}{keyword}{sep}{rewritten}{newline}")
             continue
@@ -161,6 +209,8 @@ def _rewrite_include(
     tree_root: Path,
     mapping: Dict[str, str],
     seen: Set[str],
+    *,
+    base_for=None,
 ) -> str:
     expanded = os.path.expanduser(pattern)
     if not os.path.isabs(expanded):
@@ -187,7 +237,7 @@ def _rewrite_include(
             except ValueError:
                 digest = abs(hash(str(src))) % (10**12)
                 dest = tree_root / "abs" / f"{digest}-{src.name}"
-        _materialize_file(src, dest, tree_root, mapping, seen)
+        _materialize_file(src, dest, tree_root, mapping, seen, base_for=base_for)
         rewritten_paths.append(str(dest))
     if not rewritten_paths:
         # Preserve a path OpenSSH can miss quietly rather than invent hosts.

@@ -702,7 +702,9 @@ def test_ssh_copy_id_does_not_emit_session_directives():
         conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
     )
     joined = " ".join(argv)
-    assert "LocalCommand=" not in joined
+    assert "LocalCommand=echo" not in joined
+    # A key install is no login: the block's LocalCommand is refused.
+    assert "PermitLocalCommand=no" in argv
     assert "RemoteCommand=tmux" not in joined
     assert "RequestTTY=" not in joined
     # The alias is the destination, so the block's RemoteCommand is cancelled.

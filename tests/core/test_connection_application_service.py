@@ -1103,7 +1103,7 @@ def test_effective_config_resolves_with_what_a_launch_sends(
         def forced_option_args(self):
             return ("-o", "User=forced")
 
-        def keepalive_fallback_args(self, effective):
+        def keepalive_fallback_args(self, effective, configured=None):
             seen["resolved_for_keepalive"] = dict(effective)
             return ("-o", "ServerAliveInterval=15")
 

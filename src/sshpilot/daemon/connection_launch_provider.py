@@ -132,6 +132,7 @@ class HeadlessConnectionView:
         #: Decides which file (if any) a launch names with ``-F``.
         self.config_root: str = _string(config_root)
         self._effective_config: Optional[Dict[str, Any]] = None
+        self._configured_directives: Optional[Dict[str, Any]] = None
         #: The composed Settings ▸ SSH Options fragment, set by the launch
         #: provider. Effective-config queries pass it on so they resolve what
         #: the launch will use (an overridden User decides which stored
@@ -248,6 +249,44 @@ class HeadlessConnectionView:
                     logger.debug("Could not resolve effective config", exc_info=True)
             self._effective_config = resolved
         return self._effective_config
+
+    def configured_ssh_directives(self) -> Dict[str, Any]:
+        """The first configuration line that sets each option for this host.
+
+        Read from the files a launch makes OpenSSH read: the ``-F`` file, or
+        ``~/.ssh/config`` and then the system-wide file when there is no
+        ``-F``. Needed where ``ssh -G`` is ambiguous: it prints an explicit
+        ``ServerAliveInterval 0`` exactly like an unset one. Resolved once per
+        view; empty when nothing can be read.
+        """
+        if self._configured_directives is None:
+            found: Dict[str, Any] = {}
+            host_label = self.resolve_host_identifier() or self.get_effective_host()
+            if host_label:
+                try:
+                    from ..core.ssh_config_effective import (
+                        configured_directives,
+                        openssh_system_config,
+                    )
+                    from ..platform.paths import openssh_user_dir
+
+                    config_file = self._resolve_config_override_path()
+                    files = [config_file] if config_file else [
+                        str(openssh_user_dir() / "config"),
+                        openssh_system_config(),
+                    ]
+                    effective = self.effective_ssh_config()
+                    for path in files:
+                        if not path:
+                            continue
+                        for key, item in configured_directives(
+                            host_label, path, effective
+                        ).items():
+                            found.setdefault(key, item)
+                except Exception:
+                    logger.debug("Could not read configured directives", exc_info=True)
+            self._configured_directives = found
+        return self._configured_directives
 
     def effective_destination(self) -> Tuple[str, str, int]:
         """``(hostname, username, port)`` the launch will really use.
@@ -792,16 +831,10 @@ class DaemonConnectionLaunchProvider:
         if askpass_active:
             environment["SSHPILOT_DAEMON_ASKPASS_ACTIVE"] = "1"
         environment = self._apply_identity_env(environment)
-        local_command = _string(connection.local_command)
-        if local_command and len(argv) >= 2:
-            argv = (
-                *argv[:-1],
-                "-o",
-                "PermitLocalCommand=yes",
-                "-o",
-                f"LocalCommand={local_command}",
-                argv[-1],
-            )
+        # The Host block's LocalCommand is in the configuration file, next to
+        # the PermitLocalCommand the editor writes with it, and OpenSSH runs
+        # it from there. Nothing is repeated here: options appended after the
+        # build landed behind the destination, inside a remote command.
         executable = shutil.which(argv[0], path=environment.get("PATH"))
         if executable is None:
             raise SshPilotError(

@@ -488,7 +488,9 @@ def forced_option(overrides: Any, keyword: str) -> Optional[str]:
 
 
 def keepalive_fallback_args(
-    ssh_cfg: Mapping[str, Any], effective: Optional[Mapping[str, Any]]
+    ssh_cfg: Mapping[str, Any],
+    effective: Optional[Mapping[str, Any]],
+    configured: Optional[Any] = None,
 ) -> List[str]:
     """The ``-o ServerAlive*`` pairs a launch adds when the config sets none.
 
@@ -502,10 +504,14 @@ def keepalive_fallback_args(
 
     * the switch (``apply_default_keepalive``) is off,
     * *effective* is empty (nothing is known, so nothing is imposed), or
-    * it resolves a ``ServerAliveInterval`` other than 0, OpenSSH's "unset".
+    * it resolves a ``ServerAliveInterval`` other than 0, OpenSSH's "unset",
+    * or *configured* (the lower-case options a line of the configuration
+      sets for the host) holds ``serveraliveinterval``: an explicit
+      ``ServerAliveInterval 0`` turns keepalive off, and ``ssh -G`` prints it
+      exactly like an unset one.
 
-    ``ServerAliveCountMax`` is added only while the resolved one is OpenSSH's
-    default (3), so a count the user configured is kept.
+    ``ServerAliveCountMax`` is added only while the configuration sets none
+    (or, without *configured*, while the resolved one is OpenSSH's default).
     """
     if not bool(ssh_cfg.get("apply_default_keepalive", True)):
         return []
@@ -518,14 +524,20 @@ def keepalive_fallback_args(
             value = value[0] if value else ""
         return str(value or "").strip()
 
+    configured_keys = {str(key).lower() for key in (configured or ())}
     if _resolved("serveraliveinterval") not in ("", "0"):
+        return []
+    if "serveraliveinterval" in configured_keys:
         return []
     interval = int(ssh_cfg.get("default_keepalive_interval", 15) or 15)
     count = int(ssh_cfg.get("default_keepalive_count", 3) or 3)
     args: List[str] = []
     if interval > 0:
         args.extend(["-o", f"ServerAliveInterval={interval}"])
-        if count > 0 and _resolved("serveralivecountmax") in ("", "3"):
+        count_set = "serveralivecountmax" in configured_keys or (
+            _resolved("serveralivecountmax") not in ("", "3")
+        )
+        if count > 0 and not count_set:
             args.extend(["-o", f"ServerAliveCountMax={count}"])
     return args
 

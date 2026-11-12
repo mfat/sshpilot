@@ -864,7 +864,9 @@ def _build_base_ssh_command(
         _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
     # *config* is what OpenSSH resolved for this host, so it says whether the
     # user's configuration already sets a keepalive.
-    cmd.extend(_keepalive_fallback(app_ssh_config, config))
+    cmd.extend(
+        _keepalive_fallback(app_ssh_config, config, _configured_for(connection))
+    )
 
     # Nothing from the Host block is repeated here. The destination is the
     # Host alias and the configuration file is the one a session uses, so
@@ -895,8 +897,9 @@ def _build_base_ssh_command(
     if is_copy_id:
         # The destination is the Host alias, so the block's RemoteCommand
         # would apply -- and ssh refuses to run ssh-copy-id's own remote
-        # script next to one.
-        cmd.extend(['-o', 'RemoteCommand=none'])
+        # script next to one. A key install is no login: the block's
+        # LocalCommand is not for it.
+        cmd.extend(['-o', 'RemoteCommand=none', '-o', 'PermitLocalCommand=no'])
     if command_type in ('scp', 'ssh-copy-id'):
         cmd.extend(['-o', 'ClearAllForwardings=yes'])
         # One askpass cancel should end the operation (not OpenSSH's default 3).
@@ -914,17 +917,30 @@ def _append_single_password_prompt(cmd: List[str]) -> None:
     cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
 
-def _keepalive_fallback(app_ssh_config, effective) -> List[str]:
+def _keepalive_fallback(app_ssh_config, effective, configured=None) -> List[str]:
     """The app's ServerAlive* options, when the configuration sets none.
 
-    *effective* is what OpenSSH resolved for the host (``ssh -G``). See
+    *effective* is what OpenSSH resolved for the host (``ssh -G``) and
+    *configured* the options a configuration line sets for it. See
     :func:`sshpilot.core.settings.ssh_overrides.keepalive_fallback_args`.
     """
     try:
-        return list(keepalive_fallback_args(app_ssh_config, effective))
+        return list(keepalive_fallback_args(app_ssh_config, effective, configured))
     except Exception as exc:  # never let keepalive injection break connecting
         logger.debug("Default keepalive injection skipped: %s", exc)
         return []
+
+
+def _configured_for(connection) -> Dict[str, Any]:
+    """The options a configuration line sets for *connection*, if known."""
+    resolve = getattr(connection, 'configured_ssh_directives', None)
+    if not callable(resolve):
+        return {}
+    try:
+        return dict(resolve() or {})
+    except Exception:
+        logger.debug("Could not read configured directives", exc_info=True)
+        return {}
 
 
 def _effective_config_for(connection) -> Dict[str, Any]:
@@ -1135,7 +1151,9 @@ def build_ssh_connection(
         isolated_known_hosts = _isolated_known_hosts_override(connection, effective)
 
         # The app's keepalive, only when the configuration sets none.
-        overrides = list(overrides) + _keepalive_fallback(app_ssh_config, effective)
+        overrides = list(overrides) + _keepalive_fallback(
+            app_ssh_config, effective, _configured_for(connection)
+        )
 
         auth = resolve_native_auth(
             connection,
@@ -1158,6 +1176,14 @@ def build_ssh_connection(
             overrides = select_override_args(
                 overrides, drop=OPERATION_OWNED_KEYWORDS
             )
+            # Host Info, dashboard probes, the file manager and dedicated
+            # forwards are no login: the Host block's LocalCommand (a
+            # "connected" notification, say) would fire on every probe. scp
+            # passes the same option to its own ssh.
+            if ctx.command_type != 'scp' and not any(
+                'permitlocalcommand=' in str(o).lower() for o in priority_options
+            ):
+                priority_options.extend(['-o', 'PermitLocalCommand=no'])
         if (
             ctx.command_type != 'scp'
             and (ctx.remote_command or '-s' in priority_options)

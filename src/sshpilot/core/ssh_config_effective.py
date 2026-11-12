@@ -551,6 +551,7 @@ def earlier_directives(
     *,
     max_depth: int = 32,
     new_host: bool = False,
+    _whole: bool = False,
 ) -> List[Dict[str, object]]:
     """Options OpenSSH obtains for *host* before it reaches the host's own block.
 
@@ -615,7 +616,7 @@ def earlier_directives(
                     tokens = split_host_tokens(remainder)
                 except Exception:
                     tokens = remainder.split()
-                if any(token.lower() == host.lower() for token in tokens):
+                if not _whole and any(token.lower() == host.lower() for token in tokens):
                     reached_own = True
                     return
                 active = _host_header_matches(tokens, host)
@@ -668,6 +669,55 @@ def earlier_directives(
             }
 
     walk(root, True, "", 1, [])
-    if not reached_own and not new_host:
+    if not reached_own and not new_host and not _whole:
         return []
     return [found[key] for key in sorted(found)]
+
+
+def configured_directives(
+    host: str,
+    root_path: str,
+    effective: Optional[Dict[str, Union[str, List[str]]]] = None,
+) -> Dict[str, Dict[str, object]]:
+    """The first line of the configuration that sets each option for *host*.
+
+    Like :func:`earlier_directives`, over the whole file: the host's own
+    block and everything after it count too. This is the only way to tell an
+    option the configuration sets to its default from one it does not set at
+    all -- ``ssh -G`` prints both the same (``serveraliveinterval 0``).
+    Options OpenSSH accumulates are not reported.
+    """
+    return {
+        str(item["key"]): item
+        for item in earlier_directives(host, root_path, effective, _whole=True)
+    }
+
+
+def openssh_system_config() -> Optional[str]:
+    """The system-wide file ``ssh`` reads after the user's, if it exists.
+
+    ``-F`` makes OpenSSH skip it, so a launch that has to pass ``-F`` (a
+    rewritten copy of the user's configuration) appends it by hand. The file
+    sits in the ``etc/ssh`` of the prefix the ``ssh`` binary was built for:
+    ``/etc/ssh`` for a system ``/usr/bin/ssh``, ``/opt/homebrew/etc/ssh``
+    for Homebrew, ``/app/etc/ssh`` inside the Flatpak, and
+    ``%PROGRAMDATA%\\ssh`` on Windows.
+    """
+    import shutil
+
+    candidates: List[str] = []
+    if os.name == "nt":
+        program_data = os.environ.get("PROGRAMDATA")
+        if program_data:
+            candidates.append(os.path.join(program_data, "ssh", "ssh_config"))
+    else:
+        binary = shutil.which("ssh")
+        if binary:
+            prefix = os.path.dirname(os.path.dirname(os.path.realpath(binary)))
+            if prefix not in ("/", "/usr"):
+                candidates.append(os.path.join(prefix, "etc", "ssh", "ssh_config"))
+        candidates.append("/etc/ssh/ssh_config")
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None

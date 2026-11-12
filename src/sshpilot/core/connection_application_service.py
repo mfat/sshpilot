@@ -20,13 +20,14 @@ instances: every read, mutation, and event flows through a
 from __future__ import annotations
 
 import dataclasses
+import types
 
 import logging
 import getpass
 import ipaddress
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
@@ -126,6 +127,13 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
 }
 
+
+
+def _effective_text(value: Any) -> str:
+    """One ``ssh -G`` value as text (a repeated key comes back as a list)."""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    return str(value or "").strip()
 
 
 def _target_port(record) -> int:
@@ -335,24 +343,69 @@ class ConnectionApplicationService:
         # route ride along for the same reason: the knock and the wake need a
         # target and nothing downstream can look one up.
         hostname = getattr(record, "hostname", "") or ""
+        port: Any = getattr(record, "port", "") or ""
+        username = getattr(record, "username", "") or ""
         data = record.data or {}
+        # Through a jump host, a proxy or an RD Gateway the host is not on
+        # this network: Wake-on-LAN cannot reach it and a probe from here
+        # says nothing about it.
+        direct = not any(
+            data.get(key) for key in ("proxy_jump", "proxy_command", "gateway")
+        )
+        if (record.protocol or "ssh") == "ssh":
+            # An SSH connection goes where OpenSSH resolves it, which a
+            # ``Host *`` block, a Match block or an included file may decide
+            # rather than the saved block. Knock, wake and the %h/%p/%u tokens
+            # must aim at that same machine.
+            effective = self._resolve_ssh_destination(record, connection_id)
+            if effective:
+                hostname = str(effective.get("hostname") or hostname)
+                port = str(effective.get("port") or port)
+                username = str(effective.get("user") or username)
+                direct = not (
+                    _effective_text(effective.get("proxyjump")).lower()
+                    not in ("", "none")
+                    or _effective_text(effective.get("proxycommand")).lower()
+                    not in ("", "none")
+                )
+        target_port = _target_port(types.SimpleNamespace(port=port))
         return dataclasses.replace(
             settings,
             command=expand_pre_command_tokens(
                 settings.command,
                 hostname=hostname,
-                port=getattr(record, "port", "") or "",
-                username=getattr(record, "username", "") or "",
+                port=port,
+                username=username,
             ),
             hostname=hostname,
-            target_port=_target_port(record),
-            # Through a jump host, a proxy or an RD Gateway the host is not on
-            # this network: Wake-on-LAN cannot reach it and a probe from here
-            # says nothing about it.
-            direct=not any(
-                data.get(key) for key in ("proxy_jump", "proxy_command", "gateway")
-            ),
+            target_port=target_port,
+            direct=direct,
         )
+
+    def _resolve_ssh_destination(self, record, connection_id) -> Dict[str, Any]:
+        """``ssh -G`` for a saved SSH host, as its launch resolves it."""
+        from .ssh_config_effective import get_effective_ssh_config, launch_config_file
+
+        try:
+            if is_transient_connection_id(connection_id):
+                if not record.source or not record.host:
+                    return {}
+                return dict(get_effective_ssh_config(
+                    record.host,
+                    config_file=str(record.source),
+                    overrides=self._forced_ssh_option_args(),
+                ))
+            root = getattr(self._repository, "root_config_path", None)
+            if root is None or not record.nickname:
+                return {}
+            return dict(get_effective_ssh_config(
+                record.nickname,
+                config_file=launch_config_file(root, record.source or None),
+                overrides=self._forced_ssh_option_args(),
+            ))
+        except Exception:
+            logger.debug("Could not resolve the SSH destination", exc_info=True)
+            return {}
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId
@@ -1088,7 +1141,9 @@ class ConnectionApplicationService:
             resolved = get_effective_ssh_config(
                 host, config_file=launch_file, overrides=forced
             )
-            overrides = forced + self._keepalive_fallback_args(resolved)
+            overrides = forced + self._keepalive_fallback_args(
+                resolved, self._configured_keys(host, launch_file, resolved)
+            )
             result = diff_effective_config(
                 host,
                 compare_file,
@@ -1314,14 +1369,32 @@ class ConnectionApplicationService:
             logger.debug("Could not read global SSH options", exc_info=True)
             return ()
 
-    def _keepalive_fallback_args(self, effective) -> Tuple[str, ...]:
+    @staticmethod
+    def _configured_keys(host: str, launch_file: Optional[str], effective) -> Set[str]:
+        """Options a line of the configuration a launch reads sets for *host*."""
+        from .ssh_config_effective import configured_directives, openssh_system_config
+        from ..platform.paths import openssh_user_dir
+
+        files = [launch_file] if launch_file else [
+            str(openssh_user_dir() / "config"), openssh_system_config(),
+        ]
+        keys: Set[str] = set()
+        for path in files:
+            if path:
+                try:
+                    keys.update(configured_directives(host, path, effective))
+                except Exception:
+                    logger.debug("Could not read configured directives", exc_info=True)
+        return keys
+
+    def _keepalive_fallback_args(self, effective, configured=None) -> Tuple[str, ...]:
         """The keepalive pair a launch adds for a host that configures none."""
         service = self._ssh_overrides_service
         compose = getattr(service, "keepalive_fallback_args", None)
         if not callable(compose):
             return ()
         try:
-            return tuple(compose(effective))
+            return tuple(compose(effective, configured))
         except Exception:
             logger.debug("Could not read the keepalive fallback", exc_info=True)
             return ()

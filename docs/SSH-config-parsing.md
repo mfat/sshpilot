@@ -183,11 +183,26 @@ plain one.
   adds is written with an absolute path there.
 - **What the app still adds.** Options set in Settings ▸ SSH Options
   (deliberate overrides); a keepalive, only for a host whose configuration
-  resolves no `ServerAliveInterval`; in Isolated Mode its own
-  `UserKnownHostsFile`, unless the configuration names one; and what an
-  operation itself needs (a debug log to a private file for session state,
-  one password prompt and no forwards for file transfers, the sftp
-  subsystem, a forced command for Host Info).
+  sets no `ServerAliveInterval` (an explicit `ServerAliveInterval 0` counts
+  as set: `ssh -G` cannot tell it from an unset one, so the configuration
+  lines are read); in Isolated Mode its own `UserKnownHostsFile`, unless
+  the configuration names one; and what an operation itself needs (a debug
+  log to a private file for session state, one password prompt and no
+  forwards for file transfers, the sftp subsystem, a forced command for
+  Host Info). Launches that are no login -- Host Info and dashboard probes,
+  the file manager, dedicated forwards, scp, ssh-copy-id -- send
+  `PermitLocalCommand=no`, so a host's `LocalCommand` runs for terminals
+  only.
+- **Dedicated forwards** pass a temporary copy of the configuration with
+  `LocalForward`/`RemoteForward`/`DynamicForward` removed. For the user's
+  own `~/.ssh/config` the copy ends with the system-wide file under
+  `Match all`, since `-F` would otherwise skip it.
+- **Before connecting.** Port knocking, Wake-on-LAN and the `%h`/`%p`/`%u`
+  tokens of a pre-connection command use the host, port and user OpenSSH
+  resolves, and a `ProxyJump`/`ProxyCommand` from any block marks the host
+  as not directly reachable.
+- `tests/daemon/test_openssh_parity.py` also covers scp, ssh-copy-id and
+  dedicated forwards, allowing only the differences listed there.
 
 ## 6. Reloading and Persistence
 

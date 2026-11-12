@@ -343,3 +343,216 @@ def test_nothing_is_earlier_for_a_host_without_a_block_or_with_the_first_one(tmp
 
     assert earlier_directives("own", str(root)) == []
     assert earlier_directives("unknown", str(root)) == []
+
+
+# --- the other launches: scp, ssh-copy-id, dedicated forwards -----------------
+
+#: What each of these operations sets for itself, on top of APP_OWNED.
+OPERATION_OWNED = {
+    # One prompt, no forwards, no login-only directives on a file copy.
+    "scp": {"numberofpasswordprompts", "clearallforwardings", "forwardagent",
+            "forwardx11", "permitlocalcommand", "remotecommand", "requesttty",
+            "controlmaster", "localforward", "remoteforward", "dynamicforward",
+            "sessiontype"},
+    # A key install is no login and must stay interactive.
+    "copy-id": {"numberofpasswordprompts", "clearallforwardings",
+                "permitlocalcommand", "remotecommand", "localforward",
+                "remoteforward", "dynamicforward"},
+    # A tunnel of its own: the host's forwards are stripped, its own -L added.
+    "forward": {"controlmaster", "clearallforwardings", "sessiontype",
+                "requesttty", "exitonforwardfailure", "permitlocalcommand",
+                "localforward", "remoteforward", "dynamicforward"},
+}
+
+
+def _destination_args(argv, kind):
+    """OpenSSH arguments of an scp / ssh-copy-id / forward argv, for ``ssh -G``."""
+    tokens = list(argv[1:])
+    args, index = [], 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in ("-o", "-F"):
+            args += [token, tokens[index + 1]]
+            index += 2
+        elif token == "-P" and kind == "scp":
+            args += ["-p", tokens[index + 1]]
+            index += 2
+        elif token in ("-L", "-R", "-D", "-p", "-l"):
+            args += [token, tokens[index + 1]]
+            index += 2
+        elif token == "-i" and kind == "copy-id":
+            index += 2  # the key to install, not an identity to log in with
+        elif token.startswith("-"):
+            index += 1
+        else:
+            break
+    target = tokens[-1].split(":", 1)[0] if kind == "scp" else tokens[-1]
+    return args + [target]
+
+
+@pytest.mark.parametrize("layout", ["star_first", "star_last"])
+def test_scp_copy_id_and_forwards_resolve_as_plain_ssh(tmp_path, layout):
+    root = tmp_path / "config"
+    root.write_text(
+        STAR + "\n" + HOSTS if layout == "star_first" else HOSTS + "\n" + STAR
+    )
+    key = tmp_path / "k"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+                   check=True)
+    records, provider = _provider(root)
+    for alias in records:
+        want = _resolved(["-F", str(root), alias])
+        launches = {
+            "scp": provider.prepare_scp_launch(
+                alias, extra_args=[str(root)],
+                target_override=f"{provider.scp_target(alias)}:/tmp/x",
+            )[0],
+            "copy-id": provider.prepare_copy_id_launch(alias, f"{key}.pub")[0],
+            "forward": provider.prepare_forward_launch(
+                alias, bind_port=18999, destination_host="localhost",
+                destination_port=80,
+            )[0],
+        }
+        for kind, argv in launches.items():
+            got = _resolved(_destination_args(argv, kind))
+            different = {
+                k: (want.get(k), got.get(k))
+                for k in set(want) | set(got)
+                if want.get(k) != got.get(k) and k not in OPERATION_OWNED[kind]
+            }
+            assert not different, (alias, kind, list(argv), different)
+
+
+# --- LocalCommand --------------------------------------------------------------
+
+
+def test_local_command_stays_in_the_file_and_never_follows_the_destination(tmp_path):
+    """Options appended after the build used to land behind the destination,
+    inside the remote command of every Host Info and dashboard probe."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host lc\n    HostName 192.0.2.9\n"
+        "    PermitLocalCommand yes\n    LocalCommand echo connected\n"
+    )
+    _records, provider = _provider(root)
+
+    terminal, _env = provider.prepare_terminal_launch("lc", interaction_policy="broker")
+    probe, _env = provider.prepare_remote_command_launch("lc", "uptime")
+    sftp, _env = provider.prepare_sftp_launch("lc")
+
+    assert terminal[-1] == "lc" and terminal[1:3] == ("-F", str(root))
+    assert list(probe[-2:]) == ["lc", "uptime"]
+    for argv in (terminal, probe, sftp):
+        assert not any(token.startswith("LocalCommand=") for token in argv)
+    # A probe is no login: the "connected" command must not fire for it.
+    for argv in (probe, sftp):
+        assert "PermitLocalCommand=no" in argv
+        assert argv.index("PermitLocalCommand=no") < argv.index("lc")
+    # The terminal is the login: OpenSSH runs it from the file.
+    assert _resolved(_ssh_g_args(terminal))["localcommand"] == ["echo connected"]
+
+
+# --- keepalive: an explicit 0 is a choice -------------------------------------
+
+
+def test_an_explicit_serveraliveinterval_0_turns_the_app_keepalive_off(tmp_path):
+    """`ssh -G` prints 0 for both, so the configuration lines decide."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host quiet\n    HostName 192.0.2.1\n    ServerAliveInterval 0\n\n"
+        "Host plain\n    HostName 192.0.2.2\n\n"
+        "Host counted\n    HostName 192.0.2.3\n    ServerAliveCountMax 3\n"
+    )
+    _records, provider = _provider(root)
+
+    def launch(alias):
+        return provider.prepare_terminal_launch(alias, interaction_policy="broker")[0]
+
+    assert not any("ServerAlive" in token for token in launch("quiet"))
+    assert "ServerAliveInterval=15" in launch("plain")
+    counted = launch("counted")
+    assert "ServerAliveInterval=15" in counted
+    assert not any("ServerAliveCountMax" in token for token in counted)
+
+
+# --- pre-connection: knock, wake and %h/%p/%u aim where OpenSSH connects -------
+
+
+def _service(root, records):
+    from sshpilot.core.connection_application_service import (
+        ConnectionApplicationService,
+    )
+    from tests.core.test_connection_application_service import FakeRepository
+
+    repo = FakeRepository(list(records.values()))
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    for record in records.values():
+        repo._metadata[record.id] = {
+            "pre_command": "knock %h %p %u", "pre_command_mode": "command",
+        }
+    repo.get_connection_metadata = lambda cid: repo._metadata.get(cid, {})
+    return ConnectionApplicationService(repo)
+
+
+def test_pre_connection_targets_the_host_openssh_connects_to(tmp_path):
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *.lab\n    ProxyJump bastion\n\n"
+        "Host *\n    HostName gateway.example.com\n    Port 2222\n    User deploy\n\n"
+        "Host server\n    HostName server.internal\n\n"
+        "Host db.lab\n    HostName 192.0.2.7\n"
+    )
+    records, _provider_ = _provider(root)
+    service = _service(root, records)
+
+    server = service.get_pre_connection_settings("server")
+    plain = _resolved(["-F", str(root), "server"])
+    assert (server.hostname, server.target_port) == (
+        plain["hostname"][0], int(plain["port"][0]),
+    ) == ("gateway.example.com", 2222)
+    assert "gateway.example.com" in server.command and "2222" in server.command
+    assert "deploy" in server.command
+    assert server.direct is True
+
+    # A ProxyJump from a pattern block: not reachable from here, no wake.
+    assert service.get_pre_connection_settings("db.lab").direct is False
+
+
+# --- dedicated forwards keep the system-wide file -----------------------------
+
+
+def test_forward_config_copy_reads_the_system_file_last(tmp_path, monkeypatch):
+    from sshpilot.core import ssh_config_forward_strip as strip
+
+    home_ssh = tmp_path / ".ssh"
+    (home_ssh / "conf.d").mkdir(parents=True)
+    user = home_ssh / "config"
+    user.write_text(
+        "Include conf.d/a.conf\n"
+        "Host web\n    HostName 192.0.2.30\n    Compression no\n"
+        "    LocalForward 7000 localhost:80\n"
+    )
+    # Relative to ~/.ssh, as OpenSSH reads it -- not to conf.d.
+    (home_ssh / "conf.d" / "a.conf").write_text("Include conf.d/b.conf\n")
+    (home_ssh / "conf.d" / "b.conf").write_text("Host web\n    User fromb\n")
+    system = tmp_path / "etc" / "ssh_config"
+    system.parent.mkdir()
+    system.write_text("Host *\n    Compression yes\n    SendEnv SYSTEMWIDE\n")
+    monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
+    monkeypatch.setattr(ssh_config_effective, "openssh_system_config", lambda: str(system))
+
+    copy = strip.materialize_ssh_config_without_port_forwards(str(user))
+    got = _resolved(["-F", copy, "web"])
+
+    assert got["sendenv"] == ["SYSTEMWIDE"]      # the system file is read
+    assert got["compression"] == ["no"]           # after the user's, which wins
+    assert got["user"] == ["fromb"]               # nested relative Include found
+    assert "localforward" not in got              # the host's forwards stripped
+
+    # Any other root is passed with -F by the session too: no system file.
+    other = tmp_path / "custom" / "config"
+    other.parent.mkdir()
+    other.write_text("Host web\n    HostName 192.0.2.30\n")
+    got = _resolved(["-F", strip.materialize_ssh_config_without_port_forwards(str(other)), "web"])
+    assert "sendenv" not in got

@@ -196,13 +196,22 @@ def test_no_client_path_authority(provider):
     assert view.source == "/tmp/evil-config"
 
 
-def test_local_command_injected_only_when_present(provider):
+def test_local_command_is_left_to_the_config_file(provider):
+    """The Host block's LocalCommand (and the PermitLocalCommand the editor
+    writes with it) is in the file, which OpenSSH reads. Repeating it here
+    put the options behind the destination of a remote-command launch."""
     prov, records = provider
     records["web"] = _record(data={"local_command": "echo hi"})
-    command, _environment = prov.prepare_terminal_launch(
+    terminal, _environment = prov.prepare_terminal_launch(
         "web", interaction_policy="none"
     )
-    assert "PermitLocalCommand=yes" in command
+    probe, _environment = prov.prepare_remote_command_launch("web", "uptime")
+    for command in (terminal, probe):
+        assert not any(token.startswith("LocalCommand=") for token in command)
+        assert "PermitLocalCommand=yes" not in command
+    assert command[-2:] == ("web", "uptime")
+    # A probe is no login, so the block's LocalCommand must not fire for it.
+    assert probe.index("PermitLocalCommand=no") < probe.index("web")
 
 
 def test_terminal_launch_appends_remote_command_after_host(provider):
