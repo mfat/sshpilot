@@ -65,7 +65,39 @@ OVERRIDABLE_ROWS = (
     ("add_keys_to_agent_row", "AddKeysToAgent"),
     ("identity_agent_row", "IdentityAgent"),
     ("exit_on_forward_failure_row", "ExitOnForwardFailure"),
+    ("port_forwarding_only_row", "SessionType"),
+    ("auth_method_row", "PreferredAuthentications"),
 )
+
+#: Rows that are a text field. Left empty, such a row shows the value OpenSSH
+#: resolves, dimmed (see ``_load_inherited_values_async``), so it needs no
+#: mark of its own when an earlier block supplies that value.
+TEXT_ROWS = frozenset({
+    "hostname_row", "username_row", "port_row", "proxy_jump_row",
+    "proxy_command_row", "pkcs11_provider_row", "security_key_provider_row",
+    "local_command_row", "remote_command_row",
+})
+
+#: What a switch that is off stands for. A switch cannot look "inherited":
+#: off reads as this value, so an earlier block that sets another one has to
+#: be pointed out even though the connection sets nothing itself.
+SWITCH_OFF_VALUE = {
+    "x11_row": "no",
+    "key_only_row": "no",
+    "pubkey_auth_row": "yes",
+    "exit_on_forward_failure_row": "no",
+    "port_forwarding_only_row": "default",
+}
+
+#: A switch that is off, on a host whose block spells the option out anyway
+#: (``ForwardX11 no``): the directive and the value the block then holds.
+SWITCH_OFF_AUTHORED = {
+    "x11_row": ("forwardx11", "no"),
+    "key_only_row": ("identitiesonly", "no"),
+    "pubkey_auth_row": ("pubkeyauthentication", "yes"),
+}
+
+_PASSWORD_METHODS = frozenset({"password", "keyboard-interactive"})
 
 
 def inherited_note_text() -> str:
@@ -219,6 +251,83 @@ def earlier_note(keyword: str, own: Optional[str], earlier: Dict[str, object]) -
         keyword=keyword,
         value=value,
     )
+
+
+def earlier_decides_note(keyword: str, entry) -> str:
+    """The note for a field that sets nothing while an earlier block does."""
+    block = str(getattr(entry, "block", "") or "").strip()
+    if block:
+        template = _(
+            "“{block}” in {file} (line {line}) sets {keyword} to “{value}” "
+            "for this host, so connections use that value."
+        )
+    else:
+        template = _(
+            "Line {line} of {file}, above every Host block, sets {keyword} "
+            "to “{value}” for this host, so connections use that value."
+        )
+    return template.format(
+        block=block,
+        file=_display_path(str(getattr(entry, "file", "") or "")),
+        line=int(getattr(entry, "line", 0) or 0),
+        keyword=keyword,
+        value=str(getattr(entry, "value", "") or ""),
+    )
+
+
+def _auth_methods(value: str) -> frozenset:
+    return frozenset(
+        part.strip().lower() for part in str(value or "").split(",") if part.strip()
+    )
+
+
+def earlier_row_state(
+    row_name: str,
+    keyword: str,
+    own: Optional[str],
+    earlier: Dict[str, object],
+    *,
+    password_auth: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
+    """``(state, note)`` for one dialog row against the earlier blocks.
+
+    ``OVERRIDDEN`` when the row sets a value an earlier block beats;
+    ``GLOBAL`` when the row sets nothing, cannot show an inherited value
+    (a switch, a selector) and an earlier block decides something other than
+    what it displays; ``(None, None)`` otherwise.
+    """
+    entry = earlier.get(keyword.lower())
+    if row_name == "auth_method_row":
+        # The row chooses a kind of login, not a list: it loses only when
+        # the earlier list leaves that kind out.
+        if entry is None:
+            return None, None
+        methods = _auth_methods(getattr(entry, "value", ""))
+        tried = bool(methods & _PASSWORD_METHODS) if password_auth else (
+            "publickey" in methods
+        )
+        if tried:
+            return None, None
+        if password_auth:
+            return OVERRIDDEN, earlier_note(keyword, own or "password", earlier)
+        return GLOBAL, earlier_decides_note(keyword, entry)
+    if own is not None and str(own).strip():
+        note = earlier_note(keyword, own, earlier)
+        if note:
+            return OVERRIDDEN, note
+        if row_name == "local_command_row":
+            # The block writes ``PermitLocalCommand yes`` next to the command.
+            note = earlier_note("PermitLocalCommand", "yes", earlier)
+            if note:
+                return OVERRIDDEN, note
+        return None, None
+    if entry is None or row_name in TEXT_ROWS:
+        return None, None
+    shown = SWITCH_OFF_VALUE.get(row_name)
+    value = str(getattr(entry, "value", "") or "")
+    if shown is not None and _normalized(keyword, value) == shown:
+        return None, None
+    return GLOBAL, earlier_decides_note(keyword, entry)
 
 
 def _global_note(keyword: str, value: str) -> str:
@@ -416,8 +525,10 @@ class ConnectionDialogOverridesMixin:
                 if state is None:
                     # Settings come first on the command line; only when they
                     # leave the option alone does the file's order decide.
-                    note = earlier_note(keyword, own, earlier)
-                    state = OVERRIDDEN if note else None
+                    state, note = earlier_row_state(
+                        row_name, keyword, own, earlier,
+                        password_auth=self._password_auth_selected(),
+                    )
                 self._mark_row_override(row_name, row, state, note)
             except Exception:
                 logger.debug("Could not mark %s as overridden", row_name, exc_info=True)
@@ -435,7 +546,15 @@ class ConnectionDialogOverridesMixin:
         if getattr(self, "_override_watchers_connected", False):
             return
         self._override_watchers_connected = True
-        names = [name for name, _keyword in OVERRIDABLE_ROWS]
+        toggle = getattr(self, "auth_toggle", None)
+        if toggle is not None:
+            try:
+                toggle.connect("notify::active", self._apply_override_notes)
+            except Exception:
+                logger.debug("Cannot watch the authentication method", exc_info=True)
+        names = [
+            name for name, _keyword in OVERRIDABLE_ROWS if name != "auth_method_row"
+        ]
         names += ["forward_agent_value_row", "identity_agent_value_row"]
         for name in names:
             row = getattr(self, name, None)
@@ -463,12 +582,28 @@ class ConnectionDialogOverridesMixin:
         """
         if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
             return None
-        if row_name == "x11_row":
-            return "yes" if row.get_active() else None
-        if row_name == "key_only_row":
-            return "yes" if row.get_active() and row.get_sensitive() else None
-        if row_name == "pubkey_auth_row":
-            return "no" if row.get_active() else None
+        if row_name == "auth_method_row":
+            # Password login writes its list of methods; key login need not.
+            return (
+                "keyboard-interactive,password"
+                if self._password_auth_selected() else None
+            )
+        if row_name == "port_forwarding_only_row":
+            return "none" if row.get_active() else None
+        if row_name in SWITCH_OFF_AUTHORED:
+            on_value = {"x11_row": "yes", "key_only_row": "yes", "pubkey_auth_row": "no"}
+            usable = row_name != "key_only_row" or row.get_sensitive()
+            if row.get_active() and usable:
+                return on_value[row_name]
+            # Off, but the saved block spells the option out: that line is
+            # kept on save, and an earlier block can beat it like any other.
+            directive, off_value = SWITCH_OFF_AUTHORED[row_name]
+            authored = getattr(
+                getattr(self, "connection", None), "authored_directives", None
+            ) or ()
+            if usable and getattr(self, "is_editing", False) and directive in authored:
+                return off_value
+            return None
         if row_name == "exit_on_forward_failure_row":
             return "yes" if row.get_active() else None
         if row_name == "forward_agent_row":
@@ -489,6 +624,12 @@ class ConnectionDialogOverridesMixin:
             if "port" not in (authored or ()) and "port" not in adopted:
                 return None
         return text or None
+
+    def _password_auth_selected(self) -> bool:
+        try:
+            return int(self.auth_toggle.get_active()) == 1
+        except Exception:
+            return False
 
     def _mark_row_override(
         self, row_name: str, row, state: Optional[str], note: Optional[str]

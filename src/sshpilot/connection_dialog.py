@@ -3305,6 +3305,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
         _set_action_row_child(method_row, self.auth_toggle)
         auth_group.add(method_row)
+        # Marked when the SSH configuration decides which methods are tried.
+        self.auth_method_row = method_row
 
         # --- Key selection mode: Automatic vs Use specific keys ---
         self.key_selection_group = Adw.PreferencesGroup()

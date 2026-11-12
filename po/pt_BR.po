@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-12 21:21+0330\n"
+"POT-Creation-Date: 2026-11-12 21:46+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -192,7 +192,7 @@ msgid "Split View — {name}"
 msgstr "Visualização dividida — {name}"
 
 #: src/sshpilot/actions.py:519 src/sshpilot/actions.py:671
-#: src/sshpilot/connection_dialog.py:5875 src/sshpilot/file_manager/pane.py:57
+#: src/sshpilot/connection_dialog.py:5877 src/sshpilot/file_manager/pane.py:57
 #: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1165
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
 #: src/sshpilot/window.py:1637 src/sshpilot/window.py:6705
@@ -217,7 +217,7 @@ msgstr ""
 "{error}"
 
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
-#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:5878
+#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:5880
 #: src/sshpilot/daemon_quit_policy.py:531 src/sshpilot/file_manager/pane.py:58
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3139
@@ -550,7 +550,7 @@ msgstr "Fechar"
 msgid "Touch your security key when it blinks."
 msgstr "Toque na sua chave de segurança quando ela piscar."
 
-#: src/sshpilot/askpass_utils.py:917 src/sshpilot/connection_dialog.py:3362
+#: src/sshpilot/askpass_utils.py:917 src/sshpilot/connection_dialog.py:3364
 #: src/sshpilot/gtk/login_profile_messages.py:59
 #: src/sshpilot/login_profile_dialogs.py:53 src/sshpilot/window.py:8024
 msgid "Confirm"
@@ -790,8 +790,8 @@ msgstr "Escolha uma chave local cuja contraparte pública deseja instalar."
 #: src/sshpilot/authorized_keys_window.py:525
 #: src/sshpilot/authorized_keys_window.py:620
 #: src/sshpilot/connection_dialog.py:1061
-#: src/sshpilot/connection_dialog.py:3329
-#: src/sshpilot/connection_dialog.py:3343
+#: src/sshpilot/connection_dialog.py:3331
+#: src/sshpilot/connection_dialog.py:3345
 #: src/sshpilot/login_profile_dialogs.py:260
 #: src/sshpilot/login_profile_dialogs.py:276
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:261
@@ -1483,7 +1483,7 @@ msgstr "Descrição"
 
 #. Tags (app metadata, stored in connections_meta — not in ssh_config).
 #. Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
-#: src/sshpilot/command_blocks.py:963 src/sshpilot/connection_dialog.py:3584
+#: src/sshpilot/command_blocks.py:963 src/sshpilot/connection_dialog.py:3586
 msgid "Tags (comma-separated)"
 msgstr "Tags (separadas por vírgula)"
 
@@ -1684,7 +1684,7 @@ msgstr "Comando excluído"
 msgid "Only SSH commands are allowed. Example: ssh user@host"
 msgstr "Apenas comandos SSH são permitidos. Exemplo: ssh usuario@host"
 
-#: src/sshpilot/command_palette.py:86 src/sshpilot/connection_dialog.py:3971
+#: src/sshpilot/command_palette.py:86 src/sshpilot/connection_dialog.py:3973
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:88
 #: src/sshpilot/omni_search.py:908 src/sshpilot/omni_search.py:935
 #: src/sshpilot/omni_search.py:970
@@ -1821,33 +1821,33 @@ msgid "Commands"
 msgstr "Comandos"
 
 #: src/sshpilot/connection_dialog.py:1818
-#: src/sshpilot/connection_dialog.py:4734 src/sshpilot/omni_search.py:219
+#: src/sshpilot/connection_dialog.py:4736 src/sshpilot/omni_search.py:219
 #: src/sshpilot/preferences.py:2786 src/sshpilot/preferences.py:3311
 #: src/sshpilot/settings_index.py:56
 msgid "Advanced"
 msgstr "Avançado"
 
 #: src/sshpilot/connection_dialog.py:1819
-#: src/sshpilot/connection_dialog.py:3605 src/sshpilot/sidebar.py:5107
+#: src/sshpilot/connection_dialog.py:3607 src/sshpilot/sidebar.py:5107
 msgid "Wake on LAN"
 msgstr "Wake on LAN"
 
 #: src/sshpilot/connection_dialog.py:2137
 #: src/sshpilot/connection_dialog.py:2190
-#: src/sshpilot/connection_dialog.py:3426
-#: src/sshpilot/connection_dialog.py:3695
+#: src/sshpilot/connection_dialog.py:3428
+#: src/sshpilot/connection_dialog.py:3697
 msgid "Agent socket"
 msgstr "Socket do agente"
 
 #: src/sshpilot/connection_dialog.py:2138
-#: src/sshpilot/connection_dialog.py:3698
+#: src/sshpilot/connection_dialog.py:3700
 msgid "Path to an ssh-agent socket"
 msgstr "Caminho para o socket do ssh-agent"
 
 #: src/sshpilot/connection_dialog.py:2140
 #: src/sshpilot/connection_dialog.py:2195
-#: src/sshpilot/connection_dialog.py:3412
-#: src/sshpilot/connection_dialog.py:3681
+#: src/sshpilot/connection_dialog.py:3414
+#: src/sshpilot/connection_dialog.py:3683
 msgid "Environment variable"
 msgstr "Variável de ambiente"
 
@@ -1856,7 +1856,7 @@ msgid "Name of a variable holding the socket path, e.g. $SSH_AUTH_SOCK"
 msgstr "Nome de uma variável contendo o caminho do socket, ex.: $SSH_AUTH_SOCK"
 
 #: src/sshpilot/connection_dialog.py:2192
-#: src/sshpilot/connection_dialog.py:3429
+#: src/sshpilot/connection_dialog.py:3431
 msgid "Unix-domain socket; tilde and tokens are allowed"
 msgstr "Socket de domínio Unix; til e tokens são permitidos"
 
@@ -1865,7 +1865,7 @@ msgid "Variable holding the socket path, e.g. $SSH_AUTH_SOCK"
 msgstr "Variável contendo o caminho do socket, ex.: $SSH_AUTH_SOCK"
 
 #: src/sshpilot/connection_dialog.py:2212
-#: src/sshpilot/connection_dialog.py:3374
+#: src/sshpilot/connection_dialog.py:3376
 msgid "Password (optional)"
 msgstr "Senha (opcional)"
 
@@ -1873,7 +1873,7 @@ msgstr "Senha (opcional)"
 #. Stored in secure storage, never in the connection data.
 #: src/sshpilot/connection_dialog.py:2212
 #: src/sshpilot/connection_dialog.py:3304
-#: src/sshpilot/connection_dialog.py:3373
+#: src/sshpilot/connection_dialog.py:3375
 #: src/sshpilot/gtk/login_profile_messages.py:48
 #: src/sshpilot/login_profile_dialogs.py:46
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:51
@@ -1884,7 +1884,7 @@ msgid "Password"
 msgstr "Senha"
 
 #: src/sshpilot/connection_dialog.py:2725
-#: src/sshpilot/connection_dialog.py:5629
+#: src/sshpilot/connection_dialog.py:5631
 msgid "Secure storage is unavailable."
 msgstr "O armazenamento seguro não está disponível."
 
@@ -1903,7 +1903,7 @@ msgstr "Método de autenticação"
 msgid "Key-based"
 msgstr "Baseado em chave"
 
-#: src/sshpilot/connection_dialog.py:3312
+#: src/sshpilot/connection_dialog.py:3314
 #: src/sshpilot/gtk/login_profile_messages.py:50
 #: src/sshpilot/login_profile_dialogs.py:48
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:375
@@ -1911,56 +1911,56 @@ msgstr "Baseado em chave"
 msgid "Automatic"
 msgstr "Automático"
 
-#: src/sshpilot/connection_dialog.py:3313
+#: src/sshpilot/connection_dialog.py:3315
 msgid "Use Specific Keys"
 msgstr "Usar chave(s) específica(s)"
 
-#: src/sshpilot/connection_dialog.py:3314
+#: src/sshpilot/connection_dialog.py:3316
 #: src/sshpilot/gtk/login_profile_messages.py:33
 #: src/sshpilot/login_profile_dialogs.py:239
 msgid "Key selection"
 msgstr "Seleção de chaves"
 
-#: src/sshpilot/connection_dialog.py:3315
+#: src/sshpilot/connection_dialog.py:3317
 msgid "Use SSH defaults or pick specific keys below."
 msgstr "Use os padrões do SSH ou escolha chaves específicas abaixo."
 
-#: src/sshpilot/connection_dialog.py:3323
+#: src/sshpilot/connection_dialog.py:3325
 #: src/sshpilot/gtk/login_profile_messages.py:34
 #: src/sshpilot/login_profile_dialogs.py:255
 msgid "Private Keys"
 msgstr "Chaves privadas"
 
-#: src/sshpilot/connection_dialog.py:3341
+#: src/sshpilot/connection_dialog.py:3343
 #: src/sshpilot/gtk/login_profile_messages.py:35
 #: src/sshpilot/login_profile_dialogs.py:274
 msgid "Certificates"
 msgstr "Certificados"
 
 #. --- Key handling ---
-#: src/sshpilot/connection_dialog.py:3353
+#: src/sshpilot/connection_dialog.py:3355
 msgid "Key handling"
 msgstr "Tratamento de chaves"
 
-#: src/sshpilot/connection_dialog.py:3355
+#: src/sshpilot/connection_dialog.py:3357
 #: src/sshpilot/effective_config_dialog.py:38
 msgid "Only use the selected keys"
 msgstr "Usar apenas a(s) chave(s) selecionada(s)"
 
-#: src/sshpilot/connection_dialog.py:3356
+#: src/sshpilot/connection_dialog.py:3358
 msgid "Write IdentitiesOnly yes for this connection."
 msgstr "Gravar IdentitiesOnly yes para esta conexão."
 
-#: src/sshpilot/connection_dialog.py:3362
-#: src/sshpilot/connection_dialog.py:3408
-#: src/sshpilot/connection_dialog.py:3677
+#: src/sshpilot/connection_dialog.py:3364
+#: src/sshpilot/connection_dialog.py:3410
+#: src/sshpilot/connection_dialog.py:3679
 #: src/sshpilot/login_profile_dialogs.py:53
 #: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "Padrão"
 
-#: src/sshpilot/connection_dialog.py:3362
-#: src/sshpilot/connection_dialog.py:3678
+#: src/sshpilot/connection_dialog.py:3364
+#: src/sshpilot/connection_dialog.py:3680
 #: src/sshpilot/daemon_interaction_dialogs.py:473
 #: src/sshpilot/daemon_interaction_dialogs.py:527
 #: src/sshpilot/gtk/login_profile_messages.py:54
@@ -1969,8 +1969,8 @@ msgstr "Padrão"
 msgid "Yes"
 msgstr "Sim"
 
-#: src/sshpilot/connection_dialog.py:3362
-#: src/sshpilot/connection_dialog.py:3679
+#: src/sshpilot/connection_dialog.py:3364
+#: src/sshpilot/connection_dialog.py:3681
 #: src/sshpilot/daemon_interaction_dialogs.py:472
 #: src/sshpilot/gtk/login_profile_messages.py:54
 #: src/sshpilot/gtk/login_profile_messages.py:57
@@ -1978,46 +1978,46 @@ msgstr "Sim"
 msgid "No"
 msgstr "Não"
 
-#: src/sshpilot/connection_dialog.py:3362
+#: src/sshpilot/connection_dialog.py:3364
 #: src/sshpilot/gtk/login_profile_messages.py:58
 #: src/sshpilot/login_profile_dialogs.py:53
 msgid "Ask"
 msgstr "Perguntar"
 
-#: src/sshpilot/connection_dialog.py:3364
+#: src/sshpilot/connection_dialog.py:3366
 #: src/sshpilot/effective_config_dialog.py:43
 #: src/sshpilot/gtk/login_profile_messages.py:36
 #: src/sshpilot/login_profile_dialogs.py:291
 msgid "Add keys to agent"
 msgstr "Adicionar chaves ao agente"
 
-#: src/sshpilot/connection_dialog.py:3366
+#: src/sshpilot/connection_dialog.py:3368
 msgid "Load keys into ssh-agent on first use (AddKeysToAgent)"
 msgstr "Carregar chaves no ssh-agent no primeiro uso (AddKeysToAgent)"
 
-#: src/sshpilot/connection_dialog.py:3391
+#: src/sshpilot/connection_dialog.py:3393
 #: src/sshpilot/gtk/login_profile_messages.py:39
 #: src/sshpilot/login_profile_dialogs.py:245
 msgid "Disable public key authentication"
 msgstr "Desativar autenticação por chave pública"
 
-#: src/sshpilot/connection_dialog.py:3392
+#: src/sshpilot/connection_dialog.py:3394
 msgid "Force password authentication only (PubkeyAuthentication no)."
 msgstr "Forçar apenas autenticação por senha (PubkeyAuthentication no)."
 
-#: src/sshpilot/connection_dialog.py:3400
+#: src/sshpilot/connection_dialog.py:3402
 #: src/sshpilot/login_profile_dialogs.py:286
 msgid "Agent and hardware keys"
 msgstr "Chaves de agente e de hardware"
 
-#: src/sshpilot/connection_dialog.py:3401
+#: src/sshpilot/connection_dialog.py:3403
 msgid "Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."
 msgstr ""
 "Origens opcionais para chaves de segurança IdentityAgent, PKCS#11 e FIDO."
 
 #. Translators: the access someone has to a file or folder.
 #. Order matches TERMINAL_PANE_CHOICES.
-#: src/sshpilot/connection_dialog.py:3409
+#: src/sshpilot/connection_dialog.py:3411
 #: src/sshpilot/file_manager/permissions.py:76
 #: src/sshpilot/login_profile_dialogs.py:659
 #: src/sshpilot/machine_info_dialog.py:2295
@@ -2028,65 +2028,65 @@ msgstr ""
 msgid "None"
 msgstr "Nenhum"
 
-#: src/sshpilot/connection_dialog.py:3410
+#: src/sshpilot/connection_dialog.py:3412
 msgid "SSH_AUTH_SOCK"
 msgstr "SSH_AUTH_SOCK"
 
-#: src/sshpilot/connection_dialog.py:3411
-#: src/sshpilot/connection_dialog.py:3680
+#: src/sshpilot/connection_dialog.py:3413
+#: src/sshpilot/connection_dialog.py:3682
 msgid "Socket path"
 msgstr "Caminho do socket"
 
-#: src/sshpilot/connection_dialog.py:3415
+#: src/sshpilot/connection_dialog.py:3417
 msgid "IdentityAgent"
 msgstr "IdentityAgent"
 
-#: src/sshpilot/connection_dialog.py:3417
+#: src/sshpilot/connection_dialog.py:3419
 msgid "Unix-domain socket used to communicate with ssh-agent"
 msgstr "Socket de domínio Unix usado para se comunicar com o ssh-agent"
 
-#: src/sshpilot/connection_dialog.py:3436
-#: src/sshpilot/connection_dialog.py:3705
+#: src/sshpilot/connection_dialog.py:3438
+#: src/sshpilot/connection_dialog.py:3707
 msgid "Browse for agent socket"
 msgstr "Procurar socket do agente"
 
-#: src/sshpilot/connection_dialog.py:3440
-#: src/sshpilot/connection_dialog.py:3709
+#: src/sshpilot/connection_dialog.py:3442
+#: src/sshpilot/connection_dialog.py:3711
 msgid "Select agent socket"
 msgstr "Selecionar socket do agente"
 
-#: src/sshpilot/connection_dialog.py:3449
+#: src/sshpilot/connection_dialog.py:3451
 #: src/sshpilot/gtk/login_profile_messages.py:37
 #: src/sshpilot/login_profile_dialogs.py:299
 msgid "PKCS#11 provider"
 msgstr "Provedor PKCS#11"
 
-#: src/sshpilot/connection_dialog.py:3451
-#: src/sshpilot/connection_dialog.py:3466
+#: src/sshpilot/connection_dialog.py:3453
+#: src/sshpilot/connection_dialog.py:3468
 msgid "Provider library path"
 msgstr "Caminho da biblioteca do provedor"
 
-#: src/sshpilot/connection_dialog.py:3457
-#: src/sshpilot/connection_dialog.py:3472
+#: src/sshpilot/connection_dialog.py:3459
+#: src/sshpilot/connection_dialog.py:3474
 msgid "Browse for provider library"
 msgstr "Procurar biblioteca do provedor"
 
-#: src/sshpilot/connection_dialog.py:3459
+#: src/sshpilot/connection_dialog.py:3461
 msgid "Select PKCS#11 provider library"
 msgstr "Selecionar biblioteca do provedor PKCS#11"
 
-#: src/sshpilot/connection_dialog.py:3464
+#: src/sshpilot/connection_dialog.py:3466
 #: src/sshpilot/gtk/login_profile_messages.py:38
 #: src/sshpilot/login_profile_dialogs.py:302
 msgid "FIDO security key provider"
 msgstr "Provedor de chave de segurança FIDO"
 
-#: src/sshpilot/connection_dialog.py:3474
+#: src/sshpilot/connection_dialog.py:3476
 msgid "Select FIDO security key provider library"
 msgstr "Selecionar biblioteca do provedor de chave de segurança FIDO"
 
-#: src/sshpilot/connection_dialog.py:3510
-#: src/sshpilot/connection_dialog.py:4562
+#: src/sshpilot/connection_dialog.py:3512
+#: src/sshpilot/connection_dialog.py:4564
 #: src/sshpilot/connection_dialog_port_forwarding.py:209
 #: src/sshpilot/host_info_tab.py:103 src/sshpilot/host_info_tab.py:569
 #: src/sshpilot/machine_info_dialog.py:2497
@@ -2096,33 +2096,33 @@ msgstr "Selecionar biblioteca do provedor de chave de segurança FIDO"
 msgid "Host"
 msgstr "Host"
 
-#: src/sshpilot/connection_dialog.py:3524
+#: src/sshpilot/connection_dialog.py:3526
 msgid "Protocol"
 msgstr "Protocolo"
 
 #. Display Name (SSH Pilot-owned presentation metadata)
-#: src/sshpilot/connection_dialog.py:3555
-#: src/sshpilot/connection_dialog.py:4567
-#: src/sshpilot/connection_dialog.py:4572
+#: src/sshpilot/connection_dialog.py:3557
+#: src/sshpilot/connection_dialog.py:4569
+#: src/sshpilot/connection_dialog.py:4574
 msgid "Name (optional)"
 msgstr "Comando (opcional)"
 
-#: src/sshpilot/connection_dialog.py:3557
-#: src/sshpilot/connection_dialog.py:4569
+#: src/sshpilot/connection_dialog.py:3559
+#: src/sshpilot/connection_dialog.py:4571
 msgid "Shown in the connection list. Leave empty to use the SSH alias."
 msgstr "A conexão não tem um host ou alias SSH."
 
-#: src/sshpilot/connection_dialog.py:3563
+#: src/sshpilot/connection_dialog.py:3565
 msgid "SSH Alias (no whitespace allowed)"
 msgstr "Alias SSH (sem espaços em branco)"
 
 #. Hostname
-#: src/sshpilot/connection_dialog.py:3568
+#: src/sshpilot/connection_dialog.py:3570
 msgid "Hostname / IP address"
 msgstr "Nome do host / Endereço IP"
 
 #. Username
-#: src/sshpilot/connection_dialog.py:3572
+#: src/sshpilot/connection_dialog.py:3574
 #: src/sshpilot/connection_dialog_login_profile.py:143
 #: src/sshpilot/effective_config_dialog.py:32
 #: src/sshpilot/gtk/login_profile_messages.py:31
@@ -2135,7 +2135,7 @@ msgstr "Nome de usuário"
 
 #. Port (match style of fields above using EntryRow)
 #. Title: Port and protocol
-#: src/sshpilot/connection_dialog.py:3577
+#: src/sshpilot/connection_dialog.py:3579
 #: src/sshpilot/connection_dialog_port_forwarding.py:211
 #: src/sshpilot/connection_dialog_port_forwarding.py:578
 #: src/sshpilot/effective_config_dialog.py:34
@@ -2145,15 +2145,15 @@ msgstr "Nome de usuário"
 msgid "Port"
 msgstr "Porta"
 
-#: src/sshpilot/connection_dialog.py:3585
+#: src/sshpilot/connection_dialog.py:3587
 msgid "Used by the sidebar search, e.g. production, web"
 msgstr "Usado pela pesquisa da barra lateral, ex.: produção, web"
 
-#: src/sshpilot/connection_dialog.py:3588
+#: src/sshpilot/connection_dialog.py:3590
 msgid "Pick from existing tags"
 msgstr "Escolher a partir de tags existentes"
 
-#: src/sshpilot/connection_dialog.py:3606
+#: src/sshpilot/connection_dialog.py:3608
 msgid ""
 "Optional. With a MAC address, opening this connection wakes the host when it "
 "does not answer, and the context menu wakes it on demand. Host must be on "
@@ -2163,61 +2163,61 @@ msgstr ""
 "não responde, e o menu de contexto o acorda quando você quiser. O host "
 "precisa estar na mesma sub-rede para a detecção."
 
-#: src/sshpilot/connection_dialog.py:3608
+#: src/sshpilot/connection_dialog.py:3610
 msgid "MAC address"
 msgstr "Endereço MAC"
 
-#: src/sshpilot/connection_dialog.py:3611
+#: src/sshpilot/connection_dialog.py:3613
 msgid "Broadcast IP (optional)"
 msgstr "IP de broadcast (opcional)"
 
-#: src/sshpilot/connection_dialog.py:3612
+#: src/sshpilot/connection_dialog.py:3614
 msgid "e.g. 192.168.1.255"
 msgstr "ex.: 192.168.1.255"
 
-#: src/sshpilot/connection_dialog.py:3614
+#: src/sshpilot/connection_dialog.py:3616
 msgid "WoL port (optional)"
 msgstr "Porta WoL (opcional)"
 
-#: src/sshpilot/connection_dialog.py:3621
+#: src/sshpilot/connection_dialog.py:3623
 msgid "Wake before connecting"
 msgstr "Acordar antes de conectar"
 
-#: src/sshpilot/connection_dialog.py:3622
+#: src/sshpilot/connection_dialog.py:3624
 msgid "Wake the host and wait for it when it does not answer"
 msgstr "Acordar o host e esperar por ele quando não responder"
 
 #. Detect MAC button (run in thread, update row from main thread)
-#: src/sshpilot/connection_dialog.py:3627
+#: src/sshpilot/connection_dialog.py:3629
 msgid "Detect MAC from network"
 msgstr "Detectar MAC na rede"
 
-#: src/sshpilot/connection_dialog.py:3628
+#: src/sshpilot/connection_dialog.py:3630
 msgid "Host must be on and reachable on the same subnet"
 msgstr "O host deve estar ligado e acessível na mesma sub-rede"
 
-#: src/sshpilot/connection_dialog.py:3629
+#: src/sshpilot/connection_dialog.py:3631
 msgid "Detect MAC"
 msgstr "Detectar MAC"
 
-#: src/sshpilot/connection_dialog.py:3637
+#: src/sshpilot/connection_dialog.py:3639
 msgid "Routing"
 msgstr "Roteamento"
 
-#: src/sshpilot/connection_dialog.py:3638
+#: src/sshpilot/connection_dialog.py:3640
 msgid "Optional SSH path settings used before authentication."
 msgstr "Configurações opcionais de caminho SSH usadas antes da autenticação."
 
 #. Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
-#: src/sshpilot/connection_dialog.py:3641
+#: src/sshpilot/connection_dialog.py:3643
 msgid "Jump hosts (comma-separated)"
 msgstr "Jump hosts (separados por vírgula)"
 
-#: src/sshpilot/connection_dialog.py:3642
+#: src/sshpilot/connection_dialog.py:3644
 msgid "Comma-separated ProxyJump chain, e.g. bastion1, bastion2"
 msgstr "Cadeia ProxyJump separada por vírgulas, ex.: bastion1, bastion2"
 
-#: src/sshpilot/connection_dialog.py:3653 src/sshpilot/scp_window.py:335
+#: src/sshpilot/connection_dialog.py:3655 src/sshpilot/scp_window.py:335
 #: src/sshpilot/sshcopyid_window.py:135 src/sshpilot/window_dialogs.py:1205
 #: src/sshpilot/window_dialogs.py:2517
 msgid "Pick from inventory"
@@ -2228,12 +2228,12 @@ msgstr "Escolher do inventário"
 #. set, OpenSSH applies the first line in the file.
 #. Adw.EntryRow has no subtitle (like proxy_jump_row above), so the
 #. hint lives in the tooltip.
-#: src/sshpilot/connection_dialog.py:3666
+#: src/sshpilot/connection_dialog.py:3668
 #: src/sshpilot/effective_config_dialog.py:36
 msgid "Proxy command"
 msgstr "Comando de proxy"
 
-#: src/sshpilot/connection_dialog.py:3668
+#: src/sshpilot/connection_dialog.py:3670
 msgid ""
 "Runs locally to relay the connection, e.g. ssh -W %h:%p bastion. A "
 "ProxyCommand executes a local command — only keep values you trust."
@@ -2242,39 +2242,39 @@ msgstr ""
 "Um ProxyCommand executa um comando local — mantenha apenas valores em que "
 "você confia."
 
-#: src/sshpilot/connection_dialog.py:3684
+#: src/sshpilot/connection_dialog.py:3686
 #: src/sshpilot/effective_config_dialog.py:37
 #: src/sshpilot/gtk/login_profile_messages.py:40
 #: src/sshpilot/login_profile_dialogs.py:305
 msgid "Forward agent"
 msgstr "Encaminhar agente"
 
-#: src/sshpilot/connection_dialog.py:3686
+#: src/sshpilot/connection_dialog.py:3688
 msgid "Allow the remote host to use your local ssh-agent"
 msgstr "Permitir que o host remoto use seu ssh-agent local"
 
-#: src/sshpilot/connection_dialog.py:3741
-#: src/sshpilot/connection_dialog.py:3744
+#: src/sshpilot/connection_dialog.py:3743
+#: src/sshpilot/connection_dialog.py:3746
 msgid "X11 Forwarding"
 msgstr "Redirecionamento X11"
 
-#: src/sshpilot/connection_dialog.py:3742
+#: src/sshpilot/connection_dialog.py:3744
 msgid "Forward X11 connections for GUI applications"
 msgstr "Redirecionar conexões X11 para aplicativos com interface gráfica"
 
-#: src/sshpilot/connection_dialog.py:3750
+#: src/sshpilot/connection_dialog.py:3752
 msgid "Do not start a remote shell (ssh -N flag)"
 msgstr "Não iniciar uma shell remota (flag ssh -N)"
 
-#: src/sshpilot/connection_dialog.py:3752
+#: src/sshpilot/connection_dialog.py:3754
 msgid "Session"
 msgstr "Sessão"
 
-#: src/sshpilot/connection_dialog.py:3759
+#: src/sshpilot/connection_dialog.py:3761
 msgid "Exit if port forwarding fails"
 msgstr "Desativar redirecionamento de portas"
 
-#: src/sshpilot/connection_dialog.py:3760
+#: src/sshpilot/connection_dialog.py:3762
 msgid ""
 "Terminate the connection when a requested forward cannot be set up "
 "(ExitOnForwardFailure=yes)"
@@ -2282,46 +2282,46 @@ msgstr ""
 "Encerrar a conexão quando um redirecionamento solicitado não puder ser "
 "configurado (ExitOnForwardFailure=yes)"
 
-#: src/sshpilot/connection_dialog.py:3763
+#: src/sshpilot/connection_dialog.py:3765
 msgid "Forward Failure"
 msgstr "Encaminhar agente"
 
-#: src/sshpilot/connection_dialog.py:3769
+#: src/sshpilot/connection_dialog.py:3771
 msgid "Port Forwarding Rules"
 msgstr "Regras de redirecionamento de portas"
 
-#: src/sshpilot/connection_dialog.py:3770
+#: src/sshpilot/connection_dialog.py:3772
 msgid "Add, edit, or remove port forwarding rules for this connection"
 msgstr ""
 "Adicionar, editar ou remover regras de redirecionamento de portas para esta "
 "conexão"
 
-#: src/sshpilot/connection_dialog.py:3781
+#: src/sshpilot/connection_dialog.py:3783
 msgid "Add Rule"
 msgstr "Adicionar regra"
 
-#: src/sshpilot/connection_dialog.py:3783
+#: src/sshpilot/connection_dialog.py:3785
 msgid "Add a new port forwarding rule"
 msgstr "Adicionar uma nova regra de redirecionamento de portas"
 
 #. Port info button
-#: src/sshpilot/connection_dialog.py:3788
+#: src/sshpilot/connection_dialog.py:3790
 msgid "View Port Info"
 msgstr "Ver informações das portas"
 
-#: src/sshpilot/connection_dialog.py:3790
+#: src/sshpilot/connection_dialog.py:3792
 msgid "View information about currently used ports and potential conflicts"
 msgstr "Ver informações sobre portas atualmente em uso e possíveis conflitos"
 
-#: src/sshpilot/connection_dialog.py:3803
+#: src/sshpilot/connection_dialog.py:3805
 msgid "No port forwarding rules configured"
 msgstr "Nenhuma regra de redirecionamento de portas configurada"
 
-#: src/sshpilot/connection_dialog.py:3820
+#: src/sshpilot/connection_dialog.py:3822
 msgid "About Port Forwarding"
 msgstr "Sobre o redirecionamento de portas"
 
-#: src/sshpilot/connection_dialog.py:3822
+#: src/sshpilot/connection_dialog.py:3824
 msgid ""
 "Port forwarding allows you to securely tunnel network connections.\n"
 "\n"
@@ -2343,16 +2343,16 @@ msgstr ""
 "• <b>Redirecionamento dinâmico</b>: Inicia um proxy SOCKS na máquina local "
 "escutando na porta especificada."
 
-#: src/sshpilot/connection_dialog.py:3841
+#: src/sshpilot/connection_dialog.py:3843
 msgid "Opens the way to the host before SSH Pilot connects. Choose one."
 msgstr ""
 "Abre o caminho até o host antes do SSH Pilot conectar. Escolha uma opção."
 
-#: src/sshpilot/connection_dialog.py:3846
+#: src/sshpilot/connection_dialog.py:3848
 msgid "Runs before SSH Pilot connects, for example to bring up a VPN."
 msgstr ""
 
-#: src/sshpilot/connection_dialog.py:3851
+#: src/sshpilot/connection_dialog.py:3853
 msgid ""
 "Ports to reach for, in order, such as 7000,8000,9000. Add :udp to a port for "
 "UDP. Sent by SSH Pilot itself, so no knock tool has to be installed."
@@ -2361,7 +2361,7 @@ msgstr ""
 "para UDP. Enviado pelo próprio SSH Pilot, sem necessidade de instalar "
 "ferramenta de knock."
 
-#: src/sshpilot/connection_dialog.py:3856
+#: src/sshpilot/connection_dialog.py:3858
 msgid ""
 "Anything else that has to run first — fwknop, a VPN dial-up, or a knock and "
 "a VPN together in one line."
@@ -2369,7 +2369,7 @@ msgstr ""
 "Qualquer outra coisa que precise ser executada primeiro — fwknop, conexão "
 "VPN ou um knock e uma VPN juntos em uma única linha."
 
-#: src/sshpilot/connection_dialog.py:3860
+#: src/sshpilot/connection_dialog.py:3862
 msgid ""
 "Sent to OpenSSH.\n"
 "\n"
@@ -2387,34 +2387,34 @@ msgstr ""
 
 #. : Shown under the command box. These are expanded before the command runs,
 #. : so a knock does not have to hardcode a hostname that later changes.
-#: src/sshpilot/connection_dialog.py:3866
+#: src/sshpilot/connection_dialog.py:3868
 msgid "%h host · %p port · %u user"
 msgstr "%h host · %p porta · %u usuário"
 
 #. "and", not "&": Adw.PreferencesGroup renders its title as
 #. Pango markup, and a bare ampersand makes the parse fail, so
 #. GTK drops the whole title silently.
-#: src/sshpilot/connection_dialog.py:3882
-#: src/sshpilot/connection_dialog.py:4604
+#: src/sshpilot/connection_dialog.py:3884
+#: src/sshpilot/connection_dialog.py:4606
 msgid "Port Knocking and Pre-Connect"
 msgstr "Port Knocking e Pré-conexão"
 
-#: src/sshpilot/connection_dialog.py:3893
-#: src/sshpilot/connection_dialog.py:3911
+#: src/sshpilot/connection_dialog.py:3895
+#: src/sshpilot/connection_dialog.py:3913
 msgid "Port knock sequence"
 msgstr "Sequência de port knock"
 
-#: src/sshpilot/connection_dialog.py:3904
+#: src/sshpilot/connection_dialog.py:3906
 msgid "7000,8000,9000"
 msgstr "7000,8000,9000"
 
-#: src/sshpilot/connection_dialog.py:3947
+#: src/sshpilot/connection_dialog.py:3949
 msgid "fwknop -n %h"
 msgstr "fwknop -n %h"
 
 #. Its radio is the label, which also puts the name outside the box
 #. rather than sitting inside the card looking like part of the field.
-#: src/sshpilot/connection_dialog.py:3966
+#: src/sshpilot/connection_dialog.py:3968
 msgid "Run a command"
 msgstr "Executar comando…"
 
@@ -2422,25 +2422,25 @@ msgstr "Executar comando…"
 #. options: the result answers a question about the text directly
 #. above it, and at the bottom of the group it was far enough away to
 #. read as unrelated.
-#: src/sshpilot/connection_dialog.py:3985
+#: src/sshpilot/connection_dialog.py:3987
 msgid "Test"
 msgstr "Testar"
 
-#: src/sshpilot/connection_dialog.py:4038
+#: src/sshpilot/connection_dialog.py:4040
 msgid "Timeout"
 msgstr "Tempo limite"
 
-#: src/sshpilot/connection_dialog.py:4040
+#: src/sshpilot/connection_dialog.py:4042
 msgid "Seconds before the command is stopped. 0 uses the app default."
 msgstr ""
 "Segundos antes de o comando ser interrompido. 0 usa o padrão do aplicativo."
 
-#: src/sshpilot/connection_dialog.py:4047
+#: src/sshpilot/connection_dialog.py:4049
 msgid "Do not connect if pre-connect command fails"
 msgstr "Não conectar se o comando de pré-conexão falhar"
 
-#: src/sshpilot/connection_dialog.py:4050
-#: src/sshpilot/connection_dialog.py:4611
+#: src/sshpilot/connection_dialog.py:4052
+#: src/sshpilot/connection_dialog.py:4613
 msgid ""
 "Off: SSH Pilot warns and connects anyway, so the SSH error is the one you "
 "see."
@@ -2448,59 +2448,59 @@ msgstr ""
 "Desativado: o SSH Pilot avisa e conecta mesmo assim, para que o erro exibido "
 "seja o do SSH."
 
-#: src/sshpilot/connection_dialog.py:4057
+#: src/sshpilot/connection_dialog.py:4059
 msgid "SSH Commands"
 msgstr "Comandos"
 
-#: src/sshpilot/connection_dialog.py:4061
+#: src/sshpilot/connection_dialog.py:4063
 msgid "Local Command"
 msgstr "Comando local"
 
-#: src/sshpilot/connection_dialog.py:4063
+#: src/sshpilot/connection_dialog.py:4065
 msgid "Executed locally after connect"
 msgstr "Executado localmente após conectar"
 
-#: src/sshpilot/connection_dialog.py:4066
+#: src/sshpilot/connection_dialog.py:4068
 msgid "Remote Command"
 msgstr "Comando remoto"
 
-#: src/sshpilot/connection_dialog.py:4069
+#: src/sshpilot/connection_dialog.py:4071
 msgid "Executed on remote; TTY requested for interactivity"
 msgstr "Executado no remoto; TTY solicitado para interatividade"
 
-#: src/sshpilot/connection_dialog.py:4207
+#: src/sshpilot/connection_dialog.py:4209
 msgid "Enter a knock sequence first."
 msgstr "Digite o nome do host primeiro"
 
-#: src/sshpilot/connection_dialog.py:4208
+#: src/sshpilot/connection_dialog.py:4210
 msgid "Enter a command first."
 msgstr "Digite um comando shell para executar:"
 
-#: src/sshpilot/connection_dialog.py:4217
+#: src/sshpilot/connection_dialog.py:4219
 msgid "The background service is unavailable."
 msgstr "O serviço de transferências do daemon está indisponível."
 
-#: src/sshpilot/connection_dialog.py:4234
+#: src/sshpilot/connection_dialog.py:4236
 msgid "Running…"
 msgstr "Em execução"
 
-#: src/sshpilot/connection_dialog.py:4241
+#: src/sshpilot/connection_dialog.py:4243
 msgid "The test could not be interpreted."
 msgstr "Não foi possível iniciar a transferência"
 
-#: src/sshpilot/connection_dialog.py:4574
+#: src/sshpilot/connection_dialog.py:4576
 #, fuzzy
 msgid ""
 "Shown in the connection list. Leave empty to name it after what it connects "
 "to."
 msgstr "A conexão não tem um host ou alias SSH."
 
-#: src/sshpilot/connection_dialog.py:4607
+#: src/sshpilot/connection_dialog.py:4609
 #, fuzzy
 msgid "Pre-Connect Command"
 msgstr "Comandos de conexão"
 
-#: src/sshpilot/connection_dialog.py:4614
+#: src/sshpilot/connection_dialog.py:4616
 #, fuzzy
 msgid ""
 "Off: SSH Pilot warns and connects anyway, so the connection's own error is "
@@ -2509,12 +2509,12 @@ msgstr ""
 "Desativado: o SSH Pilot avisa e conecta mesmo assim, para que o erro exibido "
 "seja o do SSH."
 
-#: src/sshpilot/connection_dialog.py:4736
+#: src/sshpilot/connection_dialog.py:4738
 #, fuzzy
 msgid "Display"
 msgstr "Exibição do grupo"
 
-#: src/sshpilot/connection_dialog.py:4738
+#: src/sshpilot/connection_dialog.py:4740
 #, fuzzy
 msgid "Devices"
 msgstr "Dispositivo"
@@ -2522,7 +2522,7 @@ msgstr "Dispositivo"
 #. Use the same neutral fallback as the local tab. Shell-provided
 #. titles can still replace it later.
 #. Move the existing terminal out of the main tab_view into pane 0
-#: src/sshpilot/connection_dialog.py:4740 src/sshpilot/omni_search.py:205
+#: src/sshpilot/connection_dialog.py:4742 src/sshpilot/omni_search.py:205
 #: src/sshpilot/preferences.py:1297 src/sshpilot/preferences.py:3303
 #: src/sshpilot/shortcut_editor.py:252 src/sshpilot/settings_index.py:48
 #: src/sshpilot/split_view.py:407 src/sshpilot/split_view.py:608
@@ -2536,64 +2536,64 @@ msgstr "Dispositivo"
 msgid "Terminal"
 msgstr "Terminal"
 
-#: src/sshpilot/connection_dialog.py:4813
+#: src/sshpilot/connection_dialog.py:4815
 #: src/sshpilot/plugins/builtin/docker_manager/tab_logs.py:99
 #: src/sshpilot/window_broadcast.py:75 src/sshpilot/window_dialogs.py:3273
 #: src/sshpilot/window_dialogs.py:3678
 msgid "Clear"
 msgstr "Limpar"
 
-#: src/sshpilot/connection_dialog.py:4870
+#: src/sshpilot/connection_dialog.py:4872
 #, fuzzy
 msgid "Show suggestions"
 msgstr "Mostrar mais ações"
 
-#: src/sshpilot/connection_dialog.py:4902
+#: src/sshpilot/connection_dialog.py:4904
 #, fuzzy
 msgid "Looking…"
 msgstr "Carregando…"
 
-#: src/sshpilot/connection_dialog.py:4933
+#: src/sshpilot/connection_dialog.py:4935
 #, fuzzy
 msgid "Nothing found"
 msgstr "Nenhuma porta em escuta encontrada"
 
-#: src/sshpilot/connection_dialog.py:4953
+#: src/sshpilot/connection_dialog.py:4955
 #, fuzzy
 msgid "Filter…"
 msgstr "Filtrar tags…"
 
-#: src/sshpilot/connection_dialog.py:5145
+#: src/sshpilot/connection_dialog.py:5147
 #: src/sshpilot/connection_dialog_validation.py:208
 #, python-brace-format
 msgid "{field} is required"
 msgstr "{field} é obrigatório"
 
-#: src/sshpilot/connection_dialog.py:5196
-#: src/sshpilot/connection_dialog.py:5594
-#: src/sshpilot/connection_dialog.py:5795
+#: src/sshpilot/connection_dialog.py:5198
+#: src/sshpilot/connection_dialog.py:5596
+#: src/sshpilot/connection_dialog.py:5797
 msgid "The connection settings could not be saved."
 msgstr "Não foi possível salvar as configurações da conexão."
 
-#: src/sshpilot/connection_dialog.py:5211
+#: src/sshpilot/connection_dialog.py:5213
 #: src/sshpilot/file_manager/properties_dialog.py:757
 #: src/sshpilot/login_profile_dialogs.py:800
 msgid "Group"
 msgstr "Grupo"
 
-#: src/sshpilot/connection_dialog.py:5214
+#: src/sshpilot/connection_dialog.py:5216
 msgid "No group"
 msgstr "Sem grupo"
 
-#: src/sshpilot/connection_dialog.py:5319
+#: src/sshpilot/connection_dialog.py:5321
 msgid "Could not load the connection from the daemon"
 msgstr "Não foi possível carregar a conexão a partir do daemon"
 
-#: src/sshpilot/connection_dialog.py:5321
+#: src/sshpilot/connection_dialog.py:5323
 msgid "Connection is still loading"
 msgstr "A conexão ainda está carregando"
 
-#: src/sshpilot/connection_dialog.py:5335
+#: src/sshpilot/connection_dialog.py:5337
 msgid ""
 "An SSH option on the Advanced tab is not valid. Fix or remove it, then save "
 "again."
@@ -2601,29 +2601,29 @@ msgstr ""
 "Uma opção SSH na aba Avançado não é válida. Corrija ou remova-a e salve "
 "novamente."
 
-#: src/sshpilot/connection_dialog.py:5352
+#: src/sshpilot/connection_dialog.py:5354
 msgid "Please enter a nickname for this connection"
 msgstr "Digite um apelido para esta conexão"
 
-#: src/sshpilot/connection_dialog.py:5466
+#: src/sshpilot/connection_dialog.py:5468
 #: src/sshpilot/login_profile_dialogs.py:412
 msgid "Please correct the invalid key passphrase."
 msgstr "Corrija a frase secreta inválida da chave."
 
-#: src/sshpilot/connection_dialog.py:5556
+#: src/sshpilot/connection_dialog.py:5558
 msgid "The secure storage backend could not be unlocked."
 msgstr "Não foi possível desbloquear o backend de armazenamento seguro."
 
-#: src/sshpilot/connection_dialog.py:5639
+#: src/sshpilot/connection_dialog.py:5641
 #, python-brace-format
 msgid "Saving to {backend}"
 msgstr "Salvando em {backend}"
 
-#: src/sshpilot/connection_dialog.py:5640
+#: src/sshpilot/connection_dialog.py:5642
 msgid "Saving passwords and passphrases to secure storage…"
 msgstr "Salvando senhas e frases secretas no armazenamento seguro…"
 
-#: src/sshpilot/connection_dialog.py:5724
+#: src/sshpilot/connection_dialog.py:5726
 msgid ""
 "The connection settings were saved, but secure storage did not answer in "
 "time. The password may have been stored anyway — reopen the connection to "
@@ -2633,7 +2633,7 @@ msgstr ""
 "respondeu a tempo. A senha pode ter sido armazenada de qualquer forma — "
 "reabra a conexão para verificar antes de salvar novamente."
 
-#: src/sshpilot/connection_dialog.py:5806
+#: src/sshpilot/connection_dialog.py:5808
 msgid ""
 "The connection settings were saved, but secure storage rejected a password "
 "or passphrase. Please try saving again."
@@ -2641,7 +2641,7 @@ msgstr ""
 "As configurações da conexão foram salvas, mas o armazenamento seguro "
 "rejeitou uma senha ou frase secreta. Tente salvar novamente."
 
-#: src/sshpilot/connection_dialog.py:5898
+#: src/sshpilot/connection_dialog.py:5900
 msgid ""
 "The connection could not be loaded from the service. You can retry or close "
 "the editor."
@@ -2649,7 +2649,7 @@ msgstr ""
 "Não foi possível carregar a conexão a partir do serviço. Você pode tentar "
 "novamente ou fechar o editor."
 
-#: src/sshpilot/connection_dialog.py:5901
+#: src/sshpilot/connection_dialog.py:5903
 msgid ""
 "The connection could not be loaded from the service. Please close the editor "
 "and try again."
@@ -2657,15 +2657,15 @@ msgstr ""
 "Não foi possível carregar a conexão a partir do serviço. Feche o editor e "
 "tente novamente."
 
-#: src/sshpilot/connection_dialog.py:5905
+#: src/sshpilot/connection_dialog.py:5907
 msgid "Could not load connection"
 msgstr "Não foi possível carregar a conexão"
 
-#: src/sshpilot/connection_dialog.py:5909
+#: src/sshpilot/connection_dialog.py:5911
 msgid "_Retry"
 msgstr "_Tentar novamente"
 
-#: src/sshpilot/connection_dialog.py:5914 src/sshpilot/window.py:2294
+#: src/sshpilot/connection_dialog.py:5916 src/sshpilot/window.py:2294
 msgid "_Close"
 msgstr "_Fechar"
 
@@ -2733,11 +2733,11 @@ msgstr "Não usar um perfil"
 msgid "Inherit from group ({name})"
 msgstr "Grupo de conexões: {name}"
 
-#: src/sshpilot/connection_dialog_overrides.py:72
+#: src/sshpilot/connection_dialog_overrides.py:105
 msgid "Inherited from your SSH configuration. Edit to set it for this host."
 msgstr "Herdado da sua configuração do SSH. Edite para definir para este host."
 
-#: src/sshpilot/connection_dialog_overrides.py:164
+#: src/sshpilot/connection_dialog_overrides.py:197
 #, python-brace-format
 msgid ""
 "Settings ▸ SSH Options set {keyword} to “{value}” for every connection. The "
@@ -2746,7 +2746,7 @@ msgstr ""
 "Configurações ▸ Opções de SSH define {keyword} como “{value}” para todas as "
 "conexões. O valor aqui é salvo, mas o aplicativo não o usa."
 
-#: src/sshpilot/connection_dialog_overrides.py:204
+#: src/sshpilot/connection_dialog_overrides.py:237
 #, python-brace-format
 msgid ""
 "Not used: “{block}” in {file} (line {line}) already sets {keyword} to "
@@ -2757,7 +2757,7 @@ msgstr ""
 "“{value}”, e o OpenSSH mantém o primeiro valor que encontra. O valor aqui é "
 "salvo, mas as conexões usam “{value}”."
 
-#: src/sshpilot/connection_dialog_overrides.py:210
+#: src/sshpilot/connection_dialog_overrides.py:243
 #, python-brace-format
 msgid ""
 "Not used: line {line} of {file}, above every Host block, already sets "
@@ -2768,7 +2768,25 @@ msgstr ""
 "define {keyword} como “{value}”, e o OpenSSH mantém o primeiro valor que "
 "encontra. O valor aqui é salvo, mas as conexões usam “{value}”."
 
-#: src/sshpilot/connection_dialog_overrides.py:225
+#: src/sshpilot/connection_dialog_overrides.py:261
+#, python-brace-format
+msgid ""
+"“{block}” in {file} (line {line}) sets {keyword} to “{value}” for this host, "
+"so connections use that value."
+msgstr ""
+"“{block}” em {file} (linha {line}) define {keyword} como “{value}” para este "
+"host, então as conexões usam esse valor."
+
+#: src/sshpilot/connection_dialog_overrides.py:266
+#, python-brace-format
+msgid ""
+"Line {line} of {file}, above every Host block, sets {keyword} to “{value}” "
+"for this host, so connections use that value."
+msgstr ""
+"A linha {line} de {file}, acima de todos os blocos Host, define {keyword} "
+"como “{value}” para este host, então as conexões usam esse valor."
+
+#: src/sshpilot/connection_dialog_overrides.py:335
 #, python-brace-format
 msgid ""
 "Settings ▸ SSH Options set {keyword} to “{value}” for every connection, so "
@@ -2777,7 +2795,7 @@ msgstr ""
 "Configurações ▸ Opções de SSH define {keyword} como “{value}” para todas as "
 "conexões, então esta conexão usa esse valor."
 
-#: src/sshpilot/connection_dialog_overrides.py:243
+#: src/sshpilot/connection_dialog_overrides.py:353
 #, python-brace-format
 msgid ""
 "Settings ▸ SSH Options also add “{value}” to every connection. Both are used."
@@ -2785,7 +2803,7 @@ msgstr ""
 "Configurações ▸ Opções de SSH também adiciona “{value}” a todas as conexões. "
 "Ambos são usados."
 
-#: src/sshpilot/connection_dialog_overrides.py:249
+#: src/sshpilot/connection_dialog_overrides.py:359
 #, python-brace-format
 msgid ""
 "Settings ▸ SSH Options set this to “{value}” for every connection. The value "
@@ -2794,7 +2812,7 @@ msgstr ""
 "Configurações ▸ Opções de SSH define isto como “{value}” para todas as "
 "conexões. O valor aqui é salvo, mas o aplicativo não o usa."
 
-#: src/sshpilot/connection_dialog_overrides.py:543
+#: src/sshpilot/connection_dialog_overrides.py:734
 msgid ""
 "Settings ▸ SSH Options and an earlier block of your SSH configuration "
 "override some settings of this connection. They are marked below."
@@ -2802,7 +2820,7 @@ msgstr ""
 "Configurações ▸ Opções de SSH e um bloco anterior da sua configuração SSH "
 "substituem algumas configurações desta conexão. Elas estão marcadas abaixo."
 
-#: src/sshpilot/connection_dialog_overrides.py:549
+#: src/sshpilot/connection_dialog_overrides.py:740
 msgid ""
 "An earlier block of your SSH configuration overrides some settings of this "
 "connection. They are marked below."
@@ -2810,7 +2828,7 @@ msgstr ""
 "Um bloco anterior da sua configuração SSH substitui algumas configurações "
 "desta conexão. Elas estão marcadas abaixo."
 
-#: src/sshpilot/connection_dialog_overrides.py:554
+#: src/sshpilot/connection_dialog_overrides.py:745
 msgid ""
 "Settings ▸ SSH Options override some settings of this connection. They are "
 "marked below."

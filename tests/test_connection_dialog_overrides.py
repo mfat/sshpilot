@@ -16,6 +16,7 @@ from sshpilot.connection_dialog_overrides import (
     advanced_option_note,
     earlier_map,
     earlier_note,
+    earlier_row_state,
     forced_map,
     inherited_note_text,
     GLOBAL,
@@ -135,7 +136,11 @@ def test_an_option_openssh_collects_is_reported_as_added_not_lost():
 
 def test_every_marked_row_is_an_option_the_dialog_owns():
     for _row, keyword in OVERRIDABLE_ROWS:
-        assert keyword.lower() in MANAGED_HOST_OPTIONS | {"exitonforwardfailure"}
+        # The two forwarding switches write their option through the
+        # Advanced tab; every other row is a directive the formatter owns.
+        assert keyword.lower() in MANAGED_HOST_OPTIONS | {
+            "exitonforwardfailure", "sessiontype",
+        }
 
 
 def _dialog(**attrs):
@@ -146,7 +151,7 @@ def _dialog(**attrs):
         "_set_forced_options", "_set_earlier_directives",
         "_apply_override_notes", "_mark_row_override",
         "_overridden_field_count", "_overridden_field_counts",
-        "_advanced_option_note",
+        "_advanced_option_note", "_password_auth_selected",
         "_override_row_value", "_watch_rows_for_overrides",
     ):
         setattr(dialog, name, getattr(Overrides, name).__get__(dialog))
@@ -410,3 +415,113 @@ def test_advanced_option_beaten_by_an_earlier_block_is_noted_and_counted():
     assert "yes" in dialog._advanced_option_note("Compression", "no")
     assert dialog._advanced_option_note("Ciphers", "aes256-ctr") is None
     assert dialog._overridden_field_counts() == (0, 1)
+
+
+# --- every kind of field, not only text ---------------------------------------
+
+
+def test_text_row_left_empty_needs_no_mark_it_shows_the_inherited_value():
+    assert earlier_row_state("username_row", "User", None, _earlier()) == (None, None)
+
+
+def test_switch_that_is_off_is_pointed_out_when_an_earlier_block_turns_it_on():
+    """A switch cannot look inherited: off reads as "no" while X11 is forwarded."""
+    earlier = _earlier("forwardx11", "yes")
+    state, note = earlier_row_state("x11_row", "ForwardX11", None, earlier)
+    assert state == GLOBAL and "yes" in note and "Host *" in note
+    # The earlier block agrees with what the switch shows: nothing to say.
+    assert earlier_row_state(
+        "x11_row", "ForwardX11", None, _earlier("forwardx11", "no")
+    ) == (None, None)
+    # "Disable public-key" off means PubkeyAuthentication yes.
+    assert earlier_row_state(
+        "pubkey_auth_row", "PubkeyAuthentication", None,
+        _earlier("pubkeyauthentication", "yes"),
+    ) == (None, None)
+    assert earlier_row_state(
+        "pubkey_auth_row", "PubkeyAuthentication", None,
+        _earlier("pubkeyauthentication", "no"),
+    )[0] == GLOBAL
+
+
+def test_selector_on_default_is_pointed_out_when_an_earlier_block_decides():
+    state, note = earlier_row_state(
+        "forward_agent_row", "ForwardAgent", None, _earlier("forwardagent", "yes")
+    )
+    assert state == GLOBAL and "ForwardAgent" in note
+
+
+def test_password_login_loses_to_an_earlier_list_without_password_methods():
+    earlier = _earlier("preferredauthentications", "publickey")
+    state, note = earlier_row_state(
+        "auth_method_row", "PreferredAuthentications",
+        "keyboard-interactive,password", earlier, password_auth=True,
+    )
+    assert state == OVERRIDDEN and "publickey" in note
+    # A list that still tries a password takes nothing away.
+    assert earlier_row_state(
+        "auth_method_row", "PreferredAuthentications",
+        "keyboard-interactive,password",
+        _earlier("preferredauthentications", "publickey,password"),
+        password_auth=True,
+    ) == (None, None)
+
+
+def test_key_login_is_pointed_out_when_an_earlier_list_leaves_keys_out():
+    earlier = _earlier("preferredauthentications", "password")
+    assert earlier_row_state(
+        "auth_method_row", "PreferredAuthentications", None, earlier
+    )[0] == GLOBAL
+    assert earlier_row_state(
+        "auth_method_row", "PreferredAuthentications", None,
+        _earlier("preferredauthentications", "publickey,password"),
+    ) == (None, None)
+
+
+def test_local_command_loses_when_an_earlier_block_forbids_local_commands():
+    state, note = earlier_row_state(
+        "local_command_row", "LocalCommand", "notify-send hi",
+        _earlier("permitlocalcommand", "no"),
+    )
+    assert state == OVERRIDDEN and "PermitLocalCommand" in note
+
+
+@needs_adw
+def test_switch_off_with_an_authored_no_is_overridden_by_an_earlier_yes():
+    """The block says `ForwardX11 no`; an earlier `Host *` says yes and wins."""
+    from gi.repository import Adw
+
+    row = Adw.SwitchRow(title="X11")
+    dialog = _dialog(
+        x11_row=row,
+        is_editing=True,
+        connection=types.SimpleNamespace(authored_directives=frozenset({"forwardx11"})),
+    )
+    dialog._forced_options = {}
+
+    dialog._set_earlier_directives(_earlier("forwardx11", "yes"))
+
+    assert row._sshpilot_override_state == OVERRIDDEN
+    assert _icon_name(row._sshpilot_override_icon) == "dialog-warning-symbolic"
+    assert dialog.banner_syncs[-1] == 1
+
+
+@needs_adw
+def test_switch_off_with_nothing_authored_gets_an_information_mark():
+    from gi.repository import Adw
+
+    row = Adw.SwitchRow(title="X11")
+    only = Adw.SwitchRow(title="Forwarding only")
+    only.set_active(True)
+    dialog = _dialog(x11_row=row, port_forwarding_only_row=only)
+    dialog._forced_options = {}
+
+    dialog._set_earlier_directives({
+        **_earlier("forwardx11", "yes"), **_earlier("sessiontype", "default", line=5),
+    })
+
+    assert row._sshpilot_override_state == GLOBAL
+    assert _icon_name(row._sshpilot_override_icon) == "dialog-information-symbolic"
+    # "Forwarding only" writes SessionType none, which the earlier line beats.
+    assert only._sshpilot_override_state == OVERRIDDEN
+    assert dialog.banner_syncs[-1] == 1

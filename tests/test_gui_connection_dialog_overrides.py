@@ -255,3 +255,79 @@ def test_new_connection_is_checked_against_the_alias_being_typed(gui):
     _pump(lambda: asked[-1] == "web.prod" and not dialog._earlier_directives)
     assert not dialog.username_row._sshpilot_override_icon.get_visible()
     assert not dialog._override_banner.get_revealed()
+
+
+def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gui):
+    """Not only text fields: every element that writes an option is judged."""
+    from gi.repository import Gtk
+    from sshpilot.api.models.connections import (
+        EarlierDirective,
+        EffectiveConfigComparison,
+    )
+    from sshpilot.connection_dialog import ConnectionDialog
+    from sshpilot.connection_dialog_overrides import GLOBAL, OVERRIDDEN
+    from sshpilot.connection_model import Connection
+    from sshpilot.plugins.loader import ensure_builtin_protocols
+
+    ensure_builtin_protocols()
+
+    def line(key, value, number):
+        return EarlierDirective(
+            key=key, value=value, block="Host *",
+            file="/home/me/.ssh/config", line=number,
+        )
+
+    comparison = EffectiveConfigComparison(
+        connection_id="web", host="web", available=True,
+        full=("hostname web.example.com",),
+        earlier=(
+            line("forwardx11", "yes", 2),
+            line("preferredauthentications", "publickey", 3),
+            line("permitlocalcommand", "no", 4),
+            line("forwardagent", "yes", 5),
+        ),
+    )
+    snapshot = GlobalSshOverrides(
+        revision="r1", connect_timeout=0, strict_host_key_checking="",
+        compression="", verbosity=0, debug_enabled=False, forced_options=(),
+    )
+    parent = Gtk.Window()
+    parent.connection_manager = _Manager()
+    parent._daemon_ready = lambda: True
+    parent.client = types.SimpleNamespace(
+        get_global_ssh_overrides=lambda: snapshot,
+        get_effective_config=lambda _cid: comparison,
+    )
+    connection = Connection({
+        "nickname": "web", "host": "web", "hostname": "web.example.com",
+        "__authored_directives": ("hostname",),
+    })
+    dialog = ConnectionDialog(
+        parent, connection=connection, connection_manager=parent.connection_manager
+    )
+    _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+
+    # Off, nothing authored, yet X11 is forwarded: an information mark.
+    assert dialog.x11_row._sshpilot_override_state == GLOBAL
+    assert "ForwardX11" in dialog.x11_row.get_tooltip_text()
+    # A selector on Default while the earlier block decides.
+    assert dialog.forward_agent_row._sshpilot_override_state == GLOBAL
+    # Key login is still tried by "publickey": nothing to say.
+    assert getattr(dialog.auth_method_row, "_sshpilot_override_state", None) is None
+    assert getattr(dialog, "_override_banner", None) is None or (
+        not dialog._override_banner.get_revealed()
+    )
+
+    # Password login is not in the earlier list: the choice here is not used.
+    dialog.auth_toggle.set_active(1)
+    assert dialog.auth_method_row._sshpilot_override_state == OVERRIDDEN
+    assert dialog.auth_method_row._sshpilot_override_icon.get_visible()
+    assert "publickey" in dialog.auth_method_row.get_tooltip_text()
+    assert dialog._override_banner.get_revealed()
+    dialog.auth_toggle.set_active(0)
+    assert not dialog._override_banner.get_revealed()
+
+    # A local command cannot run while an earlier block forbids them.
+    dialog.local_command_row.set_text("notify-send connected")
+    assert dialog.local_command_row._sshpilot_override_state == OVERRIDDEN
+    assert "PermitLocalCommand" in dialog.local_command_row.get_tooltip_text()
