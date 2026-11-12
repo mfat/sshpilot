@@ -5,10 +5,11 @@ for: Settings ▸ SSH Options (sent with every connection) and the connection
 dialog's Advanced tab (written to that host's block). One component, so the
 two cannot drift apart again.
 
-* The keyword is a text field, not a fixed dropdown. A menu on the field
-  offers the known OpenSSH keywords, but any keyword can be typed: a hard-coded
-  list goes stale with every OpenSSH release, and a keyword missing from it
-  could not be entered or even kept.
+* The keyword is a text field, not a fixed dropdown. Known OpenSSH keywords
+  are suggested as the user types (and the arrow on the field lists them
+  all), but any keyword can be typed: a hard-coded list goes stale with every
+  OpenSSH release, and a keyword missing from it could not be entered or even
+  kept.
 * A row is checked when the user finishes editing it (focus leaves, or Enter),
   never on each keystroke: a half-typed option is not an error yet. The caller
   supplies the check; :func:`check_ssh_option` is the usual one and asks
@@ -27,7 +28,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from .core.settings import (  # noqa: E402
     ExtraOptionError,
@@ -131,6 +132,9 @@ class _OptionRow(Gtk.ListBoxRow):
         self.dirty = False
         #: Why this row is refused, or None.
         self.error: Optional[str] = None
+        #: Keyword suggestions, created the first time they are needed.
+        self.suggestions: Optional[Gtk.Popover] = None
+        self.suggestion_list: Optional[Gtk.ListBox] = None
 
         self.keyword_entry = Gtk.Entry()
         self.keyword_entry.set_placeholder_text(_("Keyword"))
@@ -279,6 +283,11 @@ class SshOptionList(Gtk.Box):
         self._rows.append(row)
         self._listbox.insert(row, len(self._rows) - 1)  # above "Add Option"
         row.keyword_entry.connect("changed", self._on_entry_changed, row)
+        row.keyword_entry.connect("changed", self._on_keyword_typed, row)
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._on_keyword_key, row)
+        row.keyword_entry.add_controller(keys)
         row.value_entry.connect("changed", self._on_entry_changed, row)
         row.keyword_entry.connect(
             "activate", lambda _e, r=row: r.value_entry.grab_focus()
@@ -288,10 +297,16 @@ class SshOptionList(Gtk.Box):
         row.remove_button.connect("clicked", lambda _b, r=row: self.remove(r))
         focus = Gtk.EventControllerFocus()
         focus.connect("leave", lambda _c, r=row: self._finish(r))
+        keyword_focus = Gtk.EventControllerFocus()
+        keyword_focus.connect("leave", lambda _c, r=row: self._hide_suggestions(r))
+        row.keyword_entry.add_controller(keyword_focus)
         row.fields.add_controller(focus)
         return row
 
     def _drop(self, row: _OptionRow) -> None:
+        if row.suggestions is not None:
+            row.suggestions.unparent()
+            row.suggestions = None
         self._rows.remove(row)
         self._listbox.remove(row)
 
@@ -347,48 +362,142 @@ class SshOptionList(Gtk.Box):
             self._last = current
             self.emit("changed")
 
-    # -- keyword menu ---------------------------------------------------------
+    # -- keyword suggestions --------------------------------------------------
+
+    def keyword_matches(self, text: str) -> List[str]:
+        """Known keywords for what has been typed: prefix matches first."""
+        typed = text.strip().lower()
+        if not typed:
+            return []
+        starts = [name for name in self._keywords if name.lower().startswith(typed)]
+        inside = [
+            name for name in self._keywords
+            if typed in name.lower() and name not in starts
+        ]
+        matches = starts + inside
+        if len(matches) == 1 and matches[0].lower() == typed:
+            return []  # already typed in full: nothing left to suggest
+        return matches
+
+    def _on_keyword_typed(self, entry, row: _OptionRow) -> None:
+        if self._loading:
+            return
+        # Only while the user is typing here, never for text set from code.
+        if not entry.get_delegate().has_focus():
+            return
+        self._show_suggestions(row, self.keyword_matches(entry.get_text()))
 
     def _on_keyword_menu(self, entry, _position, row: _OptionRow) -> None:
-        if not self._keywords:
+        """The arrow lists every keyword, or the matches for what is typed."""
+        if self.suggestions_visible(row):
+            self._hide_suggestions(row)
             return
-        popover = Gtk.Popover()
-        popover.set_parent(entry)
-        popover.connect("closed", lambda p: p.unparent())
-        search = Gtk.SearchEntry()
-        search.set_placeholder_text(_("Search keywords"))
-        names = Gtk.ListBox()
-        names.set_selection_mode(Gtk.SelectionMode.NONE)
-        for name in self._keywords:
+        entry.grab_focus_without_selecting()
+        self._show_suggestions(
+            row, self.keyword_matches(entry.get_text()) or list(self._keywords)
+        )
+
+    def suggestions_visible(self, row: _OptionRow) -> bool:
+        return row.suggestions is not None and row.suggestions.get_visible()
+
+    def shown_suggestions(self, row: _OptionRow) -> List[str]:
+        if not self.suggestions_visible(row):
+            return []
+        names = []
+        item = row.suggestion_list.get_first_child()
+        while item is not None:
+            names.append(item.get_child().get_label())
+            item = item.get_next_sibling()
+        return names
+
+    def _show_suggestions(self, row: _OptionRow, names: Sequence[str]) -> None:
+        if not names or not row.keyword_entry.get_mapped():
+            self._hide_suggestions(row)
+            return
+        if row.suggestions is None:
+            # Never takes the focus: typing carries on in the entry while the
+            # list follows it.
+            popover = Gtk.Popover()
+            popover.set_autohide(False)
+            popover.set_has_arrow(False)
+            popover.set_can_focus(False)
+            popover.set_position(Gtk.PositionType.BOTTOM)
+            popover.set_halign(Gtk.Align.START)
+            popover.add_css_class("menu")
+            names_box = Gtk.ListBox()
+            names_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            names_box.set_can_focus(False)
+            names_box.connect(
+                "row-activated",
+                lambda _box, item, r=row: self._accept_suggestion(
+                    r, item.get_child().get_label()
+                ),
+            )
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_propagate_natural_height(True)
+            scroller.set_max_content_height(220)
+            scroller.set_min_content_width(240)
+            scroller.set_child(names_box)
+            popover.set_child(scroller)
+            popover.set_parent(row.keyword_entry)
+            row.suggestions, row.suggestion_list = popover, names_box
+        row.suggestion_list.remove_all()
+        for name in names:
             label = Gtk.Label(label=name, xalign=0)
             label.set_margin_top(6)
             label.set_margin_bottom(6)
             label.set_margin_start(8)
             label.set_margin_end(8)
-            names.append(label)
-        names.set_filter_func(
-            lambda item: search.get_text().strip().lower()
-            in item.get_child().get_label().lower()
-        )
-        search.connect("search-changed", lambda _s: names.invalidate_filter())
+            item = Gtk.ListBoxRow()
+            item.set_can_focus(False)
+            item.set_child(label)
+            row.suggestion_list.append(item)
+        row.suggestion_list.unselect_all()
+        row.suggestions.popup()
 
-        def _chosen(_box, item):
-            entry.set_text(item.get_child().get_label())
-            popover.popdown()
-            row.value_entry.grab_focus()
+    def _hide_suggestions(self, row: _OptionRow) -> None:
+        if row.suggestions is not None:
+            row.suggestions.popdown()
 
-        names.connect("row-activated", _chosen)
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_min_content_height(240)
-        scroller.set_min_content_width(260)
-        scroller.set_child(names)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.append(search)
-        box.append(scroller)
-        popover.set_child(box)
-        popover.popup()
-        search.grab_focus()
+    def _accept_suggestion(self, row: _OptionRow, name: str) -> None:
+        self._hide_suggestions(row)
+        row.keyword_entry.set_text(name)
+        row.keyword_entry.set_position(-1)
+        self._hide_suggestions(row)  # setting the text may have reopened it
+        row.value_entry.grab_focus()
+
+    def _on_keyword_key(self, _controller, keyval, _keycode, _state, row) -> bool:
+        """Down/Up walk the suggestions, Enter or Tab take the selected one."""
+        if not self.suggestions_visible(row):
+            return False
+        names_box = row.suggestion_list
+        selected = names_box.get_selected_row()
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_Up):
+            step = 1 if keyval == Gdk.KEY_Down else -1
+            index = (selected.get_index() if selected is not None else -1 if step > 0 else 0) + step
+            target = names_box.get_row_at_index(index)
+            if target is not None:
+                names_box.select_row(target)
+                # Keep the selection in view without moving the focus.
+                adjustment = row.suggestions.get_child().get_vadjustment()
+                height = max(target.get_height(), 1)
+                top = index * height
+                if top < adjustment.get_value():
+                    adjustment.set_value(top)
+                elif top + height > adjustment.get_value() + adjustment.get_page_size():
+                    adjustment.set_value(top + height - adjustment.get_page_size())
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Tab, Gdk.KEY_ISO_Enter):
+            if selected is not None:
+                self._accept_suggestion(row, selected.get_child().get_label())
+                return True
+            self._hide_suggestions(row)
+            return False
+        if keyval == Gdk.KEY_Escape:
+            self._hide_suggestions(row)
+            return True
+        return False
 
 
 __all__ = [

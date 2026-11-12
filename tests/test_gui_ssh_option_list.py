@@ -205,3 +205,84 @@ def test_dialog_option_helpers_still_work(gui):
     tab.remove_option("ExitOnForwardFailure", "yes")
     assert tab.get_option("ExitOnForwardFailure") is None
     assert tab.generate_ssh_config("web") == "Host web\n    sessiontype default"
+
+
+# -- keyword suggestions while typing ---------------------------------------
+
+
+def test_keyword_matches_prefix_first_then_anywhere(gui):
+    options = _list(gui, keywords=("Compression", "ConnectTimeout", "IPQoS", "SessionType"))
+    assert options.keyword_matches("") == []
+    assert options.keyword_matches("co") == ["Compression", "ConnectTimeout"]
+    assert options.keyword_matches("TIME") == ["ConnectTimeout"]
+    assert options.keyword_matches("s") == ["SessionType", "Compression", "IPQoS"]
+    assert options.keyword_matches("zzz") == []
+    # Typed in full, with nothing else to offer: no list.
+    assert options.keyword_matches("ipqos") == []
+
+
+def test_typing_a_keyword_suggests_and_arrow_keys_pick(gui):
+    from gi.repository import Gdk, Gtk
+
+    options = _list(gui, keywords=("Compression", "ConnectTimeout", "IPQoS"))
+    window = Gtk.Window(child=options)
+    window.set_default_size(520, 300)
+    window.present()
+    try:
+        gui.pump(300)
+        row = options.add_empty_row()
+        gui.pump(200)
+
+        row.keyword_entry.set_text("co")          # typed with the field focused
+        gui.pump(200)
+        assert options.shown_suggestions(row) == ["Compression", "ConnectTimeout"]
+        # The list never takes the focus away from the field.
+        assert row.keyword_entry.get_delegate().has_focus()
+
+        row.keyword_entry.set_text("con")
+        gui.pump(100)
+        assert options.shown_suggestions(row) == ["ConnectTimeout"]
+
+        row.keyword_entry.set_text("co")
+        gui.pump(100)
+        key = lambda value: options._on_keyword_key(None, value, 0, 0, row)
+        assert key(Gdk.KEY_Down) is True and key(Gdk.KEY_Down) is True
+        assert key(Gdk.KEY_Return) is True
+        gui.pump(200)
+        assert row.keyword_entry.get_text() == "ConnectTimeout"
+        assert options.suggestions_visible(row) is False
+        assert row.value_entry.get_delegate().has_focus()
+
+        # Enter with nothing selected keeps what was typed.
+        row.keyword_entry.grab_focus()
+        row.keyword_entry.set_text("i")
+        gui.pump(100)
+        assert options.shown_suggestions(row) == ["IPQoS", "Compression", "ConnectTimeout"]
+        assert key(Gdk.KEY_Return) is False
+        assert row.keyword_entry.get_text() == "i"
+
+        # Escape closes the list; an unknown keyword offers nothing.
+        row.keyword_entry.set_text("ip")
+        gui.pump(100)
+        assert key(Gdk.KEY_Escape) is True
+        assert options.suggestions_visible(row) is False
+        row.keyword_entry.set_text("zzz")
+        gui.pump(100)
+        assert options.suggestions_visible(row) is False
+    finally:
+        window.destroy()
+
+
+def test_loading_options_never_opens_suggestions(gui):
+    from gi.repository import Gtk
+
+    options = _list(gui, keywords=("Compression", "ConnectTimeout"))
+    window = Gtk.Window(child=options)
+    window.present()
+    try:
+        gui.pump(200)
+        options.set_options([("Co", "x")])
+        gui.pump(200)
+        assert options.suggestions_visible(options.rows()[0]) is False
+    finally:
+        window.destroy()

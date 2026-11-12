@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-12 10:08+0330\n"
+"POT-Creation-Date: 2026-11-12 10:19+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -1766,7 +1766,7 @@ msgstr "اضافه شد"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:132
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:171
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:191
-#: src/sshpilot/preferences.py:5659 src/sshpilot/ssh_option_list.py:156
+#: src/sshpilot/preferences.py:5659 src/sshpilot/ssh_option_list.py:160
 msgid "Remove"
 msgstr "حذف کنید"
 
@@ -2593,7 +2593,9 @@ msgstr "اتصال همچنان در حال بارگیری است"
 msgid ""
 "An SSH option on the Advanced tab is not valid. Fix or remove it, then save "
 "again."
-msgstr "یکی از گزینه‌های SSH در زبانهٔ پیشرفته معتبر نیست. آن را اصلاح یا حذف کنید و دوباره ذخیره کنید."
+msgstr ""
+"یکی از گزینه‌های SSH در زبانهٔ پیشرفته معتبر نیست. آن را اصلاح یا حذف کنید و "
+"دوباره ذخیره کنید."
 
 #: src/sshpilot/connection_dialog.py:5317
 msgid "Please enter a nickname for this connection"
@@ -12995,39 +12997,35 @@ msgid_plural "Split View ({n} terminals)"
 msgstr[0] "نمای تفکیک‌شده ({n} ترمینال)"
 msgstr[1] "نمای تفکیک‌شده ({n} ترمینال)"
 
-#: src/sshpilot/ssh_option_list.py:99
+#: src/sshpilot/ssh_option_list.py:100
 #, python-brace-format
 msgid "“{keyword}” is not an option."
 msgstr "«{keyword}» یک گزینه نیست."
 
-#: src/sshpilot/ssh_option_list.py:100
+#: src/sshpilot/ssh_option_list.py:101
 msgid "This is not a valid option."
 msgstr "این یک گزینهٔ معتبر نیست."
 
-#: src/sshpilot/ssh_option_list.py:105
+#: src/sshpilot/ssh_option_list.py:106
 #, python-brace-format
 msgid "OpenSSH did not accept this option: {error}"
 msgstr "OpenSSH این گزینه را نپذیرفت: {error}"
 
-#: src/sshpilot/ssh_option_list.py:136 src/sshpilot/ssh_option_list.py:145
+#: src/sshpilot/ssh_option_list.py:140 src/sshpilot/ssh_option_list.py:149
 msgid "Keyword"
 msgstr "کلیدواژه"
 
-#: src/sshpilot/ssh_option_list.py:142
+#: src/sshpilot/ssh_option_list.py:146
 msgid "Choose a keyword"
 msgstr "انتخاب کلیدواژه"
 
-#: src/sshpilot/ssh_option_list.py:149 src/sshpilot/ssh_option_list.py:151
+#: src/sshpilot/ssh_option_list.py:153 src/sshpilot/ssh_option_list.py:155
 msgid "Value"
 msgstr "ارزش"
 
-#: src/sshpilot/ssh_option_list.py:227
+#: src/sshpilot/ssh_option_list.py:231
 msgid "Add Option"
 msgstr "افزودن گزینه"
-
-#: src/sshpilot/ssh_option_list.py:359
-msgid "Search keywords"
-msgstr "جستجوی کلیدواژه‌ها"
 
 #: src/sshpilot/sshcopyid_window.py:31
 msgid "The background service is busy. Try again shortly."
@@ -17411,6 +17409,9 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
+
+#~ msgid "Search keywords"
+#~ msgstr "جستجوی کلیدواژه‌ها"
 
 #~ msgid "Add a new SSH configuration option"
 #~ msgstr "یک گزینه پیکربندی SSH جدید اضافه کنید"

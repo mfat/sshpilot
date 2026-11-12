@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-12 10:08+0330\n"
+"POT-Creation-Date: 2026-11-12 10:19+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -1778,7 +1778,7 @@ msgstr "Ajoutée"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:132
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:171
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:191
-#: src/sshpilot/preferences.py:5659 src/sshpilot/ssh_option_list.py:156
+#: src/sshpilot/preferences.py:5659 src/sshpilot/ssh_option_list.py:160
 msgid "Remove"
 msgstr "Retirer"
 
@@ -2613,7 +2613,9 @@ msgstr "La connexion est encore en cours de chargement"
 msgid ""
 "An SSH option on the Advanced tab is not valid. Fix or remove it, then save "
 "again."
-msgstr "Une option SSH de l'onglet Avancé n'est pas valide. Corrigez-la ou supprimez-la, puis enregistrez à nouveau."
+msgstr ""
+"Une option SSH de l'onglet Avancé n'est pas valide. Corrigez-la ou supprimez-"
+"la, puis enregistrez à nouveau."
 
 #: src/sshpilot/connection_dialog.py:5317
 msgid "Please enter a nickname for this connection"
@@ -13178,39 +13180,35 @@ msgid_plural "Split View ({n} terminals)"
 msgstr[0] "Vue scindée ({n} terminal)"
 msgstr[1] "Vue scindée ({n} terminaux)"
 
-#: src/sshpilot/ssh_option_list.py:99
+#: src/sshpilot/ssh_option_list.py:100
 #, python-brace-format
 msgid "“{keyword}” is not an option."
 msgstr "« {keyword} » n'est pas une option."
 
-#: src/sshpilot/ssh_option_list.py:100
+#: src/sshpilot/ssh_option_list.py:101
 msgid "This is not a valid option."
 msgstr "Cette option n'est pas valide."
 
-#: src/sshpilot/ssh_option_list.py:105
+#: src/sshpilot/ssh_option_list.py:106
 #, python-brace-format
 msgid "OpenSSH did not accept this option: {error}"
 msgstr "OpenSSH n'a pas accepté cette option : {error}"
 
-#: src/sshpilot/ssh_option_list.py:136 src/sshpilot/ssh_option_list.py:145
+#: src/sshpilot/ssh_option_list.py:140 src/sshpilot/ssh_option_list.py:149
 msgid "Keyword"
 msgstr "Mot-clé"
 
-#: src/sshpilot/ssh_option_list.py:142
+#: src/sshpilot/ssh_option_list.py:146
 msgid "Choose a keyword"
 msgstr "Choisir un mot-clé"
 
-#: src/sshpilot/ssh_option_list.py:149 src/sshpilot/ssh_option_list.py:151
+#: src/sshpilot/ssh_option_list.py:153 src/sshpilot/ssh_option_list.py:155
 msgid "Value"
 msgstr "Valeur"
 
-#: src/sshpilot/ssh_option_list.py:227
+#: src/sshpilot/ssh_option_list.py:231
 msgid "Add Option"
 msgstr "Ajouter une option"
-
-#: src/sshpilot/ssh_option_list.py:359
-msgid "Search keywords"
-msgstr "Rechercher des mots-clés"
 
 #: src/sshpilot/sshcopyid_window.py:31
 msgid "The background service is busy. Try again shortly."
@@ -17779,6 +17777,9 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#~ msgid "Search keywords"
+#~ msgstr "Rechercher des mots-clés"
 
 #~ msgid "Add a new SSH configuration option"
 #~ msgstr "Ajouter une nouvelle option à la configuration SSH"
