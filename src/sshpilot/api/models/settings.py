@@ -17,6 +17,7 @@ from sshpilot.core.settings.ssh_overrides import (
     EDITABLE_FIELDS,
     FIELD_TO_CONFIG_KEY,
     INTEGER_RANGES,
+    VALID_ADDRESS_FAMILY_VALUES,
     VALID_HOST_KEY_VALUES,
     VALID_YES_NO_VALUES,
     YES_NO_FIELDS,
@@ -93,6 +94,14 @@ def _validate_yes_no(value: Any, field: str) -> None:
         )
 
 
+def _validate_address_family(value: Any) -> None:
+    if not isinstance(value, str) or value not in VALID_ADDRESS_FAMILY_VALUES:
+        raise ValueError(
+            f"address_family must be one of {sorted(VALID_ADDRESS_FAMILY_VALUES)} "
+            f"(empty = not set), got {value!r}"
+        )
+
+
 def _validate_extra_options(value: Any) -> tuple:
     """Shape-check free-form options; returns them canonical (``Keyword=value``)."""
     return normalize_extra_options(value)
@@ -106,8 +115,10 @@ def _validate_patch_fields(patch: Mapping[str, Any]) -> None:
             f"unknown patch fields: {sorted(unknown)}"
         )
     for key, value in patch.items():
-        if key == "debug_enabled":
+        if key in ("debug_enabled", "legacy_algorithms"):
             _validate_boolean(value, key)
+        elif key == "address_family":
+            _validate_address_family(value)
         elif key == "extra_options":
             _validate_extra_options(value)
         elif key in _YES_NO_FIELDS:
@@ -135,6 +146,10 @@ class GlobalSshOverrides:
     applies_immediately: bool = True
     #: Free-form options, each ``Keyword=value``, sent last as ``-o`` arguments.
     extra_options: tuple = ()
+    #: ``""`` (not sent), ``inet`` (IPv4 only) or ``inet6`` (IPv6 only).
+    address_family: str = ""
+    #: Re-enable old key exchange, host key and cipher algorithms.
+    legacy_algorithms: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -146,6 +161,8 @@ class GlobalSshOverrides:
             "debug_enabled": self.debug_enabled,
             "applies_immediately": self.applies_immediately,
             "extra_options": list(self.extra_options),
+            "address_family": self.address_family,
+            "legacy_algorithms": self.legacy_algorithms,
         }
 
     def __post_init__(self) -> None:
@@ -157,6 +174,8 @@ class GlobalSshOverrides:
         _validate_integer(self.verbosity, "verbosity")
         _validate_boolean(self.debug_enabled, "debug_enabled")
         _validate_boolean(self.applies_immediately, "applies_immediately")
+        _validate_address_family(self.address_family)
+        _validate_boolean(self.legacy_algorithms, "legacy_algorithms")
         object.__setattr__(
             self, "extra_options", _validate_extra_options(self.extra_options)
         )

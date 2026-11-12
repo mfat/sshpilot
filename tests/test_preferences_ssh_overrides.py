@@ -141,6 +141,8 @@ def _make_prefs(config, controller):
     prefs.compression_row = _Choice(value="")
     prefs.verbosity_row = _Spin(value=0)
     prefs.debug_enabled_row = _Switch(active=False)
+    prefs.address_family_row = _Choice(value="")
+    prefs.legacy_algorithms_row = _Switch(active=False)
     prefs.open_file_manager_externally_row = _Switch(active=False)
     prefs.max_concurrent_transfers_row = _Spin(value=4)
     return prefs
@@ -336,6 +338,8 @@ def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
         "verbosity": 0,
         "debug_enabled": False,
         "extra_options": (),
+        "address_family": "",
+        "legacy_algorithms": False,
     }
     rows = (
         prefs.connect_timeout_row,

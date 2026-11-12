@@ -417,9 +417,19 @@ def _production_core_services():
             multiplex_extra = controlmaster_args()
         except Exception:
             multiplex_extra = None
+        # Likewise always injected, and composed only while
+        # ``ssh.legacy_algorithms`` is on. Worked out once here because it
+        # depends on which old algorithms the installed OpenSSH still ships.
+        try:
+            from sshpilot.daemon.legacy_algorithms import legacy_algorithm_args
+
+            legacy_extra = legacy_algorithm_args()
+        except Exception:
+            legacy_extra = None
         return SshOverridesService(
             get_config_dir() / "config.json",
             controlmaster_extra=multiplex_extra,
+            legacy_extra=legacy_extra,
             on_mutation=expire_all_masters,
         )
 

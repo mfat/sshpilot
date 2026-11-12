@@ -68,6 +68,8 @@ _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "verbosity": 0,
     "debug_enabled": False,
     "extra_options": (),
+    "address_family": "",
+    "legacy_algorithms": False,
 }
 
 
@@ -2826,6 +2828,8 @@ class PreferencesWindow(Adw.Window):
                     "verbosity": snapshot.verbosity,
                     "debug_enabled": snapshot.debug_enabled,
                     "extra_options": tuple(snapshot.extra_options),
+                    "address_family": snapshot.address_family,
+                    "legacy_algorithms": snapshot.legacy_algorithms,
                 }
             except Exception as error:
                 logger.debug(
@@ -2846,6 +2850,8 @@ class PreferencesWindow(Adw.Window):
             "verbosity_row",
             "debug_enabled_row",
             "extra_options_box",
+            "address_family_row",
+            "legacy_algorithms_row",
         )
         return tuple(
             row for name in names if (row := getattr(self, name, None)) is not None
@@ -2997,6 +3003,16 @@ class PreferencesWindow(Adw.Window):
         self.compression_row.set_value(str(values['compression'] or ""))
         advanced_group.add(self.compression_row)
 
+        # AddressFamily: the keywords say little ("inet"), so they get labels.
+        self.address_family_row = OptionalChoiceRow(
+            title=_("AddressFamily"),
+            choices=("inet", "inet6"),
+            labels=(_("IPv4 only"), _("IPv6 only")),
+            dont_set_label=dont_set_label,
+        )
+        self.address_family_row.set_value(str(values['address_family'] or ""))
+        advanced_group.add(self.address_family_row)
+
         # Free-form options for everything without a row of its own. Applied
         # with a button, not on every keystroke: a half-typed line is not an
         # option, and a wrong one would be sent with every connection.
@@ -3053,6 +3069,17 @@ class PreferencesWindow(Adw.Window):
             # OpenSSH for Windows cannot multiplex connections.
             self.controlmaster_row.set_visible(False)
 
+        # Legacy devices: re-enable algorithms current OpenSSH has turned off.
+        # It weakens what the client will agree to, so unlike the other rows
+        # it says so.
+        self.legacy_algorithms_row = Adw.SwitchRow()
+        self.legacy_algorithms_row.set_title(_("Legacy device compatibility"))
+        self.legacy_algorithms_row.set_subtitle(
+            _("Allows old, weaker algorithms that some older network devices need")
+        )
+        self.legacy_algorithms_row.set_active(bool(values['legacy_algorithms']))
+        app_group.add(self.legacy_algorithms_row)
+
         # SSH verbosity (-v levels)
         self.verbosity_row = self._optional_ssh_number_row(
             _("SSH Verbosity (-v)"), 'verbosity', step=1, initial=1,
@@ -3098,6 +3125,8 @@ class PreferencesWindow(Adw.Window):
                 self.verbosity_row,
                 self.debug_enabled_row,
                 self.extra_options_box,
+                self.address_family_row,
+                self.legacy_algorithms_row,
             ):
                 row.set_sensitive(False)
 
@@ -3112,6 +3141,7 @@ class PreferencesWindow(Adw.Window):
             self.apply_default_keepalive_row,
             self.controlmaster_row,
             self.debug_enabled_row,
+            self.legacy_algorithms_row,
         ):
             row.connect('notify::active', self._on_advanced_ssh_field_changed)
         for row in (
@@ -3121,6 +3151,7 @@ class PreferencesWindow(Adw.Window):
             self.verbosity_row,
             self.strict_host_row,
             self.compression_row,
+            self.address_family_row,
         ):
             row.connect('notify::value', self._on_advanced_ssh_field_changed)
 
@@ -6076,6 +6107,8 @@ class PreferencesWindow(Adw.Window):
             "verbosity": int(self.verbosity_row.get_value()),
             "debug_enabled": bool(self.debug_enabled_row.get_active()),
             "extra_options": list(getattr(self, "_ssh_extra_options_applied", ())),
+            "address_family": str(self.address_family_row.get_value() or ""),
+            "legacy_algorithms": bool(self.legacy_algorithms_row.get_active()),
         }
 
     def _apply_ssh_override_values_to_rows(self, snapshot):
@@ -6092,6 +6125,8 @@ class PreferencesWindow(Adw.Window):
             self.verbosity_row.set_value(int(snapshot.verbosity))
             self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
             self._show_applied_extra_ssh_options(snapshot.extra_options)
+            self.address_family_row.set_value(str(snapshot.address_family or ""))
+            self.legacy_algorithms_row.set_active(bool(snapshot.legacy_algorithms))
         finally:
             self._suppress_advanced_ssh_autosave = False
 
@@ -6121,6 +6156,8 @@ class PreferencesWindow(Adw.Window):
             self.verbosity_row.set_value(snapshot['verbosity'])
             self.debug_enabled_row.set_active(snapshot['debug_enabled'])
             self._show_applied_extra_ssh_options(snapshot.get('extra_options', ()))
+            self.address_family_row.set_value(str(snapshot.get('address_family') or ""))
+            self.legacy_algorithms_row.set_active(bool(snapshot.get('legacy_algorithms', False)))
             self.apply_default_keepalive_row.set_active(snapshot['apply_default_keepalive'])
             self.controlmaster_row.set_active(snapshot['controlmaster'])
         finally:

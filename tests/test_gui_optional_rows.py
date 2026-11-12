@@ -118,7 +118,7 @@ def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
             assert row.number_field_visible() is False
             assert row.get_enabled() is False
 
-    for name in ("compression_row", "strict_host_row"):
+    for name in ("compression_row", "strict_host_row", "address_family_row"):
         row = getattr(prefs, name)
         assert isinstance(row, OptionalChoiceRow), name
         if row.get_value() == "":
@@ -254,3 +254,49 @@ def test_additional_options_apply_validates_then_saves(gui):
         apply_button.emit("clicked")
         gui.pump(300)
     assert prefs.ssh_overrides_controller.load().extra_options == ()
+
+
+def test_address_family_row_shows_labels_and_stores_keywords(gui):
+    from sshpilot.optional_rows import OptionalChoiceRow
+
+    row = OptionalChoiceRow(
+        title="AddressFamily",
+        choices=("inet", "inet6"),
+        labels=("IPv4 only", "IPv6 only"),
+        dont_set_label="Not set",
+    )
+    model = row.get_model()
+    assert [model.get_string(i) for i in range(3)] == ["Not set", "IPv4 only", "IPv6 only"]
+    row.set_selected(1)
+    assert row.get_value() == "inet"
+    row.set_value("inet6")
+    assert row.get_selected() == 2
+    row.set_value("")
+    assert row.get_selected() == 0 and row.get_value() == ""
+    with pytest.raises(ValueError):
+        OptionalChoiceRow(
+            title="x", choices=("a", "b"), labels=("only one",), dont_set_label="Not set"
+        )
+
+
+def test_legacy_switch_and_address_family_save_through_the_daemon(gui):
+    gui.window.show_preferences("ssh-options")
+    gui.pump(500)
+    prefs = gui.window._preferences_window
+    prefs._ensure_page_built("ssh-options")
+    if prefs.ssh_overrides_controller is None:
+        pytest.skip("no daemon overrides service in this session")
+    try:
+        assert prefs.legacy_algorithms_row.get_active() is False
+        assert prefs.legacy_algorithms_row.get_subtitle()  # it weakens security: says so
+        prefs.legacy_algorithms_row.set_active(True)
+        prefs.address_family_row.set_value("inet")
+        gui.pump(300)
+        saved = prefs.ssh_overrides_controller.load()
+        assert saved.legacy_algorithms is True and saved.address_family == "inet"
+    finally:
+        prefs.legacy_algorithms_row.set_active(False)
+        prefs.address_family_row.set_value("")
+        gui.pump(300)
+    saved = prefs.ssh_overrides_controller.load()
+    assert saved.legacy_algorithms is False and saved.address_family == ""

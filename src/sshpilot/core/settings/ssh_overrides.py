@@ -32,6 +32,8 @@ FIELD_TO_CONFIG_KEY: Dict[str, str] = {
     "verbosity": "ssh.verbosity",
     "debug_enabled": "ssh.debug_enabled",
     "extra_options": "ssh.extra_options",
+    "address_family": "ssh.address_family",
+    "legacy_algorithms": "ssh.legacy_algorithms",
 }
 
 # Fields exposed through the API model (the public surface).
@@ -55,6 +57,12 @@ EXPLICIT_HOST_KEY_VALUES = frozenset({"accept-new", "yes", "no", "ask"})
 # Every value the setting may hold: an explicit OpenSSH value, or unset.
 VALID_HOST_KEY_VALUES = EXPLICIT_HOST_KEY_VALUES | {HOST_KEY_UNSET}
 
+# AddressFamily override. Empty means not sent (OpenSSH's ``any``); ``inet``
+# is IPv4 only and ``inet6`` IPv6 only.
+ADDRESS_FAMILY_UNSET = ""
+EXPLICIT_ADDRESS_FAMILY_VALUES = frozenset({"inet", "inet6"})
+VALID_ADDRESS_FAMILY_VALUES = EXPLICIT_ADDRESS_FAMILY_VALUES | {ADDRESS_FAMILY_UNSET}
+
 # Tri-state OpenSSH yes/no override (Compression). Empty means
 # don't inject; ``yes`` / ``no`` inject the matching ``-o`` value.
 YES_NO_UNSET = ""
@@ -72,6 +80,8 @@ DEFAULT_SSH_OVERRIDES: Dict[str, Any] = {
     "verbosity": 0,
     "debug_enabled": False,
     "extra_options": [],
+    "address_family": ADDRESS_FAMILY_UNSET,
+    "legacy_algorithms": False,
 }
 
 
@@ -94,6 +104,7 @@ _EXTRA_NOT_OPTIONS = frozenset({"host", "match", "include"})
 # there, so a free-form line for one would be a second, hidden source of truth.
 EXTRA_OPTIONS_WITH_OWN_SETTING = frozenset({
     "connecttimeout",
+    "addressfamily",
     "stricthostkeychecking",
     "compression",
     "serveraliveinterval",
@@ -229,7 +240,7 @@ def coerce_yes_no_unset(value: Any) -> str:
 def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
     """Strictly convert a raw ``ssh`` subtree to normalized semantic values.
 
-    Returns exactly the six public field names with canonical values. Missing
+    Returns exactly the public field names with canonical values. Missing
     keys normalize to :data:`DEFAULT_SSH_OVERRIDES`; ``strict_host_key_checking``
     and the yes/no fields missing or blank normalize to unset.
 
@@ -269,6 +280,17 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
             semantic[field] = normalized
         elif field == "extra_options":
             semantic[field] = list(normalize_extra_options(value))
+        elif field == "address_family":
+            if value is None or not isinstance(value, str) or not value.strip():
+                semantic[field] = ADDRESS_FAMILY_UNSET
+                continue
+            normalized = value.strip().lower()
+            if normalized not in EXPLICIT_ADDRESS_FAMILY_VALUES:
+                raise ValueError(
+                    f"address_family must be one of "
+                    f"{sorted(EXPLICIT_ADDRESS_FAMILY_VALUES)} or empty, got {value!r}"
+                )
+            semantic[field] = normalized
         elif field in YES_NO_FIELDS:
             if value is None:
                 semantic[field] = DEFAULT_SSH_OVERRIDES[field]
@@ -292,7 +314,7 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def compute_ssh_overrides_revision(semantic: Mapping[str, Any]) -> str:
-    """Deterministic revision over the six normalized semantic values.
+    """Deterministic revision over the normalized semantic values.
 
     The revision is a hex SHA-256 prefix (12 chars) of the canonical JSON of
     the sorted field set, so two semantically equal states (including a missing
@@ -311,8 +333,13 @@ def compose_ssh_overrides(
     ssh_cfg: Mapping[str, Any],
     *,
     controlmaster_extra: Optional[Sequence[str]] = None,
+    legacy_extra: Optional[Sequence[str]] = None,
 ) -> List[str]:
     """Build the flat ``ssh.ssh_overrides`` argv fragment from SSH settings.
+
+    *legacy_extra* is the ``-o`` fragment that re-enables old algorithms,
+    supplied by the caller (``daemon.legacy_algorithms.legacy_algorithm_args()``)
+    because it depends on what the installed OpenSSH still supports.
 
     Mirrors Preferences ▸ SSH Settings persistence. *controlmaster_extra* is
     supplied by the caller (typically ``ssh_multiplex.controlmaster_args()``)
@@ -328,6 +355,10 @@ def compose_ssh_overrides(
             ct = 0
         if ct > 0:
             overrides.extend(["-o", f"ConnectTimeout={ct}"])
+
+    address_family = str(ssh_cfg.get("address_family") or "").strip().lower()
+    if address_family in EXPLICIT_ADDRESS_FAMILY_VALUES:
+        overrides.extend(["-o", f"AddressFamily={address_family}"])
 
     strict_host_value = str(ssh_cfg.get("strict_host_key_checking") or "").strip()
     if strict_host_value:
@@ -366,6 +397,9 @@ def compose_ssh_overrides(
 
     if bool(ssh_cfg.get("controlmaster")) and controlmaster_extra:
         overrides.extend(list(controlmaster_extra))
+
+    if ssh_cfg.get("legacy_algorithms") is True and legacy_extra:
+        overrides.extend(list(legacy_extra))
 
     # Free-form options go last. OpenSSH keeps the first value it sees, so an
     # option that also has a control on the page (or that the app manages,

@@ -142,13 +142,19 @@ class OptionalChoiceRow(Adw.ComboRow):
         title: str,
         choices: tuple[str, ...] | list[str],
         dont_set_label: str,
+        labels: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         super().__init__(title=title)
         self._choices = tuple(choices)
         if not self._choices:
             raise ValueError("OptionalChoiceRow requires at least one choice")
         self._syncing = False
-        model = Gtk.StringList.new([dont_set_label, *self._choices])
+        # ``labels`` word the choices for people when the stored keyword alone
+        # would not say much ("inet"); the value stays the keyword.
+        shown = tuple(labels) if labels is not None else self._choices
+        if len(shown) != len(self._choices):
+            raise ValueError("OptionalChoiceRow needs one label per choice")
+        model = Gtk.StringList.new([dont_set_label, *shown])
         self.set_model(model)
         self.set_selected(0)
         self.connect("notify::selected", self._on_selected)

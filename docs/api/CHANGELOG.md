@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- `GlobalSshOverrides` gains two fields, with matching
+  `UpdateGlobalSshOverridesRequest` patch fields. `address_family` is `""`
+  (not sent), `inet` (IPv4 only) or `inet6` (IPv6 only) and is sent as
+  `-o AddressFamily=`. `legacy_algorithms` is a boolean that re-enables old key
+  exchange, host key and cipher algorithms for legacy devices; the daemon
+  appends them with the `+` form, limited to what the installed OpenSSH still
+  supports. Both are additive and optional on the wire; the API implementation
+  version is 0.96; Protocol remains 1.0.
 - `GlobalSshOverrides.extra_options` (and the matching
   `UpdateGlobalSshOverridesRequest` patch field) holds free-form SSH options:
   a list of `Keyword=value` strings, each sent last as one `-o` argument. A

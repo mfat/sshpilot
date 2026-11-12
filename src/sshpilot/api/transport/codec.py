@@ -6506,6 +6506,8 @@ def global_ssh_overrides_to_wire(
         "debug_enabled": overrides.debug_enabled,
         "applies_immediately": overrides.applies_immediately,
         "extra_options": list(overrides.extra_options),
+        "address_family": overrides.address_family,
+        "legacy_algorithms": overrides.legacy_algorithms,
     }
 
 
@@ -6522,7 +6524,12 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
             "verbosity",
             "debug_enabled",
         },
-        optional={"applies_immediately", "extra_options"},
+        optional={
+            "applies_immediately",
+            "extra_options",
+            "address_family",
+            "legacy_algorithms",
+        },
         context="global ssh overrides",
     )
     return GlobalSshOverrides(
@@ -6538,6 +6545,12 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
         debug_enabled=_boolean(data["debug_enabled"], "debug_enabled"),
         applies_immediately=_boolean(data.get("applies_immediately", True), "applies_immediately"),
         extra_options=_extra_ssh_options(data.get("extra_options", [])),
+        address_family=_text(
+            data.get("address_family", ""), "address_family", allow_empty=True
+        ),
+        legacy_algorithms=_boolean(
+            data.get("legacy_algorithms", False), "legacy_algorithms"
+        ),
     )
 
 

@@ -172,6 +172,10 @@ def get_default_config() -> Dict[str, Any]:
             'connection_timeout': 0,
             # Free-form ``Keyword=value`` options sent last as ``-o`` arguments.
             'extra_options': [],
+            # '' = not sent; 'inet' = IPv4 only; 'inet6' = IPv6 only.
+            'address_family': '',
+            # Re-enable old algorithms for legacy devices (weaker; off by default).
+            'legacy_algorithms': False,
             # Keepalive sent with every connection so a dead link is detected
             # (~interval*count seconds) instead of the indicator staying green
             # forever. The switch and both numbers are edited in Preferences;

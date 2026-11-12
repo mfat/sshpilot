@@ -32,11 +32,11 @@ from sshpilot.core.ssh_overrides_service import SshOverridesService
 
 
 def test_both_config_spellings_become_one_canonical_option():
-    text = "# a comment\nIPQoS none\n\n  SetEnv = LANG=C FOO=bar  \nAddressFamily=inet\n"
+    text = "# a comment\nIPQoS none\n\n  SetEnv = LANG=C FOO=bar  \nTCPKeepAlive=no\n"
     options = parse_extra_options_text(text)
-    assert options == ("IPQoS=none", "SetEnv=LANG=C FOO=bar", "AddressFamily=inet")
+    assert options == ("IPQoS=none", "SetEnv=LANG=C FOO=bar", "TCPKeepAlive=no")
     assert extra_options_to_text(options) == (
-        "IPQoS none\nSetEnv LANG=C FOO=bar\nAddressFamily inet"
+        "IPQoS none\nSetEnv LANG=C FOO=bar\nTCPKeepAlive no"
     )
     assert parse_extra_options_text(extra_options_to_text(options)) == options
 
@@ -94,6 +94,7 @@ def test_every_dedicated_control_is_covered():
     composed = compose_ssh_overrides(
         {
             "connection_timeout": 5,
+            "address_family": "inet",
             "strict_host_key_checking": "yes",
             "compression": "yes",
             "debug_enabled": True,

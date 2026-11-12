@@ -68,6 +68,7 @@ class SshOverridesService:
         settings_path: Path | str,
         *,
         controlmaster_extra: Optional[Sequence[str]] = None,
+        legacy_extra: Optional[Sequence[str]] = None,
         on_mutation: Optional[Callable[[], None]] = None,
     ) -> None:
         self._path = Path(settings_path)
@@ -75,6 +76,10 @@ class SshOverridesService:
         self._controlmaster_extra = (
             tuple(controlmaster_extra) if controlmaster_extra is not None else None
         )
+        # ``-o`` args that re-enable old algorithms, already filtered to what
+        # the installed OpenSSH supports. Composed only while the
+        # ``ssh.legacy_algorithms`` switch is on.
+        self._legacy_extra = tuple(legacy_extra) if legacy_extra is not None else None
         # The daemon may inject a post-persistence runtime hook.  Core owns the
         # mutation; it never imports or manages the runtime implementation.
         self._on_mutation = on_mutation
@@ -210,7 +215,9 @@ class SshOverridesService:
         if isinstance(persisted, dict):
             ssh.update({key: value for key, value in persisted.items() if value is not None})
         ssh["ssh_overrides"] = compose_ssh_overrides(
-            ssh, controlmaster_extra=self._controlmaster_extra
+            ssh,
+                controlmaster_extra=self._controlmaster_extra,
+                legacy_extra=self._legacy_extra,
         )
         return ssh
 
@@ -283,6 +290,8 @@ class SshOverridesService:
             verbosity=semantic["verbosity"],
             debug_enabled=semantic["debug_enabled"],
             extra_options=tuple(semantic["extra_options"]),
+            address_family=semantic["address_family"],
+            legacy_algorithms=semantic["legacy_algorithms"],
         )
 
     def _write_semantic(
@@ -313,7 +322,9 @@ class SshOverridesService:
             )
         try:
             overrides = compose_ssh_overrides(
-                ssh, controlmaster_extra=self._controlmaster_extra
+                ssh,
+                controlmaster_extra=self._controlmaster_extra,
+                legacy_extra=self._legacy_extra,
             )
         except Exception as exc:
             raise SshPilotError(
