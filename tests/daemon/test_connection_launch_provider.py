@@ -982,3 +982,45 @@ def test_effective_username_follows_a_global_user_override(provider, tmp_path, m
     plain = provider[0]._view(view._record)
     monkeypatch.setattr(plain, "_resolve_config_override_path", lambda: str(config))
     assert plain.effective_username == "fromfile"
+
+
+def test_quick_connect_identity_follows_global_overrides(tmp_path, monkeypatch):
+    """Matching a typed destination to a saved one uses what a launch would use."""
+    import shutil
+    from types import SimpleNamespace
+
+    from sshpilot.core.connection_application_service import (
+        ConnectionApplicationService,
+    )
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text("Host *\n    User fromfile\n")
+
+    def _identity(composed):
+        service = ConnectionApplicationService.__new__(ConnectionApplicationService)
+        service._ssh_overrides_service = (
+            SimpleNamespace(get_ssh_config=lambda: {"ssh_overrides": composed})
+            if composed is not None else None
+        )
+        monkeypatch.setattr(service, "_active_config_file", lambda: str(config))
+        return service._destination_identity("example.com", "typed", 2200, ())
+
+    assert _identity(None)[1:3] == ("typed", 2200)
+    assert _identity(["-o", "User=forced", "-v", "-o", "Port=2022"])[1:3] == (
+        "forced", 2022,
+    )
+
+
+def test_backup_views_carry_the_global_overrides(tmp_path):
+    import json
+
+    from sshpilot.daemon.secret_transfer import _selected_views
+
+    settings = tmp_path / "config.json"
+    settings.write_text(json.dumps(
+        {"ssh": {"ssh_overrides": ["-o", "User=forced"]}}
+    ))
+    views = _selected_views(None, [_record()], settings_path=settings)
+    assert [view.global_ssh_options for view in views] == [("-o", "User=forced")]

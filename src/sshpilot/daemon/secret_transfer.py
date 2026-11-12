@@ -229,8 +229,12 @@ def _selected_views(
     manager: Any,
     connections_source: Optional[Any],
     connection_ids: Optional[List[str]] = None,
+    settings_path: Optional[Path | str] = None,
 ) -> List[Any]:
     """Resolve the connections to include in an export as headless views.
+
+    Each view carries the composed Settings ▸ SSH Options, so the account and
+    keys it resolves are the ones a launch would use.
 
     ``connections_source`` is either a callable returning records or an
     iterable of records (the production composition passes
@@ -254,6 +258,16 @@ def _selected_views(
     from sshpilot.daemon.connection_launch_provider import HeadlessConnectionView
 
     views = [HeadlessConnectionView(r) for r in records]
+    try:
+        composed = _HeadlessBackupConfig(
+            settings_path or _settings_path()
+        ).get_ssh_config().get("ssh_overrides") or ()
+        global_options = tuple(str(entry) for entry in composed if entry)
+    except Exception:
+        logger.debug("reading global SSH options for backup failed", exc_info=True)
+        global_options = ()
+    for view in views:
+        view.global_ssh_options = global_options
     if not connection_ids:
         return views
     wanted = set(str(c) for c in connection_ids)
@@ -280,7 +294,9 @@ def daemon_export_backup(
     Returns counts (``credentials`` / ``private_keys``) and warnings; no secret
     value is ever returned.
     """
-    views = _selected_views(manager, connections_source, connection_ids)
+    views = _selected_views(
+        manager, connections_source, connection_ids, settings_path=settings_path
+    )
     options = normalize_backup_options(options)
     if not any(options.values()):
         return SecretTransferResult(

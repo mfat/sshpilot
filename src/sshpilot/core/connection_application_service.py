@@ -1213,6 +1213,22 @@ class ConnectionApplicationService:
         isolated = bool(getattr(self._repository, "ssh_config_isolated", False))
         return str(root) if root is not None and isolated else None
 
+    def _global_ssh_options(self) -> Tuple[str, ...]:
+        """The composed Settings ▸ SSH Options fragment, or nothing.
+
+        A launch puts it ahead of the typed account, port and jump host, so
+        the identity a destination resolves to has to be worked out with it.
+        """
+        service = self._ssh_overrides_service
+        if service is None:
+            return ()
+        try:
+            composed = service.get_ssh_config().get("ssh_overrides") or ()
+            return tuple(str(entry) for entry in composed if entry)
+        except Exception:
+            logger.debug("Could not read global SSH options", exc_info=True)
+            return ()
+
     def _destination_identity(
         self,
         hostname: str,
@@ -1229,6 +1245,7 @@ class ConnectionApplicationService:
             user=username or None,
             port=port,
             proxy_jump=proxy or None,
+            overrides=self._global_ssh_options(),
         )
         resolved_host = str(effective.get("hostname") or hostname).strip()
         resolved_user = str(effective.get("user") or username or getpass.getuser()).strip()

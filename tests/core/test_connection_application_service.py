@@ -598,7 +598,7 @@ def test_unsaved_host_omitted_port_does_not_override_ssh_config(monkeypatch):
     assert service.check_unsaved_host(
         UnsavedHostCheckRequest(hostname="alias", username="alice")
     ).saved is True
-    assert calls == [{"user": "alice", "port": None, "proxy_jump": None}]
+    assert calls == [{"user": "alice", "port": None, "proxy_jump": None, "overrides": ()}]
 
 
 def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
@@ -617,7 +617,7 @@ def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
     assert service.check_unsaved_host(
         UnsavedHostCheckRequest(hostname="alias", username="alice", port=22)
     ).saved is True
-    assert calls == [{"user": "alice", "port": 22, "proxy_jump": None}]
+    assert calls == [{"user": "alice", "port": 22, "proxy_jump": None, "overrides": ()}]
 
 
 def test_effective_config_uses_daemon_root_in_default_mode(
