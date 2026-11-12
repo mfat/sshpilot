@@ -1074,3 +1074,46 @@ def test_forced_destination_applies_only_what_it_can_resolve():
     assert forced_destination(
         ["-o", "HostName=%n-%C"], hostname="web", username="alice", port=22
     ) == ("web", "alice", 22)
+
+
+def test_effective_config_resolves_with_forced_then_authored_options(
+    monkeypatch, tmp_path
+):
+    """The order a launch uses: Settings ▸ SSH Options first, then what the
+    launch re-emits from the connection's own block. OpenSSH keeps the first
+    value, so a forced option still beats an authored one."""
+    from sshpilot.core import ssh_config_effective
+
+    root = tmp_path / "config"
+    root.write_text("Host web\n    User alice\n", encoding="utf-8")
+    repo = FakeRepository([_record(record_id="web", nickname="web", host="web")])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+
+    class Overrides:
+        def forced_option_args(self):
+            return ("-o", "User=forced")
+
+    class Launch:
+        def authored_option_args(self, record):
+            assert record.nickname == "web"
+            return ("-o", "User=alice")
+
+    seen = {}
+
+    def fake_diff(host, config_file, own_block_text, *,
+                  include_system_defaults_in_display=None, overrides=None):
+        seen["overrides"] = overrides
+        return {"has_diff": False, "changes": [], "own": [], "full": []}
+
+    monkeypatch.setattr(ssh_config_effective, "diff_effective_config", fake_diff)
+    monkeypatch.setattr(
+        ssh_config_effective, "collect_host_block_lines", lambda h, c: ["Host web"]
+    )
+    service = ConnectionApplicationService(
+        repo, launch_provider=Launch(), ssh_overrides=Overrides()
+    )
+
+    service.get_effective_config(ConnectionId("web"))
+
+    assert seen["overrides"] == ("-o", "User=forced", "-o", "User=alice")

@@ -581,6 +581,42 @@ class DaemonConnectionLaunchProvider:
             logger.debug("Could not read global SSH options", exc_info=True)
         return view
 
+    def authored_option_args(self, record: ConnectionRecord) -> Tuple[str, ...]:
+        """The ``-o`` pairs a terminal launch adds for the connection's own block.
+
+        A launch re-emits what the Host block authored as command-line options
+        (so an earlier ``Host *`` cannot override it), after Settings ▸ SSH
+        Options and before nothing else that matters to ``ssh -G``. This is
+        that layer, in launch order, with ``-p``/``-l`` spelled as ``-o``
+        (OpenSSH keeps the first value either way). An effective-config query
+        appends it to the forced options to resolve what the session uses.
+        """
+        from ..ssh_connection_builder import (
+            _authored_ssh_options,
+            _isolated_known_hosts_override,
+        )
+
+        try:
+            view = HeadlessConnectionView(record)
+            kwargs, options = _authored_ssh_options(view, command_type="ssh")
+            args: List[str] = []
+            if kwargs.get("port"):
+                args.extend(["-o", f"Port={int(kwargs['port'])}"])
+            if kwargs.get("username"):
+                args.extend(["-o", f"User={kwargs['username']}"])
+            if kwargs.get("proxy_jump"):
+                args.extend(["-o", "ProxyJump=" + ",".join(kwargs["proxy_jump"])])
+            if kwargs.get("proxy_command"):
+                args.extend(["-o", f"ProxyCommand={kwargs['proxy_command']}"])
+            args.extend(str(entry) for entry in options)
+            args.extend(_isolated_known_hosts_override(view))
+            return tuple(args)
+        except Exception:
+            # A block the launch itself would refuse (shell text in a host
+            # name) resolves from the file alone, as before.
+            logger.debug("Could not compose the authored launch options", exc_info=True)
+            return ()
+
     def _get_app_config(self):
         if self._app_config_view is not None:
             return self._app_config_view

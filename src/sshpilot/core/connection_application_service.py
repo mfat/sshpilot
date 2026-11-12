@@ -1074,7 +1074,10 @@ class ConnectionApplicationService:
                 root,
                 own_block,
                 include_system_defaults_in_display=include_system_defaults,
-                overrides=self._forced_ssh_option_args(),
+                overrides=(
+                    self._forced_ssh_option_args()
+                    + self._authored_launch_option_args(record)
+                ),
             )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
@@ -1243,6 +1246,23 @@ class ConnectionApplicationService:
             return tuple(service.forced_option_args())
         except Exception:
             logger.debug("Could not read forced SSH options", exc_info=True)
+            return ()
+
+    def _authored_launch_option_args(self, record) -> Tuple[str, ...]:
+        """What a launch adds for the connection's own Host block.
+
+        The launch re-emits authored directives as command-line options after
+        the forced ones, so an earlier ``Host *`` cannot beat them. Resolving
+        without them would report the ``Host *`` value the session never uses.
+        """
+        provider = self._launch_provider
+        compose = getattr(provider, "authored_option_args", None)
+        if not callable(compose):
+            return ()
+        try:
+            return tuple(str(entry) for entry in compose(record) if entry)
+        except Exception:
+            logger.debug("Could not read authored launch options", exc_info=True)
             return ()
 
     def _destination_identity(

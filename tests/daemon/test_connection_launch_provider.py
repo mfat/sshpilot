@@ -1059,3 +1059,63 @@ def test_remote_identity_follows_overrides_over_authored_values(
         ["ssh", "-F", str(config), "-o", "HostName=%h.internal", "web"]
     )
     assert forced._view(records["web"]).effective_username == "bob"
+
+
+def _authored_record():
+    return _record(
+        nickname="production",
+        hostname="production.example.com",
+        username="alice",
+        port=2200,
+        data={
+            "__authored_directives": ["hostname", "user", "port", "compression"],
+            "extra_ssh_config": "Compression no",
+        },
+    )
+
+
+def test_authored_option_args_are_the_launch_layer_in_order(provider):
+    """What a terminal launch adds after Settings ▸ SSH Options."""
+    prov, _records = provider
+    assert prov.authored_option_args(_authored_record()) == (
+        "-o", "Port=2200",
+        "-o", "User=alice",
+        "-o", "HostName=production.example.com",
+        "-o", "Compression=no",
+    )
+    # A record that was not parsed from a Host block authors nothing.
+    assert prov.authored_option_args(_record()) == ()
+
+
+def test_effective_config_with_the_launch_layer_matches_the_session(
+    provider, tmp_path
+):
+    """The review's case: an earlier ``Host *`` says Compression yes, the
+    block says no. The launch re-emits the block's value, so the session
+    uses no, and so must the resolved configuration."""
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    from sshpilot.core.ssh_config_effective import diff_effective_config
+
+    block = (
+        "Host production\n"
+        "    HostName production.example.com\n"
+        "    User alice\n"
+        "    Port 2200\n"
+        "    Compression no\n"
+    )
+    config = tmp_path / "config"
+    config.write_text("Host *\n    Compression yes\n\n" + block)
+    prov, _records = provider
+
+    without = diff_effective_config("production", str(config), block)
+    with_launch = diff_effective_config(
+        "production",
+        str(config),
+        block,
+        overrides=prov.authored_option_args(_authored_record()),
+    )
+
+    assert "compression yes" in without["full"]
+    assert "compression no" in with_launch["full"]
+    assert "compression" not in {c["key"] for c in with_launch["changes"]}

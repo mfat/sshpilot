@@ -14,9 +14,10 @@ notes remain separate.
   overridden. It is read-only (not a patch field), outside the revision, and
   additive and optional on the wire; the API implementation version is 0.97;
   Protocol remains 1.0.
-- `connections.get_effective_config` resolves the effective side with those
-  same options, so it reports what a session runs with. The authored side is
-  unchanged.
+- `connections.get_effective_config` resolves the effective side the way a
+  terminal launch does: those same options first, then the options the launch
+  re-emits from the connection's own Host block (which is why an earlier
+  `Host *` does not override them). The authored side is unchanged.
 - `GlobalSshOverrides` gains two fields, with matching
   `UpdateGlobalSshOverridesRequest` patch fields. `address_family` is `""`
   (not sent), `inet` (IPv4 only) or `inet6` (IPv6 only) and is sent as
