@@ -16,9 +16,10 @@ This mixin only presents it.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from gettext import gettext as _
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 try:
     from gi.repository import Adw, GLib, Gtk
@@ -65,14 +66,76 @@ def forced_map(snapshot) -> Dict[str, str]:
     return forced_options(args)
 
 
-def row_override_note(keyword: str, forced: Dict[str, str]) -> Optional[str]:
-    """What to say next to the dialog field for *keyword*, or None."""
-    value = forced.get(keyword.lower())
-    if value is None:
-        return None
-    return _(
+#: The row is set here, and Settings win: the value is not used.
+OVERRIDDEN = "overridden"
+#: The row is empty, or holds what Settings force: the global value applies.
+GLOBAL = "global"
+
+_YES_NO_LIKE = frozenset({"yes", "no", "ask", "confirm", "none"})
+
+
+def suppressing_option(
+    keyword: str, forced: Dict[str, str]
+) -> Optional[Tuple[str, str]]:
+    """``(keyword, value)`` of the forced option that decides *keyword*.
+
+    Usually the keyword itself. ``ProxyJump`` and ``ProxyCommand`` compete:
+    whichever OpenSSH obtains first wins, and a forced one always comes
+    first. A forced ``ProxyCommand`` (even ``none``) silences the
+    connection's jump hosts; a forced ``ProxyJump`` silences its proxy
+    command unless it is ``none``, which OpenSSH does not treat as a jump.
+    """
+    wanted = keyword.lower()
+    if wanted in forced:
+        return keyword, forced[wanted]
+    if wanted == "proxyjump" and "proxycommand" in forced:
+        return "ProxyCommand", forced["proxycommand"]
+    if wanted == "proxycommand" and "proxyjump" in forced:
+        value = forced["proxyjump"]
+        if value.strip().lower() != "none":
+            return "ProxyJump", value
+    return None
+
+
+def _normalized(keyword: str, value: str) -> str:
+    value = str(value).strip()
+    if keyword.lower() == "proxyjump":
+        return ",".join(part for part in re.split(r"[\s,]+", value) if part)
+    if keyword.lower() == "hostname" or value.lower() in _YES_NO_LIKE:
+        return value.lower()
+    return value
+
+
+def override_state(
+    keyword: str, own: Optional[str], forced: Dict[str, str]
+) -> Tuple[Optional[str], Optional[str]]:
+    """``(state, note)`` for a dialog field, or ``(None, None)``.
+
+    *own* is what this connection sets for *keyword*, or None when it sets
+    nothing (an empty row, or a value shown only because it is inherited).
+    """
+    suppressing = suppressing_option(keyword, forced)
+    if suppressing is None:
+        return None, None
+    forced_keyword, value = suppressing
+    same_option = forced_keyword.lower() == keyword.lower()
+    if own is None or not str(own).strip():
+        if not same_option:
+            # An empty jump-hosts row loses nothing to a forced ProxyCommand.
+            return None, None
+        return GLOBAL, _global_note(forced_keyword, value)
+    if same_option and _normalized(keyword, own) == _normalized(keyword, value):
+        return GLOBAL, _global_note(forced_keyword, value)
+    return OVERRIDDEN, _(
         "Settings ▸ SSH Options set {keyword} to “{value}” for every "
         "connection. The value here is saved, but the app does not use it."
+    ).format(keyword=forced_keyword, value=value)
+
+
+def _global_note(keyword: str, value: str) -> str:
+    return _(
+        "Settings ▸ SSH Options set {keyword} to “{value}” for every "
+        "connection, so this connection uses that value."
     ).format(keyword=keyword, value=value)
 
 
@@ -152,15 +215,20 @@ class ConnectionDialogOverridesMixin:
         self._forced_options = dict(forced or {})
         self._apply_override_notes()
 
-    def _apply_override_notes(self) -> None:
+    def _apply_override_notes(self, *_args) -> None:
         """Bring every marker, the Advanced tab and the banner up to date."""
         forced = getattr(self, "_forced_options", None) or {}
+        if forced:
+            self._watch_rows_for_overrides()
         for row_name, keyword in OVERRIDABLE_ROWS:
             row = getattr(self, row_name, None)
             if row is None:
                 continue
             try:
-                self._mark_row_override(row_name, row, row_override_note(keyword, forced))
+                state, note = override_state(
+                    keyword, self._override_row_value(row_name, row), forced
+                )
+                self._mark_row_override(row_name, row, state, note)
             except Exception:
                 logger.debug("Could not mark %s as overridden", row_name, exc_info=True)
         option_list = getattr(getattr(self, "advanced_tab", None), "option_list", None)
@@ -172,17 +240,88 @@ class ConnectionDialogOverridesMixin:
                 logger.debug("Could not refresh option notes", exc_info=True)
         self._sync_override_banner()
 
-    def _mark_row_override(self, row_name: str, row, note: Optional[str]) -> None:
+    def _watch_rows_for_overrides(self) -> None:
+        """Re-mark as the user edits: the state depends on what a row holds."""
+        if getattr(self, "_override_watchers_connected", False):
+            return
+        self._override_watchers_connected = True
+        names = [name for name, _keyword in OVERRIDABLE_ROWS]
+        names += ["forward_agent_value_row", "identity_agent_value_row"]
+        for name in names:
+            row = getattr(self, name, None)
+            if row is None:
+                continue
+            # By type: a "notify::" on a property the row lacks connects
+            # without complaint and never fires.
+            if hasattr(row, "get_active"):
+                signal = "notify::active"
+            elif hasattr(row, "get_selected"):
+                signal = "notify::selected"
+            else:
+                signal = "changed"
+            try:
+                row.connect(signal, self._apply_override_notes)
+            except Exception:
+                logger.debug("Cannot watch %s", name, exc_info=True)
+
+    def _override_row_value(self, row_name: str, row) -> Optional[str]:
+        """What this connection itself sets through *row*, or None.
+
+        A row showing an inherited value sets nothing: the value comes from
+        elsewhere. Switches set their option only when on, because that is
+        when the Host block gets the line.
+        """
+        if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
+            return None
+        if row_name == "x11_row":
+            return "yes" if row.get_active() else None
+        if row_name == "key_only_row":
+            return "yes" if row.get_active() and row.get_sensitive() else None
+        if row_name == "pubkey_auth_row":
+            return "no" if row.get_active() else None
+        if row_name == "exit_on_forward_failure_row":
+            return "yes" if row.get_active() else None
+        if row_name == "forward_agent_row":
+            from .connection_dialog import forward_agent_text_from_fields
+
+            return forward_agent_text_from_fields(
+                **self._selected_forward_agent_fields()
+            ) or None
+        if row_name == "add_keys_to_agent_row":
+            return self._selected_add_keys_to_agent() or None
+        if row_name == "identity_agent_row":
+            return self._selected_identity_agent() or None
+        text = row.get_text().strip()
+        if row_name == "port_row" and text == "22":
+            # Port 22 is written only when the block authored it.
+            authored = getattr(getattr(self, "connection", None), "authored_directives", None)
+            adopted = getattr(self, "_adopted_inherited_fields", None) or ()
+            if "port" not in (authored or ()) and "port" not in adopted:
+                return None
+        return text or None
+
+    def _mark_row_override(
+        self, row_name: str, row, state: Optional[str], note: Optional[str]
+    ) -> None:
         icon = getattr(row, "_sshpilot_override_icon", None)
-        if note and icon is None:
-            icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
-            icon.add_css_class("warning")
+        if state and icon is None:
+            icon = Gtk.Image()
             icon.set_valign(Gtk.Align.CENTER)
             row.add_suffix(icon)
             row._sshpilot_override_icon = icon
         if icon is not None:
-            icon.set_visible(bool(note))
+            overridden = state == OVERRIDDEN
+            icon.set_from_icon_name(
+                "dialog-warning-symbolic" if overridden else "dialog-information-symbolic"
+            )
+            for css, wanted in (("warning", overridden), ("dim-label", not overridden)):
+                if wanted:
+                    icon.add_css_class(css)
+                else:
+                    icon.remove_css_class(css)
+            icon.set_visible(bool(state))
             icon.set_tooltip_text(note or None)
+        row._sshpilot_override_state = state
         self._set_row_override_note(row, note or "")
         # "Edit to set it for this host" is false while the option is forced:
         # the override note replaces it, and it returns with the override gone.
@@ -200,10 +339,13 @@ class ConnectionDialogOverridesMixin:
         forced = getattr(self, "_forced_options", None) or {}
         if not forced:
             return 0
+        # Only what this connection sets and loses: a field that simply
+        # takes the global value is not a conflict.
         count = sum(
             1
-            for row_name, keyword in OVERRIDABLE_ROWS
-            if getattr(self, row_name, None) is not None and keyword.lower() in forced
+            for row_name, _keyword in OVERRIDABLE_ROWS
+            if getattr(getattr(self, row_name, None), "_sshpilot_override_state", None)
+            == OVERRIDDEN
         )
         tab = getattr(self, "advanced_tab", None)
         entries = tab.get_config_entries() if tab is not None else ()

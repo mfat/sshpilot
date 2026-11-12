@@ -16,7 +16,10 @@ from sshpilot.connection_dialog_overrides import (
     advanced_option_note,
     forced_map,
     inherited_note_text,
-    row_override_note,
+    GLOBAL,
+    OVERRIDDEN,
+    override_state,
+    suppressing_option,
 )
 from sshpilot.connection_dialog_validation import (
     ConnectionDialogValidationMixin as Validation,
@@ -42,6 +45,18 @@ needs_adw = pytest.mark.skipif(
 )
 
 
+def _icon_name(image):
+    """The icon an image shows. The app's resolver (``icon_utils``) stores a
+    GIcon rather than a plain name once it has patched ``Gtk.Image``."""
+    name = image.get_icon_name()
+    if name:
+        return name
+    gicon = image.get_gicon()
+    if hasattr(gicon, "get_names"):
+        return gicon.get_names()[0]
+    return gicon.get_file().get_basename().rsplit(".", 1)[0]
+
+
 def _snapshot(*forced):
     return GlobalSshOverrides(
         revision="r1",
@@ -60,10 +75,47 @@ def test_forced_map_keeps_the_first_value_per_keyword():
     assert forced_map(None) == {}
 
 
-def test_a_forced_field_is_explained_with_the_value_in_force():
-    note = row_override_note("User", {"user": "root"})
-    assert "User" in note and "root" in note
-    assert row_override_note("Port", {"user": "root"}) is None
+def test_a_field_set_here_to_something_else_is_overridden():
+    state, note = override_state("User", "alice", {"user": "root"})
+    assert state == OVERRIDDEN
+    assert "User" in note and "root" in note and "does not use" in note
+
+
+def test_an_empty_field_uses_the_global_value_and_is_not_a_conflict():
+    state, note = override_state("User", None, {"user": "root"})
+    assert state == GLOBAL
+    assert "root" in note and "uses that value" in note
+
+
+def test_a_field_holding_the_forced_value_loses_nothing():
+    assert override_state("User", "root", {"user": "root"})[0] == GLOBAL
+    assert override_state("ProxyJump", "a, b", {"proxyjump": "a,b"})[0] == GLOBAL
+    assert override_state("ForwardX11", "yes", {"forwardx11": "YES"})[0] == GLOBAL
+
+
+def test_nothing_is_said_about_an_option_settings_leave_alone():
+    assert override_state("Port", "2200", {"user": "root"}) == (None, None)
+
+
+def test_a_forced_proxy_command_silences_the_jump_hosts():
+    """The review's case: Settings force ProxyCommand, the host has a jump.
+    OpenSSH applies whichever it obtains first, and Settings come first."""
+    forced = {"proxycommand": "nc proxy.example.com 22"}
+    state, note = override_state("ProxyJump", "bastion", forced)
+    assert state == OVERRIDDEN
+    assert "ProxyCommand" in note and "nc proxy.example.com 22" in note
+    # An empty jump-hosts row loses nothing, so it is not marked.
+    assert override_state("ProxyJump", None, forced) == (None, None)
+    # `ProxyCommand none` still occupies the slot (ssh -G shows no proxy).
+    assert suppressing_option("ProxyJump", {"proxycommand": "none"}) == (
+        "ProxyCommand", "none",
+    )
+
+
+def test_a_forced_jump_silences_the_proxy_command_unless_it_is_none():
+    assert override_state("ProxyCommand", "nc x 22", {"proxyjump": "gw"})[0] == OVERRIDDEN
+    # `ssh -o ProxyJump=none -o ProxyCommand=…` keeps the ProxyCommand.
+    assert suppressing_option("ProxyCommand", {"proxyjump": "none"}) is None
 
 
 def test_advanced_option_that_loses_to_settings_gets_a_note():
@@ -91,6 +143,7 @@ def _dialog(**attrs):
     for name in (
         "_set_forced_options", "_apply_override_notes", "_mark_row_override",
         "_overridden_field_count", "_advanced_option_note",
+        "_override_row_value", "_watch_rows_for_overrides",
     ):
         setattr(dialog, name, getattr(Overrides, name).__get__(dialog))
     dialog.banner_syncs = []
@@ -164,3 +217,51 @@ def test_banner_counts_advanced_options_that_lose_but_not_added_ones():
     dialog = _dialog(advanced_tab=tab)
     dialog._forced_options = {"serveraliveinterval": "15", "sendenv": "LANG"}
     assert dialog._overridden_field_count() == 1
+
+
+@needs_adw
+def test_an_empty_field_gets_an_information_mark_and_no_banner():
+    from gi.repository import Adw
+
+    row = Adw.EntryRow(title="Username")
+    dialog = _dialog(username_row=row)
+
+    dialog._set_forced_options({"user": "admin"})
+
+    icon = row._sshpilot_override_icon
+    assert icon.get_visible() and _icon_name(icon) == "dialog-information-symbolic"
+    assert "uses that value" in row.get_tooltip_text()
+    assert dialog.banner_syncs == [0]
+
+    row.set_text("alice")  # now set here, and lost to Settings
+    assert _icon_name(icon) == "dialog-warning-symbolic"
+    assert dialog.banner_syncs[-1] == 1
+
+
+@needs_adw
+def test_jump_hosts_row_is_marked_for_a_forced_proxy_command():
+    from gi.repository import Adw
+
+    jump, command = Adw.EntryRow(title="Jump hosts"), Adw.EntryRow(title="Proxy command")
+    jump.set_text("bastion")
+    dialog = _dialog(proxy_jump_row=jump, proxy_command_row=command)
+
+    dialog._set_forced_options({"proxycommand": "nc proxy.example.com 22"})
+
+    assert jump._sshpilot_override_state == OVERRIDDEN
+    assert "ProxyCommand" in jump.get_tooltip_text()
+    assert command._sshpilot_override_state == GLOBAL
+    assert dialog.banner_syncs[-1] == 1
+
+
+@needs_adw
+def test_switch_off_takes_the_global_value_switch_on_against_it_is_overridden():
+    from gi.repository import Adw
+
+    row = Adw.SwitchRow(title="X11")
+    dialog = _dialog(x11_row=row)
+    dialog._set_forced_options({"forwardx11": "no"})
+    assert row._sshpilot_override_state == GLOBAL
+
+    row.set_active(True)  # watched: re-marked without another fetch
+    assert row._sshpilot_override_state == OVERRIDDEN

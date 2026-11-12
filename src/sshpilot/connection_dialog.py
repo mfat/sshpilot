@@ -2468,6 +2468,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             adopted.add(field)
             if field in _FORWARD_AGENT_FIELDS:
                 adopted.update(_FORWARD_AGENT_FIELDS)
+        # The row is this connection's own from now on.
+        remark = getattr(self, '_apply_override_notes', None)
+        if callable(remark):
+            remark()
 
     def _typed_target_directives(self):
         """Directives an unsaved search-box target authored, or None.
@@ -2611,6 +2615,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # The rows were filled programmatically; re-baseline so an untouched
             # inherited value is never mistaken for an edit and written back.
             self._capture_editor_delta_baseline()
+            # An inherited value is not this connection's own: re-mark the
+            # rows, which were judged while their text was still being set.
+            remark = getattr(self, '_apply_override_notes', None)
+            if callable(remark):
+                remark()
             return False
 
         def _start_worker():

@@ -23,6 +23,18 @@ class _Manager:
     def get_metadata(self, n): return {}
 
 
+def _icon_name(image):
+    """The icon an image shows. The app's resolver (``icon_utils``) stores a
+    GIcon rather than a plain name once it has patched ``Gtk.Image``."""
+    name = image.get_icon_name()
+    if name:
+        return name
+    gicon = image.get_gicon()
+    if hasattr(gicon, "get_names"):
+        return gicon.get_names()[0]
+    return gicon.get_file().get_basename().rsplit(".", 1)[0]
+
+
 def _pump(until, seconds=3.0):
     from gi.repository import GLib
 
@@ -86,6 +98,7 @@ def test_keepalive_alone_does_not_raise_the_banner(gui):
 
 def test_banner_is_hidden_for_a_non_ssh_protocol(gui):
     dialog = _dialog("User=deploy")
+    dialog.username_row.set_text("alice")
     _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
     assert dialog._override_banner.get_revealed()
 
@@ -101,3 +114,29 @@ def test_no_daemon_leaves_the_dialog_unmarked(gui):
     _pump(lambda: False, seconds=0.3)
     assert not getattr(dialog, "_forced_options", None)
     assert getattr(dialog, "_override_banner", None) is None
+
+
+def test_an_empty_username_takes_the_forced_one_without_a_banner(gui):
+    """Settings decide the account, but nothing this connection set is lost."""
+    dialog = _dialog("User=deploy")
+    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+
+    icon = dialog.username_row._sshpilot_override_icon
+    assert icon.get_visible()
+    assert _icon_name(icon) == "dialog-information-symbolic"
+    assert getattr(dialog, "_override_banner", None) is None
+
+    dialog.username_row.set_text("alice")
+    assert _icon_name(icon) == "dialog-warning-symbolic"
+    assert dialog._override_banner.get_revealed()
+
+
+def test_jump_host_loses_to_a_forced_proxy_command_in_the_real_dialog(gui):
+    dialog = _dialog("ProxyCommand=nc proxy.example.com 22")
+    dialog.proxy_jump_row.set_text("bastion")
+    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+
+    assert _icon_name(dialog.proxy_jump_row._sshpilot_override_icon) == (
+        "dialog-warning-symbolic"
+    )
+    assert dialog._override_banner.get_revealed()
