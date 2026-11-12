@@ -467,7 +467,9 @@ def forced_options(overrides: Any) -> Dict[str, str]:
     """Every option a composed override fragment forces: keyword → value.
 
     Keys are lower-case. OpenSSH keeps the first value it obtains, so the
-    first ``-o`` pair for a keyword is the one in force. Options OpenSSH
+    first ``-o`` pair for a keyword is the one in force. The mapping keeps
+    the order in which keywords first appear: options that compete across
+    keywords (``ProxyJump``/``ProxyCommand``) are decided by it. Options OpenSSH
     collects (:data:`EXTRA_OPTIONS_ADDED_NOT_REPLACED`) are included with
     their first value; whether a connection's own value survives next to them
     is for the caller to tell from that set.

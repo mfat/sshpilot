@@ -265,3 +265,39 @@ def test_switch_off_takes_the_global_value_switch_on_against_it_is_overridden():
 
     row.set_active(True)  # watched: re-marked without another fetch
     assert row._sshpilot_override_state == OVERRIDDEN
+
+
+@pytest.mark.parametrize(
+    "fragment, winner, jump_row, command_row",
+    [
+        # What `ssh -G` reports for each order, checked 2026-11-12.
+        (("ProxyCommand=nc proxy 22", "ProxyJump=bastion"),
+         ("ProxyCommand", "nc proxy 22"), OVERRIDDEN, GLOBAL),
+        (("ProxyJump=bastion", "ProxyCommand=nc proxy 22"),
+         ("ProxyJump", "bastion"), GLOBAL, OVERRIDDEN),
+        (("ProxyJump=none", "ProxyCommand=nc proxy 22"),
+         ("ProxyCommand", "nc proxy 22"), OVERRIDDEN, GLOBAL),
+    ],
+)
+def test_both_proxies_forced_the_first_one_decides_both_fields(
+    fragment, winner, jump_row, command_row
+):
+    """Each field is judged by the forced proxy OpenSSH actually uses, never
+    by the losing one that happens to share its keyword."""
+    forced = forced_map(_snapshot(*fragment))
+    assert suppressing_option("ProxyJump", forced) == winner
+    assert suppressing_option("ProxyCommand", forced) == winner
+    # Each row holds exactly what Settings forced under its own keyword.
+    own_jump = forced["proxyjump"]
+    own_command = forced["proxycommand"]
+    assert override_state("ProxyJump", own_jump, forced)[0] == jump_row
+    assert override_state("ProxyCommand", own_command, forced)[0] == command_row
+    # An empty field takes the winner, and the note names it.
+    note = override_state(winner[0], None, forced)[1]
+    assert winner[1] in note
+
+
+def test_proxy_jump_none_alone_leaves_the_proxy_command_alone():
+    forced = forced_map(_snapshot("ProxyJump=none"))
+    assert suppressing_option("ProxyJump", forced) == ("ProxyJump", "none")
+    assert suppressing_option("ProxyCommand", forced) is None

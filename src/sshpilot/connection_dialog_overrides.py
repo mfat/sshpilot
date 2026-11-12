@@ -79,21 +79,41 @@ def suppressing_option(
 ) -> Optional[Tuple[str, str]]:
     """``(keyword, value)`` of the forced option that decides *keyword*.
 
-    Usually the keyword itself. ``ProxyJump`` and ``ProxyCommand`` compete:
-    whichever OpenSSH obtains first wins, and a forced one always comes
-    first. A forced ``ProxyCommand`` (even ``none``) silences the
-    connection's jump hosts; a forced ``ProxyJump`` silences its proxy
-    command unless it is ``none``, which OpenSSH does not treat as a jump.
+    Usually the keyword itself. ``ProxyJump`` and ``ProxyCommand`` compete
+    for one slot: whichever OpenSSH obtains first wins, and the forced ones
+    always come before the connection's own. *forced* keeps Settings order
+    (see :func:`forced_options`), so the winner is decided here, once, for
+    both fields.
     """
     wanted = keyword.lower()
+    if wanted in _PROXY_KEYWORDS:
+        return _forced_proxy(wanted, forced)
     if wanted in forced:
         return keyword, forced[wanted]
-    if wanted == "proxyjump" and "proxycommand" in forced:
-        return "ProxyCommand", forced["proxycommand"]
-    if wanted == "proxycommand" and "proxyjump" in forced:
-        value = forced["proxyjump"]
-        if value.strip().lower() != "none":
-            return "ProxyJump", value
+    return None
+
+
+_PROXY_KEYWORDS = frozenset({"proxyjump", "proxycommand"})
+
+
+def _forced_proxy(wanted: str, forced: Dict[str, str]) -> Optional[Tuple[str, str]]:
+    """The forced proxy option that decides the *wanted* proxy field.
+
+    Walks the forced options in order, as OpenSSH reads them. A
+    ``ProxyCommand`` (even ``none``) takes the slot. A ``ProxyJump`` takes it
+    too, except ``ProxyJump none``: that only stops later jump hosts, and a
+    later ``ProxyCommand`` still applies (``ssh -G`` confirms both).
+    """
+    jump_none = None
+    for name, value in forced.items():
+        if name == "proxycommand":
+            return "ProxyCommand", value
+        if name == "proxyjump":
+            if value.strip().lower() != "none":
+                return "ProxyJump", value
+            jump_none = value
+    if wanted == "proxyjump" and jump_none is not None:
+        return "ProxyJump", jump_none
     return None
 
 
