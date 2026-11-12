@@ -814,11 +814,13 @@ def _build_base_ssh_command(
 
     app_ssh_config = _app_ssh_config(app_config)
 
-    # Directives this Host block authored, emitted before the app-wide
-    # Preferences below so the connection's own values win — the same rule the
-    # session command follows. Without them this path resolved everything from
-    # the config file, so a global `Host *` could send ssh-copy-id to a
-    # different account than the editor displayed.
+    # Settings ▸ SSH Options first: they override the connection's own values,
+    # the same rule the session command follows.
+    _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
+
+    # Directives this Host block authored. Without them this path resolved
+    # everything from the config file, so a global `Host *` could send
+    # ssh-copy-id to a different account than the editor displayed.
     #
     # ssh-copy-id accepts only -i/-p/-o/-f/-n/-s/-x, so nothing here may use a
     # long flag: `-l` in particular is rejected, hence `-o User=`.
@@ -839,8 +841,6 @@ def _build_base_ssh_command(
     authored_port = 'port' in authored_kwargs
     if port and (port != 22 or authored_port):
         cmd.extend(['-P' if command_type == 'scp' else '-p', str(port)])
-
-    _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
 
     _append_identity_and_proxy(cmd, config, is_copy_id=is_copy_id)
 
@@ -879,30 +879,20 @@ def _append_single_password_prompt(cmd: List[str]) -> None:
     cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
 
-def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
-    """Append the app's ServerAlive* options to *cmd* unless a host sets its own.
+def _maybe_append_default_keepalive(cmd, app_ssh_config):
+    """Append the app's ServerAlive* options to *cmd* when the switch is on.
 
-    The interval and count come from Preferences (``ssh.default_keepalive_*``);
+    The interval and count come from Settings (``ssh.default_keepalive_*``);
     the switch there (``ssh.apply_default_keepalive`` = False) disables
     injection entirely.
 
-    A ``ServerAliveInterval`` authored in the Host block also suppresses the
-    default: it is re-emitted as an authored option and passed in through
-    *overrides*. Argv order alone now protects it — Preferences and the
-    injected default both sit after the authored options — but suppressing it
-    keeps the command free of an option that could never take effect.
+    Like every other option on that page this is an override: it is emitted
+    with ``ssh_overrides``, ahead of the connection's own options, so it beats
+    a ``ServerAliveInterval`` the Host block authored.
     """
     try:
         if not bool(app_ssh_config.get('apply_default_keepalive', True)):
             return
-
-        # Case-insensitive: a keepalive re-emitted from an authored config
-        # directive keeps that directive's own spelling, and OpenSSH option
-        # names are case-insensitive anyway.
-        if isinstance(overrides, (list, tuple)):
-            for entry in overrides:
-                if entry and 'serveraliveinterval' in str(entry).lower():
-                    return
 
         interval = int(app_ssh_config.get('default_keepalive_interval', 15) or 15)
         count = int(app_ssh_config.get('default_keepalive_count', 3) or 3)
@@ -954,9 +944,9 @@ def _authored_ssh_options(
       login session. ``RequestTTY force`` breaks ``ssh -N`` and ``ssh -s sftp``,
       and a config ``RemoteCommand`` on ssh-copy-id would replace the install.
 
-    Returns ``(request_kwargs, extra_option_argv)``. The extra options are
-    appended after the auth layer's own options so that a deliberate runtime
-    decision (an agent bypass, for example) still wins.
+    Returns ``(request_kwargs, extra_option_argv)``. Both are emitted after the
+    app's own runtime options and after Settings ▸ SSH Options, so a deliberate
+    runtime decision and an app-level override still win.
     """
     from .ssh_config_formatter import _authored_directives
 
@@ -1110,7 +1100,7 @@ _EXTRA_OPTION_ACCUMULATING = frozenset({
 
 
 def _authored_extra_options(extra_ssh_config: str) -> List[str]:
-    """``-o`` argv for Advanced-tab directives, so a global cannot override them.
+    """``-o`` argv for Advanced-tab directives, so a ``Host *`` cannot override them.
 
     Everything on the Advanced tab is authored by definition — it is parsed
     from this block's own lines — but it previously reached OpenSSH only by
@@ -1273,9 +1263,9 @@ def build_ssh_connection(
     # settings (IdentityFile, port forwarding, X11, RemoteCommand, ...), so the
     # command stays minimal: `ssh -F <config> host`. This builder owns only the
     # runtime concerns that do NOT live in ~/.ssh/config:
-    #   * app-level ssh_overrides (verbosity/timeouts/keepalive from
-    #     Preferences), emitted last so they act as defaults a connection's own
-    #     settings can override
+    #   * app-level ssh_overrides (Settings ▸ SSH Options, keepalive
+    #     included), emitted ahead of the connection's own options so they
+    #     override them
     #   * batch mode preference
     #   * the authentication environment: askpass + keyring autofill for key
     #     passphrases (with an optional agent bypass), or sshpass for a stored
@@ -1309,9 +1299,8 @@ def build_ssh_connection(
 
         # Directives this Host block authored are re-emitted as argv so the
         # session uses what the editor shows, even when an earlier `Host *`
-        # block would otherwise win. Resolved before keepalive injection: an
-        # authored ServerAliveInterval has to suppress the app default, which
-        # is placed earlier in argv and would beat it.
+        # block would otherwise win. They follow ssh_overrides in argv, so an
+        # option set in Settings ▸ SSH Options still beats them.
         authored_kwargs, authored_options = _authored_ssh_options(
             connection,
             command_type=ctx.command_type,
@@ -1322,19 +1311,15 @@ def build_ssh_connection(
         # written into the isolated ssh_config, because -F is given the file
         # that *declared* the Host -- which for anything pulled in through an
         # Include is a fragment, not the root, so a `Host *` block in the root
-        # would never be parsed. It rides ssh_overrides, which the core
-        # builder appends last, so a connection that authors its own
-        # UserKnownHostsFile still wins.
+        # would never be parsed. It is a fallback: it goes after the authored
+        # options, at the very end, so a connection that authors its own
+        # UserKnownHostsFile (or a Settings override) still wins.
         isolated_known_hosts = _isolated_known_hosts_override(connection)
-        if isolated_known_hosts:
-            overrides = list(overrides) + isolated_known_hosts
 
-        # Default keepalive injection into the overrides list (core builder
-        # appends ssh_overrides verbatim).
+        # Keepalive is one of the Settings overrides (core builder emits
+        # ssh_overrides verbatim, ahead of the connection's options).
         keepalive_cmd: List[str] = []
-        _maybe_append_default_keepalive(
-            keepalive_cmd, list(overrides) + authored_options, app_ssh_config
-        )
+        _maybe_append_default_keepalive(keepalive_cmd, app_ssh_config)
         overrides = list(overrides) + keepalive_cmd
 
         auth = resolve_native_auth(
@@ -1344,12 +1329,15 @@ def build_ssh_connection(
             interaction_policy=ctx.interaction_policy,
         )
 
-        extra_options: List[str] = list(auth.extra_opts or [])
+        # What the app itself needs for this launch: emitted before the
+        # Settings overrides, so a caller's forced option (ControlMaster=no on
+        # a forwarding-only tab, say) cannot be outranked.
+        priority_options: List[str] = list(auth.extra_opts or [])
         if ctx.command_type in ('scp', 'ssh-copy-id', 'sftp'):
-            if not any('NumberOfPasswordPrompts' in str(e) for e in extra_options + overrides):
-                extra_options.extend(['-o', 'NumberOfPasswordPrompts=1'])
+            if not any('NumberOfPasswordPrompts' in str(e) for e in priority_options + overrides):
+                priority_options.extend(['-o', 'NumberOfPasswordPrompts=1'])
         if extra_args:
-            extra_options.extend(str(a) for a in extra_args if a)
+            priority_options.extend(str(a) for a in extra_args if a)
 
         batch_mode = False
         host_key_mode = None
@@ -1401,14 +1389,16 @@ def build_ssh_connection(
                 '-o', 'ForwardX11Trusted=yes',
             ]
 
-        # Authored options are appended after the auth layer's own options, so
-        # a deliberate runtime decision (an agent bypass, say) still wins.
+        # Authored options come after the app's own options and the Settings
+        # overrides, so both still win; the isolated known_hosts fallback is
+        # last of all.
         req = SSHLaunchRequest(
             destination=native_target,
             executable=executable,
             config_file=config_override,
+            priority_options=priority_options,
             ssh_overrides=overrides,
-            extra_options=extra_options + authored_options,
+            extra_options=list(authored_options) + isolated_known_hosts,
             **authored_kwargs,
             batch_mode=batch_mode,
             host_key_mode=host_key_mode,

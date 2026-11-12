@@ -10,9 +10,9 @@ from sshpilot import ssh_connection_builder as builder
 from sshpilot.connection_model import Connection, ConnectionState
 
 
-def _inject(overrides=None, app_cfg=None):
+def _inject(app_cfg=None):
     cmd = []
-    builder._maybe_append_default_keepalive(cmd, overrides or [], app_cfg or {})
+    builder._maybe_append_default_keepalive(cmd, app_cfg or {})
     return cmd
 
 
@@ -37,14 +37,6 @@ def test_removed_keepalive_override_key_is_ignored():
     # suppresses the app keepalive nor replaces its numbers.
     cmd = _inject(app_cfg={'apply_default_keepalive': True, 'keepalive_interval': 33})
     assert cmd == ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3']
-
-
-def test_default_keepalive_skipped_when_in_overrides():
-    cmd = _inject(
-        overrides=['-o', 'ServerAliveInterval=42'],
-        app_cfg={'apply_default_keepalive': True},
-    )
-    assert cmd == []
 
 
 def test_default_keepalive_defaults_to_on_when_flag_absent():

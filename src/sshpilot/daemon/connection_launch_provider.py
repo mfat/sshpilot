@@ -615,8 +615,8 @@ class DaemonConnectionLaunchProvider:
             # options before the destination -- the only position OpenSSH
             # reads as options. (Appending to the finished argv would land
             # after the remote command, where the remote shell executes it.)
-            # OpenSSH is first-value-wins: this fragment is placed before
-            # authored Host options and before preference ssh_overrides, so
+            # OpenSSH is first-value-wins: extra_args are emitted before the
+            # Settings ssh_overrides and before authored Host options, so
             # Host Info holds a master even when ssh.controlmaster is off or
             # the Host block authored ControlMaster no. When the preference
             # already provided the identical fragment it may appear twice;
@@ -709,8 +709,8 @@ class DaemonConnectionLaunchProvider:
             # ControlMaster=auto + ControlPersist preference. OpenSSH then
             # backgrounds the mux master and the watched foreground process exits
             # 0, which the UI treats as a clean shell exit and destroys the tab.
-            # Force ControlMaster=no first (OpenSSH first-value-wins; preference
-            # overrides are emitted last) so the -N process stays in the
+            # Force ControlMaster=no first (OpenSSH first-value-wins; extra_args
+            # are emitted before the Settings overrides) so the -N process stays in the
             # foreground. Normal shell tabs keep multiplexing unchanged.
             extra_args: Optional[List[str]] = None
             if self._connection_is_forwarding_only(connection):
@@ -841,7 +841,7 @@ class DaemonConnectionLaunchProvider:
         ``ssh -N`` foreground exits 0 — Host Info / plugin local forwards fail
         with ``forward_not_active`` while an orphaned master may still hold the
         bind. Force ``ControlMaster=no`` first (OpenSSH first-value-wins;
-        preference overrides are emitted last) so the dedicated forward child
+        ``extra_args`` are emitted before the Settings overrides) so the dedicated forward child
         stays in the foreground for the daemon's lifetime tracking.
         """
 

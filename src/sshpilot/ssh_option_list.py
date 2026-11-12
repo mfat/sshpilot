@@ -183,6 +183,14 @@ class _OptionRow(Gtk.ListBoxRow):
         box.set_margin_end(8)
         box.append(self.fields)
         box.append(self.error_label)
+
+        # A remark about an accepted option. Unlike the error it refuses nothing.
+        self.note_label = Gtk.Label(xalign=0)
+        self.note_label.set_wrap(True)
+        self.note_label.add_css_class("dim-label")
+        self.note_label.add_css_class("caption")
+        self.note_label.set_visible(False)
+        box.append(self.note_label)
         self.set_child(box)
 
     def pair(self) -> Option:
@@ -200,6 +208,12 @@ class _OptionRow(Gtk.ListBoxRow):
                 entry.add_css_class("error")
             else:
                 entry.remove_css_class("error")
+        if self.error:
+            self.show_note(None)
+
+    def show_note(self, note: Optional[str]) -> None:
+        self.note_label.set_label(note or "")
+        self.note_label.set_visible(bool(note))
 
 
 class SshOptionList(Gtk.Box):
@@ -222,8 +236,12 @@ class SshOptionList(Gtk.Box):
         *,
         keywords: Sequence[str] = (),
         validate: Optional[Validator] = None,
+        note: Optional[Validator] = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        #: Like *validate*, but its text is shown as a remark under an accepted
+        #: row and refuses nothing.
+        self._note = note
         self._keywords = tuple(keywords)
         self._canonical = {name.lower(): name for name in self._keywords}
         self._validate = validate
@@ -275,6 +293,7 @@ class SshOptionList(Gtk.Box):
                 row.value_entry.set_text(str(value))
                 row.dirty = False
                 row.good = row.pair() if all(row.pair()) else None
+                self._update_note(row)
         finally:
             self._loading = False
         self._last = tuple(self.get_options())
@@ -374,6 +393,14 @@ class SshOptionList(Gtk.Box):
             )
             if row.error is None:
                 row.good = (keyword, value)
+        self._update_note(row)
+
+    def _update_note(self, row: _OptionRow) -> None:
+        keyword, value = row.pair()
+        if self._note is None or row.error or not keyword or not value:
+            row.show_note(None)
+        else:
+            row.show_note(self._note(keyword, value))
 
     def _finish(self, row: _OptionRow) -> None:
         if row not in self._rows:

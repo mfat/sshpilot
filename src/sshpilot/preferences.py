@@ -2928,9 +2928,9 @@ class PreferencesWindow(Adw.Window):
         help_group = Adw.PreferencesGroup()
         help_group.set_title(_("Override SSH Configuration"))
         help_group.set_description(
-            _("Options you set here are injected into the SSH command and "
-              "win over what is set in your SSH configuration file. "
-              "Per-connection settings always win over these.")
+            _("Options you set here are added to every SSH command. "
+              "They win over your SSH configuration file and over each "
+              "connection's own settings.")
         )
 
         # Two groups, because unset means different things in each. Under
@@ -2953,9 +2953,9 @@ class PreferencesWindow(Adw.Window):
 
         # Keepalive: one switch with its two numbers folded underneath. When
         # on (default), SSH Pilot sends ServerAlive options so dropped links
-        # are detected. They are command-line options, so they beat a
-        # `Host *` value in ~/.ssh/config; only an interval authored in the
-        # host's own block suppresses them.
+        # are detected. Like the overrides they are emitted ahead of the
+        # connection's own options, so they beat a `Host *` value in
+        # ~/.ssh/config and an interval authored in the host's own block.
         from .optional_rows import SwitchExpanderRow
 
         self.apply_default_keepalive_row = SwitchExpanderRow(title=_("Keepalive"))
@@ -3010,7 +3010,10 @@ class PreferencesWindow(Adw.Window):
         # Options without a row of their own: the same keyword/value list the
         # connection dialog's Advanced tab uses. A row is saved when it is
         # finished and OpenSSH accepts it, like every other row on the page.
-        from .core.settings import EXTRA_OPTIONS_WITH_OWN_SETTING
+        from .core.settings import (
+            EXTRA_OPTIONS_ADDED_NOT_REPLACED,
+            EXTRA_OPTIONS_WITH_OWN_SETTING,
+        )
         from .ssh_option_list import (
             OPENSSH_KEYWORDS,
             SshOptionList,
@@ -3020,6 +3023,9 @@ class PreferencesWindow(Adw.Window):
 
         extra_group = Adw.PreferencesGroup(title=_("Additional Options"))
         own_setting = _("“{keyword}” has its own setting on this page.")
+        added_note = _(
+            "Added to each connection's own values; it does not replace them."
+        )
         self.extra_options_list = SshOptionList(
             keywords=tuple(
                 name for name in OPENSSH_KEYWORDS
@@ -3029,6 +3035,11 @@ class PreferencesWindow(Adw.Window):
                 keyword, value,
                 reserved=EXTRA_OPTIONS_WITH_OWN_SETTING,
                 reserved_message=own_setting,
+            ),
+            note=lambda keyword, _value: (
+                added_note
+                if keyword.lower() in EXTRA_OPTIONS_ADDED_NOT_REPLACED
+                else None
             ),
         )
         self.extra_options_list.set_options(

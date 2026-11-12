@@ -18,6 +18,8 @@ override anyway. A record with no authorship evidence emits nothing.
 
 import asyncio
 
+import shutil
+
 import pytest
 
 from sshpilot.connection_model import Connection
@@ -366,7 +368,7 @@ def test_authored_proxy_jump_and_forward_agent_are_emitted():
             authored=("hostname", "proxyjump", "forwardagent"),
         )
     )
-    assert "-J" in argv and argv[argv.index("-J") + 1] == "jump.example.com"
+    assert "ProxyJump=jump.example.com" in argv and "-J" not in argv
     assert "ForwardAgent=yes" in argv
 
 
@@ -582,10 +584,9 @@ def test_repeated_advanced_directive_is_left_to_the_config():
     assert "setenv=" not in " ".join(argv).lower()
 
 
-def test_authored_keepalive_suppresses_the_app_default():
-    # ssh_overrides precede authored options in argv and the command line is
-    # first-obtained-value-wins, so an injected default would beat the value the
-    # user set on the Advanced tab.
+def test_app_keepalive_overrides_an_authored_one():
+    # Keepalive is one of the Settings overrides: it precedes the authored
+    # option in argv and the command line is first-obtained-value-wins.
     argv = _argv(
         _config_connection(
             hostname="web.example.com",
@@ -593,8 +594,7 @@ def test_authored_keepalive_suppresses_the_app_default():
             authored=("hostname", "serveraliveinterval"),
         )
     )
-    assert "serveraliveinterval=30" in argv
-    assert "ServerAliveInterval=15" not in argv
+    assert argv.index("ServerAliveInterval=15") < argv.index("serveraliveinterval=30")
 
 
 def test_default_keepalive_still_applies_without_an_authored_one():
@@ -635,56 +635,107 @@ def test_batch_mode_only_appears_under_the_none_interaction_policy():
 # --- Preferences act as defaults, not overrides -----------------------------
 
 
-def test_preferences_lose_to_a_connections_own_settings():
-    """Preferences ▸ SSH are defaults; the connection's own values win.
-
-    They used to be emitted first, and OpenSSH takes the first value it
-    obtains, so a global Preferences value silently beat the per-connection
-    setting the editor displayed.
-    """
+def _prefs_config(prefs):
     import types
 
     from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
 
-    prefs = {
+    return types.SimpleNamespace(
+        get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
+    )
+
+
+def test_settings_overrides_beat_a_connections_own_settings():
+    """Settings ▸ SSH Options are app-level overrides.
+
+    OpenSSH takes the first value it obtains, so every override is emitted
+    ahead of the connection's own option for the same setting.
+    """
+    app_config = _prefs_config({
         "compression": True,
         "strict_host_key_checking": "accept-new",
         "default_keepalive_interval": 60,
         "connection_timeout": 15,
-    }
-    app_config = types.SimpleNamespace(
-        get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
-    )
+        "extra_options": ["Ciphers=aes128-ctr", "User=forced"],
+    })
     conn = _config_connection(
         hostname="web.example.com",
+        username="alice",
         extra_ssh_config=(
-            "stricthostkeychecking yes\ncompression no\nserveraliveinterval 30"
+            "stricthostkeychecking yes\ncompression no\n"
+            "serveraliveinterval 30\nciphers aes256-ctr"
         ),
         authored=(
-            "hostname", "stricthostkeychecking", "compression", "serveraliveinterval"
+            "hostname", "user", "stricthostkeychecking", "compression",
+            "serveraliveinterval", "ciphers",
         ),
     )
     argv = build_ssh_connection(
         ConnectionContext(connection=conn, config=app_config, command_type="ssh")
     ).command
 
-    def _index(fragment):
-        return next(i for i, token in enumerate(argv) if token == fragment)
-
-    # Every Preferences option trails the connection's own option for the same
-    # setting, which is what makes OpenSSH prefer the connection's value.
-    for own, preference in (
-        ("stricthostkeychecking=yes", "StrictHostKeyChecking=accept-new"),
-        ("compression=no", "Compression=yes"),
+    for override, own in (
+        ("StrictHostKeyChecking=accept-new", "stricthostkeychecking=yes"),
+        ("Compression=yes", "compression=no"),
+        ("ServerAliveInterval=60", "serveraliveinterval=30"),
+        ("Ciphers=aes128-ctr", "ciphers=aes256-ctr"),
+        ("User=forced", "-l"),
     ):
-        assert _index(own) < _index(preference), argv
-
-    # The app keepalive is not emitted at all when the connection sets its own.
-    assert "serveraliveinterval=30" in argv
-    assert "ServerAliveInterval=60" not in argv
-
-    # Preferences still supply what the connection does not set.
+        assert argv.index(override) < argv.index(own), argv
     assert "ConnectTimeout=15" in argv
+
+
+def test_app_runtime_options_still_beat_settings_overrides():
+    """A caller's forced option (forwarding-only tab) outranks the overrides."""
+    app_config = _prefs_config({"extra_options": ["SessionType=default"]})
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="web.example.com", authored=("hostname",)
+            ),
+            config=app_config,
+            command_type="ssh",
+            extra_args=["-o", "SessionType=none"],
+        )
+    ).command
+    assert argv.index("SessionType=none") < argv.index("SessionType=default")
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+@pytest.mark.parametrize(
+    "override, expected",
+    [
+        ("ProxyJump=global-jump", "proxyjump global-jump"),
+        ("ProxyCommand=nc %h %p", "proxycommand nc %h %p"),
+        ("Port=2022", "port 2022"),
+        ("User=forced", "user forced"),
+    ],
+)
+def test_openssh_resolves_an_override_over_the_connections_value(override, expected):
+    """Ask ssh itself: the override wins, and the command still parses.
+
+    A global proxy with a connection that has its own jump host used to be a
+    hard failure (``-J`` after ``-o ProxyJump=``/``-o ProxyCommand=``).
+    """
+    import subprocess
+
+    app_config = _prefs_config({"extra_options": [override]})
+    conn = _config_connection(
+        hostname="web.example.com",
+        username="alice",
+        port=2200,
+        proxy_jump=["jump.example.com"],
+        authored=("hostname", "user", "port", "proxyjump"),
+    )
+    argv = build_ssh_connection(
+        ConnectionContext(connection=conn, config=app_config, command_type="ssh")
+    ).command
+    result = subprocess.run(
+        [argv[0], "-F", "/dev/null", "-G", *argv[1:]],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert expected in result.stdout.lower().splitlines()
 
 
 def test_preferences_still_apply_when_the_connection_sets_nothing():

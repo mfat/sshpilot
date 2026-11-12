@@ -748,17 +748,17 @@ def test_max_concurrent_transfers_changed_persists_immediately(tmp_path, monkeyp
 
 
 def test_ssh_options_help_explains_per_connection_precedence():
-    """Preferences ▸ SSH Options must say these are injected into the SSH
-    command (winning over the SSH config file) and lose to an explicit
-    per-connection setting.
+    """Settings ▸ SSH Options must say these are added to every SSH command
+    and win over both the SSH config file and a connection's own settings.
     """
     import inspect
 
     src = inspect.getsource(PreferencesWindow._build_ssh_settings_preferences_page)
     assert "Override SSH Configuration" in src
-    assert "injected into the SSH command" in src
+    assert "added to every SSH command" in src
     assert "SSH configuration file" in src
-    assert "Per-connection settings always win over these" in src
+    assert "connection's own settings" in src
+    assert "Per-connection settings always win" not in src
     assert "help_group.set_description(" in src
 
 
@@ -1067,7 +1067,7 @@ def test_keepalive_numbers_are_saved_and_reach_the_command(tmp_path, monkeypatch
     from sshpilot.ssh_connection_builder import _maybe_append_default_keepalive
 
     cmd = []
-    _maybe_append_default_keepalive(cmd, [], service.get_ssh_config())
+    _maybe_append_default_keepalive(cmd, service.get_ssh_config())
     assert cmd == [
         "-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=5",
     ]

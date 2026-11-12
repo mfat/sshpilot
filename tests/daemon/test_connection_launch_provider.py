@@ -353,7 +353,7 @@ def test_terminal_forwarding_only_disables_preference_multiplex(provider):
     """SessionType none terminal launches must not inherit ControlMaster=auto.
 
     Preference multiplexing injects ControlMaster=auto + ControlPersist via
-    ssh_overrides (last). Combined with SessionType none, OpenSSH backgrounds
+    ssh_overrides. Combined with SessionType none, OpenSSH backgrounds
     the master and the watched process exits 0 — the tab closes as a clean
     exit. Forced ControlMaster=no is first-value-wins before those overrides.
     """
@@ -417,7 +417,7 @@ def test_forward_launch_disables_preference_multiplex(provider):
     """Daemon ``ssh -N`` forwards must not inherit ControlMaster=auto.
 
     Preference multiplexing injects ControlMaster=auto + ControlPersist via
-    ssh_overrides (last). Combined with ``ssh -N``, OpenSSH backgrounds the
+    ssh_overrides. Combined with ``ssh -N``, OpenSSH backgrounds the
     master and the watched process exits 0 — Host Info web-UI opens fail with
     ``forward_not_active``. Forced ControlMaster=no is first-value-wins before
     those overrides.

@@ -246,7 +246,8 @@ def test_launch_singles_match_openssh_flags():
     jump = build_ssh_process_spec(
         SSHLaunchRequest(destination="example.com", proxy_jump=["b1", "b2"])
     )
-    assert "-J" in jump.argv and "b1,b2" in jump.argv
+    # Not ``-J``: ssh refuses it after an ``-o ProxyJump=`` override.
+    assert "-J" not in jump.argv and "ProxyJump=b1,b2" in jump.argv
     command = build_ssh_process_spec(
         SSHLaunchRequest(
             destination="example.com", proxy_command="ssh -W %h:%p bastion"

@@ -116,6 +116,19 @@ EXTRA_OPTIONS_WITH_OWN_SETTING = frozenset({
 })
 
 
+# Options OpenSSH collects instead of keeping the first value. An override for
+# one of these cannot replace what a connection sets: both end up in force (the
+# override's identity is tried first, forwards and variables are merged).
+EXTRA_OPTIONS_ADDED_NOT_REPLACED = frozenset({
+    "identityfile",
+    "certificatefile",
+    "localforward",
+    "remoteforward",
+    "dynamicforward",
+    "sendenv",
+})
+
+
 class ExtraOptionProblem(str, Enum):
     """Why a free-form option line was refused (stable; frontends word it)."""
 
@@ -350,9 +363,8 @@ def compose_ssh_overrides(
     except (TypeError, ValueError):
         compression = YES_NO_UNSET
     if compression:
-        # ``-C`` force-enables compression regardless of where it sits in argv,
-        # so a connection's own ``Compression no`` could never win against it.
-        # The equivalent option obeys OpenSSH's first-value-wins rule.
+        # ``-C`` can only switch compression on; the option spelling can also
+        # force it off, and obeys OpenSSH's first-value-wins rule.
         overrides.extend(["-o", f"Compression={compression}"])
 
     try:
@@ -382,9 +394,11 @@ def compose_ssh_overrides(
     if ssh_cfg.get("legacy_algorithms") is True and legacy_extra:
         overrides.extend(list(legacy_extra))
 
-    # Free-form options go last. OpenSSH keeps the first value it sees, so an
-    # option that also has a control on the page (or that the app manages,
-    # like multiplexing) keeps the value set there. A line that is not a
+    # Free-form options go last within this fragment. OpenSSH keeps the first
+    # value it sees, so an option that also has a control on the page (or that
+    # the app manages, like multiplexing) keeps the value set there. The whole
+    # fragment is emitted ahead of a connection's own options, so every entry
+    # still overrides those. A line that is not a
     # well-formed option is skipped: one bad entry in a hand-edited file must
     # not turn into a stray argument or stop every connection.
     extra = ssh_cfg.get("extra_options")

@@ -122,6 +122,7 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("ssh_option_list.py", "settings", "ExtraOptionError"),
         ("ssh_option_list.py", "settings", "ExtraOptionProblem"),
         ("ssh_option_list.py", "settings", "normalize_extra_option"),
+        ("preferences.py", "settings", "EXTRA_OPTIONS_ADDED_NOT_REPLACED"),
         ("preferences.py", "settings", "EXTRA_OPTIONS_WITH_OWN_SETTING"),
         # -- pure normaliser for the tri-state Compression value ------------
         ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),

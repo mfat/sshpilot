@@ -356,3 +356,20 @@ def test_half_filled_row_blocks_the_dialog_save(gui):
     blank.keyword_entry.set_text("TCPKeepAlive")
     assert tab.has_invalid_options() is False
     assert tab.get_extra_ssh_config() == "Compression yes\nTCPKeepAlive no"
+
+
+def test_note_remarks_on_an_accepted_row_without_refusing_it(gui):
+    note = lambda keyword, _value: "added" if keyword.lower() == "identityfile" else None
+    options = _list(gui, note=note, refused={"badone": "nope"})
+    options.set_options([("IdentityFile", "~/.ssh/a"), ("IPQoS", "none")])
+    loaded, plain = options.rows()
+    assert loaded.note_label.get_visible() and loaded.note_label.get_label() == "added"
+    assert not plain.note_label.get_visible()
+
+    row = options.add_empty_row()
+    _finish(options, row, "IdentityFile", "~/.ssh/b")
+    assert row.error is None and row.note_label.get_visible()
+    assert ("IdentityFile", "~/.ssh/b") in options.get_options()
+
+    _finish(options, row, "BadOne", "x")        # an error replaces the note
+    assert row.error == "nope" and not row.note_label.get_visible()
