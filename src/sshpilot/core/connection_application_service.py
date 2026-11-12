@@ -1074,6 +1074,7 @@ class ConnectionApplicationService:
                 root,
                 own_block,
                 include_system_defaults_in_display=include_system_defaults,
+                overrides=self._forced_ssh_option_args(),
             )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
@@ -1227,6 +1228,21 @@ class ConnectionApplicationService:
             return tuple(str(entry) for entry in composed if entry)
         except Exception:
             logger.debug("Could not read global SSH options", exc_info=True)
+            return ()
+
+    def _forced_ssh_option_args(self) -> Tuple[str, ...]:
+        """Everything a launch sends ahead of a connection's own options.
+
+        :meth:`_global_ssh_options` plus the keepalive pair, for showing the
+        configuration a session really runs with.
+        """
+        service = self._ssh_overrides_service
+        if service is None:
+            return ()
+        try:
+            return tuple(service.forced_option_args())
+        except Exception:
+            logger.debug("Could not read forced SSH options", exc_info=True)
             return ()
 
     def _destination_identity(

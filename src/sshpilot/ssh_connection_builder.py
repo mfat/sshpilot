@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from .ssh_config_document import split_config_lines
 from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
-from .core.settings.ssh_overrides import coerce_yes_no_unset, select_override_args
+from .core.settings.ssh_overrides import (
+    coerce_yes_no_unset,
+    keepalive_override_args,
+    select_override_args,
+)
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
 
 
@@ -936,15 +940,7 @@ def _maybe_append_default_keepalive(cmd, app_ssh_config):
     a ``ServerAliveInterval`` the Host block authored.
     """
     try:
-        if not bool(app_ssh_config.get('apply_default_keepalive', True)):
-            return
-
-        interval = int(app_ssh_config.get('default_keepalive_interval', 15) or 15)
-        count = int(app_ssh_config.get('default_keepalive_count', 3) or 3)
-        if interval > 0:
-            cmd.extend(['-o', f'ServerAliveInterval={interval}'])
-            if count > 0:
-                cmd.extend(['-o', f'ServerAliveCountMax={count}'])
+        cmd.extend(keepalive_override_args(app_ssh_config))
     except Exception as exc:  # never let keepalive injection break connecting
         logger.debug("Default keepalive injection skipped: %s", exc)
 

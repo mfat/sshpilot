@@ -97,3 +97,23 @@ def test_update_request_from_wire_rejects_unknown_fields():
         update_global_ssh_overrides_request_from_wire(
             {"patch": {}, "mystery": 1}
         )
+
+
+def test_forced_options_round_trip_and_default_to_empty():
+    snapshot = _overrides(
+        forced_options=("ConnectTimeout=30", "ServerAliveInterval=15"),
+    )
+    wire = global_ssh_overrides_to_wire(snapshot)
+    assert wire["forced_options"] == ["ConnectTimeout=30", "ServerAliveInterval=15"]
+    assert global_ssh_overrides_from_wire(wire) == snapshot
+
+    # A daemon that predates the field simply does not send it.
+    del wire["forced_options"]
+    assert global_ssh_overrides_from_wire(wire).forced_options == ()
+
+
+def test_forced_options_must_be_keyword_value_strings():
+    with pytest.raises(ValueError):
+        _overrides(forced_options=("NoValue",))
+    with pytest.raises(TypeError):
+        _overrides(forced_options="User=root")

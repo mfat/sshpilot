@@ -494,3 +494,50 @@ def test_persisted_mutation_composes_controlmaster_when_enabled(tmp_path):
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert "ControlMaster=auto" in on_disk["ssh"]["ssh_overrides"]
+
+
+def test_snapshot_reports_everything_a_launch_forces(tmp_path):
+    """The dedicated controls, the free-form options, the legacy-algorithm
+    extras and the keepalive pair, in the order a launch sends them."""
+    path = _write(
+        tmp_path / "config.json",
+        {"ssh": {
+            "connection_timeout": 20,
+            "verbosity": 1,
+            "legacy_algorithms": True,
+            "extra_options": ["User=root"],
+            "default_keepalive_interval": 40,
+        }},
+    )
+    service = SshOverridesService(
+        path, legacy_extra=("-o", "KexAlgorithms=+diffie-hellman-group1-sha1")
+    )
+
+    snapshot = service.get()
+
+    assert snapshot.forced_options == (
+        "ConnectTimeout=20",
+        "LogLevel=VERBOSE",
+        "KexAlgorithms=+diffie-hellman-group1-sha1",
+        "User=root",
+        "ServerAliveInterval=40",
+        "ServerAliveCountMax=3",
+    )
+    assert service.forced_option_args()[:2] == ("-o", "ConnectTimeout=20")
+    assert "-v" not in service.forced_option_args()
+
+
+def test_keepalive_switch_off_forces_no_keepalive(tmp_path):
+    path = _write(
+        tmp_path / "config.json", {"ssh": {"apply_default_keepalive": False}}
+    )
+    assert _service(path).get().forced_options == ()
+
+
+def test_forced_options_do_not_move_the_revision(tmp_path):
+    on = _service(_write(tmp_path / "a.json", {"ssh": {}})).get()
+    off = _service(
+        _write(tmp_path / "b.json", {"ssh": {"apply_default_keepalive": False}})
+    ).get()
+    assert on.forced_options != off.forced_options
+    assert on.revision == off.revision

@@ -35,9 +35,11 @@ from .settings import (
     compute_ssh_overrides_revision,
     get_default_config,
     get_nested,
+    keepalive_override_args,
     load_settings_strict,
     normalize_ssh_overrides,
     save_settings,
+    select_override_args,
     set_nested,
     settings_transaction_lock,
 )
@@ -209,17 +211,37 @@ class SshOverridesService:
         defaults, and the derived ``ssh_overrides`` argv fragment is always
         regenerated so the launch path and the overrides API agree.
         """
-        config = self._load_view()
+        return self._ssh_view(self._load_view())
+
+    def forced_option_args(self) -> tuple:
+        """Every ``-o`` pair a launch sends ahead of a connection's own options.
+
+        The composed Settings ▸ SSH Options fragment without its bare flags,
+        followed by the keepalive pair. Queries that have to resolve what a
+        launch will really use (``ssh -G``) pass exactly this.
+        """
+        return self._forced_option_args(self._load_view())
+
+    def _ssh_view(self, config: Dict[str, Any]) -> Dict[str, Any]:
         ssh = dict(get_default_config()["ssh"])
         persisted = config.get("ssh")
         if isinstance(persisted, dict):
             ssh.update({key: value for key, value in persisted.items() if value is not None})
         ssh["ssh_overrides"] = compose_ssh_overrides(
             ssh,
-                controlmaster_extra=self._controlmaster_extra,
-                legacy_extra=self._legacy_extra,
+            controlmaster_extra=self._controlmaster_extra,
+            legacy_extra=self._legacy_extra,
         )
         return ssh
+
+    def _forced_option_args(self, config: Dict[str, Any]) -> tuple:
+        ssh = self._ssh_view(config)
+        args = select_override_args(ssh["ssh_overrides"], flags=False)
+        try:
+            args.extend(keepalive_override_args(ssh))
+        except (TypeError, ValueError):
+            logger.debug("Keepalive settings unreadable; not reported as forced")
+        return tuple(args)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -292,6 +314,7 @@ class SshOverridesService:
             extra_options=tuple(semantic["extra_options"]),
             address_family=semantic["address_family"],
             legacy_algorithms=semantic["legacy_algorithms"],
+            forced_options=self._forced_option_args(config)[1::2],
         )
 
     def _write_semantic(

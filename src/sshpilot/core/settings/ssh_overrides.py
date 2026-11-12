@@ -463,19 +463,46 @@ def select_override_args(
     return selected
 
 
-def forced_option(overrides: Any, keyword: str) -> Optional[str]:
-    """The value a composed override fragment forces for *keyword*, if any.
+def forced_options(overrides: Any) -> Dict[str, str]:
+    """Every option a composed override fragment forces: keyword → value.
 
-    OpenSSH keeps the first value it obtains, so the first ``-o`` pair for the
-    keyword is the one in force.
+    Keys are lower-case. OpenSSH keeps the first value it obtains, so the
+    first ``-o`` pair for a keyword is the one in force. Options OpenSSH
+    collects (:data:`EXTRA_OPTIONS_ADDED_NOT_REPLACED`) are included with
+    their first value; whether a connection's own value survives next to them
+    is for the caller to tell from that set.
     """
-    wanted = keyword.lower()
+    forced: Dict[str, str] = {}
     args = select_override_args(overrides, flags=False)
     for value in args[1::2]:
         name, _separator, rest = value.partition("=")
-        if name.strip().lower() == wanted:
-            return rest.strip()
-    return None
+        forced.setdefault(name.strip().lower(), rest.strip())
+    return forced
+
+
+def forced_option(overrides: Any, keyword: str) -> Optional[str]:
+    """The value a composed override fragment forces for *keyword*, if any."""
+    return forced_options(overrides).get(keyword.lower())
+
+
+def keepalive_override_args(ssh_cfg: Mapping[str, Any]) -> List[str]:
+    """The ``-o ServerAlive*`` pairs Settings ▸ SSH Options ▸ Keepalive sends.
+
+    Empty while the switch (``apply_default_keepalive``) is off. These are
+    overrides like the rest of that page: a launch emits them ahead of the
+    connection's own options, so they beat a ``ServerAliveInterval`` the Host
+    block authored.
+    """
+    if not bool(ssh_cfg.get("apply_default_keepalive", True)):
+        return []
+    interval = int(ssh_cfg.get("default_keepalive_interval", 15) or 15)
+    count = int(ssh_cfg.get("default_keepalive_count", 3) or 3)
+    args: List[str] = []
+    if interval > 0:
+        args.extend(["-o", f"ServerAliveInterval={interval}"])
+        if count > 0:
+            args.extend(["-o", f"ServerAliveCountMax={count}"])
+    return args
 
 
 def forced_destination(

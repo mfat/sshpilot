@@ -150,6 +150,11 @@ class GlobalSshOverrides:
     address_family: str = ""
     #: Re-enable old key exchange, host key and cipher algorithms.
     legacy_algorithms: bool = False
+    #: Read-only: every ``Keyword=value`` a launch sends ahead of a
+    #: connection's own options (the fields above as composed, the keepalive
+    #: pair, the legacy-algorithm and multiplexing options). OpenSSH keeps the
+    #: first value per keyword, so order matters. Not part of the revision.
+    forced_options: tuple = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -163,6 +168,7 @@ class GlobalSshOverrides:
             "extra_options": list(self.extra_options),
             "address_family": self.address_family,
             "legacy_algorithms": self.legacy_algorithms,
+            "forced_options": list(self.forced_options),
         }
 
     def __post_init__(self) -> None:
@@ -179,6 +185,12 @@ class GlobalSshOverrides:
         object.__setattr__(
             self, "extra_options", _validate_extra_options(self.extra_options)
         )
+        forced = self.forced_options
+        if isinstance(forced, (str, bytes)) or not isinstance(forced, (list, tuple)):
+            raise TypeError("forced_options must be a list of strings")
+        if any(type(item) is not str or "=" not in item for item in forced):
+            raise ValueError("forced_options entries must be Keyword=value")
+        object.__setattr__(self, "forced_options", tuple(forced))
 
 
 @dataclass(frozen=True)

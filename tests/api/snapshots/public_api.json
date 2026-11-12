@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.96",
+  "api_implementation_version": "0.97",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",

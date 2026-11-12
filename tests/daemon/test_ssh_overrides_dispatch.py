@@ -130,6 +130,7 @@ def test_get_returns_wire_snapshot(tmp_path):
         "extra_options",
         "address_family",
         "legacy_algorithms",
+        "forced_options",
     }
     assert result.value["extra_options"] == []
     assert result.value["strict_host_key_checking"] == ""

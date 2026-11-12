@@ -5,6 +5,18 @@ notes remain separate.
 
 ## Unreleased
 
+- `GlobalSshOverrides.forced_options` lists every `Keyword=value` a launch
+  sends ahead of a connection's own options: the override fields as composed,
+  the free-form options, the legacy-algorithm and multiplexing options, and the
+  keepalive pair (`ServerAliveInterval`, `ServerAliveCountMax`) while that
+  switch is on. OpenSSH keeps the first value per keyword, so the list is in
+  launch order. Frontends use it to tell which of a connection's settings are
+  overridden. It is read-only (not a patch field), outside the revision, and
+  additive and optional on the wire; the API implementation version is 0.97;
+  Protocol remains 1.0.
+- `connections.get_effective_config` resolves the effective side with those
+  same options, so it reports what a session runs with. The authored side is
+  unchanged.
 - `GlobalSshOverrides` gains two fields, with matching
   `UpdateGlobalSshOverridesRequest` patch fields. `address_family` is `""`
   (not sent), `inet` (IPv4 only) or `inet6` (IPv6 only) and is sent as

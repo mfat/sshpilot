@@ -255,3 +255,28 @@ def test_select_override_args_drops_owned_options_and_stray_tokens():
         "-o", "LogLevel=VERBOSE",
     ]
     assert select_override_args(None) == []
+
+
+def test_forced_options_maps_each_keyword_to_its_first_value():
+    from sshpilot.core.settings.ssh_overrides import forced_option, forced_options
+
+    fragment = [
+        "-o", "ConnectTimeout=5", "-v",
+        "-o", "User=root", "-o", "user=later", "-o", "broken", "-o",
+    ]
+    assert forced_options(fragment) == {"connecttimeout": "5", "user": "root"}
+    assert forced_option(fragment, "User") == "root"
+    assert forced_option(fragment, "Port") is None
+    assert forced_options(None) == {}
+
+
+def test_keepalive_override_args_follow_the_switch():
+    from sshpilot.core.settings.ssh_overrides import keepalive_override_args
+
+    assert keepalive_override_args({}) == [
+        "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+    ]
+    assert keepalive_override_args({"apply_default_keepalive": False}) == []
+    assert keepalive_override_args(
+        {"default_keepalive_interval": 40, "default_keepalive_count": 2}
+    ) == ["-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=2"]

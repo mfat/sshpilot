@@ -655,7 +655,8 @@ def test_effective_config_uses_daemon_root_in_default_mode(
         ]
 
     def fake_diff_effective_config(
-        host, config_file, own_block_text, *, include_system_defaults_in_display=None
+        host, config_file, own_block_text, *, include_system_defaults_in_display=None,
+        overrides=None
     ):
         calls["diff"] = (host, config_file, own_block_text)
         calls["diff_display_flag"] = include_system_defaults_in_display
@@ -724,7 +725,8 @@ def test_effective_config_excludes_system_defaults_in_isolated_mode(
         return ["Host GoogleRouter", "    HostName 192.168.8.1", "    User root"]
 
     def fake_diff_effective_config(
-        host, config_file, own_block_text, *, include_system_defaults_in_display=None
+        host, config_file, own_block_text, *, include_system_defaults_in_display=None,
+        overrides=None
     ):
         calls["diff_display_flag"] = include_system_defaults_in_display
         return {"has_diff": False, "changes": [], "own": ["x"], "full": ["x"]}

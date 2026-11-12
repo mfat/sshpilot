@@ -6490,6 +6490,12 @@ def _extra_ssh_options(value: Any) -> tuple:
     return tuple(_text(item, "extra_options") for item in value)
 
 
+def _forced_ssh_options(value: Any) -> tuple:
+    if type(value) is not list:
+        raise ValueError("forced_options must be an array")
+    return tuple(_text(item, "forced_options") for item in value)
+
+
 def global_ssh_overrides_to_wire(
     overrides: Any,
 ) -> Dict[str, Any]:
@@ -6508,6 +6514,7 @@ def global_ssh_overrides_to_wire(
         "extra_options": list(overrides.extra_options),
         "address_family": overrides.address_family,
         "legacy_algorithms": overrides.legacy_algorithms,
+        "forced_options": list(overrides.forced_options),
     }
 
 
@@ -6529,6 +6536,7 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
             "extra_options",
             "address_family",
             "legacy_algorithms",
+            "forced_options",
         },
         context="global ssh overrides",
     )
@@ -6551,6 +6559,7 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
         legacy_algorithms=_boolean(
             data.get("legacy_algorithms", False), "legacy_algorithms"
         ),
+        forced_options=_forced_ssh_options(data.get("forced_options", [])),
     )
 
 

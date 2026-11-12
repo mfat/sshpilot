@@ -290,6 +290,7 @@ def diff_effective_config(
     own_block_text: str,
     *,
     include_system_defaults_in_display: Optional[bool] = None,
+    overrides: Optional[Sequence[str]] = None,
 ) -> Optional[Dict[str, object]]:
     """Compare an authored block against the daemon-selected OpenSSH config.
 
@@ -302,6 +303,11 @@ def diff_effective_config(
     None`` for callers that don't care) — real ``ssh -G`` invocations made
     without ``-F`` pick up the system-wide config, so the display should
     match that whenever the app itself launches sessions without ``-F``.
+
+    *overrides* is what a launch sends ahead of the connection's own options
+    (Settings ▸ SSH Options). It is applied to the effective sides only, never
+    to the authored block, so an option forced there shows up as a difference
+    from what the Host block says.
     """
     if not _safe_host_identifier(host):
         return None
@@ -315,8 +321,14 @@ def diff_effective_config(
         if config_file is None:
             config_file = os.path.expanduser("~/.ssh/config")
         compare_file = config_file if os.path.isfile(config_file) else temporary_path
-        full = get_effective_ssh_config(host, config_file=compare_file)
-        display = get_effective_ssh_config(host) if include_system_defaults_in_display else full
+        full = get_effective_ssh_config(
+            host, config_file=compare_file, overrides=overrides
+        )
+        display = (
+            get_effective_ssh_config(host, overrides=overrides)
+            if include_system_defaults_in_display
+            else full
+        )
     finally:
         try:
             os.unlink(temporary_path)
