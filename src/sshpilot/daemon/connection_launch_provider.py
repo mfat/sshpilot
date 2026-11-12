@@ -174,9 +174,10 @@ class HeadlessConnectionView:
     def effective_username(self) -> str:
         """The account OpenSSH resolves for this host.
 
-        Equals :attr:`username` whenever the Host block authored ``User``. When
-        it did not, the account is inherited — from a global block or from
-        OpenSSH's own local-user default — and only ``ssh -G`` knows it. Secret
+        Equals :attr:`username` whenever the Host block authored ``User`` and
+        Settings ▸ SSH Options do not force another one. Otherwise the account
+        is inherited — from a global block or from OpenSSH's own local-user
+        default — or overridden, and only ``ssh -G`` knows it. Secret
         lookup and user-facing labels must use this, never the authored value,
         which is empty in exactly that case.
 
@@ -185,8 +186,11 @@ class HeadlessConnectionView:
         """
         if self._effective_username is not None:
             return self._effective_username
+        from ..core.settings.ssh_overrides import forced_option
+
         resolved = self.username
-        if not resolved:
+        forced = forced_option(self.global_ssh_options, "user")
+        if forced or not resolved:
             host_label = self.resolve_host_identifier() or self.get_effective_host()
             if host_label:
                 try:
@@ -198,14 +202,36 @@ class HeadlessConnectionView:
                         config_file=config_override,
                         overrides=self.global_ssh_options,
                     )
-                    resolved = _string(effective.get("user"))
+                    resolved = _string(effective.get("user")) or (
+                        self.username if forced else ""
+                    )
                 except Exception:
                     logger.debug(
                         "Could not resolve effective username", exc_info=True
                     )
-                    resolved = ""
+                    resolved = self.username if forced else ""
         self._effective_username = resolved
         return resolved
+
+    def effective_destination(self) -> Tuple[str, str, int]:
+        """``(hostname, username, port)`` the launch will really use.
+
+        The saved values, with the account resolved through OpenSSH and a
+        ``HostName``/``Port`` forced in Settings ▸ SSH Options applied.
+        """
+        from ..core.settings.ssh_overrides import forced_destination
+
+        hostname = _string(
+            self.hostname or self.get_effective_host() or self.host
+        )
+        hostname, _user, port = forced_destination(
+            self.global_ssh_options,
+            hostname=hostname,
+            username="",
+            port=self.port,
+            alias=_string(self.resolve_host_identifier()) or None,
+        )
+        return hostname, _string(self.effective_username), port
 
     @property
     def port(self) -> int:
@@ -816,13 +842,7 @@ class DaemonConnectionLaunchProvider:
 
         record = self._resolve(connection_id)
         connection = self._view(record)
-        hostname = str(
-            connection.hostname
-            or connection.get_effective_host()
-            or connection.host
-            or ""
-        ).strip()
-        return hostname, str(connection.effective_username or "").strip(), connection.port
+        return connection.effective_destination()
 
     def prepare_sftp_launch(
         self,

@@ -1011,3 +1011,64 @@ def test_subscribe_then_close_detaches_listener():
     service.close()
     assert repo.listeners == []
     assert seen == []
+
+
+def test_unsaved_host_check_applies_global_overrides_to_the_saved_side(tmp_path):
+    """A saved host still matches once Settings force its account and port.
+
+    The requested side is resolved by the real ssh with the overrides; the
+    saved side has to be compared with the same forced values, not with what
+    the record stored.
+    """
+    import shutil
+    from types import SimpleNamespace
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text("")
+    composed = [
+        "-o", "User=bob", "-v", "-o", "Port=2022", "-o", "ProxyJump=bastion",
+    ]
+    repo = FakeRepository(
+        [_record(record_id="prod", hostname="example.com", username="alice", port=2200)]
+    )
+    service = ConnectionApplicationService(
+        repo,
+        client_name="test",
+        ssh_overrides=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": composed}
+        ),
+    )
+    service._active_config_file = lambda: str(config)
+
+    # What the user types is irrelevant where an override forces the value.
+    for typed_user, typed_port in (("alice", 2200), ("bob", 2022), ("", None)):
+        result = service.check_unsaved_host(
+            UnsavedHostCheckRequest(
+                hostname="example.com", username=typed_user, port=typed_port
+            )
+        )
+        assert result.saved is True, (typed_user, typed_port)
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="other.example.com", username="bob")
+    ).saved is False
+
+
+def test_forced_destination_applies_only_what_it_can_resolve():
+    from sshpilot.core.settings.ssh_overrides import forced_destination, forced_option
+
+    composed = ["-o", "User=bob", "-v", "-o", "Port=2022", "-o", "User=later"]
+    assert forced_option(composed, "USER") == "bob"          # first value wins
+    assert forced_option(composed, "hostname") is None
+    assert forced_destination(
+        composed, hostname="web", username="alice", port=2200
+    ) == ("web", "bob", 2022)
+    assert forced_destination(
+        ["-o", "HostName=%h.corp.example", "-o", "Port=nope"],
+        hostname="web", username="alice", port=2200,
+    ) == ("web.corp.example", "alice", 2200)
+    # A token only OpenSSH can expand leaves the given value alone.
+    assert forced_destination(
+        ["-o", "HostName=%n-%C"], hostname="web", username="alice", port=22
+    ) == ("web", "alice", 22)

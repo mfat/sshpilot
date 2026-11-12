@@ -463,6 +463,51 @@ def select_override_args(
     return selected
 
 
+def forced_option(overrides: Any, keyword: str) -> Optional[str]:
+    """The value a composed override fragment forces for *keyword*, if any.
+
+    OpenSSH keeps the first value it obtains, so the first ``-o`` pair for the
+    keyword is the one in force.
+    """
+    wanted = keyword.lower()
+    args = select_override_args(overrides, flags=False)
+    for value in args[1::2]:
+        name, _separator, rest = value.partition("=")
+        if name.strip().lower() == wanted:
+            return rest.strip()
+    return None
+
+
+def forced_destination(
+    overrides: Any,
+    *,
+    hostname: str,
+    username: str,
+    port: int,
+    alias: Optional[str] = None,
+) -> tuple:
+    """``(hostname, username, port)`` after the overrides that replace them.
+
+    For callers that describe where a launch goes without running ``ssh -G``.
+    ``HostName`` may use ``%h`` and ``%%``. ``%h`` is the name ssh is given,
+    which is *alias* for a saved Host block (default: *hostname*); a value with any
+    other token, or a ``Port`` that is not a port, is left to OpenSSH and the
+    given value is kept.
+    """
+    forced_host = forced_option(overrides, "hostname")
+    if forced_host:
+        expanded = forced_host.replace("%%", "\0").replace("%h", alias or hostname)
+        if "%" not in expanded:
+            hostname = expanded.replace("\0", "%")
+    forced_user = forced_option(overrides, "user")
+    if forced_user and "%" not in forced_user:
+        username = forced_user
+    forced_port = forced_option(overrides, "port")
+    if forced_port and forced_port.isdigit() and 1 <= int(forced_port) <= 65535:
+        port = int(forced_port)
+    return hostname, username, port
+
+
 def ssh_settings_from_values(
     *,
     connect_timeout: Optional[int] = None,

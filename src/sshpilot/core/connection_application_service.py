@@ -1294,11 +1294,38 @@ class ConnectionApplicationService:
             user = str(requested[1]) if inherits("user") else getpass.getuser()
         port = int(requested[2]) if inherits("port") else int(record.port or 22)
         proxy = ",".join(proxy_jump).casefold() or "none"
-        return {
-            (self._normalize_host(str(value)), user, port, proxy)
-            for value in values
-            if str(value or "").strip()
-        }
+        # Settings ▸ SSH Options outrank what the record saved, and the
+        # requested side was resolved with them. Apply the ones that replace a
+        # value here too, or a saved host would never match once one is set.
+        from .settings.ssh_overrides import forced_destination, forced_option
+
+        overrides = self._global_ssh_options()
+        # A forced ProxyCommand ahead of a ProxyJump wins and leaves no jump
+        # host to resolve; the requested side then keeps its typed value too.
+        forced_proxy = forced_option(overrides, "proxyjump")
+        if forced_proxy and not self._proxy_command_comes_first(overrides):
+            proxy = forced_proxy.casefold()
+        identities = set()
+        for value in values:
+            if not str(value or "").strip():
+                continue
+            host, saved_user, saved_port = forced_destination(
+                overrides, hostname=str(value).strip(), username=user, port=port
+            )
+            identities.add(
+                (self._normalize_host(host), saved_user, saved_port, proxy)
+            )
+        return identities
+
+    @staticmethod
+    def _proxy_command_comes_first(overrides: Tuple[str, ...]) -> bool:
+        for entry in overrides:
+            keyword = str(entry).partition("=")[0].strip().lower()
+            if keyword == "proxycommand":
+                return True
+            if keyword == "proxyjump":
+                return False
+        return False
 
     @staticmethod
     def _normalize_host(value: str) -> str:

@@ -1024,3 +1024,38 @@ def test_backup_views_carry_the_global_overrides(tmp_path):
     ))
     views = _selected_views(None, [_record()], settings_path=settings)
     assert [view.global_ssh_options for view in views] == [("-o", "User=forced")]
+
+
+def test_remote_identity_follows_overrides_over_authored_values(
+    provider, tmp_path, monkeypatch
+):
+    """An authored User/Port loses to Settings, so prompts and the stored
+    password lookup must name the forced account, port and host."""
+    import shutil
+
+    from sshpilot.daemon import connection_launch_provider as module
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text(
+        "Host web\n    HostName example.com\n    User alice\n    Port 2200\n"
+    )
+    monkeypatch.setattr(
+        module.HeadlessConnectionView,
+        "_resolve_config_override_path",
+        lambda self: str(config),
+    )
+    prov, records = provider
+    records["web"] = _record(username="alice", port=2200)
+    assert prov.remote_identity("web") == ("example.com", "alice", 2200)
+
+    forced = _hostile_provider(
+        provider, extra=("User=bob", "Port=2022", "HostName=%h.internal")
+    )
+    # %h is the name ssh is given: the alias, as `ssh -G` confirms.
+    assert forced.remote_identity("web") == ("web.internal", "bob", 2022)
+    assert "hostname web.internal" in _ssh_resolves(
+        ["ssh", "-F", str(config), "-o", "HostName=%h.internal", "web"]
+    )
+    assert forced._view(records["web"]).effective_username == "bob"
