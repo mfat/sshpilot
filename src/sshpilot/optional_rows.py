@@ -22,8 +22,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GObject, Gtk  # noqa: E402
 
 
-class OptionalIntRow(Adw.ActionRow):
-    """Don't-set dropdown + number field; ``value`` is 0 while unset."""
+class OptionalIntRow(Adw.ComboRow):
+    """Don't-set dropdown + number field; ``value`` is 0 while unset.
+
+    A combo row, like :class:`OptionalChoiceRow`, so both kinds of row draw
+    the same dropdown. The number field sits just before it.
+    """
 
     __gtype_name__ = "SshPilotOptionalIntRow"
 
@@ -51,17 +55,18 @@ class OptionalIntRow(Adw.ActionRow):
         self._spin.set_value(min(max(int(initial), lower), int(upper)))
         self._spin.update_property([Gtk.AccessibleProperty.LABEL], [title])
 
-        model = Gtk.StringList.new([dont_set_label, custom_label])
-        self._dropdown = Gtk.DropDown(model=model)
-        self._dropdown.set_valign(Gtk.Align.CENTER)
-        self._dropdown.set_selected(0)
+        self.set_model(Gtk.StringList.new([dont_set_label, custom_label]))
+        self.set_selected(0)
 
         self.add_suffix(self._spin)
-        self.add_suffix(self._dropdown)
-        self.set_activatable_widget(self._dropdown)
+        # add_suffix appends after the row's own dropdown; move the number
+        # field ahead of it so every row's arrow lines up on the right.
+        box = self._spin.get_parent()
+        if isinstance(box, Gtk.Box):
+            box.reorder_child_after(self._spin, None)
 
         self._spin.connect("value-changed", self._on_changed)
-        self._dropdown.connect("notify::selected", self._on_changed)
+        self.connect("notify::selected", self._on_changed)
         self._refresh()
 
     def get_value(self) -> int:
@@ -77,18 +82,18 @@ class OptionalIntRow(Adw.ActionRow):
         try:
             if number > 0:
                 self._spin.set_value(number)
-            self._dropdown.set_selected(1 if number > 0 else 0)
+            self.set_selected(1 if number > 0 else 0)
         finally:
             self._syncing = False
         self._refresh()
 
     def get_enabled(self) -> bool:
-        return int(self._dropdown.get_selected()) != 0
+        return int(self.get_selected()) != 0
 
     def set_enabled(self, enabled: bool) -> None:
         self._syncing = True
         try:
-            self._dropdown.set_selected(1 if enabled else 0)
+            self.set_selected(1 if enabled else 0)
         finally:
             self._syncing = False
         self._refresh()
@@ -101,7 +106,7 @@ class OptionalIntRow(Adw.ActionRow):
             self._refresh()
 
     def _refresh(self) -> None:
-        enabled = int(self._dropdown.get_selected()) != 0
+        enabled = int(self.get_selected()) != 0
         self._spin.set_visible(enabled)
         new_value = int(self._spin.get_value()) if enabled else 0
         if new_value != self.value:
