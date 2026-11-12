@@ -203,3 +203,54 @@ def test_int_row_shows_no_set_label_once_set(gui):
         assert "Not set" in _row_labels(row)
     finally:
         window.destroy()
+
+
+def test_additional_options_apply_validates_then_saves(gui):
+    gui.window.show_preferences("ssh-options")
+    gui.pump(500)
+    prefs = gui.window._preferences_window
+    prefs._ensure_page_built("ssh-options")
+    if prefs.ssh_overrides_controller is None:
+        pytest.skip("no daemon overrides service in this session")
+    buffer = prefs.extra_options_view.get_buffer()
+    apply_button = prefs.extra_options_apply_button
+    error = prefs.extra_options_error
+    try:
+        assert apply_button.get_sensitive() is False
+
+        # An option that has its own row is refused, and nothing is saved.
+        buffer.set_text("IPQoS none\nConnectTimeout 5")
+        assert apply_button.get_sensitive() is True
+        apply_button.emit("clicked")
+        gui.pump(200)
+        assert error.get_visible() and "ConnectTimeout" in error.get_label()
+        assert "2" in error.get_label()
+        assert prefs.ssh_overrides_controller.load().extra_options == ()
+
+        # OpenSSH itself rejects a keyword that does not exist.
+        buffer.set_text("NoSuchOptionAtAll yes")
+        apply_button.emit("clicked")
+        gui.pump(200)
+        assert error.get_visible() and "NoSuchOptionAtAll".lower() in error.get_label().lower()
+        assert prefs.ssh_overrides_controller.load().extra_options == ()
+
+        # Valid options are saved through the daemon, in canonical form.
+        buffer.set_text("# proxy\nIPQoS none\nSetEnv=LANG=C")
+        apply_button.emit("clicked")
+        gui.pump(300)
+        assert error.get_visible() is False
+        assert prefs.ssh_overrides_controller.load().extra_options == (
+            "IPQoS=none", "SetEnv=LANG=C",
+        )
+        assert apply_button.get_sensitive() is False
+
+        # Editing away from the saved value offers Apply again; back hides it.
+        buffer.set_text("IPQoS none")
+        assert apply_button.get_sensitive() is True
+        buffer.set_text("IPQoS none\nSetEnv LANG=C")
+        assert apply_button.get_sensitive() is False
+    finally:
+        buffer.set_text("")
+        apply_button.emit("clicked")
+        gui.pump(300)
+    assert prefs.ssh_overrides_controller.load().extra_options == ()

@@ -282,6 +282,7 @@ class SshOverridesService:
             compression=semantic["compression"],
             verbosity=semantic["verbosity"],
             debug_enabled=semantic["debug_enabled"],
+            extra_options=tuple(semantic["extra_options"]),
         )
 
     def _write_semantic(
@@ -341,4 +342,6 @@ class SshOverridesService:
             )
         for field, config_key in FIELD_TO_CONFIG_KEY.items():
             raw_key = config_key.split(".", 1)[1]
-            ssh[raw_key] = DEFAULT_SSH_OVERRIDES[field]
+            default = DEFAULT_SSH_OVERRIDES[field]
+            # A fresh list each time: the default must never be shared and mutated.
+            ssh[raw_key] = list(default) if isinstance(default, list) else default

@@ -170,6 +170,8 @@ def get_default_config() -> Dict[str, Any]:
             # Global SSH override fields (daemon-owned). 0 disables the
             # corresponding ``-o`` option (matching compose_ssh_overrides).
             'connection_timeout': 0,
+            # Free-form ``Keyword=value`` options sent last as ``-o`` arguments.
+            'extra_options': [],
             # Keepalive sent with every connection so a dead link is detected
             # (~interval*count seconds) instead of the indicator staying green
             # forever. The switch and both numbers are edited in Preferences;

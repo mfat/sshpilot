@@ -6484,6 +6484,12 @@ def daemon_stop_result_from_wire(value: Any) -> DaemonStopResult:
 # ---------------------------------------------------------------------------
 
 
+def _extra_ssh_options(value: Any) -> tuple:
+    if type(value) is not list:
+        raise ValueError("extra_options must be an array")
+    return tuple(_text(item, "extra_options") for item in value)
+
+
 def global_ssh_overrides_to_wire(
     overrides: Any,
 ) -> Dict[str, Any]:
@@ -6499,6 +6505,7 @@ def global_ssh_overrides_to_wire(
         "verbosity": overrides.verbosity,
         "debug_enabled": overrides.debug_enabled,
         "applies_immediately": overrides.applies_immediately,
+        "extra_options": list(overrides.extra_options),
     }
 
 
@@ -6515,7 +6522,7 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
             "verbosity",
             "debug_enabled",
         },
-        optional={"applies_immediately"},
+        optional={"applies_immediately", "extra_options"},
         context="global ssh overrides",
     )
     return GlobalSshOverrides(
@@ -6530,6 +6537,7 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
         verbosity=_integer(data["verbosity"], "verbosity"),
         debug_enabled=_boolean(data["debug_enabled"], "debug_enabled"),
         applies_immediately=_boolean(data.get("applies_immediately", True), "applies_immediately"),
+        extra_options=_extra_ssh_options(data.get("extra_options", [])),
     )
 
 
@@ -6540,7 +6548,12 @@ def update_global_ssh_overrides_request_to_wire(
 
     if type(request) is not UpdateGlobalSshOverridesRequest:
         raise TypeError("UpdateGlobalSshOverridesRequest is required")
-    result: Dict[str, Any] = {"patch": dict(request.patch)}
+    result: Dict[str, Any] = {
+        "patch": {
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in request.patch.items()
+        }
+    }
     if request.expected_revision is not None:
         result["expected_revision"] = request.expected_revision
     return result

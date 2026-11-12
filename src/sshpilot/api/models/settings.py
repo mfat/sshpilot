@@ -21,6 +21,7 @@ from sshpilot.core.settings.ssh_overrides import (
     VALID_YES_NO_VALUES,
     YES_NO_FIELDS,
     compute_ssh_overrides_revision,
+    normalize_extra_options,
 )
 
 # Re-exported field-model contracts (consumed by the daemon service).
@@ -92,6 +93,11 @@ def _validate_yes_no(value: Any, field: str) -> None:
         )
 
 
+def _validate_extra_options(value: Any) -> tuple:
+    """Shape-check free-form options; returns them canonical (``Keyword=value``)."""
+    return normalize_extra_options(value)
+
+
 def _validate_patch_fields(patch: Mapping[str, Any]) -> None:
     """Reject unknown patch fields and type-check values."""
     unknown = set(patch.keys()) - EDITABLE_FIELDS
@@ -102,6 +108,8 @@ def _validate_patch_fields(patch: Mapping[str, Any]) -> None:
     for key, value in patch.items():
         if key == "debug_enabled":
             _validate_boolean(value, key)
+        elif key == "extra_options":
+            _validate_extra_options(value)
         elif key in _YES_NO_FIELDS:
             _validate_yes_no(value, key)
         elif key == "strict_host_key_checking":
@@ -125,6 +133,8 @@ class GlobalSshOverrides:
     verbosity: int
     debug_enabled: bool
     applies_immediately: bool = True
+    #: Free-form options, each ``Keyword=value``, sent last as ``-o`` arguments.
+    extra_options: tuple = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,6 +145,7 @@ class GlobalSshOverrides:
             "verbosity": self.verbosity,
             "debug_enabled": self.debug_enabled,
             "applies_immediately": self.applies_immediately,
+            "extra_options": list(self.extra_options),
         }
 
     def __post_init__(self) -> None:
@@ -146,6 +157,9 @@ class GlobalSshOverrides:
         _validate_integer(self.verbosity, "verbosity")
         _validate_boolean(self.debug_enabled, "debug_enabled")
         _validate_boolean(self.applies_immediately, "applies_immediately")
+        object.__setattr__(
+            self, "extra_options", _validate_extra_options(self.extra_options)
+        )
 
 
 @dataclass(frozen=True)

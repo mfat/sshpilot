@@ -167,6 +167,8 @@ SETTINGS = (
     SettingEntry("ssh-options", N_("Overrides"), N_("StrictHostKeyChecking"),
                  N_("host key;known hosts")),
     SettingEntry("ssh-options", N_("Overrides"), N_("Compression")),
+    SettingEntry("ssh-options", None, N_("Additional Options"),
+                 N_("custom options;extra;proxycommand")),
     SettingEntry("ssh-options", N_("Application Behavior"), N_("Enable SSH connection multiplexing"),
                  N_("controlmaster;controlpersist")),
     SettingEntry("ssh-options", N_("Application Behavior"), N_("SSH Verbosity (-v)"),

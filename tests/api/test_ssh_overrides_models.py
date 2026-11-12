@@ -10,13 +10,14 @@ from sshpilot.api.models.settings import (
 )
 
 
-def test_editable_fields_exactly_five():
+def test_editable_fields_exactly_six():
     assert EDITABLE_FIELDS == {
         "connect_timeout",
         "strict_host_key_checking",
         "compression",
         "verbosity",
         "debug_enabled",
+        "extra_options",
     }
 
 

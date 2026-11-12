@@ -335,6 +335,7 @@ def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
         "compression": "",
         "verbosity": 0,
         "debug_enabled": False,
+        "extra_options": (),
     }
     rows = (
         prefs.connect_timeout_row,

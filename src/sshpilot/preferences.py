@@ -22,6 +22,12 @@ from .shortcut_editor import ShortcutsPreferencesPage
 from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
 from .core.settings import INTEGER_RANGES as _SSH_OVERRIDE_RANGES
+from .core.settings import (
+    ExtraOptionError,
+    ExtraOptionProblem,
+    extra_options_to_text,
+    parse_extra_options_text,
+)
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 from .terminal_osc52 import (
     OSC52_MAX_MAX_KIB,
@@ -61,6 +67,7 @@ _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "compression": "",
     "verbosity": 0,
     "debug_enabled": False,
+    "extra_options": (),
 }
 
 
@@ -2801,7 +2808,7 @@ class PreferencesWindow(Adw.Window):
 
 
     def _ssh_override_page_values(self):
-        """Return the five SSH override field values for the page.
+        """Return the SSH override field values for the page.
 
         The daemon-backed controller is authoritative when injected; the page
         then reflects daemon state instead of the local config cache. Without a
@@ -2818,6 +2825,7 @@ class PreferencesWindow(Adw.Window):
                     "compression": snapshot.compression,
                     "verbosity": snapshot.verbosity,
                     "debug_enabled": snapshot.debug_enabled,
+                    "extra_options": tuple(snapshot.extra_options),
                 }
             except Exception as error:
                 logger.debug(
@@ -2837,6 +2845,7 @@ class PreferencesWindow(Adw.Window):
             "compression_row",
             "verbosity_row",
             "debug_enabled_row",
+            "extra_options_box",
         )
         return tuple(
             row for name in names if (row := getattr(self, name, None)) is not None
@@ -2988,6 +2997,51 @@ class PreferencesWindow(Adw.Window):
         self.compression_row.set_value(str(values['compression'] or ""))
         advanced_group.add(self.compression_row)
 
+        # Free-form options for everything without a row of its own. Applied
+        # with a button, not on every keystroke: a half-typed line is not an
+        # option, and a wrong one would be sent with every connection.
+        extra_group = Adw.PreferencesGroup(title=_("Additional Options"))
+        extra_group.set_description(
+            _("One option per line, as in an SSH configuration file. "
+              "Options that have their own setting on this page are set there.")
+        )
+        self._ssh_extra_options_applied = tuple(values['extra_options'])
+        self.extra_options_view = Gtk.TextView()
+        self.extra_options_view.set_monospace(True)
+        self.extra_options_view.set_top_margin(8)
+        self.extra_options_view.set_bottom_margin(8)
+        self.extra_options_view.set_left_margin(12)
+        self.extra_options_view.set_right_margin(12)
+        self.extra_options_view.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_("Additional Options")]
+        )
+        self.extra_options_view.get_buffer().set_text(
+            extra_options_to_text(self._ssh_extra_options_applied)
+        )
+        extra_scroller = Gtk.ScrolledWindow()
+        extra_scroller.set_min_content_height(96)
+        extra_scroller.set_child(self.extra_options_view)
+        extra_scroller.add_css_class("card")
+        extra_scroller.set_overflow(Gtk.Overflow.HIDDEN)
+        self.extra_options_error = Gtk.Label(xalign=0)
+        self.extra_options_error.set_wrap(True)
+        self.extra_options_error.add_css_class("error")
+        self.extra_options_error.set_visible(False)
+        self.extra_options_apply_button = Gtk.Button(label=_("Apply"))
+        self.extra_options_apply_button.set_valign(Gtk.Align.CENTER)
+        self.extra_options_apply_button.set_sensitive(False)
+        self.extra_options_apply_button.connect(
+            'clicked', self._on_apply_extra_ssh_options
+        )
+        extra_group.set_header_suffix(self.extra_options_apply_button)
+        self.extra_options_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.extra_options_box.append(extra_scroller)
+        self.extra_options_box.append(self.extra_options_error)
+        extra_group.add(self.extra_options_box)
+        self.extra_options_view.get_buffer().connect(
+            'changed', self._on_extra_ssh_options_edited
+        )
+
         # Connection multiplexing (ControlMaster). When on, the first
         # connection to a host opens a master socket that later connections
         # reuse (no re-handshake) — faster reconnects and chatty operations.
@@ -3029,12 +3083,13 @@ class PreferencesWindow(Adw.Window):
 
         ssh_settings_page.add(help_group)
         ssh_settings_page.add(advanced_group)
+        ssh_settings_page.add(extra_group)
         ssh_settings_page.add(app_group)
         ssh_settings_page.add(reset_group)
 
         if self.ssh_overrides_controller is None:
             # No daemon overrides service: there is no authoritative owner for
-            # the five semantic fields, so they stay visible but disabled
+            # the semantic fields, so they stay visible but disabled
             # rather than being persisted locally.
             for row in (
                 self.connect_timeout_row,
@@ -3042,6 +3097,7 @@ class PreferencesWindow(Adw.Window):
                 self.compression_row,
                 self.verbosity_row,
                 self.debug_enabled_row,
+                self.extra_options_box,
             ):
                 row.set_sensitive(False)
 
@@ -5936,14 +5992,90 @@ class PreferencesWindow(Adw.Window):
             )
         )
 
+    def _extra_ssh_options_text(self):
+        buffer = self.extra_options_view.get_buffer()
+        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+
+    def _show_applied_extra_ssh_options(self, options):
+        """Make the text box show *options* as the applied, saved value."""
+        self._ssh_extra_options_applied = tuple(options or ())
+        view = getattr(self, 'extra_options_view', None)
+        if view is None:
+            return
+        view.get_buffer().set_text(
+            extra_options_to_text(self._ssh_extra_options_applied)
+        )
+        self.extra_options_error.set_visible(False)
+        self.extra_options_apply_button.set_sensitive(False)
+
+    def _on_extra_ssh_options_edited(self, _buffer):
+        """Offer Apply only while the text differs from what is saved."""
+        try:
+            pending = parse_extra_options_text(self._extra_ssh_options_text())
+        except ExtraOptionError:
+            pending = None  # not applicable yet, but certainly not saved
+        self.extra_options_apply_button.set_sensitive(
+            pending != self._ssh_extra_options_applied
+        )
+
+    @staticmethod
+    def _extra_ssh_option_error_text(error):
+        """Word a refused option line for the user."""
+        if error.problem is ExtraOptionProblem.HAS_OWN_SETTING:
+            return _("Line {line}: “{keyword}” has its own setting on this page.").format(
+                line=error.line, keyword=error.keyword
+            )
+        if error.problem is ExtraOptionProblem.NOT_AN_OPTION:
+            return _("Line {line}: “{keyword}” is not an option.").format(
+                line=error.line, keyword=error.keyword
+            )
+        if error.problem is ExtraOptionProblem.TOO_MANY:
+            return _("Too many options.")
+        return _("Line {line}: write one option as “Keyword value”.").format(
+            line=error.line
+        )
+
+    def _on_apply_extra_ssh_options(self, _button):
+        """Check the text, then save it with the other overrides."""
+        try:
+            options = parse_extra_options_text(self._extra_ssh_options_text())
+        except ExtraOptionError as error:
+            self.extra_options_error.set_label(self._extra_ssh_option_error_text(error))
+            self.extra_options_error.set_visible(True)
+            return
+        if options:
+            # Ask OpenSSH itself, so a misspelt keyword or a bad value is
+            # caught here and not on every connection afterwards. ``ssh -G``
+            # only parses: it connects nowhere and runs no command.
+            from .ssh_config_utils import validate_ssh_config_text
+
+            rejected = validate_ssh_config_text(
+                "Host *\n" + "".join(
+                    f"    {line}\n" for line in extra_options_to_text(options).splitlines()
+                )
+            )
+            if rejected:
+                self.extra_options_error.set_label(
+                    _("OpenSSH did not accept these options: {error}").format(
+                        error=rejected
+                    )
+                )
+                self.extra_options_error.set_visible(True)
+                return
+        self.extra_options_error.set_visible(False)
+        self._ssh_extra_options_applied = options
+        self.extra_options_apply_button.set_sensitive(False)
+        self._on_advanced_ssh_field_changed(None, None)
+
     def _collect_ssh_override_patch(self):
-        """Read the five SSH override fields from the page rows."""
+        """Read the SSH override fields from the page rows."""
         return {
             "connect_timeout": int(self.connect_timeout_row.get_value()),
             "strict_host_key_checking": str(self.strict_host_row.get_value() or ""),
             "compression": str(self.compression_row.get_value() or ""),
             "verbosity": int(self.verbosity_row.get_value()),
             "debug_enabled": bool(self.debug_enabled_row.get_active()),
+            "extra_options": list(getattr(self, "_ssh_extra_options_applied", ())),
         }
 
     def _apply_ssh_override_values_to_rows(self, snapshot):
@@ -5959,6 +6091,7 @@ class PreferencesWindow(Adw.Window):
             self.compression_row.set_value(str(snapshot.compression or ""))
             self.verbosity_row.set_value(int(snapshot.verbosity))
             self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+            self._show_applied_extra_ssh_options(snapshot.extra_options)
         finally:
             self._suppress_advanced_ssh_autosave = False
 
@@ -5987,6 +6120,7 @@ class PreferencesWindow(Adw.Window):
             self.compression_row.set_value(str(snapshot.get('compression') or ""))
             self.verbosity_row.set_value(snapshot['verbosity'])
             self.debug_enabled_row.set_active(snapshot['debug_enabled'])
+            self._show_applied_extra_ssh_options(snapshot.get('extra_options', ()))
             self.apply_default_keepalive_row.set_active(snapshot['apply_default_keepalive'])
             self.controlmaster_row.set_active(snapshot['controlmaster'])
         finally:
@@ -6014,7 +6148,7 @@ class PreferencesWindow(Adw.Window):
 
         Config-owned rows (``ssh.apply_default_keepalive``, ``ssh.controlmaster``,
         file-manager settings) persist first — each ``set_setting`` writes the
-        file immediately.  The five daemon-owned SSH override fields are
+        file immediately.  The daemon-owned SSH override fields are
         submitted through the controller last; on success the legacy Config
         cache is refreshed from the authoritative file without writing it back,
         so a later Config-owned write cannot clobber the daemon state.
@@ -6103,7 +6237,7 @@ class PreferencesWindow(Adw.Window):
                     'file_manager.max_concurrent_transfers', concurrent_value
                 )
 
-            # 2. The five daemon-owned fields go through the controller last.
+            # 2. The daemon-owned fields go through the controller last.
             if controller is not None and page_built:
                 try:
                     controller.update(self._collect_ssh_override_patch())
@@ -6167,7 +6301,7 @@ class PreferencesWindow(Adw.Window):
     def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI.
 
-        Config-owned rows persist first; the five daemon-owned SSH override
+        Config-owned rows persist first; the daemon-owned SSH override
         fields reset through the controller last.  Returns ``True`` on
         success.  On a daemon failure the page keeps its state and no
         ControlMaster sessions are expired.
@@ -6224,7 +6358,7 @@ class PreferencesWindow(Adw.Window):
                     'ssh.auto_add_host_keys', defaults.get('auto_add_host_keys')
                 )
 
-            # The five daemon-owned fields reset through the controller last.
+            # The daemon-owned fields reset through the controller last.
             if controller is not None and page_built:
                 try:
                     snapshot = controller.reset()
@@ -6300,7 +6434,7 @@ class PreferencesWindow(Adw.Window):
         """Reset only advanced SSH keys to defaults and update UI.
 
         A failed reset is a *partial* reset — the Config-owned keys are
-        already persisted while the five daemon-owned fields keep their old
+        already persisted while the daemon-owned fields keep their old
         values — so the failure is surfaced rather than discarded, the same
         way a failed save is.  Silently swallowing it left the user looking at
         a page where Reset had visibly worked on half the rows.

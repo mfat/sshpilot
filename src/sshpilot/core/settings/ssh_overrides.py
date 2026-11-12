@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 # ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ FIELD_TO_CONFIG_KEY: Dict[str, str] = {
     "compression": "ssh.compression",
     "verbosity": "ssh.verbosity",
     "debug_enabled": "ssh.debug_enabled",
+    "extra_options": "ssh.extra_options",
 }
 
 # Fields exposed through the API model (the public surface).
@@ -68,7 +71,129 @@ DEFAULT_SSH_OVERRIDES: Dict[str, Any] = {
     "compression": YES_NO_UNSET,
     "verbosity": 0,
     "debug_enabled": False,
+    "extra_options": [],
 }
+
+
+# ---------------------------------------------------------------------------
+# Free-form extra options
+# ---------------------------------------------------------------------------
+
+#: Upper bounds that keep a settings file from growing an argv without limit.
+EXTRA_OPTIONS_MAX_COUNT = 64
+EXTRA_OPTION_MAX_LENGTH = 1024
+
+_EXTRA_OPTION_LINE = re.compile(
+    r"\s*([A-Za-z][A-Za-z0-9]*)(?:\s*=\s*|\s+)(\S.*?)\s*\Z", re.DOTALL
+)
+# Config-file structure, not options: OpenSSH rejects them after ``-o``.
+_EXTRA_NOT_OPTIONS = frozenset({"host", "match", "include"})
+
+
+# Options that have their own control on the SSH options page. They are set
+# there, so a free-form line for one would be a second, hidden source of truth.
+EXTRA_OPTIONS_WITH_OWN_SETTING = frozenset({
+    "connecttimeout",
+    "stricthostkeychecking",
+    "compression",
+    "serveraliveinterval",
+    "serveralivecountmax",
+    "controlmaster",
+    "controlpath",
+    "controlpersist",
+    "loglevel",
+})
+
+
+class ExtraOptionProblem(str, Enum):
+    """Why a free-form option line was refused (stable; frontends word it)."""
+
+    MALFORMED = "malformed"
+    NOT_AN_OPTION = "not_an_option"
+    HAS_OWN_SETTING = "has_own_setting"
+    TOO_LONG = "too_long"
+    TOO_MANY = "too_many"
+
+
+class ExtraOptionError(ValueError):
+    """A free-form option that cannot become exactly one ``-o`` argument."""
+
+    def __init__(self, problem: ExtraOptionProblem, *, line: int = 0, keyword: str = ""):
+        super().__init__(f"extra option {problem.value} (line {line})")
+        self.problem = problem
+        self.line = line
+        self.keyword = keyword
+
+
+def normalize_extra_option(text: Any, *, line: int = 0) -> str:
+    """Return *text* as one canonical ``Keyword=value`` option.
+
+    Accepts the two spellings an SSH config file does (``Keyword value`` and
+    ``Keyword=value``). The result is always passed to OpenSSH as the single
+    argument after ``-o``, so a line can never add a flag of its own. Which
+    options a user sets is their choice: only shape is checked, plus the few
+    options that already have their own control on the page.
+    """
+    if not isinstance(text, str):
+        raise ExtraOptionError(ExtraOptionProblem.MALFORMED, line=line)
+    if len(text) > EXTRA_OPTION_MAX_LENGTH:
+        raise ExtraOptionError(ExtraOptionProblem.TOO_LONG, line=line)
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        raise ExtraOptionError(ExtraOptionProblem.MALFORMED, line=line)
+    match = _EXTRA_OPTION_LINE.match(text)
+    if match is None:
+        raise ExtraOptionError(ExtraOptionProblem.MALFORMED, line=line)
+    keyword, value = match.group(1), match.group(2)
+    if keyword.lower() in _EXTRA_NOT_OPTIONS:
+        raise ExtraOptionError(
+            ExtraOptionProblem.NOT_AN_OPTION, line=line, keyword=keyword
+        )
+    if keyword.lower() in EXTRA_OPTIONS_WITH_OWN_SETTING:
+        raise ExtraOptionError(
+            ExtraOptionProblem.HAS_OWN_SETTING, line=line, keyword=keyword
+        )
+    return f"{keyword}={value}"
+
+
+def normalize_extra_options(value: Any) -> tuple:
+    """Normalize a stored/patched list of option strings to a tuple."""
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise TypeError(
+            f"extra_options must be a list of strings, got {type(value).__name__}"
+        )
+    if len(value) > EXTRA_OPTIONS_MAX_COUNT:
+        raise ExtraOptionError(ExtraOptionProblem.TOO_MANY)
+    return tuple(
+        normalize_extra_option(item, line=index)
+        for index, item in enumerate(value, start=1)
+    )
+
+
+def parse_extra_options_text(text: str) -> tuple:
+    """Parse editor text: one option per line; blank and ``#`` lines skipped.
+
+    Errors carry the 1-based line number of the text as the user sees it.
+    """
+    options = []
+    for number, raw in enumerate(str(text or "").splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        options.append(normalize_extra_option(stripped, line=number))
+        if len(options) > EXTRA_OPTIONS_MAX_COUNT:
+            raise ExtraOptionError(ExtraOptionProblem.TOO_MANY, line=number)
+    return tuple(options)
+
+
+def extra_options_to_text(options: Any) -> str:
+    """Editor text for stored options, in config-file spelling."""
+    lines = []
+    for option in options or ():
+        keyword, _, value = str(option).partition("=")
+        lines.append(f"{keyword} {value}")
+    return "\n".join(lines)
 
 
 def coerce_yes_no_unset(value: Any) -> str:
@@ -104,7 +229,7 @@ def coerce_yes_no_unset(value: Any) -> str:
 def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
     """Strictly convert a raw ``ssh`` subtree to normalized semantic values.
 
-    Returns exactly the five public field names with canonical values. Missing
+    Returns exactly the six public field names with canonical values. Missing
     keys normalize to :data:`DEFAULT_SSH_OVERRIDES`; ``strict_host_key_checking``
     and the yes/no fields missing or blank normalize to unset.
 
@@ -142,6 +267,8 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
                     f"{sorted(EXPLICIT_HOST_KEY_VALUES)} or empty, got {value!r}"
                 )
             semantic[field] = normalized
+        elif field == "extra_options":
+            semantic[field] = list(normalize_extra_options(value))
         elif field in YES_NO_FIELDS:
             if value is None:
                 semantic[field] = DEFAULT_SSH_OVERRIDES[field]
@@ -165,7 +292,7 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def compute_ssh_overrides_revision(semantic: Mapping[str, Any]) -> str:
-    """Deterministic revision over the five normalized semantic values.
+    """Deterministic revision over the six normalized semantic values.
 
     The revision is a hex SHA-256 prefix (12 chars) of the canonical JSON of
     the sorted field set, so two semantically equal states (including a missing
@@ -239,6 +366,19 @@ def compose_ssh_overrides(
 
     if bool(ssh_cfg.get("controlmaster")) and controlmaster_extra:
         overrides.extend(list(controlmaster_extra))
+
+    # Free-form options go last. OpenSSH keeps the first value it sees, so an
+    # option that also has a control on the page (or that the app manages,
+    # like multiplexing) keeps the value set there. A line that is not a
+    # well-formed option is skipped: one bad entry in a hand-edited file must
+    # not turn into a stray argument or stop every connection.
+    extra = ssh_cfg.get("extra_options")
+    if isinstance(extra, (list, tuple)):
+        for index, item in enumerate(extra[:EXTRA_OPTIONS_MAX_COUNT], start=1):
+            try:
+                overrides.extend(["-o", normalize_extra_option(item, line=index)])
+            except ExtraOptionError:
+                continue
 
     return overrides
 

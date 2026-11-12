@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- `GlobalSshOverrides.extra_options` (and the matching
+  `UpdateGlobalSshOverridesRequest` patch field) holds free-form SSH options:
+  a list of `Keyword=value` strings, each sent last as one `-o` argument. A
+  patch accepts `Keyword value` too and stores the canonical form. Only shape
+  is validated, plus two refusals: config-file structure (`Host`, `Match`,
+  `Include`) and options that have their own override field or app setting
+  (`ConnectTimeout`, `StrictHostKeyChecking`, `Compression`, `LogLevel`,
+  `ServerAlive*`, `Control*`). The field is additive and optional on the
+  wire; the API implementation version is 0.95; Protocol remains 1.0.
 - `GlobalSshOverrides` and `UpdateGlobalSshOverridesRequest` lose four fields:
   `batch_mode`, `connection_attempts`, `server_alive_interval` and
   `server_alive_count_max`. A global `BatchMode` or `ConnectionAttempts` is no
