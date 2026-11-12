@@ -57,6 +57,14 @@ class OptionalIntRow(Adw.ComboRow):
 
         self.set_model(Gtk.StringList.new([dont_set_label, custom_label]))
         self.set_selected(0)
+        # The popup keeps both choices, but the row itself shows no label
+        # once set: the number beside the arrow already says so.
+        self._custom_label = custom_label
+        self.set_list_factory(self.get_factory())
+        shown = Gtk.SignalListItemFactory()
+        shown.connect("setup", lambda _f, item: item.set_child(Gtk.Label(xalign=0)))
+        shown.connect("bind", self._bind_shown_choice)
+        self.set_factory(shown)
 
         self.add_suffix(self._spin)
         # add_suffix appends after the row's own dropdown; move the number
@@ -68,6 +76,14 @@ class OptionalIntRow(Adw.ComboRow):
         self._spin.connect("value-changed", self._on_changed)
         self.connect("notify::selected", self._on_changed)
         self._refresh()
+
+    def _bind_shown_choice(self, _factory, item) -> None:
+        text = item.get_item().get_string()
+        item.get_child().set_label("" if text == self._custom_label else text)
+
+    def shown_choice_text(self) -> str:
+        """The label the row displays for the current choice (for tests)."""
+        return "" if self.get_enabled() else self.get_selected_item().get_string()
 
     def get_value(self) -> int:
         return int(self.value)

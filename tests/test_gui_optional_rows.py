@@ -154,3 +154,52 @@ def test_keepalive_is_one_switch_with_its_numbers_folded_in(gui):
         assert row.get_subtitle() == "ServerAliveInterval 40, ServerAliveCountMax 5"
     finally:
         prefs._suppress_advanced_ssh_autosave = False
+
+
+def _row_labels(row):
+    """Text of every label drawn on the row itself, popup excluded."""
+    from gi.repository import Gtk
+
+    found = []
+
+    def walk(widget):
+        if isinstance(widget, Gtk.Popover):
+            return
+        if isinstance(widget, Gtk.Label) and widget.get_mapped():
+            found.append(widget.get_label())
+        child = widget.get_first_child()
+        while child is not None:
+            walk(child)
+            child = child.get_next_sibling()
+
+    walk(row)
+    return found
+
+
+def test_int_row_shows_no_set_label_once_set(gui):
+    """The number says it is set; the word "Set" stays in the popup only."""
+    from gi.repository import Gtk
+
+    row = _int_row()
+    box = Gtk.ListBox()
+    box.append(row)
+    window = Gtk.Window(child=box)
+    window.present()
+    try:
+        gui.pump(300)
+        assert "Not set" in _row_labels(row)
+
+        row.set_enabled(True)
+        gui.pump(300)
+        labels = _row_labels(row)
+        assert "Set" not in labels and "Not set" not in labels
+        assert row.shown_choice_text() == ""
+        # Both choices are still offered.
+        model = row.get_model()
+        assert [model.get_string(i) for i in range(2)] == ["Not set", "Set"]
+
+        row.set_enabled(False)
+        gui.pump(300)
+        assert "Not set" in _row_labels(row)
+    finally:
+        window.destroy()
