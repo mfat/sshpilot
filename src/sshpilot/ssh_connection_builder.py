@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from .ssh_config_document import split_config_lines
 from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
-from .core.settings.ssh_overrides import coerce_yes_no_unset
+from .core.settings.ssh_overrides import coerce_yes_no_unset, select_override_args
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
 
 
@@ -719,6 +719,40 @@ def _append_positive_int_option(cmd: List[str], raw_value, option_name: str) -> 
         cmd.extend(['-o', f'{option_name}={value}'])
 
 
+# Options that decide what a launch *is*. On anything other than a plain
+# terminal session the app chooses them (a forward runs ``-N``, the file
+# manager runs the sftp subsystem, Host Info runs one command), so a Settings
+# override for one of them is left out of that launch. Reordering is not
+# enough: OpenSSH refuses to start on several of the combinations
+# (``RemoteCommand`` with a command, ``SessionType`` with ``-N``/``-s``), and
+# ``ClearAllForwardings=yes`` drops the very ``-L`` a forward was started for.
+OPERATION_OWNED_KEYWORDS = frozenset({
+    'remotecommand',
+    'sessiontype',
+    'requesttty',
+    'forkafterauthentication',
+    'stdinnull',
+    'localcommand',
+    'permitlocalcommand',
+    'clearallforwardings',
+})
+
+# ssh-copy-id additionally has to stay interactive and must not leave a
+# multiplex master behind for a one-off key install.
+_COPY_ID_DROPPED_KEYWORDS = OPERATION_OWNED_KEYWORDS | frozenset({
+    'batchmode', 'controlmaster', 'controlpath', 'controlpersist',
+})
+
+_HELPER_FLAGS = frozenset({'-N', '-s', '-T'})
+
+
+def _is_helper_launch(command_type: str, remote_command, extra_args) -> bool:
+    """Whether this launch is an app operation rather than a terminal session."""
+    if command_type != 'ssh' or remote_command:
+        return True
+    return any(str(arg) in _HELPER_FLAGS for arg in (extra_args or ()))
+
+
 def _append_app_ssh_overrides(cmd: List[str], app_ssh_config: dict, *, is_copy_id: bool) -> None:
     """Apply app-level SSH prefs (verbosity, compression, timeouts, host keys)."""
     verbosity = int(app_ssh_config.get('verbosity', 0) or 0)
@@ -815,8 +849,19 @@ def _build_base_ssh_command(
     app_ssh_config = _app_ssh_config(app_config)
 
     # Settings ▸ SSH Options first: they override the connection's own values,
-    # the same rule the session command follows.
-    _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
+    # the same rule the session command follows. The composed fragment is the
+    # whole page (additional options, address family, legacy algorithms); the
+    # typed subset below only stands in when a caller supplies raw settings.
+    composed = select_override_args(
+        app_ssh_config.get('ssh_overrides'),
+        drop=_COPY_ID_DROPPED_KEYWORDS if is_copy_id else OPERATION_OWNED_KEYWORDS,
+        flags=not is_copy_id,
+    )
+    if composed:
+        cmd.extend(composed)
+        _maybe_append_default_keepalive(cmd, app_ssh_config)
+    else:
+        _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
 
     # Directives this Host block authored. Without them this path resolved
     # everything from the config file, so a global `Host *` could send
@@ -1338,6 +1383,19 @@ def build_ssh_connection(
                 priority_options.extend(['-o', 'NumberOfPasswordPrompts=1'])
         if extra_args:
             priority_options.extend(str(a) for a in extra_args if a)
+
+        if _is_helper_launch(ctx.command_type, ctx.remote_command, extra_args):
+            overrides = select_override_args(
+                overrides, drop=OPERATION_OWNED_KEYWORDS
+            )
+        if (
+            ctx.command_type != 'scp'
+            and (ctx.remote_command or '-s' in priority_options)
+            and not any('remotecommand=' in o.lower() for o in priority_options)
+        ):
+            # ssh refuses a command (or subsystem) on the command line next to
+            # a RemoteCommand from any source, the config file included.
+            priority_options.extend(['-o', 'RemoteCommand=none'])
 
         batch_mode = False
         host_key_mode = None

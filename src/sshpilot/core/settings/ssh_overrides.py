@@ -401,15 +401,66 @@ def compose_ssh_overrides(
     # still overrides those. A line that is not a
     # well-formed option is skipped: one bad entry in a hand-edited file must
     # not turn into a stray argument or stop every connection.
+    #
+    # SetEnv is the exception to one row, one argument: OpenSSH keeps only the
+    # first ``-o SetEnv=`` and discards the rest, so several rows are joined
+    # into the single argument that carries every assignment.
     extra = ssh_cfg.get("extra_options")
     if isinstance(extra, (list, tuple)):
+        setenv_at: Optional[int] = None
         for index, item in enumerate(extra[:EXTRA_OPTIONS_MAX_COUNT], start=1):
             try:
-                overrides.extend(["-o", normalize_extra_option(item, line=index)])
+                option = normalize_extra_option(item, line=index)
             except ExtraOptionError:
                 continue
+            keyword, _sep, value = option.partition("=")
+            if keyword.lower() == "setenv":
+                if setenv_at is None:
+                    overrides.extend(["-o", f"SetEnv={value}"])
+                    setenv_at = len(overrides) - 1
+                else:
+                    overrides[setenv_at] += f" {value}"
+                continue
+            overrides.extend(["-o", option])
 
     return overrides
+
+
+def select_override_args(
+    overrides: Any,
+    *,
+    drop: frozenset = frozenset(),
+    flags: bool = True,
+) -> List[str]:
+    """A composed override fragment minus the options an operation owns.
+
+    *drop* holds lower-case keywords; every ``-o Keyword=value`` pair for one
+    of them is left out. With ``flags=False`` only ``-o`` pairs survive, for
+    consumers that cannot take bare flags such as ``-v`` (``ssh -G``,
+    ``ssh-copy-id``). Anything that is not a flag or a complete pair is
+    dropped, so the result can never contribute a stray argument.
+    """
+    selected: List[str] = []
+    if not isinstance(overrides, (list, tuple)):
+        return selected
+    entries = [str(entry) for entry in overrides if entry]
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        if entry == "-o":
+            value = entries[index + 1] if index + 1 < len(entries) else ""
+            index += 2
+            keyword, separator, _rest = value.partition("=")
+            if not separator or not keyword or value.startswith("-"):
+                continue
+            if keyword.strip().lower() in drop:
+                continue
+            selected.extend(["-o", value])
+            continue
+        index += 1
+        if flags and re.fullmatch(r"-[A-Za-z0-9]+", entry):
+            selected.append(entry)
+    return selected
 
 
 def ssh_settings_from_values(

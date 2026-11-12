@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Set, Union
+from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Union
 
 from sshpilot.platform.process import hidden_console_kwargs
 
@@ -201,8 +201,16 @@ def get_effective_ssh_config(
     user: Optional[str] = None,
     port: Optional[int] = None,
     proxy_jump: Optional[str] = None,
+    overrides: Optional[Sequence[str]] = None,
 ) -> Dict[str, Union[str, List[str]]]:
-    """Resolve *host* through OpenSSH without allowing option confusion."""
+    """Resolve *host* through OpenSSH without allowing option confusion.
+
+    *overrides* is the composed Settings ▸ SSH Options fragment
+    (``ssh.ssh_overrides``). A launch puts it ahead of the connection's own
+    options, so a query that wants what the launch will really use (which
+    account, which port, which jump host) has to pass it too. Only its
+    ``-o Keyword=value`` pairs are used.
+    """
     host = _safe_host_identifier(host)
     if not host:
         return {}
@@ -213,6 +221,10 @@ def get_effective_ssh_config(
             logger.warning("Requested SSH config override %s does not exist", expanded)
             return {}
         command.extend(["-F", expanded])
+    if overrides:
+        from .settings.ssh_overrides import select_override_args
+
+        command.extend(select_override_args(list(overrides), flags=False))
     if user:
         command.extend(["-o", f"User={user}"])
     if port is not None:

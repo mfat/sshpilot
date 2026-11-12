@@ -126,6 +126,11 @@ class HeadlessConnectionView:
     ) -> None:
         self._record = record
         self._manager = manager
+        #: The composed Settings ▸ SSH Options fragment, set by the launch
+        #: provider. Effective-config queries pass it on so they resolve what
+        #: the launch will use (an overridden User decides which stored
+        #: password matches).
+        self.global_ssh_options: Tuple[str, ...] = ()
         self.data = dict(record.data or {})
         self._status = None
         self.is_connected = False
@@ -189,7 +194,9 @@ class HeadlessConnectionView:
 
                     config_override = self._resolve_config_override_path()
                     effective = get_effective_ssh_config(
-                        host_label, config_file=config_override
+                        host_label,
+                        config_file=config_override,
+                        overrides=self.global_ssh_options,
                     )
                     resolved = _string(effective.get("user"))
                 except Exception:
@@ -339,12 +346,11 @@ class HeadlessConnectionView:
                     from ..core.ssh_config_effective import get_effective_ssh_config
 
                     config_override = self._resolve_config_override_path()
-                    if config_override:
-                        effective_cfg = get_effective_ssh_config(
-                            host_label, config_file=config_override
-                        )
-                    else:
-                        effective_cfg = get_effective_ssh_config(host_label)
+                    effective_cfg = get_effective_ssh_config(
+                        host_label,
+                        config_file=config_override or None,
+                        overrides=self.global_ssh_options,
+                    )
                 except Exception:
                     effective_cfg = {}
             else:
@@ -537,6 +543,18 @@ class DaemonConnectionLaunchProvider:
 
         return _ManagerShim()
 
+    def _view(self, record: ConnectionRecord) -> "HeadlessConnectionView":
+        """A connection view that knows the current Settings overrides."""
+        view = HeadlessConnectionView(record)
+        try:
+            app_config = self._get_app_config()
+            ssh_config = app_config.get_ssh_config() if app_config else {}
+            composed = (ssh_config or {}).get("ssh_overrides") or ()
+            view.global_ssh_options = tuple(str(entry) for entry in composed if entry)
+        except Exception:
+            logger.debug("Could not read global SSH options", exc_info=True)
+        return view
+
     def _get_app_config(self):
         if self._app_config_view is not None:
             return self._app_config_view
@@ -575,7 +593,11 @@ class DaemonConnectionLaunchProvider:
                 if len(seen) >= _MAX_JUMP_HOSTS:
                     raise ValueError("ProxyJump names too many hosts")
                 seen.append(host)
-                effective = get_effective_ssh_config(host, config_file=config_file)
+                effective = get_effective_ssh_config(
+                    host,
+                    config_file=config_file,
+                    overrides=connection.global_ssh_options,
+                )
                 validate_ssh_hostname(effective.get("hostname"), "HostName")
                 for hop in _string(effective.get("proxyjump")).split(","):
                     if hop:
@@ -698,7 +720,7 @@ class DaemonConnectionLaunchProvider:
         force_tty: bool = False,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         protocol = connection.protocol
         if protocol != "ssh":
             argv, environment = self._prepare_protocol_launch(
@@ -745,7 +767,7 @@ class DaemonConnectionLaunchProvider:
         target_override: Optional[str] = None,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -762,7 +784,7 @@ class DaemonConnectionLaunchProvider:
 
     def scp_target(self, connection_id: ConnectionId) -> str:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         host = connection.resolve_host_identifier() if hasattr(
             connection, "resolve_host_identifier"
         ) else connection.host
@@ -793,7 +815,7 @@ class DaemonConnectionLaunchProvider:
         """
 
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         hostname = str(
             connection.hostname
             or connection.get_effective_host()
@@ -809,7 +831,7 @@ class DaemonConnectionLaunchProvider:
         interaction_policy: str = "broker",
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -846,7 +868,7 @@ class DaemonConnectionLaunchProvider:
         """
 
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -872,6 +894,10 @@ class DaemonConnectionLaunchProvider:
             extra_args=[
                 "-o",
                 "ControlMaster=no",
+                # A ClearAllForwardings=yes from anywhere would drop the very
+                # forward this process exists for.
+                "-o",
+                "ClearAllForwardings=no",
                 "-N",
                 "-T",
                 forward_flag,
@@ -934,7 +960,7 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection_id,
             )
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -976,7 +1002,7 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection_id,
             )
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -1002,7 +1028,9 @@ class DaemonConnectionLaunchProvider:
         self._refuse_shell_text_in_host_names(connection)
         try:
             effective_config = get_effective_ssh_config(
-                host_value, config_file=config_file
+                host_value,
+                config_file=config_file,
+                overrides=connection.global_ssh_options,
             )
         except Exception:
             effective_config = {}

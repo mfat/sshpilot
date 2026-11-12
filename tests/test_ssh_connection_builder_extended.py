@@ -805,3 +805,43 @@ def test_a_connection_authoring_its_own_known_hosts_is_left_alone(monkeypatch, t
     })
 
     assert _known_hosts_value(cmd) is None
+
+
+def test_copy_id_takes_the_whole_settings_page_minus_what_it_cannot_use():
+    """ssh-copy-id used to see only a few typed settings, not the composed list."""
+    import types
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    prefs = {
+        "verbosity": 2,
+        "address_family": "inet",
+        "controlmaster": True,
+        "extra_options": [
+            "Ciphers=aes128-ctr", "RemoteCommand=uptime", "BatchMode=yes",
+        ],
+    }
+    composed = compose_ssh_overrides(
+        prefs, controlmaster_extra=["-o", "ControlMaster=auto", "-o", "ControlPersist=60"]
+    )
+    app_config = types.SimpleNamespace(
+        get_ssh_config=lambda: {**prefs, "ssh_overrides": composed}
+    )
+    connection = Connection({
+        'host': 'demo', 'hostname': 'demo', 'username': 'alice',
+        '__authored_directives': ('hostname', 'user'),
+    })
+    command = _build_base_ssh_command(
+        connection, {}, app_config, 'ssh-copy-id'
+    )
+
+    assert _has_o_option(command, 'AddressFamily=inet')
+    assert _has_o_option(command, 'Ciphers=aes128-ctr')
+    assert _has_o_option(command, 'ServerAliveInterval=15')
+    # Overrides come before the connection's own options.
+    assert command.index('Ciphers=aes128-ctr') < command.index('User=alice')
+    # Not usable by ssh-copy-id, or fatal to an interactive key install.
+    assert '-v' not in command
+    for unwanted in ('RemoteCommand', 'BatchMode', 'ControlMaster', 'ControlPersist'):
+        assert not _has_o_option(command, unwanted), command

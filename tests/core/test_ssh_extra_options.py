@@ -227,3 +227,31 @@ def test_service_refuses_an_option_with_its_own_setting(tmp_path):
             UpdateGlobalSshOverridesRequest(patch={"extra_options": ["LogLevel DEBUG"]})
         )
     assert service.get().extra_options == ()
+
+
+def test_repeated_setenv_rows_become_one_argument():
+    """OpenSSH keeps only the first ``-o SetEnv=``; later rows would vanish."""
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+
+    argv = compose_ssh_overrides(
+        {"extra_options": ["SetEnv=A=1", "IPQoS=none", "setenv B=2", "SetEnv=C=3"]}
+    )
+    assert argv == ["-o", "SetEnv=A=1 B=2 C=3", "-o", "IPQoS=none"]
+
+
+def test_select_override_args_drops_owned_options_and_stray_tokens():
+    from sshpilot.core.settings.ssh_overrides import select_override_args
+
+    fragment = [
+        "-o", "Compression=yes", "-v", "-o", "RemoteCommand=uptime",
+        "-o", "LogLevel=VERBOSE", "stray", "-o", "-oProxyCommand=id", "-o",
+    ]
+    assert select_override_args(fragment, drop=frozenset({"remotecommand"})) == [
+        "-o", "Compression=yes", "-v", "-o", "LogLevel=VERBOSE",
+    ]
+    # Consumers that cannot take bare flags (ssh -G, ssh-copy-id).
+    assert select_override_args(fragment, flags=False) == [
+        "-o", "Compression=yes", "-o", "RemoteCommand=uptime",
+        "-o", "LogLevel=VERBOSE",
+    ]
+    assert select_override_args(None) == []

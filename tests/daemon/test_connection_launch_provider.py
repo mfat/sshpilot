@@ -852,3 +852,133 @@ def test_launch_follows_a_proxy_jump_loop_only_once(tmp_path):
     )
 
     assert command[-1] == "prod"
+
+
+# --- Settings overrides vs. what an app operation needs ----------------------
+
+_HOSTILE_OVERRIDES = (
+    "RemoteCommand=uptime",
+    "SessionType=none",
+    "ClearAllForwardings=yes",
+    "ForkAfterAuthentication=yes",
+    "StdinNull=yes",
+    "RequestTTY=force",
+    "PermitLocalCommand=yes",
+    "LocalCommand=touch /tmp/ran",
+    "Ciphers=aes128-ctr",
+)
+
+
+def _hostile_provider(provider, extra=()):
+    from types import SimpleNamespace
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+
+    prov, _records = provider
+    composed = compose_ssh_overrides(
+        {"extra_options": [*_HOSTILE_OVERRIDES, *extra]}
+    )
+    return DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {
+                "ssh_overrides": composed,
+                "apply_default_keepalive": False,
+            }
+        ),
+    )
+
+
+def _ssh_resolves(command):
+    """What the real ssh makes of *command* (``-G`` prints, never connects)."""
+    import shutil
+    import subprocess
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    tokens = [str(token) for token in command]
+    if not any(token == "-F" for token in tokens):
+        tokens[1:1] = ["-F", "/dev/null"]  # not the developer's own ~/.ssh/config
+    result = subprocess.run(
+        [tokens[0], "-G", *tokens[1:]], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.lower().splitlines()
+
+
+def _launches(prov):
+    return {
+        "forward": prov.prepare_forward_launch(
+            "web", forward_type="local", bind_host="127.0.0.1", bind_port=18080,
+            destination_host="127.0.0.1", destination_port=80,
+        )[0],
+        "command": prov.prepare_remote_command_launch("web", "uptime")[0],
+        # The file manager appends the subsystem name to the prepared argv.
+        "sftp": (*prov.prepare_sftp_launch("web")[0], "sftp"),
+    }
+
+
+@pytest.mark.parametrize("operation", ["forward", "command", "sftp"])
+def test_operations_drop_the_overrides_they_own(provider, operation):
+    """Global options that decide what a launch is stay out of app operations.
+
+    Each of these made OpenSSH refuse to start or do something else entirely:
+    RemoteCommand next to a command, SessionType next to -N/-s, and
+    ClearAllForwardings=yes dropping the forward itself.
+    """
+    tokens = [str(t) for t in _launches(_hostile_provider(provider))[operation]]
+    for hostile in _HOSTILE_OVERRIDES[:-1]:
+        assert hostile not in tokens, tokens
+    # An ordinary override still applies to the operation.
+    assert "Ciphers=aes128-ctr" in tokens
+
+    resolved = _ssh_resolves(tokens)
+    assert "ciphers aes128-ctr" in resolved
+    assert "forkafterauthentication no" in resolved
+    assert "stdinnull no" in resolved
+    assert not any(line.startswith("remotecommand ") for line in resolved)
+    expected_session = {
+        "forward": "sessiontype none",
+        "command": "sessiontype default",
+        "sftp": "sessiontype subsystem",
+    }[operation]
+    assert expected_session in resolved
+    if operation == "forward":
+        assert "clearallforwardings no" in resolved
+        assert any(
+            line.startswith("localforward") and "18080" in line for line in resolved
+        )
+
+
+def test_terminal_session_keeps_every_override(provider):
+    """A plain terminal tab is the user's session: nothing is filtered."""
+    command, _env = _hostile_provider(provider).prepare_terminal_launch("web")
+    tokens = [str(t) for t in command]
+    for option in _HOSTILE_OVERRIDES:
+        assert option in tokens
+
+
+def test_effective_username_follows_a_global_user_override(provider, tmp_path, monkeypatch):
+    """Credential lookup has to resolve the account the launch will use."""
+    import shutil
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text("Host web\n    HostName example.com\n    User fromfile\n")
+    prov = _hostile_provider(provider, extra=("User=forced",))
+    record = prov._resolver("web")
+    view = prov._view(
+        ConnectionRecord(
+            id=record.id, nickname=record.nickname, hostname=record.hostname,
+            username="", port=22, protocol="ssh", source="", data={},
+        )
+    )
+    monkeypatch.setattr(view, "_resolve_config_override_path", lambda: str(config))
+    assert "User=forced" in view.global_ssh_options
+    assert view.effective_username == "forced"
+
+    plain = provider[0]._view(view._record)
+    monkeypatch.setattr(plain, "_resolve_config_override_path", lambda: str(config))
+    assert plain.effective_username == "fromfile"
