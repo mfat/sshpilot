@@ -59,6 +59,10 @@ from .connection_dialog_login_profile import (
 from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
+from .connection_dialog_overrides import (
+    ConnectionDialogOverridesMixin,
+    inherited_note_text,
+)
 from .plugins.registry import protocol_registry
 
 from gettext import gettext as _
@@ -611,6 +615,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 reserved=MANAGED_HOST_OPTIONS,
                 reserved_message=own_field,
             ),
+            note=self._override_note,
         )
         self.option_list.connect("edited", self.on_entry_changed)
         self.option_list.connect("changed", self.on_entry_changed)
@@ -622,6 +627,11 @@ class SSHConfigAdvancedTab(Gtk.Box):
         scrolled.set_child(self.option_list)
         self.append(scrolled)
 
+    def _override_note(self, keyword, value):
+        """What Settings ▸ SSH Options do to this option, from the dialog."""
+        note = getattr(self.parent_dialog, '_advanced_option_note', None)
+        return note(keyword, value) if callable(note) else None
+
     def on_add_option(self, button):
         """Add a new, empty SSH option row and focus it."""
         self.option_list.add_empty_row()
@@ -631,6 +641,9 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.update_config_preview()
         self._update_parent_connection()
         self._notify_parent_session_type_changed()
+        sync_banner = getattr(self.parent_dialog, '_sync_override_banner', None)
+        if callable(sync_banner):
+            sync_banner()
 
     def _notify_parent_session_type_changed(self):
         """Notify the dialog when Advanced SessionType / ExitOnForwardFailure change."""
@@ -1590,6 +1603,7 @@ class ConnectionDialog(
     ConnectionDialogValidationMixin,
     ConnectionDialogFieldHelpersMixin,
     ConnectionDialogPortForwardingMixin,
+    ConnectionDialogOverridesMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1730,6 +1744,10 @@ class ConnectionDialog(
                 pass
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
+        try:
+            self._start_override_awareness()
+        except Exception:
+            logger.debug("Override awareness unavailable", exc_info=True)
         # Saving a search-box target: fill in what its session used.
         if self._typed_target_directives() is not None:
             try:
@@ -2412,12 +2430,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         row.add_css_class('dim-label')
         # Composed with any validation message rather than replacing it: a row
         # has one tooltip, and setting it directly made whichever ran last win.
-        self._set_row_inherited_note(
-            row,
-            _('Inherited from your SSH configuration. Edit to set it for this host.'),
-        )
         handlers[row_name] = row.connect(
             'changed', lambda _row, name=row_name: self._on_inherited_row_edited(name)
+        )
+        overridden = bool(getattr(row, '_sshpilot_override_note', ''))
+        # While Settings ▸ SSH Options force this option, editing the row
+        # would not put the host's value in force, so the note is not shown.
+        self._set_row_inherited_note(
+            row, '' if overridden else inherited_note_text()
         )
 
     def _on_inherited_row_edited(self, row_name) -> None:
@@ -4361,6 +4381,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _on_protocol_changed(self, *_args):
         self._apply_protocol_to_ui()
         self._sync_config_read_only_ui()
+        self._sync_override_banner()
 
     def set_config_read_only(self, read_only, unavailable=False):
         """Offer an SSH connection view-only: its config file is read-only.

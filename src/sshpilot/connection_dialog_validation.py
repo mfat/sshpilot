@@ -28,8 +28,9 @@ from gettext import gettext as _
 
 
 class ConnectionDialogValidationMixin:
-    # A row can carry two independent notes: what validation says about the
-    # text, and whether the value is inherited from ssh_config. Both are shown
+    # A row can carry independent notes: what validation says about the text,
+    # whether the value is inherited from ssh_config, and whether Settings ▸
+    # SSH Options override it. All are shown
     # through the one tooltip a row has, so neither may call
     # ``set_tooltip_text`` directly — whichever ran last would erase the other.
     # They are stored separately on the row and composed here.
@@ -42,12 +43,22 @@ class ConnectionDialogValidationMixin:
         except Exception:
             pass
 
+    def _set_row_override_note(self, row, note: str) -> None:
+        """Record (or clear, with '') the Settings-override note for *row*."""
+        try:
+            row._sshpilot_override_note = note or ""
+            self._refresh_row_tooltip(row)
+        except Exception:
+            pass
+
     def _refresh_row_tooltip(self, row) -> None:
-        """Rebuild a row's tooltip from its validation and inheritance notes."""
+        """Rebuild a row's tooltip from its validation, inheritance and
+        override notes."""
         parts = [
             text for text in (
                 getattr(row, '_sshpilot_validation_message', ''),
                 getattr(row, '_sshpilot_inherited_note', ''),
+                getattr(row, '_sshpilot_override_note', ''),
             ) if text
         ]
         tooltip = "\n".join(parts) or None

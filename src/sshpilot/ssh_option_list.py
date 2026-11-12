@@ -308,6 +308,11 @@ class SshOptionList(Gtk.Box):
     def has_errors(self) -> bool:
         return any(row.error for row in self._rows)
 
+    def refresh_notes(self) -> None:
+        """Ask *note* again for every row: what it depends on has changed."""
+        for row in self._rows:
+            self._update_note(row)
+
     def add_empty_row(self) -> _OptionRow:
         row = self._new_row()
         row.keyword_entry.grab_focus()

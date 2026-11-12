@@ -373,3 +373,41 @@ def test_note_remarks_on_an_accepted_row_without_refusing_it(gui):
 
     _finish(options, row, "BadOne", "x")        # an error replaces the note
     assert row.error == "nope" and not row.note_label.get_visible()
+
+
+def test_refresh_notes_follows_what_the_note_depends_on(gui):
+    forced = {}
+    options = _list(gui, note=lambda keyword, _value: forced.get(keyword.lower()))
+    options.set_options([("IPQoS", "none")])
+    (row,) = options.rows()
+    assert not row.note_label.get_visible()
+
+    forced["ipqos"] = "overridden"
+    options.refresh_notes()
+    assert row.note_label.get_visible() and row.note_label.get_label() == "overridden"
+
+    forced.clear()
+    options.refresh_notes()
+    assert not row.note_label.get_visible()
+
+
+def test_advanced_tab_notes_options_that_settings_override(gui):
+    """The dialog supplies the note; the tab asks it for each of its rows."""
+    import types
+
+    from sshpilot.connection_dialog import SSHConfigAdvancedTab
+    from sshpilot.connection_dialog_overrides import advanced_option_note
+
+    forced = {"serveraliveinterval": "15"}
+    synced = []
+    dialog = types.SimpleNamespace(
+        _advanced_option_note=lambda k, v: advanced_option_note(k, v, forced),
+        _sync_override_banner=lambda: synced.append(True),
+    )
+    tab = SSHConfigAdvancedTab(None, parent_dialog=dialog)
+    tab.set_config_entries([("ServerAliveInterval", "90"), ("TCPKeepAlive", "no")])
+    overridden, plain = tab.option_list.rows()
+    assert overridden.note_label.get_visible()
+    assert "15" in overridden.note_label.get_label()
+    assert not plain.note_label.get_visible()
+    assert tab.get_extra_ssh_config() == "ServerAliveInterval 90\nTCPKeepAlive no"
