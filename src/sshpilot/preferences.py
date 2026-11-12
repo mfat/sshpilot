@@ -48,7 +48,7 @@ from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 logger = logging.getLogger(__name__)
 
 
-# StrictHostKeyChecking choices after the leading "Don't set" dropdown entry.
+# StrictHostKeyChecking choices after the leading "Not set" dropdown entry.
 # Unset (empty string in storage) sends no option; OpenSSH then resolves it
 # from the SSH config.
 _STRICT_HOST_KEY_CHOICES = ("accept-new", "yes", "no", "ask")
@@ -2899,7 +2899,7 @@ class PreferencesWindow(Adw.Window):
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
     def _optional_ssh_number_row(self, title, field, *, step, initial, value):
-        """A number row with a Don't-set dropdown until the user opts in.
+        """A number row with a Not-set dropdown until the user opts in.
 
         Stored as before: 0 means the option is not sent. The row never shows
         that 0 -- unset is the first dropdown choice -- and its range is the
@@ -2914,8 +2914,8 @@ class PreferencesWindow(Adw.Window):
             upper=upper,
             step=step,
             initial=initial,
-            dont_set_label=_("Don't set"),
-            custom_label=_("Custom"),
+            dont_set_label=_("Not set"),
+            custom_label=_("Set"),
         )
         row.set_value(value)
         return row
@@ -2937,7 +2937,7 @@ class PreferencesWindow(Adw.Window):
         )
 
         # Two groups, because unset means different things in each. Under
-        # Overrides, unset is "Don't set" in a dropdown (nothing injected).
+        # Overrides, unset is "Not set" in a dropdown (nothing injected).
         # Under Application Behavior a switch is the app's own feature and
         # off simply means off.
         advanced_group = Adw.PreferencesGroup(title=_("Overrides"))
@@ -2945,7 +2945,7 @@ class PreferencesWindow(Adw.Window):
         reset_group = Adw.PreferencesGroup()
 
         values = self._ssh_override_page_values()
-        dont_set_label = _("Don't set")
+        dont_set_label = _("Not set")
 
         # Connect timeout
         self.connect_timeout_row = self._optional_ssh_number_row(
@@ -2995,7 +2995,7 @@ class PreferencesWindow(Adw.Window):
         )
         advanced_group.add(self.keepalive_count_row)
 
-        # Strict host key / BatchMode / Compression — Don't set / OpenSSH
+        # Strict host key / BatchMode / Compression — Not set / OpenSSH
         # keywords, so force-yes and force-no are both possible.
         from .optional_rows import OptionalChoiceRow
 

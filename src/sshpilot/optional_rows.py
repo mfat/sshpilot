@@ -1,6 +1,6 @@
 """Settings rows for options that may be left unset (not injected).
 
-Unset is always the first dropdown choice ("Don't set"), never an off
+Unset is always the first dropdown choice ("Not set"), never an off
 switch or a bare ``0``. That keeps "not injected" from reading as
 "disabled" or as the current SSH config value.
 
@@ -23,7 +23,7 @@ from gi.repository import Adw, GObject, Gtk  # noqa: E402
 
 
 class OptionalIntRow(Adw.ComboRow):
-    """Don't-set dropdown + number field; ``value`` is 0 while unset.
+    """Not-set dropdown + number field; ``value`` is 0 while unset.
 
     A combo row, like :class:`OptionalChoiceRow`, so both kinds of row draw
     the same dropdown. The number field sits just before it.
@@ -114,7 +114,7 @@ class OptionalIntRow(Adw.ComboRow):
 
 
 class OptionalChoiceRow(Adw.ComboRow):
-    """Don't-set dropdown of keywords; ``value`` is \"\" while unset."""
+    """Not-set dropdown of keywords; ``value`` is \"\" while unset."""
 
     __gtype_name__ = "SshPilotOptionalChoiceRow"
 

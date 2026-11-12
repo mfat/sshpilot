@@ -1,6 +1,6 @@
-"""GUI tests for Don't-set dropdown rows on Settings > SSH options.
+"""GUI tests for Not-set dropdown rows on Settings > SSH options.
 
-Unset is the first dropdown choice ("Don't set"), never an off switch or a
+Unset is the first dropdown choice ("Not set"), never an off switch or a
 bare selected OpenSSH keyword. Stored values are unchanged
 (0 / \"\" = not sent).
 
@@ -25,8 +25,8 @@ def _int_row(**overrides):
         upper=600,
         step=1,
         initial=30,
-        dont_set_label="Don't set",
-        custom_label="Custom",
+        dont_set_label="Not set",
+        custom_label="Set",
     )
     options.update(overrides)
     return OptionalIntRow(**options)
@@ -38,7 +38,7 @@ def _choice_row(**overrides):
     options = dict(
         title="StrictHostKeyChecking",
         choices=("accept-new", "yes", "no", "ask"),
-        dont_set_label="Don't set",
+        dont_set_label="Not set",
     )
     options.update(overrides)
     return OptionalChoiceRow(**options)

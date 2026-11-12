@@ -156,7 +156,7 @@ def get_default_config() -> Dict[str, Any]:
         },
         'connections_meta': {},  # per-connection metadata
         'ssh': {
-            # Empty = "Don't set": no Compression/BatchMode option is sent.
+            # Empty = "Not set": no Compression/BatchMode option is sent.
             # ``yes`` / ``no`` inject the matching ``-o`` value.
             'compression': '',
             'auto_add_host_keys': True,
