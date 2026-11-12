@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-12 10:19+0330\n"
+"POT-Creation-Date: 2026-11-12 10:44+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1753,7 +1753,7 @@ msgstr "Agregado"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:132
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:171
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:191
-#: src/sshpilot/preferences.py:5659 src/sshpilot/ssh_option_list.py:160
+#: src/sshpilot/preferences.py:5659 src/sshpilot/ssh_option_list.py:166
 msgid "Remove"
 msgstr "Eliminar"
 
@@ -13118,35 +13118,40 @@ msgid_plural "Split View ({n} terminals)"
 msgstr[0] "Vista dividida ({n} terminal)"
 msgstr[1] "Vista dividida ({n} terminales)"
 
-#: src/sshpilot/ssh_option_list.py:100
+#: src/sshpilot/ssh_option_list.py:104
 #, python-brace-format
 msgid "“{keyword}” is not an option."
 msgstr "«{keyword}» no es una opción."
 
-#: src/sshpilot/ssh_option_list.py:101
+#: src/sshpilot/ssh_option_list.py:105
 msgid "This is not a valid option."
 msgstr "Esta no es una opción válida."
 
-#: src/sshpilot/ssh_option_list.py:106
+#: src/sshpilot/ssh_option_list.py:110
 #, python-brace-format
 msgid "OpenSSH did not accept this option: {error}"
 msgstr "OpenSSH no aceptó esta opción: {error}"
 
-#: src/sshpilot/ssh_option_list.py:140 src/sshpilot/ssh_option_list.py:149
+#: src/sshpilot/ssh_option_list.py:146 src/sshpilot/ssh_option_list.py:155
 msgid "Keyword"
 msgstr "Palabra clave"
 
-#: src/sshpilot/ssh_option_list.py:146
+#: src/sshpilot/ssh_option_list.py:152
 msgid "Choose a keyword"
 msgstr "Elegir una palabra clave"
 
-#: src/sshpilot/ssh_option_list.py:153 src/sshpilot/ssh_option_list.py:155
+#: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
 msgid "Value"
 msgstr "Valor"
 
-#: src/sshpilot/ssh_option_list.py:231
+#: src/sshpilot/ssh_option_list.py:237
 msgid "Add Option"
 msgstr "Añadir opción"
+
+#. Half an option. Saying so beats leaving it out without a word.
+#: src/sshpilot/ssh_option_list.py:370
+msgid "Enter both a keyword and a value."
+msgstr "Introduzca una palabra clave y un valor."
 
 #: src/sshpilot/sshcopyid_window.py:31
 msgid "The background service is busy. Try again shortly."

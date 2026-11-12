@@ -32,8 +32,8 @@ def test_rows_report_only_finished_valid_options(gui):
 
     row = options.add_empty_row()
     row.keyword_entry.set_text("IPQoS")
-    options._finish(row)                       # no value yet: not an option, not an error
-    assert options.get_options() == [] and row.error is None and seen == []
+    options._finish(row)                       # half an option: flagged, reports nothing
+    assert options.get_options() == [] and row.error and seen == []
 
     _finish(options, row, "IPQoS", "none")
     assert seen == [[("IPQoS", "none")]]
@@ -77,7 +77,9 @@ def test_loaded_rows_are_trusted_until_edited(gui):
     row.value_entry.set_text("no")             # now the user touched it
     assert options.commit_all() is False
     assert row.error == "refused"
-    assert options.get_options() == [("IPQoS", "none")]
+    # The refused edit changes nothing: the row still stands for what was saved.
+    assert options.get_options() == [("OldThing", "yes"), ("IPQoS", "none")]
+    assert seen == []
 
 
 def test_edited_fires_on_every_keystroke(gui):
@@ -286,3 +288,71 @@ def test_loading_options_never_opens_suggestions(gui):
         assert options.suggestions_visible(options.rows()[0]) is False
     finally:
         window.destroy()
+
+
+# -- a refused edit must never change what is saved -------------------------
+
+
+def test_refused_edit_of_a_saved_option_keeps_the_saved_value(gui):
+    """Saving on ``changed`` must not drop an option because of a typo in it."""
+    options = _list(gui, refused={"ipqos": None})
+    options._validate = lambda keyword, value: "bad value" if value == "typo" else None
+    saves = []
+    options.connect("changed", lambda _o: saves.append(list(options.get_options())))
+    options.set_options([("IPQoS", "none"), ("SetEnv", "A=b")])
+    row = options.rows()[0]
+
+    _finish(options, row, "IPQoS", "typo")
+    assert row.error == "bad value"
+    assert options.get_options() == [("IPQoS", "none"), ("SetEnv", "A=b")]
+    assert saves == []                               # nothing was persisted
+
+    row.value_entry.set_text("")                     # value cleared: half an option
+    options._finish(row)
+    assert row.error and saves == []
+    assert options.get_options() == [("IPQoS", "none"), ("SetEnv", "A=b")]
+
+    _finish(options, row, "IPQoS", "lowdelay")       # a good edit saves the new value
+    assert row.error is None
+    assert saves == [[("IPQoS", "lowdelay"), ("SetEnv", "A=b")]]
+
+    _finish(options, row, "IPQoS", "typo")           # ...and is what a later typo keeps
+    assert options.get_options()[0] == ("IPQoS", "lowdelay")
+    assert len(saves) == 1
+
+    options.remove(row)                              # only removing takes it away
+    assert saves[-1] == [("SetEnv", "A=b")]
+
+
+def test_emptying_both_fields_removes_the_option(gui):
+    options = _list(gui)
+    saves = []
+    options.connect("changed", lambda _o: saves.append(list(options.get_options())))
+    options.set_options([("IPQoS", "none")])
+    row = options.rows()[0]
+    row.keyword_entry.set_text("")
+    row.value_entry.set_text("")
+    options._finish(row)
+    assert row.error is None and saves == [[]]
+
+
+def test_half_filled_row_blocks_the_dialog_save(gui):
+    tab = _tab(gui)
+    tab.set_extra_ssh_config("Compression yes")
+    assert tab.has_invalid_options() is False
+
+    blank = tab.option_list.add_empty_row()          # an untouched new row is fine
+    assert tab.has_invalid_options() is False
+
+    blank.keyword_entry.set_text("TCPKeepAlive")     # keyword but no value
+    assert tab.has_invalid_options() is True
+    assert blank.error and blank.error_label.get_visible()
+    assert tab.get_extra_ssh_config() == "Compression yes"
+
+    blank.keyword_entry.set_text("")
+    blank.value_entry.set_text("no")                 # value but no keyword
+    assert tab.has_invalid_options() is True
+
+    blank.keyword_entry.set_text("TCPKeepAlive")
+    assert tab.has_invalid_options() is False
+    assert tab.get_extra_ssh_config() == "Compression yes\nTCPKeepAlive no"

@@ -17,6 +17,10 @@ two cannot drift apart again.
 * Rows loaded with :meth:`SshOptionList.set_options` are trusted until edited.
   They are what is already saved; refusing to hand them back would silently
   delete someone's configuration.
+* A refused edit never changes what the list reports. Each row remembers the
+  last value that was accepted, and keeps reporting it while the row shows an
+  error, so a caller that saves on ``changed`` cannot lose a saved option to
+  a typo. Only the remove button (or emptying both fields) takes one away.
 """
 from __future__ import annotations
 
@@ -132,6 +136,8 @@ class _OptionRow(Gtk.ListBoxRow):
         self.dirty = False
         #: Why this row is refused, or None.
         self.error: Optional[str] = None
+        #: The last keyword/value accepted for this row (loaded or checked).
+        self.good: Optional[Option] = None
         #: Keyword suggestions, created the first time they are needed.
         self.suggestions: Optional[Gtk.Popover] = None
         self.suggestion_list: Optional[Gtk.ListBox] = None
@@ -240,11 +246,22 @@ class SshOptionList(Gtk.Box):
         return tuple(self._rows)
 
     def get_options(self) -> List[Option]:
-        """Complete rows that are not refused, in order."""
-        return [
-            row.pair() for row in self._rows
-            if all(row.pair()) and row.error is None
-        ]
+        """The options the rows stand for, in order.
+
+        A row that is refused, or half filled in, stands for the last value it
+        was accepted with (nothing, if it never was). A row with both fields
+        empty stands for nothing.
+        """
+        options = []
+        for row in self._rows:
+            keyword, value = row.pair()
+            if not keyword and not value:
+                continue
+            if keyword and value and row.error is None:
+                options.append((keyword, value))
+            elif row.good is not None:
+                options.append(row.good)
+        return options
 
     def set_options(self, options: Iterable[Option]) -> None:
         """Show *options* as the saved state. Emits nothing; rows are trusted."""
@@ -257,6 +274,7 @@ class SshOptionList(Gtk.Box):
                 row.keyword_entry.set_text(str(keyword))
                 row.value_entry.set_text(str(value))
                 row.dirty = False
+                row.good = row.pair() if all(row.pair()) else None
         finally:
             self._loading = False
         self._last = tuple(self.get_options())
@@ -345,10 +363,17 @@ class SshOptionList(Gtk.Box):
             finally:
                 self._loading = False
             keyword = known
-        if keyword and value and self._validate is not None:
-            row.show_error(self._validate(keyword, value))
+        if not keyword and not value:
+            row.show_error(None)  # an empty row is simply not an option
+        elif not keyword or not value:
+            # Half an option. Saying so beats leaving it out without a word.
+            row.show_error(_("Enter both a keyword and a value."))
         else:
-            row.show_error(None)  # incomplete: not an option yet, not an error
+            row.show_error(
+                self._validate(keyword, value) if self._validate is not None else None
+            )
+            if row.error is None:
+                row.good = (keyword, value)
 
     def _finish(self, row: _OptionRow) -> None:
         if row not in self._rows:

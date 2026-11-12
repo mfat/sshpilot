@@ -249,6 +249,14 @@ def test_additional_options_rows_validate_then_save(gui):
         assert second.error is None
         assert saved() == ("IPQoS=none", "RequiredRSASize=2048")
 
+        # A bad edit of a saved option leaves the saved value alone.
+        finish(first, "IPQoS", "not-a-real-class")
+        assert first.error
+        assert saved() == ("IPQoS=none", "RequiredRSASize=2048")
+        finish(first, "IPQoS", "lowdelay")
+        assert first.error is None
+        assert saved() == ("IPQoS=lowdelay", "RequiredRSASize=2048")
+
         # Removing a row saves too.
         options.remove(first)
         gui.pump(300)
