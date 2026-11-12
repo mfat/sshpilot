@@ -270,13 +270,23 @@ def test_forced_options_maps_each_keyword_to_its_first_value():
     assert forced_options(None) == {}
 
 
-def test_keepalive_override_args_follow_the_switch():
-    from sshpilot.core.settings.ssh_overrides import keepalive_override_args
+def test_keepalive_fallback_args_follow_the_switch_and_the_configuration():
+    from sshpilot.core.settings.ssh_overrides import keepalive_fallback_args
 
-    assert keepalive_override_args({}) == [
+    unset = {"serveraliveinterval": "0", "serveralivecountmax": "3"}
+    assert keepalive_fallback_args({}, unset) == [
         "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
     ]
-    assert keepalive_override_args({"apply_default_keepalive": False}) == []
-    assert keepalive_override_args(
-        {"default_keepalive_interval": 40, "default_keepalive_count": 2}
+    assert keepalive_fallback_args({"apply_default_keepalive": False}, unset) == []
+    assert keepalive_fallback_args(
+        {"default_keepalive_interval": 40, "default_keepalive_count": 2}, unset
     ) == ["-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=2"]
+    # The user's configuration sets one: a command-line option would beat it.
+    assert keepalive_fallback_args({}, {"serveraliveinterval": "60"}) == []
+    # A configured count is kept next to the fallback interval.
+    assert keepalive_fallback_args(
+        {}, {"serveraliveinterval": "0", "serveralivecountmax": "10"}
+    ) == ["-o", "ServerAliveInterval=15"]
+    # Nothing resolved, nothing imposed.
+    assert keepalive_fallback_args({}, {}) == []
+    assert keepalive_fallback_args({}, None) == []

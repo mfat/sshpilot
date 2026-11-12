@@ -10,17 +10,14 @@ GTK-free argv composition for explicit launch descriptions lives in
 adapter that resolves askpass/secret backends for live Connection objects.
 """
 import os
-import re
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 
-from .ssh_config_document import split_config_lines
-from .api.models.common import validate_ssh_hostname
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
 from .core.settings.ssh_overrides import (
     coerce_yes_no_unset,
-    keepalive_override_args,
+    keepalive_fallback_args,
     select_override_args,
 )
 from .platform.windows.environment import WINDOWS_PROCESS_ENV
@@ -863,33 +860,17 @@ def _build_base_ssh_command(
     )
     if composed:
         cmd.extend(composed)
-        _maybe_append_default_keepalive(cmd, app_ssh_config)
     else:
         _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
+    # *config* is what OpenSSH resolved for this host, so it says whether the
+    # user's configuration already sets a keepalive.
+    cmd.extend(_keepalive_fallback(app_ssh_config, config))
 
-    # Directives this Host block authored. Without them this path resolved
-    # everything from the config file, so a global `Host *` could send
-    # ssh-copy-id to a different account than the editor displayed.
-    #
-    # ssh-copy-id accepts only -i/-p/-o/-f/-n/-s/-x, so nothing here may use a
-    # long flag: `-l` in particular is rejected, hence `-o User=`.
-    authored_kwargs, authored_options = _authored_ssh_options(
-        connection, command_type=command_type
-    )
-    if 'username' in authored_kwargs:
-        cmd.extend(['-o', f"User={authored_kwargs['username']}"])
-    if 'proxy_jump' in authored_kwargs:
-        cmd.extend(['-o', f"ProxyJump={','.join(authored_kwargs['proxy_jump'])}"])
-    if 'proxy_command' in authored_kwargs:
-        cmd.extend(['-o', f"ProxyCommand={authored_kwargs['proxy_command']}"])
-    cmd.extend(authored_options)
-
-    # Port: authored values are emitted even when they equal 22, since pinning
-    # 22 against an inherited Port is a deliberate choice.
-    port = authored_kwargs.get('port', getattr(connection, 'port', None))
-    authored_port = 'port' in authored_kwargs
-    if port and (port != 22 or authored_port):
-        cmd.extend(['-P' if command_type == 'scp' else '-p', str(port)])
+    # Nothing from the Host block is repeated here. The destination is the
+    # Host alias and the configuration file is the one a session uses, so
+    # OpenSSH resolves user, port, jump host and every other option exactly
+    # as `ssh <alias>` does -- including its first-value-wins precedence
+    # between the Host block and any ``Host *`` block before it.
 
     _append_identity_and_proxy(cmd, config, is_copy_id=is_copy_id)
 
@@ -911,6 +892,11 @@ def _build_base_ssh_command(
     # ExitOnForwardFailure=yes is set (a port already in use by an active
     # terminal session would kill the transfer). ClearAllForwardings only
     # cancels Local/Remote/Dynamic forwards; X11 and agent forwarding are unaffected.
+    if is_copy_id:
+        # The destination is the Host alias, so the block's RemoteCommand
+        # would apply -- and ssh refuses to run ssh-copy-id's own remote
+        # script next to one.
+        cmd.extend(['-o', 'RemoteCommand=none'])
     if command_type in ('scp', 'ssh-copy-id'):
         cmd.extend(['-o', 'ClearAllForwardings=yes'])
         # One askpass cancel should end the operation (not OpenSSH's default 3).
@@ -928,261 +914,34 @@ def _append_single_password_prompt(cmd: List[str]) -> None:
     cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
 
-def _maybe_append_default_keepalive(cmd, app_ssh_config):
-    """Append the app's ServerAlive* options to *cmd* when the switch is on.
+def _keepalive_fallback(app_ssh_config, effective) -> List[str]:
+    """The app's ServerAlive* options, when the configuration sets none.
 
-    The interval and count come from Settings (``ssh.default_keepalive_*``);
-    the switch there (``ssh.apply_default_keepalive`` = False) disables
-    injection entirely.
-
-    Like every other option on that page this is an override: it is emitted
-    with ``ssh_overrides``, ahead of the connection's own options, so it beats
-    a ``ServerAliveInterval`` the Host block authored.
+    *effective* is what OpenSSH resolved for the host (``ssh -G``). See
+    :func:`sshpilot.core.settings.ssh_overrides.keepalive_fallback_args`.
     """
     try:
-        cmd.extend(keepalive_override_args(app_ssh_config))
+        return list(keepalive_fallback_args(app_ssh_config, effective))
     except Exception as exc:  # never let keepalive injection break connecting
         logger.debug("Default keepalive injection skipped: %s", exc)
-
-
-# Canonical OpenSSH spelling for directives re-emitted as ``-o`` options.
-MANAGED_OPTION_KEYWORDS = {
-    'identityagent': 'IdentityAgent',
-    'addkeystoagent': 'AddKeysToAgent',
-    'pkcs11provider': 'PKCS11Provider',
-    'securitykeyprovider': 'SecurityKeyProvider',
-}
-
-
-def _authored_ssh_options(
-    connection,
-    *,
-    command_type: str = 'ssh',
-    extra_args: Optional[List[str]] = None,
-) -> Tuple[Dict[str, Any], List[str]]:
-    """Argv for directives the Host block itself authored.
-
-    OpenSSH resolves ``ssh <alias>`` with first-obtained-value-wins, so a
-    ``Host *`` block placed earlier in the file silently beats a specific
-    block's explicit values — the editor would show one thing and the session
-    would use another. Command-line options beat every config file, so an
-    authored directive is re-emitted here to make the editor authoritative.
-
-    Only directives the block actually authored are emitted. Defaults (an
-    absent ``User``, the fallback port 22) must never reach argv: forcing them
-    would override a global the user deliberately relies on.
-
-    Deliberately not emitted:
-
-    * ``IdentityFile``/``CertificateFile``/``*Forward`` accumulate rather than
-      replace — ``-i`` appends, and no argv spelling clears an inherited
-      ``IdentityFile`` (``-o IdentityFile=none`` merely appends ``none``). They
-      stay resolved by OpenSSH and are surfaced to the user as inherited.
-    * ``PreferredAuthentications``/``PubkeyAuthentication`` — owned by
-      :func:`resolve_native_auth`.
-    * ``RemoteCommand``/``LocalCommand``/``RequestTTY`` on scp, sftp,
-      ssh-copy-id, and non-login ssh (``-N``/``-s``/``-T``) — those are not a
-      login session. ``RequestTTY force`` breaks ``ssh -N`` and ``ssh -s sftp``,
-      and a config ``RemoteCommand`` on ssh-copy-id would replace the install.
-
-    Returns ``(request_kwargs, extra_option_argv)``. Both are emitted after the
-    app's own runtime options and after Settings ▸ SSH Options, so a deliberate
-    runtime decision and an app-level override still win.
-    """
-    from .ssh_config_formatter import _authored_directives
-
-    data = getattr(connection, 'data', None)
-    data = data if isinstance(data, dict) else {}
-    authored = _authored_directives(data)
-    if not authored:
-        # No evidence (record not parsed from a Host block). Keep the historic
-        # `ssh <alias>` shape rather than guessing which values were explicit.
-        return {}, []
-
-    def _raw(name: str) -> Any:
-        # Only a few of these are promoted to attributes on Connection /
-        # HeadlessConnectionView; the rest live solely in the parsed data dict.
-        value = getattr(connection, name, None)
-        if value is None or value == '':
-            value = data.get(name)
-        return value
-
-    def _text(name: str) -> str:
-        return str(_raw(name) or '').strip()
-
-    kwargs: Dict[str, Any] = {}
-    options: List[str] = []
-
-    def _option(keyword: str, value: str) -> None:
-        options.extend(['-o', f'{keyword}={value}'])
-
-    if 'user' in authored and _text('username'):
-        kwargs['username'] = _text('username')
-    if 'port' in authored:
-        try:
-            port = int(_raw('port') or 0)
-        except (TypeError, ValueError):
-            port = 0
-        if 1 <= port <= 65535:
-            kwargs['port'] = port
-    # A block from an imported or restored file reaches here without any
-    # request model's checks, and the -F file on argv carries the same
-    # values, so shell text in HostName or a ProxyJump hop fails the launch
-    # instead of being re-emitted (see ``validate_ssh_hostname``).
-    if 'hostname' in authored and _text('hostname'):
-        # OpenSSH drops a trailing "# comment" from a config line.
-        hostname = re.sub(r'\s+#.*$', '', _text('hostname'))
-        _option('HostName', validate_ssh_hostname(hostname, 'HostName'))
-
-    # ProxyJump and ProxyCommand may coexist in one block; OpenSSH applies
-    # the first line in the file and ignores the second. When the block
-    # authors both, neither is re-emitted here: any -o ordering would impose
-    # this module's precedence over the file's, while the -F config already
-    # on argv resolves exactly what plain `ssh host` would do. A single
-    # authored directive is still re-emitted so an earlier `Host *` block
-    # cannot override what the editor shows.
-    raw_proxy_jump = _raw('proxy_jump') or ()
-    if isinstance(raw_proxy_jump, str):
-        raw_proxy_jump = [h for h in re.split(r'[\s,]+', raw_proxy_jump) if h]
-    proxy_jump = [str(e).strip() for e in raw_proxy_jump if str(e).strip()]
-    for hop in proxy_jump:
-        validate_ssh_hostname(hop, 'ProxyJump')
-    proxy_command = _text('proxy_command')
-    both_proxies = (
-        'proxyjump' in authored and proxy_jump
-        and 'proxycommand' in authored and proxy_command
-    )
-    if not both_proxies:
-        if 'proxyjump' in authored and proxy_jump:
-            kwargs['proxy_jump'] = proxy_jump
-        elif 'proxycommand' in authored and proxy_command:
-            kwargs['proxy_command'] = proxy_command
-
-    if 'forwardagent' in authored:
-        # ssh_config(5): yes / no / a socket path / $ENV. Collapsing a
-        # socket to ``yes`` would forward the default agent and, because
-        # command-line options beat the file, drop the path even with no
-        # ``Host *`` in the way.
-        agent_target = _text('forward_agent_target')
-        if agent_target:
-            _option('ForwardAgent', agent_target)
-        else:
-            _option(
-                'ForwardAgent',
-                'yes' if bool(_raw('forward_agent')) else 'no',
-            )
-    if 'forwardx11' in authored:
-        _option(
-            'ForwardX11',
-            'yes' if bool(_raw('x11_forwarding')) else 'no',
-        )
-    if 'identitiesonly' in authored:
-        try:
-            key_select_mode = int(_raw('key_select_mode') or 0)
-        except (TypeError, ValueError):
-            key_select_mode = 0
-        _option('IdentitiesOnly', 'yes' if key_select_mode == 1 else 'no')
-
-    for directive, attribute in (
-        ('identityagent', 'identity_agent'),
-        ('addkeystoagent', 'add_keys_to_agent'),
-        ('pkcs11provider', 'pkcs11_provider'),
-        ('securitykeyprovider', 'security_key_provider'),
-    ):
-        if directive in authored and _text(attribute):
-            _option(MANAGED_OPTION_KEYWORDS[directive], _text(attribute))
-
-    # Typed session directives. They used to be skipped as "runtime owned"
-    # while the native request never received them — so an earlier ``Host *``
-    # still won. Emit as ``-o``, not as ``SSHLaunchRequest.remote_command``
-    # (that field is the positional one-shot command and overrides this).
-    # Non-login ssh (``-N``/``-s``/``-T``), scp, sftp, and ssh-copy-id are not
-    # a login shell; ``RequestTTY force`` breaks ``ssh -N`` and ``ssh -s sftp``.
-    extra_tokens = {str(a) for a in (extra_args or ())}
-    login_session = (
-        str(command_type or 'ssh') == 'ssh'
-        and not extra_tokens & {"-N", "-s", "-T"}
-    )
-    if login_session:
-        if 'localcommand' in authored and _text('local_command'):
-            _option('PermitLocalCommand', 'yes')
-            _option('LocalCommand', _text('local_command'))
-        if 'remotecommand' in authored and _text('remote_command'):
-            _option('RemoteCommand', _text('remote_command'))
-        if 'requesttty' in authored and _text('request_tty'):
-            _option('RequestTTY', _text('request_tty'))
-
-    options.extend(_authored_extra_options(_text('extra_ssh_config')))
-    return kwargs, options
-
-
-# Directives from the Advanced tab that must never become ``-o`` options.
-#
-# Structural: an ``-o Host=`` / ``-o Match=`` / ``-o Include=`` is meaningless
-# or harmful on the command line, and all three appear in the tab's keyword
-# list.
-_EXTRA_OPTION_STRUCTURAL = frozenset({'host', 'match', 'include'})
-# Owned by typed connection fields and re-emitted from those in
-# ``_authored_ssh_options``. Skipping them here avoids a second ``-o`` from
-# an Advanced-tab spelling of the same directive.
-_EXTRA_OPTION_RUNTIME_OWNED = frozenset({
-    'remotecommand', 'localcommand', 'permitlocalcommand', 'requesttty',
-})
-# The command line cannot make these authoritative: they append to whatever the
-# config already resolved, so emitting one leaves the inherited value in force
-# and merely adds a second entry. ``SetEnv``/``SendEnv`` are here for a sharper
-# reason — a repeated ``-o SetEnv=`` keeps only the FIRST, so a block authoring
-# two of them would silently lose the rest.
-_EXTRA_OPTION_ACCUMULATING = frozenset({
-    'identityfile', 'certificatefile',
-    'localforward', 'remoteforward', 'dynamicforward',
-    'setenv', 'sendenv',
-})
-
-
-def _authored_extra_options(extra_ssh_config: str) -> List[str]:
-    """``-o`` argv for Advanced-tab directives, so a ``Host *`` cannot override them.
-
-    Everything on the Advanced tab is authored by definition — it is parsed
-    from this block's own lines — but it previously reached OpenSSH only by
-    being written into the Host block, which an earlier ``Host *`` beats. The
-    tab showed ``Compression no`` while the session ran with ``Compression
-    yes``.
-
-    A directive authored more than once is skipped: only the first ``-o`` for a
-    given keyword takes effect, so emitting would drop the user's later lines.
-    Skipped directives keep working exactly as before, resolved from the file.
-    """
-    if not extra_ssh_config:
         return []
 
-    parsed: List[Tuple[str, str]] = []
-    counts: Dict[str, int] = {}
-    for raw_line in split_config_lines(extra_ssh_config):
-        line = raw_line.strip()
-        if not line or line.startswith('#'):
-            continue
-        keyword, _sep, value = line.partition(' ')
-        keyword = keyword.strip().rstrip('=').strip()
-        value = value.strip()
-        if not keyword or not value:
-            continue
-        lowered = keyword.lower()
-        counts[lowered] = counts.get(lowered, 0) + 1
-        parsed.append((keyword, value))
 
-    options: List[str] = []
-    for keyword, value in parsed:
-        lowered = keyword.lower()
-        if (
-            lowered in _EXTRA_OPTION_STRUCTURAL
-            or lowered in _EXTRA_OPTION_RUNTIME_OWNED
-            or lowered in _EXTRA_OPTION_ACCUMULATING
-            or counts[lowered] > 1
-        ):
-            continue
-        options.extend(['-o', f'{keyword}={value}'])
-    return options
+def _effective_config_for(connection) -> Dict[str, Any]:
+    """What OpenSSH resolves for *connection*, for launch-time decisions.
+
+    The daemon's launch view resolves it (``ssh -G`` with the launch's own
+    configuration file and Settings options). A connection object that cannot
+    answer yields nothing, and the fallbacks that depend on it stay off.
+    """
+    resolve = getattr(connection, 'effective_ssh_config', None)
+    if not callable(resolve):
+        return {}
+    try:
+        return dict(resolve() or {})
+    except Exception:
+        logger.debug("Could not resolve effective config", exc_info=True)
+        return {}
 
 
 def _connection_is_isolated(connection) -> bool:
@@ -1200,7 +959,34 @@ def _connection_is_isolated(connection) -> bool:
     return bool(value)
 
 
-def _isolated_known_hosts_override(connection) -> List[str]:
+def _config_sets_known_hosts_file(effective) -> bool:
+    """Whether the resolved configuration names its own ``UserKnownHostsFile``.
+
+    ``ssh -G`` always prints the option; left unset it is OpenSSH's default
+    pair, ``~/.ssh/known_hosts`` and ``~/.ssh/known_hosts2``.
+    """
+    value = (effective or {}).get('userknownhostsfile')
+    if not value:
+        return False
+    if isinstance(value, (list, tuple)):
+        value = ' '.join(str(entry) for entry in value)
+    try:
+        from .platform.paths import openssh_user_dir
+
+        default_dir = os.path.normcase(os.path.abspath(str(openssh_user_dir())))
+    except Exception:
+        return False
+    for entry in str(value).split():
+        path = os.path.abspath(os.path.expanduser(entry))
+        if (
+            os.path.normcase(os.path.dirname(path)) != default_dir
+            or os.path.basename(path) not in ('known_hosts', 'known_hosts2')
+        ):
+            return True
+    return False
+
+
+def _isolated_known_hosts_override(connection, effective=None) -> List[str]:
     """``-o UserKnownHostsFile=`` for an isolated-mode connection, else ``[]``.
 
     Default Mode deliberately emits nothing: ``~/.ssh/known_hosts`` is shared
@@ -1208,18 +994,17 @@ def _isolated_known_hosts_override(connection) -> List[str]:
     anyone who set ``UserKnownHostsFile`` themselves and would make sshPilot
     the owner of a file it does not own.
 
-    A command-line ``-o`` beats every config file, so a block that authored
-    its own ``UserKnownHostsFile`` would otherwise be overridden by this --
-    the opposite of the intent. When the Host block authored the directive,
-    emit nothing and let OpenSSH resolve it from the file.
-
-    Known limit: a value inherited from a ``Host *`` block is not visible
-    here. The loader records authored directives per concrete Host block and
-    does not merge wildcard blocks into a record, so an isolated config that
-    redirects known_hosts globally still gets this option. Per-host authorship
-    -- the way the connection editor writes it -- is honored.
+    A command-line ``-o`` beats every config file, so a configuration that
+    names its own ``UserKnownHostsFile`` -- in the Host block, or in a
+    ``Host *`` block of the isolated config -- would be overridden by this,
+    the opposite of the intent. *effective* is what OpenSSH resolved for the
+    host; when it shows a file other than OpenSSH's default, nothing is
+    emitted and OpenSSH uses the configured one. Without *effective* only
+    the Host block's own directive can be seen.
     """
     if not _connection_is_isolated(connection):
+        return []
+    if _config_sets_known_hosts_file(effective):
         return []
     try:
         from .ssh_config_formatter import _authored_directives
@@ -1338,30 +1123,19 @@ def build_ssh_connection(
         if isinstance(raw_overrides, (list, tuple)):
             overrides = [str(entry) for entry in raw_overrides if entry]
 
-        # Directives this Host block authored are re-emitted as argv so the
-        # session uses what the editor shows, even when an earlier `Host *`
-        # block would otherwise win. They follow ssh_overrides in argv, so an
-        # option set in Settings ▸ SSH Options still beats them.
-        authored_kwargs, authored_options = _authored_ssh_options(
-            connection,
-            command_type=ctx.command_type,
-            extra_args=ctx.extra_args,
-        )
+        # Nothing from the Host block is repeated on the command line: the
+        # configuration file is the single source of truth, and OpenSSH
+        # resolves it with its own precedence, as `ssh <alias>` would. What
+        # OpenSSH resolved is read back only to decide the two fallbacks
+        # below, which apply when the configuration says nothing.
+        effective = _effective_config_for(connection)
 
-        # Isolated Mode owns its own host keys. Emitted as argv rather than
-        # written into the isolated ssh_config, because -F is given the file
-        # that *declared* the Host -- which for anything pulled in through an
-        # Include is a fragment, not the root, so a `Host *` block in the root
-        # would never be parsed. It is a fallback: it goes after the authored
-        # options, at the very end, so a connection that authors its own
-        # UserKnownHostsFile (or a Settings override) still wins.
-        isolated_known_hosts = _isolated_known_hosts_override(connection)
+        # Isolated Mode owns its own host keys, unless the isolated
+        # configuration names a known_hosts file itself. Emitted last.
+        isolated_known_hosts = _isolated_known_hosts_override(connection, effective)
 
-        # Keepalive is one of the Settings overrides (core builder emits
-        # ssh_overrides verbatim, ahead of the connection's options).
-        keepalive_cmd: List[str] = []
-        _maybe_append_default_keepalive(keepalive_cmd, app_ssh_config)
-        overrides = list(overrides) + keepalive_cmd
+        # The app's keepalive, only when the configuration sets none.
+        overrides = list(overrides) + _keepalive_fallback(app_ssh_config, effective)
 
         auth = resolve_native_auth(
             connection,
@@ -1432,28 +1206,24 @@ def build_ssh_connection(
 
         # Windows has no xauth, so OpenSSH refuses untrusted X11 forwarding
         # there ("xauth key data not generated"). ForwardX11 itself comes from
-        # the config file or an authored -o, so ask for trusted forwarding
-        # here; it only takes effect when forwarding is on (issue #1365).
+        # the config file, so ask for trusted forwarding here; it only takes
+        # effect when forwarding is on (issue #1365).
+        platform_options: List[str] = []
         if (
             os.name == 'nt'
             and executable == 'ssh'
             and launch_mode is LaunchMode.INTERACTIVE
         ):
-            authored_options = list(authored_options) + [
-                '-o', 'ForwardX11Trusted=yes',
-            ]
+            platform_options = ['-o', 'ForwardX11Trusted=yes']
 
-        # Authored options come after the app's own options and the Settings
-        # overrides, so both still win; the isolated known_hosts fallback is
-        # last of all.
+        # The isolated known_hosts fallback is last of all.
         req = SSHLaunchRequest(
             destination=native_target,
             executable=executable,
             config_file=config_override,
             priority_options=priority_options,
             ssh_overrides=overrides,
-            extra_options=list(authored_options) + isolated_known_hosts,
-            **authored_kwargs,
+            extra_options=platform_options + isolated_known_hosts,
             batch_mode=batch_mode,
             host_key_mode=host_key_mode,
             remote_command=ctx.remote_command,

@@ -5,6 +5,26 @@ notes remain separate.
 
 ## Unreleased
 
+- A launch of a saved SSH host now resolves exactly as `ssh <alias>` does.
+  Nothing from the connection's own Host block is repeated on the command
+  line, so OpenSSH's first-value-wins precedence applies between that block
+  and any `Host *` or `Match` block before it. The launch names no `-F` file
+  when the configuration root is the user's `~/.ssh/config` (OpenSSH then
+  also reads `/etc/ssh/ssh_config`); any other root is passed whole, also for
+  a host declared in an included file. `connections.get_effective_config`
+  resolves the same way.
+- `EffectiveConfigComparison.earlier` lists the options a block before the
+  host's own block already decides, as `EarlierDirective` values (`key`,
+  `value`, `block`, `file`, `line`), one per keyword. A value the host's own
+  block gives for one of them is not used; frontends mark those fields.
+  Options OpenSSH accumulates (`IdentityFile`, the forwards, `SetEnv`, ...)
+  never appear. The field is additive and optional on the wire.
+- The keepalive (`ssh.apply_default_keepalive`) is a fallback, not an
+  override: `ServerAliveInterval` is sent only for a host whose resolved
+  configuration sets none, and `ServerAliveCountMax` only while the resolved
+  count is OpenSSH's default. `GlobalSshOverrides.forced_options` therefore
+  no longer lists the keepalive pair.
+- The API implementation version is 0.98; Protocol remains 1.0.
 - `GlobalSshOverrides.forced_options` lists every `Keyword=value` a launch
   sends ahead of a connection's own options: the override fields as composed,
   the free-form options, the legacy-algorithm and multiplexing options, and the

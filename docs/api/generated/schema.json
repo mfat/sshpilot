@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.97",
+  "api_implementation_version": "0.98",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -4409,6 +4409,46 @@
       ],
       "status": "Schema only"
     },
+    "EarlierDirective": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "block",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
     "EffectiveConfigComparison": {
       "fields": [
         {
@@ -4466,6 +4506,13 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": [],
+          "name": "earlier",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[EarlierDirective, ...]"
         }
       ],
       "status": "Implemented"

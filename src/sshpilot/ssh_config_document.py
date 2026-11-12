@@ -121,6 +121,22 @@ def split_include_args(remainder: str) -> List[str]:
     return shlex.split(remainder)
 
 
+def include_patterns(line: str):
+    """The path patterns of an ``Include`` line, or ``None`` for any other line.
+
+    The keyword is read the way OpenSSH reads every keyword: case-insensitive
+    and separated from its argument by blanks, tabs or ``=``. Raises
+    ``ValueError`` for an argument that cannot be tokenized.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith('#'):
+        return None
+    keyword, remainder = _split_keyword(stripped)
+    if keyword != 'include':
+        return None
+    return split_include_args(remainder)
+
+
 _BLOCK_HEADERS = ('host', 'match', 'include')
 
 _CONFIG_LINE_RE = re.compile(r'[^\n]*\n|[^\n]+')

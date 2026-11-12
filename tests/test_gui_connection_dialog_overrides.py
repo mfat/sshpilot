@@ -142,3 +142,64 @@ def test_jump_host_loses_to_a_forced_proxy_command_in_the_real_dialog(gui):
         "dialog-warning-symbolic"
     )
     assert dialog._override_banner.get_revealed()
+
+
+def test_dialog_marks_a_field_an_earlier_block_beats(gui):
+    """`Host *` before the host's own block decides User in OpenSSH, and the
+    app launches plain `ssh <alias>`. The editor says so on the field."""
+    from gi.repository import Gtk
+    from sshpilot.api.models.connections import (
+        EarlierDirective,
+        EffectiveConfigComparison,
+    )
+    from sshpilot.connection_dialog import ConnectionDialog
+    from sshpilot.connection_model import Connection
+    from sshpilot.plugins.loader import ensure_builtin_protocols
+
+    ensure_builtin_protocols()
+    comparison = EffectiveConfigComparison(
+        connection_id="web", host="web", available=True,
+        full=("user deploy", "hostname web.example.com", "port 22"),
+        earlier=(
+            EarlierDirective(
+                key="user", value="deploy", block="Host *",
+                file="/home/me/.ssh/config", line=2,
+            ),
+        ),
+    )
+    snapshot = GlobalSshOverrides(
+        revision="r1", connect_timeout=0, strict_host_key_checking="",
+        compression="", verbosity=0, debug_enabled=False, forced_options=(),
+    )
+    parent = Gtk.Window()
+    parent.connection_manager = _Manager()
+    parent._daemon_ready = lambda: True
+    parent.client = types.SimpleNamespace(
+        get_global_ssh_overrides=lambda: snapshot,
+        get_effective_config=lambda _cid: comparison,
+    )
+    connection = Connection({
+        "nickname": "web", "host": "web", "hostname": "web.example.com",
+        "username": "admin",
+        "__authored_directives": ("hostname", "user"),
+    })
+    dialog = ConnectionDialog(
+        parent, connection=connection, connection_manager=parent.connection_manager
+    )
+    _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+
+    icon = dialog.username_row._sshpilot_override_icon
+    assert icon.get_visible()
+    assert _icon_name(icon) == "dialog-warning-symbolic"
+    tooltip = dialog.username_row.get_tooltip_text()
+    assert "deploy" in tooltip and "Host *" in tooltip and "line 2" in tooltip
+    assert dialog._override_banner.get_revealed()
+    assert "earlier block" in dialog._override_banner.get_title()
+    # Informing only: the value stays, and stays editable.
+    assert dialog.username_row.get_text() == "admin"
+    assert dialog.username_row.get_sensitive()
+
+    # Agreeing with the earlier block loses nothing.
+    dialog.username_row.set_text("deploy")
+    assert not icon.get_visible()
+    assert not dialog._override_banner.get_revealed()

@@ -291,9 +291,9 @@ def test_require_master_coexists_with_preference_multiplex(provider):
 def test_require_master_overrides_authored_controlmaster_no(provider):
     """Host Info must hold a master even when the Host block disabled mux.
 
-    OpenSSH is first-value-wins: the forced fragment is emitted before
-    authored Advanced-tab options, so ControlMaster=auto beats an authored
-    ControlMaster no (and the forced ControlPath beats ControlPath none).
+    The forced fragment is on the command line, which beats the Host block
+    in the file: ControlMaster=auto wins over an authored ControlMaster no
+    (and the forced ControlPath over ControlPath none).
     """
     prov, records = provider
     records["web"] = _record(
@@ -309,15 +309,13 @@ def test_require_master_overrides_authored_controlmaster_no(provider):
     )
     tokens = [str(token) for token in command]
     first_master = tokens.index("ControlMaster=auto")
-    authored_no = tokens.index("ControlMaster=no")
-    assert first_master < authored_no
     assert tokens[-1] == "uptime"
     assert first_master < len(tokens) - 2
     assert tokens[first_master - 1] == "-o"
-    # Forced path is the first ControlPath; authored none comes later and loses.
-    control_paths = [t for t in tokens if t.startswith("ControlPath=")]
-    assert control_paths[0] != "ControlPath=none"
-    assert "ControlPath=none" in control_paths[1:]
+    # The block's own values stay in the file, where the forced command-line
+    # options beat them.
+    assert "ControlMaster=no" not in tokens
+    assert "ControlPath=none" not in tokens
     assert any(token.startswith("ControlPath=") and "/%C" in token for token in tokens)
 
 
@@ -326,8 +324,8 @@ def test_remote_command_overrides_authored_session_type_none(provider):
 
     ``SessionType none`` (ssh -N) makes OpenSSH ignore the remote command and
     exit 0 with empty stdout — Host Info then "succeeds" with a blank
-    snapshot. Forced ``SessionType=default`` is first-value-wins before the
-    authored Advanced-tab option.
+    snapshot. Forced ``SessionType=default`` is on the command line, which
+    beats the block's own line in the file.
     """
     prov, records = provider
     records["web"] = _record(
@@ -341,9 +339,8 @@ def test_remote_command_overrides_authored_session_type_none(provider):
     command, _environment = prov.prepare_remote_command_launch("web", "uptime")
     tokens = [str(token) for token in command]
     forced = tokens.index("SessionType=default")
-    authored_none = tokens.index("SessionType=none")
     assert tokens[forced - 1] == "-o"
-    assert forced < authored_none
+    assert "SessionType=none" not in tokens
     assert forced < len(tokens) - 2
     assert tokens[-2]  # destination alias / host
     assert tokens[-1] == "uptime"
@@ -1074,48 +1071,41 @@ def _authored_record():
     )
 
 
-def test_authored_option_args_are_the_launch_layer_in_order(provider):
-    """What a terminal launch adds after Settings ▸ SSH Options."""
-    prov, _records = provider
-    assert prov.authored_option_args(_authored_record()) == (
-        "-o", "Port=2200",
-        "-o", "User=alice",
-        "-o", "HostName=production.example.com",
-        "-o", "Compression=no",
-    )
-    # A record that was not parsed from a Host block authors nothing.
-    assert prov.authored_option_args(_record()) == ()
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_launch_resolves_like_plain_ssh_when_host_star_comes_first(tmp_path):
+    """An earlier ``Host *`` says Compression yes and User deploy, the block
+    says no and alice. OpenSSH keeps the first value, so `ssh production`
+    uses yes and deploy -- and the launch adds nothing that would change it."""
+    import subprocess
 
-
-def test_effective_config_with_the_launch_layer_matches_the_session(
-    provider, tmp_path
-):
-    """The review's case: an earlier ``Host *`` says Compression yes, the
-    block says no. The launch re-emits the block's value, so the session
-    uses no, and so must the resolved configuration."""
-    if shutil.which("ssh") is None:
-        pytest.skip("needs OpenSSH")
-    from sshpilot.core.ssh_config_effective import diff_effective_config
-
-    block = (
+    config = tmp_path / "config"
+    config.write_text(
+        "Host *\n    Compression yes\n    User deploy\n"
+        "    ServerAliveInterval 60\n\n"
         "Host production\n"
         "    HostName production.example.com\n"
         "    User alice\n"
         "    Port 2200\n"
         "    Compression no\n"
     )
-    config = tmp_path / "config"
-    config.write_text("Host *\n    Compression yes\n\n" + block)
-    prov, _records = provider
+    from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
 
-    without = diff_effective_config("production", str(config), block)
-    with_launch = diff_effective_config(
-        "production",
-        str(config),
-        block,
-        overrides=prov.authored_option_args(_authored_record()),
+    records = {r.id: r for r in load_ssh_configuration(config, isolated=False).connections}
+    prov = DaemonConnectionLaunchProvider(
+        records.get, config_root=lambda: config
     )
 
-    assert "compression yes" in without["full"]
-    assert "compression no" in with_launch["full"]
-    assert "compression" not in {c["key"] for c in with_launch["changes"]}
+    argv, _env = prov.prepare_terminal_launch("production", interaction_policy="broker")
+
+    assert list(argv[1:]) == ["-F", str(config), "production"]
+
+    def resolved(args):
+        out = subprocess.run(
+            ["ssh", "-G", *args], capture_output=True, text=True, check=True
+        ).stdout
+        return sorted(out.splitlines())
+
+    assert resolved(list(argv[1:])) == resolved(["-F", str(config), "production"])
+    assert prov.remote_identity("production") == (
+        "production.example.com", "deploy", 2200,
+    )

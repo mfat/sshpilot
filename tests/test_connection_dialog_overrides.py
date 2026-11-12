@@ -14,6 +14,8 @@ from sshpilot.connection_dialog_overrides import (
     OVERRIDABLE_ROWS,
     ConnectionDialogOverridesMixin as Overrides,
     advanced_option_note,
+    earlier_map,
+    earlier_note,
     forced_map,
     inherited_note_text,
     GLOBAL,
@@ -141,8 +143,10 @@ def _dialog(**attrs):
     for name in ("_set_row_override_note", "_set_row_inherited_note", "_refresh_row_tooltip"):
         setattr(dialog, name, getattr(Validation, name).__get__(dialog))
     for name in (
-        "_set_forced_options", "_apply_override_notes", "_mark_row_override",
-        "_overridden_field_count", "_advanced_option_note",
+        "_set_forced_options", "_set_earlier_directives",
+        "_apply_override_notes", "_mark_row_override",
+        "_overridden_field_count", "_overridden_field_counts",
+        "_advanced_option_note",
         "_override_row_value", "_watch_rows_for_overrides",
     ):
         setattr(dialog, name, getattr(Overrides, name).__get__(dialog))
@@ -301,3 +305,108 @@ def test_proxy_jump_none_alone_leaves_the_proxy_command_alone():
     forced = forced_map(_snapshot("ProxyJump=none"))
     assert suppressing_option("ProxyJump", forced) == ("ProxyJump", "none")
     assert suppressing_option("ProxyCommand", forced) is None
+
+
+# --- an earlier block of the SSH configuration -------------------------------
+#
+# The app launches `ssh <alias>` and repeats nothing from the Host block, so
+# OpenSSH's first-value-wins rule decides: a `Host *` placed before the host's
+# own block wins. The editor marks the field that loses and says what is used
+# and where it comes from.
+
+
+def _earlier(key="user", value="deploy", block="Host *", file="/etc/x/config", line=2):
+    from sshpilot.api.models.connections import EarlierDirective
+
+    return {key: EarlierDirective(key=key, value=value, block=block, file=file, line=line)}
+
+
+def test_earlier_map_keeps_the_first_entry_per_keyword():
+    from sshpilot.api.models.connections import (
+        EarlierDirective,
+        EffectiveConfigComparison,
+    )
+
+    comparison = EffectiveConfigComparison(
+        connection_id="web", host="web", available=True,
+        earlier=(
+            EarlierDirective(key="user", value="deploy", block="Host *", file="/c", line=2),
+            EarlierDirective(key="port", value="2222", block="Host *", file="/c", line=3),
+        ),
+    )
+    assert set(earlier_map(comparison)) == {"user", "port"}
+
+
+def test_a_value_an_earlier_block_beats_names_the_value_used_and_its_source():
+    note = earlier_note("User", "admin", _earlier())
+    assert "deploy" in note
+    assert "Host *" in note and "/etc/x/config" in note and "2" in note
+
+
+def test_a_line_above_every_block_is_described_as_such():
+    note = earlier_note("User", "admin", _earlier(block=""))
+    assert "above every Host block" in note
+
+
+def test_nothing_is_said_when_the_field_agrees_is_empty_or_is_not_set_earlier():
+    assert earlier_note("User", "deploy", _earlier()) is None
+    assert earlier_note("User", "", _earlier()) is None
+    assert earlier_note("User", None, _earlier()) is None
+    assert earlier_note("Port", "2200", _earlier()) is None
+    assert earlier_note("ForwardAgent", "YES", _earlier("forwardagent", "yes")) is None
+
+
+@needs_adw
+def test_row_beaten_by_an_earlier_block_is_marked_and_stays_editable():
+    from gi.repository import Adw
+
+    row = Adw.EntryRow(title="Username")
+    row.set_text("admin")
+    port = Adw.EntryRow(title="Port")
+    dialog = _dialog(username_row=row, port_row=port)
+    dialog._forced_options = {}
+
+    dialog._set_earlier_directives({**_earlier(), **_earlier("port", "2222", line=3)})
+
+    assert row._sshpilot_override_icon.get_visible()
+    assert _icon_name(row._sshpilot_override_icon) == "dialog-warning-symbolic"
+    assert "deploy" in row.get_tooltip_text() and "Host *" in row.get_tooltip_text()
+    assert row.get_text() == "admin" and row.get_sensitive()
+    # An empty Port row sets nothing: the earlier value is just inherited.
+    assert getattr(port, "_sshpilot_override_icon", None) is None
+    assert dialog.banner_syncs[-1] == 1
+
+    row.set_text("deploy")
+    dialog._apply_override_notes()
+    assert not row._sshpilot_override_icon.get_visible()
+
+
+@needs_adw
+def test_settings_override_is_reported_before_an_earlier_block():
+    """Settings options are on the command line, which beats every file."""
+    from gi.repository import Adw
+
+    row = Adw.EntryRow(title="Username")
+    row.set_text("admin")
+    dialog = _dialog(username_row=row)
+    dialog._earlier_directives = _earlier()
+
+    dialog._set_forced_options({"user": "root"})
+
+    assert "root" in row.get_tooltip_text()
+    assert "deploy" not in row.get_tooltip_text()
+    assert dialog._overridden_field_counts() == (1, 0)
+
+
+def test_advanced_option_beaten_by_an_earlier_block_is_noted_and_counted():
+    tab = types.SimpleNamespace(
+        option_list=None,
+        get_config_entries=lambda: [("Compression", "no"), ("Ciphers", "aes256-ctr")],
+    )
+    dialog = _dialog(advanced_tab=tab)
+    dialog._forced_options = {}
+    dialog._earlier_directives = _earlier("compression", "yes", line=4)
+
+    assert "yes" in dialog._advanced_option_note("Compression", "no")
+    assert dialog._advanced_option_note("Ciphers", "aes256-ctr") is None
+    assert dialog._overridden_field_counts() == (0, 1)

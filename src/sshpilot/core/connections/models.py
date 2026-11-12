@@ -66,8 +66,9 @@ class ConnectionRecord:
     identity_file_evidence_status: str = "unavailable"
     identity_file_evidence_reason: str = "not_provided"
     # Lowercased directive names the Host block itself authored. Empty for
-    # records that did not come from an SSH config file. The launch path emits
-    # argv only for these; everything else stays resolved by OpenSSH.
+    # records that did not come from an SSH config file. The editor uses it
+    # to tell a value set here from an inherited one; a launch repeats none
+    # of them on the command line (OpenSSH resolves the file).
     authored_directives: frozenset = frozenset()
 
     def normalized_nickname(self) -> str:

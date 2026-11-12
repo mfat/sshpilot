@@ -589,14 +589,14 @@ def test_app_config_batch_mode_skipped_for_combined_auth_pty_password():
 def test_keepalive_and_timeout_only_via_ssh_overrides():
     # Native mode does not derive ConnectTimeout from the app config key; it
     # must be passed verbatim via ssh_overrides. The removed keepalive override
-    # key is ignored: only the app keepalive (15/3 by default) is sent.
+    # key is ignored, and the app keepalive is a fallback that needs to know
+    # the host's configuration sets none (this connection cannot say).
     cfg = _ConfigStub({'keepalive_interval': 33, 'connection_timeout': 12})
     cmd, _ = _build(
         {'host': 'ka.example', 'hostname': 'ka.example'},
         config=cfg,
     )
-    assert not _has_o_option(cmd, 'ServerAliveInterval=33')
-    assert _has_o_option(cmd, 'ServerAliveInterval=15')
+    assert not _has_o_option(cmd, 'ServerAliveInterval')
     assert not _has_o_option(cmd, 'ConnectTimeout')
 
 
@@ -832,16 +832,18 @@ def test_copy_id_takes_the_whole_settings_page_minus_what_it_cannot_use():
         'host': 'demo', 'hostname': 'demo', 'username': 'alice',
         '__authored_directives': ('hostname', 'user'),
     })
+    # The resolved configuration sets no keepalive, so the app's applies.
     command = _build_base_ssh_command(
-        connection, {}, app_config, 'ssh-copy-id'
+        connection, {'serveraliveinterval': '0'}, app_config, 'ssh-copy-id'
     )
 
     assert _has_o_option(command, 'AddressFamily=inet')
     assert _has_o_option(command, 'Ciphers=aes128-ctr')
     assert _has_o_option(command, 'ServerAliveInterval=15')
-    # Overrides come before the connection's own options.
-    assert command.index('Ciphers=aes128-ctr') < command.index('User=alice')
+    # The Host block's own values stay in the file.
+    assert not _has_o_option(command, 'User=alice')
     # Not usable by ssh-copy-id, or fatal to an interactive key install.
     assert '-v' not in command
-    for unwanted in ('RemoteCommand', 'BatchMode', 'ControlMaster', 'ControlPersist'):
+    assert not _has_o_option(command, 'RemoteCommand=uptime')
+    for unwanted in ('BatchMode', 'ControlMaster', 'ControlPersist'):
         assert not _has_o_option(command, unwanted), command

@@ -3245,6 +3245,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._load_inherited_values_async()
         except Exception:
             logger.debug("Could not start inherited-value lookup", exc_info=True)
+        # The saved file may have a different block order now.
+        try:
+            self._load_earlier_directives_async()
+        except Exception:
+            logger.debug("Could not start earlier-directive lookup", exc_info=True)
 
 
     def _refresh_save_sensitivity(self):

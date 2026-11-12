@@ -477,6 +477,7 @@ def _production_core_services():
         app_config=overrides_service,
         headless_settings=settings,
         identity_env=identity_state_service.agent_environment,
+        config_root=lambda: repository.root_config_path,
     )
     # List views describe a non-SSH connection's target through its
     # protocol backend; core cannot import plugins, so it is handed this.

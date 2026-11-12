@@ -1,4 +1,8 @@
-"""What Settings ▸ SSH Options override, shown in the connection editor.
+"""What overrides a connection's own settings, shown in the connection editor.
+
+Two things can decide an option before the connection's own Host block does.
+
+**Settings ▸ SSH Options.**
 
 Everything on that Settings page is sent ahead of a connection's own options,
 and OpenSSH keeps the first value it obtains. A field in this dialog can
@@ -11,6 +15,16 @@ The daemon is the only source of *what* is forced
 (``GlobalSshOverrides.forced_options``): it alone knows the legacy-algorithm
 and multiplexing options, and it composes the list the way a launch does.
 This mixin only presents it.
+
+**An earlier block of the SSH configuration.** OpenSSH keeps the first value
+it obtains, so a ``Host *`` or ``Match`` block placed before the host's own
+block decides every option it sets. The app launches exactly ``ssh <alias>``
+and does not repeat the Host block on the command line, so that is also what
+a session uses. The daemon reports those lines
+(``EffectiveConfigComparison.earlier``); a field that sets something else is
+marked with the value that is used and where it comes from. The value stays
+editable and is saved: the file is the user's, and the app never moves
+blocks around in it.
 """
 
 from __future__ import annotations
@@ -152,6 +166,60 @@ def override_state(
     ).format(keyword=forced_keyword, value=value)
 
 
+def earlier_map(comparison) -> Dict[str, object]:
+    """``EffectiveConfigComparison.earlier`` as lower-case keyword → entry."""
+    found: Dict[str, object] = {}
+    for entry in getattr(comparison, "earlier", ()) or ():
+        key = str(getattr(entry, "key", "") or "").lower()
+        if key:
+            found.setdefault(key, entry)
+    return found
+
+
+def _display_path(path: str) -> str:
+    import os
+
+    home = os.path.expanduser("~")
+    if home and (path == home or path.startswith(home + os.sep)):
+        return "~" + path[len(home):]
+    return path
+
+
+def earlier_note(keyword: str, own: Optional[str], earlier: Dict[str, object]) -> Optional[str]:
+    """The note for a field an earlier block of the configuration beats.
+
+    None when no earlier block sets *keyword*, when the field sets nothing
+    (*own* empty: the earlier value is simply the inherited one), or when
+    both hold the same value.
+    """
+    entry = earlier.get(keyword.strip().lower())
+    if entry is None or own is None or not str(own).strip():
+        return None
+    value = str(getattr(entry, "value", "") or "")
+    if _normalized(keyword, own) == _normalized(keyword, value):
+        return None
+    block = str(getattr(entry, "block", "") or "").strip()
+    if block:
+        template = _(
+            "Not used: “{block}” in {file} (line {line}) already sets "
+            "{keyword} to “{value}”, and OpenSSH keeps the first value it "
+            "finds. The value here is saved, but connections use “{value}”."
+        )
+    else:
+        template = _(
+            "Not used: line {line} of {file}, above every Host block, already "
+            "sets {keyword} to “{value}”, and OpenSSH keeps the first value "
+            "it finds. The value here is saved, but connections use “{value}”."
+        )
+    return template.format(
+        block=block,
+        file=_display_path(str(getattr(entry, "file", "") or "")),
+        line=int(getattr(entry, "line", 0) or 0),
+        keyword=keyword,
+        value=value,
+    )
+
+
 def _global_note(keyword: str, value: str) -> str:
     return _(
         "Settings ▸ SSH Options set {keyword} to “{value}” for every "
@@ -195,8 +263,10 @@ class ConnectionDialogOverridesMixin:
         and one answer holds for its lifetime.
         """
         self._forced_options = {}
+        self._earlier_directives = {}
         self._override_fetch_serial = 0
         self._load_forced_options_async()
+        self._load_earlier_directives_async()
 
     def _load_forced_options_async(self) -> None:
         parent = getattr(self, "parent_window", None)
@@ -229,25 +299,75 @@ class ConnectionDialogOverridesMixin:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _load_earlier_directives_async(self) -> None:
+        """Ask which options an earlier block decides for the edited host.
+
+        Only a saved SSH host has a block with something before it. A new
+        connection is not in the file yet, so there is nothing to ask about.
+        """
+        parent = getattr(self, "parent_window", None)
+        client = getattr(parent, "client", None)
+        connection = getattr(self, "connection", None)
+        if connection is None or not getattr(self, "is_editing", False):
+            return
+        if not (
+            callable(getattr(parent, "_daemon_ready", None))
+            and parent._daemon_ready()
+            and callable(getattr(client, "get_effective_config", None))
+        ):
+            return
+        self._earlier_fetch_serial = serial = (
+            getattr(self, "_earlier_fetch_serial", 0) + 1
+        )
+
+        def apply(earlier):
+            if earlier is None or serial != getattr(self, "_earlier_fetch_serial", 0):
+                return False
+            self._set_earlier_directives(earlier)
+            return False
+
+        def worker():
+            earlier = None
+            try:
+                from .api.connection_identity import connection_id_for
+
+                result = client.get_effective_config(connection_id_for(connection))
+                if getattr(result, "available", False):
+                    earlier = earlier_map(result)
+            except Exception:
+                logger.debug("Earlier SSH directives unavailable", exc_info=True)
+            GLib.idle_add(apply, earlier)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     # -- presenting -------------------------------------------------------
 
     def _set_forced_options(self, forced: Dict[str, str]) -> None:
         self._forced_options = dict(forced or {})
         self._apply_override_notes()
 
+    def _set_earlier_directives(self, earlier: Dict[str, object]) -> None:
+        self._earlier_directives = dict(earlier or {})
+        self._apply_override_notes()
+
     def _apply_override_notes(self, *_args) -> None:
         """Bring every marker, the Advanced tab and the banner up to date."""
         forced = getattr(self, "_forced_options", None) or {}
-        if forced:
+        earlier = getattr(self, "_earlier_directives", None) or {}
+        if forced or earlier:
             self._watch_rows_for_overrides()
         for row_name, keyword in OVERRIDABLE_ROWS:
             row = getattr(self, row_name, None)
             if row is None:
                 continue
             try:
-                state, note = override_state(
-                    keyword, self._override_row_value(row_name, row), forced
-                )
+                own = self._override_row_value(row_name, row)
+                state, note = override_state(keyword, own, forced)
+                if state is None:
+                    # Settings come first on the command line; only when they
+                    # leave the option alone does the file's order decide.
+                    note = earlier_note(keyword, own, earlier)
+                    state = OVERRIDDEN if note else None
                 self._mark_row_override(row_name, row, state, note)
             except Exception:
                 logger.debug("Could not mark %s as overridden", row_name, exc_info=True)
@@ -351,37 +471,53 @@ class ConnectionDialogOverridesMixin:
             )
 
     def _advanced_option_note(self, keyword: str, value: str) -> Optional[str]:
-        return advanced_option_note(
-            keyword, value, getattr(self, "_forced_options", None) or {}
+        forced = getattr(self, "_forced_options", None) or {}
+        if keyword.strip().lower() in forced:
+            return advanced_option_note(keyword, value, forced)
+        return earlier_note(
+            keyword, value, getattr(self, "_earlier_directives", None) or {}
         )
 
-    def _overridden_field_count(self) -> int:
+    def _overridden_field_counts(self) -> Tuple[int, int]:
+        """``(by Settings, by an earlier block)``: fields set here and not used."""
         forced = getattr(self, "_forced_options", None) or {}
-        if not forced:
-            return 0
+        earlier = getattr(self, "_earlier_directives", None) or {}
+        by_settings = by_earlier = 0
+        if not forced and not earlier:
+            return 0, 0
         # Only what this connection sets and loses: a field that simply
         # takes the global value is not a conflict.
-        count = sum(
-            1
-            for row_name, _keyword in OVERRIDABLE_ROWS
-            if getattr(getattr(self, row_name, None), "_sshpilot_override_state", None)
-            == OVERRIDDEN
-        )
+        for row_name, keyword in OVERRIDABLE_ROWS:
+            row = getattr(self, row_name, None)
+            if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
+                continue
+            if suppressing_option(keyword, forced) is not None:
+                by_settings += 1
+            else:
+                by_earlier += 1
         tab = getattr(self, "advanced_tab", None)
         entries = tab.get_config_entries() if tab is not None else ()
         for keyword, value in entries:
-            if keyword.strip().lower() in EXTRA_OPTIONS_ADDED_NOT_REPLACED:
-                continue
-            if advanced_option_note(keyword, value, forced):
-                count += 1
-        return count
+            lowered = keyword.strip().lower()
+            if lowered in forced:
+                if lowered in EXTRA_OPTIONS_ADDED_NOT_REPLACED:
+                    continue
+                if advanced_option_note(keyword, value, forced):
+                    by_settings += 1
+            elif earlier_note(keyword, value, earlier):
+                by_earlier += 1
+        return by_settings, by_earlier
+
+    def _overridden_field_count(self) -> int:
+        return sum(self._overridden_field_counts())
 
     def _sync_override_banner(self) -> None:
         try:
             ssh = self._selected_protocol_id() == "ssh"
         except Exception:
             ssh = True
-        show = ssh and self._overridden_field_count() > 0
+        by_settings, by_earlier = self._overridden_field_counts() if ssh else (0, 0)
+        show = by_settings + by_earlier > 0
         banner = getattr(self, "_override_banner", None)
         if banner is None:
             if not show:
@@ -391,12 +527,6 @@ class ConnectionDialogOverridesMixin:
                 banner.set_use_markup(False)
             except Exception:
                 pass
-            # No button: this dialog is modal, so a Settings window opened
-            # from it could not be used until the dialog is closed.
-            banner.set_title(
-                _("Settings ▸ SSH Options override some settings of this "
-                  "connection. They are marked below.")
-            )
             # Solid error colours (style.css): a muted grey banner was easy to
             # miss above the form.
             banner.add_css_class("error")
@@ -405,4 +535,24 @@ class ConnectionDialogOverridesMixin:
                 self.content_mount.prepend(banner)
             except Exception:
                 logger.debug("Could not mount the override banner", exc_info=True)
+        if show:
+            # No button: this dialog is modal, so a Settings window opened
+            # from it could not be used until the dialog is closed.
+            if by_settings and by_earlier:
+                title = _(
+                    "Settings ▸ SSH Options and an earlier block of your SSH "
+                    "configuration override some settings of this "
+                    "connection. They are marked below."
+                )
+            elif by_earlier:
+                title = _(
+                    "An earlier block of your SSH configuration overrides "
+                    "some settings of this connection. They are marked below."
+                )
+            else:
+                title = _(
+                    "Settings ▸ SSH Options override some settings of this "
+                    "connection. They are marked below."
+                )
+            banner.set_title(title)
         banner.set_revealed(show)

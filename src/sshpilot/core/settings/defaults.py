@@ -178,8 +178,10 @@ def get_default_config() -> Dict[str, Any]:
             'legacy_algorithms': False,
             # Keepalive sent with every connection so a dead link is detected
             # (~interval*count seconds) instead of the indicator staying green
-            # forever. The switch and both numbers are edited in Preferences;
-            # a host's own ServerAliveInterval wins.
+            # forever. The switch and both numbers are edited in Preferences.
+            # It is a fallback: a ServerAliveInterval anywhere in the SSH
+            # configuration (the host's block, `Host *`, an included file)
+            # wins, and then nothing is sent.
             'apply_default_keepalive': True,
             'default_keepalive_interval': 15,
             'default_keepalive_count': 3,

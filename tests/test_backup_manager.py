@@ -1214,13 +1214,13 @@ def test_merge_fragment_dedups_drops_globals_keeps_unindented(monkeypatch, tmp_p
     assert mgr.last_merge_dropped_globals >= 2                       # Host* + Match
     assert any("brand-new" in " ".join(p) for p in mgr.last_merge_collisions)
     # main gained exactly one Include for the fragment
-    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    assert _fragment_includes(main.read_text()) == 1
 
     # Idempotent: re-importing the same hosts adds nothing (fragment is Include-resolved now).
     before = fragment.read_text()
     mgr._merge_ssh_config_fragment(str(main), [imported])
     assert fragment.read_text() == before
-    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    assert _fragment_includes(main.read_text()) == 1
 
 
 def test_merge_no_double_include_when_glob_already_covers(monkeypatch, tmp_path):
@@ -1237,6 +1237,18 @@ def test_merge_no_double_include_when_glob_already_covers(monkeypatch, tmp_path)
     assert "sshpilot-imported.conf" not in main.read_text()
 
 
+def _fragment_includes(text: str) -> int:
+    """Include lines for the import fragment. The path is absolute under a
+    root outside ~/.ssh (these tests), where OpenSSH would look for a relative
+    one in ~/.ssh and miss the file."""
+    return sum(
+        1
+        for line in text.splitlines()
+        if line.strip().startswith("Include ")
+        and line.strip().endswith(bm._IMPORT_FRAGMENT_NAME)
+    )
+
+
 def test_merge_writes_unconditional_guarded_include(monkeypatch, tmp_path):
     """A trailing Host block must not swallow the fragment Include: OpenSSH reads an
     Include inside a Host/Match block as conditional inclusion, so the fragment's hosts
@@ -1251,8 +1263,8 @@ def test_merge_writes_unconditional_guarded_include(monkeypatch, tmp_path):
     mgr._merge_ssh_config_fragment(str(main), ["Host newone\n    HostName n.example\n"])
 
     text = main.read_text()
-    assert text.count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
-    assert "Match all\n    Include " + bm._IMPORT_FRAGMENT_NAME in text
+    assert _fragment_includes(text) == 1
+    assert "Match all\n    Include " in text
     # The fragment Include must not sit directly inside the trailing Host block.
     assert not mgr._fragment_include_is_conditional(text, bm._IMPORT_FRAGMENT_NAME)
     assert (root / bm._IMPORT_FRAGMENT_NAME).read_text() == \
@@ -1260,7 +1272,7 @@ def test_merge_writes_unconditional_guarded_include(monkeypatch, tmp_path):
 
     # Idempotent: re-importing keeps a single guarded Include.
     mgr._merge_ssh_config_fragment(str(main), ["Host newone\n    HostName n.example\n"])
-    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    assert _fragment_includes(main.read_text()) == 1
 
 
 def test_ensure_include_repairs_conditional_fragment_include(monkeypatch, tmp_path):
@@ -1283,8 +1295,8 @@ def test_ensure_include_repairs_conditional_fragment_include(monkeypatch, tmp_pa
     mgr._ensure_include(str(main), str(fragment))
 
     text = main.read_text()
-    assert text.count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
-    assert "Match all\n    Include " + bm._IMPORT_FRAGMENT_NAME in text
+    assert _fragment_includes(text) == 1
+    assert "Match all\n    Include " in text
     assert not mgr._fragment_include_is_conditional(text, bm._IMPORT_FRAGMENT_NAME)
 
 
@@ -1794,3 +1806,24 @@ def test_import_version_bounds(monkeypatch, tmp_path):
     assert mgr._validate_import_data({"version": 0, "app_config": {}})[0] is False
     assert mgr._validate_import_data({"version": "x", "app_config": {}}) == (
         False, "Unsupported backup version: x")
+
+
+def test_fragment_include_is_relative_only_in_the_users_own_config(tmp_path, monkeypatch):
+    """Relative in ~/.ssh/config, where OpenSSH resolves it; absolute under
+    any other root, where `ssh -F <root>` would look in ~/.ssh instead."""
+    from sshpilot.platform import paths
+
+    manager = bm.BackupManager(None, FakeConnMgr([], "", "", isolated_mode=False))
+    for name, standard in (("dotssh", True), ("custom", False)):
+        root_dir = tmp_path / name
+        root_dir.mkdir()
+        main = root_dir / "config"
+        main.write_text("Host a\n    HostName a.example\n")
+        fragment = root_dir / bm._IMPORT_FRAGMENT_NAME
+        fragment.write_text("Host b\n")
+        monkeypatch.setattr(
+            paths, "openssh_user_dir", lambda d=(root_dir if standard else tmp_path / "x"): d
+        )
+        manager._ensure_include(str(main), str(fragment))
+        wanted = bm._IMPORT_FRAGMENT_NAME if standard else str(fragment)
+        assert f"    Include {wanted}\n" in main.read_text()

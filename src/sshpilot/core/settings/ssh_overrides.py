@@ -487,22 +487,45 @@ def forced_option(overrides: Any, keyword: str) -> Optional[str]:
     return forced_options(overrides).get(keyword.lower())
 
 
-def keepalive_override_args(ssh_cfg: Mapping[str, Any]) -> List[str]:
-    """The ``-o ServerAlive*`` pairs Settings ▸ SSH Options ▸ Keepalive sends.
+def keepalive_fallback_args(
+    ssh_cfg: Mapping[str, Any], effective: Optional[Mapping[str, Any]]
+) -> List[str]:
+    """The ``-o ServerAlive*`` pairs a launch adds when the config sets none.
 
-    Empty while the switch (``apply_default_keepalive``) is off. These are
-    overrides like the rest of that page: a launch emits them ahead of the
-    connection's own options, so they beat a ``ServerAliveInterval`` the Host
-    block authored.
+    The app's keepalive (Settings ▸ SSH Options ▸ Keepalive) is a fallback,
+    not an override: a command-line option beats every configuration file, so
+    sending it unconditionally would replace a ``ServerAliveInterval`` the
+    user wrote in ``Host *`` or in the host's own block.
+
+    *effective* is what OpenSSH resolved for the host (``ssh -G``), without
+    this fallback. Nothing is returned when
+
+    * the switch (``apply_default_keepalive``) is off,
+    * *effective* is empty (nothing is known, so nothing is imposed), or
+    * it resolves a ``ServerAliveInterval`` other than 0, OpenSSH's "unset".
+
+    ``ServerAliveCountMax`` is added only while the resolved one is OpenSSH's
+    default (3), so a count the user configured is kept.
     """
     if not bool(ssh_cfg.get("apply_default_keepalive", True)):
+        return []
+    if not effective:
+        return []
+
+    def _resolved(keyword: str) -> str:
+        value = effective.get(keyword)
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else ""
+        return str(value or "").strip()
+
+    if _resolved("serveraliveinterval") not in ("", "0"):
         return []
     interval = int(ssh_cfg.get("default_keepalive_interval", 15) or 15)
     count = int(ssh_cfg.get("default_keepalive_count", 3) or 3)
     args: List[str] = []
     if interval > 0:
         args.extend(["-o", f"ServerAliveInterval={interval}"])
-        if count > 0:
+        if count > 0 and _resolved("serveralivecountmax") in ("", "3"):
             args.extend(["-o", f"ServerAliveCountMax={count}"])
     return args
 

@@ -151,7 +151,10 @@ def test_keepalive_is_one_switch_with_its_numbers_folded_in(gui):
         prefs.keepalive_interval_row.set_value(40)
         prefs.keepalive_count_row.set_value(5)
         prefs._sync_keepalive_subtitle()
-        assert row.get_subtitle() == "ServerAliveInterval 40, ServerAliveCountMax 5"
+        assert row.get_subtitle() == (
+            "ServerAliveInterval 40, ServerAliveCountMax 5. "
+            "Used for hosts whose SSH configuration sets no keepalive."
+        )
     finally:
         prefs._suppress_advanced_ssh_autosave = False
 

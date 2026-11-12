@@ -1061,16 +1061,14 @@ def test_keepalive_numbers_are_saved_and_reach_the_command(tmp_path, monkeypatch
     assert on_disk["ssh"]["default_keepalive_interval"] == 40
     assert on_disk["ssh"]["default_keepalive_count"] == 5
     assert prefs.apply_default_keepalive_row.subtitle == (
-        "ServerAliveInterval 40, ServerAliveCountMax 5"
+        "ServerAliveInterval 40, ServerAliveCountMax 5. "
+        "Used for hosts whose SSH configuration sets no keepalive."
     )
 
-    from sshpilot.ssh_connection_builder import _maybe_append_default_keepalive
-
-    cmd = []
-    _maybe_append_default_keepalive(cmd, service.get_ssh_config())
-    assert cmd == [
+    # They reach the command of a host whose configuration sets no keepalive.
+    assert service.keepalive_fallback_args({"serveraliveinterval": "0"}) == (
         "-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=5",
-    ]
+    )
 
 
 def test_reset_restores_the_keepalive_numbers(tmp_path, monkeypatch):

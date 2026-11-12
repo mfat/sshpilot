@@ -50,6 +50,7 @@ from ..api.models.connections import (
     ConnectionId,
     ConnectionMutationResult,
     ConnectionSummary,
+    EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -1034,7 +1035,13 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         from ..ssh_config_formatter import format_ssh_config_entry
-        from .ssh_config_effective import collect_host_block_lines, diff_effective_config
+        from .ssh_config_effective import (
+            collect_host_block_lines,
+            diff_effective_config,
+            earlier_directives,
+            get_effective_ssh_config,
+            launch_config_file,
+        )
 
         before_generation = self._repository.snapshot().generation
         if transient:
@@ -1042,11 +1049,15 @@ class ConnectionApplicationService:
             # never apply to the session and must not apply here either.
             host = record.host
             root = str(record.source)
-            include_system_defaults = False
+            launch_file: Optional[str] = root
         else:
             host = record.nickname
             root = str(self._repository.root_config_path)
-            include_system_defaults = not self._repository.ssh_config_isolated
+            # The file the launch names with -F (none for ~/.ssh/config, when
+            # OpenSSH also reads the system-wide configuration).
+            launch_file = launch_config_file(root, record.source or None)
+        include_system_defaults = launch_file is None
+        compare_file = launch_file or root
         logger.debug(
             "Effective-config resolve start: id=%s host=%s mode=%s root=%s "
             "root_file=%s generation=%s",
@@ -1068,17 +1079,33 @@ class ConnectionApplicationService:
             len(own_lines),
             not bool(own_lines),
         )
+        earlier: Tuple[EarlierDirective, ...] = ()
         try:
+            # What a launch sends: Settings ▸ SSH Options, then the app's
+            # keepalive when the configuration itself sets none.
+            forced = self._forced_ssh_option_args()
+            resolved = get_effective_ssh_config(
+                host, config_file=launch_file, overrides=forced
+            )
+            overrides = forced + self._keepalive_fallback_args(resolved)
             result = diff_effective_config(
                 host,
-                root,
+                compare_file,
                 own_block,
                 include_system_defaults_in_display=include_system_defaults,
-                overrides=(
-                    self._forced_ssh_option_args()
-                    + self._authored_launch_option_args(record)
-                ),
+                overrides=overrides,
             )
+            if not transient:
+                earlier = tuple(
+                    EarlierDirective(
+                        key=str(item["key"]),
+                        value=str(item["value"]),
+                        block=str(item["block"]),
+                        file=str(item["file"]),
+                        line=int(item["line"]),
+                    )
+                    for item in earlier_directives(host, compare_file, resolved)
+                )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
                 "changes=%d own=%d full=%d",
@@ -1120,6 +1147,7 @@ class ConnectionApplicationService:
             own=tuple(result.get("own") or ()),
             full=tuple(result.get("full") or ()),
             generation=max(0, int(after_generation)),
+            earlier=earlier,
         )
 
     def check_unsaved_host(
@@ -1213,9 +1241,11 @@ class ConnectionApplicationService:
         return request.port is None or request.port == record.port
 
     def _active_config_file(self) -> Optional[str]:
+        """The ``-F`` file a saved host's launch uses; ``None`` for no ``-F``."""
+        from .ssh_config_effective import launch_config_file
+
         root = getattr(self._repository, "root_config_path", None)
-        isolated = bool(getattr(self._repository, "ssh_config_isolated", False))
-        return str(root) if root is not None and isolated else None
+        return launch_config_file(root) if root is not None else None
 
     def _global_ssh_options(self) -> Tuple[str, ...]:
         """The composed Settings ▸ SSH Options fragment, or nothing.
@@ -1233,6 +1263,18 @@ class ConnectionApplicationService:
             logger.debug("Could not read global SSH options", exc_info=True)
             return ()
 
+    def _keepalive_fallback_args(self, effective) -> Tuple[str, ...]:
+        """The keepalive pair a launch adds for a host that configures none."""
+        service = self._ssh_overrides_service
+        compose = getattr(service, "keepalive_fallback_args", None)
+        if not callable(compose):
+            return ()
+        try:
+            return tuple(compose(effective))
+        except Exception:
+            logger.debug("Could not read the keepalive fallback", exc_info=True)
+            return ()
+
     def _forced_ssh_option_args(self) -> Tuple[str, ...]:
         """Everything a launch sends ahead of a connection's own options.
 
@@ -1246,23 +1288,6 @@ class ConnectionApplicationService:
             return tuple(service.forced_option_args())
         except Exception:
             logger.debug("Could not read forced SSH options", exc_info=True)
-            return ()
-
-    def _authored_launch_option_args(self, record) -> Tuple[str, ...]:
-        """What a launch adds for the connection's own Host block.
-
-        The launch re-emits authored directives as command-line options after
-        the forced ones, so an earlier ``Host *`` cannot beat them. Resolving
-        without them would report the ``Host *`` value the session never uses.
-        """
-        provider = self._launch_provider
-        compose = getattr(provider, "authored_option_args", None)
-        if not callable(compose):
-            return ()
-        try:
-            return tuple(str(entry) for entry in compose(record) if entry)
-        except Exception:
-            logger.debug("Could not read authored launch options", exc_info=True)
             return ()
 
     def _destination_identity(

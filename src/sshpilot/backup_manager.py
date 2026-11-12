@@ -1892,7 +1892,17 @@ class BackupManager:
             and not self._fragment_include_is_conditional(existing, fragment_name)
         ):
             return
-        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path)).replace("\\", "/")
+        # OpenSSH looks for a relative Include in ~/.ssh, wherever the file
+        # holding it lives. Under any other root (Isolated Mode, a custom SSH
+        # folder) a relative path would point `ssh -F <root>` at nothing.
+        from .platform.paths import is_openssh_user_config
+
+        if is_openssh_user_config(main_path):
+            rel = os.path.relpath(frag_abs, _ssh_config_root(main_path)).replace("\\", "/")
+        else:
+            rel = frag_abs.replace("\\", "/")
+            if " " in rel:
+                rel = '"' + rel + '"'
         self._atomic_write_text(
             main_path,
             self._normalize_fragment_include(existing, fragment_name, rel),

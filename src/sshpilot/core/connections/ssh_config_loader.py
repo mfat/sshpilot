@@ -33,9 +33,10 @@ from ...ssh_config_document import (
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
+    include_patterns,
     split_config_lines,
-    split_include_args,
 )
+from ...platform.paths import include_base_dir
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord
@@ -168,20 +169,16 @@ def _resolve_config_files(
         visited.add(abs_path)
         resolved.append(abs_path)
         stack.append(abs_path)
-        base_dir = abs_path.parent
+        base_dir = include_base_dir(root_path, abs_path)
         for raw_line in lines:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            lowered = line.lower()
-            if not lowered.startswith("include "):
-                continue
             try:
-                patterns = split_include_args(line[len("include "):])
+                patterns = include_patterns(raw_line)
             except ValueError:
                 raise _config_error(
                     "SSH configuration contains an invalid Include header"
                 ) from None
+            if patterns is None:
+                continue
             for pattern in patterns:
                 expanded = os.path.expanduser(os.path.expandvars(
                     _expand_ssh_tokens(pattern)

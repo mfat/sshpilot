@@ -129,7 +129,7 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- pure normaliser for the tri-state Compression value ------------
         ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),
         ("ssh_connection_builder.py", "settings.ssh_overrides", "select_override_args"),
-        ("ssh_connection_builder.py", "settings.ssh_overrides", "keepalive_override_args"),
+        ("ssh_connection_builder.py", "settings.ssh_overrides", "keepalive_fallback_args"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --
         ("config.py", "settings", "SettingsFileError"),
         ("config.py", "settings", "upgrade_settings"),

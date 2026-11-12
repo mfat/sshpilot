@@ -497,8 +497,9 @@ def test_persisted_mutation_composes_controlmaster_when_enabled(tmp_path):
 
 
 def test_snapshot_reports_everything_a_launch_forces(tmp_path):
-    """The dedicated controls, the free-form options, the legacy-algorithm
-    extras and the keepalive pair, in the order a launch sends them."""
+    """The dedicated controls, the free-form options and the legacy-algorithm
+    extras, in the order a launch sends them. The keepalive is not forced: it
+    is a fallback for hosts whose configuration sets none."""
     path = _write(
         tmp_path / "config.json",
         {"ssh": {
@@ -520,24 +521,35 @@ def test_snapshot_reports_everything_a_launch_forces(tmp_path):
         "LogLevel=VERBOSE",
         "KexAlgorithms=+diffie-hellman-group1-sha1",
         "User=root",
-        "ServerAliveInterval=40",
-        "ServerAliveCountMax=3",
     )
     assert service.forced_option_args()[:2] == ("-o", "ConnectTimeout=20")
     assert "-v" not in service.forced_option_args()
+    assert service.keepalive_fallback_args({"serveraliveinterval": "0"}) == (
+        "-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=3",
+    )
+    assert service.keepalive_fallback_args({"serveraliveinterval": "60"}) == ()
 
 
-def test_keepalive_switch_off_forces_no_keepalive(tmp_path):
+def test_keepalive_switch_off_adds_no_fallback(tmp_path):
     path = _write(
         tmp_path / "config.json", {"ssh": {"apply_default_keepalive": False}}
     )
-    assert _service(path).get().forced_options == ()
+    service = _service(path)
+    assert service.get().forced_options == ()
+    assert service.keepalive_fallback_args({"serveraliveinterval": "0"}) == ()
 
 
 def test_forced_options_do_not_move_the_revision(tmp_path):
-    on = _service(_write(tmp_path / "a.json", {"ssh": {}})).get()
-    off = _service(
-        _write(tmp_path / "b.json", {"ssh": {"apply_default_keepalive": False}})
+    plain = _service(_write(tmp_path / "a.json", {"ssh": {}})).get()
+    legacy = SshOverridesService(
+        _write(tmp_path / "b.json", {"ssh": {"legacy_algorithms": True}}),
+        legacy_extra=("-o", "KexAlgorithms=+diffie-hellman-group1-sha1"),
     ).get()
-    assert on.forced_options != off.forced_options
-    assert on.revision == off.revision
+    bare = _service(
+        _write(tmp_path / "c.json", {"ssh": {"legacy_algorithms": True}})
+    ).get()
+    # Same settings, different installed OpenSSH: the list differs, the
+    # revision (settings only) does not.
+    assert legacy.forced_options != bare.forced_options
+    assert legacy.revision == bare.revision
+    assert plain.forced_options == ()

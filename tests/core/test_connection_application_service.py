@@ -9,6 +9,7 @@ a minimal in-memory ``ConnectionRepositoryProtocol`` fake. No filesystem, no
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -691,8 +692,16 @@ def test_effective_config_uses_daemon_root_in_default_mode(
     assert result.has_diff is False
     assert calls["collect"] == ("GoogleRouter", str(root))
     assert calls["diff"][0:2] == ("GoogleRouter", str(root))
-    # Default (non-isolated) mode: real launches run ssh without -F, so the
-    # displayed full side must still include /etc/ssh/ssh_config (#1138).
+    # A root that is not ~/.ssh/config is launched with -F, which makes
+    # OpenSSH skip /etc/ssh/ssh_config; the display must not add it back.
+    assert calls["diff_display_flag"] is False
+
+    # The user's own ~/.ssh/config is launched without -F, so OpenSSH also
+    # reads /etc/ssh/ssh_config and the displayed side includes it (#1138).
+    monkeypatch.setattr(
+        ssh_config_effective, "is_openssh_user_config", lambda path: True
+    )
+    service.get_effective_config(ConnectionId("google-router"))
     assert calls["diff_display_flag"] is True
 
 
@@ -1076,12 +1085,12 @@ def test_forced_destination_applies_only_what_it_can_resolve():
     ) == ("web", "alice", 22)
 
 
-def test_effective_config_resolves_with_forced_then_authored_options(
+def test_effective_config_resolves_with_what_a_launch_sends(
     monkeypatch, tmp_path
 ):
-    """The order a launch uses: Settings ▸ SSH Options first, then what the
-    launch re-emits from the connection's own block. OpenSSH keeps the first
-    value, so a forced option still beats an authored one."""
+    """Settings ▸ SSH Options, then the keepalive fallback for a host whose
+    configuration sets none. Nothing from the Host block is added: the launch
+    leaves the block to OpenSSH, and so must the resolved configuration."""
     from sshpilot.core import ssh_config_effective
 
     root = tmp_path / "config"
@@ -1094,10 +1103,9 @@ def test_effective_config_resolves_with_forced_then_authored_options(
         def forced_option_args(self):
             return ("-o", "User=forced")
 
-    class Launch:
-        def authored_option_args(self, record):
-            assert record.nickname == "web"
-            return ("-o", "User=alice")
+        def keepalive_fallback_args(self, effective):
+            seen["resolved_for_keepalive"] = dict(effective)
+            return ("-o", "ServerAliveInterval=15")
 
     seen = {}
 
@@ -1106,14 +1114,49 @@ def test_effective_config_resolves_with_forced_then_authored_options(
         seen["overrides"] = overrides
         return {"has_diff": False, "changes": [], "own": [], "full": []}
 
+    def fake_resolve(host, config_file=None, *, overrides=None, **_kwargs):
+        seen["resolve"] = (host, config_file, overrides)
+        return {"user": "forced", "serveraliveinterval": "0"}
+
     monkeypatch.setattr(ssh_config_effective, "diff_effective_config", fake_diff)
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_resolve)
     monkeypatch.setattr(
         ssh_config_effective, "collect_host_block_lines", lambda h, c: ["Host web"]
     )
-    service = ConnectionApplicationService(
-        repo, launch_provider=Launch(), ssh_overrides=Overrides()
-    )
+    service = ConnectionApplicationService(repo, ssh_overrides=Overrides())
 
     service.get_effective_config(ConnectionId("web"))
 
-    assert seen["overrides"] == ("-o", "User=forced", "-o", "User=alice")
+    assert seen["resolve"] == ("web", str(root), ("-o", "User=forced"))
+    assert seen["resolved_for_keepalive"]["serveraliveinterval"] == "0"
+    assert seen["overrides"] == (
+        "-o", "User=forced", "-o", "ServerAliveInterval=15",
+    )
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_effective_config_reports_what_an_earlier_block_decides(tmp_path):
+    """`Host *` before the host's own block wins in OpenSSH. The comparison
+    says so, and names the line, so the editor can mark the losing field."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User deploy\n    Port 2222\n\n"
+        "Host web\n    HostName web.example.com\n    User admin\n",
+        encoding="utf-8",
+    )
+    record = _record(record_id="web", nickname="web", host="web", source=str(root))
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    result = service.get_effective_config(ConnectionId("web"))
+
+    assert result.available is True
+    assert "user deploy" in result.full
+    earlier = {item.key: item for item in result.earlier}
+    assert set(earlier) == {"user", "port"}
+    assert earlier["user"].value == "deploy"
+    assert earlier["user"].block == "Host *"
+    assert earlier["user"].file == str(root)
+    assert earlier["user"].line == 2

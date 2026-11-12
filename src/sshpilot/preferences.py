@@ -2953,9 +2953,9 @@ class PreferencesWindow(Adw.Window):
 
         # Keepalive: one switch with its two numbers folded underneath. When
         # on (default), SSH Pilot sends ServerAlive options so dropped links
-        # are detected. Like the overrides they are emitted ahead of the
-        # connection's own options, so they beat a `Host *` value in
-        # ~/.ssh/config and an interval authored in the host's own block.
+        # are detected. Unlike the overrides around it this is a fallback: it
+        # is sent only for a host whose SSH configuration (its own block, a
+        # `Host *` block, an included file) sets no ServerAliveInterval.
         from .optional_rows import SwitchExpanderRow
 
         self.apply_default_keepalive_row = SwitchExpanderRow(title=_("Keepalive"))
@@ -6006,10 +6006,11 @@ class PreferencesWindow(Adw.Window):
 
     def _sync_keepalive_subtitle(self):
         """Show the values the keepalive switch sends on its collapsed row."""
-        # Directive names are not translated, so the template is the same
-        # sentence in every language.
         self.apply_default_keepalive_row.set_subtitle(
-            _("ServerAliveInterval {interval}, ServerAliveCountMax {count}").format(
+            _(
+                "ServerAliveInterval {interval}, ServerAliveCountMax {count}. "
+                "Used for hosts whose SSH configuration sets no keepalive."
+            ).format(
                 interval=int(self.keepalive_interval_row.get_value()),
                 count=int(self.keepalive_count_row.get_value()),
             )

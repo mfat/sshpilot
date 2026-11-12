@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.97",
+  "api_implementation_version": "0.98",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3614,6 +3614,7 @@
     "DetachedConnectionInfo",
     "EDITABLE_CONFIG_FIELDS",
     "EDITABLE_FIELDS",
+    "EarlierDirective",
     "EffectiveConfigComparison",
     "ExecutionInteractionMode",
     "ExternalTerminalLaunchSpec",
@@ -4298,6 +4299,13 @@
       "profile_name",
       "reason"
     ],
+    "EarlierDirective": [
+      "key",
+      "value",
+      "block",
+      "file",
+      "line"
+    ],
     "EffectiveConfigComparison": [
       "connection_id",
       "host",
@@ -4306,7 +4314,8 @@
       "changes",
       "own",
       "full",
-      "generation"
+      "generation",
+      "earlier"
     ],
     "ErrorData": [
       "code",

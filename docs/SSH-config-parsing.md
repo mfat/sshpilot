@@ -150,7 +150,44 @@ Parse the Output: The command produces a simple, definitive key value list of th
 connection. The custom parser is for discovery, display, and safe editing; it
 does not attempt to reproduce every OpenSSH evaluation rule.
 
-## 5. Reloading and Persistence
+## 5. Launching: the same as `ssh <alias>`
+
+The SSH configuration is the source of truth. With nothing set in Settings ▸
+SSH Options, opening a saved host resolves to the same configuration as
+typing `ssh <alias>` in a terminal. `tests/daemon/test_openssh_parity.py`
+pins this by comparing `ssh -G` of the launched command with `ssh -G` of the
+plain one.
+
+- **Nothing from the Host block is repeated on the command line.** A
+  command-line option beats every configuration file, so repeating the
+  block's `User` or `Port` would change OpenSSH's own precedence. OpenSSH
+  keeps the *first* value it obtains: a `Host *` (or `Match`) block placed
+  before a host's own block decides every option it sets. The connection
+  editor marks a field that loses this way and names the value that is used
+  and the line it comes from (`EffectiveConfigComparison.earlier`). It never
+  reorders the file.
+- **Which file is read.** For the user's own `~/.ssh/config` the launch
+  passes no `-F`, so OpenSSH also reads `/etc/ssh/ssh_config` as it does in a
+  terminal. Any other root (`SSHPILOT_SSH_DIR`, Isolated Mode) is passed
+  whole with `-F`, which makes OpenSSH skip the system-wide file. A host
+  declared in an included file is resolved through the root too, so the
+  root's `Host *` blocks apply to it.
+- **Relative `Include` paths.** OpenSSH resolves them in `~/.ssh`, whichever
+  file holds the line, and so does the app for `~/.ssh/config`. Under any
+  other root the app resolves them next to the including file. `ssh -F
+  <root>` cannot reach such a file; a host declared there is resolved from
+  its own file alone (logged), and the root's blocks do not apply to it. Use
+  absolute `Include` paths under a custom root. The import fragment the app
+  adds is written with an absolute path there.
+- **What the app still adds.** Options set in Settings ▸ SSH Options
+  (deliberate overrides); a keepalive, only for a host whose configuration
+  resolves no `ServerAliveInterval`; in Isolated Mode its own
+  `UserKnownHostsFile`, unless the configuration names one; and what an
+  operation itself needs (a debug log to a private file for session state,
+  one password prompt and no forwards for file transfers, the sftp
+  subsystem, a forced command for Host Info).
+
+## 6. Reloading and Persistence
 
 - The root configuration file is monitored for external changes. Reloads are
   debounced and preserve existing `Connection` objects when nicknames remain

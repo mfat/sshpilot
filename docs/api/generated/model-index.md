@@ -1915,6 +1915,41 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: EarlierDirective -->
+## `EarlierDirective`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** An option OpenSSH obtains before it reaches a host's own block.
+
+OpenSSH keeps the first value it obtains, so this line decides the option
+for the host whatever the host's own block says. ``block`` is the header
+of the block that holds the line (``Host *``, ``Match all``), empty for a
+line above every block; ``file`` and ``line`` locate it.
+
+**Related methods:** `get_effective_config`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | No |
+| `block` | `str` | Yes | — | No |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "block": "example",
+  "file": "example",
+  "key": "example",
+  "line": 0,
+  "value": "example"
+}
+```
+
 <!-- api-model: EffectiveConfigComparison -->
 ## `EffectiveConfigComparison`
 
@@ -1935,6 +1970,7 @@ Synthetic representation:
 | `own` | `tuple[str, ...]` | No | `[]` | No |
 | `full` | `tuple[str, ...]` | No | `[]` | No |
 | `generation` | `int` | No | `0` | No |
+| `earlier` | `tuple[EarlierDirective, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -1943,6 +1979,7 @@ Synthetic representation:
   "available": false,
   "changes": [],
   "connection_id": "production",
+  "earlier": [],
   "full": [],
   "generation": 0,
   "has_diff": false,

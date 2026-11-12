@@ -10,13 +10,15 @@ from sshpilot import ssh_connection_builder as builder
 from sshpilot.connection_model import Connection, ConnectionState
 
 
-def _inject(app_cfg=None):
-    cmd = []
-    builder._maybe_append_default_keepalive(cmd, app_cfg or {})
-    return cmd
+#: What `ssh -G` prints for a host whose configuration sets no keepalive.
+_UNSET = {'serveraliveinterval': '0', 'serveralivecountmax': '3'}
 
 
-# --- Phase 1: default keepalive injection -----------------------------------
+def _inject(app_cfg=None, effective=_UNSET):
+    return builder._keepalive_fallback(app_cfg or {}, effective)
+
+
+# --- Phase 1: default keepalive, a fallback ----------------------------------
 
 def test_default_keepalive_injected_when_unset():
     cmd = _inject(app_cfg={
@@ -43,6 +45,22 @@ def test_default_keepalive_defaults_to_on_when_flag_absent():
     # Missing apply_default_keepalive defaults to True.
     cmd = _inject(app_cfg={'default_keepalive_interval': 20, 'default_keepalive_count': 2})
     assert cmd == ['-o', 'ServerAliveInterval=20', '-o', 'ServerAliveCountMax=2']
+
+
+def test_configured_keepalive_wins_over_the_default():
+    # A command-line option would replace what the user's SSH config says.
+    cmd = _inject(effective={'serveraliveinterval': '60', 'serveralivecountmax': '10'})
+    assert cmd == []
+
+
+def test_configured_count_is_kept_with_the_default_interval():
+    cmd = _inject(effective={'serveraliveinterval': '0', 'serveralivecountmax': '10'})
+    assert cmd == ['-o', 'ServerAliveInterval=15']
+
+
+def test_no_default_keepalive_when_the_host_could_not_be_resolved():
+    assert _inject(effective={}) == []
+    assert _inject(effective=None) == []
 
 
 # --- Phase 2: ConnectionState model + is_connected compat -------------------

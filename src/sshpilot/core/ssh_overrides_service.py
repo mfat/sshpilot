@@ -35,7 +35,7 @@ from .settings import (
     compute_ssh_overrides_revision,
     get_default_config,
     get_nested,
-    keepalive_override_args,
+    keepalive_fallback_args,
     load_settings_strict,
     normalize_ssh_overrides,
     save_settings,
@@ -216,11 +216,26 @@ class SshOverridesService:
     def forced_option_args(self) -> tuple:
         """Every ``-o`` pair a launch sends ahead of a connection's own options.
 
-        The composed Settings ▸ SSH Options fragment without its bare flags,
-        followed by the keepalive pair. Queries that have to resolve what a
-        launch will really use (``ssh -G``) pass exactly this.
+        The composed Settings ▸ SSH Options fragment without its bare flags.
+        Queries that have to resolve what a launch will really use
+        (``ssh -G``) pass exactly this. The keepalive is not part of it: it
+        is a fallback, see :meth:`keepalive_fallback_args`.
         """
         return self._forced_option_args(self._load_view())
+
+    def keepalive_fallback_args(self, effective) -> tuple:
+        """The keepalive ``-o`` pairs a launch adds for a host, or nothing.
+
+        *effective* is what OpenSSH resolved for that host without them; the
+        app's keepalive applies only when the configuration sets none.
+        """
+        try:
+            return tuple(
+                keepalive_fallback_args(self._ssh_view(self._load_view()), effective)
+            )
+        except (TypeError, ValueError):
+            logger.debug("Keepalive settings unreadable; no fallback applied")
+            return ()
 
     def _ssh_view(self, config: Dict[str, Any]) -> Dict[str, Any]:
         ssh = dict(get_default_config()["ssh"])
@@ -236,12 +251,7 @@ class SshOverridesService:
 
     def _forced_option_args(self, config: Dict[str, Any]) -> tuple:
         ssh = self._ssh_view(config)
-        args = select_override_args(ssh["ssh_overrides"], flags=False)
-        try:
-            args.extend(keepalive_override_args(ssh))
-        except (TypeError, ValueError):
-            logger.debug("Keepalive settings unreadable; not reported as forced")
-        return tuple(args)
+        return tuple(select_override_args(ssh["ssh_overrides"], flags=False))
 
     # ------------------------------------------------------------------
     # Internal helpers

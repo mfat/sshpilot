@@ -445,6 +445,33 @@ class ConnectionMutationResult:
 
 
 @dataclass(frozen=True)
+class EarlierDirective:
+    """An option OpenSSH obtains before it reaches a host's own block.
+
+    OpenSSH keeps the first value it obtains, so this line decides the option
+    for the host whatever the host's own block says. ``block`` is the header
+    of the block that holds the line (``Host *``, ``Match all``), empty for a
+    line above every block; ``file`` and ``line`` locate it.
+    """
+
+    key: str
+    value: str
+    block: str
+    file: str
+    line: int
+
+    def __post_init__(self) -> None:
+        for name in ("key", "value", "block", "file"):
+            text = getattr(self, name)
+            if type(text) is not str or "\x00" in text:
+                raise ValueError(f"earlier directive {name} is invalid")
+        if not self.key or self.key != self.key.lower():
+            raise ValueError("earlier directive key must be a lower-case keyword")
+        if type(self.line) is not int or self.line < 1:
+            raise ValueError("earlier directive line must be a positive integer")
+
+
+@dataclass(frozen=True)
 class EffectiveConfigComparison:
     """Daemon-owned authored-vs-effective OpenSSH comparison."""
 
@@ -456,9 +483,18 @@ class EffectiveConfigComparison:
     own: Tuple[str, ...] = ()
     full: Tuple[str, ...] = ()
     generation: int = 0
+    #: Options a block before the host's own block already decides, one entry
+    #: per keyword. A value the host's block gives for one of them is not
+    #: used. Accumulating options (IdentityFile, the forwards, ...) never
+    #: appear: OpenSSH collects those from every block.
+    earlier: Tuple[EarlierDirective, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
+        if type(self.earlier) is not tuple or any(
+            not isinstance(item, EarlierDirective) for item in self.earlier
+        ):
+            raise TypeError("effective config earlier directives are invalid")
         if type(self.host) is not str or "\x00" in self.host:
             raise ValueError("effective config host is invalid")
         if type(self.available) is not bool or type(self.has_diff) is not bool:
