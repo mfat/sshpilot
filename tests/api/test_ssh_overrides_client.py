@@ -63,11 +63,7 @@ def _direct_core_service(tmp_path, *, with_service=True):
 def _full_snapshot_values(snapshot):
     return {
         "connect_timeout": snapshot.connect_timeout,
-        "connection_attempts": snapshot.connection_attempts,
-        "server_alive_interval": snapshot.server_alive_interval,
-        "server_alive_count_max": snapshot.server_alive_count_max,
         "strict_host_key_checking": snapshot.strict_host_key_checking,
-        "batch_mode": snapshot.batch_mode,
         "compression": snapshot.compression,
         "verbosity": snapshot.verbosity,
         "debug_enabled": snapshot.debug_enabled,
@@ -87,12 +83,12 @@ def test_direct_core_service_updates_global_overrides(tmp_path):
     before = client.get_global_ssh_overrides()
     updated = client.update_global_ssh_overrides(
         UpdateGlobalSshOverridesRequest(
-            patch={"connect_timeout": 30, "batch_mode": "yes"},
+            patch={"connect_timeout": 30, "compression": "yes"},
             expected_revision=before.revision,
         )
     )
     assert updated.connect_timeout == 30
-    assert updated.batch_mode == "yes"
+    assert updated.compression == "yes"
     assert updated.revision != before.revision
 
     # A second read reflects the same daemon-owned state.
@@ -105,16 +101,16 @@ def test_direct_core_service_reset_restores_defaults(tmp_path):
     before = client.get_global_ssh_overrides()
     changed = client.update_global_ssh_overrides(
         UpdateGlobalSshOverridesRequest(
-            patch={"server_alive_interval": 45},
+            patch={"connect_timeout": 45},
             expected_revision=before.revision,
         )
     )
-    assert changed.server_alive_interval == 45
+    assert changed.connect_timeout == 45
     reset = client.reset_global_ssh_overrides(
         expected_revision=changed.revision
     )
-    assert reset.server_alive_interval == 0
-    assert reset.batch_mode == ""
+    assert reset.connect_timeout == 0
+    assert reset.compression == ""
 
 
 def test_direct_core_service_rejects_stale_revision(tmp_path):

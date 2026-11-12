@@ -101,10 +101,10 @@ def test_update_without_load_uses_explicit_revision():
     controller = _controller(client)
 
     updated = controller.update(
-        {"batch_mode": "yes"}, expected_revision="explicit-rev"
+        {"compression": "yes"}, expected_revision="explicit-rev"
     )
-    assert client.calls[-1] == ("update", {"batch_mode": "yes"}, "explicit-rev")
-    assert updated.batch_mode == "yes"
+    assert client.calls[-1] == ("update", {"compression": "yes"}, "explicit-rev")
+    assert updated.compression == "yes"
 
 
 def test_reset_calls_client_reset_with_loaded_revision():
@@ -176,11 +176,7 @@ class _Connection:
 
 def _service_config():
     ssh = {
-        "batch_mode": "yes",
         "connection_timeout": 12,
-        "connection_attempts": 4,
-        "keepalive_interval": 45,
-        "keepalive_count_max": 6,
         "strict_host_key_checking": "accept-new",
         "compression": "yes",
         "verbosity": 2,
@@ -215,15 +211,11 @@ def test_ssh_and_scp_argv_carry_identical_override_fragment():
     # Option boundary: every Preference token precedes the host token.
     host_i = scp_cmd.index("example")
     assert scp_cmd.index("-v") < host_i
-    assert scp_cmd.index("ServerAliveInterval=45") < host_i
+    assert scp_cmd.index("ConnectTimeout=12") < host_i
 
     joined = " ".join(ssh_cmd)
     for fragment in (
-        "BatchMode=yes",
         "ConnectTimeout=12",
-        "ConnectionAttempts=4",
-        "ServerAliveInterval=45",
-        "ServerAliveCountMax=6",
         "StrictHostKeyChecking=accept-new",
         "Compression=yes",
         "LogLevel=DEBUG2",

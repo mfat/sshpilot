@@ -49,6 +49,9 @@ class _Switch:
     def set_active(self, active):
         self._active = active
 
+    def set_subtitle(self, subtitle):
+        self.subtitle = subtitle
+
     def set_sensitive(self, sensitive):
         self._sensitive = sensitive
 
@@ -132,11 +135,9 @@ def _make_prefs(config, controller):
     prefs.apply_default_keepalive_row = _Switch(active=True)
     prefs.controlmaster_row = _Switch(active=False)
     prefs.connect_timeout_row = _Spin(value=0)
-    prefs.connection_attempts_row = _Spin(value=0)
-    prefs.keepalive_interval_row = _Spin(value=0)
-    prefs.keepalive_count_row = _Spin(value=0)
+    prefs.keepalive_interval_row = _Spin(value=15)
+    prefs.keepalive_count_row = _Spin(value=3)
     prefs.strict_host_row = _Choice(value="")
-    prefs.batch_mode_row = _Choice(value="")
     prefs.compression_row = _Choice(value="")
     prefs.verbosity_row = _Spin(value=0)
     prefs.debug_enabled_row = _Switch(active=False)
@@ -165,12 +166,12 @@ def test_config_owned_writes_cannot_clobber_daemon_overrides(
     config = _make_config(
         tmp_path,
         monkeypatch,
-        {"ssh": {"connection_timeout": 5, "batch_mode": ""}},
+        {"ssh": {"connection_timeout": 5, "compression": ""}},
     )
     service = SshOverridesService(tmp_path / "config.json")
     prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
     prefs.connect_timeout_row = _Spin(value=30)
-    prefs.batch_mode_row = _Choice(value="yes")
+    prefs.compression_row = _Choice(value="yes")
     prefs.open_file_manager_externally_row = _Switch(active=True)
     expires = _expiry_record(monkeypatch)
 
@@ -179,10 +180,10 @@ def test_config_owned_writes_cannot_clobber_daemon_overrides(
     on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     # Daemon-owned values persisted through the controller survive.
     assert on_disk["ssh"]["connection_timeout"] == 30
-    assert on_disk["ssh"]["batch_mode"] == "yes"
+    assert on_disk["ssh"]["compression"] == "yes"
     # The derived list reflects the daemon-composed state.
     assert "ConnectTimeout=30" in on_disk["ssh"]["ssh_overrides"]
-    assert "BatchMode=yes" in on_disk["ssh"]["ssh_overrides"]
+    assert "Compression=yes" in on_disk["ssh"]["ssh_overrides"]
     # Config-owned rows were persisted too.
     assert on_disk["file_manager"]["open_externally"] is True
     assert expires == [True]
@@ -266,15 +267,15 @@ def test_save_without_controller_does_not_persist_daemon_fields(
     )
     prefs = _make_prefs(config, None)
     prefs.connect_timeout_row = _Spin(value=99)
-    prefs.batch_mode_row = _Choice(value="yes")
+    prefs.compression_row = _Choice(value="yes")
     expires = _expiry_record(monkeypatch)
 
     assert prefs.save_advanced_ssh_settings() is True
 
     on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    # The nine daemon-owned fields were NOT mutated through the local config.
+    # The five daemon-owned fields were NOT mutated through the local config.
     assert on_disk["ssh"].get("connection_timeout") == 5
-    assert on_disk["ssh"].get("batch_mode") != "yes"
+    assert on_disk["ssh"].get("compression") != "yes"
     assert "ssh_overrides" not in on_disk["ssh"]
     # Config-owned rows still persist through Config.
     assert on_disk["ssh"]["apply_default_keepalive"] is True
@@ -293,11 +294,7 @@ def test_late_controller_attachment_enables_existing_ssh_override_rows(
     prefs = _make_prefs(config, None)
     rows = (
         prefs.connect_timeout_row,
-        prefs.connection_attempts_row,
-        prefs.keepalive_interval_row,
-        prefs.keepalive_count_row,
         prefs.strict_host_row,
-        prefs.batch_mode_row,
         prefs.compression_row,
         prefs.verbosity_row,
         prefs.debug_enabled_row,
@@ -334,22 +331,14 @@ def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
 
     assert values == {
         "connect_timeout": 0,
-        "connection_attempts": 0,
-        "server_alive_interval": 0,
-        "server_alive_count_max": 0,
         "strict_host_key_checking": "",
-        "batch_mode": "",
         "compression": "",
         "verbosity": 0,
         "debug_enabled": False,
     }
     rows = (
         prefs.connect_timeout_row,
-        prefs.connection_attempts_row,
-        prefs.keepalive_interval_row,
-        prefs.keepalive_count_row,
         prefs.strict_host_row,
-        prefs.batch_mode_row,
         prefs.compression_row,
         prefs.verbosity_row,
         prefs.debug_enabled_row,
@@ -493,7 +482,7 @@ def test_stale_snapshot_save_conflicts_without_manual_refresh(
     loaded = controller.load()
     prefs = _make_prefs(config, controller)
     prefs.connect_timeout_row = _Spin(value=60)
-    prefs.batch_mode_row = _Choice(value="yes")
+    prefs.compression_row = _Choice(value="yes")
     expires = _expiry_record(monkeypatch)
 
     # Another SshOverridesService changes connection_timeout to revision B
@@ -1046,3 +1035,63 @@ def test_reset_asks_first_and_does_nothing_when_cancelled(tmp_path, monkeypatch)
 
     prefs._on_reset_advanced_ssh_response(None, "reset")
     assert service.get().connect_timeout == 0
+
+
+# ---------------------------------------------------------------------------
+# Keepalive: one switch with its two numbers, all Config-owned.
+# ---------------------------------------------------------------------------
+
+
+def test_keepalive_numbers_are_saved_and_reach_the_command(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs.keepalive_interval_row = _Spin(value=40)
+    prefs.keepalive_count_row = _Spin(value=5)
+    _expiry_record(monkeypatch)
+
+    assert prefs.save_advanced_ssh_settings() is True
+
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["default_keepalive_interval"] == 40
+    assert on_disk["ssh"]["default_keepalive_count"] == 5
+    assert prefs.apply_default_keepalive_row.subtitle == (
+        "ServerAliveInterval 40, ServerAliveCountMax 5"
+    )
+
+    from sshpilot.ssh_connection_builder import _maybe_append_default_keepalive
+
+    cmd = []
+    _maybe_append_default_keepalive(cmd, [], service.get_ssh_config())
+    assert cmd == [
+        "-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=5",
+    ]
+
+
+def test_reset_restores_the_keepalive_numbers(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "ssh": {
+                "apply_default_keepalive": False,
+                "default_keepalive_interval": 40,
+                "default_keepalive_count": 5,
+            }
+        },
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs.apply_default_keepalive_row = _Switch(active=False)
+    prefs.keepalive_interval_row = _Spin(value=40)
+    prefs.keepalive_count_row = _Spin(value=5)
+    _expiry_record(monkeypatch)
+
+    assert prefs._apply_default_advanced_settings() is True
+
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["apply_default_keepalive"] is True
+    assert on_disk["ssh"]["default_keepalive_interval"] == 15
+    assert on_disk["ssh"]["default_keepalive_count"] == 3
+    assert prefs.keepalive_interval_row.get_value() == 15
+    assert prefs.keepalive_count_row.get_value() == 3

@@ -29,7 +29,7 @@ from sshpilot.core.settings import store, versioning
 USER_VALUES = {
     "terminal": {"theme": "solarized", "font": "Iosevka 13"},
     "ui": {"language": "de"},
-    "ssh": {"batch_mode": "yes"},
+    "ssh": {"compression": "yes"},
 }
 
 # One tree per shipped version. Version 0 is a file from before
@@ -41,6 +41,7 @@ VERSION_FIXTURES = {
     3: {"config_version": 3, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
     4: {"config_version": 4, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
     5: {"config_version": 5, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
+    6: {"config_version": 6, "shortcuts": {"quit": ["<Ctrl>q"]}, **USER_VALUES},
 }
 
 
@@ -360,11 +361,11 @@ def _v3_tree(**ssh):
 def test_v3_saved_accept_new_becomes_do_not_configure():
     """accept-new was both the untouched default and a choice; all of it moves."""
     tree, stored = upgrade_settings(
-        _v3_tree(strict_host_key_checking="accept-new", batch_mode=True)
+        _v3_tree(strict_host_key_checking="accept-new", compression=True)
     )
     assert stored == 3
     assert tree["ssh"]["strict_host_key_checking"] == ""
-    assert tree["ssh"]["batch_mode"] == "yes"
+    assert tree["ssh"]["compression"] == "yes"
 
 
 @pytest.mark.parametrize("value", ["yes", "no", "ask"])
@@ -413,19 +414,76 @@ def _v4_tree(**ssh):
 @pytest.mark.parametrize(
     "key, before, after",
     [
-        ("batch_mode", True, "yes"),
-        ("batch_mode", False, ""),
         ("compression", True, "yes"),
         ("compression", False, ""),
     ],
 )
-def test_v4_bool_batch_or_compression_becomes_yes_no_unset(key, before, after):
+def test_v4_bool_compression_becomes_yes_no_unset(key, before, after):
     tree, stored = upgrade_settings(_v4_tree(**{key: before}))
     assert stored == 4
     assert tree["ssh"][key] == after
 
 
 @pytest.mark.parametrize("value", ["yes", "no", ""])
-def test_v4_string_batch_mode_is_kept(value):
-    tree, _stored = upgrade_settings(_v4_tree(batch_mode=value))
-    assert tree["ssh"]["batch_mode"] == value
+def test_v4_string_compression_is_kept(value):
+    tree, _stored = upgrade_settings(_v4_tree(compression=value))
+    assert tree["ssh"]["compression"] == value
+
+
+# -- version 6: BatchMode / ConnectionAttempts removed, keepalive merged -----
+
+
+def _v5_tree(**ssh):
+    return {"config_version": 5, "shortcuts": {}, "ssh": dict(ssh)}
+
+
+def test_v5_removed_overrides_are_dropped():
+    """A removed option must not keep applying with no control to change it."""
+    tree, stored = upgrade_settings(
+        _v5_tree(batch_mode="yes", connection_attempts=4, connection_timeout=9)
+    )
+    assert stored == 5
+    assert "batch_mode" not in tree["ssh"]
+    assert "connection_attempts" not in tree["ssh"]
+    assert tree["ssh"]["connection_timeout"] == 9
+
+
+def test_v5_saved_keepalive_override_becomes_the_app_keepalive():
+    """The override was sent whatever the switch said, so the switch turns on."""
+    tree, _stored = upgrade_settings(
+        _v5_tree(
+            keepalive_interval=45,
+            keepalive_count_max=6,
+            apply_default_keepalive=False,
+        )
+    )
+    ssh = tree["ssh"]
+    assert "keepalive_interval" not in ssh and "keepalive_count_max" not in ssh
+    assert ssh["apply_default_keepalive"] is True
+    assert ssh["default_keepalive_interval"] == 45
+    assert ssh["default_keepalive_count"] == 6
+
+
+def test_v5_interval_without_a_count_keeps_the_existing_count():
+    tree, _stored = upgrade_settings(
+        _v5_tree(keepalive_interval=45, keepalive_count_max=0, default_keepalive_count=3)
+    )
+    assert tree["ssh"]["default_keepalive_interval"] == 45
+    assert tree["ssh"]["default_keepalive_count"] == 3
+
+
+@pytest.mark.parametrize("switch", [True, False])
+def test_v5_unset_keepalive_override_leaves_the_switch_alone(switch):
+    tree, _stored = upgrade_settings(
+        _v5_tree(
+            keepalive_interval=0,
+            keepalive_count_max=5,
+            apply_default_keepalive=switch,
+            default_keepalive_interval=15,
+        )
+    )
+    ssh = tree["ssh"]
+    assert ssh["apply_default_keepalive"] is switch
+    assert ssh["default_keepalive_interval"] == 15
+    assert "default_keepalive_count" not in ssh
+    assert "keepalive_interval" not in ssh and "keepalive_count_max" not in ssh

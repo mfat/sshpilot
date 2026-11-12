@@ -110,9 +110,6 @@ def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
     prefs._ensure_page_built("ssh-options")
     for name in (
         "connect_timeout_row",
-        "connection_attempts_row",
-        "keepalive_interval_row",
-        "keepalive_count_row",
         "verbosity_row",
     ):
         row = getattr(prefs, name)
@@ -121,8 +118,39 @@ def test_ssh_options_page_uses_dont_set_dropdown_rows(gui):
             assert row.number_field_visible() is False
             assert row.get_enabled() is False
 
-    for name in ("batch_mode_row", "compression_row", "strict_host_row"):
+    for name in ("compression_row", "strict_host_row"):
         row = getattr(prefs, name)
         assert isinstance(row, OptionalChoiceRow), name
         if row.get_value() == "":
             assert row.get_selected() == 0
+
+    assert not hasattr(prefs, "batch_mode_row")
+    assert not hasattr(prefs, "connection_attempts_row")
+
+
+def test_keepalive_is_one_switch_with_its_numbers_folded_in(gui):
+    from sshpilot.optional_rows import SwitchExpanderRow
+
+    gui.window.show_preferences("ssh-options")
+    gui.pump(500)
+    prefs = gui.window._preferences_window
+    prefs._ensure_page_built("ssh-options")
+    row = prefs.apply_default_keepalive_row
+    assert isinstance(row, SwitchExpanderRow)
+
+    prefs._suppress_advanced_ssh_autosave = True
+    try:
+        seen = []
+        row.connect("notify::active", lambda *_a: seen.append(row.get_active()))
+        row.set_active(False)
+        assert row.get_enable_expansion() is False
+        row.set_enable_expansion(True)
+        assert row.get_active() is True
+        assert seen == [False, True]
+
+        prefs.keepalive_interval_row.set_value(40)
+        prefs.keepalive_count_row.set_value(5)
+        prefs._sync_keepalive_subtitle()
+        assert row.get_subtitle() == "ServerAliveInterval 40, ServerAliveCountMax 5"
+    finally:
+        prefs._suppress_advanced_ssh_autosave = False

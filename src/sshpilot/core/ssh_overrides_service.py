@@ -278,11 +278,7 @@ class SshOverridesService:
         return GlobalSshOverrides(
             revision=compute_ssh_overrides_revision(semantic),
             connect_timeout=semantic["connect_timeout"],
-            connection_attempts=semantic["connection_attempts"],
-            server_alive_interval=semantic["server_alive_interval"],
-            server_alive_count_max=semantic["server_alive_count_max"],
             strict_host_key_checking=semantic["strict_host_key_checking"],
-            batch_mode=semantic["batch_mode"],
             compression=semantic["compression"],
             verbosity=semantic["verbosity"],
             debug_enabled=semantic["debug_enabled"],

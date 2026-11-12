@@ -27,7 +27,7 @@ def test_missing_config_uses_defaults(tmp_path):
     settings = DaemonBootstrapSettings(tmp_path / "does-not-exist.json")
     ssh = settings.get_ssh_config()
     assert ssh["use_isolated_config"] is False
-    assert ssh["batch_mode"] is False
+    assert "batch_mode" not in ssh
     assert ssh["auto_add_host_keys"] is True
 
 

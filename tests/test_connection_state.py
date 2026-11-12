@@ -32,9 +32,11 @@ def test_default_keepalive_respects_opt_out():
     assert cmd == []
 
 
-def test_default_keepalive_skipped_when_app_value_set():
+def test_removed_keepalive_override_key_is_ignored():
+    # The separate keepalive override is gone; a leftover value neither
+    # suppresses the app keepalive nor replaces its numbers.
     cmd = _inject(app_cfg={'apply_default_keepalive': True, 'keepalive_interval': 33})
-    assert cmd == []
+    assert cmd == ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3']
 
 
 def test_default_keepalive_skipped_when_in_overrides():

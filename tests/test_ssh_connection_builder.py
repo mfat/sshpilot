@@ -649,7 +649,7 @@ def test_preferences_lose_to_a_connections_own_settings():
     prefs = {
         "compression": True,
         "strict_host_key_checking": "accept-new",
-        "keepalive_interval": 60,
+        "default_keepalive_interval": 60,
         "connection_timeout": 15,
     }
     app_config = types.SimpleNamespace(
@@ -676,9 +676,12 @@ def test_preferences_lose_to_a_connections_own_settings():
     for own, preference in (
         ("stricthostkeychecking=yes", "StrictHostKeyChecking=accept-new"),
         ("compression=no", "Compression=yes"),
-        ("serveraliveinterval=30", "ServerAliveInterval=60"),
     ):
         assert _index(own) < _index(preference), argv
+
+    # The app keepalive is not emitted at all when the connection sets its own.
+    assert "serveraliveinterval=30" in argv
+    assert "ServerAliveInterval=60" not in argv
 
     # Preferences still supply what the connection does not set.
     assert "ConnectTimeout=15" in argv
@@ -720,7 +723,7 @@ def test_scp_preference_overrides_stay_options_when_path_operands_follow():
 
     prefs = {
         "verbosity": 1,
-        "keepalive_interval": 25,
+        "default_keepalive_interval": 25,
     }
     app_config = types.SimpleNamespace(
         get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}

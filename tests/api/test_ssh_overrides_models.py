@@ -10,14 +10,10 @@ from sshpilot.api.models.settings import (
 )
 
 
-def test_editable_fields_exactly_nine():
+def test_editable_fields_exactly_five():
     assert EDITABLE_FIELDS == {
         "connect_timeout",
-        "connection_attempts",
-        "server_alive_interval",
-        "server_alive_count_max",
         "strict_host_key_checking",
-        "batch_mode",
         "compression",
         "verbosity",
         "debug_enabled",
@@ -28,11 +24,7 @@ def test_default_snapshot_is_valid():
     snapshot = GlobalSshOverrides(
         revision="abc",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,
@@ -55,9 +47,6 @@ def test_revision_ignores_applies_immediately():
     [
         dict(connect_timeout=-1),
         dict(connect_timeout=601),
-        dict(connection_attempts=101),
-        dict(server_alive_interval=86401),
-        dict(server_alive_count_max=101),
         dict(verbosity=4),
         dict(verbosity=-1),
     ],
@@ -66,11 +55,7 @@ def test_out_of_range_integer_rejected(kwargs):
     base = dict(
         revision="r",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,
@@ -84,8 +69,6 @@ def test_out_of_range_integer_rejected(kwargs):
     "kwargs",
     [
         dict(connect_timeout=0.5),
-        dict(connection_attempts="10"),
-        dict(server_alive_interval=True),
         dict(debug_enabled="true"),
     ],
 )
@@ -93,11 +76,7 @@ def test_wrong_type_rejected(kwargs):
     base = dict(
         revision="r",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,
@@ -110,9 +89,7 @@ def test_wrong_type_rejected(kwargs):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        dict(batch_mode=True),
         dict(compression=1),
-        dict(batch_mode="true"),
         dict(compression="maybe"),
     ],
 )
@@ -120,11 +97,7 @@ def test_invalid_yes_no_override_rejected(kwargs):
     base = dict(
         revision="r",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,
@@ -139,11 +112,7 @@ def test_unknown_strict_host_value_rejected():
         GlobalSshOverrides(
             revision="r",
             connect_timeout=0,
-            connection_attempts=0,
-            server_alive_interval=0,
-            server_alive_count_max=0,
             strict_host_key_checking="maybe",
-            batch_mode="",
             compression="",
             verbosity=0,
             debug_enabled=False,
@@ -157,7 +126,7 @@ def test_update_request_rejects_unknown_fields():
 
 def test_update_request_rejects_wrong_typed_value():
     with pytest.raises(ValueError):
-        UpdateGlobalSshOverridesRequest(patch={"batch_mode": "true"})
+        UpdateGlobalSshOverridesRequest(patch={"compression": "true"})
     with pytest.raises(ValueError):
         UpdateGlobalSshOverridesRequest(patch={"compression": True})
 
@@ -192,11 +161,7 @@ def test_unset_strict_host_key_is_a_valid_snapshot_and_patch_value():
     snapshot = GlobalSshOverrides(
         revision="abc",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,
@@ -239,7 +204,7 @@ def test_update_request_copies_caller_patch():
     request = UpdateGlobalSshOverridesRequest(patch=caller_patch)
 
     caller_patch["connect_timeout"] = 99
-    caller_patch["batch_mode"] = True
+    caller_patch["compression"] = "yes"
 
     assert request.patch == {"connect_timeout": 5}
     assert set(request.patch) == {"connect_timeout"}
@@ -249,11 +214,7 @@ def test_snapshot_revision_must_be_non_empty_string():
     base = dict(
         revision="r",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,
@@ -267,11 +228,7 @@ def test_snapshot_applies_immediately_must_be_boolean():
     base = dict(
         revision="r",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode="",
         compression="",
         verbosity=0,
         debug_enabled=False,

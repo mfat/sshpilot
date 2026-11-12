@@ -120,11 +120,7 @@ class GlobalSshOverrides:
 
     revision: str
     connect_timeout: int
-    connection_attempts: int
-    server_alive_interval: int
-    server_alive_count_max: int
     strict_host_key_checking: str
-    batch_mode: str
     compression: str
     verbosity: int
     debug_enabled: bool
@@ -134,11 +130,7 @@ class GlobalSshOverrides:
         return {
             "revision": self.revision,
             "connect_timeout": self.connect_timeout,
-            "connection_attempts": self.connection_attempts,
-            "server_alive_interval": self.server_alive_interval,
-            "server_alive_count_max": self.server_alive_count_max,
             "strict_host_key_checking": self.strict_host_key_checking,
-            "batch_mode": self.batch_mode,
             "compression": self.compression,
             "verbosity": self.verbosity,
             "debug_enabled": self.debug_enabled,
@@ -149,11 +141,7 @@ class GlobalSshOverrides:
         # Validate on construction (frozen dataclass uses object.__setattr__).
         _validate_revision(self.revision)
         _validate_integer(self.connect_timeout, "connect_timeout")
-        _validate_integer(self.connection_attempts, "connection_attempts")
-        _validate_integer(self.server_alive_interval, "server_alive_interval")
-        _validate_integer(self.server_alive_count_max, "server_alive_count_max")
         _validate_strict_host_key(self.strict_host_key_checking)
-        _validate_yes_no(self.batch_mode, "batch_mode")
         _validate_yes_no(self.compression, "compression")
         _validate_integer(self.verbosity, "verbosity")
         _validate_boolean(self.debug_enabled, "debug_enabled")

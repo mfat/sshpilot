@@ -531,13 +531,15 @@ def test_build_native_command_overrides_and_remote_command():
 # --- app config: batch mode + overrides ---
 
 
-def test_app_config_batch_mode_added_for_key_auth():
-    cfg = _ConfigStub({'batch_mode': True})
+def test_removed_global_batch_mode_setting_is_ignored():
+    # The global BatchMode override is gone; a value left in an old settings
+    # dict must not switch prompts off.
+    cfg = _ConfigStub({'batch_mode': 'yes'})
     cmd, _ = _build(
         {'host': 'appcfg.example', 'hostname': 'appcfg.example', 'auth_method': 0},
         config=cfg,
     )
-    assert _has_o_option(cmd, 'BatchMode=yes')
+    assert not _has_o_option(cmd, 'BatchMode')
 
 
 def test_app_config_batch_mode_skipped_for_password_mode():
@@ -585,14 +587,16 @@ def test_app_config_batch_mode_skipped_for_combined_auth_pty_password():
 
 
 def test_keepalive_and_timeout_only_via_ssh_overrides():
-    # Native mode no longer derives ServerAlive*/ConnectTimeout from app config
-    # keys; they must be passed verbatim via ssh_overrides (written to config).
+    # Native mode does not derive ConnectTimeout from the app config key; it
+    # must be passed verbatim via ssh_overrides. The removed keepalive override
+    # key is ignored: only the app keepalive (15/3 by default) is sent.
     cfg = _ConfigStub({'keepalive_interval': 33, 'connection_timeout': 12})
     cmd, _ = _build(
         {'host': 'ka.example', 'hostname': 'ka.example'},
         config=cfg,
     )
-    assert not _has_o_option(cmd, 'ServerAliveInterval')
+    assert not _has_o_option(cmd, 'ServerAliveInterval=33')
+    assert _has_o_option(cmd, 'ServerAliveInterval=15')
     assert not _has_o_option(cmd, 'ConnectTimeout')
 
 
@@ -659,8 +663,8 @@ def test_native_sftp_limits_password_prompts_terminal_does_not():
 
 
 def test_base_command_copy_id_skips_unsupported_flags():
-    # ssh-copy-id rejects -v/-C/-A and BatchMode defeats its interactive purpose.
-    cfg = _ConfigStub({'verbosity': 2, 'compression': True, 'batch_mode': True})
+    # ssh-copy-id rejects -v/-C/-A.
+    cfg = _ConfigStub({'verbosity': 2, 'compression': True})
     cmd = _base_cmd('ssh-copy-id', app_config=cfg,
                     effective_config={'forwardagent': 'yes', 'forwardx11': 'yes'})
     assert '-v' not in cmd
@@ -672,7 +676,6 @@ def test_base_command_copy_id_skips_unsupported_flags():
     scp_cmd = _base_cmd('scp', app_config=cfg)
     assert '-v' in scp_cmd
     assert _has_o_option(scp_cmd, 'Compression=yes')
-    assert _has_o_option(scp_cmd, 'BatchMode=yes')
 
 
 def test_base_command_copy_id_never_injects_identity(tmp_path):

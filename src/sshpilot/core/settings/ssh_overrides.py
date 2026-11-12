@@ -25,11 +25,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 # Semantic public field name -> dotted persisted config key.
 FIELD_TO_CONFIG_KEY: Dict[str, str] = {
     "connect_timeout": "ssh.connection_timeout",
-    "connection_attempts": "ssh.connection_attempts",
-    "server_alive_interval": "ssh.keepalive_interval",
-    "server_alive_count_max": "ssh.keepalive_count_max",
     "strict_host_key_checking": "ssh.strict_host_key_checking",
-    "batch_mode": "ssh.batch_mode",
     "compression": "ssh.compression",
     "verbosity": "ssh.verbosity",
     "debug_enabled": "ssh.debug_enabled",
@@ -41,9 +37,6 @@ EDITABLE_FIELDS = frozenset(FIELD_TO_CONFIG_KEY.keys())
 # Integer fields with their documented valid ranges.
 INTEGER_RANGES: Dict[str, tuple[int, int]] = {
     "connect_timeout": (0, 600),
-    "connection_attempts": (0, 100),
-    "server_alive_interval": (0, 86400),
-    "server_alive_count_max": (0, 100),
     "verbosity": (0, 3),
 }
 
@@ -59,23 +52,19 @@ EXPLICIT_HOST_KEY_VALUES = frozenset({"accept-new", "yes", "no", "ask"})
 # Every value the setting may hold: an explicit OpenSSH value, or unset.
 VALID_HOST_KEY_VALUES = EXPLICIT_HOST_KEY_VALUES | {HOST_KEY_UNSET}
 
-# Tri-state OpenSSH yes/no overrides (BatchMode, Compression). Empty means
+# Tri-state OpenSSH yes/no override (Compression). Empty means
 # don't inject; ``yes`` / ``no`` inject the matching ``-o`` value.
 YES_NO_UNSET = ""
 EXPLICIT_YES_NO_VALUES = frozenset({"yes", "no"})
 VALID_YES_NO_VALUES = EXPLICIT_YES_NO_VALUES | {YES_NO_UNSET}
-YES_NO_FIELDS = frozenset({"batch_mode", "compression"})
+YES_NO_FIELDS = frozenset({"compression"})
 
 # Canonical semantic defaults. A missing raw key normalizes to exactly these
 # values, so "field absent" and "field set to its default" are equivalent for
 # the snapshot and the revision token.
 DEFAULT_SSH_OVERRIDES: Dict[str, Any] = {
     "connect_timeout": 0,
-    "connection_attempts": 0,
-    "server_alive_interval": 0,
-    "server_alive_count_max": 0,
     "strict_host_key_checking": HOST_KEY_UNSET,
-    "batch_mode": YES_NO_UNSET,
     "compression": YES_NO_UNSET,
     "verbosity": 0,
     "debug_enabled": False,
@@ -83,7 +72,7 @@ DEFAULT_SSH_OVERRIDES: Dict[str, Any] = {
 
 
 def coerce_yes_no_unset(value: Any) -> str:
-    """Normalize a BatchMode/Compression setting to ``\"\"`` / ``yes`` / ``no``.
+    """Normalize the Compression setting to ``\"\"`` / ``yes`` / ``no``.
 
     Legacy booleans are accepted: ``True`` → ``yes``, ``False`` → unset.
     """
@@ -108,14 +97,6 @@ def coerce_yes_no_unset(value: Any) -> str:
     )
 
 
-def is_yes_no_enabled(value: Any) -> bool:
-    """True when the setting injects ``=yes`` (legacy ``True`` counts)."""
-    try:
-        return coerce_yes_no_unset(value) == "yes"
-    except (TypeError, ValueError):
-        return False
-
-
 # ---------------------------------------------------------------------------
 # Strict normalization (single conversion used by model + revision)
 # ---------------------------------------------------------------------------
@@ -123,14 +104,14 @@ def is_yes_no_enabled(value: Any) -> bool:
 def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
     """Strictly convert a raw ``ssh`` subtree to normalized semantic values.
 
-    Returns exactly the nine public field names with canonical values. Missing
+    Returns exactly the five public field names with canonical values. Missing
     keys normalize to :data:`DEFAULT_SSH_OVERRIDES`; ``strict_host_key_checking``
     and the yes/no fields missing or blank normalize to unset.
 
     Raises ``TypeError`` for wrong types and ``ValueError`` for out-of-range
     integers or unknown enum values. Numeric strings (``"10"``), ``"true"/"false"``
     strings for integers, and bools used for integer fields are rejected rather
-    than coerced. Legacy booleans for BatchMode/Compression are accepted and
+    than coerced. Legacy booleans for Compression are accepted and
     mapped to ``yes`` / unset.
     """
     semantic: Dict[str, Any] = {}
@@ -184,7 +165,7 @@ def normalize_ssh_overrides(ssh: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def compute_ssh_overrides_revision(semantic: Mapping[str, Any]) -> str:
-    """Deterministic revision over the nine normalized semantic values.
+    """Deterministic revision over the five normalized semantic values.
 
     The revision is a hex SHA-256 prefix (12 chars) of the canonical JSON of
     the sorted field set, so two semantically equal states (including a missing
@@ -212,13 +193,6 @@ def compose_ssh_overrides(
     """
     overrides: List[str] = []
 
-    try:
-        batch_mode = coerce_yes_no_unset(ssh_cfg.get("batch_mode"))
-    except (TypeError, ValueError):
-        batch_mode = YES_NO_UNSET
-    if batch_mode:
-        overrides.extend(["-o", f"BatchMode={batch_mode}"])
-
     connect_timeout = ssh_cfg.get("connection_timeout")
     if connect_timeout is not None:
         try:
@@ -227,33 +201,6 @@ def compose_ssh_overrides(
             ct = 0
         if ct > 0:
             overrides.extend(["-o", f"ConnectTimeout={ct}"])
-
-    connection_attempts = ssh_cfg.get("connection_attempts")
-    if connection_attempts is not None:
-        try:
-            ca = int(connection_attempts)
-        except (TypeError, ValueError):
-            ca = 0
-        if ca > 0:
-            overrides.extend(["-o", f"ConnectionAttempts={ca}"])
-
-    keepalive_interval = ssh_cfg.get("keepalive_interval")
-    if keepalive_interval is not None:
-        try:
-            ki = int(keepalive_interval)
-        except (TypeError, ValueError):
-            ki = 0
-        if ki > 0:
-            overrides.extend(["-o", f"ServerAliveInterval={ki}"])
-
-    keepalive_count = ssh_cfg.get("keepalive_count_max")
-    if keepalive_count is not None:
-        try:
-            kc = int(keepalive_count)
-        except (TypeError, ValueError):
-            kc = 0
-        if kc > 0:
-            overrides.extend(["-o", f"ServerAliveCountMax={kc}"])
 
     strict_host_value = str(ssh_cfg.get("strict_host_key_checking") or "").strip()
     if strict_host_value:
@@ -299,11 +246,7 @@ def compose_ssh_overrides(
 def ssh_settings_from_values(
     *,
     connect_timeout: Optional[int] = None,
-    connection_attempts: Optional[int] = None,
-    keepalive_interval: Optional[int] = None,
-    keepalive_count_max: Optional[int] = None,
     strict_host_key_checking: str = HOST_KEY_UNSET,
-    batch_mode: str = YES_NO_UNSET,
     compression: str = YES_NO_UNSET,
     verbosity: int = 0,
     debug_enabled: bool = False,
@@ -312,11 +255,7 @@ def ssh_settings_from_values(
     """Build an ssh settings fragment from typed values (for tests / CLI)."""
     return {
         "connection_timeout": connect_timeout,
-        "connection_attempts": connection_attempts,
-        "keepalive_interval": keepalive_interval,
-        "keepalive_count_max": keepalive_count_max,
         "strict_host_key_checking": strict_host_key_checking,
-        "batch_mode": coerce_yes_no_unset(batch_mode),
         "compression": coerce_yes_no_unset(compression),
         "verbosity": verbosity,
         "debug_enabled": debug_enabled,
@@ -340,7 +279,6 @@ def ssh_config_from_settings(get_setting: Callable[[str, Any], Any]) -> Dict[str
 
     defaults: Dict[str, Any] = {
         'auto_add_host_keys': True,
-        'batch_mode': YES_NO_UNSET,
         'compression': YES_NO_UNSET,
         'debug_enabled': False,
         'strict_host_key_checking': HOST_KEY_UNSET,
@@ -353,10 +291,7 @@ def ssh_config_from_settings(get_setting: Callable[[str, Any], Any]) -> Dict[str
     }
 
     optional_int_keys = {
-        'connection_attempts',
         'connection_timeout',
-        'keepalive_count_max',
-        'keepalive_interval',
     }
 
     # Internal keepalive defaults applied when the user hasn't set their own

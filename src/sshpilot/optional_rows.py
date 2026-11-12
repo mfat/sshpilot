@@ -165,3 +165,32 @@ class OptionalChoiceRow(Adw.ComboRow):
             new_value = self._choices[idx - 1]
         if new_value != self.value:
             self.value = new_value
+
+
+class SwitchExpanderRow(Adw.ExpanderRow):
+    """A switch whose own settings fold out underneath it.
+
+    ``active`` mirrors the expander's enable switch, so the row reads and
+    notifies like an ``Adw.SwitchRow`` (``get_active``/``set_active``/
+    ``notify::active``) while the nested rows are only reachable when on.
+    """
+
+    __gtype_name__ = "SshPilotSwitchExpanderRow"
+
+    active = GObject.Property(type=bool, default=True)
+
+    def __init__(self, *, title: str) -> None:
+        super().__init__(title=title)
+        self.set_show_enable_switch(True)
+        self.bind_property(
+            "active",
+            self,
+            "enable-expansion",
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE,
+        )
+
+    def get_active(self) -> bool:
+        return bool(self.active)
+
+    def set_active(self, active: bool) -> None:
+        self.active = bool(active)

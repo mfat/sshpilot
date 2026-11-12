@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 # Lines moved per discrete mouse-wheel notch (VTE history scroll).  macOS
 # already accelerates wheel deltas, so one line per unit matches Terminal.app;
@@ -156,11 +156,10 @@ def get_default_config() -> Dict[str, Any]:
         },
         'connections_meta': {},  # per-connection metadata
         'ssh': {
-            # Empty = "Not set": no Compression/BatchMode option is sent.
-            # ``yes`` / ``no`` inject the matching ``-o`` value.
+            # Empty = "Not set": no Compression option is sent.
+            # ``yes`` / ``no`` inject ``-o Compression=<value>``.
             'compression': '',
             'auto_add_host_keys': True,
-            'batch_mode': '',
             'verbosity': 0,
             'debug_enabled': False,
             'use_isolated_config': False,
@@ -171,13 +170,10 @@ def get_default_config() -> Dict[str, Any]:
             # Global SSH override fields (daemon-owned). 0 disables the
             # corresponding ``-o`` option (matching compose_ssh_overrides).
             'connection_timeout': 0,
-            'connection_attempts': 0,
-            'keepalive_interval': 0,
-            'keepalive_count_max': 0,
-            # When the user hasn't configured keepalive (here or in
-            # ~/.ssh/config), apply a sane default ServerAlive* so a dead
-            # link is detected (~interval*count seconds) instead of the
-            # indicator staying green forever. User/per-host values win.
+            # Keepalive sent with every connection so a dead link is detected
+            # (~interval*count seconds) instead of the indicator staying green
+            # forever. The switch and both numbers are edited in Preferences;
+            # a host's own ServerAliveInterval wins.
             'apply_default_keepalive': True,
             'default_keepalive_interval': 15,
             'default_keepalive_count': 3,

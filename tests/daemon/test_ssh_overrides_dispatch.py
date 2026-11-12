@@ -122,11 +122,7 @@ def test_get_returns_wire_snapshot(tmp_path):
     assert set(result.value) == {
         "revision",
         "connect_timeout",
-        "connection_attempts",
-        "server_alive_interval",
-        "server_alive_count_max",
         "strict_host_key_checking",
-        "batch_mode",
         "compression",
         "verbosity",
         "debug_enabled",

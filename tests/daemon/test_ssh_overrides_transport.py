@@ -67,12 +67,12 @@ def test_update_round_trip_over_real_daemon(tmp_path, overrides_server):
         before = client.get_global_ssh_overrides()
         updated = client.update_global_ssh_overrides(
             UpdateGlobalSshOverridesRequest(
-                patch={"connect_timeout": 15, "batch_mode": "yes"},
+                patch={"connect_timeout": 15, "compression": "yes"},
                 expected_revision=before.revision,
             )
         )
         assert updated.connect_timeout == 15
-        assert updated.batch_mode == "yes"
+        assert updated.compression == "yes"
         assert updated.revision != before.revision
 
         # Fresh read reflects daemon state.

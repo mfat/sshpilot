@@ -20,7 +20,6 @@ from typing import Any, Dict, Optional
 
 DEFAULT_SSH_CONFIG: Dict[str, Any] = {
     "auto_add_host_keys": True,
-    "batch_mode": "",
     "compression": "",
     "debug_enabled": False,
     "strict_host_key_checking": "",

@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- `GlobalSshOverrides` and `UpdateGlobalSshOverridesRequest` lose four fields:
+  `batch_mode`, `connection_attempts`, `server_alive_interval` and
+  `server_alive_count_max`. A global `BatchMode` or `ConnectionAttempts` is no
+  longer offered; keepalive is the single app setting
+  (`ssh.apply_default_keepalive` with `ssh.default_keepalive_interval` /
+  `ssh.default_keepalive_count`). The settings file moves to `config_version`
+  6; the upgrade drops the two removed values and moves a saved keepalive
+  override into the app keepalive, turning it on. Fields are removed, so the
+  API implementation version is 0.94; Protocol remains 1.0.
 - `GlobalSshOverrides.batch_mode` and `GlobalSshOverrides.compression` (and the
   matching `UpdateGlobalSshOverridesRequest` patch fields) are tri-state
   strings: empty means don't set (nothing injected), `yes` / `no` inject the

@@ -95,6 +95,31 @@ def _v4_to_v5(tree: Dict[str, Any]) -> None:
             ssh[key] = ""
 
 
+def _v5_to_v6(tree: Dict[str, Any]) -> None:
+    # Version 6 trimmed the global SSH overrides. BatchMode and
+    # ConnectionAttempts are gone, so a saved value is dropped rather than
+    # left applying with no control to show or change it. The two ServerAlive
+    # override numbers merged into the keepalive switch: a saved interval
+    # becomes the keepalive the app sends, and the switch turns on because
+    # that value was being sent whatever the switch said.
+    ssh = tree.get("ssh")
+    if not isinstance(ssh, dict):
+        return
+    ssh.pop("batch_mode", None)
+    ssh.pop("connection_attempts", None)
+    interval = ssh.pop("keepalive_interval", None)
+    count = ssh.pop("keepalive_count_max", None)
+    if _is_positive_int(interval):
+        ssh["default_keepalive_interval"] = interval
+        ssh["apply_default_keepalive"] = True
+        if _is_positive_int(count):
+            ssh["default_keepalive_count"] = count
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 #: ``MIGRATIONS[n]`` upgrades a version-``n`` tree in place to version ``n + 1``.
 MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], None]] = {
     0: _v0_to_v1,
@@ -102,6 +127,7 @@ MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], None]] = {
     2: _v2_to_v3,
     3: _v3_to_v4,
     4: _v4_to_v5,
+    5: _v5_to_v6,
 }
 
 
