@@ -97,6 +97,7 @@ src/sshpilot/sidebar.py
 src/sshpilot/sftp_service_controller.py
 src/sshpilot/split_view.py
 src/sshpilot/ssh_connection_validator.py
+src/sshpilot/ssh_option_list.py
 src/sshpilot/sshcopyid_window.py
 src/sshpilot/terminal.py
 src/sshpilot/terminal_session_controller.py

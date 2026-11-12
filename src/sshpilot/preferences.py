@@ -22,12 +22,6 @@ from .shortcut_editor import ShortcutsPreferencesPage
 from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
 from .core.settings import INTEGER_RANGES as _SSH_OVERRIDE_RANGES
-from .core.settings import (
-    ExtraOptionError,
-    ExtraOptionProblem,
-    extra_options_to_text,
-    parse_extra_options_text,
-)
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 from .terminal_osc52 import (
     OSC52_MAX_MAX_KIB,
@@ -2849,7 +2843,7 @@ class PreferencesWindow(Adw.Window):
             "compression_row",
             "verbosity_row",
             "debug_enabled_row",
-            "extra_options_box",
+            "extra_options_list",
             "address_family_row",
             "legacy_algorithms_row",
         )
@@ -3013,50 +3007,37 @@ class PreferencesWindow(Adw.Window):
         self.address_family_row.set_value(str(values['address_family'] or ""))
         advanced_group.add(self.address_family_row)
 
-        # Free-form options for everything without a row of its own. Applied
-        # with a button, not on every keystroke: a half-typed line is not an
-        # option, and a wrong one would be sent with every connection.
+        # Options without a row of their own: the same keyword/value list the
+        # connection dialog's Advanced tab uses. A row is saved when it is
+        # finished and OpenSSH accepts it, like every other row on the page.
+        from .core.settings import EXTRA_OPTIONS_WITH_OWN_SETTING
+        from .ssh_option_list import (
+            OPENSSH_KEYWORDS,
+            SshOptionList,
+            check_ssh_option,
+            options_from_strings,
+        )
+
         extra_group = Adw.PreferencesGroup(title=_("Additional Options"))
-        extra_group.set_description(
-            _("One option per line, as in an SSH configuration file. "
-              "Options that have their own setting on this page are set there.")
+        own_setting = _("“{keyword}” has its own setting on this page.")
+        self.extra_options_list = SshOptionList(
+            keywords=tuple(
+                name for name in OPENSSH_KEYWORDS
+                if name.lower() not in EXTRA_OPTIONS_WITH_OWN_SETTING
+            ),
+            validate=lambda keyword, value: check_ssh_option(
+                keyword, value,
+                reserved=EXTRA_OPTIONS_WITH_OWN_SETTING,
+                reserved_message=own_setting,
+            ),
         )
-        self._ssh_extra_options_applied = tuple(values['extra_options'])
-        self.extra_options_view = Gtk.TextView()
-        self.extra_options_view.set_monospace(True)
-        self.extra_options_view.set_top_margin(8)
-        self.extra_options_view.set_bottom_margin(8)
-        self.extra_options_view.set_left_margin(12)
-        self.extra_options_view.set_right_margin(12)
-        self.extra_options_view.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_("Additional Options")]
+        self.extra_options_list.set_options(
+            options_from_strings(values['extra_options'])
         )
-        self.extra_options_view.get_buffer().set_text(
-            extra_options_to_text(self._ssh_extra_options_applied)
+        self.extra_options_list.connect(
+            'changed', lambda _list: self._on_advanced_ssh_field_changed(None, None)
         )
-        extra_scroller = Gtk.ScrolledWindow()
-        extra_scroller.set_min_content_height(96)
-        extra_scroller.set_child(self.extra_options_view)
-        extra_scroller.add_css_class("card")
-        extra_scroller.set_overflow(Gtk.Overflow.HIDDEN)
-        self.extra_options_error = Gtk.Label(xalign=0)
-        self.extra_options_error.set_wrap(True)
-        self.extra_options_error.add_css_class("error")
-        self.extra_options_error.set_visible(False)
-        self.extra_options_apply_button = Gtk.Button(label=_("Apply"))
-        self.extra_options_apply_button.set_valign(Gtk.Align.CENTER)
-        self.extra_options_apply_button.set_sensitive(False)
-        self.extra_options_apply_button.connect(
-            'clicked', self._on_apply_extra_ssh_options
-        )
-        extra_group.set_header_suffix(self.extra_options_apply_button)
-        self.extra_options_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.extra_options_box.append(extra_scroller)
-        self.extra_options_box.append(self.extra_options_error)
-        extra_group.add(self.extra_options_box)
-        self.extra_options_view.get_buffer().connect(
-            'changed', self._on_extra_ssh_options_edited
-        )
+        extra_group.add(self.extra_options_list)
 
         # Connection multiplexing (ControlMaster). When on, the first
         # connection to a host opens a master socket that later connections
@@ -3124,7 +3105,7 @@ class PreferencesWindow(Adw.Window):
                 self.compression_row,
                 self.verbosity_row,
                 self.debug_enabled_row,
-                self.extra_options_box,
+                self.extra_options_list,
                 self.address_family_row,
                 self.legacy_algorithms_row,
             ):
@@ -6023,80 +6004,23 @@ class PreferencesWindow(Adw.Window):
             )
         )
 
-    def _extra_ssh_options_text(self):
-        buffer = self.extra_options_view.get_buffer()
-        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+    def _extra_ssh_option_strings(self):
+        """The usable Additional Options rows as stored ``Keyword=value`` strings."""
+        option_list = getattr(self, 'extra_options_list', None)
+        if option_list is None:
+            return []
+        from .ssh_option_list import strings_from_options
+
+        return list(strings_from_options(option_list.get_options()))
 
     def _show_applied_extra_ssh_options(self, options):
-        """Make the text box show *options* as the applied, saved value."""
-        self._ssh_extra_options_applied = tuple(options or ())
-        view = getattr(self, 'extra_options_view', None)
-        if view is None:
+        """Make the Additional Options rows show *options* as the saved value."""
+        option_list = getattr(self, 'extra_options_list', None)
+        if option_list is None:
             return
-        view.get_buffer().set_text(
-            extra_options_to_text(self._ssh_extra_options_applied)
-        )
-        self.extra_options_error.set_visible(False)
-        self.extra_options_apply_button.set_sensitive(False)
+        from .ssh_option_list import options_from_strings
 
-    def _on_extra_ssh_options_edited(self, _buffer):
-        """Offer Apply only while the text differs from what is saved."""
-        try:
-            pending = parse_extra_options_text(self._extra_ssh_options_text())
-        except ExtraOptionError:
-            pending = None  # not applicable yet, but certainly not saved
-        self.extra_options_apply_button.set_sensitive(
-            pending != self._ssh_extra_options_applied
-        )
-
-    @staticmethod
-    def _extra_ssh_option_error_text(error):
-        """Word a refused option line for the user."""
-        if error.problem is ExtraOptionProblem.HAS_OWN_SETTING:
-            return _("Line {line}: “{keyword}” has its own setting on this page.").format(
-                line=error.line, keyword=error.keyword
-            )
-        if error.problem is ExtraOptionProblem.NOT_AN_OPTION:
-            return _("Line {line}: “{keyword}” is not an option.").format(
-                line=error.line, keyword=error.keyword
-            )
-        if error.problem is ExtraOptionProblem.TOO_MANY:
-            return _("Too many options.")
-        return _("Line {line}: write one option as “Keyword value”.").format(
-            line=error.line
-        )
-
-    def _on_apply_extra_ssh_options(self, _button):
-        """Check the text, then save it with the other overrides."""
-        try:
-            options = parse_extra_options_text(self._extra_ssh_options_text())
-        except ExtraOptionError as error:
-            self.extra_options_error.set_label(self._extra_ssh_option_error_text(error))
-            self.extra_options_error.set_visible(True)
-            return
-        if options:
-            # Ask OpenSSH itself, so a misspelt keyword or a bad value is
-            # caught here and not on every connection afterwards. ``ssh -G``
-            # only parses: it connects nowhere and runs no command.
-            from .ssh_config_utils import validate_ssh_config_text
-
-            rejected = validate_ssh_config_text(
-                "Host *\n" + "".join(
-                    f"    {line}\n" for line in extra_options_to_text(options).splitlines()
-                )
-            )
-            if rejected:
-                self.extra_options_error.set_label(
-                    _("OpenSSH did not accept these options: {error}").format(
-                        error=rejected
-                    )
-                )
-                self.extra_options_error.set_visible(True)
-                return
-        self.extra_options_error.set_visible(False)
-        self._ssh_extra_options_applied = options
-        self.extra_options_apply_button.set_sensitive(False)
-        self._on_advanced_ssh_field_changed(None, None)
+        option_list.set_options(options_from_strings(options))
 
     def _collect_ssh_override_patch(self):
         """Read the SSH override fields from the page rows."""
@@ -6106,7 +6030,7 @@ class PreferencesWindow(Adw.Window):
             "compression": str(self.compression_row.get_value() or ""),
             "verbosity": int(self.verbosity_row.get_value()),
             "debug_enabled": bool(self.debug_enabled_row.get_active()),
-            "extra_options": list(getattr(self, "_ssh_extra_options_applied", ())),
+            "extra_options": self._extra_ssh_option_strings(),
             "address_family": str(self.address_family_row.get_value() or ""),
             "legacy_algorithms": bool(self.legacy_algorithms_row.get_active()),
         }

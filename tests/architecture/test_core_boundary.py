@@ -115,13 +115,14 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # The widget bounds come from the model's own ranges so a saved value
         # can never be clamped by the row. Read-only constant; no I/O.
         ("preferences.py", "settings", "INTEGER_RANGES"),
-        # -- pure shape check / text conversion for free-form SSH options ---
-        # The page checks a line before sending it and words the refusal
-        # itself; the daemon applies the same check to whatever arrives.
-        ("preferences.py", "settings", "ExtraOptionError"),
-        ("preferences.py", "settings", "ExtraOptionProblem"),
-        ("preferences.py", "settings", "extra_options_to_text"),
-        ("preferences.py", "settings", "parse_extra_options_text"),
+        # -- pure shape check for free-form SSH options ---------------------
+        # The shared option list checks a row before it is saved and words
+        # the refusal itself; the daemon applies the same check to whatever
+        # arrives. The page passes the set of options that have their own row.
+        ("ssh_option_list.py", "settings", "ExtraOptionError"),
+        ("ssh_option_list.py", "settings", "ExtraOptionProblem"),
+        ("ssh_option_list.py", "settings", "normalize_extra_option"),
+        ("preferences.py", "settings", "EXTRA_OPTIONS_WITH_OWN_SETTING"),
         # -- pure normaliser for the tri-state Compression value ------------
         ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --

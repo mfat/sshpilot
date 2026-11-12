@@ -136,14 +136,20 @@ class ExtraOptionError(ValueError):
         self.keyword = keyword
 
 
-def normalize_extra_option(text: Any, *, line: int = 0) -> str:
+def normalize_extra_option(
+    text: Any,
+    *,
+    line: int = 0,
+    reserved: frozenset = EXTRA_OPTIONS_WITH_OWN_SETTING,
+) -> str:
     """Return *text* as one canonical ``Keyword=value`` option.
 
     Accepts the two spellings an SSH config file does (``Keyword value`` and
     ``Keyword=value``). The result is always passed to OpenSSH as the single
     argument after ``-o``, so a line can never add a flag of its own. Which
-    options a user sets is their choice: only shape is checked, plus the few
-    options that already have their own control on the page.
+    options a user sets is their choice: only shape is checked, plus *reserved*,
+    the lower-case keywords that have their own control where the option is
+    being entered (by default, those of the global overrides).
     """
     if not isinstance(text, str):
         raise ExtraOptionError(ExtraOptionProblem.MALFORMED, line=line)
@@ -159,7 +165,7 @@ def normalize_extra_option(text: Any, *, line: int = 0) -> str:
         raise ExtraOptionError(
             ExtraOptionProblem.NOT_AN_OPTION, line=line, keyword=keyword
         )
-    if keyword.lower() in EXTRA_OPTIONS_WITH_OWN_SETTING:
+    if keyword.lower() in reserved:
         raise ExtraOptionError(
             ExtraOptionProblem.HAS_OWN_SETTING, line=line, keyword=keyword
         )
@@ -180,31 +186,6 @@ def normalize_extra_options(value: Any) -> tuple:
         normalize_extra_option(item, line=index)
         for index, item in enumerate(value, start=1)
     )
-
-
-def parse_extra_options_text(text: str) -> tuple:
-    """Parse editor text: one option per line; blank and ``#`` lines skipped.
-
-    Errors carry the 1-based line number of the text as the user sees it.
-    """
-    options = []
-    for number, raw in enumerate(str(text or "").splitlines(), start=1):
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        options.append(normalize_extra_option(stripped, line=number))
-        if len(options) > EXTRA_OPTIONS_MAX_COUNT:
-            raise ExtraOptionError(ExtraOptionProblem.TOO_MANY, line=number)
-    return tuple(options)
-
-
-def extra_options_to_text(options: Any) -> str:
-    """Editor text for stored options, in config-file spelling."""
-    lines = []
-    for option in options or ():
-        keyword, _, value = str(option).partition("=")
-        lines.append(f"{keyword} {value}")
-    return "\n".join(lines)
 
 
 def coerce_yes_no_unset(value: Any) -> str:

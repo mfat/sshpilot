@@ -205,55 +205,59 @@ def test_int_row_shows_no_set_label_once_set(gui):
         window.destroy()
 
 
-def test_additional_options_apply_validates_then_saves(gui):
+def test_additional_options_rows_validate_then_save(gui):
     gui.window.show_preferences("ssh-options")
     gui.pump(500)
     prefs = gui.window._preferences_window
     prefs._ensure_page_built("ssh-options")
     if prefs.ssh_overrides_controller is None:
         pytest.skip("no daemon overrides service in this session")
-    buffer = prefs.extra_options_view.get_buffer()
-    apply_button = prefs.extra_options_apply_button
-    error = prefs.extra_options_error
-    try:
-        assert apply_button.get_sensitive() is False
+    options = prefs.extra_options_list
+    saved = lambda: prefs.ssh_overrides_controller.load().extra_options
 
-        # An option that has its own row is refused, and nothing is saved.
-        buffer.set_text("IPQoS none\nConnectTimeout 5")
-        assert apply_button.get_sensitive() is True
-        apply_button.emit("clicked")
-        gui.pump(200)
-        assert error.get_visible() and "ConnectTimeout" in error.get_label()
-        assert "2" in error.get_label()
-        assert prefs.ssh_overrides_controller.load().extra_options == ()
+    def finish(row, keyword, value):
+        row.keyword_entry.set_text(keyword)
+        row.value_entry.set_text(value)
+        options._finish(row)   # what leaving the row does
+        gui.pump(300)
+
+    try:
+        assert options.rows() == () and saved() == ()
+
+        # A valid option is saved the moment its row is finished.
+        first = options.add_empty_row()
+        finish(first, "ipqos", "none")
+        assert first.error is None
+        assert first.keyword_entry.get_text() == "IPQoS"   # documented spelling
+        assert saved() == ("IPQoS=none",)
+
+        # An option that has its own row is refused on that row; nothing changes.
+        second = options.add_empty_row()
+        finish(second, "ConnectTimeout", "5")
+        assert "ConnectTimeout" in second.error
+        assert second.error_label.get_visible()
+        assert saved() == ("IPQoS=none",)
 
         # OpenSSH itself rejects a keyword that does not exist.
-        buffer.set_text("NoSuchOptionAtAll yes")
-        apply_button.emit("clicked")
-        gui.pump(200)
-        assert error.get_visible() and "NoSuchOptionAtAll".lower() in error.get_label().lower()
-        assert prefs.ssh_overrides_controller.load().extra_options == ()
+        finish(second, "NoSuchOptionAtAll", "yes")
+        assert second.error and "nosuchoptionatall" in second.error.lower()
+        assert saved() == ("IPQoS=none",)
 
-        # Valid options are saved through the daemon, in canonical form.
-        buffer.set_text("# proxy\nIPQoS none\nSetEnv=LANG=C")
-        apply_button.emit("clicked")
+        # A keyword the menu does not list can still be typed and saved.
+        assert "ChannelTimeout" in options._keywords
+        finish(second, "RequiredRSASize", "2048")
+        assert second.error is None
+        assert saved() == ("IPQoS=none", "RequiredRSASize=2048")
+
+        # Removing a row saves too.
+        options.remove(first)
         gui.pump(300)
-        assert error.get_visible() is False
-        assert prefs.ssh_overrides_controller.load().extra_options == (
-            "IPQoS=none", "SetEnv=LANG=C",
-        )
-        assert apply_button.get_sensitive() is False
-
-        # Editing away from the saved value offers Apply again; back hides it.
-        buffer.set_text("IPQoS none")
-        assert apply_button.get_sensitive() is True
-        buffer.set_text("IPQoS none\nSetEnv LANG=C")
-        assert apply_button.get_sensitive() is False
+        assert saved() == ("RequiredRSASize=2048",)
     finally:
-        buffer.set_text("")
-        apply_button.emit("clicked")
+        for row in options.rows():
+            options.remove(row)
         gui.pump(300)
-    assert prefs.ssh_overrides_controller.load().extra_options == ()
+    assert saved() == ()
 
 
 def test_address_family_row_shows_labels_and_stores_keywords(gui):

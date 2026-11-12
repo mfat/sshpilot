@@ -19,9 +19,8 @@ from sshpilot.core.settings import (
     ExtraOptionError,
     ExtraOptionProblem,
     compose_ssh_overrides,
-    extra_options_to_text,
+    normalize_extra_option,
     normalize_ssh_overrides,
-    parse_extra_options_text,
 )
 from sshpilot.core.settings.ssh_overrides import (
     EXTRA_OPTION_MAX_LENGTH,
@@ -31,24 +30,20 @@ from sshpilot.core.settings.ssh_overrides import (
 from sshpilot.core.ssh_overrides_service import SshOverridesService
 
 
-def test_both_config_spellings_become_one_canonical_option():
-    text = "# a comment\nIPQoS none\n\n  SetEnv = LANG=C FOO=bar  \nTCPKeepAlive=no\n"
-    options = parse_extra_options_text(text)
-    assert options == ("IPQoS=none", "SetEnv=LANG=C FOO=bar", "TCPKeepAlive=no")
-    assert extra_options_to_text(options) == (
-        "IPQoS none\nSetEnv LANG=C FOO=bar\nTCPKeepAlive no"
-    )
-    assert parse_extra_options_text(extra_options_to_text(options)) == options
-
-
-def test_command_running_options_are_the_users_choice():
-    """Nothing is refused for what it does, only for its shape."""
-    options = parse_extra_options_text(
-        "ProxyCommand nc -X connect -x proxy:3128 %h %p\n"
-        "PermitLocalCommand yes\nLocalCommand notify-send %n\n"
-    )
-    assert options[0] == "ProxyCommand=nc -X connect -x proxy:3128 %h %p"
-    assert len(options) == 3
+@pytest.mark.parametrize(
+    "line, option",
+    [
+        ("IPQoS none", "IPQoS=none"),
+        ("  SetEnv = LANG=C FOO=bar  ", "SetEnv=LANG=C FOO=bar"),
+        ("TCPKeepAlive=no", "TCPKeepAlive=no"),
+        # Nothing is refused for what it does, only for its shape.
+        ("ProxyCommand nc -X connect -x proxy:3128 %h %p",
+         "ProxyCommand=nc -X connect -x proxy:3128 %h %p"),
+        ("LocalCommand notify-send %n", "LocalCommand=notify-send %n"),
+    ],
+)
+def test_both_config_spellings_become_one_canonical_option(line, option):
+    assert normalize_extra_option(line) == option
 
 
 @pytest.mark.parametrize(
@@ -61,12 +56,13 @@ def test_command_running_options_are_the_users_choice():
         "=value",
         "a b\x00c",
         "a b\x1bc",
+        "a b\nc d",
         "K " + "v" * EXTRA_OPTION_MAX_LENGTH,
     ],
 )
 def test_lines_that_are_not_one_option_are_refused(line):
     with pytest.raises(ExtraOptionError) as caught:
-        parse_extra_options_text("IPQoS none\n" + line)
+        normalize_extra_option(line, line=2)
     assert caught.value.line == 2
     assert caught.value.problem in (
         ExtraOptionProblem.MALFORMED, ExtraOptionProblem.TOO_LONG,
@@ -76,7 +72,7 @@ def test_lines_that_are_not_one_option_are_refused(line):
 @pytest.mark.parametrize("keyword", ["Host", "match", "Include"])
 def test_config_file_structure_is_not_an_option(keyword):
     with pytest.raises(ExtraOptionError) as caught:
-        parse_extra_options_text(f"{keyword} something")
+        normalize_extra_option(f"{keyword} something")
     assert caught.value.problem is ExtraOptionProblem.NOT_AN_OPTION
     assert caught.value.keyword == keyword
 
@@ -85,8 +81,18 @@ def test_config_file_structure_is_not_an_option(keyword):
 def test_options_with_their_own_setting_are_set_there(keyword):
     for spelling in (keyword, keyword.upper()):
         with pytest.raises(ExtraOptionError) as caught:
-            parse_extra_options_text(f"{spelling} 1")
+            normalize_extra_option(f"{spelling} 1")
         assert caught.value.problem is ExtraOptionProblem.HAS_OWN_SETTING
+
+
+def test_the_reserved_set_belongs_to_where_the_option_is_entered():
+    """The connection dialog reserves its own fields, not the global rows."""
+    assert normalize_extra_option("ConnectTimeout 5", reserved=frozenset()) == (
+        "ConnectTimeout=5"
+    )
+    with pytest.raises(ExtraOptionError) as caught:
+        normalize_extra_option("ProxyJump bastion", reserved=frozenset({"proxyjump"}))
+    assert caught.value.problem is ExtraOptionProblem.HAS_OWN_SETTING
 
 
 def test_every_dedicated_control_is_covered():
@@ -111,9 +117,11 @@ def test_every_dedicated_control_is_covered():
 
 
 def test_too_many_options_are_refused():
-    text = "\n".join(f"SetEnv A{i}=1" for i in range(EXTRA_OPTIONS_MAX_COUNT + 1))
+    from sshpilot.core.settings.ssh_overrides import normalize_extra_options
+
+    many = [f"SetEnv A{i}=1" for i in range(EXTRA_OPTIONS_MAX_COUNT + 1)]
     with pytest.raises(ExtraOptionError) as caught:
-        parse_extra_options_text(text)
+        normalize_extra_options(many)
     assert caught.value.problem is ExtraOptionProblem.TOO_MANY
 
 
