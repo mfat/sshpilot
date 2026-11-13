@@ -1279,12 +1279,14 @@ class ConnectionApplicationService:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
         from .ssh_config_effective import (
+            ConfigScanCache,
             collect_host_block_lines,
             launch_config_file,
             losing_directives,
         )
 
         root = str(self._repository.root_config_path)
+        cache = ConfigScanCache()
         conflicts = []
         for record in self._repository.list_records():
             if (record.protocol or "ssh").strip().lower() != "ssh":
@@ -1293,9 +1295,9 @@ class ConnectionApplicationService:
             if not host or not record.source:
                 continue
             try:
-                own_lines = collect_host_block_lines(host, root)
+                own_lines = collect_host_block_lines(host, root, cache=cache)
                 compare_file = launch_config_file(root, record.source) or root
-                found = losing_directives(host, compare_file, own_lines)
+                found = losing_directives(host, compare_file, own_lines, cache=cache)
             except Exception:
                 logger.debug("Config conflict check failed for %s", host, exc_info=True)
                 continue

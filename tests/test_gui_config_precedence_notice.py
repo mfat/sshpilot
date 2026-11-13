@@ -57,9 +57,21 @@ def _notice(gui, conflicts, config=None):
     window = Gtk.Window()
     window.config = config if config is not None else _Config()
     window.client = types.SimpleNamespace(list_config_conflicts=list_config_conflicts)
-    window.connection_manager = types.SimpleNamespace(
-        get_connection_by_id=lambda cid: types.SimpleNamespace(nickname=cid),
-    )
+    # What the connection list holds and whether the SSH config was readable.
+    state["loaded"] = ["web", "db"]
+    state["unavailable"] = None
+    class _Manager:
+        def get_connection_by_id(self, cid):
+            return types.SimpleNamespace(nickname=cid)
+
+        def snapshot(self):
+            return types.SimpleNamespace(ssh_config_unavailable=state["unavailable"])
+
+        @property
+        def connections(self):
+            return [types.SimpleNamespace(nickname=n) for n in state["loaded"]]
+
+    window.connection_manager = _Manager()
     window.show_connection_dialog = lambda connection: opened.append(connection.nickname)
     container = Gtk.Box()
     container.set_visible(False)
@@ -132,7 +144,7 @@ def test_dismissed_conflicts_stay_hidden_and_a_new_one_brings_the_banner_back(gu
 
     notice._on_dismiss()
     assert not notice._banner.get_revealed() and not container.get_visible()
-    assert len(window.config.values["ui.config_conflicts_dismissed"]) == 1
+    assert len(window.config.values["ui.config_conflicts_dismissed"]["default"]) == 1
 
     # The same conflict, even after unrelated lines moved it: still dismissed.
     _check(notice, state, [_conflict("web", line=9)])
@@ -153,7 +165,7 @@ def test_a_fixed_conflict_is_forgotten_so_its_return_is_news(gui):
     notice._on_dismiss()
 
     _check(notice, state, [])
-    assert window.config.values["ui.config_conflicts_dismissed"] == []
+    assert window.config.values["ui.config_conflicts_dismissed"] == {"default": []}
     assert not notice._banner.get_revealed()
 
     _check(notice, state, [web])
@@ -164,7 +176,9 @@ def test_a_dismissal_from_an_earlier_launch_is_honoured(gui):
     from sshpilot.gtk.config_precedence_notice import conflict_fingerprint
 
     web = _conflict("web")
-    config = _Config({"ui.config_conflicts_dismissed": [conflict_fingerprint(web)]})
+    config = _Config(
+        {"ui.config_conflicts_dismissed": {"default": [conflict_fingerprint(web)]}}
+    )
     notice, container, _window, state, _opened = _notice(gui, [web], config=config)
 
     notice.check()
@@ -177,4 +191,67 @@ def test_a_dismissal_from_an_earlier_launch_is_honoured(gui):
 def test_nothing_dismissed_by_default():
     from sshpilot.core.settings.defaults import get_default_config
 
-    assert get_default_config()["ui"]["config_conflicts_dismissed"] == []
+    assert get_default_config()["ui"]["config_conflicts_dismissed"] == {}
+
+
+def test_a_mode_switch_keeps_what_the_other_mode_dismissed(gui):
+    """Isolated mode reads another SSH config: its scan says nothing about
+    the default one's conflicts, so their dismissal survives the round trip."""
+    web = _conflict("web")
+    notice, _container, window, state, _opened = _notice(gui, [web])
+    notice.check()
+    _pump(lambda: notice._banner is not None)
+    notice._on_dismiss()
+
+    window.config.values["ssh.use_isolated_config"] = True
+    state["loaded"] = ["lab"]
+    _check(notice, state, [])
+    window.config.values["ssh.use_isolated_config"] = False
+    state["loaded"] = ["web", "db"]
+    _check(notice, state, [web])
+
+    assert not notice._banner.get_revealed()
+    assert window.config.values["ui.config_conflicts_dismissed"]["default"]
+
+
+def test_dismissals_are_kept_per_mode(gui):
+    web = _conflict("web")
+    config = _Config({"ssh.use_isolated_config": True})
+    notice, _container, window, state, _opened = _notice(gui, [web], config=config)
+    notice.check()
+    _pump(lambda: notice._banner is not None)
+    notice._on_dismiss()
+    assert set(window.config.values["ui.config_conflicts_dismissed"]) == {"isolated"}
+
+    # The same conflict in default mode was never dismissed there.
+    window.config.values["ssh.use_isolated_config"] = False
+    _check(notice, state, [web])
+    assert notice._banner.get_revealed()
+
+
+def test_an_unreadable_config_neither_shows_nor_forgets(gui):
+    web = _conflict("web")
+    notice, _container, window, state, _opened = _notice(gui, [web])
+    notice.check()
+    _pump(lambda: notice._banner is not None)
+    notice._on_dismiss()
+    stored = dict(window.config.values["ui.config_conflicts_dismissed"])
+
+    state["unavailable"] = "permission_denied"
+    _check(notice, state, [])
+    assert window.config.values["ui.config_conflicts_dismissed"] == stored
+
+    state["unavailable"] = None
+    _check(notice, state, [web])
+    assert not notice._banner.get_revealed()
+
+
+def test_a_dismissal_stored_as_a_plain_list_counts_for_default_mode(gui):
+    from sshpilot.gtk.config_precedence_notice import conflict_fingerprint
+
+    web = _conflict("web")
+    config = _Config({"ui.config_conflicts_dismissed": [conflict_fingerprint(web)]})
+    notice, container, _window, state, _opened = _notice(gui, [web], config=config)
+    notice.check()
+    _pump(lambda: state["asked"] and not notice._checking)
+    assert not container.get_visible()

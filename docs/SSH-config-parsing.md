@@ -164,7 +164,9 @@ plain one.
   keeps the *first* value it obtains: a `Host *` (or `Match`) block placed
   before a host's own block decides every option it sets. The connection
   editor marks a field that loses this way and names the value that is used
-  and the line it comes from (`EffectiveConfigComparison.earlier`). A new
+  and the line it comes from (`EffectiveConfigComparison.earlier`). A host
+  may have several blocks: a `Host *` between two of them decides what the
+  later one sets, unless an earlier block of the host set it first. A new
   connection is checked the same way against the alias being typed
   (`get_earlier_directives`): its block is appended to the end of the file,
   so every applicable block precedes it. The editor never reorders the file.

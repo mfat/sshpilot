@@ -26,7 +26,9 @@ from gi.repository import Adw, GLib, Gtk
 logger = logging.getLogger(__name__)
 
 #: ``ui.<key>`` in config.json: the conflicts the user dismissed, as
-#: :func:`conflict_fingerprint` strings.
+#: :func:`conflict_fingerprint` strings, per configuration scope
+#: (``{"default": [...], "isolated": [...]}``). Default and isolated mode read
+#: different SSH configs, so what one dismissed says nothing about the other.
 SETTING_KEY = "ui.config_conflicts_dismissed"
 
 
@@ -42,21 +44,47 @@ def conflict_fingerprint(conflict) -> str:
     )
 
 
-def dismissed_fingerprints(config) -> frozenset:
+def config_scope(config) -> str:
+    """Which SSH config the current conflicts come from."""
     try:
-        stored = config.get_setting(SETTING_KEY, [])
+        isolated = bool(config.get_setting("ssh.use_isolated_config", False))
     except Exception:
-        return frozenset()
-    if not isinstance(stored, list):
-        return frozenset()
-    return frozenset(item for item in stored if isinstance(item, str))
+        isolated = False
+    return "isolated" if isolated else "default"
 
 
-def store_dismissed(config, fingerprints) -> None:
+def _stored(config) -> Dict[str, List[str]]:
     try:
-        config.set_setting(SETTING_KEY, sorted(fingerprints))
+        stored = config.get_setting(SETTING_KEY, {})
+    except Exception:
+        return {}
+    if isinstance(stored, list):
+        # Written before dismissals were kept per scope: default mode.
+        stored = {"default": stored}
+    if not isinstance(stored, dict):
+        return {}
+    return {
+        str(scope): [item for item in items if isinstance(item, str)]
+        for scope, items in stored.items()
+        if isinstance(items, list)
+    }
+
+
+def dismissed_fingerprints(config, scope: str) -> frozenset:
+    return frozenset(_stored(config).get(scope, ()))
+
+
+def store_dismissed(config, scope: str, fingerprints) -> None:
+    stored = _stored(config)
+    stored[scope] = sorted(fingerprints)
+    try:
+        config.set_setting(SETTING_KEY, stored)
     except Exception:
         logger.debug("Could not record the dismissed conflicts", exc_info=True)
+
+
+def _fingerprint_host(fingerprint: str) -> str:
+    return fingerprint.split("\x1f", 1)[0]
 
 
 # -- wording ----------------------------------------------------------------
@@ -200,16 +228,48 @@ class ConfigPrecedenceNotice:
             self.check()
         return False
 
+    def _config_unreadable(self) -> bool:
+        manager = getattr(self._window, "connection_manager", None)
+        try:
+            snapshot = manager.snapshot()
+        except Exception:
+            return False
+        return getattr(snapshot, "ssh_config_unavailable", None) is not None
+
+    def _loaded_hosts(self) -> frozenset:
+        manager = getattr(self._window, "connection_manager", None)
+        try:
+            return frozenset(
+                str(getattr(item, "nickname", "") or "")
+                for item in (manager.connections or ())
+            )
+        except Exception:
+            return frozenset()
+
     def _apply(self, conflicts: tuple) -> None:
+        if self._config_unreadable():
+            # An empty answer here says nothing about the file: keep every
+            # dismissal and show nothing until it can be read again.
+            self._conflicts = ()
+            self._hide()
+            self._refresh_review()
+            return
         self._conflicts = conflicts
         config = getattr(self._window, "config", None)
+        scope = config_scope(config)
         current = {conflict_fingerprint(item) for item in conflicts}
-        dismissed = dismissed_fingerprints(config)
-        # A dismissed conflict that is gone is forgotten: should it come back
-        # later, it is news again.
-        if dismissed - current:
-            dismissed = dismissed & current
-            store_dismissed(config, dismissed)
+        dismissed = dismissed_fingerprints(config, scope)
+        # A dismissed conflict that is gone is forgotten, so its return is
+        # news again -- but only for a host that is loaded now. A host
+        # missing from the list (a mode switch still settling) proves nothing.
+        loaded = self._loaded_hosts()
+        gone = {
+            item for item in dismissed - current
+            if _fingerprint_host(item) in loaded
+        }
+        if gone:
+            dismissed = dismissed - gone
+            store_dismissed(config, scope, dismissed)
         new = [item for item in conflicts if conflict_fingerprint(item) not in dismissed]
         if new:
             self._show(len(conflicts_by_host(new)))
@@ -352,9 +412,12 @@ class ConfigPrecedenceNotice:
             logger.debug("Could not open the connection editor", exc_info=True)
 
     def _on_dismiss(self, *_args) -> None:
+        config = getattr(self._window, "config", None)
         store_dismissed(
-            getattr(self._window, "config", None),
-            {conflict_fingerprint(item) for item in self._conflicts},
+            config,
+            config_scope(config),
+            dismissed_fingerprints(config, config_scope(config))
+            | {conflict_fingerprint(item) for item in self._conflicts},
         )
         self._hide()
         if self._review is not None:
