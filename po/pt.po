@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-13 23:30+0330\n"
+"POT-Creation-Date: 2026-11-13 23:36+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -5935,17 +5935,17 @@ msgstr "Não foi possível substituir o ficheiro remoto."
 #: src/sshpilot/gtk/config_precedence_notice.py:102
 #, python-brace-format
 msgid ""
-"{count} saved host does not use some of its own settings, because an earlier "
-"block in your SSH config sets them first."
+"{count} connection may connect with different settings than it shows. Review "
+"what overrides them."
 msgid_plural ""
-"{count} saved hosts do not use some of their own settings, because an "
-"earlier block in your SSH config sets them first."
+"{count} connections may connect with different settings than they show. "
+"Review what overrides them."
 msgstr[0] ""
-"{count} anfitrião guardado não usa algumas das suas próprias definições, "
-"porque um bloco anterior da sua configuração SSH define-as primeiro."
+"{count} ligação pode ligar-se com definições diferentes das que mostra. "
+"Reveja o que as substitui."
 msgstr[1] ""
-"{count} anfitriões guardados não usam algumas das suas próprias definições, "
-"porque um bloco anterior da sua configuração SSH define-as primeiro."
+"{count} ligações podem ligar-se com definições diferentes das que mostram. "
+"Reveja o que as substitui."
 
 #: src/sshpilot/gtk/config_precedence_notice.py:111
 msgid "Review"
@@ -5989,12 +5989,12 @@ msgstr "Todos os anfitriões guardados usam agora as suas próprias definições
 msgid "Edit this connection"
 msgstr "Editar esta ligação"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:352
+#: src/sshpilot/gtk/config_precedence_notice.py:355
 #: src/sshpilot/sidebar_peek_hint.py:64
 msgid "Don't Show Again"
 msgstr "Não mostrar novamente"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:354
+#: src/sshpilot/gtk/config_precedence_notice.py:357
 msgid ""
 "Hide this notice for these hosts. It returns only if another setting stops "
 "being used. The connection editor still marks each setting that is not used."
@@ -17922,6 +17922,21 @@ msgstr "Transmissão direta"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copiar chave para o servidor"
+
+#, python-brace-format
+#~ msgid ""
+#~ "{count} saved host does not use some of its own settings, because an "
+#~ "earlier block in your SSH config sets them first."
+#~ msgid_plural ""
+#~ "{count} saved hosts do not use some of their own settings, because an "
+#~ "earlier block in your SSH config sets them first."
+#~ msgstr[0] ""
+#~ "{count} anfitrião guardado não usa algumas das suas próprias definições, "
+#~ "porque um bloco anterior da sua configuração SSH define-as primeiro."
+#~ msgstr[1] ""
+#~ "{count} anfitriões guardados não usam algumas das suas próprias "
+#~ "definições, porque um bloco anterior da sua configuração SSH define-as "
+#~ "primeiro."
 
 #~ msgid "Search keywords"
 #~ msgstr "Procurar palavras-chave"

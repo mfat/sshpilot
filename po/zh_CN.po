@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-13 23:30+0330\n"
+"POT-Creation-Date: 2026-11-13 23:36+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -5719,14 +5719,13 @@ msgstr "无法替换远程文件。"
 #: src/sshpilot/gtk/config_precedence_notice.py:102
 #, python-brace-format
 msgid ""
-"{count} saved host does not use some of its own settings, because an earlier "
-"block in your SSH config sets them first."
+"{count} connection may connect with different settings than it shows. Review "
+"what overrides them."
 msgid_plural ""
-"{count} saved hosts do not use some of their own settings, because an "
-"earlier block in your SSH config sets them first."
+"{count} connections may connect with different settings than they show. "
+"Review what overrides them."
 msgstr[0] ""
-"{count} 个已保存的主机未使用其自身的部分设置，因为您的 SSH 配置中较早的块先设"
-"置了它们。"
+"{count} 个连接实际使用的设置可能与其显示的不同。请查看是什么覆盖了这些设置。"
 
 #: src/sshpilot/gtk/config_precedence_notice.py:111
 msgid "Review"
@@ -5769,12 +5768,12 @@ msgstr "现在所有已保存的主机都使用其自身的设置。"
 msgid "Edit this connection"
 msgstr "编辑此连接"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:352
+#: src/sshpilot/gtk/config_precedence_notice.py:355
 #: src/sshpilot/sidebar_peek_hint.py:64
 msgid "Don't Show Again"
 msgstr "不再显示"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:354
+#: src/sshpilot/gtk/config_precedence_notice.py:357
 msgid ""
 "Hide this notice for these hosts. It returns only if another setting stops "
 "being used. The connection editor still marks each setting that is not used."
@@ -17150,6 +17149,17 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#, python-brace-format
+#~ msgid ""
+#~ "{count} saved host does not use some of its own settings, because an "
+#~ "earlier block in your SSH config sets them first."
+#~ msgid_plural ""
+#~ "{count} saved hosts do not use some of their own settings, because an "
+#~ "earlier block in your SSH config sets them first."
+#~ msgstr[0] ""
+#~ "{count} 个已保存的主机未使用其自身的部分设置，因为您的 SSH 配置中较早的块"
+#~ "先设置了它们。"
 
 #~ msgid "Search keywords"
 #~ msgstr "搜索关键字"

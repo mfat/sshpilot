@@ -90,7 +90,7 @@ def test_conflicts_show_a_banner_naming_the_host_count(gui):
 
     assert container.get_visible()
     assert notice._banner.get_revealed()
-    assert "2 saved hosts" in notice._banner.get_title()
+    assert notice._banner.get_title().startswith("2 connections may connect")
     assert notice._banner.has_css_class("error")
     assert window.config.values == {}
 
@@ -155,7 +155,7 @@ def test_dismissed_conflicts_stay_hidden_and_a_new_one_brings_the_banner_back(gu
     # counting only what is new.
     _check(notice, state, [web, _conflict("db")])
     assert notice._banner.get_revealed()
-    assert "1 saved host " in notice._banner.get_title()
+    assert notice._banner.get_title().startswith("1 connection may connect")
 
 
 def test_a_fixed_conflict_is_forgotten_so_its_return_is_news(gui):

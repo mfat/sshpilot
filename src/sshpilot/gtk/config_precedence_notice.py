@@ -99,10 +99,10 @@ def _display_path(path: str) -> str:
 
 def banner_title(host_count: int) -> str:
     return ngettext(
-        "{count} saved host does not use some of its own settings, because an "
-        "earlier block in your SSH config sets them first.",
-        "{count} saved hosts do not use some of their own settings, because an "
-        "earlier block in your SSH config sets them first.",
+        "{count} connection may connect with different settings than it "
+        "shows. Review what overrides them.",
+        "{count} connections may connect with different settings than they "
+        "show. Review what overrides them.",
         host_count,
     ).format(count=host_count)
 
