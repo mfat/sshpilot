@@ -145,7 +145,10 @@ def test_every_marked_row_is_an_option_the_dialog_owns():
 
 def _dialog(**attrs):
     dialog = types.SimpleNamespace(_inherited_row_handlers={}, **attrs)
-    for name in ("_set_row_override_note", "_set_row_inherited_note", "_refresh_row_tooltip"):
+    for name in (
+        "_set_row_override_note", "_set_row_inherited_note", "_refresh_row_tooltip",
+        "_set_row_override_error", "_set_row_validation_error", "_refresh_row_error_class",
+    ):
         setattr(dialog, name, getattr(Validation, name).__get__(dialog))
     for name in (
         "_set_forced_options", "_set_earlier_directives",
@@ -243,7 +246,7 @@ def test_an_empty_field_gets_an_information_mark_and_no_banner():
     assert dialog.banner_syncs == [0]
 
     row.set_text("alice")  # now set here, and lost to Settings
-    assert _icon_name(icon) == "dialog-warning-symbolic"
+    assert _icon_name(icon) == "dialog-error-symbolic"
     assert dialog.banner_syncs[-1] == 1
 
 
@@ -374,7 +377,7 @@ def test_row_beaten_by_an_earlier_block_is_marked_and_stays_editable():
     dialog._set_earlier_directives({**_earlier(), **_earlier("port", "2222", line=3)})
 
     assert row._sshpilot_override_icon.get_visible()
-    assert _icon_name(row._sshpilot_override_icon) == "dialog-warning-symbolic"
+    assert _icon_name(row._sshpilot_override_icon) == "dialog-error-symbolic"
     assert "deploy" in row.get_tooltip_text() and "Host *" in row.get_tooltip_text()
     assert row.get_text() == "admin" and row.get_sensitive()
     # An empty Port row sets nothing: the earlier value is just inherited.
@@ -384,6 +387,53 @@ def test_row_beaten_by_an_earlier_block_is_marked_and_stays_editable():
     row.set_text("deploy")
     dialog._apply_override_notes()
     assert not row._sshpilot_override_icon.get_visible()
+
+
+@needs_adw
+def test_an_unused_value_takes_the_error_style_and_validation_keeps_its_own():
+    """The row's "error" class has two independent reasons; clearing one must
+    not hide the other."""
+    from gi.repository import Adw
+
+    row = Adw.EntryRow(title="Username")
+    row.set_text("admin")
+    dialog = _dialog(username_row=row)
+    dialog._forced_options = {}
+
+    dialog._set_earlier_directives(_earlier())
+    assert row.has_css_class("error")
+
+    dialog._set_row_validation_error(row, True)
+    dialog._set_row_validation_error(row, False)
+    assert row.has_css_class("error")  # still unused
+
+    dialog._set_row_validation_error(row, True)
+    row.set_text("deploy")
+    dialog._apply_override_notes()
+    assert row.has_css_class("error")  # still refused by validation
+    dialog._set_row_validation_error(row, False)
+    assert not row.has_css_class("error")
+
+
+@needs_adw
+def test_forced_value_note_says_to_change_it_in_settings_after_closing():
+    from gi.repository import Adw
+
+    row = Adw.EntryRow(title="Port")
+    row.set_text("2200")
+    dialog = _dialog(port_row=row)
+
+    dialog._set_forced_options({"port": "2222"})
+
+    assert row.has_css_class("error")
+    assert "close this dialog and open Settings" in row.get_tooltip_text()
+
+
+def test_settings_note_on_an_advanced_option_says_where_to_change_it():
+    forced = {"compression": "yes"}
+    assert "close this dialog" in advanced_option_note("Compression", "no", forced)
+    added = advanced_option_note("SendEnv", "TERM", {"sendenv": "LANG"})
+    assert "close this dialog" not in added
 
 
 @needs_adw
@@ -412,7 +462,8 @@ def test_advanced_option_beaten_by_an_earlier_block_is_noted_and_counted():
     dialog._forced_options = {}
     dialog._earlier_directives = _earlier("compression", "yes", line=4)
 
-    assert "yes" in dialog._advanced_option_note("Compression", "no")
+    note, unused = dialog._advanced_option_note("Compression", "no")
+    assert "yes" in note and unused is True
     assert dialog._advanced_option_note("Ciphers", "aes256-ctr") is None
     assert dialog._overridden_field_counts() == (0, 1)
 
@@ -502,7 +553,7 @@ def test_switch_off_with_an_authored_no_is_overridden_by_an_earlier_yes():
     dialog._set_earlier_directives(_earlier("forwardx11", "yes"))
 
     assert row._sshpilot_override_state == OVERRIDDEN
-    assert _icon_name(row._sshpilot_override_icon) == "dialog-warning-symbolic"
+    assert _icon_name(row._sshpilot_override_icon) == "dialog-error-symbolic"
     assert dialog.banner_syncs[-1] == 1
 
 

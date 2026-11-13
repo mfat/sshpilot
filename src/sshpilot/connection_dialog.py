@@ -1651,6 +1651,8 @@ class ConnectionDialog(
     content_mount = Gtk.Template.Child()
     cancel_button = Gtk.Template.Child()
     save_button = Gtk.Template.Child()
+    effective_config_button = Gtk.Template.Child()
+    edit_ssh_config_button = Gtk.Template.Child()
     
     def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None, as_new=False):
         super().__init__()
@@ -1727,6 +1729,7 @@ class ConnectionDialog(
         self.cancel_button.connect("clicked", self.on_cancel_clicked)
         self.save_button.connect("clicked", self.on_save_clicked)
         self._save_buttons = [self.save_button]
+        self._setup_config_buttons()
         self.setup_keyboard_shortcuts()
 
         # Install inline validators for key fields

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.99",
+  "api_implementation_version": "0.100",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -328,6 +328,10 @@
     "list_bitwarden_backups": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
+    },
+    "list_config_conflicts": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "list_connections": {
       "capability": "connections.read",
@@ -757,6 +761,9 @@
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.list_config_conflicts": {
+      "capability": "connections.config.read"
     },
     "connections.metadata.add_tag": {
       "capability": "connections.metadata.write"
@@ -2600,6 +2607,46 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConfigConflict": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "own_value",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "earlier",
+          "required": true,
+          "sensitive": false,
+          "type": "EarlierDirective"
         }
       ],
       "status": "Implemented"

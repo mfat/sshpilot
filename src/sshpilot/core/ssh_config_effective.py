@@ -705,6 +705,73 @@ def configured_directives(
     }
 
 
+_YES_NO_LIKE = frozenset({"yes", "no", "ask", "confirm", "none"})
+
+
+def normalized_directive_value(keyword: str, value: str) -> str:
+    """*value* in the form two spellings of one setting share.
+
+    Host names and yes/no-like words are case-insensitive to OpenSSH, and a
+    jump list may be separated by commas or blanks. Anything else is compared
+    as written.
+    """
+    value = str(value).strip()
+    if keyword.lower() == "proxyjump":
+        return ",".join(part for part in re.split(r"[\s,]+", value) if part)
+    if keyword.lower() == "hostname" or value.lower() in _YES_NO_LIKE:
+        return value.lower()
+    return value
+
+
+def own_block_values(own_lines: Sequence[str]) -> Dict[str, str]:
+    """The first value each option gets in a host's own block lines.
+
+    *own_lines* is what :func:`collect_host_block_lines` returns: the
+    ``Host`` header lines are skipped, and so are the options OpenSSH
+    collects, since an earlier block cannot take those away.
+    """
+    values: Dict[str, str] = {}
+    for raw_line in own_lines:
+        line = str(raw_line).strip()
+        if not line or line.startswith("#"):
+            continue
+        keyword, remainder = _split_keyword(line)
+        if keyword in {"host", "match"} or keyword in ACCUMULATING_DIRECTIVES:
+            continue
+        value = _unquoted(remainder)
+        if keyword and value and keyword not in values:
+            values[keyword] = value
+    return values
+
+
+def losing_directives(
+    host: str, root_path: str, own_lines: Sequence[str]
+) -> List[Dict[str, object]]:
+    """Options the host's own block sets but an earlier block decides.
+
+    One entry per option, as :func:`earlier_directives` reports it plus
+    ``own``, the value the host's block gives that is never used. Equal
+    values are not a loss. No ``ssh -G`` is run: a ``Match`` block whose
+    criteria cannot be judged from the file is left out, so every entry is
+    certain.
+    """
+    own = own_block_values(own_lines)
+    if not own:
+        return []
+    found = []
+    for item in earlier_directives(host, root_path):
+        key = str(item["key"])
+        mine = own.get(key)
+        if mine is None:
+            continue
+        if normalized_directive_value(key, mine) == normalized_directive_value(
+            key, str(item["value"])
+        ):
+            continue
+        found.append(dict(item, own=mine))
+    return found
+
+
 #: A value no one configures, per option :func:`launch_configured_directives`
 #: can ask OpenSSH about. Only the keepalive pair needs asking: it is what the
 #: app fills in when the configuration sets nothing.

@@ -102,18 +102,25 @@ class EffectiveConfigDialog(Adw.Window):
     __gtype_name__ = "SshPilotEffectiveConfigDialog"
 
     @classmethod
-    def for_result(cls, parent, host: str, result: dict):
-        """Open the viewer with an already-computed post-save result."""
-        dialog = cls(parent, host=host, result=result)
+    def for_result(cls, parent, host: str, result: dict, *, on_edit=None):
+        """Open the viewer with an already-computed post-save result.
+
+        *on_edit* replaces what the "Edit SSH config…" button does. A parent
+        that is modal (the connection dialog) passes one that opens the
+        editor over itself; the viewer is then modal too, since a window
+        merely transient for a modal one cannot be used.
+        """
+        dialog = cls(parent, host=host, result=result, on_edit=on_edit)
         dialog.present()
         return dialog
 
     def __init__(self, parent, *, host: str, own_block: str = '',
                  root_config: Optional[str] = None, is_new: bool = False,
-                 result: Optional[dict] = None) -> None:
+                 result: Optional[dict] = None, on_edit=None) -> None:
         super().__init__()
         self._parent = parent
         self._host = host
+        self._on_edit = on_edit
         self._own_lines: List[str] = []
         self._full_lines: List[str] = []
         self._changes: List[Dict[str, object]] = []
@@ -121,8 +128,10 @@ class EffectiveConfigDialog(Adw.Window):
 
         self.set_transient_for(parent)
         # Non-modal: the Edit button opens the SSH config editor (transient for
-        # the main window); a modal grab here would block it.
-        self.set_modal(False)
+        # the main window); a modal grab here would block it. Opened from a
+        # modal dialog, which hands the editor to *on_edit*, it must be modal
+        # itself to be usable at all.
+        self.set_modal(on_edit is not None)
         self.set_title(_("Effective SSH configuration"))
         self.set_default_size(820, 560)
 
@@ -369,6 +378,12 @@ class EffectiveConfigDialog(Adw.Window):
     # ---- actions -----------------------------------------------------------
 
     def _on_edit_clicked(self, _button) -> None:
+        if self._on_edit is not None:
+            try:
+                self._on_edit(self)
+            except Exception:
+                logger.debug("SSH config editor callback failed", exc_info=True)
+            return
         app = None
         try:
             app = self._parent.get_application() if self._parent else None

@@ -86,19 +86,16 @@ class ConnectionDialogValidationMixin:
             self._refresh_row_tooltip(row)
         except Exception:
             pass
-        # CSS classes: clear, then set per severity
+        # CSS classes: clear, then set per severity. The error class is
+        # shared with the override mark, so it is composed, never set here.
+        invalid = bool(hasattr(result, 'is_valid') and not result.is_valid)
         try:
-            row.remove_css_class('error')
             row.remove_css_class('warning')
-        except Exception:
-            pass
-        try:
-            if hasattr(result, 'is_valid') and not result.is_valid:
-                row.add_css_class('error')
-            elif hasattr(result, 'severity') and result.severity == 'warning':
+            if not invalid and getattr(result, 'severity', None) == 'warning':
                 row.add_css_class('warning')
         except Exception:
             pass
+        self._set_row_validation_error(row, invalid)
 
     def _update_existing_names_in_validator(self):
         try:
@@ -175,8 +172,37 @@ class ConnectionDialogValidationMixin:
             self._refresh_row_tooltip(row)
         except Exception:
             pass
+        self._set_row_validation_error(row, bool(is_error))
+
+    def _set_row_validation_error(self, row, invalid: bool) -> None:
+        """Record whether validation refuses *row*'s text, and restyle it."""
         try:
-            if is_error:
+            row._sshpilot_validation_error = bool(invalid)
+        except Exception:
+            pass
+        self._refresh_row_error_class(row)
+
+    def _set_row_override_error(self, row, unused: bool) -> None:
+        """Record whether *row* holds a value that is never used, and restyle it."""
+        try:
+            row._sshpilot_override_error = bool(unused)
+        except Exception:
+            pass
+        self._refresh_row_error_class(row)
+
+    def _refresh_row_error_class(self, row) -> None:
+        """Adwaita's error style while validation or an override marks *row*.
+
+        Two independent reasons share the one class; each records its own
+        flag, and only this method adds or removes the class, so clearing one
+        never hides the other.
+        """
+        wanted = bool(
+            getattr(row, '_sshpilot_validation_error', False)
+            or getattr(row, '_sshpilot_override_error', False)
+        )
+        try:
+            if wanted:
                 row.add_css_class('error')
             else:
                 row.remove_css_class('error')

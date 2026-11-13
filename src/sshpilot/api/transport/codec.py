@@ -105,6 +105,7 @@ from ..models.connections import (
     ConnectionDetails,
     ConnectionEditorCapabilities,
     ConnectionEditorDetails,
+    ConfigConflict,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -2191,6 +2192,73 @@ def earlier_directives_from_wire(value: Any) -> Tuple[EarlierDirective, ...]:
                 block=fields["block"],
                 file=fields["file"],
                 line=fields["line"],
+            )
+        )
+    return tuple(found)
+
+
+def _earlier_directive_to_wire(item: EarlierDirective) -> Dict[str, Any]:
+    return {
+        "key": item.key,
+        "value": item.value,
+        "block": item.block,
+        "file": item.file,
+        "line": item.line,
+    }
+
+
+def _earlier_directive_from_wire(value: Any) -> EarlierDirective:
+    fields = _strict_fields(
+        value,
+        required={"key", "value", "block", "file", "line"},
+        context="earlier directive",
+    )
+    return EarlierDirective(
+        key=fields["key"],
+        value=fields["value"],
+        block=fields["block"],
+        file=fields["file"],
+        line=fields["line"],
+    )
+
+
+def config_conflicts_to_wire(value: Any) -> Dict[str, Any]:
+    if type(value) is not tuple or any(
+        not isinstance(item, ConfigConflict) for item in value
+    ):
+        raise TypeError("value must be a tuple of ConfigConflict")
+    return {
+        "conflicts": [
+            {
+                "connection_id": item.connection_id,
+                "host": item.host,
+                "key": item.key,
+                "own_value": item.own_value,
+                "earlier": _earlier_directive_to_wire(item.earlier),
+            }
+            for item in value
+        ]
+    }
+
+
+def config_conflicts_from_wire(value: Any) -> Tuple[ConfigConflict, ...]:
+    data = _strict_fields(value, required={"conflicts"}, context="config conflicts")
+    if type(data["conflicts"]) is not list:
+        raise ValueError("config conflicts must be a list")
+    found = []
+    for item in data["conflicts"]:
+        fields = _strict_fields(
+            item,
+            required={"connection_id", "host", "key", "own_value", "earlier"},
+            context="config conflict",
+        )
+        found.append(
+            ConfigConflict(
+                connection_id=fields["connection_id"],
+                host=fields["host"],
+                key=fields["key"],
+                own_value=fields["own_value"],
+                earlier=_earlier_directive_from_wire(fields["earlier"]),
             )
         )
     return tuple(found)

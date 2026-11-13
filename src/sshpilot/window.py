@@ -1038,6 +1038,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(self.client, bridge=self.client_bridge)
         self._maybe_restore_daemon_sessions()
+        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        if callable(schedule):
+            schedule()
         self._run_client_ready_callbacks(True)
 
     def when_daemon_client_ready(self, callback) -> None:
@@ -2268,6 +2271,29 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         container.set_visible(True)
         banner.set_revealed(True)
 
+    def _schedule_config_precedence_check(self) -> None:
+        """Look for unused host settings shortly after the store settles.
+
+        Store refreshes come in bursts; one check follows the last of them.
+        Nothing is asked once the notice is retired.
+        """
+        notice = getattr(self, '_config_precedence_notice', None)
+        if notice is None:
+            return
+        from .gtk.config_precedence_notice import notice_pending
+        if not notice_pending(getattr(self, 'config', None)):
+            return
+        if getattr(self, '_config_precedence_check_timer', 0):
+            GLib.source_remove(self._config_precedence_check_timer)
+
+        def fire():
+            self._config_precedence_check_timer = 0
+            if self._daemon_ready():
+                notice.check()
+            return False
+
+        self._config_precedence_check_timer = GLib.timeout_add(1000, fire)
+
     def _on_ssh_config_link_details(self, *_args):
         from .gtk.ssh_config_access_messages import (
             copy_command_label,
@@ -2382,6 +2408,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.ssh_config_banner_container.set_visible(False)
+        # Saved hosts whose own settings an earlier block beats; shown once,
+        # to installs from before launches matched `ssh <alias>`.
+        self.config_precedence_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.config_precedence_banner_container.set_visible(False)
+        from .gtk.config_precedence_notice import ConfigPrecedenceNotice
+        self._config_precedence_notice = ConfigPrecedenceNotice(
+            self, self.config_precedence_banner_container
+        )
+        self._config_precedence_check_timer = 0
         self.tips_revealer = None
         self.tips_label = None
         self.tips_next_button = None
@@ -4168,6 +4205,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.ssh_config_banner_container)
+            content_wrapper.append(self.config_precedence_banner_container)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
@@ -4185,6 +4223,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(self.ssh_config_banner_container)
+            main_box.append(self.config_precedence_banner_container)
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
@@ -6327,13 +6366,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to present group edit options: {e}")
             self.show_connection_dialog(connection, skip_group_warning=True)
 
-    def _open_ssh_config_editor(self):
+    def _open_ssh_config_editor(self, parent=None, on_saved=None):
         """Open the SSH config text editor backed by the daemon.
 
         GTK never decides which SSH config file is active and never writes it:
         the daemon resolves the root (normal or isolated mode), serves the
         text, performs the hardened atomic write, and reloads connection
         state. This reuses the existing raw text editor UI unchanged.
+
+        *parent* is a modal window the editor is opened from (the connection
+        dialog). A window transient for this one could not be used while that
+        dialog is open, so the editor is then modal over *parent* instead.
+        *on_saved* runs after each save. Returns the editor, or None.
         """
         try:
             from .text_editor import RemoteFileEditorWindow
@@ -6351,11 +6395,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     "SSH config editing requires the background service. "
                     "Start it and try again."
                 ))
-                return
+                return None
 
             service = DaemonSshConfigTextService(client)
             editor = RemoteFileEditorWindow(
-                parent=self,
+                parent=parent or self,
                 file_path="",  # the daemon resolves the active config file
                 file_name=_("SSH Config"),
                 is_local=False,
@@ -6363,7 +6407,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 file_manager_window=None,
                 language_id="sshconfig",
                 show_outline=True,
+                on_saved=on_saved,
             )
+            if parent is not None:
+                editor.set_modal(True)
 
             # Window/taskbar title; the header title shows the daemon-resolved
             # display name as the subtitle automatically.
@@ -6372,9 +6419,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 editor.set_editor_title(_("SSH Config"))
 
             editor.present()
+            return editor
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
             self.show_toast(_("Could not open the SSH config editor."))
+            return None
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its
@@ -7436,6 +7485,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self.group_manager.bind_connections(manager.connections)
         self._sync_ssh_config_link_notice(manager)
+        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        if callable(schedule):
+            schedule()
         # A rebuild that runs after this reset, before the idle one, already
         # shows this state; the idle callback then has nothing left to do.
         self._projection_rebuild_mark = getattr(

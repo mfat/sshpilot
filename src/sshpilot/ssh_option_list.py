@@ -211,9 +211,26 @@ class _OptionRow(Gtk.ListBoxRow):
         if self.error:
             self.show_note(None)
 
-    def show_note(self, note: Optional[str]) -> None:
+    def show_note(self, note: Optional[str], *, unused: bool = False) -> None:
+        """Show a remark under the row; *unused* says the value is never used.
+
+        An unused value is drawn in Adwaita's error style, like a refused
+        one, though nothing is refused: the option is still saved.
+        """
+        unused = bool(note) and unused
         self.note_label.set_label(note or "")
         self.note_label.set_visible(bool(note))
+        if unused:
+            self.note_label.remove_css_class("dim-label")
+            self.note_label.add_css_class("error")
+        else:
+            self.note_label.remove_css_class("error")
+            self.note_label.add_css_class("dim-label")
+        if not self.error:
+            if unused:
+                self.value_entry.add_css_class("error")
+            else:
+                self.value_entry.remove_css_class("error")
 
 
 class SshOptionList(Gtk.Box):
@@ -404,8 +421,15 @@ class SshOptionList(Gtk.Box):
         keyword, value = row.pair()
         if self._note is None or row.error or not keyword or not value:
             row.show_note(None)
+            return
+        # A note is text, or ``(text, unused)`` when the remark means the
+        # value is never used.
+        note = self._note(keyword, value)
+        if isinstance(note, tuple):
+            text, unused = note
+            row.show_note(text, unused=bool(unused))
         else:
-            row.show_note(self._note(keyword, value))
+            row.show_note(note)
 
     def _finish(self, row: _OptionRow) -> None:
         if row not in self._rows:

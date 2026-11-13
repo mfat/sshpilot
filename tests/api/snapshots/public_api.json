@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.99",
+  "api_implementation_version": "0.100",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -424,6 +424,10 @@
     "list_bitwarden_backups": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
+    },
+    "list_config_conflicts": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "list_connections": {
       "capability": "connections.read",
@@ -857,6 +861,7 @@
     "list_agent_keys",
     "list_authorized_keys",
     "list_bitwarden_backups",
+    "list_config_conflicts",
     "list_connections",
     "list_forwards",
     "list_interactions",
@@ -1798,6 +1803,10 @@
     "list_bitwarden_backups": {
       "parameters": [],
       "return": "list[dict[str, str]]"
+    },
+    "list_config_conflicts": {
+      "parameters": [],
+      "return": "tuple[ConfigConflict, ...]"
     },
     "list_connections": {
       "parameters": [],
@@ -2914,6 +2923,9 @@
     "connections.list": {
       "capability": "connections.read"
     },
+    "connections.list_config_conflicts": {
+      "capability": "connections.config.read"
+    },
     "connections.metadata.add_tag": {
       "capability": "connections.metadata.write"
     },
@@ -3585,6 +3597,7 @@
     "CloseSessionRequest",
     "CloseSftpRequest",
     "CompatibilityResult",
+    "ConfigConflict",
     "ConfirmationPrompt",
     "ConnectionDetails",
     "ConnectionEditorCapabilities",
@@ -4007,6 +4020,13 @@
       "compatible",
       "protocol_version",
       "message"
+    ],
+    "ConfigConflict": [
+      "connection_id",
+      "host",
+      "key",
+      "own_value",
+      "earlier"
     ],
     "ConfirmationPrompt": [
       "text"

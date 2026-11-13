@@ -472,6 +472,33 @@ class EarlierDirective:
 
 
 @dataclass(frozen=True)
+class ConfigConflict:
+    """A saved host's own value that an earlier block keeps from being used.
+
+    The host's block sets ``key`` to ``own_value``, but ``earlier`` sets it
+    first, and OpenSSH keeps the first value it obtains. ``key`` is the
+    lower-case keyword, the same as ``earlier.key``.
+    """
+
+    connection_id: str
+    host: str
+    key: str
+    own_value: str
+    earlier: EarlierDirective
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        for name in ("host", "key", "own_value"):
+            text = getattr(self, name)
+            if type(text) is not str or not text or "\x00" in text:
+                raise ValueError(f"config conflict {name} is invalid")
+        if not isinstance(self.earlier, EarlierDirective):
+            raise TypeError("config conflict earlier directive is invalid")
+        if self.key != self.earlier.key:
+            raise ValueError("config conflict key must match its earlier directive")
+
+
+@dataclass(frozen=True)
 class EffectiveConfigComparison:
     """Daemon-owned authored-vs-effective OpenSSH comparison."""
 

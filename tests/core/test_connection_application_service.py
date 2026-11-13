@@ -1188,3 +1188,38 @@ def test_earlier_directives_for_a_host_not_saved_yet(tmp_path):
     # Not a Host name: nothing to ask OpenSSH about.
     assert service.get_earlier_directives("-oProxyCommand=x") == ()
     assert service.get_earlier_directives("two words") == ()
+
+
+def test_config_conflicts_list_every_saved_host_value_an_earlier_block_beats(tmp_path):
+    """The upgrade notice's list: a saved host's own value is reported when an
+    earlier block sets the option to something else. An equal value, a block
+    after the host, a Match only OpenSSH could judge, and collected options
+    such as IdentityFile are not conflicts."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User admin\n    ForwardAgent no\n    IdentityFile ~/.ssh/a\n\n"
+        "Host web\n    User deploy\n    ForwardAgent NO\n    IdentityFile ~/.ssh/b\n\n"
+        "Match exec \"true\"\n    Port 2200\n\n"
+        "Host db\n    User admin\n    Port 2222\n\n"
+        "Host *\n    User late\n",
+        encoding="utf-8",
+    )
+    records = [
+        _record(record_id="web", nickname="web", host="web", source=str(root)),
+        _record(record_id="db", nickname="db", host="db", source=str(root)),
+    ]
+    repo = FakeRepository(records)
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    conflicts = service.list_config_conflicts()
+
+    assert len(conflicts) == 1
+    conflict = conflicts[0]
+    assert (conflict.connection_id, conflict.host) == ("web", "web")
+    assert (conflict.key, conflict.own_value) == ("user", "deploy")
+    assert conflict.earlier.value == "admin"
+    assert conflict.earlier.block == "Host *"
+    assert (conflict.earlier.file, conflict.earlier.line) == (str(root), 2)
+

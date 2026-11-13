@@ -17,6 +17,7 @@ from .models.connections import (
     AsbruImportResult,
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConfigConflict,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -246,6 +247,9 @@ class SshPilotClient(Protocol):
         ...
 
     def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
+        ...
+
+    def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         ...
 
     def check_unsaved_host(

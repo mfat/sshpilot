@@ -27,8 +27,13 @@ def test_for_result_reuses_precomputed_diff():
     dialog = EffectiveConfigDialog.for_result.__func__(
         _Dialog, "parent", "US", result)
 
-    assert dialog.kwargs == {"host": "US", "result": result}
+    assert dialog.kwargs == {"host": "US", "result": result, "on_edit": None}
     assert dialog.presented is True
+
+    on_edit = object()
+    dialog = EffectiveConfigDialog.for_result.__func__(
+        _Dialog, "parent", "US", result, on_edit=on_edit)
+    assert dialog.kwargs["on_edit"] is on_edit
 
 
 def test_full_view_toggle_offers_return_to_differences():

@@ -3,7 +3,8 @@ using Adw 1;
 
 // Layout skeleton only. The tabbed preferences content (content_mount) and the
 // validators/data loading are built in Python (connection_dialog.py); this file
-// owns the container structure and the pinned Cancel/Save buttons.
+// owns the container structure and the pinned buttons: the SSH configuration
+// ones on the left, Cancel/Save on the right.
 template $ConnectionDialog: Adw.Window {
   modal: true;
   default-width: 600;
@@ -33,7 +34,20 @@ template $ConnectionDialog: Adw.Window {
       margin-end: 24;
       margin-top: 12;
       margin-bottom: 12;
-      halign: end;
+
+      Gtk.Button effective_config_button {
+        label: _("Effective Config");
+        tooltip-text: _("Show what SSH uses for this host, as saved");
+      }
+
+      Gtk.Button edit_ssh_config_button {
+        label: _("Edit SSH Config");
+        tooltip-text: _("Open the SSH config editor");
+      }
+
+      Gtk.Box {
+        hexpand: true;
+      }
 
       Gtk.Button cancel_button {
         label: _("Cancel");

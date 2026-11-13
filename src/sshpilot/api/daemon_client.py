@@ -52,6 +52,7 @@ from .models.connections import (
     AsbruImportResult,
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConfigConflict,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -196,6 +197,7 @@ from .transport.codec import (
     close_sftp_request_to_wire,
     connection_details_from_wire,
     connection_editor_details_from_wire,
+    config_conflicts_from_wire,
     earlier_directives_from_wire,
     effective_config_comparison_from_wire,
     unsaved_host_check_request_to_wire,
@@ -422,6 +424,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "set_operation_mode": Capability.OPERATION_MODE,
     "get_operation_mode": Capability.OPERATION_MODE,
@@ -882,6 +885,14 @@ class DaemonClient:
             return earlier_directives_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid earlier SSH directives")
+
+    def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("connections.list_config_conflicts", {})
+        try:
+            return config_conflicts_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid SSH config conflicts")
 
     def check_unsaved_host(
         self, request: UnsavedHostCheckRequest

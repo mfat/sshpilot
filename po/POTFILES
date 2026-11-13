@@ -46,6 +46,7 @@ src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/sftp_error_messages.py
 src/sshpilot/gtk/transfer_error_messages.py
 src/sshpilot/gtk/sftp_failure_messages.py
+src/sshpilot/gtk/config_precedence_notice.py
 src/sshpilot/gtk/ssh_config_access_messages.py
 src/sshpilot/gtk/secret_status_messages.py
 src/sshpilot/gtk/secret_transfer_messages.py

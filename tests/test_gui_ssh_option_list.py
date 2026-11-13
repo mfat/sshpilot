@@ -411,3 +411,29 @@ def test_advanced_tab_notes_options_that_settings_override(gui):
     assert "15" in overridden.note_label.get_label()
     assert not plain.note_label.get_visible()
     assert tab.get_extra_ssh_config() == "ServerAliveInterval 90\nTCPKeepAlive no"
+
+
+def test_a_note_saying_the_value_is_unused_draws_the_row_in_error_style(gui):
+    """``(text, True)`` from the note callback: the value is never used, so the
+    value field and the note take Adwaita's error style; a plain remark keeps
+    the dim style. Nothing is refused either way."""
+    notes = {
+        "Compression": ("Not used: Host * sets yes", True),
+        "SendEnv": ("Both are used", False),
+    }
+    options = _list(gui, note=lambda k, v: notes.get(k))
+    options.set_options([("Compression", "no"), ("SendEnv", "TERM"), ("Ciphers", "x")])
+    unused, added, plain = options.rows()
+
+    assert unused.value_entry.has_css_class("error")
+    assert unused.note_label.has_css_class("error")
+    assert not unused.note_label.has_css_class("dim-label")
+    assert not added.value_entry.has_css_class("error")
+    assert added.note_label.has_css_class("dim-label")
+    assert not plain.note_label.get_visible()
+    assert options.get_options() == [("Compression", "no"), ("SendEnv", "TERM"), ("Ciphers", "x")]
+
+    notes.pop("Compression")
+    options.refresh_notes()
+    assert not unused.value_entry.has_css_class("error")
+    assert not unused.note_label.get_visible()

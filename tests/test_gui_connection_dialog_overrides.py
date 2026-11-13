@@ -129,7 +129,7 @@ def test_an_empty_username_takes_the_forced_one_without_a_banner(gui):
     assert getattr(dialog, "_override_banner", None) is None
 
     dialog.username_row.set_text("alice")
-    assert _icon_name(icon) == "dialog-warning-symbolic"
+    assert _icon_name(icon) == "dialog-error-symbolic"
     assert dialog._override_banner.get_revealed()
 
 
@@ -139,7 +139,7 @@ def test_jump_host_loses_to_a_forced_proxy_command_in_the_real_dialog(gui):
     _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
 
     assert _icon_name(dialog.proxy_jump_row._sshpilot_override_icon) == (
-        "dialog-warning-symbolic"
+        "dialog-error-symbolic"
     )
     assert dialog._override_banner.get_revealed()
 
@@ -190,7 +190,7 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
 
     icon = dialog.username_row._sshpilot_override_icon
     assert icon.get_visible()
-    assert _icon_name(icon) == "dialog-warning-symbolic"
+    assert _icon_name(icon) == "dialog-error-symbolic"
     tooltip = dialog.username_row.get_tooltip_text()
     assert "deploy" in tooltip and "Host *" in tooltip and "line 2" in tooltip
     assert dialog._override_banner.get_revealed()
@@ -199,10 +199,85 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     assert dialog.username_row.get_text() == "admin"
     assert dialog.username_row.get_sensitive()
 
+    # Drawn like a refused value, but Save is not blocked by it.
+    assert dialog.username_row.has_css_class("error")
+    assert dialog.save_button.get_sensitive()
+
     # Agreeing with the earlier block loses nothing.
     dialog.username_row.set_text("deploy")
     assert not icon.get_visible()
+    assert not dialog.username_row.has_css_class("error")
     assert not dialog._override_banner.get_revealed()
+
+
+def test_config_buttons_open_the_viewer_and_editor_over_the_dialog(gui):
+    """The dialog is modal, so whatever it opens must be modal over it to be
+    usable: the effective-config viewer, and the SSH config editor."""
+    from gi.repository import Gtk
+    from sshpilot.api.models.connections import EffectiveConfigComparison
+    from sshpilot.connection_dialog import ConnectionDialog
+    from sshpilot.connection_model import Connection
+    from sshpilot.effective_config_dialog import EffectiveConfigDialog
+    from sshpilot.plugins.loader import ensure_builtin_protocols
+
+    ensure_builtin_protocols()
+    comparison = EffectiveConfigComparison(
+        connection_id="web", host="web", available=True, has_diff=False,
+        own=("user admin",), full=("user admin", "port 22"),
+    )
+    snapshot = GlobalSshOverrides(
+        revision="r1", connect_timeout=0, strict_host_key_checking="",
+        compression="", verbosity=0, debug_enabled=False, forced_options=(),
+    )
+    opened = []
+    parent = Gtk.Window()
+    parent.connection_manager = _Manager()
+    parent._daemon_ready = lambda: True
+    parent.client = types.SimpleNamespace(
+        get_global_ssh_overrides=lambda: snapshot,
+        get_effective_config=lambda _cid: comparison,
+    )
+    parent._open_ssh_config_editor = (
+        lambda parent=None, on_saved=None: opened.append((parent, on_saved))
+    )
+
+    new = ConnectionDialog(parent, connection_manager=parent.connection_manager)
+    assert new.edit_ssh_config_button.get_visible()
+    assert not new.effective_config_button.get_sensitive()  # nothing saved yet
+    new.close()
+
+    connection = Connection({
+        "nickname": "web", "host": "web", "hostname": "web.example.com",
+        "username": "admin", "__authored_directives": ("hostname", "user"),
+    })
+    dialog = ConnectionDialog(
+        parent, connection=connection, connection_manager=parent.connection_manager
+    )
+    assert dialog.effective_config_button.get_sensitive()
+
+    dialog.edit_ssh_config_button.emit("clicked")
+    assert opened and opened[-1][0] is dialog
+    reloads = []
+    dialog._load_earlier_directives_async = lambda: reloads.append("earlier")
+    dialog._load_inherited_values_async = lambda: reloads.append("inherited")
+    opened[-1][1]()  # the editor saved
+    assert reloads == ["earlier", "inherited"]
+
+    dialog.effective_config_button.emit("clicked")
+
+    def viewer():
+        for window in Gtk.Window.list_toplevels():
+            if isinstance(window, EffectiveConfigDialog) and window.get_visible():
+                return window
+        return None
+
+    _pump(lambda: viewer() is not None)
+    window = viewer()
+    assert window.get_transient_for() is dialog and window.get_modal()
+    window._on_edit_clicked(None)
+    assert opened[-1][0] is window
+    window.close()
+    dialog.close()
 
 
 def test_new_connection_is_checked_against_the_alias_being_typed(gui):

@@ -118,8 +118,6 @@ OVERRIDDEN = "overridden"
 #: The row is empty, or holds what Settings force: the global value applies.
 GLOBAL = "global"
 
-_YES_NO_LIKE = frozenset({"yes", "no", "ask", "confirm", "none"})
-
 
 def suppressing_option(
     keyword: str, forced: Dict[str, str]
@@ -164,7 +162,15 @@ def _forced_proxy(wanted: str, forced: Dict[str, str]) -> Optional[Tuple[str, st
     return None
 
 
+_YES_NO_LIKE = frozenset({"yes", "no", "ask", "confirm", "none"})
+
+
 def _normalized(keyword: str, value: str) -> str:
+    """Two spellings of one value compare equal, as they do to OpenSSH.
+
+    The daemon's ``normalized_directive_value`` applies the same rule to the
+    upgrade notice; the frontend keeps its own copy of this pure helper.
+    """
     value = str(value).strip()
     if keyword.lower() == "proxyjump":
         return ",".join(part for part in re.split(r"[\s,]+", value) if part)
@@ -195,7 +201,8 @@ def override_state(
         return GLOBAL, _global_note(forced_keyword, value)
     return OVERRIDDEN, _(
         "Settings ▸ SSH Options set {keyword} to “{value}” for every "
-        "connection. The value here is saved, but the app does not use it."
+        "connection. The value here is saved, but the app does not use it. "
+        "To change it, close this dialog and open Settings ▸ SSH Options."
     ).format(keyword=forced_keyword, value=value)
 
 
@@ -357,7 +364,8 @@ def advanced_option_note(
         return None
     return _(
         "Settings ▸ SSH Options set this to “{value}” for every connection. "
-        "The value here is saved, but the app does not use it."
+        "The value here is saved, but the app does not use it. To change it, "
+        "close this dialog and open Settings ▸ SSH Options."
     ).format(value=forced_value)
 
 
@@ -643,9 +651,9 @@ class ConnectionDialogOverridesMixin:
         if icon is not None:
             overridden = state == OVERRIDDEN
             icon.set_from_icon_name(
-                "dialog-warning-symbolic" if overridden else "dialog-information-symbolic"
+                "dialog-error-symbolic" if overridden else "dialog-information-symbolic"
             )
-            for css, wanted in (("warning", overridden), ("dim-label", not overridden)):
+            for css, wanted in (("error", overridden), ("dim-label", not overridden)):
                 if wanted:
                     icon.add_css_class(css)
                 else:
@@ -653,6 +661,9 @@ class ConnectionDialogOverridesMixin:
             icon.set_visible(bool(state))
             icon.set_tooltip_text(note or None)
         row._sshpilot_override_state = state
+        # A value that is never used is drawn like a refused one (Adwaita's
+        # error style), though it is still saved.
+        self._set_row_override_error(row, state == OVERRIDDEN)
         self._set_row_override_note(row, note or "")
         # "Edit to set it for this host" is false while the option is forced:
         # the override note replaces it, and it returns with the override gone.
@@ -661,13 +672,25 @@ class ConnectionDialogOverridesMixin:
                 row, "" if note else inherited_note_text()
             )
 
-    def _advanced_option_note(self, keyword: str, value: str) -> Optional[str]:
+    def _advanced_option_note(
+        self, keyword: str, value: str
+    ) -> Optional[Tuple[str, bool]]:
+        """``(note, unused)`` for an Advanced-tab option, or None.
+
+        *unused* is False only for an option Settings add to rather than
+        replace: both values are used there.
+        """
         forced = getattr(self, "_forced_options", None) or {}
-        if keyword.strip().lower() in forced:
-            return advanced_option_note(keyword, value, forced)
-        return earlier_note(
-            keyword, value, getattr(self, "_earlier_directives", None) or {}
-        )
+        lowered = keyword.strip().lower()
+        if lowered in forced:
+            note = advanced_option_note(keyword, value, forced)
+            unused = lowered not in EXTRA_OPTIONS_ADDED_NOT_REPLACED
+        else:
+            note = earlier_note(
+                keyword, value, getattr(self, "_earlier_directives", None) or {}
+            )
+            unused = True
+        return (note, unused) if note else None
 
     def _overridden_field_counts(self) -> Tuple[int, int]:
         """``(by Settings, by an earlier block)``: fields set here and not used."""
@@ -702,7 +725,138 @@ class ConnectionDialogOverridesMixin:
     def _overridden_field_count(self) -> int:
         return sum(self._overridden_field_counts())
 
+    # -- the SSH configuration buttons -----------------------------------
+
+    def _setup_config_buttons(self) -> None:
+        """Wire "Effective Config" and "Edit SSH Config" at the dialog's foot."""
+        effective = getattr(self, "effective_config_button", None)
+        if effective is not None:
+            effective.connect("clicked", self._on_effective_config_clicked)
+        editor = getattr(self, "edit_ssh_config_button", None)
+        if editor is not None:
+            editor.connect("clicked", self._on_edit_ssh_config_clicked)
+        self._sync_config_buttons()
+
+    def _sync_config_buttons(self) -> None:
+        """Both buttons are about SSH; the viewer also needs a saved host."""
+        try:
+            ssh = self._selected_protocol_id() == "ssh"
+        except Exception:
+            ssh = True
+        editor = getattr(self, "edit_ssh_config_button", None)
+        if editor is not None:
+            editor.set_visible(ssh)
+        effective = getattr(self, "effective_config_button", None)
+        if effective is None:
+            return
+        effective.set_visible(ssh)
+        saved = bool(getattr(self, "is_editing", False)) and getattr(
+            self, "connection", None
+        ) is not None
+        effective.set_sensitive(saved)
+        effective.set_tooltip_text(
+            _("Show what SSH uses for this host, as saved")
+            if saved
+            else _("Save the connection to see what SSH uses for it")
+        )
+
+    def _on_effective_config_clicked(self, _button) -> None:
+        """Open the effective-config viewer over this dialog.
+
+        It shows the saved host, as ``ssh <alias>`` resolves it; changes not
+        saved yet are not in it.
+        """
+        parent = getattr(self, "parent_window", None)
+        client = getattr(parent, "client", None)
+        connection = getattr(self, "connection", None)
+        if connection is None or not (
+            callable(getattr(parent, "_daemon_ready", None))
+            and parent._daemon_ready()
+            and callable(getattr(client, "get_effective_config", None))
+        ):
+            self._show_effective_config_unavailable()
+            return
+        host = str(getattr(connection, "nickname", "") or "")
+
+        def present(result):
+            if result is None or not getattr(result, "available", False):
+                self._show_effective_config_unavailable()
+                return False
+            try:
+                from .effective_config_dialog import EffectiveConfigDialog
+
+                EffectiveConfigDialog.for_result(
+                    self,
+                    host,
+                    {
+                        "has_diff": result.has_diff,
+                        "changes": list(result.changes),
+                        "own": list(result.own),
+                        "full": list(result.full),
+                    },
+                    on_edit=self._open_ssh_config_editor_over,
+                )
+            except Exception:
+                logger.debug("Could not open the effective-config viewer", exc_info=True)
+            return False
+
+        def worker():
+            result = None
+            try:
+                from .api.connection_identity import connection_id_for
+
+                result = client.get_effective_config(connection_id_for(connection))
+            except Exception:
+                logger.debug("Effective config unavailable", exc_info=True)
+            GLib.idle_add(present, result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_effective_config_unavailable(self) -> None:
+        dialog = Adw.AlertDialog.new(
+            _("Effective configuration unavailable"),
+            _(
+                "The background service could not resolve this connection's "
+                "effective SSH configuration."
+            ),
+        )
+        dialog.add_response("close", _("_Close"))
+        dialog.present(self)
+
+    def _on_edit_ssh_config_clicked(self, _button) -> None:
+        self._open_ssh_config_editor_over(self)
+
+    def _open_ssh_config_editor_over(self, window) -> None:
+        """Open the SSH config editor modal over *window* (this dialog, or
+        the viewer opened from it), and re-mark the fields after each save."""
+        parent = getattr(self, "parent_window", None)
+        opener = getattr(parent, "_open_ssh_config_editor", None)
+        if not callable(opener):
+            return
+        opener(parent=window, on_saved=self._on_ssh_config_saved)
+
+    def _on_ssh_config_saved(self) -> None:
+        """The file changed under this dialog: ask again what decides each field.
+
+        Only the marks and the inherited values are refreshed. What the user
+        typed stays, and a save still writes only the fields changed here.
+        """
+        names = ["_load_earlier_directives_async"]
+        if getattr(self, "is_editing", False):
+            # A saved host shows inherited values dimmed in its empty fields.
+            # (A search-box target fills them as its own values instead,
+            # once, when the dialog opens; that is not repeated here.)
+            names.append("_load_inherited_values_async")
+        for name in names:
+            reload = getattr(self, name, None)
+            if callable(reload):
+                try:
+                    reload()
+                except Exception:
+                    logger.debug("Could not refresh after an SSH config save", exc_info=True)
+
     def _sync_override_banner(self) -> None:
+        self._sync_config_buttons()
         try:
             ssh = self._selected_protocol_id() == "ssh"
         except Exception:

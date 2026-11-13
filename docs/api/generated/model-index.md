@@ -654,6 +654,46 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConfigConflict -->
+## `ConfigConflict`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A saved host's own value that an earlier block keeps from being used.
+
+The host's block sets ``key`` to ``own_value``, but ``earlier`` sets it
+first, and OpenSSH keeps the first value it obtains. ``key`` is the
+lower-case keyword, the same as ``earlier.key``.
+
+**Related methods:** `list_config_conflicts`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `str` | Yes | — | No |
+| `host` | `str` | Yes | — | No |
+| `key` | `str` | Yes | — | No |
+| `own_value` | `str` | Yes | — | No |
+| `earlier` | `EarlierDirective` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "earlier": {
+    "block": "example",
+    "file": "example",
+    "key": "example",
+    "line": 0,
+    "value": "example"
+  },
+  "host": "example",
+  "key": "example",
+  "own_value": "example"
+}
+```
+
 <!-- api-model: ConfirmationPrompt -->
 ## `ConfirmationPrompt`
 
@@ -1927,7 +1967,7 @@ for the host whatever the host's own block says. ``block`` is the header
 of the block that holds the line (``Host *``, ``Match all``), empty for a
 line above every block; ``file`` and ``line`` locate it.
 
-**Related methods:** `get_earlier_directives`, `get_effective_config`
+**Related methods:** `get_earlier_directives`, `get_effective_config`, `list_config_conflicts`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

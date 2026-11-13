@@ -51,6 +51,7 @@ from ..api.models.connections import (
     ConnectionId,
     ConnectionMutationResult,
     ConnectionSummary,
+    ConfigConflict,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -93,6 +94,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
@@ -1263,6 +1265,60 @@ class ConnectionApplicationService:
             )
             for item in found
         )
+
+    def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
+        """Every saved host's own value that an earlier block keeps unused.
+
+        The same judgement the connection editor makes for one host
+        (``EffectiveConfigComparison.earlier`` against the block's own
+        lines), over all saved SSH hosts, from the files alone: a ``Match``
+        block that only OpenSSH could judge is left out, so nothing reported
+        is a guess. Hosts are walked in store order; a host whose files
+        cannot be read contributes nothing.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .ssh_config_effective import (
+            collect_host_block_lines,
+            launch_config_file,
+            losing_directives,
+        )
+
+        root = str(self._repository.root_config_path)
+        conflicts = []
+        for record in self._repository.list_records():
+            if (record.protocol or "ssh").strip().lower() != "ssh":
+                continue
+            host = (record.nickname or "").strip()
+            if not host or not record.source:
+                continue
+            try:
+                own_lines = collect_host_block_lines(host, root)
+                compare_file = launch_config_file(root, record.source) or root
+                found = losing_directives(host, compare_file, own_lines)
+            except Exception:
+                logger.debug("Config conflict check failed for %s", host, exc_info=True)
+                continue
+            for item in found:
+                try:
+                    conflicts.append(
+                        ConfigConflict(
+                            connection_id=str(record.id),
+                            host=host,
+                            key=str(item["key"]),
+                            own_value=str(item["own"]),
+                            earlier=EarlierDirective(
+                                key=str(item["key"]),
+                                value=str(item["value"]),
+                                block=str(item["block"]),
+                                file=str(item["file"]),
+                                line=int(item["line"]),
+                            ),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    logger.debug("Skipping an unrepresentable conflict for %s", host)
+        return tuple(conflicts)
 
     def check_unsaved_host(
         self, request: UnsavedHostCheckRequest
