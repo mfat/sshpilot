@@ -15,7 +15,11 @@ from typing import Any, Dict, Optional
 from gettext import gettext as _, ngettext
 
 from .platform_utils import is_macos, is_windows
-from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CHOICES
+from .core.settings.defaults import (
+    DEFAULT_WHEEL_SCROLL_LINES,
+    GROUP_COLOR_DISPLAY_MODES,
+    TERMINAL_PANE_CHOICES,
+)
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
@@ -1312,7 +1316,7 @@ class PreferencesWindow(Adw.Window):
         group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
 
         # Sidebar group color display mode
-        self._group_color_display_values = ['fill', 'badge', 'bar', 'dot']
+        self._group_color_display_values = list(GROUP_COLOR_DISPLAY_MODES)
         self.group_color_display_row = Adw.ComboRow()
         self.group_color_display_row.set_title(_("Sidebar Group Colors"))
         self.group_color_display_row.set_subtitle(
@@ -1324,6 +1328,7 @@ class PreferencesWindow(Adw.Window):
         color_display_options.append(_("Color Badges"))
         color_display_options.append(_("Accent Bars"))
         color_display_options.append(_("Color Dots"))
+        color_display_options.append(_("Colored Text"))
         self.group_color_display_row.set_model(color_display_options)
 
         current_mode = 'fill'
@@ -5799,7 +5804,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             normalized = 'fill'
 
-        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar', 'dot']):
+        if normalized not in getattr(self, '_group_color_display_values', list(GROUP_COLOR_DISPLAY_MODES)):
             normalized = 'fill'
 
         target_index = self._group_color_display_values.index(normalized)

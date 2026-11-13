@@ -19,6 +19,10 @@ DEFAULT_WHEEL_SCROLL_LINES = 1 if sys.platform == 'darwin' else 3
 # file_manager.terminal_panes values: which terminals sit below a file manager.
 TERMINAL_PANE_CHOICES = ('none', 'remote', 'local', 'both')
 
+# Sidebar group-colour treatments ('ui.group_color_display'), in the order the
+# Preferences combo lists them.
+GROUP_COLOR_DISPLAY_MODES = ('fill', 'badge', 'bar', 'dot', 'text')
+
 
 def get_default_config() -> Dict[str, Any]:
     """Return the canonical default configuration tree."""
