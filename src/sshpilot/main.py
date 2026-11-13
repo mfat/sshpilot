@@ -639,6 +639,12 @@ class SshPilotApplication(Adw.Application):
             from . import startup_preload
 
             startup_preload.wait()
+            try:
+                from .gtk.text_view_im_guard import install_text_view_im_guard
+
+                install_text_view_im_guard()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Could not install the text view IM guard: %s", exc)
             from .window import MainWindow
             startup_timing.mark("window_module_imported")
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
