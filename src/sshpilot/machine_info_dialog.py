@@ -909,6 +909,9 @@ class MachineInfoDialog:
         #: The reading every rate is measured against, and when it was taken.
         self._previous_live: Optional[LiveSample] = None
         self._previous_live_time = 0.0
+        #: Bumped by every refresh; a live sample asked for under an older
+        #: value predates the new gather and must not be applied to it.
+        self._live_generation = 0
         self._rate_labels: dict = {}
         self._cpu_gauge: Optional[_Gauge] = None
         self._memory_gauge: Optional[_Gauge] = None
@@ -1118,6 +1121,7 @@ class MachineInfoDialog:
         self._remember_selected_tab()
         self._refresh_button.set_sensitive(False)
         self._stop_live_timer()
+        self._live_generation += 1
         self._show_status(_("Gathering host information…"), spinner=True)
         self._start_probe()
 
@@ -1273,8 +1277,13 @@ class MachineInfoDialog:
             return False
         # Skip this tick when the previous sample has not come back yet, so a
         # slow link cannot build a queue of outstanding probes.
+        generation = self._live_generation
         try:
-            started = self._submit(HostInfoProbe.LIVE, self._on_live, self._on_live_error)
+            started = self._submit(
+                HostInfoProbe.LIVE,
+                lambda summary: self._on_live(summary, generation),
+                self._on_live_error,
+            )
         except HostInfoProbeBusy:
             return True
         if not started:
@@ -1282,8 +1291,13 @@ class MachineInfoDialog:
             return False
         return True
 
-    def _on_live(self, summary) -> bool:
+    def _on_live(self, summary, generation: Optional[int] = None) -> bool:
         if self._closed or summary.failure is not None or summary.live is None:
+            return False
+        if generation is not None and generation != self._live_generation:
+            # Read before the refresh: it is older than the new gather's
+            # baseline, so it would blank the CPU gauge now and skew the
+            # next rates.
             return False
         now = GLib.get_monotonic_time() / 1_000_000
         elapsed = now - self._previous_live_time

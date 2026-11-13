@@ -13,6 +13,7 @@ from sshpilot.api.models.host_info import (
     CpuInfo,
     CpuTimes,
     FailedUnit,
+    HostInfoProbe,
     FilesystemUsage,
     HostInfoSnapshot,
     HostKeyFingerprint,
@@ -1086,3 +1087,84 @@ def test_refresh_keeps_the_tab_on_the_notebook_fallback(monkeypatch):
     _refresh(dialog)
 
     assert dialog._tabs.get_current_page() == module.MachineInfoDialog._TAB_NAMES.index("network")
+
+
+class _RecordingController:
+    """Keeps every probe's callbacks so a test decides when each one answers."""
+
+    instances = []
+
+    def __init__(self, _client):
+        self.calls = []
+        _RecordingController.instances.append(self)
+
+    def start(self, connection_id, probe, on_result, on_error, on_started=None):
+        self.calls.append((probe, on_result))
+
+    def is_running(self, probe):
+        return False
+
+    def close(self):
+        pass
+
+
+class _ActiveWindow:
+    client = object()
+    client_bridge = None
+
+    def connect(self, *_args):
+        return 0
+
+    def is_active(self):
+        return True
+
+
+class _Summary:
+    def __init__(self, snapshot=None, live=None, counters=()):
+        self.snapshot = snapshot
+        self.live = live
+        self.counters = counters
+        self.failure = None
+
+
+def _cpu_times(busy, idle):
+    return (CpuTimes("cpu", user=busy, nice=0, system=0, idle=idle),)
+
+
+def test_a_live_sample_from_before_a_refresh_is_not_applied_after_it(monkeypatch):
+    """A sample in flight when Refresh is clicked predates the new gather.
+
+    Applying it blanked the CPU gauge and made it the baseline, so the next
+    rates were measured against a reading older than the one on screen.
+    """
+
+    import sshpilot.machine_info_dialog as module
+
+    monkeypatch.setattr(module, "HostInfoController", _RecordingController)
+    monkeypatch.setattr(module.GLib, "idle_add", lambda func, *args: func(*args))
+    dialog = module.MachineInfoDialog(_ActiveWindow(), _Connection(), as_tab=True)
+    controller = _RecordingController.instances[-1]
+    try:
+        _probe, answer_first_gather = controller.calls[-1]
+        answer_first_gather(_Summary(snapshot=_snapshot(cpu_times=_cpu_times(100, 900))))
+
+        dialog._tick_live()
+        probe, answer_stale_live = controller.calls[-1]
+        assert probe is HostInfoProbe.LIVE
+
+        dialog._on_refresh()
+        probe, answer_refresh = controller.calls[-1]
+        assert probe is HostInfoProbe.FULL
+        answer_refresh(_Summary(snapshot=_snapshot(cpu_times=_cpu_times(500, 1500))))
+        baseline = dialog._previous_live
+
+        answer_stale_live(_Summary(live=LiveSample(cpu_times=_cpu_times(150, 1050))))
+        assert dialog._previous_live is baseline
+
+        dialog._tick_live()
+        probe, answer_fresh_live = controller.calls[-1]
+        assert probe is HostInfoProbe.LIVE
+        answer_fresh_live(_Summary(live=LiveSample(cpu_times=_cpu_times(550, 1550))))
+        assert dialog._cpu_gauge._percent.get_text() == "50%"
+    finally:
+        dialog.cleanup()
