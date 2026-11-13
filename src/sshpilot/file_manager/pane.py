@@ -2667,7 +2667,7 @@ class FilePane(Gtk.Box):
             base_dir = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
         source_paths = [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
 
-        destination = destination_pane.toolbar.path_entry.get_text() or "/"
+        destination = window._pane_directory_text(destination_pane) or "/"
         payload = {"paths": source_paths, "destination": destination}
         self.emit("request-operation", "upload", payload)
         if len(entries) == 1:
@@ -2818,7 +2818,10 @@ class FilePane(Gtk.Box):
 
     def _set_current_pathbar_text(self, path: str) -> None:
         """Set the path bar text with human-friendly display formatting."""
-        display_path = safe_display_text(_pretty_path_for_display(path))
+        # Remote paths are the server's POSIX paths: GLib's local display form
+        # would turn /home/u into \home\u on Windows.
+        shown = path if self._is_remote else _pretty_path_for_display(path)
+        display_path = safe_display_text(shown)
         self.toolbar.path_entry.set_text(display_path)
 
     @staticmethod
@@ -2948,8 +2951,8 @@ class FilePane(Gtk.Box):
             else:
                 # Normalize path (remove trailing slash)
                 normalized_path = current_path.rstrip("/")
-                dir_name = os.path.basename(normalized_path) or normalized_path
-                parent_path = os.path.dirname(normalized_path) or "/"
+                dir_name = _paths_for(self._is_remote).basename(normalized_path) or normalized_path
+                parent_path = _paths_for(self._is_remote).dirname(normalized_path) or "/"
                 # If parent_path is empty after dirname, use "/"
                 if not parent_path:
                     parent_path = "/"
@@ -3901,7 +3904,7 @@ class FilePane(Gtk.Box):
         return None
 
     def _on_up_clicked(self, _button) -> None:
-        parent = os.path.dirname(self._current_path.rstrip('/')) or '/'
+        parent = _paths_for(self._is_remote).dirname(self._current_path.rstrip('/')) or '/'
         # Don't navigate above a portal grant's accessible root
         # (/run/user/<uid>/doc/<id>): it is unreadable in the sandbox and would
         # display as the bare doc id.

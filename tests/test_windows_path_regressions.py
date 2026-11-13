@@ -134,6 +134,48 @@ def test_remote_properties_location_joins_with_a_slash(load_file_manager_window,
     assert details["location"] == "/srv/data/a.txt"
 
 
+def _windows_display(monkeypatch, module):
+    """GLib's display form of a path on Windows: backslash separators."""
+    monkeypatch.setattr(
+        _pane_module(module),
+        "_pretty_path_for_display",
+        lambda path: path.replace("/", "\\"),
+    )
+
+
+def test_remote_path_bar_shows_the_server_path(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
+    _windows_display(monkeypatch, module)
+    pane = _remote_pane(module, monkeypatch, [])
+    shown = []
+    pane.toolbar = SimpleNamespace(path_entry=SimpleNamespace(set_text=shown.append))
+
+    pane._set_current_pathbar_text("/home/behnam")
+
+    assert shown == ["/home/behnam"]
+
+
+def test_upload_targets_the_remote_folder_not_the_bar_text(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
+    remote = _remote_pane(module, monkeypatch, [])
+    remote._current_path = "/home/behnam"
+    remote.toolbar = SimpleNamespace(
+        path_entry=SimpleNamespace(get_text=lambda: "\\home\\behnam")
+    )
+
+    assert module.FileManagerWindow._pane_directory_text(remote) == "/home/behnam"
+
+
+def test_remote_up_keeps_a_backslash_in_a_folder_name(load_file_manager_window, monkeypatch):
+    module = load_file_manager_window()
+    pane = _remote_pane(module, monkeypatch, [])
+    pane._current_path = "/srv/a\\b"
+
+    pane._on_up_clicked(None)
+
+    assert pane.emitted == [("path-changed", "/srv")]
+
+
 # --- file manager: local Properties --------------------------------------
 
 

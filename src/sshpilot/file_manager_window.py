@@ -1622,7 +1622,7 @@ class FileManagerWindow(Adw.Window):
             pane.show_toast(_("Nothing selected"))
             return
 
-        directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+        directory = payload.get("directory") or self._pane_directory_text(pane) or "/"
         if pane is self._left_pane:
             # Use the actual current path instead of the display path from path entry
             # This handles Flatpak portal paths correctly
@@ -1660,7 +1660,7 @@ class FileManagerWindow(Adw.Window):
         destination = ""
         force_move = False
         if isinstance(payload, dict):
-            destination = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            destination = payload.get("directory") or self._pane_directory_text(pane) or "/"
             force_move = bool(payload.get("force_move"))
         
         # For local pane destinations, use actual current path instead of display path
@@ -1717,7 +1717,7 @@ class FileManagerWindow(Adw.Window):
             if response == "ok":
                 name = entry.get_text().strip()
                 if name:
-                    current_dir = pane.toolbar.path_entry.get_text() or "/"
+                    current_dir = self._pane_directory_text(pane) or "/"
                     if pane is self._left_pane:
                         target_dir = self._local_pane_directory(pane)
                         new_path = os.path.join(target_dir, name)
@@ -1778,7 +1778,7 @@ class FileManagerWindow(Adw.Window):
             if response == "ok":
                 name = entry.get_text().strip()
                 if name:
-                    current_dir = pane.toolbar.path_entry.get_text() or "/"
+                    current_dir = self._pane_directory_text(pane) or "/"
                     if pane is self._left_pane:
                         target_dir = self._local_pane_directory(pane)
                         new_path = os.path.join(target_dir, name)
@@ -1834,7 +1834,7 @@ class FileManagerWindow(Adw.Window):
 
     def _op_rename(self, pane, payload) -> None:
         entries = payload.get("entries") or []
-        directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+        directory = payload.get("directory") or self._pane_directory_text(pane) or "/"
         if not entries:
             return
 
@@ -1918,7 +1918,7 @@ class FileManagerWindow(Adw.Window):
 
     def _op_delete(self, pane, payload) -> None:
         entries = payload.get("entries") or []
-        directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+        directory = payload.get("directory") or self._pane_directory_text(pane) or "/"
         if not entries:
             return
 
@@ -2146,7 +2146,7 @@ class FileManagerWindow(Adw.Window):
         else:
             return
 
-        remote_root = target_pane.toolbar.path_entry.get_text() or "/"
+        remote_root = self._pane_directory_text(target_pane) or "/"
         raw_items: object | None = None
 
         move_sources: List[pathlib.Path] = []
@@ -2282,11 +2282,11 @@ class FileManagerWindow(Adw.Window):
         logger.debug("Directory: %s", directory)
         if not directory:
             if pane is self._right_pane:
-                directory = pane.toolbar.path_entry.get_text() or "/"
+                directory = self._pane_directory_text(pane) or "/"
             else:
                 remote_pane = getattr(self, "_right_pane", None)
                 if isinstance(remote_pane, FilePane):
-                    directory = remote_pane.toolbar.path_entry.get_text() or "/"
+                    directory = self._pane_directory_text(remote_pane) or "/"
                 else:
                     directory = "/"
         destination_base = payload.get("destination")
@@ -3693,6 +3693,20 @@ class FileManagerWindow(Adw.Window):
         if current:
             return current
         return self._normalize_local_path(pane.toolbar.path_entry.get_text())
+
+    @staticmethod
+    def _pane_directory_text(pane) -> str:
+        """The folder a pane is showing, for building paths from it.
+
+        The path bar holds display text, not a path: on Windows GLib renders
+        the remote ``/home/u`` as ``\\home\\u``, which the server cannot find.
+        Prefer the pane's own current path; the bar's text is only a
+        fallback before the first listing arrives.
+        """
+        current = getattr(pane, "_current_path", None)
+        if current:
+            return current
+        return pane.toolbar.path_entry.get_text()
 
 
 def launch_file_manager_window(
