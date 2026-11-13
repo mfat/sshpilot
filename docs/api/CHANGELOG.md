@@ -10,8 +10,8 @@ notes remain separate.
   (`Host *`, `Match all`, ...) already decides, so the host's value is never
   used. Each carries the host, the keyword, the unused value and the
   `EarlierDirective` that wins. Only the files are read: a `Match` block only
-  OpenSSH could judge is left out. The main window uses it for a one-time
-  notice after upgrading. Requires `connections.config.read`. The API
+  OpenSSH could judge is left out. The main window uses it for a notice
+  that returns only for conflicts the user has not dismissed. Requires `connections.config.read`. The API
   implementation version is 0.100; Protocol remains 1.0.
 - `connections.get_earlier_directives(host)` returns the `EarlierDirective`
   values the SSH configuration already decides for a host that has no block

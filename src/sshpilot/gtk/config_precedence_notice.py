@@ -1,16 +1,16 @@
-"""The one-time notice about saved hosts whose own settings are not used.
+"""The notice about saved hosts whose own settings are not used.
 
-Until SSH Pilot launched hosts exactly as ``ssh <alias>``, it repeated each
-Host block's own settings on the command line, so they beat a ``Host *`` or
-``Match`` block placed before them. Now OpenSSH's own rule applies: the first
-value it finds wins. A host whose block sets something an earlier block
-already decides therefore connects differently after the upgrade.
+SSH Pilot launches a saved host exactly as ``ssh <alias>``, so OpenSSH's rule
+applies: the first value it finds for a setting wins. A host whose own block
+sets something that a ``Host *`` or ``Match`` block placed before it already
+sets never uses its own value. That happens after an upgrade from a version
+that repeated the block on the command line, and after any edit to the file.
 
 The daemon lists those values (``connections.list_config_conflicts``) and
-sends no sentences; the wording is here. The notice is shown to installs that
-predate the change only -- a fresh install never saw the old behaviour -- and
-once dismissed, or once nothing is left to report, it never comes back. The
-connection editor keeps marking such fields regardless.
+sends no sentences; the wording is here. The banner shows while a conflict
+exists that the user has not dismissed. Dismissing remembers the conflicts
+shown then, so the banner returns only for a new one. The connection editor
+marks such fields regardless.
 """
 
 from __future__ import annotations
@@ -25,25 +25,38 @@ from gi.repository import Adw, GLib, Gtk
 
 logger = logging.getLogger(__name__)
 
-#: ``ui.<key>`` in config.json. A fresh install's defaults set it to False;
-#: a settings file from before it existed lacks it, and that means pending.
-SETTING_KEY = "ui.config_precedence_notice"
+#: ``ui.<key>`` in config.json: the conflicts the user dismissed, as
+#: :func:`conflict_fingerprint` strings.
+SETTING_KEY = "ui.config_conflicts_dismissed"
 
 
-def notice_pending(config) -> bool:
-    """Whether this install still has the notice to show."""
+def conflict_fingerprint(conflict) -> str:
+    """What identifies one conflict across launches.
+
+    The host, the option, its unused value and the value used. Not the file
+    or line: editing an unrelated line above must not bring a dismissed
+    conflict back.
+    """
+    return "\x1f".join(
+        (conflict.host, conflict.key, conflict.own_value, conflict.earlier.value)
+    )
+
+
+def dismissed_fingerprints(config) -> frozenset:
     try:
-        return bool(config.get_setting(SETTING_KEY, True))
+        stored = config.get_setting(SETTING_KEY, [])
     except Exception:
-        return False
+        return frozenset()
+    if not isinstance(stored, list):
+        return frozenset()
+    return frozenset(item for item in stored if isinstance(item, str))
 
 
-def retire_notice(config) -> None:
-    """Never show the notice again."""
+def store_dismissed(config, fingerprints) -> None:
     try:
-        config.set_setting(SETTING_KEY, False)
+        config.set_setting(SETTING_KEY, sorted(fingerprints))
     except Exception:
-        logger.debug("Could not record the precedence notice as done", exc_info=True)
+        logger.debug("Could not record the dismissed conflicts", exc_info=True)
 
 
 # -- wording ----------------------------------------------------------------
@@ -76,11 +89,9 @@ def review_heading() -> str:
 
 def review_body() -> str:
     return _(
-        "SSH Pilot now connects exactly as “ssh <host>” does in a terminal: "
-        "the first value OpenSSH finds for a setting is the one it uses. These "
-        "hosts set a value that an earlier block in your SSH config already "
-        "decides, so their own value is not used. To use it, remove the line "
-        "from the earlier block, or move that block below the host."
+        "Some values set by these hosts are not used because an earlier "
+        "block in your SSH config already sets them. To use them, remove the "
+        "line from the earlier block, or move that block below the host."
     )
 
 
@@ -162,9 +173,6 @@ class ConfigPrecedenceNotice:
     # The daemon walks every saved host's files, so the check runs off the
     # GTK thread; a burst of store refreshes collapses into one more check.
     def check(self) -> None:
-        if not notice_pending(getattr(self._window, "config", None)):
-            self._hide()
-            return
         client = getattr(self._window, "client", None)
         if not callable(getattr(client, "list_config_conflicts", None)):
             return
@@ -194,15 +202,19 @@ class ConfigPrecedenceNotice:
 
     def _apply(self, conflicts: tuple) -> None:
         self._conflicts = conflicts
-        if not conflicts:
-            # Nothing to report: an upgrade that needed no notice, or every
-            # conflict fixed. Either way, never ask again.
-            if self._banner is not None or self._review is not None:
-                self._hide()
-            retire_notice(getattr(self._window, "config", None))
-            self._refresh_review()
-            return
-        self._show(len(conflicts_by_host(conflicts)))
+        config = getattr(self._window, "config", None)
+        current = {conflict_fingerprint(item) for item in conflicts}
+        dismissed = dismissed_fingerprints(config)
+        # A dismissed conflict that is gone is forgotten: should it come back
+        # later, it is news again.
+        if dismissed - current:
+            dismissed = dismissed & current
+            store_dismissed(config, dismissed)
+        new = [item for item in conflicts if conflict_fingerprint(item) not in dismissed]
+        if new:
+            self._show(len(conflicts_by_host(new)))
+        else:
+            self._hide()
         self._refresh_review()
 
     def _show(self, host_count: int) -> None:
@@ -258,8 +270,9 @@ class ConfigPrecedenceNotice:
         footer.set_halign(Gtk.Align.END)
         dismiss = Gtk.Button(label=_("Don't Show Again"))
         dismiss.set_tooltip_text(_(
-            "Hide this notice for good. The connection editor still marks "
-            "each setting that is not used."
+            "Hide this notice for these hosts. It returns only if another "
+            "setting stops being used. The connection editor still marks each "
+            "setting that is not used."
         ))
         dismiss.connect("clicked", self._on_dismiss)
         footer.append(dismiss)
@@ -339,7 +352,10 @@ class ConfigPrecedenceNotice:
             logger.debug("Could not open the connection editor", exc_info=True)
 
     def _on_dismiss(self, *_args) -> None:
-        retire_notice(getattr(self._window, "config", None))
+        store_dismissed(
+            getattr(self._window, "config", None),
+            {conflict_fingerprint(item) for item in self._conflicts},
+        )
         self._hide()
         if self._review is not None:
             self._review.close()

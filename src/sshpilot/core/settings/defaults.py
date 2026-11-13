@@ -123,11 +123,9 @@ def get_default_config() -> Dict[str, Any]:
             # On for new installs only: existing configs lack the key, and the
             # call sites fall back to False, so upgraders keep their rows as-is.
             'sidebar_show_dashboard_button': True,
-            # The notice about saved hosts whose own settings an earlier SSH
-            # config block beats. Fresh installs never had the old behaviour,
-            # so it is off here; an older settings file lacks the key, which
-            # the notice reads as "still to show".
-            'config_precedence_notice': False,
+            # Saved-host settings an earlier SSH config block beats that the
+            # user dismissed from the main-window notice (fingerprints).
+            'config_conflicts_dismissed': [],
             'sidebar_show_split_view_button': False,
             # Pinned Local Terminal row at the top of the connection list
             'sidebar_show_local_terminal': False,

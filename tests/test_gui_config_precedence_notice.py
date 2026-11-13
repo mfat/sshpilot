@@ -67,7 +67,8 @@ def _notice(gui, conflicts, config=None):
     return notice, container, window, state, opened
 
 
-def test_upgrader_with_conflicts_sees_a_banner_naming_the_host_count(gui):
+def test_conflicts_show_a_banner_naming_the_host_count(gui):
+    """Whoever has a conflict sees it, upgrade or not."""
     conflicts = [_conflict("web"), _conflict("web", key="port", own="22", value="2222"),
                  _conflict("db")]
     notice, container, window, state, _opened = _notice(gui, conflicts)
@@ -78,78 +79,102 @@ def test_upgrader_with_conflicts_sees_a_banner_naming_the_host_count(gui):
     assert container.get_visible()
     assert notice._banner.get_revealed()
     assert "2 saved hosts" in notice._banner.get_title()
-    assert window.config.values == {}  # still pending until dismissed
+    assert window.config.values == {}
+
+
+def _rows(notice):
+    from gi.repository import Adw
+
+    rows = []
+    stack = list(notice._review_groups)
+    while stack:
+        widget = stack.pop()
+        if isinstance(widget, Adw.ActionRow):
+            rows.append(widget)
+            continue
+        item = widget.get_first_child()
+        while item is not None:
+            stack.append(item)
+            item = item.get_next_sibling()
+    return rows
 
 
 def test_review_lists_each_host_and_opens_its_editor(gui):
-    from gi.repository import Adw
-
-    notice, _container, window, _state, opened = _notice(
+    notice, _container, _window, _state, opened = _notice(
         gui, [_conflict("web"), _conflict("web", key="port", own="22", value="2222", line=4)]
     )
     notice.check()
     _pump(lambda: notice._banner is not None)
 
     notice._on_review()
-    rows = []
-    for group in notice._review_groups:
-        child = group
-        stack = [child]
-        while stack:
-            widget = stack.pop()
-            if isinstance(widget, Adw.ActionRow):
-                rows.append(widget)
-                continue
-            item = widget.get_first_child()
-            while item is not None:
-                stack.append(item)
-                item = item.get_next_sibling()
+    rows = _rows(notice)
     assert [row.get_title() for row in rows] == ["web"]
     subtitle = rows[0].get_subtitle()
-    assert "“admin”" in subtitle and "“deploy”" in subtitle and "line 4" in subtitle
+    assert "User: uses “admin”" in subtitle and "“deploy”" in subtitle
+    assert "Port: uses “2222”" in subtitle and "line 4" in subtitle
 
     rows[0].emit("activated")
     assert opened == ["web"]
 
+
+def _check(notice, state, conflicts):
+    asked = state["asked"]
+    state["conflicts"] = tuple(conflicts)
+    notice.check()
+    _pump(lambda: state["asked"] > asked and not notice._checking)
+
+
+def test_dismissed_conflicts_stay_hidden_and_a_new_one_brings_the_banner_back(gui):
+    web = _conflict("web")
+    notice, container, window, state, _opened = _notice(gui, [web])
+    notice.check()
+    _pump(lambda: notice._banner is not None)
+
     notice._on_dismiss()
-    assert window.config.values == {"ui.config_precedence_notice": False}
+    assert not notice._banner.get_revealed() and not container.get_visible()
+    assert len(window.config.values["ui.config_conflicts_dismissed"]) == 1
+
+    # The same conflict, even after unrelated lines moved it: still dismissed.
+    _check(notice, state, [_conflict("web", line=9)])
     assert not notice._banner.get_revealed()
-    assert notice._review is None or not notice._review.get_visible()
+
+    # A new one, edited in by hand between launches: the banner returns,
+    # counting only what is new.
+    _check(notice, state, [web, _conflict("db")])
+    assert notice._banner.get_revealed()
+    assert "1 saved host " in notice._banner.get_title()
 
 
-def test_no_conflicts_retires_the_notice_without_showing_anything(gui):
-    notice, container, window, state, _opened = _notice(gui, [])
+def test_a_fixed_conflict_is_forgotten_so_its_return_is_news(gui):
+    web = _conflict("web")
+    notice, _container, window, state, _opened = _notice(gui, [web])
+    notice.check()
+    _pump(lambda: notice._banner is not None)
+    notice._on_dismiss()
+
+    _check(notice, state, [])
+    assert window.config.values["ui.config_conflicts_dismissed"] == []
+    assert not notice._banner.get_revealed()
+
+    _check(notice, state, [web])
+    assert notice._banner.get_revealed()
+
+
+def test_a_dismissal_from_an_earlier_launch_is_honoured(gui):
+    from sshpilot.gtk.config_precedence_notice import conflict_fingerprint
+
+    web = _conflict("web")
+    config = _Config({"ui.config_conflicts_dismissed": [conflict_fingerprint(web)]})
+    notice, container, _window, state, _opened = _notice(gui, [web], config=config)
 
     notice.check()
     _pump(lambda: state["asked"] and not notice._checking)
 
-    assert notice._banner is None and not container.get_visible()
-    assert window.config.values == {"ui.config_precedence_notice": False}
+    assert not container.get_visible()
+    assert notice._banner is None or not notice._banner.get_revealed()
 
 
-def test_fresh_install_or_retired_notice_never_asks(gui):
-    notice, _container, _window, state, _opened = _notice(
-        gui, [_conflict("web")], config=_Config({"ui.config_precedence_notice": False})
-    )
-    notice.check()
-    _pump(lambda: False, seconds=0.2)
-    assert state["asked"] == 0 and notice._banner is None
-
-
-def test_fixing_the_last_conflict_hides_the_banner_for_good(gui):
-    notice, container, window, state, _opened = _notice(gui, [_conflict("web")])
-    notice.check()
-    _pump(lambda: notice._banner is not None)
-
-    state["conflicts"] = ()
-    notice.check()
-    _pump(lambda: state["asked"] == 2 and not notice._checking)
-
-    assert not notice._banner.get_revealed() and not container.get_visible()
-    assert window.config.values == {"ui.config_precedence_notice": False}
-
-
-def test_fresh_install_defaults_turn_the_notice_off():
+def test_nothing_dismissed_by_default():
     from sshpilot.core.settings.defaults import get_default_config
 
-    assert get_default_config()["ui"]["config_precedence_notice"] is False
+    assert get_default_config()["ui"]["config_conflicts_dismissed"] == []

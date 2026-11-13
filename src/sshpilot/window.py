@@ -2275,13 +2275,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Look for unused host settings shortly after the store settles.
 
         Store refreshes come in bursts; one check follows the last of them.
-        Nothing is asked once the notice is retired.
         """
         notice = getattr(self, '_config_precedence_notice', None)
         if notice is None:
-            return
-        from .gtk.config_precedence_notice import notice_pending
-        if not notice_pending(getattr(self, 'config', None)):
             return
         if getattr(self, '_config_precedence_check_timer', 0):
             GLib.source_remove(self._config_precedence_check_timer)
@@ -2408,8 +2404,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.ssh_config_banner_container.set_visible(False)
-        # Saved hosts whose own settings an earlier block beats; shown once,
-        # to installs from before launches matched `ssh <alias>`.
+        # Saved hosts whose own settings an earlier block beats; shown until
+        # dismissed, and again for a conflict not dismissed before.
         self.config_precedence_banner_container = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL
         )
