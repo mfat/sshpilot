@@ -91,6 +91,7 @@ def test_conflicts_show_a_banner_naming_the_host_count(gui):
     assert container.get_visible()
     assert notice._banner.get_revealed()
     assert "2 saved hosts" in notice._banner.get_title()
+    assert notice._banner.has_css_class("error")
     assert window.config.values == {}
 
 

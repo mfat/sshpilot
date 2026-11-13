@@ -271,4 +271,6 @@ banner.error > revealer > widget,
 banner.error > revealer > widget:backdrop {
     background-color: @error_bg_color;
     color: @error_fg_color;
+    /* A hairline, so two error banners stacked in the main window read as two. */
+    box-shadow: inset 0 -1px alpha(black, 0.18);
 }

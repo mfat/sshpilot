@@ -306,6 +306,9 @@ class ConfigPrecedenceNotice:
                 banner.set_use_markup(False)
             except Exception:
                 pass
+            # Solid error colours (style.css), like the same notice in the
+            # connection editor: the muted grey default was easy to miss.
+            banner.add_css_class("error")
             banner.set_button_label(review_button_label())
             banner.connect("button-clicked", self._on_review)
             self._container.append(banner)
