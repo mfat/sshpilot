@@ -40,6 +40,7 @@ from sshpilot.api.models.daemon import (
     DaemonLifecycleState,
     DaemonResourceCounts,
     DaemonStatus,
+    StopDaemonRequest,
 )
 from sshpilot.api.models.interactions import InteractionState
 from sshpilot.api.models.operations import (
@@ -252,6 +253,8 @@ class _ClientConnection:
     pending_request_ids: Set[RequestId] = field(default_factory=set)
     #: Windows TCP transport: validates the token preamble before any frame.
     auth_gate: Optional[Any] = None
+    #: Handshake declared an app frontend whose process is watched.
+    app_peer: bool = False
 
 
 @dataclass(frozen=True)
@@ -409,6 +412,11 @@ class DaemonServer:
         self._session_shutdown_started = False
         self._started_at_wall: Optional[datetime] = None
         self._instance_id = new_server_instance_id()
+        # Quit stops the daemon explicitly; this covers the app crashing or
+        # being killed, so nothing it started outlives it.
+        from .app_watch import AppProcessWatcher
+
+        self._app_watcher = AppProcessWatcher(self._on_app_processes_gone)
 
     @property
     def ready(self) -> bool:
@@ -1499,6 +1507,7 @@ class DaemonServer:
                 # replayed to it.
                 with self._event_lock:
                     state.protocol.next_event_sequence = self._next_event_sequence
+                self._watch_app_peer(state)
             if isinstance(result, DeferredResult):
                 self._submit_deferred(state, envelope, result, context=request_context)
                 return
@@ -1975,6 +1984,29 @@ class DaemonServer:
             broker.disconnect_client(state.protocol.client_id)
         self._clear_command_inputs(state.token)
         self._note_lifecycle_activity()
+        if state.app_peer:
+            self._app_watcher.poke()
+
+    def _watch_app_peer(self, state: "_ClientConnection") -> None:
+        from .app_watch import identify_peer_process, is_app_frontend
+
+        info = state.protocol.client_info
+        if info is None or not is_app_frontend(getattr(info, "frontend_type", None)):
+            return
+        identity = identify_peer_process(state.sock)
+        if identity is None:
+            return
+        state.app_peer = True
+        self._app_watcher.register(identity)
+
+    def _on_app_processes_gone(self, _gone) -> None:
+        """Every app process exited without stopping us: stop as quit would."""
+
+        lifecycle = self._lifecycle
+        if lifecycle is None:
+            self.shutdown()
+            return
+        lifecycle.request_stop(StopDaemonRequest(force=True))
 
     def _on_terminal_output(self, output: TerminalOutput) -> None:
         if self._stopping.is_set():
@@ -2218,6 +2250,7 @@ class DaemonServer:
         return dropped
 
     def _cleanup(self) -> None:
+        self._app_watcher.stop()
         self._stop_configuration_reload()
         operation_runtime = self._operation_runtime
         self._operation_runtime = None
