@@ -1,7 +1,12 @@
 # Plan: hand the SSH terminal's PTY to VTE
 
-Status: **proposal, November 2026.** Nothing is implemented. This page records
-what a survey of the current code found and how the change would be done.
+Status: **not pursued (option C), November 2026.** Nothing is implemented.
+The handover would lose OSC 52 clipboard writes (on by default), output
+highlighting and the selection feed pause, and the resize gain turned out not
+to address a live bug: GH #1270 was a Flatpak local-tab relay bug, fixed on
+2026-09-22 and confirmed by the reporter on 6.3.9. SSH tabs keep the
+daemon streaming path. This page records the survey and the design in case
+the trade-off changes.
 
 ## Goal
 
@@ -19,8 +24,10 @@ Expected gains:
 * VTE gets a real PTY. Legacy mouse reports work natively, so the GH #1212
   workaround (`MouseTrackingState` SGR translation) is no longer needed for
   these tabs.
-* Resize is a local `TIOCSWINSZ` by VTE; no RPC round trip, no
-  `_resize_in_flight` state (the main suspect in GH #1270).
+* Resize is a local `TIOCSWINSZ` by VTE; no RPC round trip and no
+  `_resize_in_flight` coalescing. (Streaming resize works: GH #1270 was a
+  different bug, and the stuck-flag path cannot occur in practice because
+  resize requests are never cancelled individually.)
 * Keystrokes and output stop crossing the daemon socket.
 
 ## What reads the terminal stream today
