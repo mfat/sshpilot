@@ -63,6 +63,7 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
         ('item', 'Terminal Theme Button', 'win.headerbar-terminal-theme'),
         ('item', 'Theme Menu', 'win.headerbar-theme-menu'),
         ('item', 'Local Terminal Button', 'win.headerbar-local-terminal'),
+        ('item', 'Status Bar', 'win.show-status-bar'),
     ]
 
     first_section = menu.entries[0][2]

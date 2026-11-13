@@ -129,6 +129,7 @@ def test_build_menubar_uses_existing_actions():
         "win.headerbar-terminal-theme",
         "win.headerbar-theme-menu",
         "win.headerbar-local-terminal",
+        "win.show-status-bar",
     ]
     assert [a for _l, a in _flatten_items(menus["Tools"])] == [
         "app.new-key",

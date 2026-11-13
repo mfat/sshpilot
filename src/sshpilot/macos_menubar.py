@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from gettext import gettext as _
 
-from .actions import HEADERBAR_VISIBILITY_ACTIONS
+from .actions import HEADERBAR_VISIBILITY_ACTIONS, STATUS_BAR_ACTION
 
 from gi.repository import Gio, GLib
 
@@ -83,6 +83,9 @@ def build_macos_menubar(
     for action_name, label, _key, _default in HEADERBAR_VISIBILITY_ACTIONS:
         titlebar_buttons.append(_(label), f"win.{action_name}")
     view_menu.append_section(None, titlebar_buttons)
+    status_section = menu_cls()
+    status_section.append(_("Status Bar"), f"win.{STATUS_BAR_ACTION}")
+    view_menu.append_section(None, status_section)
     menubar.append_submenu(_("View"), view_menu)
 
     tools_menu = menu_cls()

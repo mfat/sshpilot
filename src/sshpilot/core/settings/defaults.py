@@ -153,6 +153,10 @@ def get_default_config() -> Dict[str, Any]:
             'headerbar_show_terminal_theme': False,
             'headerbar_show_theme_toggle': False,
             'headerbar_show_local_terminal': True,
+            # Full-width status bar (Settings ▸ Interface ▸ Status Bar).
+            'show_status_bar': True,
+            # Fetch data/news.json once at startup for the notification center.
+            'show_news': True,
         },
         'welcome': {
             'background_color': None,  # None for default, or CSS string for custom

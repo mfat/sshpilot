@@ -335,6 +335,7 @@ class WindowFullscreenController:
             self.presentation = None
             self._saved = None
             self._sync_tab_bar_visibility()
+            self._sync_status_bar()
             logger.debug(
                 'Exited fullscreen (external=%s)', not request_window_unfullscreen
             )
@@ -611,10 +612,25 @@ class WindowFullscreenController:
             )
             self._sync_tab_bar_visibility()
         self._add_fullscreen_css()
+        self._sync_status_bar()
 
     def _clear_terminal_presentation(self) -> None:
         self._exit_immersive_chrome()
         self._remove_fullscreen_css()
+        self._sync_status_bar()
+
+    def _sync_status_bar(self) -> None:
+        """The status bar follows its setting, except in terminal fullscreen.
+
+        Recomputed from the setting rather than restored from a snapshot, so a
+        toggle made while fullscreen still applies on the way out.
+        """
+        updater = getattr(self.window, 'update_status_bar_visibility', None)
+        if callable(updater):
+            try:
+                updater()
+            except Exception:
+                logger.debug('Status bar visibility resync failed', exc_info=True)
 
     # -- chrome state ------------------------------------------------------
 

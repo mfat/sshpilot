@@ -94,6 +94,7 @@ from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, Sideb
 from .welcome_page import WelcomePage
 from .actions import (
     HEADERBAR_VISIBILITY_ACTIONS,
+    STATUS_BAR_ACTION,
     WindowActions,
     register_window_actions,
 )
@@ -429,6 +430,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ),
             on_changed=self._on_runtime_connection_status_changed,
         )
+        # Status bar (mounted full-width in setup_ui). Built here because the
+        # daemon client can attach before setup_ui runs. What it says is
+        # curated in gtk/status_bar_messages.py and ships empty.
+        from .status_bar import StatusBar, StatusBarController
+        self.status_bar = StatusBar()
+        self.status_bar_separator = Gtk.Separator(
+            orientation=Gtk.Orientation.HORIZONTAL
+        )
+        app = kwargs.get('application') or self.get_application()
+        self.status_bar_controller = StatusBarController(
+            self.status_bar,
+            name_lookup=self._status_bar_connection_name,
+            notification_store=getattr(app, 'notification_store', None),
+        )
+        # The store is app-wide; drop this window's badge binding with it.
+        self.connect('destroy', lambda *_a: self.status_bar_controller.shutdown())
 
         # Menu section that plugin pages append to (built before create_menu
         # runs during setup_ui; the host mutates it on bind).
@@ -612,6 +629,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
             self.group_manager.set_mutation_controller(self._group_mutation_controller)
         self.connection_runtime_status.attach_client(self.client)
+        try:
+            self.status_bar_controller.attach_client(self.client)
+        except Exception:
+            logger.debug("Status bar could not subscribe to daemon events", exc_info=True)
         self.plugin_connection_services.attach_client(self.client)
         # Key operations stay unavailable until the daemon confirms its
         # semantic mode; never construct a DEFAULT manager during a delayed
@@ -1089,6 +1110,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._group_mutation_controller = None
         self.plugin_connection_services.detach_client()
         self.connection_runtime_status.close()
+        controller = getattr(self, "status_bar_controller", None)
+        if controller is not None:
+            controller.close()
         self._settle_plugin_backend()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
         logger.error(
@@ -1763,7 +1787,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
 
+        self._start_news_fetch()
         return False  # Don't repeat
+
+    def _start_news_fetch(self):
+        """Fetch news.json once per app run for the notification center."""
+        app = self.get_application()
+        if app is None or getattr(app, '_news_fetch_started', False):
+            return
+        if not bool(self.config.get_setting('ui.show_news', True)):
+            logger.debug("News feed disabled in settings")
+            return
+        store = getattr(app, 'notification_store', None)
+        if store is None:
+            return
+        app._news_fetch_started = True
+        try:
+            from .news_feed import fetch_news_async
+            fetch_news_async(store.set_news)
+        except Exception:
+            logger.debug("Could not start the news fetch", exc_info=True)
 
     def _queue_focus_operation(self, focus_func):
         """Queue a focus operation to be executed after startup is complete"""
@@ -2623,6 +2666,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._global_overlay.set_child(root_widget)
         main_box.append(self._global_overlay)
 
+        # Full-width status bar under the sidebar and the content area.
+        main_box.append(self.status_bar_separator)
+        main_box.append(self.status_bar)
+        self.update_status_bar_visibility()
+
         self._omni_search = None
         # The Start page's search field is built by the omni-search controller,
         # so it must follow the first frame directly, not the startup timer.
@@ -2776,6 +2824,55 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # preference refreshes cannot resurrect the button on the Start page.
         self._update_tab_button_visibility()
         self._update_command_snippets_button_visibility()
+
+    def update_status_bar_visibility(self):
+        """Show the status bar per ``ui.show_status_bar`` (Settings ▸ Interface
+        and View ▸ Status Bar); terminal fullscreen always hides it."""
+        bar = getattr(self, 'status_bar', None)
+        if bar is None:
+            return
+        wanted = bool(self.config.get_setting('ui.show_status_bar', True))
+        action = getattr(self, '_status_bar_action', None)
+        if action is not None:
+            try:
+                if action.get_state().get_boolean() != wanted:
+                    action.set_state(GLib.Variant.new_boolean(wanted))
+            except Exception:
+                logger.debug("Failed to synchronize the status bar action", exc_info=True)
+        fullscreen = getattr(self, 'fullscreen_controller', None)
+        if fullscreen is not None and fullscreen.terminal_presentation_active:
+            wanted = False
+        bar.set_visible(wanted)
+        separator = getattr(self, 'status_bar_separator', None)
+        if separator is not None:
+            separator.set_visible(wanted)
+
+    def _status_bar_connection_name(self, connection_id):
+        """Display name for a connection id, for status/notification routes."""
+        if not connection_id:
+            return ""
+        try:
+            summary = self.connection_manager.get_connection_by_id(str(connection_id))
+        except Exception:
+            summary = None
+        if summary is None:
+            return str(connection_id)
+        for attr in ('nickname', 'name', 'host', 'hostname'):
+            value = getattr(summary, attr, None)
+            if value:
+                return str(value)
+        return str(connection_id)
+
+    def show_notification_center(self, initial_tab=None):
+        """Open the notification center dialog (the status bar's bell)."""
+        app = self.get_application()
+        store = getattr(app, 'notification_store', None)
+        if store is None:
+            return None
+        from .notification_center import NotificationCenterDialog
+        dialog = NotificationCenterDialog(store, initial_tab=initial_tab)
+        dialog.present(self)
+        return dialog
 
     def update_sidebar_display(self):
         """Update sidebar display based on current preferences."""
@@ -4409,6 +4506,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         view_menu.append(_('Toggle Full Screen'), f'win.{TOGGLE_FULLSCREEN_ACTION}')
         for action_name, label, _key, _default in HEADERBAR_VISIBILITY_ACTIONS:
             view_menu.append(_(label), f'win.{action_name}')
+        view_menu.append(_('Status Bar'), f'win.{STATUS_BAR_ACTION}')
         submenu_section.append_submenu(_('View'), view_menu)
 
         # Plugin-contributed pages live in the Tools submenu. The section
