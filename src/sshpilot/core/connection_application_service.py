@@ -1296,7 +1296,9 @@ class ConnectionApplicationService:
                 continue
             try:
                 own_lines = collect_host_block_lines(host, root, cache=cache)
-                compare_file = launch_config_file(root, record.source) or root
+                compare_file = (
+                    launch_config_file(root, record.source, cache=cache) or root
+                )
                 found = losing_directives(host, compare_file, own_lines, cache=cache)
             except Exception:
                 logger.debug("Config conflict check failed for %s", host, exc_info=True)

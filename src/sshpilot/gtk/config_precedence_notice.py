@@ -208,6 +208,7 @@ class ConfigPrecedenceNotice:
             self._recheck = True
             return
         self._checking = True
+        started = self._scan_state()
 
         def worker():
             conflicts = None
@@ -215,17 +216,37 @@ class ConfigPrecedenceNotice:
                 conflicts = tuple(client.list_config_conflicts())
             except Exception:
                 logger.debug("SSH config conflicts unavailable", exc_info=True)
-            GLib.idle_add(self._on_checked, conflicts)
+            GLib.idle_add(self._on_checked, conflicts, started)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_checked(self, conflicts) -> bool:
+    def _scan_state(self) -> tuple:
+        """What a scan's answer belongs to: the mode and the store generation.
+
+        A mode switch or a store change while a scan runs makes its answer
+        about a configuration that is no longer the current one; applying it
+        would show stale conflicts and could forget dismissals of the other
+        mode.
+        """
+        manager = getattr(self._window, "connection_manager", None)
+        try:
+            generation = getattr(manager.snapshot(), "generation", None)
+        except Exception:
+            generation = None
+        return (config_scope(getattr(self._window, "config", None)), generation)
+
+    def _on_checked(self, conflicts, started=None) -> bool:
         self._checking = False
-        if conflicts is not None:
-            self._apply(conflicts)
-        if self._recheck:
+        stale = self._recheck or (
+            started is not None and started != self._scan_state()
+        )
+        if stale:
+            # A newer scan is due; this answer is not applied at all.
             self._recheck = False
             self.check()
+            return False
+        if conflicts is not None:
+            self._apply(conflicts)
         return False
 
     def _config_unreadable(self) -> bool:

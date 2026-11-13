@@ -142,3 +142,26 @@ def test_a_scan_cache_gives_the_same_answers(tmp_path):
             cache=cache,
         )
         assert cached == plain, host
+
+
+def test_launch_file_lookup_with_a_scan_cache_matches_the_plain_one(tmp_path):
+    """A root outside ~/.ssh: a host in a reachable include resolves through
+    the root, one OpenSSH cannot reach through its own file. The cached walk
+    of what OpenSSH reaches must agree."""
+    from sshpilot.core.ssh_config_effective import launch_config_file
+
+    (tmp_path / "inc").mkdir()
+    reachable = tmp_path / "inc" / "a.conf"
+    reachable.write_text("Host a\n    Port 1\n", encoding="utf-8")
+    stray = tmp_path / "stray.conf"
+    stray.write_text("Host s\n    Port 2\n", encoding="utf-8")
+    root = tmp_path / "config"
+    root.write_text(f"Include {tmp_path}/inc/*.conf\n", encoding="utf-8")
+
+    cache = ConfigScanCache()
+    for source in (reachable, stray, root, None):
+        plain = launch_config_file(str(root), str(source) if source else None)
+        cached = launch_config_file(str(root), str(source) if source else None, cache=cache)
+        assert cached == plain
+    assert launch_config_file(str(root), str(reachable), cache=cache) == str(root)
+    assert launch_config_file(str(root), str(stray), cache=cache) == str(stray)

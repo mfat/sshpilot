@@ -191,7 +191,9 @@ def openssh_reachable_files(root_path: str) -> FrozenSet[str]:
         return frozenset()
 
 
-def launch_config_file(root_path, source_path=None) -> Optional[str]:
+def launch_config_file(
+    root_path, source_path=None, *, cache: Optional["ConfigScanCache"] = None
+) -> Optional[str]:
     """The ``-F`` argument for resolving a saved host, or ``None`` for no ``-F``.
 
     ``None`` when the root is the user's own ``~/.ssh/config``: plain
@@ -210,7 +212,11 @@ def launch_config_file(root_path, source_path=None) -> Optional[str]:
     if root and is_openssh_user_config(root):
         return None
     if root and os.path.isfile(root):
-        if not source or source == root or source in openssh_reachable_files(root):
+        reachable = (
+            cache.reachable_files(root) if cache is not None
+            else openssh_reachable_files(root)
+        ) if source and source != root else frozenset()
+        if not source or source == root or source in reachable:
             return root
         logger.warning(
             "SSH config %s is not reachable by OpenSSH from %s (a relative "
@@ -257,6 +263,13 @@ class ConfigScanCache:
         self._includes: Dict[tuple, List[str]] = {}
         self._blocks: Dict[str, Dict[str, list]] = {}
         self._base_dirs: Dict[tuple, str] = {}
+        self._reachable: Dict[str, FrozenSet[str]] = {}
+
+    def reachable_files(self, root: str) -> FrozenSet[str]:
+        """:func:`openssh_reachable_files`, walked once per scan."""
+        if root not in self._reachable:
+            self._reachable[root] = openssh_reachable_files(root)
+        return self._reachable[root]
 
     def include_base(self, root: str, path: str) -> str:
         key = (root, path)

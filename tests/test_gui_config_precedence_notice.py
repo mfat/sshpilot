@@ -255,3 +255,72 @@ def test_a_dismissal_stored_as_a_plain_list_counts_for_default_mode(gui):
     notice.check()
     _pump(lambda: state["asked"] and not notice._checking)
     assert not container.get_visible()
+
+
+def test_a_scan_answered_after_a_mode_switch_is_discarded(gui):
+    """The scan starts in default mode, the user switches to isolated mode,
+    then the default-mode answer arrives. It must not be applied to isolated
+    mode's dismissals, nor shown; a fresh scan runs instead."""
+    import threading
+
+    from sshpilot.gtk.config_precedence_notice import conflict_fingerprint
+
+    lab = _conflict("lab")
+    config = _Config({
+        "ui.config_conflicts_dismissed": {"isolated": [conflict_fingerprint(lab)]},
+    })
+    notice, _container, window, state, _opened = _notice(gui, [], config=config)
+    state["loaded"] = ["web", "lab"]  # "lab" exists in both modes
+    release = threading.Event()
+    answers = [(_conflict("web"),), (lab,)]  # default-mode answer, then isolated
+
+    def slow_scan():
+        state["asked"] += 1
+        if state["asked"] == 1:
+            release.wait(5)
+        return answers[state["asked"] - 1]
+
+    window.client.list_config_conflicts = slow_scan
+    notice.check()                                   # starts in default mode
+    window.config.values["ssh.use_isolated_config"] = True
+    state["loaded"] = ["lab"]
+    release.set()
+    _pump(lambda: state["asked"] == 2 and not notice._checking)
+
+    # The default-mode answer (web) was dropped and never touched isolated
+    # dismissals; the fresh isolated scan found "lab", already dismissed.
+    assert window.config.values["ui.config_conflicts_dismissed"]["isolated"] == [
+        conflict_fingerprint(lab)
+    ]
+    assert notice._banner is None or not notice._banner.get_revealed()
+    assert [item.host for item in notice._conflicts] == ["lab"]
+
+
+def test_a_store_change_during_a_scan_triggers_a_fresh_one(gui):
+    import threading
+
+    notice, _container, window, state, _opened = _notice(gui, [])
+    generation = {"value": 1}
+    manager = window.connection_manager
+    original = manager.snapshot
+    manager.snapshot = lambda: types.SimpleNamespace(
+        ssh_config_unavailable=None, generation=generation["value"]
+    )
+    release = threading.Event()
+
+    def slow_scan():
+        state["asked"] += 1
+        if state["asked"] == 1:
+            release.wait(5)
+            return (_conflict("web"),)
+        return ()
+
+    window.client.list_config_conflicts = slow_scan
+    notice.check()
+    generation["value"] = 2
+    release.set()
+    _pump(lambda: state["asked"] == 2 and not notice._checking)
+
+    assert notice._conflicts == ()
+    assert notice._banner is None
+    manager.snapshot = original
