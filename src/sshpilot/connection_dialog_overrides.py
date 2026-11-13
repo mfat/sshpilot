@@ -653,7 +653,9 @@ class ConnectionDialogOverridesMixin:
             icon.set_from_icon_name(
                 "dialog-error-symbolic" if overridden else "dialog-information-symbolic"
             )
-            for css, wanted in (("error", overridden), ("dim-label", not overridden)):
+            # The informational marker is the only sign that another block
+            # decides the value, so it takes the accent colour, not a dim one.
+            for css, wanted in (("error", overridden), ("accent", not overridden)):
                 if wanted:
                     icon.add_css_class(css)
                 else:
