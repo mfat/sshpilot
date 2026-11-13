@@ -267,9 +267,16 @@ class ConnectionSummary:
     #: (``web · podman``, ``/dev/ttyUSB0 @ 115200``); empty for SSH and for
     #: a protocol the daemon cannot describe.
     target_summary: str = ""
+    #: An SSH connection whose config file the daemon cannot write (a Home
+    #: Manager link into the read-only /nix/store, a read-only mount, plain
+    #: permissions). Frontends offer it view-only; non-SSH connections live
+    #: in the daemon's own state and are never read-only.
+    config_read_only: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.id, "connection id")
+        if type(self.config_read_only) is not bool:
+            raise TypeError("connection config_read_only must be a boolean")
         if not self.nickname.strip():
             raise ValueError("connection nickname must not be empty")
         if type(self.display_name) is not str:
@@ -438,6 +445,85 @@ class ConnectionMutationResult:
 
 
 @dataclass(frozen=True)
+class EarlierDirective:
+    """An option OpenSSH obtains before it reaches a host's own block.
+
+    OpenSSH keeps the first value it obtains, so this line decides the option
+    for the host whatever the host's own block says. ``block`` is the header
+    of the block that holds the line (``Host *``, ``Match all``), empty for a
+    line above every block; ``file`` and ``line`` locate it.
+    """
+
+    key: str
+    value: str
+    block: str
+    file: str
+    line: int
+
+    def __post_init__(self) -> None:
+        for name in ("key", "value", "block", "file"):
+            text = getattr(self, name)
+            if type(text) is not str or "\x00" in text:
+                raise ValueError(f"earlier directive {name} is invalid")
+        if not self.key or self.key != self.key.lower():
+            raise ValueError("earlier directive key must be a lower-case keyword")
+        if type(self.line) is not int or self.line < 1:
+            raise ValueError("earlier directive line must be a positive integer")
+
+
+@dataclass(frozen=True)
+class ConfigConflict:
+    """A saved host's own value that an earlier block keeps from being used.
+
+    The host's block sets ``key`` to ``own_value``, but ``earlier`` sets it
+    first, and OpenSSH keeps the first value it obtains. ``key`` is the
+    lower-case keyword, the same as ``earlier.key``.
+    """
+
+    connection_id: str
+    host: str
+    key: str
+    own_value: str
+    earlier: EarlierDirective
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        for name in ("host", "key", "own_value"):
+            text = getattr(self, name)
+            if type(text) is not str or not text or "\x00" in text:
+                raise ValueError(f"config conflict {name} is invalid")
+        if not isinstance(self.earlier, EarlierDirective):
+            raise TypeError("config conflict earlier directive is invalid")
+        if self.key != self.earlier.key:
+            raise ValueError("config conflict key must match its earlier directive")
+
+
+@dataclass(frozen=True)
+class ConfigSyntaxError:
+    """A line of the SSH configuration that OpenSSH rejects.
+
+    OpenSSH refuses the whole configuration over one such line, so no SSH
+    connection starts until it is corrected. ``file`` and ``line`` locate it;
+    ``diagnostic`` is OpenSSH's own text for it, shown as it is and never
+    interpreted.
+    """
+
+    file: str
+    line: int
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("file", "diagnostic"):
+            text = getattr(self, name)
+            if type(text) is not str or "\x00" in text:
+                raise ValueError(f"config syntax error {name} is invalid")
+        if not self.file:
+            raise ValueError("config syntax error file must not be empty")
+        if type(self.line) is not int or self.line < 1:
+            raise ValueError("config syntax error line must be a positive integer")
+
+
+@dataclass(frozen=True)
 class EffectiveConfigComparison:
     """Daemon-owned authored-vs-effective OpenSSH comparison."""
 
@@ -449,9 +535,18 @@ class EffectiveConfigComparison:
     own: Tuple[str, ...] = ()
     full: Tuple[str, ...] = ()
     generation: int = 0
+    #: Options a block before the host's own block already decides, one entry
+    #: per keyword. A value the host's block gives for one of them is not
+    #: used. Accumulating options (IdentityFile, the forwards, ...) never
+    #: appear: OpenSSH collects those from every block.
+    earlier: Tuple[EarlierDirective, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
+        if type(self.earlier) is not tuple or any(
+            not isinstance(item, EarlierDirective) for item in self.earlier
+        ):
+            raise TypeError("effective config earlier directives are invalid")
         if type(self.host) is not str or "\x00" in self.host:
             raise ValueError("effective config host is invalid")
         if type(self.available) is not bool or type(self.has_diff) is not bool:

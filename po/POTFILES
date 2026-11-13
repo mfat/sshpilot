@@ -11,6 +11,7 @@ src/sshpilot/command_progress_dialog.py
 src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_field_helpers.py
 src/sshpilot/connection_dialog_login_profile.py
+src/sshpilot/connection_dialog_overrides.py
 src/sshpilot/connection_dialog_port_forwarding.py
 src/sshpilot/connection_dialog_validation.py
 src/sshpilot/connection_display.py
@@ -45,6 +46,9 @@ src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/sftp_error_messages.py
 src/sshpilot/gtk/transfer_error_messages.py
 src/sshpilot/gtk/sftp_failure_messages.py
+src/sshpilot/gtk/config_precedence_notice.py
+src/sshpilot/gtk/config_syntax_notice.py
+src/sshpilot/gtk/ssh_config_access_messages.py
 src/sshpilot/gtk/secret_status_messages.py
 src/sshpilot/gtk/secret_transfer_messages.py
 src/sshpilot/host_info_payload.py
@@ -96,6 +100,7 @@ src/sshpilot/sidebar.py
 src/sshpilot/sftp_service_controller.py
 src/sshpilot/split_view.py
 src/sshpilot/ssh_connection_validator.py
+src/sshpilot/ssh_option_list.py
 src/sshpilot/sshcopyid_window.py
 src/sshpilot/terminal.py
 src/sshpilot/terminal_session_controller.py

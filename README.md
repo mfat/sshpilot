@@ -188,7 +188,7 @@ everywhere Flatpak does.
 | Component    | Minimum Version |
 |---------------|----------------|
 | Python        | 3.12           |
-| GTK 4         | 4.6            |
+| GTK 4         | 4.14           |
 | libadwaita    | 1.5            |
 | VTE (GTK4)    | 0.70           |
 | PyGObject     | 3.42           |

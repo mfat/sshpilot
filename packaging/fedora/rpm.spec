@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.3.9}
+Version:        %{?version}%{!?version:6.4.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -168,6 +168,21 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Nov 13 2026 mFat <newmfat@gmail.com> - 6.4.0-1
+- Saved hosts now connect exactly as `ssh <alias>` does in a terminal: earlier Host * and Match blocks, /etc/ssh/ssh_config and the main config of hosts in included files all apply as OpenSSH applies them
+- If a setting you typed is no longer the one used, a banner in the main window says so and the connection editor marks the field with the value that wins and where it comes from; open Effective Config for details
+- Saved passwords are looked up by the user and host OpenSSH resolves, so a Host * that changes User or HostName may ask for the password once more
+- The app keepalive is now only a fallback; a ServerAliveInterval in your SSH config wins
+- Host key checking is left to your SSH config unless you set it in Settings
+- Settings > SSH Options is now a page of overrides that win over the SSH config, with Not set by default, keyword suggestions, an address family option, a legacy device compatibility switch and free-form extra options
+- Clear messages when the SSH config cannot be read, is read-only, is a link the app cannot see, or is rejected by OpenSSH; no more .bak copy beside it
+- A linked ~/.ssh/config is followed the way OpenSSH does
+- File manager: Windows servers keep nested folders on upload and show their paths as the server gives them; Flatpak users get Request Access for folders the sandbox cannot reach
+- Dashboard keeps its data and tab while refreshing
+- New Colored Text style for sidebar group colours
+- RDP: gtk4-frdp 0.2.4, OpenSSL legacy provider bundled on Windows, FreeRDP diagnostics in the app log
+- Fixed a crash in the shortcuts overview, an X11 ibus crash when closing the SSH config editor, and a corrupt process registry after a power cut on Windows
+
 * Thu Nov 05 2026 mFat <newmfat@gmail.com> - 6.3.9-1
 - more rdp fixes
 

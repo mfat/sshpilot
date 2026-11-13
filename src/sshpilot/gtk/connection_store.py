@@ -325,6 +325,9 @@ class ConnectionPresentationStore:
             groups=groups,
             root_connection_ids=root_ids,
             metadata=metadata,
+            ssh_config_read_only=current.ssh_config_read_only,
+            ssh_config_unavailable=current.ssh_config_unavailable,
+            ssh_config_unavailable_path=current.ssh_config_unavailable_path,
         )
         return True
 

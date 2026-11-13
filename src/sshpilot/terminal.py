@@ -80,6 +80,27 @@ from .terminal_display_pause import (
 _terminal_padding_css_installed = False
 
 
+def _menu_close_should_refocus_terminal(focus, terminal_widget, popover) -> bool:
+    """Whether focus is stranded after the app-owned context menu closed.
+
+    When a GtkPopover that held focus unmaps, GTK hands focus to an ancestor
+    container (the split pane), not back to the terminal, so the next Enter
+    lands in the sidebar (#1378). Reclaim it only when focus is nowhere, still
+    inside the popover, or on a container around the terminal; an action that
+    moved focus somewhere real (the search entry, a dialog) keeps it.
+    """
+    if focus is None:
+        return True
+    # The popover is parented to the terminal box: test it before the box.
+    if popover is not None and (focus is popover or focus.is_ancestor(popover)):
+        return True
+    if terminal_widget is None:
+        return False
+    if focus is terminal_widget or focus.is_ancestor(terminal_widget):
+        return False
+    return terminal_widget.is_ancestor(focus)
+
+
 def _finish_capture_gesture(gesture, handled: bool) -> None:
     """Resolve a capture gesture without leaving it competing with VTE."""
     state = (
@@ -1376,10 +1397,19 @@ class TerminalWidget(Gtk.Box):
                 self._set_session_overlay_mode("connecting")
 
     def ensure_forwarding_only_context(self, client=None, bridge=None) -> None:
-        """Resolve SessionType none + rules if not already known on the connection."""
+        """Resolve SessionType none + rules as OpenSSH resolves them.
+
+        A cached answer is shown at once; the daemon is still asked, because
+        ``SessionType none`` and the forwards may come from another block
+        (``Host *.tunnel``, ``Match``, an include) that the Host block's own
+        text does not show, and the configuration may have changed since.
+        The effective configuration decides; the authored block only when
+        that is unavailable.
+        """
         from .forwarding_only_ui import (
             apply_forwarding_only_flag,
             connection_forwarding_only,
+            effective_forwarding_context,
         )
 
         connection = getattr(self, "connection", None)
@@ -1388,8 +1418,11 @@ class TerminalWidget(Gtk.Box):
             self._forwarding_only_known = flagged
             if flagged:
                 self._update_forwarding_only_tab_title()
-            return
         if client is None or bridge is None or connection is None:
+            return
+        if getattr(connection, "is_local_shell", False) or (
+            str(getattr(connection, "protocol", None) or "ssh").casefold() != "ssh"
+        ):
             return
         try:
             from .api.connection_identity import connection_id_for
@@ -1397,7 +1430,33 @@ class TerminalWidget(Gtk.Box):
 
             connection_id = connection_id_for(connection)
 
-            def on_success(details):
+            def resolve():
+                getter = getattr(client, "get_effective_config", None)
+                if callable(getter):
+                    try:
+                        effective = getter(connection_id)
+                    except Exception:
+                        logger.debug(
+                            "Effective config unavailable for forwarding-only",
+                            exc_info=True,
+                        )
+                    else:
+                        if getattr(effective, "available", False):
+                            flag, rules = effective_forwarding_context(
+                                getattr(effective, "full", ()) or ()
+                            )
+                            if flag is not None:
+                                return flag, rules
+                return None, client.get_connection_editor(connection_id)
+
+            def on_success(result):
+                flag, payload = result
+                if flag is not None:
+                    self.apply_forwarding_only_context(
+                        forwarding_only=flag, rules=payload
+                    )
+                    return
+                details = payload
                 extra = getattr(details, "extra_ssh_config", None) or ""
                 flag = apply_forwarding_only_flag(connection, extra)
                 raw = getattr(details, "forwarding_rules", None) or ()
@@ -1411,10 +1470,11 @@ class TerminalWidget(Gtk.Box):
                 )
 
             def on_error(_error):
-                self._forwarding_only_known = False
+                if self._forwarding_only_known is None:
+                    self._forwarding_only_known = False
 
             bridge.submit(
-                lambda: client.get_connection_editor(connection_id),
+                resolve,
                 on_success=on_success,
                 on_error=on_error,
             )
@@ -4554,6 +4614,8 @@ class TerminalWidget(Gtk.Box):
             # menus itself. Only the legacy/WebView popover is application-owned.
             if not self._native_vte_context_menu and parent_widget:
                 self._menu_popover.set_parent(parent_widget)
+                self._menu_popover.connect(
+                    "closed", lambda _p: GLib.idle_add(self._refocus_after_context_menu))
 
             self._menu_needs_manual_dismiss = not self.backend.supports_feature("hyperlinks")
             if self._menu_needs_manual_dismiss:
@@ -4735,6 +4797,22 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
+
+    def _refocus_after_context_menu(self):
+        """Return keyboard focus to the terminal once its context menu closed."""
+        try:
+            if getattr(self, '_destroyed', False) or self.backend is None:
+                return False
+            widget = self.backend.widget
+            root = widget.get_root() if widget is not None else None
+            if root is None:
+                return False
+            if _menu_close_should_refocus_terminal(
+                    root.get_focus(), widget, getattr(self, '_menu_popover', None)):
+                self.backend.grab_focus()
+        except Exception:
+            logger.debug("Could not refocus terminal after context menu", exc_info=True)
+        return False
 
     def _dismiss_context_menu(self):
         """Hide the context menu popover if it is showing (manual-dismiss backends)."""

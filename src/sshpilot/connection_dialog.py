@@ -46,6 +46,7 @@ from .ssh_key_fingerprint import (
     _fingerprint_for_path,
 )
 from .ssh_config_formatter import MANAGED_HOST_OPTIONS
+from .ssh_option_list import OPENSSH_KEYWORDS, SshOptionList, check_ssh_option
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
     ValidationResult,
@@ -58,6 +59,10 @@ from .connection_dialog_login_profile import (
 from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
+from .connection_dialog_overrides import (
+    ConnectionDialogOverridesMixin,
+    inherited_note_text,
+)
 from .plugins.registry import protocol_registry
 
 from gettext import gettext as _
@@ -557,50 +562,19 @@ def _set_action_row_child(row, widget):
 # MANAGED_HOST_OPTIONS already have typed dialog fields (or are Host-block
 # structure) and must not appear here: the loader routes them out of
 # extra_ssh_config, so they would vanish from this tab after save/reload.
-_OPENSSH_ADVANCED_KEYWORDS = (
-    'AddKeysToAgent', 'AddressFamily', 'BatchMode', 'BindAddress', 'BindInterface',
-    'CanonicalDomains', 'CanonicalizeFallbackLocal', 'CanonicalizeHostname',
-    'CanonicalizeMaxDots', 'CanonicalizePermittedCNAMEs', 'CASignatureAlgorithms',
-    'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
-    'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
-    'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
-    'ExitOnForwardFailure', 'FingerprintHash', 'ForwardX11',
-    'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
-    'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
-    'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
-    'GSSAPITrustDns', 'HashKnownHosts', 'Host', 'HostbasedAcceptedAlgorithms',
-    'HostbasedAuthentication', 'HostKeyAlgorithms', 'HostKeyAlias', 'HostName',
-    'IdentitiesOnly', 'IdentityAgent', 'IdentityFile', 'IgnoreUnknown', 'Include',
-    'IPQoS', 'KbdInteractiveAuthentication', 'KbdInteractiveDevices', 'KexAlgorithms',
-    'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
-    'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
-    'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
-    'PreferredAuthentications', 'ProxyCommand', 'ProxyUseFdpass',
-    'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
-    'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
-    'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
-    'StdinNull', 'StreamLocalBindMask', 'StreamLocalBindUnlink', 'StrictHostKeyChecking',
-    'SyslogFacility', 'TCPKeepAlive', 'Tunnel', 'TunnelDevice', 'UpdateHostKeys',
-    'User', 'UserKnownHostsFile', 'UsePrivilegedPort', 'VerifyHostKeyDNS',
-    'VisualHostKey', 'XAuthLocation',
-)
-
 ADVANCED_TAB_SSH_OPTIONS = tuple(
-    name for name in _OPENSSH_ADVANCED_KEYWORDS
+    name for name in OPENSSH_KEYWORDS
     if name.lower() not in MANAGED_HOST_OPTIONS
 )
 
 
-class SSHConfigEntry(GObject.Object):
-    """Data model for SSH config entries"""
-    
-    def __init__(self, key="", value=""):
-        super().__init__()
-        self.key = key
-        self.value = value
-
 class SSHConfigAdvancedTab(Gtk.Box):
-    """Advanced SSH Configuration Tab for GTK 4"""
+    """Advanced SSH Configuration Tab for GTK 4.
+
+    The rows are the shared :class:`SshOptionList`, the same component
+    Settings ▸ SSH Options uses for its additional options. This class keeps
+    the dialog-facing API (entries in, ``extra_ssh_config`` text out).
+    """
 
     def __init__(self, connection_manager, parent_dialog=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -613,180 +587,63 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.parent_dialog = parent_dialog
 
         self.ssh_options = list(ADVANCED_TAB_SSH_OPTIONS)
-        
-        # Store config entries
-        self.config_entries = []
-        
+
         self.setup_ui()
-        
+
     def setup_ui(self):
         """Setup the user interface"""
-        
+
         # Header
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         title = Gtk.Label(label=_("Advanced SSH Configuration"))
         title.set_markup(_("<b>Advanced SSH Configuration</b>"))
         title.set_halign(Gtk.Align.START)
-        
+
         subtitle = Gtk.Label(label=_("Add custom SSH configuration options"))
         subtitle.add_css_class("dim-label")
         subtitle.set_halign(Gtk.Align.START)
-        
+
         header.append(title)
         header.append(subtitle)
         self.append(header)
-        
-        # Add button (positioned at the top)
-        from sshpilot import icon_utils
-        self.add_button = Gtk.Button(label=_("Add SSH Option"))
-        icon_utils.set_button_icon(self.add_button, "list-add-symbolic")
-        self.add_button.set_tooltip_text(_("Add a new SSH configuration option"))
-        self.add_button.connect("clicked", self.on_add_option)
-        self.add_button.set_halign(Gtk.Align.START)
-        self.add_button.set_margin_bottom(12)
-        self.append(self.add_button)
-        
-        # Scrolled window for config entries
+
+        own_field = _("“{keyword}” has its own field in this dialog.")
+        self.option_list = SshOptionList(
+            keywords=self.ssh_options,
+            validate=lambda keyword, value: check_ssh_option(
+                keyword, value,
+                reserved=MANAGED_HOST_OPTIONS,
+                reserved_message=own_field,
+            ),
+            note=self._override_note,
+        )
+        self.option_list.connect("edited", self.on_entry_changed)
+        self.option_list.connect("changed", self.on_entry_changed)
+
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_min_content_height(200)
         scrolled.set_vexpand(True)
-        
-        # Main content box
-        self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        scrolled.set_child(self.content_box)
-        
-        # Grid header
-        header_grid = Gtk.Grid()
-        header_grid.set_column_spacing(12)
-        header_grid.set_margin_bottom(6)
-        
-        key_header = Gtk.Label(label=_("SSH Option"))
-        key_header.set_markup(_("<b>Keyword</b>"))
-        key_header.set_halign(Gtk.Align.START)
-        key_header.set_hexpand(True)
-        
-        value_header = Gtk.Label(label=_("Value"))
-        value_header.set_markup(_("<b>Value</b>"))
-        value_header.set_halign(Gtk.Align.START)
-        value_header.set_hexpand(True)
-        
-        header_grid.attach(key_header, 0, 0, 1, 1)
-        header_grid.attach(value_header, 1, 0, 1, 1)
-        
-        self.content_box.append(header_grid)
-        
-        # Empty state label
-        self.empty_label = Gtk.Label(label=_("No custom SSH options configured.\nClick 'Add' button to get started."))
-        self.empty_label.add_css_class("dim-label")
-        self.empty_label.set_justify(Gtk.Justification.CENTER)
-        self.empty_label.set_margin_top(24)
-        self.empty_label.set_margin_bottom(24)
-        self.content_box.append(self.empty_label)
-        
+        scrolled.set_child(self.option_list)
         self.append(scrolled)
 
-    def create_config_entry_row(self):
-        """Create a new config entry row"""
-        row_grid = Gtk.Grid()
-        row_grid.set_column_spacing(12)
-        row_grid.set_margin_bottom(6)
-        
-        # SSH option dropdown (only supported options)
-        key_dropdown = Gtk.DropDown()
-        key_dropdown.set_hexpand(False)  # Don't expand horizontally
-        key_dropdown.set_size_request(200, -1)  # Fixed width of 200px
-        
-        # Create string list for dropdown
-        string_list = Gtk.StringList()
-        string_list.append("Select SSH option...")
-        for option in self.ssh_options:
-            string_list.append(option)
-        
-        key_dropdown.set_model(string_list)
-        
-        # Set expression for StringList items to enable search
-        expr = Gtk.PropertyExpression.new(Gtk.StringObject, None, "string")
-        key_dropdown.set_expression(expr)
-        
-        key_dropdown.set_selected(0)  # Default to "Select SSH option..."
-        
-        # Enable search functionality, matching anywhere in the keyword
-        # (the default search mode only matches the prefix).
-        key_dropdown.set_enable_search(True)
-        try:
-            key_dropdown.set_search_match_mode(Gtk.StringFilterMatchMode.SUBSTRING)
-        except AttributeError:  # GTK < 4.12
-            pass
-        
-        # Value entry
-        value_entry = Gtk.Entry()
-        value_entry.set_placeholder_text(_("Enter value..."))
-        value_entry.set_hexpand(True)
-        value_entry.connect("activate", self.on_value_entry_activate, row_grid)
-        
-        # Remove button
-        from sshpilot import icon_utils
-        remove_button = Gtk.Button()
-        icon_utils.set_button_icon(remove_button, "user-trash-symbolic")
-        remove_button.add_css_class("flat")
-        remove_button.add_css_class("error")
-        
-        # Connect signals
-        key_dropdown.connect("notify::selected", self.on_entry_changed)
-        value_entry.connect("changed", self.on_entry_changed)
-        remove_button.connect("clicked", self.on_remove_option, row_grid)
-        
-        # Store entries in the grid for easy access
-        row_grid.key_dropdown = key_dropdown
-        row_grid.value_entry = value_entry
-        
-        row_grid.attach(key_dropdown, 0, 0, 1, 1)
-        row_grid.attach(value_entry, 1, 0, 1, 1)
-        row_grid.attach(remove_button, 2, 0, 1, 1)
-        
-        return row_grid
-        
-    def on_add_option(self, button):
-        """Add a new SSH option entry"""
-        entry_row = self.create_config_entry_row()
-        self.config_entries.append(entry_row)
-        
-        # Hide empty label if it's the first entry
-        if len(self.config_entries) == 1:
-            self.empty_label.set_visible(False)
-            
-        # Append the new row to the content box
-        self.content_box.append(entry_row)
-        
-        # Only focus on the new value entry if this was triggered by user clicking the add button
-        # (not when loading existing data)
-        if button is not None:
-            entry_row.value_entry.grab_focus()
-        
-    def on_remove_option(self, button, row_grid):
-        """Remove a SSH option entry"""
-        self.config_entries.remove(row_grid)
-        
-        # Check if the widget is still a child of the content box before removing
-        if row_grid.get_parent() == self.content_box:
-            self.content_box.remove(row_grid)
-        
-        # Show empty label if no entries left
-        if len(self.config_entries) == 0:
-            self.empty_label.set_visible(True)
-        else:
-            self.update_config_preview()
+    def _override_note(self, keyword, value):
+        """What Settings ▸ SSH Options do to this option, from the dialog."""
+        note = getattr(self.parent_dialog, '_advanced_option_note', None)
+        return note(keyword, value) if callable(note) else None
 
-        self._update_parent_connection()
-        self._notify_parent_session_type_changed()
-            
+    def on_add_option(self, button):
+        """Add a new, empty SSH option row and focus it."""
+        self.option_list.add_empty_row()
+
     def on_entry_changed(self, widget, pspec=None):
-        """Handle entry text changes"""
+        """Mirror the rows into the connection being edited."""
         self.update_config_preview()
-        # Update the parent connection object if we're editing
         self._update_parent_connection()
         self._notify_parent_session_type_changed()
+        sync_banner = getattr(self.parent_dialog, '_sync_override_banner', None)
+        if callable(sync_banner):
+            sync_banner()
 
     def _notify_parent_session_type_changed(self):
         """Notify the dialog when Advanced SessionType / ExitOnForwardFailure change."""
@@ -801,22 +658,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                     callback()
             except Exception:
                 logger.debug("Failed to synchronize %s", name, exc_info=True)
-        
-    def on_value_entry_activate(self, entry, row_grid):
-        """Handle Enter key press in value entry - move to next row or add new one"""
-        current_index = self.config_entries.index(row_grid)
-        
-        # If this is the last row, add a new one
-        if current_index == len(self.config_entries) - 1:
-            self.on_add_option(None)
-            # Focus on the key entry of the new row
-            new_row = self.config_entries[-1]
-            new_row.key_dropdown.grab_focus()
-        else:
-            # Move to the next row's key entry
-            next_row = self.config_entries[current_index + 1]
-            next_row.key_dropdown.grab_focus()
-        
+
     def update_config_preview(self):
         """No-op retained for existing callers.
 
@@ -826,17 +668,17 @@ class SSHConfigAdvancedTab(Gtk.Box):
         """
         return
 
+    def has_invalid_options(self):
+        """Check every edited row; True when one is refused.
+
+        Called before saving so a refused option is fixed or removed by the
+        user instead of being dropped from the Host block without a word.
+        """
+        return not self.option_list.commit_all()
+
     def get_config_entries(self):
         """Get all valid config entries"""
-        entries = []
-        for row_grid in self.config_entries:
-            key = self._get_dropdown_selected_text(row_grid.key_dropdown)
-            value = row_grid.value_entry.get_text().strip()
-            
-            if key and value and key != "Select SSH option...":
-                entries.append((key, value))
-                
-        return entries
+        return list(self.option_list.get_options())
 
     def get_option(self, keyword):
         """Return the first value for an extra SSH option, if configured."""
@@ -880,119 +722,26 @@ class SSHConfigAdvancedTab(Gtk.Box):
             )
         ]
         self.set_config_entries(entries)
-        
+
     def set_config_entries(self, entries):
         """Set config entries from saved data"""
-        logger.debug(f"Setting config entries: {entries}")
-        
-        # Clear existing entries
-        for row_grid in self.config_entries.copy():
-            self.on_remove_option(None, row_grid)
-            
-        # Add new entries
-        for key, value in entries:
-            logger.debug(f"Adding entry: {key} = {value}")
-            self.on_add_option(None)
-            row_grid = self.config_entries[-1]
-            # Set dropdown to the correct SSH option
-            self._set_dropdown_to_option(row_grid.key_dropdown, key)
-            row_grid.value_entry.set_text(value)
-            logger.debug(f"Set dropdown to {key} and value to {value}")
-        
-        # Set focus on the add button after loading entries
-        if hasattr(self, 'add_button'):
-            self.add_button.grab_focus()
-            
+        self.option_list.set_options(entries)
+
     def generate_ssh_config(self, hostname="your-host-name"):
         """Generate SSH config block"""
         entries = self.get_config_entries()
         if not entries:
             return ""
-            
+
         config_lines = [f"Host {hostname}"]
         for key, value in entries:
             config_lines.append(f"    {key} {value}")
-            
+
         return "\n".join(config_lines)
-
-    def _get_dropdown_selected_text(self, dropdown):
-        """Get the selected text from a dropdown"""
-        try:
-            selected = dropdown.get_selected()
-            if selected > 0:  # Skip the first item which is "Select SSH option..."
-                model = dropdown.get_model()
-                if model and selected < model.get_n_items():
-                    # Gtk.DropDown models provide items as Gtk.StringObject instances in
-                    # newer GTK versions.  Some environments may return plain strings
-                    # (or other objects) instead, so fall back to ``str()`` when the
-                    # "get_string" accessor is not available.
-                    item = model.get_item(selected)
-                    getter = getattr(item, "get_string", None)
-                    if callable(getter):
-                        return getter()
-                    return str(item)
-        except Exception as e:
-            logger.debug(f"Error getting dropdown selected text: {e}")
-        return ""
-
-    def _set_dropdown_to_option(self, dropdown, option_name):
-        """Set dropdown to a specific SSH option"""
-        try:
-            model = dropdown.get_model()
-            if model:
-                logger.debug(f"Looking for option '{option_name}' in dropdown model")
-                for i in range(1, model.get_n_items()):  # Start from 1 to skip "Select SSH option..."
-                    item = model.get_item(i)
-                    getter = getattr(item, "get_string", None)
-                    model_string = getter() if callable(getter) else str(item)
-                    logger.debug(f"Model item {i}: '{model_string}'")
-                    # Case-insensitive comparison for SSH options
-                    if model_string.lower() == option_name.strip().lower():
-                        logger.debug(
-                            f"Found option '{option_name}' at index {i} (matched '{model_string}')"
-                        )
-                        dropdown.set_selected(i)
-                        return
-                logger.debug(f"Option '{option_name}' not found in dropdown model")
-        except Exception as e:
-            logger.debug(f"Error setting dropdown to option {option_name}: {e}")
-
-
 
     def get_extra_ssh_config(self):
         """Get extra SSH config as a string for saving"""
-        config_lines: list[str] = []
-        host_rows = []
-
-        for row_grid in self.config_entries.copy():
-            try:
-                key = self._get_dropdown_selected_text(row_grid.key_dropdown)
-                value = row_grid.value_entry.get_text().strip()
-            except Exception:
-                continue
-
-            if not key or not value or key == "Select SSH option...":
-                continue
-
-            if key.lower() == "host":
-                host_rows.append(row_grid)
-                continue
-
-            config_lines.append(f"{key} {value}")
-
-        if host_rows:
-            def _remove_rows():
-                for row in host_rows:
-                    try:
-                        self.on_remove_option(None, row)
-                    except Exception:
-                        pass
-                self.update_config_preview()
-                return False
-
-            GLib.idle_add(_remove_rows)
-
-        return "\n".join(config_lines)
+        return "\n".join(f"{key} {value}" for key, value in self.get_config_entries())
 
     def _update_parent_connection(self):
         """Update the parent connection object with current advanced tab data"""
@@ -1021,9 +770,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
         for line in config_string.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
-                parts = line.split(' ', 1)
+                # "Keyword value" or "Keyword=value", any whitespace between.
+                parts = re.split(r'\s*=\s*|\s+', line, maxsplit=1)
                 key = parts[0].strip()
-                value = parts[1].strip() if len(parts) == 2 else "yes"
+                value = parts[1].strip() if len(parts) == 2 and parts[1].strip() else "yes"
                 if key.lower() == 'host':
                     continue
                 entries.append((key, value))
@@ -1853,6 +1603,7 @@ class ConnectionDialog(
     ConnectionDialogValidationMixin,
     ConnectionDialogFieldHelpersMixin,
     ConnectionDialogPortForwardingMixin,
+    ConnectionDialogOverridesMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1900,6 +1651,8 @@ class ConnectionDialog(
     content_mount = Gtk.Template.Child()
     cancel_button = Gtk.Template.Child()
     save_button = Gtk.Template.Child()
+    effective_config_button = Gtk.Template.Child()
+    edit_ssh_config_button = Gtk.Template.Child()
     
     def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None, as_new=False):
         super().__init__()
@@ -1976,6 +1729,7 @@ class ConnectionDialog(
         self.cancel_button.connect("clicked", self.on_cancel_clicked)
         self.save_button.connect("clicked", self.on_save_clicked)
         self._save_buttons = [self.save_button]
+        self._setup_config_buttons()
         self.setup_keyboard_shortcuts()
 
         # Install inline validators for key fields
@@ -1993,6 +1747,10 @@ class ConnectionDialog(
                 pass
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
+        try:
+            self._start_override_awareness()
+        except Exception:
+            logger.debug("Override awareness unavailable", exc_info=True)
         # Saving a search-box target: fill in what its session used.
         if self._typed_target_directives() is not None:
             try:
@@ -2675,12 +2433,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         row.add_css_class('dim-label')
         # Composed with any validation message rather than replacing it: a row
         # has one tooltip, and setting it directly made whichever ran last win.
-        self._set_row_inherited_note(
-            row,
-            _('Inherited from your SSH configuration. Edit to set it for this host.'),
-        )
         handlers[row_name] = row.connect(
             'changed', lambda _row, name=row_name: self._on_inherited_row_edited(name)
+        )
+        overridden = bool(getattr(row, '_sshpilot_override_note', ''))
+        # While Settings ▸ SSH Options force this option, editing the row
+        # would not put the host's value in force, so the note is not shown.
+        self._set_row_inherited_note(
+            row, '' if overridden else inherited_note_text()
         )
 
     def _on_inherited_row_edited(self, row_name) -> None:
@@ -2711,6 +2471,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             adopted.add(field)
             if field in _FORWARD_AGENT_FIELDS:
                 adopted.update(_FORWARD_AGENT_FIELDS)
+        # The row is this connection's own from now on.
+        remark = getattr(self, '_apply_override_notes', None)
+        if callable(remark):
+            remark()
 
     def _typed_target_directives(self):
         """Directives an unsaved search-box target authored, or None.
@@ -2854,6 +2618,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # The rows were filled programmatically; re-baseline so an untouched
             # inherited value is never mistaken for an edit and written back.
             self._capture_editor_delta_baseline()
+            # An inherited value is not this connection's own: re-mark the
+            # rows, which were judged while their text was still being set.
+            remark = getattr(self, '_apply_override_notes', None)
+            if callable(remark):
+                remark()
             return False
 
         def _start_worker():
@@ -3479,6 +3248,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._load_inherited_values_async()
         except Exception:
             logger.debug("Could not start inherited-value lookup", exc_info=True)
+        # The saved file may have a different block order now.
+        try:
+            self._load_earlier_directives_async()
+        except Exception:
+            logger.debug("Could not start earlier-directive lookup", exc_info=True)
 
 
     def _refresh_save_sensitivity(self):
@@ -3504,7 +3278,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             snapshot_ok = True
             load_failed = False
             
-        sensitive = form_is_valid and not secret_busy and snapshot_ok and not load_failed
+        sensitive = (
+            form_is_valid and not secret_busy and snapshot_ok and not load_failed
+            and not self._config_read_only_active()
+        )
 
         for button in getattr(self, '_save_buttons', ()):
             try:
@@ -3531,6 +3308,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
         _set_action_row_child(method_row, self.auth_toggle)
         auth_group.add(method_row)
+        # Marked when the SSH configuration decides which methods are tried.
+        self.auth_method_row = method_row
 
         # --- Key selection mode: Automatic vs Use specific keys ---
         self.key_selection_group = Adw.PreferencesGroup()
@@ -4620,6 +4399,56 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _on_protocol_changed(self, *_args):
         self._apply_protocol_to_ui()
+        self._sync_config_read_only_ui()
+        self._sync_override_banner()
+
+    def set_config_read_only(self, read_only, unavailable=False):
+        """Offer an SSH connection view-only: its config file is read-only.
+
+        The daemon marks a connection whose Host block lives in a file it
+        cannot write (a Home Manager link into /nix/store), and a store
+        whose root config cannot take a new connection. The banner says so
+        up front and Save stays off while SSH is selected; a plugin
+        protocol saves to the daemon's own state and is unaffected -- unless
+        *unavailable*: while the SSH config can't be read at all the daemon
+        refuses every change, so every protocol is view-only.
+        """
+        self._config_read_only = bool(read_only)
+        self._config_unavailable = bool(read_only and unavailable)
+        if self._config_read_only and getattr(self, '_read_only_banner', None) is None:
+            from .gtk.ssh_config_access_messages import read_only_body
+            banner = Adw.Banner()
+            try:
+                banner.set_use_markup(False)
+            except Exception:
+                pass
+            banner.set_title(read_only_body(self._config_unavailable))
+            banner.set_revealed(False)
+            self._read_only_banner = banner
+            try:
+                self.content_mount.prepend(banner)
+            except Exception:
+                logger.debug("Could not mount the read-only banner", exc_info=True)
+        self._sync_config_read_only_ui()
+
+    def _config_read_only_active(self):
+        if not getattr(self, '_config_read_only', False):
+            return False
+        if getattr(self, '_config_unavailable', False):
+            return True
+        try:
+            return self._selected_protocol_id() == 'ssh'
+        except Exception:
+            return True
+
+    def _sync_config_read_only_ui(self):
+        banner = getattr(self, '_read_only_banner', None)
+        if banner is not None:
+            try:
+                banner.set_revealed(self._config_read_only_active())
+            except Exception:
+                pass
+        self._refresh_save_sensitivity()
 
     def _apply_protocol_to_ui(self):
         """Show only what the selected protocol uses.
@@ -5475,6 +5304,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle save button click or dialog save response"""
         if getattr(self, '_secret_save_in_progress', False):
             return
+        # Ctrl+S bypasses the insensitive Save button: a read-only SSH config
+        # explains itself again instead of failing at the daemon.
+        if self._config_read_only_active():
+            from .gtk.ssh_config_access_messages import (
+                read_only_body,
+                read_only_heading,
+            )
+            unavailable = getattr(self, '_config_unavailable', False)
+            self.show_error(
+                read_only_body(unavailable), heading=read_only_heading(unavailable)
+            )
+            return
         # Daemon edits: never save before the authoritative editor snapshot
         # arrived, and never save after a terminal load failure.
         if self.is_daemon_editor():
@@ -5489,6 +5330,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         backend = self._selected_protocol_backend()
         if backend is not None and backend.protocol_id != 'ssh':
             self._save_plugin_connection(backend)
+            return
+        # A refused option on the Advanced tab would be left out of the Host
+        # block; make the user fix or remove it instead of losing it quietly.
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        has_invalid = getattr(advanced_tab, 'has_invalid_options', None)
+        if callable(has_invalid) and has_invalid():
+            self.show_error(
+                _("An SSH option on the Advanced tab is not valid. Fix or remove it, then save again.")
+            )
             return
         # Block save and focus the first invalid field if any inline validation fails
         invalid_row = None
@@ -6015,7 +5865,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return None
         return controller.load_state()
 
-    def show_error(self, message):
+    def show_error(self, message, heading=None):
         """Show error message"""
         try:
             if hasattr(self, 'present'):
@@ -6027,7 +5877,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         parent_window = self.parent_window if hasattr(self, 'parent_window') else None
         dialog = Adw.MessageDialog.new(
             parent_window,
-            _("Error"),
+            heading or _("Error"),
             message
         )
         dialog.add_response("ok", _("OK"))

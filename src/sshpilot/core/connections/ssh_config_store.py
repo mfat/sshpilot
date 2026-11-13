@@ -4,8 +4,8 @@
 configuration: it decides the owning source file from *loaded daemon state*,
 never from client-supplied paths, and persists every mutation through one
 hardened atomic writer (same-directory temporary file, ``fsync``, atomic
-replace, parent-directory ``fsync``, one-shot ``.bak`` backup, symlink
-refusal, mode preservation).
+replace, parent-directory ``fsync``, links followed like OpenSSH, mode
+preservation, no ``.bak`` copies).
 
 Optimistic concurrency: every mutation compares the loaded configuration
 revision immediately before commit and raises a dedicated stale-state
@@ -20,9 +20,10 @@ exception text, or file contents.
 from __future__ import annotations
 
 import copy
+import errno
+import logging
 import os
 import shlex
-import shutil
 import stat
 import tempfile
 from dataclasses import dataclass, field, replace
@@ -52,8 +53,20 @@ from .ssh_config_loader import (
 _SSH_CONFIG_HEADER = "# SSH configuration file\n\n"
 
 
+logger = logging.getLogger(__name__)
+
+
 def _store_error(message: str) -> CoreError:
     return CoreError(ErrorCode.CONNECTION_STATE_IO_ERROR, message)
+
+
+def _read_only_error() -> CoreError:
+    return CoreError(
+        ErrorCode.SSH_CONFIG_READ_ONLY,
+        "The SSH configuration file is read-only",
+        diagnostic_category="permission",
+        diagnostic_reason="ssh config file not writable",
+    )
 
 
 def _stale_error() -> CoreError:
@@ -81,6 +94,251 @@ def _already_exists_error() -> CoreError:
 # Hardened atomic writer
 # ---------------------------------------------------------------------------
 
+def resolve_config_link(path: Path) -> Path:
+    """Return the file an SSH config path names, following links like OpenSSH.
+
+    OpenSSH reads ``~/.ssh/config`` through any symbolic link, so a config
+    managed by Home Manager, GNU Stow or chezmoi is simply that file. The
+    daemon edits it in the same place. A dangling link resolves to its
+    (missing) target, which then reads as empty and is never writable.
+    """
+    return Path(os.path.realpath(path))
+
+
+def config_file_writable(path: Path) -> bool:
+    """Whether the hardened writer can replace the SSH config file at *path*.
+
+    The writer renames a same-directory temporary file over the file a link
+    names, so that file's directory needs write+execute access and an
+    existing file must itself be writable. A config that does not exist yet
+    counts as writable when its own directory can still be created; a link
+    whose target directory is missing (a sandbox hiding ``/nix/store``)
+    does not. ``os.access`` also reports a read-only mount.
+    """
+    try:
+        requested = Path(os.path.abspath(path))
+        target = resolve_config_link(requested)
+        directory = target.parent
+        if not directory.exists():
+            if target != requested:
+                return False
+            # The writer creates the config's own directory: look for the
+            # nearest existing ancestor it would create it in.
+            ancestor = directory
+            while not ancestor.exists() and ancestor.parent != ancestor:
+                ancestor = ancestor.parent
+            return os.access(ancestor, os.W_OK | os.X_OK)
+        if not os.access(directory, os.W_OK | os.X_OK):
+            return False
+        if target.exists():
+            return os.access(target, os.W_OK)
+        return True
+    except OSError:
+        return False
+
+
+# Mirrored by gtk/ssh_config_access_messages.flatpak_override_command (core and
+# frontend may not import each other); a test keeps the two identical.
+def flatpak_override_command(target) -> str:
+    """The command that lets the Flatpak sandbox read a linked SSH config.
+
+    A NixOS Home Manager link names one file deep in ``/nix/store``; sharing
+    the store read-only keeps working across rebuilds, which change the
+    hash. Anything else shares the directory holding the target.
+    """
+    app_id = os.environ.get("FLATPAK_ID") or "io.github.mfat.sshpilot"
+    text = str(target)
+    shared = "/nix/store" if text.startswith("/nix/store/") else str(Path(text).parent)
+    return (
+        f"flatpak override --user --filesystem={shlex.quote(shared + ':ro')} "
+        f"{app_id}"
+    )
+
+
+def _flatpak_grant_hint(target: Path) -> str:
+    return (
+        "Inside the Flatpak sandbox only ~/.ssh is shared; grant read-only "
+        f"access with: {flatpak_override_command(target)}"
+    )
+
+
+#: Access states in which the root config's real content cannot be known.
+UNAVAILABLE_ACCESS_STATES = frozenset(
+    {"dangling", "no_access", "sandbox_hidden", "unreadable"}
+)
+
+
+def _denied_directory(path: Path) -> Optional[Path]:
+    """The first directory on the way to *path* this process may not enter.
+
+    A folder owned by another user (often left behind by ``sudo``), a mode
+    of 000, or an AppArmor/SELinux rule all make a config that exists look
+    missing: ``lexists`` swallows the permission error. Walking the parents
+    tells the two apart.
+    """
+    for directory in reversed(Path(path).parents):
+        try:
+            if directory.is_dir() and not os.access(directory, os.X_OK):
+                return directory
+        except OSError:
+            return directory
+    return None
+
+
+def _flatpak_shared_paths() -> Optional[List[Path]]:
+    """Host paths the Flatpak sandbox shares, or ``None`` outside one.
+
+    ``/.flatpak-info`` lists the effective ``filesystems`` grant after user
+    overrides (a removed grant is simply absent). ``host`` and ``home``
+    cover the home directory; ``xdg-*`` names never cover ``~/.ssh``.
+    """
+    if not os.path.exists("/.flatpak-info"):
+        return None
+    import configparser
+
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read("/.flatpak-info", encoding="utf-8")
+        entries = parser.get("Context", "filesystems", fallback="")
+    except (OSError, configparser.Error, UnicodeError):
+        return None
+    home = Path(os.path.expanduser("~"))
+    # The app's own data is always there, though the grant never lists it:
+    # the isolated-mode SSH config lives in it.
+    shared: List[Path] = [
+        Path(os.environ[name])
+        for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
+        if os.environ.get(name)
+    ]
+    app_id = os.environ.get("FLATPAK_ID")
+    if app_id:
+        shared.append(home / ".var" / "app" / app_id)
+    for entry in entries.split(";"):
+        name, _, mode = entry.strip().rpartition(":")
+        if mode not in ("ro", "rw", "create"):
+            name = entry.strip()
+        if name in ("host", "home", "~"):
+            shared.append(Path("/") if name == "host" else home)
+        elif name.startswith("~/"):
+            shared.append(home / name[2:])
+        elif name.startswith("/"):
+            shared.append(Path(name))
+    return shared
+
+
+def flatpak_hides(path: Path) -> bool:
+    """Whether the Flatpak sandbox gives no access to *path* at all.
+
+    Inside the sandbox a folder that is not shared simply is not there, so
+    a config in it reads as missing. The grant list is the only way to tell
+    that from a home directory without the folder.
+    """
+    shared = _flatpak_shared_paths()
+    if shared is None:
+        return False
+    target = Path(os.path.abspath(path))
+    return not any(target == base or base in target.parents for base in shared)
+
+
+def _classify_config_access(path: Path) -> Tuple[str, str, Path]:
+    """``(state, reason, subject)``: :func:`describe_config_access` plus the
+    path the state is about (the denied folder, the hidden folder, the link
+    target), for the snapshot's ``ssh_config_unavailable_path``."""
+    requested = Path(os.path.abspath(path))
+    try:
+        is_link = os.path.islink(requested)
+        target = resolve_config_link(requested)
+    except OSError as exc:
+        return "unreadable", f"{requested} cannot be inspected ({exc.strerror})", requested
+    shown = f"{requested} (a link to {target})" if is_link else str(requested)
+    if not os.path.lexists(requested):
+        denied = _denied_directory(requested)
+        if denied is not None:
+            return (
+                "no_access",
+                f"{requested} cannot be opened: permission denied on the "
+                f"folder {denied}, so no connections are loaded",
+                denied,
+            )
+        if flatpak_hides(requested.parent):
+            return (
+                "sandbox_hidden",
+                f"{requested} is not visible because the Flatpak sandbox has "
+                f"no access to {requested.parent}; grant it with: flatpak "
+                "override --user --filesystem=~/.ssh:create "
+                f"{os.environ.get('FLATPAK_ID') or 'io.github.mfat.sshpilot'}",
+                requested.parent,
+            )
+        return (
+            "missing",
+            f"{shown} does not exist; no connections are loaded from it",
+            requested,
+        )
+    if not target.exists():
+        denied = _denied_directory(target)
+        if denied is not None:
+            return (
+                "no_access",
+                f"{shown} cannot be opened: permission denied on the folder "
+                f"{denied}, so no connections are loaded",
+                denied,
+            )
+        reason = (
+            f"{shown} points to a file that does not exist or is not visible "
+            "here, so no connections are loaded from it"
+        )
+        if os.path.exists("/.flatpak-info"):
+            reason += ". " + _flatpak_grant_hint(target)
+        return "dangling", reason, target
+    if not os.access(target, os.R_OK):
+        return (
+            "unreadable",
+            f"{shown} exists but cannot be read (permission denied)",
+            target,
+        )
+    state, reason = _describe_writable_config(requested, target, shown)
+    return state, reason, target
+
+
+def describe_config_access(path: Path) -> Tuple[str, str]:
+    """Classify an SSH config file for the daemon log: ``(state, reason)``.
+
+    ``state`` is one of ``ok``, ``missing``, ``dangling``, ``no_access``
+    (a folder on the way cannot be entered), ``sandbox_hidden`` (the
+    Flatpak does not share its folder), ``unreadable`` or ``read_only``;
+    ``reason`` is a log sentence naming the file, the file a link points
+    to, and what is wrong. Log text only: public errors never carry paths.
+    """
+    state, reason, _subject = _classify_config_access(path)
+    return state, reason
+
+
+def _describe_writable_config(
+    requested: Path, target: Path, shown: str
+) -> Tuple[str, str]:
+    if config_file_writable(requested):
+        return "ok", f"{shown} is readable and writable"
+    directory = target.parent
+    try:
+        read_only_mount = bool(os.statvfs(directory).f_flag & os.ST_RDONLY)
+    except (OSError, AttributeError):
+        read_only_mount = False
+    if read_only_mount:
+        why = f"{directory} is on a read-only filesystem"
+    elif not os.access(directory, os.W_OK | os.X_OK):
+        why = f"its directory {directory} is not writable"
+    else:
+        try:
+            mode = oct(stat.S_IMODE(os.stat(target).st_mode))
+        except OSError:
+            mode = "unknown"
+        why = f"the file itself is not writable (mode {mode})"
+    return (
+        "read_only",
+        f"{shown} is read-only because {why}; its connections are view-only",
+    )
+
+
 def _atomic_write_text(
     path: Path,
     text: str,
@@ -90,12 +348,16 @@ def _atomic_write_text(
     """Atomically replace *path* with *text* using a same-directory temp file.
 
     - Rejects exact ``str`` input only.
-    - Refuses symbolic-link targets (checked before and immediately before
-      replacement, so a target swapped into a symlink mid-write aborts).
+    - Follows symbolic links the way OpenSSH reads them: a linked config
+      (Home Manager, GNU Stow, chezmoi) is written in place at the file the
+      link names, in that file's directory, so the link itself survives.
+      The resolved file must not turn into a link before the replacement
+      (a swap mid-write aborts).
     - Existing-file metadata failure is an error; mode 0600 is used only for
       genuinely new files; an existing safe mode is preserved.
-    - Creates one ``.bak`` of the first prior good file (never overwrites an
-      existing backup).
+    - Leaves no ``.bak`` copy behind: rollback restores from the bytes the
+      repository captured in memory, and a ``.bak`` would litter dotfiles
+      repositories that a linked config lives in.
     - Flushes and ``fsync``s the temporary file, then the parent directory.
     - When *expected_bytes* is supplied, the target's current bytes must
       equal it immediately before replacement or a stale-state error is
@@ -107,7 +369,11 @@ def _atomic_write_text(
     if type(text) is not str:
         raise TypeError("SSH configuration content must be exact text")
 
-    target = Path(path)
+    requested = Path(path)
+    try:
+        target = resolve_config_link(requested)
+    except OSError as exc:
+        raise _store_error("The connection configuration could not be saved") from exc
     directory = target.parent
 
     # Existing-file metadata must be readable; a failure is an error.
@@ -119,20 +385,25 @@ def _atomic_write_text(
         raise _store_error("The connection configuration could not be saved") from exc
     if st is not None and stat.S_ISLNK(st.st_mode):
         raise _store_error("Refusing to write through a symbolic link")
+    # A file the daemon cannot replace (a Home Manager link into the
+    # read-only /nix/store, a read-only mount, plain permissions) gets its
+    # own code so the frontend can say why instead of "could not be saved".
+    if not config_file_writable(requested):
+        logger.warning(
+            "Not saving the SSH config: %s", describe_config_access(requested)[1]
+        )
+        raise _read_only_error()
 
     try:
-        makedirs_private(directory)
+        # Only the config's own directory is ever created. A link whose
+        # target directory is gone stays an error rather than conjuring
+        # that directory into existence.
+        if target == Path(os.path.abspath(requested)):
+            makedirs_private(directory)
+        elif not directory.is_dir():
+            raise FileNotFoundError(str(directory))
     except OSError as exc:
         raise _store_error("The connection configuration could not be saved") from exc
-
-    # One-shot backup of the first prior good file.
-    backup = target.with_name(target.name + ".bak")
-    if st is not None and not backup.exists():
-        try:
-            shutil.copy2(target, backup)
-            os.chmod(backup, 0o600)
-        except OSError as exc:
-            raise _store_error("The connection configuration could not be backed up") from exc
 
     fd: Optional[int] = None
     tmp_name: Optional[str] = None
@@ -157,6 +428,16 @@ def _atomic_write_text(
             raise _store_error("The connection configuration could not be saved") from exc
         if st_now is not None and stat.S_ISLNK(st_now.st_mode):
             raise _store_error("Refusing to write through a symbolic link")
+        # The link itself must still name the file we checked and read: a
+        # link retargeted mid-write (even at a file with identical bytes,
+        # which the content check below cannot tell apart) must not be
+        # followed to a destination nobody validated.
+        if resolve_config_link(requested) != target:
+            logger.warning(
+                "Not saving the SSH config: %s was retargeted during the save",
+                requested,
+            )
+            raise _stale_error()
         if expected_bytes is not None:
             try:
                 current = target.read_bytes() if st_now is not None else None
@@ -184,6 +465,13 @@ def _atomic_write_text(
     except CoreError:
         raise
     except OSError as exc:
+        # The pre-check can race a chmod/remount, and access(2) can disagree
+        # with the real call (ACLs, some FUSE mounts): report what happened.
+        if exc.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+            logger.warning(
+                "Not saving the SSH config %s: %s", target, exc.strerror
+            )
+            raise _read_only_error() from exc
         raise _store_error("The connection configuration could not be saved") from exc
     finally:
         if fd is not None:
@@ -298,7 +586,6 @@ class PreparedSshMutation:
         """Commit after rechecking the base revision and expected bytes."""
         if not isinstance(store, SshConfigStore):
             raise TypeError("prepared mutation needs its owning SshConfigStore")
-        store._refuse_symlinked_root()
         if not store._revision_matches(self.base_revision):
             raise _stale_error()
         # Re-evaluate the exact target source tree immediately before the
@@ -341,8 +628,53 @@ class SshConfigStore:
     # -- loading -----------------------------------------------------------
 
     def load(self) -> LoadedSshConfiguration:
+        self._log_root_access()
         config = load_ssh_configuration(self._root_path, isolated=self._isolated)
         return self._overlay_generations(config)
+
+    def _log_root_access(self) -> None:
+        """Say in the daemon log why the root config gives no/RO connections.
+
+        Logged when the state changes, not on every reload: an empty list
+        from a link the Flatpak sandbox cannot follow, a missing file and an
+        unreadable one otherwise all look the same to the user.
+        """
+        try:
+            state, reason = describe_config_access(self._root_path)
+        except Exception:  # pragma: no cover - diagnostics must never break a load
+            logger.debug("Could not classify SSH config access", exc_info=True)
+            return
+        previous = getattr(self, "_logged_access", None)
+        if previous == (state, reason):
+            return
+        self._logged_access = (state, reason)
+        if state in UNAVAILABLE_ACCESS_STATES:
+            logger.warning("SSH config: %s", reason)
+        elif state != "ok" or previous is not None:
+            logger.info("SSH config: %s", reason)
+
+    def unavailable_access(self) -> Optional[Tuple[Any, Path]]:
+        """``(state, subject)`` when the root config cannot be seen, else None.
+
+        A config the daemon is refused, cannot see from inside the Flatpak,
+        or that is a link to a file it cannot see is *not* an empty config:
+        loading it as empty would retire every saved connection's identity
+        (and its groups) the next time the sidecar is reconciled. The
+        repository holds still instead and the frontend explains why.
+        """
+        from ...api.models.connection_store import SshConfigUnavailableReason
+
+        self._log_root_access()
+        state, _reason, subject = _classify_config_access(self._root_path)
+        reason = {
+            "dangling": SshConfigUnavailableReason.DANGLING_LINK,
+            "no_access": SshConfigUnavailableReason.PERMISSION_DENIED,
+            "unreadable": SshConfigUnavailableReason.PERMISSION_DENIED,
+            "sandbox_hidden": SshConfigUnavailableReason.SANDBOX_HIDDEN,
+        }.get(state)
+        if reason is None:
+            return None
+        return reason, subject
 
     def _overlay_generations(
         self, config: LoadedSshConfiguration
@@ -383,21 +715,11 @@ class SshConfigStore:
     def _is_writable(self) -> bool:
         """True when the daemon's hardened write path can replace the root.
 
-        Mirrors ``_atomic_write_text``: same-directory temp file + atomic
-        rename, so directory write+execute access is required and symlinked
-        roots are never mutated.
+        Follows links like OpenSSH: what matters is the file the link names.
+        A Home Manager link into /nix/store (or a dangling one inside a
+        sandbox) resolves to a read-only or missing directory.
         """
-        try:
-            root = Path(self._root_path)
-            if os.path.islink(root):
-                return False
-            if not os.access(root.parent, os.W_OK | os.X_OK):
-                return False
-            if root.exists():
-                return os.access(root, os.W_OK)
-            return True
-        except OSError:
-            return False
+        return config_file_writable(self._root_path)
 
     def _read_root_text(self) -> str:
         try:
@@ -436,15 +758,13 @@ class SshConfigStore:
         """Replace the daemon-selected root config text atomically.
 
         Reuses the hardened writer (same-directory temp, fsync, atomic
-        replace, one-shot ``.bak`` backup, mode preservation, symlink
-        refusal) and rejects stale saves when any participating file changed
+        replace, mode preservation, links followed like OpenSSH) and rejects stale saves when any participating file changed
         since the editor loaded it. The text is written exactly as provided.
         """
         if type(text) is not str:
             raise TypeError("SSH configuration content must be exact text")
         if type(expected_revision) is not str or not expected_revision.strip():
             raise TypeError("an expected SSH config revision is required")
-        self._refuse_symlinked_root()
         current_bytes = (
             self._root_path.read_bytes() if self._root_path.exists() else None
         )
@@ -470,7 +790,6 @@ class SshConfigStore:
             raise TypeError("SSH configuration content must be exact text")
         if type(expected_revision) is not str or not expected_revision.strip():
             raise TypeError("an expected SSH config revision is required")
-        self._refuse_symlinked_root()
         expected_bytes = (
             self._root_path.read_bytes() if self._root_path.exists() else None
         )
@@ -577,7 +896,6 @@ class SshConfigStore:
 
     def prepare_create(self, data: Mapping[str, Any]) -> PreparedSshMutation:
         """Prepare a new Host block without touching the SSH config."""
-        self._refuse_symlinked_root()
         config = self.load()
         payload = dict(data)
         payload.pop("uuid", None)
@@ -610,7 +928,6 @@ class SshConfigStore:
         expected_generation: Optional[int],
     ) -> PreparedSshMutation:
         """Prepare an existing Host-block update without writing it."""
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -673,7 +990,6 @@ class SshConfigStore:
         ids = tuple(dict.fromkeys(str(item) for item in connection_ids))
         if not ids:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "No connections to delete")
-        self._refuse_symlinked_root()
         config = self.load()
         sources = set()
         for connection_id in ids:
@@ -716,7 +1032,6 @@ class SshConfigStore:
 
     def prepare_duplicate(self, connection_id: str) -> PreparedSshMutation:
         """Prepare a duplicate Host block without writing it."""
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         source = _source_of(record)
@@ -752,7 +1067,6 @@ class SshConfigStore:
         expected_generation: Optional[int],
     ) -> PreparedSshMutation:
         """Prepare a split without changing the real SSH tree."""
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -828,21 +1142,6 @@ class SshConfigStore:
         return _compute_revision(files, {target: target_bytes})
 
     # -- lookups -----------------------------------------------------------
-
-    def _refuse_symlinked_root(self) -> None:
-        """Refuse mutations when the selected root config is a symlink.
-
-        The loader resolves symbolic links while reading, so a symlinked root
-        would otherwise silently redirect writes to its target; the daemon
-        never mutates a configuration through a symlink.
-        """
-        try:
-            if os.path.islink(self._root_path):
-                raise _store_error("Refusing to write through a symbolic link")
-        except OSError as exc:
-            raise _store_error(
-                "The connection configuration could not be saved"
-            ) from exc
 
     def _find(self, config: LoadedSshConfiguration, connection_id: str) -> ConnectionRecord:
         for record in config.connections:
@@ -958,7 +1257,6 @@ class SshConfigStore:
     # -- mutations ---------------------------------------------------------
 
     def create(self, data: Mapping[str, Any]) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         payload = dict(data)
         payload.pop("uuid", None)
@@ -993,7 +1291,6 @@ class SshConfigStore:
         *,
         expected_generation: Optional[int],
     ) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -1056,7 +1353,6 @@ class SshConfigStore:
         return SshConfigMutationResult(config=fresh, connection_id=new_name, touched_path=source)
 
     def delete(self, connection_id: str) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._ensure_unique_managed_declaration(connection_id, allow_shared=True)
@@ -1102,7 +1398,6 @@ class SshConfigStore:
         return SshConfigMutationResult(config=fresh, connection_id=connection_id, touched_path=source)
 
     def duplicate(self, connection_id: str) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         source = _source_of(record)
@@ -1145,7 +1440,6 @@ class SshConfigStore:
         *,
         expected_generation: Optional[int],
     ) -> SshConfigMutationResult:
-        self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)

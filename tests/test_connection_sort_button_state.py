@@ -202,6 +202,7 @@ def test_projection_reset_keeps_the_sort(monkeypatch):
     # Issue #1312: opening a connection refreshes the projection, which used
     # to drop the sort back to manual order.
     window = _window(sort="name-asc")
+    window._sync_ssh_config_link_notice = lambda _manager=None: None
     idle = []
     monkeypatch.setattr(
         window_module.GLib, "idle_add", lambda callback, *args: idle.append(callback)

@@ -217,3 +217,82 @@ def test_connecting_mode_hides_forwarding_box():
     assert term._overlay_mode == "connecting"
     term.forwarding_box.set_visible.assert_called_with(False)
     term.connecting_box.set_visible.assert_called_with(True)
+
+
+class _ImmediateBridge:
+    def submit(self, operation, *, on_success, on_error, **_kwargs):
+        try:
+            result = operation()
+        except BaseException as error:  # pragma: no cover - surfaced by asserts
+            on_error(error)
+        else:
+            on_success(result)
+
+
+def test_inherited_session_type_none_comes_from_effective_config(monkeypatch):
+    """``Host *.tunnel`` sets SessionType none; web.tunnel's block does not.
+
+    The tab must follow OpenSSH: forwarding-only, with the inherited forward
+    listed, even though the authored block (and the cached flag from it)
+    says this is a shell.
+    """
+    from sshpilot.api.models.connections import EffectiveConfigComparison
+
+    connection = SimpleNamespace(
+        nickname="web.tunnel",
+        display_name="web.tunnel",
+        extra_ssh_config="HostName example.com",
+    )
+    term = _bare_terminal(connection)
+    titles = []
+    monkeypatch.setattr(
+        TerminalWidget, "_update_forwarding_only_tab_title",
+        lambda self: titles.append(True),
+    )
+    monkeypatch.setattr(
+        "sshpilot.api.connection_identity.connection_id_for",
+        lambda _c: "web.tunnel",
+    )
+    client = Mock()
+    client.get_effective_config.return_value = EffectiveConfigComparison(
+        connection_id="web.tunnel",
+        host="web.tunnel",
+        available=True,
+        full=(
+            "hostname example.com",
+            "localforward 8080 [localhost]:80",
+            "sessiontype none",
+        ),
+    )
+
+    term.ensure_forwarding_only_context(client, _ImmediateBridge())
+
+    assert term.is_forwarding_only_session() is True
+    assert connection.forwarding_only is True
+    assert titles
+    assert [r["listen_port"] for r in connection.forwarding_rules] == [8080]
+    client.get_connection_editor.assert_not_called()
+
+
+def test_forwarding_only_falls_back_to_authored_without_effective(monkeypatch):
+    from sshpilot.api.models.connections import EffectiveConfigComparison
+
+    connection = SimpleNamespace(nickname="h", display_name="h")
+    term = _bare_terminal(connection)
+    monkeypatch.setattr(
+        TerminalWidget, "_update_forwarding_only_tab_title", lambda self: None
+    )
+    monkeypatch.setattr(
+        "sshpilot.api.connection_identity.connection_id_for", lambda _c: "h"
+    )
+    client = Mock()
+    client.get_effective_config.return_value = EffectiveConfigComparison(
+        connection_id="h", host="h", available=False
+    )
+    client.get_connection_editor.return_value = SimpleNamespace(
+        extra_ssh_config="SessionType none", forwarding_rules=()
+    )
+
+    term.ensure_forwarding_only_context(client, _ImmediateBridge())
+
+    assert term.is_forwarding_only_session() is True

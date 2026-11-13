@@ -189,6 +189,30 @@ class ConnectionMetadataSummary:
         )
 
 
+class SshConfigUnavailableReason(str, Enum):
+    """Why the daemon could not read the selected SSH config.
+
+    While a reason is set the store holds no SSH connections and refuses
+    every change, rather than treating an unseen config as an empty one.
+    """
+
+    #: The config is a link to a file this daemon cannot see (a Home
+    #: Manager link into /nix/store from inside the Flatpak, or a broken
+    #: link). The path is the link's target.
+    DANGLING_LINK = "dangling_link"
+    #: A folder on the way, or the file itself, refuses access (wrong owner
+    #: or mode, AppArmor/SELinux). The path is what refused.
+    PERMISSION_DENIED = "permission_denied"
+    #: The Flatpak sandbox does not share the config's folder. The path is
+    #: that folder.
+    SANDBOX_HIDDEN = "sandbox_hidden"
+    #: A file the config includes could not be read, or is not text. The
+    #: path is that file.
+    UNREADABLE = "unreadable"
+    #: The config could not be parsed. The path is the root config.
+    INVALID = "invalid"
+
+
 @dataclass(frozen=True)
 class ConnectionStoreSnapshot:
     """The complete daemon-owned connection store, revisioned by generation."""
@@ -198,9 +222,30 @@ class ConnectionStoreSnapshot:
     groups: Tuple[GroupSummary, ...]
     root_connection_ids: Tuple[ConnectionId, ...]
     metadata: Tuple[ConnectionMetadataSummary, ...]
+    #: The selected SSH config file cannot be written, so a new SSH
+    #: connection (always appended there) cannot be saved.
+    ssh_config_read_only: bool = False
+    #: Why the selected SSH config could not be read, else ``None``.
+    ssh_config_unavailable: Optional[SshConfigUnavailableReason] = None
+    #: The absolute path that reason is about, else "".
+    ssh_config_unavailable_path: str = ""
 
     def __post_init__(self) -> None:
         from .connections import ConnectionSummary  # deferred: avoid import cycle
+
+        if type(self.ssh_config_read_only) is not bool:
+            raise TypeError("store ssh_config_read_only must be a boolean")
+        if self.ssh_config_unavailable is not None and (
+            type(self.ssh_config_unavailable) is not SshConfigUnavailableReason
+        ):
+            raise TypeError(
+                "store ssh_config_unavailable must be an SshConfigUnavailableReason"
+            )
+        path = self.ssh_config_unavailable_path
+        if type(path) is not str or "\x00" in path or len(path) > 4096:
+            raise TypeError(
+                "store ssh_config_unavailable_path must be a path string"
+            )
 
         if type(self.generation) is not int or self.generation < 0:
             raise ValueError("store generation must be a non-negative integer")

@@ -49,20 +49,25 @@ class _Switch:
     def set_active(self, active):
         self._active = active
 
+    def set_subtitle(self, subtitle):
+        self.subtitle = subtitle
+
     def set_sensitive(self, sensitive):
         self._sensitive = sensitive
 
 
-class _Combo:
-    def __init__(self, selected=0):
-        self._selected = selected
+class _Choice:
+    """Stand-in for OptionalChoiceRow (get_value/set_value, \"\" = unset)."""
+
+    def __init__(self, value=""):
+        self._value = value
         self._sensitive = True
 
-    def get_selected(self):
-        return self._selected
+    def get_value(self):
+        return self._value
 
-    def set_selected(self, index):
-        self._selected = index
+    def set_value(self, value):
+        self._value = "" if value is None else str(value)
 
     def set_sensitive(self, sensitive):
         self._sensitive = sensitive
@@ -130,14 +135,14 @@ def _make_prefs(config, controller):
     prefs.apply_default_keepalive_row = _Switch(active=True)
     prefs.controlmaster_row = _Switch(active=False)
     prefs.connect_timeout_row = _Spin(value=0)
-    prefs.connection_attempts_row = _Spin(value=0)
-    prefs.keepalive_interval_row = _Spin(value=0)
-    prefs.keepalive_count_row = _Spin(value=0)
-    prefs.strict_host_row = _Combo(selected=0)
-    prefs.batch_mode_row = _Switch(active=False)
-    prefs.compression_row = _Switch(active=False)
+    prefs.keepalive_interval_row = _Spin(value=15)
+    prefs.keepalive_count_row = _Spin(value=3)
+    prefs.strict_host_row = _Choice(value="")
+    prefs.compression_row = _Choice(value="")
     prefs.verbosity_row = _Spin(value=0)
     prefs.debug_enabled_row = _Switch(active=False)
+    prefs.address_family_row = _Choice(value="")
+    prefs.legacy_algorithms_row = _Switch(active=False)
     prefs.open_file_manager_externally_row = _Switch(active=False)
     prefs.max_concurrent_transfers_row = _Spin(value=4)
     return prefs
@@ -163,12 +168,12 @@ def test_config_owned_writes_cannot_clobber_daemon_overrides(
     config = _make_config(
         tmp_path,
         monkeypatch,
-        {"ssh": {"connection_timeout": 5, "batch_mode": False}},
+        {"ssh": {"connection_timeout": 5, "compression": ""}},
     )
     service = SshOverridesService(tmp_path / "config.json")
     prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
     prefs.connect_timeout_row = _Spin(value=30)
-    prefs.batch_mode_row = _Switch(active=True)
+    prefs.compression_row = _Choice(value="yes")
     prefs.open_file_manager_externally_row = _Switch(active=True)
     expires = _expiry_record(monkeypatch)
 
@@ -177,10 +182,10 @@ def test_config_owned_writes_cannot_clobber_daemon_overrides(
     on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     # Daemon-owned values persisted through the controller survive.
     assert on_disk["ssh"]["connection_timeout"] == 30
-    assert on_disk["ssh"]["batch_mode"] is True
+    assert on_disk["ssh"]["compression"] == "yes"
     # The derived list reflects the daemon-composed state.
     assert "ConnectTimeout=30" in on_disk["ssh"]["ssh_overrides"]
-    assert "BatchMode=yes" in on_disk["ssh"]["ssh_overrides"]
+    assert "Compression=yes" in on_disk["ssh"]["ssh_overrides"]
     # Config-owned rows were persisted too.
     assert on_disk["file_manager"]["open_externally"] is True
     assert expires == [True]
@@ -264,15 +269,15 @@ def test_save_without_controller_does_not_persist_daemon_fields(
     )
     prefs = _make_prefs(config, None)
     prefs.connect_timeout_row = _Spin(value=99)
-    prefs.batch_mode_row = _Switch(active=True)
+    prefs.compression_row = _Choice(value="yes")
     expires = _expiry_record(monkeypatch)
 
     assert prefs.save_advanced_ssh_settings() is True
 
     on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    # The nine daemon-owned fields were NOT mutated through the local config.
+    # The five daemon-owned fields were NOT mutated through the local config.
     assert on_disk["ssh"].get("connection_timeout") == 5
-    assert on_disk["ssh"].get("batch_mode") is not True
+    assert on_disk["ssh"].get("compression") != "yes"
     assert "ssh_overrides" not in on_disk["ssh"]
     # Config-owned rows still persist through Config.
     assert on_disk["ssh"]["apply_default_keepalive"] is True
@@ -291,11 +296,7 @@ def test_late_controller_attachment_enables_existing_ssh_override_rows(
     prefs = _make_prefs(config, None)
     rows = (
         prefs.connect_timeout_row,
-        prefs.connection_attempts_row,
-        prefs.keepalive_interval_row,
-        prefs.keepalive_count_row,
         prefs.strict_host_row,
-        prefs.batch_mode_row,
         prefs.compression_row,
         prefs.verbosity_row,
         prefs.debug_enabled_row,
@@ -332,22 +333,17 @@ def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
 
     assert values == {
         "connect_timeout": 0,
-        "connection_attempts": 0,
-        "server_alive_interval": 0,
-        "server_alive_count_max": 0,
-        "strict_host_key_checking": "accept-new",
-        "batch_mode": False,
-        "compression": False,
+        "strict_host_key_checking": "",
+        "compression": "",
         "verbosity": 0,
         "debug_enabled": False,
+        "extra_options": (),
+        "address_family": "",
+        "legacy_algorithms": False,
     }
     rows = (
         prefs.connect_timeout_row,
-        prefs.connection_attempts_row,
-        prefs.keepalive_interval_row,
-        prefs.keepalive_count_row,
         prefs.strict_host_row,
-        prefs.batch_mode_row,
         prefs.compression_row,
         prefs.verbosity_row,
         prefs.debug_enabled_row,
@@ -491,7 +487,7 @@ def test_stale_snapshot_save_conflicts_without_manual_refresh(
     loaded = controller.load()
     prefs = _make_prefs(config, controller)
     prefs.connect_timeout_row = _Spin(value=60)
-    prefs.batch_mode_row = _Switch(active=True)
+    prefs.compression_row = _Choice(value="yes")
     expires = _expiry_record(monkeypatch)
 
     # Another SshOverridesService changes connection_timeout to revision B
@@ -626,12 +622,12 @@ def test_field_changed_persists_and_advances_snapshot_on_success(tmp_path, monke
     prefs = _make_prefs(config, controller)
     prefs._advanced_ssh_last_good_snapshot = prefs._snapshot_advanced_ssh_rows()
 
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)
 
     # Actually landed on the daemon, not just marked as if it did.
-    assert service.get().compression is True
-    assert prefs._advanced_ssh_last_good_snapshot['compression'] is True
+    assert service.get().compression == "yes"
+    assert prefs._advanced_ssh_last_good_snapshot['compression'] == "yes"
 
 
 def test_field_changed_reverts_all_rows_on_daemon_failure(tmp_path, monkeypatch):
@@ -683,7 +679,7 @@ def test_field_changed_is_noop_while_suppressed(tmp_path, monkeypatch):
 
     prefs.save_advanced_ssh_settings = _fail_if_called
 
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)  # must not raise
 
 
@@ -698,8 +694,8 @@ def test_snapshot_round_trip_restores_values_and_clears_suppress_flag(tmp_path, 
     snapshot = prefs._snapshot_advanced_ssh_rows()
 
     prefs.connect_timeout_row.set_value(99)
-    prefs.compression_row.set_active(True)
-    prefs.strict_host_row.set_selected(2)
+    prefs.compression_row.set_value("yes")
+    prefs.strict_host_row.set_value("yes")
 
     prefs._restore_advanced_ssh_rows(snapshot)
 
@@ -752,17 +748,18 @@ def test_max_concurrent_transfers_changed_persists_immediately(tmp_path, monkeyp
 
 
 def test_ssh_options_help_explains_per_connection_precedence():
-    """Preferences ▸ SSH Options must say these are app-wide defaults that
-    lose to an explicit per-connection setting, not only that they override
-    ~/.ssh/config.
+    """Settings ▸ SSH Options must say these are added to every SSH command
+    and win over both the SSH config file and a connection's own settings.
     """
     import inspect
 
     src = inspect.getsource(PreferencesWindow._build_ssh_settings_preferences_page)
-    assert "~/.ssh/config" in src
-    assert "per-connection" in src
+    assert "Override SSH Configuration" in src
+    assert "added to every SSH command" in src
+    assert "SSH configuration file" in src
+    assert "connection's own settings" in src
+    assert "Per-connection settings always win" not in src
     assert "help_group.set_description(" in src
-    assert "These settings override values from your ~/.ssh/config." not in src
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +894,7 @@ def test_failed_reset_is_surfaced_to_the_user(tmp_path, monkeypatch):
     prefs._show_ssh_save_failure = lambda: failures.append(True)
     _expiry_record(monkeypatch)
 
-    prefs.on_reset_advanced_ssh()
+    prefs.reset_advanced_ssh()
 
     assert failures == [True]
 
@@ -938,11 +935,11 @@ def test_failed_edit_after_failed_reset_keeps_row_and_file_agreed(
     prefs._show_ssh_save_failure = lambda: None
     _expiry_record(monkeypatch)
 
-    prefs.on_reset_advanced_ssh()
+    prefs.reset_advanced_ssh()
 
     # Any later edit that the daemon also rejects.
     prefs.ssh_overrides_controller = SshOverridesController(_FailingClient(service))
-    prefs.compression_row.set_active(True)
+    prefs.compression_row.set_value("yes")
     prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)
 
     config.reload_json_cache_strict()
@@ -962,8 +959,142 @@ def test_successful_reset_still_advances_the_snapshot(tmp_path, monkeypatch):
     prefs._show_ssh_save_failure = lambda: failures.append(True)
     _expiry_record(monkeypatch)
 
-    prefs.on_reset_advanced_ssh()
+    prefs.reset_advanced_ssh()
 
     assert failures == []
     assert prefs.controlmaster_row.get_active() is False
     assert prefs._advanced_ssh_last_good_snapshot["controlmaster"] is False
+
+
+# ---------------------------------------------------------------------------
+# Host key checking: unset (\"\") is the default; set values round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["", "accept-new", "yes", "no", "ask"])
+def test_strict_host_row_maps_each_choice_to_its_value(tmp_path, monkeypatch, value):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    _expiry_record(monkeypatch)
+
+    prefs.strict_host_row.set_value(value)
+    assert prefs._collect_ssh_override_patch()["strict_host_key_checking"] == value
+    assert prefs.save_advanced_ssh_settings() is True
+    assert service.get().strict_host_key_checking == value
+
+    # And the saved value restores the same choice when the page reloads.
+    prefs.strict_host_row.set_value("ask" if value != "ask" else "yes")
+    prefs._apply_ssh_override_values_to_rows(service.get())
+    assert prefs.strict_host_row.get_value() == value
+
+
+def test_untouched_page_does_not_configure_host_key_checking(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+
+    assert prefs._ssh_override_page_values()["strict_host_key_checking"] == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []
+
+
+# ---------------------------------------------------------------------------
+# Reset touches only the settings on the SSH options page
+# ---------------------------------------------------------------------------
+
+
+def test_reset_leaves_file_manager_settings_alone(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "ssh": {"connection_timeout": 30, "controlmaster": True},
+            "file_manager": {"open_externally": True, "max_concurrent_transfers": 8},
+        },
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs.open_file_manager_externally_row = _Switch(active=True)
+    prefs.max_concurrent_transfers_row = _Spin(value=8)
+    _expiry_record(monkeypatch)
+
+    assert prefs._apply_default_advanced_settings() is True
+
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["connection_timeout"] == 0
+    assert on_disk["ssh"]["controlmaster"] is False
+    assert on_disk["file_manager"]["open_externally"] is True
+    assert on_disk["file_manager"]["max_concurrent_transfers"] == 8
+    assert prefs.open_file_manager_externally_row.get_active() is True
+    assert prefs.max_concurrent_transfers_row.get_value() == 8
+
+
+def test_reset_asks_first_and_does_nothing_when_cancelled(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {"connection_timeout": 30}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    _expiry_record(monkeypatch)
+
+    prefs._on_reset_advanced_ssh_response(None, "cancel")
+    assert service.get().connect_timeout == 30
+
+    prefs._on_reset_advanced_ssh_response(None, "reset")
+    assert service.get().connect_timeout == 0
+
+
+# ---------------------------------------------------------------------------
+# Keepalive: one switch with its two numbers, all Config-owned.
+# ---------------------------------------------------------------------------
+
+
+def test_keepalive_numbers_are_saved_and_reach_the_command(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs.keepalive_interval_row = _Spin(value=40)
+    prefs.keepalive_count_row = _Spin(value=5)
+    _expiry_record(monkeypatch)
+
+    assert prefs.save_advanced_ssh_settings() is True
+
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["default_keepalive_interval"] == 40
+    assert on_disk["ssh"]["default_keepalive_count"] == 5
+    assert prefs.apply_default_keepalive_row.subtitle == (
+        "ServerAliveInterval 40, ServerAliveCountMax 5. "
+        "Used for hosts whose SSH configuration sets no keepalive."
+    )
+
+    # They reach the command of a host whose configuration sets no keepalive.
+    assert service.keepalive_fallback_args({"serveraliveinterval": "0"}) == (
+        "-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=5",
+    )
+
+
+def test_reset_restores_the_keepalive_numbers(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "ssh": {
+                "apply_default_keepalive": False,
+                "default_keepalive_interval": 40,
+                "default_keepalive_count": 5,
+            }
+        },
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs.apply_default_keepalive_row = _Switch(active=False)
+    prefs.keepalive_interval_row = _Spin(value=40)
+    prefs.keepalive_count_row = _Spin(value=5)
+    _expiry_record(monkeypatch)
+
+    assert prefs._apply_default_advanced_settings() is True
+
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["apply_default_keepalive"] is True
+    assert on_disk["ssh"]["default_keepalive_interval"] == 15
+    assert on_disk["ssh"]["default_keepalive_count"] == 3
+    assert prefs.keepalive_interval_row.get_value() == 15
+    assert prefs.keepalive_count_row.get_value() == 3

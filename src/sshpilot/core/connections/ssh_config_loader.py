@@ -19,6 +19,7 @@ from __future__ import annotations
 import getpass
 import glob
 import hashlib
+import logging
 import os
 import re
 import shlex
@@ -32,9 +33,10 @@ from ...ssh_config_document import (
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
+    include_patterns,
     split_config_lines,
-    split_include_args,
 )
+from ...platform.paths import include_base_dir
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord
@@ -99,6 +101,9 @@ def _expand_ssh_tokens(value: str) -> str:
     return _TOKEN_RE.sub(_repl, value)
 
 
+
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Include resolution (headless; unreadable files are fatal)
 # ---------------------------------------------------------------------------
@@ -133,14 +138,17 @@ def _resolve_config_files(
             try:
                 return split_config_lines(override.decode("utf-8"))
             except UnicodeDecodeError:
-                unreadable.append(path)
+                unreadable.append((path, "it is not valid UTF-8 text"))
                 return None
         try:
             return split_config_lines(path.read_bytes().decode("utf-8"))
         except FileNotFoundError:
             return _MISSING  # missing include -> tolerated, treated as empty
-        except (OSError, UnicodeError):
-            unreadable.append(path)
+        except UnicodeError:
+            unreadable.append((path, "it is not valid UTF-8 text"))
+            return None
+        except OSError as exc:
+            unreadable.append((path, exc.strerror or type(exc).__name__))
             return None
 
     def _resolve(path: Path, depth: int, stack: List[Path]) -> None:
@@ -161,20 +169,16 @@ def _resolve_config_files(
         visited.add(abs_path)
         resolved.append(abs_path)
         stack.append(abs_path)
-        base_dir = abs_path.parent
+        base_dir = include_base_dir(root_path, abs_path)
         for raw_line in lines:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            lowered = line.lower()
-            if not lowered.startswith("include "):
-                continue
             try:
-                patterns = split_include_args(line[len("include "):])
+                patterns = include_patterns(raw_line)
             except ValueError:
                 raise _config_error(
                     "SSH configuration contains an invalid Include header"
                 ) from None
+            if patterns is None:
+                continue
             for pattern in patterns:
                 expanded = os.path.expanduser(os.path.expandvars(
                     _expand_ssh_tokens(pattern)
@@ -207,8 +211,24 @@ def _resolve_config_files(
 
     _resolve(root_path, 1, [])
     if unreadable:
-        # Never surface the offending path in the public message.
-        raise _config_error("SSH configuration could not be read completely")
+        # The public error never names a path; the daemon log must, or
+        # "could not be read completely" is undiagnosable.
+        for path, reason in unreadable:
+            logger.warning(
+                "SSH config file %s could not be read (%s); no connections "
+                "are loaded until it can be",
+                path,
+                reason,
+            )
+        # ``details`` stays inside the daemon (the API mapping drops it): it
+        # lets a startup that cannot read the config name the file instead
+        # of failing to start.
+        raise CoreError(
+            ErrorCode.CONFIG_PARSE_ERROR,
+            "SSH configuration could not be read completely",
+            details={"unreadable_path": str(unreadable[0][0])},
+            diagnostic_category="unreadable",
+        )
     return resolved
 
 

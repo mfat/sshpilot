@@ -1065,7 +1065,15 @@ class RemoteFileEditorWindow(Adw.Window):
                             self._save_button.set_sensitive(False)
                         except Exception:
                             pass
-                        self._show_toast(_("Read-only file"), timeout=3)
+                        # A service may explain *why* (the SSH config editor:
+                        # a Home Manager-managed file); others stay generic.
+                        notice = getattr(
+                            self._daemon_file_service, "read_only_notice", None
+                        )
+                        if callable(notice):
+                            self._show_toast(notice(), timeout=8)
+                        else:
+                            self._show_toast(_("Read-only file"), timeout=3)
                     GLib.idle_add(self._load_file_content)
                 except Exception as e:
                     logger.error("Failed to read daemon file for editing", exc_info=True)

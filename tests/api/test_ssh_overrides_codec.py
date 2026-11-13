@@ -18,12 +18,8 @@ def _overrides(**overrides):
     values = dict(
         revision="r1",
         connect_timeout=0,
-        connection_attempts=0,
-        server_alive_interval=0,
-        server_alive_count_max=0,
         strict_host_key_checking="accept-new",
-        batch_mode=False,
-        compression=False,
+        compression="",
         verbosity=0,
         debug_enabled=False,
     )
@@ -35,8 +31,7 @@ def test_global_ssh_overrides_round_trip():
     snapshot = _overrides(
         revision="rev-123",
         connect_timeout=30,
-        server_alive_interval=45,
-        batch_mode=True,
+        compression="no",
         strict_host_key_checking="yes",
         verbosity=2,
     )
@@ -45,8 +40,7 @@ def test_global_ssh_overrides_round_trip():
 
     assert restored.revision == "rev-123"
     assert restored.connect_timeout == 30
-    assert restored.server_alive_interval == 45
-    assert restored.batch_mode is True
+    assert restored.compression == "no"
     assert restored.strict_host_key_checking == "yes"
     assert restored.verbosity == 2
     assert restored.applies_immediately is True
@@ -71,12 +65,12 @@ def test_global_ssh_overrides_from_wire_rejects_missing_keys():
 
 def test_update_request_round_trip_with_expected_revision():
     request = UpdateGlobalSshOverridesRequest(
-        patch={"connect_timeout": 12, "batch_mode": True},
+        patch={"connect_timeout": 12, "compression": "yes"},
         expected_revision="rev-abc",
     )
     wire = update_global_ssh_overrides_request_to_wire(request)
     restored = update_global_ssh_overrides_request_from_wire(wire)
-    assert restored.patch == {"connect_timeout": 12, "batch_mode": True}
+    assert restored.patch == {"connect_timeout": 12, "compression": "yes"}
     assert restored.expected_revision == "rev-abc"
 
 
@@ -103,3 +97,23 @@ def test_update_request_from_wire_rejects_unknown_fields():
         update_global_ssh_overrides_request_from_wire(
             {"patch": {}, "mystery": 1}
         )
+
+
+def test_forced_options_round_trip_and_default_to_empty():
+    snapshot = _overrides(
+        forced_options=("ConnectTimeout=30", "ServerAliveInterval=15"),
+    )
+    wire = global_ssh_overrides_to_wire(snapshot)
+    assert wire["forced_options"] == ["ConnectTimeout=30", "ServerAliveInterval=15"]
+    assert global_ssh_overrides_from_wire(wire) == snapshot
+
+    # A daemon that predates the field simply does not send it.
+    del wire["forced_options"]
+    assert global_ssh_overrides_from_wire(wire).forced_options == ()
+
+
+def test_forced_options_must_be_keyword_value_strings():
+    with pytest.raises(ValueError):
+        _overrides(forced_options=("NoValue",))
+    with pytest.raises(TypeError):
+        _overrides(forced_options="User=root")

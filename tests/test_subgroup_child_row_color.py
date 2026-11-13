@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 RED = '#ff0000'
 GREEN = '#00ff00'
 BLUE = '#0000ff'
-MODES = ['fill', 'badge', 'bar', 'dot']
+MODES = list(sidebar.GROUP_COLOR_DISPLAY_MODES) if sidebar is not None else []
 
 
 class _FakeConfig:

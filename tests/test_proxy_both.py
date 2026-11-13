@@ -179,36 +179,28 @@ def test_update_preserves_jump_on_unrelated_edit(tmp_path):
 # --- launch paths defer to the file -----------------------------------------
 
 
-def test_authored_options_omit_both_and_defer_to_file():
-    """With both authored, no proxy -o is emitted: the -F config on argv
-    resolves exactly what plain `ssh host` would do."""
-    from types import SimpleNamespace
+def test_launch_emits_no_proxy_option_and_defers_to_file():
+    """No proxy -o is emitted, for one authored proxy or for both: the
+    configuration resolves exactly what plain `ssh host` would do."""
+    from sshpilot.connection_model import Connection
+    from sshpilot.ssh_connection_builder import ConnectionContext, build_ssh_connection
 
-    from sshpilot.ssh_connection_builder import _authored_ssh_options
-
-    data = {
-        "proxy_jump": ["bastion-jump"],
-        "proxy_command": "ssh -W %h:%p bastion-cmd",
-        "__authored_directives": ("proxyjump", "proxycommand"),
-    }
-    view = SimpleNamespace(data=dict(data), **{k: v for k, v in data.items()})
-    kwargs, _ = _authored_ssh_options(view)
-    assert "proxy_jump" not in kwargs
-    assert "proxy_command" not in kwargs
-
-    single_jump = SimpleNamespace(
-        data={"proxy_jump": ["b"], "__authored_directives": ("proxyjump",)},
-        proxy_jump=["b"],
-    )
-    kwargs, _ = _authored_ssh_options(single_jump)
-    assert kwargs["proxy_jump"] == ["b"]
-
-    single_command = SimpleNamespace(
-        data={"proxy_command": "ssh cmd", "__authored_directives": ("proxycommand",)},
-        proxy_command="ssh cmd",
-    )
-    kwargs, _ = _authored_ssh_options(single_command)
-    assert kwargs["proxy_command"] == "ssh cmd"
+    for data in (
+        {
+            "proxy_jump": ["bastion-jump"],
+            "proxy_command": "ssh -W %h:%p bastion-cmd",
+            "__authored_directives": ("proxyjump", "proxycommand"),
+        },
+        {"proxy_jump": ["b"], "__authored_directives": ("proxyjump",)},
+        {"proxy_command": "ssh cmd", "__authored_directives": ("proxycommand",)},
+    ):
+        argv = build_ssh_connection(
+            ConnectionContext(
+                connection=Connection({"host": "both", "nickname": "both", **data}),
+                command_type="ssh",
+            )
+        ).command
+        assert argv == ["ssh", "both"]
 
 
 def test_resolved_config_probe_omits_both():
@@ -246,7 +238,8 @@ def test_launch_singles_match_openssh_flags():
     jump = build_ssh_process_spec(
         SSHLaunchRequest(destination="example.com", proxy_jump=["b1", "b2"])
     )
-    assert "-J" in jump.argv and "b1,b2" in jump.argv
+    # Not ``-J``: ssh refuses it after an ``-o ProxyJump=`` override.
+    assert "-J" not in jump.argv and "ProxyJump=b1,b2" in jump.argv
     command = build_ssh_process_spec(
         SSHLaunchRequest(
             destination="example.com", proxy_command="ssh -W %h:%p bastion"

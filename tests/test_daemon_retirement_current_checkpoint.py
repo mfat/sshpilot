@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from sshpilot.core.settings import CONFIG_VERSION
 
 
 def test_frontend_reload_operation_preserves_a_newer_daemon_value(tmp_path):
@@ -17,7 +18,7 @@ def test_frontend_reload_operation_preserves_a_newer_daemon_value(tmp_path):
 
     path = tmp_path / "config.json"
     initial = {
-        "config_version": 3,
+        "config_version": CONFIG_VERSION,
         "ui": {"language": "en"},
         "plugins": {"docker_enabled": False},
     }

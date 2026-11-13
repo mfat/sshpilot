@@ -260,3 +260,17 @@ button.layout-card:checked {
 headerbar.sidebar-title-row {
     min-height: 46px;
 }
+
+/* Connection dialog: "Settings ▸ SSH Options override …" banner
+   (connection_dialog_overrides.py). AdwBanner has no error style of its own:
+   its tint comes from one grey --banner-color and its child sets its own text
+   colour, so the generic .error class alone changes nothing. Solid error
+   colours make it stand out above the form. Named colours, not CSS
+   variables, so it also works on libadwaita versions that predate them. */
+banner.error > revealer > widget,
+banner.error > revealer > widget:backdrop {
+    background-color: @error_bg_color;
+    color: @error_fg_color;
+    /* A hairline, so two error banners stacked in the main window read as two. */
+    box-shadow: inset 0 -1px alpha(black, 0.18);
+}

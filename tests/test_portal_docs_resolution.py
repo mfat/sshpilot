@@ -600,3 +600,82 @@ def test_open_with_default_app_ignores_cancelled_chooser(monkeypatch, tmp_path):
     errors = []
     portal_docs.open_with_default_app(str(tmp_path / "a.qqq"), on_error=errors.append)
     assert errors == []
+
+
+# --- #1376: host paths typed into the local path bar ----------------------
+
+_DL = "/run/user/1000/doc/AAA/Downloads"
+_DOCS = "/run/user/1000/doc/BBB/Documents"
+
+
+@pytest.fixture
+def two_grants(monkeypatch):
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    hosts = {_DL: "/home/u/Downloads", _DOCS: "/home/u/Documents"}
+    monkeypatch.setattr(portal_docs, "_portal_path_to_host", hosts.get)
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {"AAA": {}, "BBB": {}})
+    monkeypatch.setattr(
+        portal_docs, "_lookup_document_path", {"AAA": _DL, "BBB": _DOCS}.get
+    )
+
+
+def test_sandbox_path_for_host_maps_current_grant_and_subpaths(two_grants):
+    current = _DL + "/a/b"
+    # Re-entering what the bar shows, a subfolder of it, or a parent inside
+    # the grant all reopen the portal folder, not the empty sandbox twin.
+    assert portal_docs._sandbox_path_for_host("/home/u/Downloads/a/b", current) == current
+    assert portal_docs._sandbox_path_for_host("/home/u/Downloads/a/b/c/", current) == current + "/c"
+    assert portal_docs._sandbox_path_for_host("/home/u/Downloads", current) == _DL
+
+
+def test_sandbox_path_for_host_uses_saved_grants(two_grants):
+    assert portal_docs._sandbox_path_for_host("/home/u/Documents/x", _DL) == _DOCS + "/x"
+
+
+def test_sandbox_path_for_host_leaves_unmapped_and_portal_paths(two_grants):
+    assert portal_docs._sandbox_path_for_host("/home/u/Down", _DL) is None
+    assert portal_docs._sandbox_path_for_host("/etc", _DL) is None
+    assert portal_docs._sandbox_path_for_host(_DL + "/a", _DL) is None
+
+
+def test_sandbox_path_for_host_is_a_no_op_outside_flatpak(monkeypatch):
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: False)
+    assert portal_docs._sandbox_path_for_host("/home/u/Downloads", _DL) is None
+
+
+def _flatpak_info(tmp_path, monkeypatch, filesystems):
+    info = tmp_path / "flatpak-info"
+    info.write_text(f"[Application]\nname=x\n\n[Context]\nfilesystems={filesystems}\n")
+    monkeypatch.setattr(portal_docs, "_FLATPAK_INFO", str(info))
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    monkeypatch.setenv("HOME", "/home/u")
+    monkeypatch.setenv("FLATPAK_ID", "io.github.mfat.sshpilot")
+
+
+def test_reachable_paths_follow_the_sandbox_shares(tmp_path, monkeypatch):
+    # The manifest shares only ~/.ssh: home and its folders are the
+    # sandbox's empty copies, where created folders vanish (#1376).
+    _flatpak_info(tmp_path, monkeypatch, "~/.ssh:create;")
+    reachable = portal_docs._is_reachable_local_path
+    assert reachable("/run/user/1000/doc/AAA/Downloads/sub")
+    assert reachable("/home/u/.ssh") and reachable("/home/u/.ssh/keys")
+    assert reachable("/home/u/.var/app/io.github.mfat.sshpilot/data")
+    assert not reachable("/home/u")
+    assert not reachable("/home/u/Downloads")
+    assert not reachable("/home/u/.sshx")
+    assert not reachable("/run/user/1000/doc")
+    assert not reachable("/usr")
+
+
+def test_reachable_paths_honour_home_host_and_negations(tmp_path, monkeypatch):
+    _flatpak_info(tmp_path, monkeypatch, "home;!home/Private;/srv/data:ro;")
+    assert portal_docs._is_reachable_local_path("/home/u/Downloads")
+    assert portal_docs._is_reachable_local_path("/srv/data/x")
+    assert not portal_docs._is_reachable_local_path("/etc")
+    _flatpak_info(tmp_path, monkeypatch, "host;")
+    assert portal_docs._is_reachable_local_path("/etc")
+
+
+def test_every_path_is_reachable_outside_flatpak(monkeypatch):
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: False)
+    assert portal_docs._is_reachable_local_path("/home/u/Downloads")

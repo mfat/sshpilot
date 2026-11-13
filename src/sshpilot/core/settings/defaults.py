@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 6
 
 # Lines moved per discrete mouse-wheel notch (VTE history scroll).  macOS
 # already accelerates wheel deltas, so one line per unit matches Terminal.app;
@@ -18,6 +18,10 @@ DEFAULT_WHEEL_SCROLL_LINES = 1 if sys.platform == 'darwin' else 3
 
 # file_manager.terminal_panes values: which terminals sit below a file manager.
 TERMINAL_PANE_CHOICES = ('none', 'remote', 'local', 'both')
+
+# Sidebar group-colour treatments ('ui.group_color_display'), in the order the
+# Preferences combo lists them.
+GROUP_COLOR_DISPLAY_MODES = ('fill', 'badge', 'bar', 'dot', 'text')
 
 
 def get_default_config() -> Dict[str, Any]:
@@ -123,6 +127,10 @@ def get_default_config() -> Dict[str, Any]:
             # On for new installs only: existing configs lack the key, and the
             # call sites fall back to False, so upgraders keep their rows as-is.
             'sidebar_show_dashboard_button': True,
+            # Saved-host settings an earlier SSH config block beats that the
+            # user dismissed from the main-window notice: fingerprints per
+            # SSH config scope ('default' / 'isolated').
+            'config_conflicts_dismissed': {},
             'sidebar_show_split_view_button': False,
             # Pinned Local Terminal row at the top of the connection list
             'sidebar_show_local_terminal': False,
@@ -156,24 +164,32 @@ def get_default_config() -> Dict[str, Any]:
         },
         'connections_meta': {},  # per-connection metadata
         'ssh': {
-            'compression': False,
+            # Empty = "Not set": no Compression option is sent.
+            # ``yes`` / ``no`` inject ``-o Compression=<value>``.
+            'compression': '',
             'auto_add_host_keys': True,
-            'batch_mode': False,
             'verbosity': 0,
             'debug_enabled': False,
             'use_isolated_config': False,
             'ssh_overrides': [],
-            'strict_host_key_checking': 'accept-new',
+            # Empty = "do not configure": no StrictHostKeyChecking option is
+            # sent and OpenSSH resolves it from the user's SSH config.
+            'strict_host_key_checking': '',
             # Global SSH override fields (daemon-owned). 0 disables the
             # corresponding ``-o`` option (matching compose_ssh_overrides).
             'connection_timeout': 0,
-            'connection_attempts': 0,
-            'keepalive_interval': 0,
-            'keepalive_count_max': 0,
-            # When the user hasn't configured keepalive (here or in
-            # ~/.ssh/config), apply a sane default ServerAlive* so a dead
-            # link is detected (~interval*count seconds) instead of the
-            # indicator staying green forever. User/per-host values win.
+            # Free-form ``Keyword=value`` options sent last as ``-o`` arguments.
+            'extra_options': [],
+            # '' = not sent; 'inet' = IPv4 only; 'inet6' = IPv6 only.
+            'address_family': '',
+            # Re-enable old algorithms for legacy devices (weaker; off by default).
+            'legacy_algorithms': False,
+            # Keepalive sent with every connection so a dead link is detected
+            # (~interval*count seconds) instead of the indicator staying green
+            # forever. The switch and both numbers are edited in Preferences.
+            # It is a fallback: a ServerAliveInterval anywhere in the SSH
+            # configuration (the host's block, `Host *`, an included file)
+            # wins, and then nothing is sent.
             'apply_default_keepalive': True,
             'default_keepalive_interval': 15,
             'default_keepalive_count': 3,

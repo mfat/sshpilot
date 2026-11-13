@@ -21,7 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from sshpilot.api.models.connection_store import thaw_safe_metadata
+from sshpilot.api.models.connection_store import (
+    SshConfigUnavailableReason,
+    thaw_safe_metadata,
+)
 from sshpilot.core.connections.state_file import (
     ConnectionFileState,
     GroupFileState,
@@ -121,9 +124,8 @@ def test_store_save_writes_exact_text_and_updates_revision(tmp_path):
     assert saved.revision != loaded.revision
     # Exact text as entered — no reformatting.
     assert root.read_text(encoding="utf-8") == edited
-    # One-shot backup of the first prior good file.
-    backup = tmp_path / ".ssh" / "config.bak"
-    assert backup.read_text(encoding="utf-8") == original
+    # No .bak copy is left beside the config.
+    assert not (tmp_path / ".ssh" / "config.bak").exists()
     # Permissions preserved (0600).
     assert stat.S_IMODE(os.stat(root).st_mode) == 0o600
 
@@ -159,18 +161,49 @@ def test_store_rejects_save_when_included_file_changed(tmp_path):
     assert exc_info.value.code is ErrorCode.STALE_CONNECTION_STATE
 
 
-def test_store_refuses_symlinked_root_and_reports_not_writable(tmp_path):
-    target = tmp_path / "real-config"
+def test_store_saves_linked_root_in_place(tmp_path):
+    target = tmp_path / "dotfiles" / "config"
     _write_config(target, "Host a\n")
     link = tmp_path / "config-link"
     link.symlink_to(target)
 
     store = SshConfigStore(link)
     text = store.get_text()
-    assert text.writable is False
-    with pytest.raises(CoreError):
-        store.replace_text("Host b\n", text.revision)
-    assert target.read_text(encoding="utf-8") == "Host a\n"
+    assert text.writable is True
+    store.replace_text("Host b\n", text.revision)
+    assert target.read_text(encoding="utf-8") == "Host b\n"
+    assert link.is_symlink()
+
+
+def test_repository_edits_linked_root_through_daemon_transaction(tmp_path):
+    # The full daemon path: capture, write, post-write record. A linked
+    # ~/.ssh/config (Home Manager, Stow, chezmoi) must save like a file.
+    target = tmp_path / "dotfiles" / "config"
+    _write_config(target, "Host one\n    HostName one.example.com\n")
+    root = tmp_path / ".ssh" / "config"
+    root.parent.mkdir()
+    root.symlink_to(target)
+    repo = _make_repository(root, state_dir=tmp_path / "state")
+    assert [c.id for c in repo.snapshot().connections] == ["one"]
+
+    repo.create_connection(
+        {"nickname": "two", "hostname": "two.example.com", "protocol": "ssh"}
+    )
+    repo.update_connection(
+        "one",
+        {"nickname": "one", "hostname": "uno.example.com", "protocol": "ssh"},
+    )
+    loaded = repo.get_ssh_config_text()
+    repo.save_ssh_config_text(
+        SaveSshConfigTextRequest(
+            text=loaded.text + "# raw\n", expected_revision=loaded.revision
+        )
+    )
+
+    assert root.is_symlink() and os.readlink(root) == str(target)
+    body = target.read_text(encoding="utf-8")
+    assert "Host two" in body and "uno.example.com" in body and "# raw" in body
+    assert {c.id for c in repo.snapshot().connections} == {"one", "two"}
 
 
 # ---------------------------------------------------------------------------
@@ -450,3 +483,206 @@ def test_gtk_editor_service_source_never_touches_the_config_file():
     source = inspect.getsource(module)
     for banned in ("atomic_write_text", "os.replace", "shutil.", "write_text", "os.open"):
         assert banned not in source, f"GTK SSH config service must not use {banned!r}"
+
+
+def test_snapshot_names_a_linked_root_that_cannot_be_seen(tmp_path):
+    # #1373: inside the Flatpak a Home Manager link into /nix/store dangles;
+    # the snapshot names the target so the window can say why it is empty.
+    root = tmp_path / ".ssh" / "config"
+    root.parent.mkdir()
+    root.symlink_to("/nix/store/abc-home-manager-files/.ssh/config")
+    snapshot = _make_repository(root, state_dir=tmp_path / "state").snapshot()
+    assert snapshot.connections == ()
+    assert snapshot.ssh_config_read_only is True
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.DANGLING_LINK
+    assert (
+        snapshot.ssh_config_unavailable_path
+        == "/nix/store/abc-home-manager-files/.ssh/config"
+    )
+
+
+def test_snapshot_names_no_reason_for_a_missing_or_readable_config(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    repo = _make_repository(root, state_dir=tmp_path / "state")
+    assert repo.snapshot().ssh_config_unavailable is None
+    target = tmp_path / "dotfiles" / "config"
+    _write_config(target, "Host a\n")
+    root.parent.mkdir(exist_ok=True)
+    root.symlink_to(target)
+    repo = _make_repository(root, state_dir=tmp_path / "state2")
+    assert repo.snapshot().ssh_config_unavailable is None
+    assert repo.snapshot().ssh_config_unavailable_path == ""
+
+
+needs_permissions = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root ignores file modes",
+)
+
+
+@needs_permissions
+def test_a_locked_ssh_folder_starts_and_names_the_folder(tmp_path):
+    # Before: the load raised, the daemon never started, and the window
+    # only said its background service timed out.
+    root = tmp_path / ".ssh" / "config"
+    _write_config(root, "Host a\n  HostName 192.0.2.1\n")
+    os.chmod(root.parent, 0)
+    try:
+        repo = _make_repository(root, state_dir=tmp_path / "state")
+        snapshot = repo.snapshot()
+    finally:
+        os.chmod(root.parent, 0o700)
+    assert snapshot.connections == ()
+    assert snapshot.ssh_config_read_only is True
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.PERMISSION_DENIED
+    assert snapshot.ssh_config_unavailable_path == str(root.parent)
+
+
+@needs_permissions
+def test_an_unreadable_config_file_starts_and_names_the_file(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    _write_config(root, "Host a\n  HostName 192.0.2.1\n")
+    os.chmod(root, 0)
+    try:
+        snapshot = _make_repository(root, state_dir=tmp_path / "state").snapshot()
+    finally:
+        os.chmod(root, 0o600)
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.PERMISSION_DENIED
+    assert snapshot.ssh_config_unavailable_path == str(root)
+
+
+@needs_permissions
+def test_an_unreadable_include_starts_and_names_the_include(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    extra = tmp_path / ".ssh" / "extra"
+    _write_config(root, f"Include {extra}\nHost a\n  HostName 192.0.2.1\n")
+    _write_config(extra, "Host b\n  HostName 192.0.2.2\n")
+    os.chmod(extra, 0)
+    try:
+        snapshot = _make_repository(root, state_dir=tmp_path / "state").snapshot()
+    finally:
+        os.chmod(extra, 0o600)
+    assert snapshot.connections == ()
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.UNREADABLE
+    assert snapshot.ssh_config_unavailable_path == str(extra)
+
+
+def test_an_invalid_config_starts_instead_of_stopping_the_daemon(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    _write_config(root, "Host -oProxyCommand=evil\n  HostName 192.0.2.1\n")
+    snapshot = _make_repository(root, state_dir=tmp_path / "state").snapshot()
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.INVALID
+    assert snapshot.ssh_config_unavailable_path == str(root)
+
+
+def test_a_flatpak_without_ssh_folder_access_says_so(tmp_path, monkeypatch):
+    # Inside the sandbox an unshared ~/.ssh looks like a missing one; the
+    # sandbox's own grant list tells the two apart.
+    from sshpilot.core.connections import ssh_config_store
+
+    root = tmp_path / ".ssh" / "config"
+    monkeypatch.setattr(ssh_config_store, "_flatpak_shared_paths", lambda: [Path("/nix/store")])
+    snapshot = _make_repository(root, state_dir=tmp_path / "state").snapshot()
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.SANDBOX_HIDDEN
+    assert snapshot.ssh_config_unavailable_path == str(root.parent)
+
+    monkeypatch.setattr(ssh_config_store, "_flatpak_shared_paths", lambda: [root.parent])
+    assert _make_repository(root, state_dir=tmp_path / "s2").snapshot().ssh_config_unavailable is None
+
+
+def test_flatpak_grant_list_is_parsed_like_flatpak_writes_it(tmp_path, monkeypatch):
+    from sshpilot.core.connections import ssh_config_store
+
+    info = tmp_path / "flatpak-info"
+    info.write_text("[Context]\nfilesystems=~/.ssh:create;/nix/store:ro;\n")
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        ssh_config_store.os.path, "exists",
+        lambda p: True if p == "/.flatpak-info" else real_exists(p),
+    )
+    import configparser
+    real_read = configparser.ConfigParser.read
+    monkeypatch.setattr(
+        configparser.ConfigParser, "read",
+        lambda self, _p, encoding=None: real_read(self, info, encoding=encoding),
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert not ssh_config_store.flatpak_hides(tmp_path / ".ssh")
+    assert not ssh_config_store.flatpak_hides(Path("/nix/store/x"))
+    assert ssh_config_store.flatpak_hides(tmp_path / "dotfiles")
+    info.write_text("[Context]\nfilesystems=home:ro;\n")
+    assert not ssh_config_store.flatpak_hides(tmp_path / ".ssh")
+    info.write_text("[Context]\nfilesystems=host;\n")
+    assert not ssh_config_store.flatpak_hides(Path("/etc/ssh"))
+    # The isolated-mode config lives in the app's own data, which the grant
+    # never lists but the sandbox always has.
+    info.write_text("[Context]\nfilesystems=/nix/store:ro;\n")
+    app_config = tmp_path / ".var" / "app" / "io.github.mfat.sshpilot" / "config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(app_config))
+    monkeypatch.setenv("FLATPAK_ID", "io.github.mfat.sshpilot")
+    assert not ssh_config_store.flatpak_hides(app_config / "sshpilot")
+    assert not ssh_config_store.flatpak_hides(app_config.parent / "data")
+    assert ssh_config_store.flatpak_hides(tmp_path / ".ssh")
+
+
+def _seed_group(root, state_dir):
+    repo = _make_repository(root, state_dir=state_dir)
+    group = repo.create_group("Prod")
+    repo.assign_connection_to_group("web", group.id)
+    return group.id
+
+
+def _assert_group_survives(root, state_dir, group_id):
+    snapshot = _make_repository(root, state_dir=state_dir).snapshot()
+    assert snapshot.ssh_config_unavailable is None
+    [group] = [g for g in snapshot.groups if g.id == group_id]
+    assert group.connection_ids == ("web",)
+
+
+def test_an_unseen_linked_config_keeps_groups_and_identities(tmp_path):
+    # Before: a dangling link loaded as an empty config, and reconciling the
+    # sidecar against it tombstoned every SSH identity and emptied groups.
+    target = tmp_path / "store" / "hm-ssh-config"
+    _write_config(target, "Host web\n  HostName 192.0.2.1\n")
+    root = tmp_path / ".ssh" / "config"
+    root.parent.mkdir()
+    root.symlink_to(target)
+    state_dir = tmp_path / "state"
+    group_id = _seed_group(root, state_dir)
+    before = (state_dir / "connections.json").read_bytes()
+
+    hidden = tmp_path / "store-hidden"
+    target.parent.rename(hidden)
+    repo = _make_repository(root, state_dir=state_dir)
+    snapshot = repo.snapshot()
+    assert snapshot.ssh_config_unavailable is SshConfigUnavailableReason.DANGLING_LINK
+    [group] = [g for g in snapshot.groups if g.id == group_id]
+    assert group.connection_ids == ()
+    with pytest.raises(CoreError) as excinfo:
+        repo.create_group("Other")
+    assert excinfo.value.code is ErrorCode.SSH_CONFIG_READ_ONLY
+    assert (state_dir / "connections.json").read_bytes() == before
+
+    hidden.rename(target.parent)
+    _assert_group_survives(root, state_dir, group_id)
+
+
+@needs_permissions
+def test_a_locked_ssh_folder_keeps_groups_and_identities(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    _write_config(root, "Host web\n  HostName 192.0.2.1\n")
+    state_dir = tmp_path / "state"
+    group_id = _seed_group(root, state_dir)
+    before = (state_dir / "connections.json").read_bytes()
+    os.chmod(root.parent, 0)
+    try:
+        repo = _make_repository(root, state_dir=state_dir)
+        assert repo.snapshot().connections == ()
+        repo.reload()
+    finally:
+        os.chmod(root.parent, 0o700)
+    assert (state_dir / "connections.json").read_bytes() == before
+    repo.reload()
+    assert repo.snapshot().ssh_config_unavailable is None
+    assert [c.id for c in repo.snapshot().connections] == ["web"]
+    _assert_group_survives(root, state_dir, group_id)

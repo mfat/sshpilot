@@ -5,6 +5,139 @@ notes remain separate.
 
 ## Unreleased
 
+- `connections.list_config_syntax_errors()` returns a `ConfigSyntaxError` for
+  every line that makes OpenSSH refuse the SSH configuration a launch reads:
+  the file, the line and OpenSSH's own text for it (an opaque diagnostic).
+  OpenSSH is asked (`ssh -G`), so a line in any block or included file it
+  reads is found. Empty when the configuration is accepted, and when OpenSSH
+  could not be asked. The main window shows a banner while there is one,
+  since no SSH connection starts until it is corrected. `EffectiveConfigComparison.earlier`
+  is now filled also when `available` is false for that reason. Requires
+  `connections.config.read`. The API implementation version is 0.101;
+  Protocol remains 1.0.
+- `connections.list_config_conflicts()` returns a `ConfigConflict` for every
+  saved SSH host whose own Host block sets a value that an earlier block
+  (`Host *`, `Match all`, ...) already decides, so the host's value is never
+  used. Each carries the host, the keyword, the unused value and the
+  `EarlierDirective` that wins. Only the files are read: a `Match` block only
+  OpenSSH could judge is left out. The main window uses it for a notice
+  that returns only for conflicts the user has not dismissed. Requires `connections.config.read`. The API
+  implementation version is 0.100; Protocol remains 1.0.
+- `connections.get_earlier_directives(host)` returns the `EarlierDirective`
+  values the SSH configuration already decides for a host that has no block
+  yet. A new Host block is appended to the end of the root file, so every
+  applicable line precedes it. The connection editor asks it for the alias of
+  a new connection, to mark a field whose value would not be used. Requires
+  `connections.config.read`; an alias that is not a valid Host name yields an
+  empty list. The API implementation version is 0.99; Protocol remains 1.0.
+- A launch of a saved SSH host now resolves exactly as `ssh <alias>` does.
+  Nothing from the connection's own Host block is repeated on the command
+  line, so OpenSSH's first-value-wins precedence applies between that block
+  and any `Host *` or `Match` block before it. The launch names no `-F` file
+  when the configuration root is the user's `~/.ssh/config` (OpenSSH then
+  also reads `/etc/ssh/ssh_config`); any other root is passed whole, also for
+  a host declared in an included file. `connections.get_effective_config`
+  resolves the same way.
+- `EffectiveConfigComparison.earlier` lists the options a block before the
+  host's own block already decides, as `EarlierDirective` values (`key`,
+  `value`, `block`, `file`, `line`), one per keyword. A value the host's own
+  block gives for one of them is not used; frontends mark those fields.
+  Options OpenSSH accumulates (`IdentityFile`, the forwards, `SetEnv`, ...)
+  never appear. The field is additive and optional on the wire.
+- The keepalive (`ssh.apply_default_keepalive`) is a fallback, not an
+  override: `ServerAliveInterval` is sent only for a host whose resolved
+  configuration sets none, and `ServerAliveCountMax` only while the resolved
+  count is OpenSSH's default. `GlobalSshOverrides.forced_options` therefore
+  no longer lists the keepalive pair.
+- The API implementation version is 0.98; Protocol remains 1.0.
+- `GlobalSshOverrides.forced_options` lists every `Keyword=value` a launch
+  sends ahead of a connection's own options: the override fields as composed,
+  the free-form options, the legacy-algorithm and multiplexing options, and the
+  keepalive pair (`ServerAliveInterval`, `ServerAliveCountMax`) while that
+  switch is on. OpenSSH keeps the first value per keyword, so the list is in
+  launch order. Frontends use it to tell which of a connection's settings are
+  overridden. It is read-only (not a patch field), outside the revision, and
+  additive and optional on the wire; the API implementation version is 0.97;
+  Protocol remains 1.0.
+- `connections.get_effective_config` resolves the effective side the way a
+  terminal launch does: those same options first, then the options the launch
+  re-emits from the connection's own Host block (which is why an earlier
+  `Host *` does not override them). The authored side is unchanged.
+- `GlobalSshOverrides` gains two fields, with matching
+  `UpdateGlobalSshOverridesRequest` patch fields. `address_family` is `""`
+  (not sent), `inet` (IPv4 only) or `inet6` (IPv6 only) and is sent as
+  `-o AddressFamily=`. `legacy_algorithms` is a boolean that re-enables old key
+  exchange, host key and cipher algorithms for legacy devices; the daemon
+  appends them with the `+` form, limited to what the installed OpenSSH still
+  supports. Both are additive and optional on the wire; the API implementation
+  version is 0.96; Protocol remains 1.0.
+- `GlobalSshOverrides.extra_options` (and the matching
+  `UpdateGlobalSshOverridesRequest` patch field) holds free-form SSH options:
+  a list of `Keyword=value` strings, each sent last as one `-o` argument. A
+  patch accepts `Keyword value` too and stores the canonical form. Only shape
+  is validated, plus two refusals: config-file structure (`Host`, `Match`,
+  `Include`) and options that have their own override field or app setting
+  (`ConnectTimeout`, `StrictHostKeyChecking`, `Compression`, `LogLevel`,
+  `ServerAlive*`, `Control*`). The field is additive and optional on the
+  wire; the API implementation version is 0.95; Protocol remains 1.0.
+- `GlobalSshOverrides` and `UpdateGlobalSshOverridesRequest` lose four fields:
+  `batch_mode`, `connection_attempts`, `server_alive_interval` and
+  `server_alive_count_max`. A global `BatchMode` or `ConnectionAttempts` is no
+  longer offered; keepalive is the single app setting
+  (`ssh.apply_default_keepalive` with `ssh.default_keepalive_interval` /
+  `ssh.default_keepalive_count`). The settings file moves to `config_version`
+  6; the upgrade drops the two removed values and moves a saved keepalive
+  override into the app keepalive, turning it on. Fields are removed, so the
+  API implementation version is 0.94; Protocol remains 1.0.
+- `GlobalSshOverrides.batch_mode` and `GlobalSshOverrides.compression` (and the
+  matching `UpdateGlobalSshOverridesRequest` patch fields) are tri-state
+  strings: empty means don't set (nothing injected), `yes` / `no` inject the
+  matching `-o BatchMode=` / `-o Compression=` value. They were booleans where
+  `false` meant unset and `true` meant force-yes, so force-no was impossible.
+  The settings file moves to `config_version` 5; the upgrade maps `true` →
+  `yes` and `false` → empty. Type and accepted values change, so the API
+  implementation version is 0.93; Protocol remains 1.0.
+- `GlobalSshOverrides.strict_host_key_checking` and the matching
+  `UpdateGlobalSshOverridesRequest` patch field accept the empty string, which
+  means "do not configure": no `StrictHostKeyChecking` option is sent and
+  OpenSSH resolves it from the user's SSH configuration. It is the new default
+  (previously `accept-new`, which was sent on every launch and overrode a
+  `Host *` value). The settings file moves to `config_version` 4; the upgrade
+  turns a saved `accept-new` into the empty value once and keeps an explicit
+  `yes`/`no`/`ask`. New accepted value and default, so the API implementation
+  version is 0.92; Protocol remains 1.0.
+- `ConnectionStoreSnapshot.ssh_config_unavailable` (new enum
+  `SshConfigUnavailableReason`: `dangling_link`, `permission_denied`,
+  `sandbox_hidden`, `unreadable`, `invalid`) and
+  `ConnectionStoreSnapshot.ssh_config_unavailable_path` (wire fields sent only
+  when a reason is set) say why the daemon could not read the selected SSH
+  config and which path is at fault: a link it cannot follow (inside the
+  Flatpak usually a NixOS Home Manager link into `/nix/store`), a folder or
+  file that refuses access, a folder the Flatpak sandbox does not share, an
+  included file it cannot read, or a config it cannot parse. While a reason
+  is set the store holds no SSH connections and refuses every change with
+  `ssh_config_read_only`, instead of reconciling saved identities, groups and
+  metadata against an empty config; a config that cannot be read at startup
+  no longer stops the daemon. These replace the unreleased
+  `ssh_config_missing_link_target` (0.90), now `dangling_link` with its
+  target as the path. New fields and enum, so the API implementation version
+  is 0.91; Protocol remains 1.0.
+- `ConnectionStoreSnapshot.ssh_config_missing_link_target` (wire field
+  `ssh_config_missing_link_target`, sent only when set) is the absolute target
+  of a root SSH config that is a link the daemon cannot see -- inside the
+  Flatpak usually a NixOS Home Manager link into `/nix/store` -- so a frontend
+  can explain an empty list instead of showing nothing. New field, so the API
+  implementation version is 0.90; Protocol remains 1.0.
+- A linked `~/.ssh/config` (Home Manager, GNU Stow, chezmoi) is followed the
+  way OpenSSH follows it: writes go to the file the link names, in place, and
+  the link survives. A file the daemon cannot write is now reported instead of
+  failing generically: new error code `ssh_config_read_only` on SSH connection
+  writes and raw SSH config saves; `ConnectionSummary.config_read_only` (wire
+  field `config_read_only`, sent only when true) marks an SSH connection whose
+  Host block lives in such a file; and `ConnectionStoreSnapshot.ssh_config_read_only`
+  (sent only when true) says the root config cannot take a new SSH
+  connection. Non-SSH connections are never marked. New error code and
+  fields, so the API implementation version is 0.89; Protocol remains 1.0.
 - New client method `run_pre_connect` with wire method
   `connections.run_pre_connect` (capability `sessions.write`), taking a
   `connection_id` and the `scope_id` its notices are published under and

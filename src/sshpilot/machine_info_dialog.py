@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from collections import deque
 from gettext import gettext as _, ngettext
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -47,6 +48,8 @@ from .gtk.host_info_controller import HostInfoController, HostInfoProbeBusy
 from .gtk.host_info_failure_messages import (
     format_host_info_error,
     format_host_info_failure,
+    host_info_error_reason,
+    host_info_failure_reason,
 )
 from .host_info_web_uis import (
     WebUiMatch,
@@ -184,6 +187,25 @@ def _ensure_css() -> None:
 # ---------------------------------------------------------------------------
 # Value formatting (the only place raw numbers become text)
 # ---------------------------------------------------------------------------
+
+def _elapsed_clock() -> float:
+    """Seconds on a clock that keeps counting while the computer sleeps.
+
+    GLib's monotonic clock stops during suspend, so after a night asleep the
+    dashboard would still say it was updated a minute ago, and the first
+    rate after waking would divide a night's traffic by two seconds.
+    ``CLOCK_BOOTTIME`` runs through suspend; where it does not exist the wall
+    clock does too, at the cost of following clock changes.
+    """
+
+    boottime = getattr(time, "CLOCK_BOOTTIME", None)
+    if boottime is not None:
+        try:
+            return time.clock_gettime(boottime)
+        except OSError:
+            pass
+    return time.time()
+
 
 def _format_bytes(value: Optional[float]) -> str:
     """Binary units, for memory as the kernel reports it."""
@@ -615,6 +637,16 @@ class _Sparkline:
         self._values.append(value)
         self.widget.queue_draw()
 
+    @property
+    def values(self) -> Tuple[Optional[float], ...]:
+        return tuple(self._values)
+
+    def adopt(self, earlier: Sequence[Optional[float]]) -> None:
+        """Put a previous trace in front of this one, so a refresh keeps it."""
+
+        self._values = deque(list(earlier) + list(self._values), maxlen=self._length)
+        self.widget.queue_draw()
+
     def set_severity(self, severity: str) -> None:
         for name in _SEVERITY_CLASSES:
             self.widget.remove_css_class(name)
@@ -909,13 +941,38 @@ class MachineInfoDialog:
         #: The reading every rate is measured against, and when it was taken.
         self._previous_live: Optional[LiveSample] = None
         self._previous_live_time = 0.0
+        #: The last CPU utilization and interface rates shown, so a rebuilt
+        #: dashboard keeps them instead of blanking until the next sample.
+        self._last_utilization: Dict[str, CpuUtilization] = {}
+        self._last_rates: Dict[str, Tuple[float, float]] = {}
+        #: True while a full gather is outstanding.
+        self._gathering = False
+        #: Bumped by every refresh; a live sample asked for under an older
+        #: value predates the new gather and must not be applied to it.
+        self._live_generation = 0
         self._rate_labels: dict = {}
         self._cpu_gauge: Optional[_Gauge] = None
         self._memory_gauge: Optional[_Gauge] = None
         self._cpu_section: Optional[_CpuSection] = None
+        #: The tab switcher on screen (Adw.ViewStack or Gtk.Notebook), and
+        #: the page the user had open, so a refresh rebuilds onto that page.
+        self._tabs: Optional[Gtk.Widget] = None
+        self._selected_tab: Optional[str] = None
+        self._page_scrolls: Dict[str, Gtk.ScrolledWindow] = {}
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(self._build_header())
+        # A refresh that fails while data is on screen says so here and keeps
+        # the data, rather than replacing it with an error page.
+        self._banner = Adw.Banner()
+        try:
+            # Diagnostics are host output; "<" or "&" must not be read as markup.
+            self._banner.set_use_markup(False)
+        except AttributeError:
+            pass
+        self._banner.set_button_label(_("Retry"))
+        self._banner.connect("button-clicked", lambda _banner: self._on_refresh())
+        toolbar.add_top_bar(self._banner)
         self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._content.set_vexpand(True)
         toolbar.set_content(self._content)
@@ -942,6 +999,7 @@ class MachineInfoDialog:
         if self._dialog is not None:
             self._dialog.present(window)
         self._watch_window_focus()
+        self._set_gathering(True)
         self._start_probe()
 
     @property
@@ -987,6 +1045,12 @@ class MachineInfoDialog:
         header.pack_end(self._refresh_button)
 
         self._age_label = Gtk.Label(label="")
+        self._age_label.set_tooltip_text(
+            _(
+                "CPU, memory and network traffic update live. "
+                "Everything else is as of the last refresh."
+            )
+        )
         self._age_label.add_css_class("dim-label")
         self._age_label.add_css_class("caption")
         header.pack_end(self._age_label)
@@ -1105,30 +1169,79 @@ class MachineInfoDialog:
         try:
             started = self._submit(HostInfoProbe.FULL, self._on_snapshot, self._on_error)
         except HostInfoProbeBusy:
+            # The outstanding gather settles the dashboard when it answers.
             return
         if not started:
-            self._show_status(_("Daemon connection unavailable."))
-            self._refresh_button.set_sensitive(True)
+            reason = _("Daemon connection unavailable.")
+            self._gather_failed(reason, reason)
+
+    def _set_gathering(self, gathering: bool) -> None:
+        """Show on the Refresh button whether a gather is outstanding."""
+
+        self._gathering = gathering
+        self._refresh_button.set_sensitive(not gathering)
+        if gathering:
+            spinner = Gtk.Spinner()
+            spinner.start()
+            self._refresh_button.set_child(spinner)
+        else:
+            self._refresh_button.set_icon_name("view-refresh-symbolic")
 
     def _on_refresh(self) -> None:
-        self._refresh_button.set_sensitive(False)
+        if self._closed or self._gathering:
+            return
+        self._remember_selected_tab()
+        self._banner.set_revealed(False)
+        self._set_gathering(True)
         self._stop_live_timer()
-        self._show_status(_("Gathering host information…"), spinner=True)
+        self._live_generation += 1
+        # What is on screen stays there until the new gather replaces it; the
+        # page-sized spinner is only for a dashboard with nothing to show.
+        if self._tabs is None:
+            self._show_status(_("Gathering host information…"), spinner=True)
         self._start_probe()
+
+    def _gather_failed(self, page_message: str, reason: Optional[str]) -> None:
+        """Report a failed gather without throwing away data on screen.
+
+        ``page_message`` is the full text, diagnostic included, for an empty
+        dashboard; with data on screen a one-line banner carries ``reason``
+        and the full text moves to its tooltip.
+        """
+
+        self._set_gathering(False)
+        if self._tabs is None:
+            self._show_status(page_message)
+            return
+        if reason:
+            title = _("Could not refresh host information: {reason}").format(
+                reason=reason
+            )
+        else:
+            title = _("Could not refresh host information.")
+        self._banner.set_title(title)
+        self._banner.set_tooltip_text(page_message)
+        self._banner.set_revealed(True)
+        # The data shown is still the last gather's, and its live parts keep
+        # going; the age label keeps counting from when it arrived.
+        self._start_live_timer()
 
     def _on_snapshot(self, summary) -> bool:
         if self._closed:
             return False
-        self._refresh_button.set_sensitive(True)
         if summary.failure is not None:
-            self._show_status(
+            self._gather_failed(
                 _("Could not gather host information.\n\n%s")
-                % format_host_info_failure(summary.failure)
+                % format_host_info_failure(summary.failure),
+                host_info_failure_reason(summary.failure),
             )
             return False
         if summary.snapshot is None:
-            self._show_status(_("The host returned no system information."))
+            message = _("The host returned no system information.")
+            self._gather_failed(message, message)
             return False
+        self._set_gathering(False)
+        self._banner.set_revealed(False)
         self._snapshot = summary.snapshot
         # The gather read the same counters the live probe does, so it is the
         # baseline for the first sample rather than a throwaway.
@@ -1138,7 +1251,7 @@ class MachineInfoDialog:
             memory=summary.snapshot.memory,
             load_average=summary.snapshot.load_average,
         )
-        self._previous_live_time = GLib.get_monotonic_time() / 1_000_000
+        self._previous_live_time = _elapsed_clock()
         self._last_refresh = self._previous_live_time
         self._build_tabs()
         self._start_age_timer()
@@ -1150,14 +1263,15 @@ class MachineInfoDialog:
             return False
         # A failed refresh must not leave the button dead; the user needs to be
         # able to try again.
-        self._refresh_button.set_sensitive(True)
         logger.warning("Host info gather failed: %s", error)
-        self._show_status(format_host_info_error(error))
+        self._gather_failed(format_host_info_error(error), host_info_error_reason(error))
         return False
 
     # -- status / age ---------------------------------------------------
 
     def _clear_content(self) -> None:
+        self._tabs = None
+        self._page_scrolls = {}
         child = self._content.get_first_child()
         while child is not None:
             following = child.get_next_sibling()
@@ -1201,17 +1315,23 @@ class MachineInfoDialog:
         if self._last_refresh is None:
             self._age_label.set_text("")
             return
-        elapsed = int(GLib.get_monotonic_time() / 1_000_000 - self._last_refresh)
+        # Never negative: the wall-clock fallback can step backwards.
+        elapsed = max(0, int(_elapsed_clock() - self._last_refresh))
         if elapsed < 60:
             self._age_label.set_text(
                 ngettext("Updated %d second ago", "Updated %d seconds ago", elapsed)
                 % elapsed
             )
-        else:
+        elif elapsed < 3600:
             minutes = elapsed // 60
             self._age_label.set_text(
                 ngettext("Updated %d minute ago", "Updated %d minutes ago", minutes)
                 % minutes
+            )
+        else:
+            hours = elapsed // 3600
+            self._age_label.set_text(
+                ngettext("Updated %d hour ago", "Updated %d hours ago", hours) % hours
             )
 
     # -- live sampling --------------------------------------------------
@@ -1267,8 +1387,13 @@ class MachineInfoDialog:
             return False
         # Skip this tick when the previous sample has not come back yet, so a
         # slow link cannot build a queue of outstanding probes.
+        generation = self._live_generation
         try:
-            started = self._submit(HostInfoProbe.LIVE, self._on_live, self._on_live_error)
+            started = self._submit(
+                HostInfoProbe.LIVE,
+                lambda summary: self._on_live(summary, generation),
+                self._on_live_error,
+            )
         except HostInfoProbeBusy:
             return True
         if not started:
@@ -1276,10 +1401,15 @@ class MachineInfoDialog:
             return False
         return True
 
-    def _on_live(self, summary) -> bool:
+    def _on_live(self, summary, generation: Optional[int] = None) -> bool:
         if self._closed or summary.failure is not None or summary.live is None:
             return False
-        now = GLib.get_monotonic_time() / 1_000_000
+        if generation is not None and generation != self._live_generation:
+            # Read before the refresh: it is older than the new gather's
+            # baseline, so it would blank the CPU gauge now and skew the
+            # next rates.
+            return False
+        now = _elapsed_clock()
         elapsed = now - self._previous_live_time
         sample = summary.live
         if self._previous_live is not None:
@@ -1298,15 +1428,24 @@ class MachineInfoDialog:
     ) -> None:
         """Update everything that only exists between two readings."""
 
-        for name, (receive, transmit) in interface_rates(
-            previous.counters, sample.counters, elapsed
-        ).items():
+        rates = interface_rates(previous.counters, sample.counters, elapsed)
+        self._last_rates.update(rates)
+        self._show_rates(rates)
+
+        utilization = cpu_utilization_by_name(previous.cpu_times, sample.cpu_times)
+        self._last_utilization = utilization
+        self._show_utilization(utilization, sample.load_average, record=True)
+
+    def _show_rates(self, rates: Dict[str, Tuple[float, float]]) -> None:
+        for name, (receive, transmit) in rates.items():
             labels = self._rate_labels.get(name)
             if labels is not None:
                 labels[0].set_text(_format_rate(receive))
                 labels[1].set_text(_format_rate(transmit))
 
-        utilization = cpu_utilization_by_name(previous.cpu_times, sample.cpu_times)
+    def _show_utilization(
+        self, utilization: Dict[str, CpuUtilization], load, *, record: bool
+    ) -> None:
         if self._cpu_section is not None:
             self._cpu_section.update(utilization)
         if self._cpu_gauge is not None:
@@ -1315,8 +1454,8 @@ class MachineInfoDialog:
             self._cpu_gauge.update(
                 None if total is None else total / 100.0,
                 _format_frequency(self._snapshot.cpu.frequency_mhz),
-                self._load_detail(sample.load_average),
-                record=True,
+                self._load_detail(load),
+                record=record,
             )
 
     def _apply_readings(self, sample: LiveSample) -> None:
@@ -1460,7 +1599,37 @@ class MachineInfoDialog:
 
     # -- tabs -----------------------------------------------------------
 
+    _TAB_NAMES = ("overview", "resources", "storage", "network", "traffic", "system")
+
+    def _remember_selected_tab(self) -> None:
+        """Record the open page so the rebuilt tabs reopen it.
+
+        Read before the tabs are torn down; a status screen in between (a
+        failed refresh) keeps the last remembered page.
+        """
+        tabs = self._tabs
+        if isinstance(tabs, Gtk.Notebook):
+            index = tabs.get_current_page()
+            if 0 <= index < len(self._TAB_NAMES):
+                self._selected_tab = self._TAB_NAMES[index]
+        elif tabs is not None:
+            name = tabs.get_visible_child_name()
+            if name:
+                self._selected_tab = name
+
     def _build_tabs(self) -> None:
+        # A refresh replaces every widget; carry over what the user would
+        # otherwise lose -- where each page was scrolled to and the CPU and
+        # memory traces -- so the new data lands in the same view.
+        scrolled_to = {
+            name: scrolled.get_vadjustment().get_value()
+            for name, scrolled in self._page_scrolls.items()
+        }
+        histories = {
+            "cpu": self._cpu_gauge.sparkline.values if self._cpu_gauge else (),
+            "memory": self._memory_gauge.sparkline.values if self._memory_gauge else (),
+        }
+
         self._clear_content()
         self._rate_labels = {}
         self._cpu_gauge = None
@@ -1482,16 +1651,55 @@ class MachineInfoDialog:
             # renders page icons and Gtk.StackSwitcher rejects Adw.ViewStack,
             # so neither can reproduce the labels-only switcher here.
             self._build_tabs_notebook(pages)
-            return
+        else:
+            self._build_tabs_stack(pages)
 
+        for name, value in scrolled_to.items():
+            scrolled = self._page_scrolls.get(name)
+            if scrolled is not None and value > 0:
+                self._restore_scroll(scrolled, value)
+        if self._cpu_gauge is not None and self._cpu_gauge.sparkline is not None:
+            self._cpu_gauge.sparkline.adopt(histories["cpu"])
+        if self._memory_gauge is not None and self._memory_gauge.sparkline is not None:
+            self._memory_gauge.sparkline.adopt(histories["memory"])
+        # The gather took one CPU reading, and utilization needs two; show the
+        # last measured one until the next live sample rather than a blank.
+        if self._last_utilization:
+            self._show_utilization(
+                self._last_utilization, self._snapshot.load_average, record=False
+            )
+        self._show_rates(self._last_rates)
+
+    def _page_scroller(self, name: str, widget: Gtk.Widget) -> Gtk.ScrolledWindow:
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(widget)
+        self._page_scrolls[name] = scrolled
+        return scrolled
+
+    @staticmethod
+    def _restore_scroll(scrolled: Gtk.ScrolledWindow, value: float) -> None:
+        """Scroll a new page to ``value`` once it has been laid out."""
+
+        adjustment = scrolled.get_vadjustment()
+        handler_id = 0
+
+        def on_changed(adj: Gtk.Adjustment) -> None:
+            if adj.get_page_size() <= 0:
+                return
+            adj.disconnect(handler_id)
+            adj.set_value(min(value, max(0.0, adj.get_upper() - adj.get_page_size())))
+
+        handler_id = adjustment.connect("changed", on_changed)
+
+    def _build_tabs_stack(self, pages: Sequence[Tuple[str, str, Gtk.Widget]]) -> None:
         stack = Adw.ViewStack()
         stack.set_vexpand(True)
         for name, title, widget in pages:
-            scrolled = Gtk.ScrolledWindow()
-            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scrolled.set_vexpand(True)
-            scrolled.set_child(widget)
-            stack.add_titled(scrolled, name, title)
+            stack.add_titled(self._page_scroller(name, widget), name, title)
+        if self._selected_tab is not None:
+            stack.set_visible_child_name(self._selected_tab)
 
         switcher = Adw.InlineViewSwitcher()
         switcher.set_stack(stack)
@@ -1524,6 +1732,7 @@ class MachineInfoDialog:
         container.append(switcher_card)
         container.append(stack)
         self._content.append(container)
+        self._tabs = stack
 
     def _build_tabs_notebook(
         self, pages: Sequence[Tuple[str, str, Gtk.Widget]]
@@ -1534,13 +1743,12 @@ class MachineInfoDialog:
         notebook.set_show_border(False)
         notebook.set_vexpand(True)
         notebook.set_scrollable(True)
-        for _name, title, widget in pages:
-            scrolled = Gtk.ScrolledWindow()
-            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scrolled.set_vexpand(True)
-            scrolled.set_child(widget)
-            notebook.append_page(scrolled, Gtk.Label(label=title))
+        for name, title, widget in pages:
+            notebook.append_page(self._page_scroller(name, widget), Gtk.Label(label=title))
         self._content.append(notebook)
+        if self._selected_tab in self._TAB_NAMES:
+            notebook.set_current_page(self._TAB_NAMES.index(self._selected_tab))
+        self._tabs = notebook
 
     # -- Overview -------------------------------------------------------
 

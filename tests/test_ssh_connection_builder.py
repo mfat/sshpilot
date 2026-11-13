@@ -18,6 +18,8 @@ override anyway. A record with no authorship evidence emits nothing.
 
 import asyncio
 
+import shutil
+
 import pytest
 
 from sshpilot.connection_model import Connection
@@ -284,15 +286,25 @@ def test_key_auth_does_not_add_identity_agent_bypass():
     assert 'IdentityAgent=none' not in cmd
 
 
-# --- authored directives become argv ---------------------------------------
+# --- the Host block is never repeated on the command line -------------------
+#
+# The configuration file is the source of truth and OpenSSH resolves it with
+# its own first-value-wins precedence. Anything the builder repeated as an
+# option would beat every file, including a ``Host *`` block placed before
+# the host's own block, and the session would differ from `ssh <alias>`.
 
 
 def _config_connection(**data):
     """A Connection carrying parser authorship evidence, as the daemon supplies."""
     authored = data.pop("authored", ())
+    effective = data.pop("effective", None)
     payload = {"host": "web", "nickname": "web", **data}
     payload["__authored_directives"] = tuple(authored)
-    return Connection(payload)
+    conn = Connection(payload)
+    if effective is not None:
+        # What the daemon's launch view answers from `ssh -G`.
+        conn.effective_ssh_config = lambda: dict(effective)
+    return conn
 
 
 def _argv(conn):
@@ -301,305 +313,90 @@ def _argv(conn):
     ).command
 
 
-def test_authored_user_and_port_are_emitted_so_a_global_cannot_win():
+def test_a_host_blocks_own_settings_are_not_repeated_as_options():
     argv = _argv(
         _config_connection(
             hostname="web.example.com",
             username="alice",
             port=2200,
-            authored=("hostname", "port", "user"),
-        )
-    )
-    assert "-l" in argv and argv[argv.index("-l") + 1] == "alice"
-    assert "-p" in argv and argv[argv.index("-p") + 1] == "2200"
-    assert argv[-1] == "web"
-
-
-def test_unauthored_user_and_port_are_never_forced_onto_the_command():
-    # This block authors only HostName, so User/Port are inherited. Emitting the
-    # parser defaults here would override a `Host *` the user depends on.
-    argv = _argv(
-        _config_connection(
-            hostname="bare.example.com",
-            username="",
-            port=22,
-            authored=("hostname",),
-        )
-    )
-    assert "-l" not in argv
-    assert "-p" not in argv
-    assert "User=" not in " ".join(argv)
-
-
-def test_accumulating_directives_are_left_to_openssh():
-    # `-i` appends rather than replaces and no argv spelling clears an inherited
-    # IdentityFile, so emitting these would duplicate entries without changing
-    # precedence.
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            identity_files=["~/.ssh/id_web"],
-            certificate_files=["~/.ssh/id_web-cert.pub"],
-            authored=("hostname", "identityfile", "certificatefile"),
-        )
-    )
-    assert "-i" not in argv
-    assert "CertificateFile" not in " ".join(argv)
-
-
-def test_record_without_authorship_evidence_keeps_the_plain_shape():
-    # Empty evidence means "unknown", never "authored nothing" — guessing here
-    # would force values onto connections that never came from a Host block.
-    argv = _argv(
-        _config_connection(hostname="web.example.com", username="alice", port=2200)
-    )
-    assert "-l" not in argv
-    assert "-p" not in argv
-
-
-def test_authored_proxy_jump_and_forward_agent_are_emitted():
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            proxy_jump=["jump.example.com"],
-            forward_agent=True,
-            authored=("hostname", "proxyjump", "forwardagent"),
-        )
-    )
-    assert "-J" in argv and argv[argv.index("-J") + 1] == "jump.example.com"
-    assert "ForwardAgent=yes" in argv
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {"hostname": "10.0.0.5\\'$(id>/tmp/proof)\\'", "proxy_jump": ["bastion"]},
-        {"hostname": "10.0.0.5 -oProxyCommand=id", "proxy_jump": ["bastion"]},
-        {"hostname": "10.0.0.5", "proxy_jump": ["`id`@bastion"]},
-        # Both proxies authored: neither is re-emitted, OpenSSH reads the file.
-        {
-            "hostname": "10.0.0.5",
-            "proxy_jump": ["$(id>/tmp/proof)@bastion"],
-            "proxy_command": "none",
-        },
-    ],
-)
-def test_authored_names_with_shell_text_are_refused(fields):
-    # OpenSSH runs `ssh [-l user] -W '[%h]:%p' bastion` for ProxyJump through
-    # the shell, with HostName as %h, and checks these characters only in its
-    # destination argument -- the alias. An imported config never met the
-    # dialog's validator, so the launch has to refuse the value itself.
-    with pytest.raises(ValueError, match="a shell would run"):
-        _argv(
-            _config_connection(
-                **fields, authored=("hostname", "proxyjump", "proxycommand")
-            )
-        )
-
-
-def test_authored_hostname_keeps_tokens_and_ipv6_zone_ids():
-    # The rule is OpenSSH's own destination check, not the dialog's stricter
-    # hostname syntax: `%h` expansions and zone ids are valid HostName text.
-    for hostname in ("%h.example.com", "fe80::1%%eth0", "[2001:db8::1]"):
-        argv = _argv(
-            _config_connection(hostname=hostname, authored=("hostname",))
-        )
-        assert f"HostName={hostname}" in argv
-
-
-def test_authored_hostname_trailing_comment_is_dropped():
-    argv = _argv(
-        _config_connection(hostname="10.0.0.5  # db primary", authored=("hostname",))
-    )
-    assert "HostName=10.0.0.5" in argv
-
-
-def test_authored_forward_agent_no_is_emitted_so_a_global_yes_cannot_win():
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
+            proxy_jump=["bastion"],
             forward_agent=False,
-            authored=("hostname", "forwardagent"),
-        )
-    )
-    assert "ForwardAgent=no" in argv
-
-
-def test_authored_forward_agent_socket_is_emitted_not_collapsed_to_yes():
-    # ``ForwardAgent $SSH_AUTH_SOCK`` is not the same as ``yes``. Emitting
-    # ``yes`` would forward the default agent and drop the socket, because a
-    # command-line option beats the file even with no ``Host *``.
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            forward_agent=True,
-            forward_agent_target="$SSH_AUTH_SOCK",
-            authored=("hostname", "forwardagent"),
-        )
-    )
-    assert "ForwardAgent=$SSH_AUTH_SOCK" in argv
-    assert "ForwardAgent=yes" not in argv
-
-
-def test_authored_session_directives_are_emitted_from_typed_fields():
-    # These were skipped as "runtime owned" while the native request never
-    # received them, so an earlier ``Host *`` still won. ``RemoteCommand`` is
-    # ``-o``, not the positional one-shot command.
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
+            x11_forwarding=True,
+            identity_files=["~/.ssh/id_web"],
             local_command="echo connected",
             remote_command="tmux attach",
             request_tty="force",
-            authored=("hostname", "localcommand", "remotecommand", "requesttty"),
+            extra_ssh_config="compression no\nserveraliveinterval 30",
+            authored=(
+                "hostname", "user", "port", "proxyjump", "forwardagent",
+                "forwardx11", "identityfile", "localcommand", "remotecommand",
+                "requesttty", "compression", "serveraliveinterval",
+            ),
         )
     )
-    assert "PermitLocalCommand=yes" in argv
-    assert "LocalCommand=echo connected" in argv
-    assert "RemoteCommand=tmux attach" in argv
-    assert "RequestTTY=force" in argv
-    assert argv[-1] == "web"
+    assert argv == ["ssh", "web"]
 
 
-def test_unauthored_session_directives_are_not_forced_onto_the_command():
+def test_one_shot_remote_command_stays_positional():
+    conn = _config_connection(
+        hostname="web.example.com",
+        remote_command="tmux attach",
+        authored=("hostname", "remotecommand"),
+    )
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=conn, command_type="ssh", remote_command="uptime"
+        )
+    ).command
+    assert argv[-2:] == ["web", "uptime"]
+    # ssh refuses a command next to a configured RemoteCommand.
+    assert "RemoteCommand=none" in argv
+    assert "RemoteCommand=tmux attach" not in argv
+
+
+# --- keepalive is a fallback ------------------------------------------------
+
+
+def test_default_keepalive_applies_when_the_configuration_sets_none():
     argv = _argv(
         _config_connection(
             hostname="web.example.com",
-            local_command="echo connected",
-            remote_command="tmux attach",
-            request_tty="force",
             authored=("hostname",),
+            effective={"serveraliveinterval": "0", "serveralivecountmax": "3"},
         )
     )
-    joined = " ".join(argv)
-    assert "LocalCommand=" not in joined
-    assert "RemoteCommand=" not in joined
-    assert "RequestTTY=" not in joined
-
-
-def test_one_shot_remote_command_stays_positional_alongside_authored_remotecommand():
-    # OpenSSH ignores ``RemoteCommand`` when a command is given on the command
-    # line, so a "run command on host" launch still wins.
-    argv = build_ssh_connection(
-        ConnectionContext(
-            connection=_config_connection(
-                hostname="web.example.com",
-                remote_command="tmux attach",
-                authored=("hostname", "remotecommand"),
-            ),
-            command_type="ssh",
-            remote_command="uptime",
-        )
-    ).command
-    assert "RemoteCommand=tmux attach" in argv
-    assert argv[-1] == "uptime"
-
-
-def test_non_login_ssh_does_not_emit_session_directives():
-    # Port-forward is command_type=ssh with ``-N``/``-T``. RequestTTY force
-    # breaks ``ssh -N``; RemoteCommand is not a tunnel.
-    argv = build_ssh_connection(
-        ConnectionContext(
-            connection=_config_connection(
-                hostname="web.example.com",
-                local_command="echo connected",
-                remote_command="tmux attach",
-                request_tty="force",
-                authored=("hostname", "localcommand", "remotecommand", "requesttty"),
-            ),
-            command_type="ssh",
-            extra_args=["-N", "-T"],
-        )
-    ).command
-    joined = " ".join(argv)
-    assert "LocalCommand=" not in joined
-    assert "RemoteCommand=" not in joined
-    assert "RequestTTY=" not in joined
-    assert "-N" in argv
-    assert "-T" in argv
-
-
-# --- Advanced tab (extra_ssh_config) ---------------------------------------
-
-
-def test_authored_advanced_options_are_emitted():
-    # These reached OpenSSH only by being written into the Host block, which an
-    # earlier `Host *` beats — the tab showed `Compression no` while the
-    # session ran with `Compression yes`.
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            extra_ssh_config="compression no\nstricthostkeychecking yes",
-            authored=("hostname", "compression", "stricthostkeychecking"),
-        )
-    )
-    assert "compression=no" in argv
-    assert "stricthostkeychecking=yes" in argv
-
-
-def test_advanced_option_value_is_split_at_lf_only():
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            extra_ssh_config='tag "a\u2028ProxyCommand touch /tmp/x"',
-            authored=("hostname", "tag"),
-        )
-    )
-    assert not any(arg.startswith("ProxyCommand=") for arg in argv)
-
-
-def test_structural_and_accumulating_advanced_options_are_not_emitted():
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            extra_ssh_config=(
-                "include other.conf\n"
-                "sendenv LC_ONE\n"
-                "remotecommand tail -f /var/log/syslog"
-            ),
-            authored=("hostname", "include", "sendenv", "remotecommand"),
-        )
-    )
-    joined = " ".join(argv)
-    # `-o Include=` is meaningless, SendEnv appends rather than replaces, and
-    # RemoteCommand is composed from the typed field — not from this Advanced
-    # spelling, so a second ``-o`` is not emitted here.
-    assert "Include=" not in joined
-    assert "sendenv=" not in joined.lower()
-    assert "remotecommand=" not in joined.lower()
-
-
-def test_repeated_advanced_directive_is_left_to_the_config():
-    # Only the first `-o` for a keyword takes effect, so emitting would silently
-    # drop the second SetEnv line.
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            extra_ssh_config="setenv A=1\nsetenv B=2",
-            authored=("hostname", "setenv"),
-        )
-    )
-    assert "setenv=" not in " ".join(argv).lower()
-
-
-def test_authored_keepalive_suppresses_the_app_default():
-    # ssh_overrides precede authored options in argv and the command line is
-    # first-obtained-value-wins, so an injected default would beat the value the
-    # user set on the Advanced tab.
-    argv = _argv(
-        _config_connection(
-            hostname="web.example.com",
-            extra_ssh_config="serveraliveinterval 30",
-            authored=("hostname", "serveraliveinterval"),
-        )
-    )
-    assert "serveraliveinterval=30" in argv
-    assert "ServerAliveInterval=15" not in argv
-
-
-def test_default_keepalive_still_applies_without_an_authored_one():
-    argv = _argv(_config_connection(hostname="web.example.com", authored=("hostname",)))
     assert "ServerAliveInterval=15" in argv
+    assert "ServerAliveCountMax=3" in argv
+
+
+def test_a_configured_keepalive_is_left_alone():
+    # Wherever it comes from -- the Host block, `Host *`, an included file --
+    # `ssh -G` shows it, and a command-line option would replace it.
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            authored=("hostname",),
+            effective={"serveraliveinterval": "60", "serveralivecountmax": "10"},
+        )
+    )
+    assert not any("ServerAlive" in token for token in argv)
+
+
+def test_a_configured_keepalive_count_survives_the_fallback_interval():
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            authored=("hostname",),
+            effective={"serveraliveinterval": "0", "serveralivecountmax": "10"},
+        )
+    )
+    assert "ServerAliveInterval=15" in argv
+    assert not any("ServerAliveCountMax" in token for token in argv)
+
+
+def test_no_keepalive_is_imposed_when_nothing_could_be_resolved():
+    argv = _argv(_config_connection(hostname="web.example.com", authored=("hostname",)))
+    assert not any("ServerAlive" in token for token in argv)
 
 
 def test_batch_mode_only_appears_under_the_none_interaction_policy():
@@ -628,60 +425,117 @@ def test_batch_mode_only_appears_under_the_none_interaction_policy():
     for policy in ("normal", "broker"):
         argv = _argv_for(policy)
         assert "BatchMode=yes" not in argv
-        # Still the real command: authored values are enforced either way.
-        assert "-l" in argv and argv[argv.index("-l") + 1] == "alice"
+        # Still the plain command: the configuration supplies the rest.
+        assert argv[-1] == "web"
 
 
 # --- Preferences act as defaults, not overrides -----------------------------
 
 
-def test_preferences_lose_to_a_connections_own_settings():
-    """Preferences ▸ SSH are defaults; the connection's own values win.
-
-    They used to be emitted first, and OpenSSH takes the first value it
-    obtains, so a global Preferences value silently beat the per-connection
-    setting the editor displayed.
-    """
+def _prefs_config(prefs):
     import types
 
     from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
 
-    prefs = {
-        "compression": True,
-        "strict_host_key_checking": "accept-new",
-        "keepalive_interval": 60,
-        "connection_timeout": 15,
-    }
-    app_config = types.SimpleNamespace(
+    return types.SimpleNamespace(
         get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
     )
+
+
+def test_settings_overrides_are_sent_and_the_connections_own_are_not():
+    """Settings ▸ SSH Options are app-level overrides.
+
+    A command-line option beats every configuration file, so each override
+    wins over the connection's own value, which stays in the file.
+    """
+    app_config = _prefs_config({
+        "compression": True,
+        "strict_host_key_checking": "accept-new",
+        "default_keepalive_interval": 60,
+        "connection_timeout": 15,
+        "extra_options": ["Ciphers=aes128-ctr", "User=forced"],
+    })
     conn = _config_connection(
         hostname="web.example.com",
+        username="alice",
         extra_ssh_config=(
-            "stricthostkeychecking yes\ncompression no\nserveraliveinterval 30"
+            "stricthostkeychecking yes\ncompression no\n"
+            "serveraliveinterval 30\nciphers aes256-ctr"
         ),
         authored=(
-            "hostname", "stricthostkeychecking", "compression", "serveraliveinterval"
+            "hostname", "user", "stricthostkeychecking", "compression",
+            "serveraliveinterval", "ciphers",
         ),
     )
     argv = build_ssh_connection(
         ConnectionContext(connection=conn, config=app_config, command_type="ssh")
     ).command
 
-    def _index(fragment):
-        return next(i for i, token in enumerate(argv) if token == fragment)
-
-    # Every Preferences option trails the connection's own option for the same
-    # setting, which is what makes OpenSSH prefer the connection's value.
-    for own, preference in (
-        ("stricthostkeychecking=yes", "StrictHostKeyChecking=accept-new"),
-        ("compression=no", "Compression=yes"),
-        ("serveraliveinterval=30", "ServerAliveInterval=60"),
+    for override in (
+        "StrictHostKeyChecking=accept-new", "Compression=yes",
+        "Ciphers=aes128-ctr", "User=forced", "ConnectTimeout=15",
     ):
-        assert _index(own) < _index(preference), argv
+        assert override in argv, argv
+    lowered = " ".join(argv).lower()
+    for own in ("stricthostkeychecking=yes", "compression=no", "ciphers=aes256-ctr"):
+        assert own not in lowered
+    assert "-l" not in argv
+    # The keepalive is no override: this connection could not be resolved,
+    # so it is not sent at all.
+    assert not any("ServerAlive" in token for token in argv)
 
-    # Preferences still supply what the connection does not set.
-    assert "ConnectTimeout=15" in argv
+
+def test_app_runtime_options_still_beat_settings_overrides():
+    """A caller's forced option (forwarding-only tab) outranks the overrides."""
+    app_config = _prefs_config({"extra_options": ["SessionType=default"]})
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="web.example.com", authored=("hostname",)
+            ),
+            config=app_config,
+            command_type="ssh",
+            extra_args=["-o", "SessionType=none"],
+        )
+    ).command
+    assert argv.index("SessionType=none") < argv.index("SessionType=default")
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+@pytest.mark.parametrize(
+    "override, expected",
+    [
+        ("ProxyJump=global-jump", "proxyjump global-jump"),
+        ("ProxyCommand=nc %h %p", "proxycommand nc %h %p"),
+        ("Port=2022", "port 2022"),
+        ("User=forced", "user forced"),
+    ],
+)
+def test_openssh_resolves_an_override_over_the_connections_value(override, expected):
+    """Ask ssh itself: the override wins, and the command still parses.
+
+    A global proxy with a connection that has its own jump host used to be a
+    hard failure (``-J`` after ``-o ProxyJump=``/``-o ProxyCommand=``).
+    """
+    import subprocess
+
+    app_config = _prefs_config({"extra_options": [override]})
+    conn = _config_connection(
+        hostname="web.example.com",
+        username="alice",
+        port=2200,
+        proxy_jump=["jump.example.com"],
+        authored=("hostname", "user", "port", "proxyjump"),
+    )
+    argv = build_ssh_connection(
+        ConnectionContext(connection=conn, config=app_config, command_type="ssh")
+    ).command
+    result = subprocess.run(
+        [argv[0], "-F", "/dev/null", "-G", *argv[1:]],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert expected in result.stdout.lower().splitlines()
 
 
 def test_preferences_still_apply_when_the_connection_sets_nothing():
@@ -720,7 +574,7 @@ def test_scp_preference_overrides_stay_options_when_path_operands_follow():
 
     prefs = {
         "verbosity": 1,
-        "keepalive_interval": 25,
+        "default_keepalive_interval": 25,
     }
     app_config = types.SimpleNamespace(
         get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
@@ -730,6 +584,7 @@ def test_scp_preference_overrides_stay_options_when_path_operands_follow():
             connection=_config_connection(
                 hostname="host.example.com",
                 authored=("hostname",),
+                effective={"serveraliveinterval": "0"},
             ),
             config=app_config,
             command_type="scp",
@@ -755,8 +610,8 @@ def test_scp_preference_overrides_stay_options_when_path_operands_follow():
     assert argv[-1] == "alice@host.example.com:/remote/drop"
 
 
-def test_scp_none_policy_keeps_scp_safe_port_and_user_flags():
-    """interaction_policy none must not revive ssh-shaped -p/-l on scp."""
+def test_scp_none_policy_sends_no_port_or_user():
+    """The alias in the target carries both: scp resolves them from the config."""
 
     argv = build_ssh_connection(
         ConnectionContext(
@@ -768,25 +623,24 @@ def test_scp_none_policy_keeps_scp_safe_port_and_user_flags():
             ),
             command_type="scp",
             extra_args=["-r"],
-            target_override="alice@host.example.com:/remote/drop",
+            target_override="web:/remote/drop",
             interaction_policy="none",
         )
     ).command
 
     assert argv[0] == "scp"
     assert "BatchMode=yes" in argv
-    assert "-P" in argv and argv[argv.index("-P") + 1] == "2200"
-    assert "User=alice" in argv
-    assert "-l" not in argv
-    assert "-p" not in argv
+    for flag in ("-P", "-l", "-p"):
+        assert flag not in argv
+    assert not any(token.startswith("User=") for token in argv)
 
 
-def test_ssh_copy_id_installs_to_the_account_the_editor_shows():
-    """Key deployment must not resolve the account from a global block.
+def test_ssh_copy_id_leaves_the_host_block_to_the_config():
+    """ssh-copy-id is given the alias, so OpenSSH applies the Host block.
 
-    ssh-copy-id builds its argv through a different function than a session,
-    and it emitted no User at all — so with a global `Host * User tom` the key
-    was installed into tom's authorized_keys while the editor said alice.
+    Repeating User or Port as options would beat a `Host *` block placed
+    before the host's own, and install the key somewhere `ssh <alias>` does
+    not log in.
     """
     import types
 
@@ -802,25 +656,33 @@ def test_ssh_copy_id_installs_to_the_account_the_editor_shows():
         conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
     )
 
-    assert "User=alice" in argv
-    assert "-p" in argv and argv[argv.index("-p") + 1] == "2200"
+    assert not any(token.startswith("User=") for token in argv)
     # ssh-copy-id rejects the long flags ssh accepts.
-    for rejected in ("-l", "-J", "-A", "-C", "-v"):
+    for rejected in ("-p", "-l", "-J", "-A", "-C", "-v"):
         assert rejected not in argv
 
 
-def test_ssh_copy_id_leaves_unauthored_values_to_the_config():
+def test_ssh_copy_id_sends_no_host_key_option_when_not_configured():
+    """"Do not configure" must not fall back to accept-new on this path."""
     import types
 
     from sshpilot.ssh_connection_builder import _build_base_ssh_command
 
     conn = _config_connection(hostname="web.example.com", authored=("hostname",))
-    argv = _build_base_ssh_command(
-        conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
-    )
+    for settings in ({}, {"strict_host_key_checking": ""},
+                     {"strict_host_key_checking": "", "auto_add_host_keys": True}):
+        argv = _build_base_ssh_command(
+            conn, {}, types.SimpleNamespace(get_ssh_config=lambda s=settings: dict(s)),
+            "ssh-copy-id",
+        )
+        assert not any("StrictHostKeyChecking" in token for token in argv)
 
-    assert not any(token.startswith("User=") for token in argv)
-    assert "-p" not in argv
+    argv = _build_base_ssh_command(
+        conn, {},
+        types.SimpleNamespace(get_ssh_config=lambda: {"strict_host_key_checking": "yes"}),
+        "ssh-copy-id",
+    )
+    assert "StrictHostKeyChecking=yes" in argv
 
 
 def test_ssh_copy_id_does_not_emit_session_directives():
@@ -840,6 +702,10 @@ def test_ssh_copy_id_does_not_emit_session_directives():
         conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
     )
     joined = " ".join(argv)
-    assert "LocalCommand=" not in joined
-    assert "RemoteCommand=" not in joined
+    assert "LocalCommand=echo" not in joined
+    # A key install is no login: the block's LocalCommand is refused.
+    assert "PermitLocalCommand=no" in argv
+    assert "RemoteCommand=tmux" not in joined
     assert "RequestTTY=" not in joined
+    # The alias is the destination, so the block's RemoteCommand is cancelled.
+    assert "RemoteCommand=none" in argv

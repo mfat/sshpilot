@@ -111,6 +111,28 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- pure enum of file_manager.terminal_panes values ---------------
         ("config.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
         ("preferences.py", "settings.defaults", "TERMINAL_PANE_CHOICES"),
+        # -- pure enum of ui.group_color_display values -------------------
+        ("sidebar.py", "settings.defaults", "GROUP_COLOR_DISPLAY_MODES"),
+        ("preferences.py", "settings.defaults", "GROUP_COLOR_DISPLAY_MODES"),
+        # -- pure valid-range table for the SSH option number rows ----------
+        # The widget bounds come from the model's own ranges so a saved value
+        # can never be clamped by the row. Read-only constant; no I/O.
+        ("preferences.py", "settings", "INTEGER_RANGES"),
+        # -- pure shape check for free-form SSH options ---------------------
+        # The shared option list checks a row before it is saved and words
+        # the refusal itself; the daemon applies the same check to whatever
+        # arrives. The page passes the set of options that have their own row.
+        ("ssh_option_list.py", "settings", "ExtraOptionError"),
+        ("ssh_option_list.py", "settings", "ExtraOptionProblem"),
+        ("ssh_option_list.py", "settings", "normalize_extra_option"),
+        ("preferences.py", "settings", "EXTRA_OPTIONS_ADDED_NOT_REPLACED"),
+        ("preferences.py", "settings", "EXTRA_OPTIONS_WITH_OWN_SETTING"),
+        ("connection_dialog_overrides.py", "settings", "EXTRA_OPTIONS_ADDED_NOT_REPLACED"),
+        ("connection_dialog_overrides.py", "settings", "forced_options"),
+        # -- pure normaliser for the tri-state Compression value ------------
+        ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),
+        ("ssh_connection_builder.py", "settings.ssh_overrides", "select_override_args"),
+        ("ssh_connection_builder.py", "settings.ssh_overrides", "keepalive_fallback_args"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --
         ("config.py", "settings", "SettingsFileError"),
         ("config.py", "settings", "upgrade_settings"),
@@ -761,7 +783,7 @@ _SSH_OVERRIDE_CONFIG_KEYS = frozenset(
 
 def test_preferences_has_no_local_ssh_override_persistence():
     """SSH overrides ownership: Preferences never composes the derived list or
-    persists the nine daemon-owned fields through the local config.
+    persists the five daemon-owned fields through the local config.
 
     The daemon owns the semantic SSH fields; the page only reads them for
     display and submits mutations through ``SshOverridesController``.  Any

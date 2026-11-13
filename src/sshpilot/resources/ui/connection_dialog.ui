@@ -38,7 +38,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="margin-end">24</property>
             <property name="margin-top">12</property>
             <property name="margin-bottom">12</property>
-            <property name="halign">2</property>
+            <child>
+              <object class="GtkButton" id="effective_config_button">
+                <property name="label" translatable="yes">Effective Config</property>
+                <property name="tooltip-text" translatable="yes">Show what SSH uses for this host, as saved</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="edit_ssh_config_button">
+                <property name="label" translatable="yes">Edit SSH Config</property>
+                <property name="tooltip-text" translatable="yes">Open the SSH config editor</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="hexpand">true</property>
+              </object>
+            </child>
             <child>
               <object class="GtkButton" id="cancel_button">
                 <property name="label" translatable="yes">Cancel</property>

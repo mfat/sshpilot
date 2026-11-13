@@ -80,6 +80,7 @@ class SSHLaunchRequest:
     env: Mapping[str, str] = field(default_factory=dict)
     extra_options: List[str] = field(default_factory=list)
     ssh_overrides: List[str] = field(default_factory=list)
+    priority_options: List[str] = field(default_factory=list)
     launch_mode: LaunchMode = LaunchMode.INTERACTIVE
     force_tty: bool = False
     cwd: Optional[Path] = None
@@ -138,16 +139,25 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
     """Compose a deterministic ``ProcessSpec`` from *req*.
 
     Argument order (stable, tested):
-    executable, ``-F`` config, explicit ``-o``/flags, identity/certificate/
-    proxy/forward options, ``extra_options``, ``ssh_overrides``, destination,
-    remote command.
+    executable, ``-F`` config, batch/host-key mode, ``priority_options``,
+    ``ssh_overrides``, the typed connection fields (timeout, keepalive, port,
+    user, identity/certificate/proxy/forward options), ``extra_options``,
+    destination, remote command.
 
-    ``ssh_overrides`` carries the app-wide Preferences settings and comes
-    *last*, because OpenSSH takes the first value it obtains for an option.
-    They are defaults: anything a connection sets for itself is emitted earlier
-    and therefore wins. Placing them first — as this once did — made a global
-    Preferences value silently override the per-connection setting the editor
-    displayed.
+    OpenSSH takes the first value it obtains for an option, so this order is
+    the precedence:
+
+    * ``priority_options`` are what the app itself needs for this launch (a
+      forced ``ControlMaster=no`` on a forwarding-only tab, say). Nothing may
+      outrank them or the feature they belong to breaks.
+    * ``ssh_overrides`` carries Settings ▸ SSH Options. They are app-level
+      overrides: they come before everything a connection sets for itself and
+      therefore win.
+    * ``extra_options`` carries the connection's own options and fallbacks.
+
+    Jump hosts are emitted as ``-o ProxyJump=`` rather than ``-J``: ssh refuses
+    to start when ``-J`` follows an ``-o ProxyJump=``/``-o ProxyCommand=``
+    (which an override may be), while two ``-o`` spellings resolve first-wins.
     """
     _validate_request(req)
     argv: List[str] = [req.executable or "ssh"]
@@ -161,6 +171,15 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
 
     if req.host_key_mode is not None:
         argv.extend(["-o", f"StrictHostKeyChecking={req.host_key_mode.value}"])
+
+    for opt in req.priority_options or []:
+        if opt:
+            argv.append(str(opt))
+
+    # Settings ▸ SSH Options: ahead of the connection's own (see docstring).
+    for entry in req.ssh_overrides or []:
+        if entry:
+            argv.append(str(entry))
 
     if req.connect_timeout is not None and int(req.connect_timeout) > 0:
         argv.extend(["-o", f"ConnectTimeout={int(req.connect_timeout)}"])
@@ -194,7 +213,9 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
         argv.extend(["-o", f"CertificateFile={req.certificate_file}"])
 
     if req.proxy_jump:
-        argv.extend(["-J", ",".join(str(j) for j in req.proxy_jump if j)])
+        argv.extend(
+            ["-o", "ProxyJump=" + ",".join(str(j) for j in req.proxy_jump if j)]
+        )
 
     if req.proxy_command:
         argv.extend(["-o", f"ProxyCommand={req.proxy_command}"])
@@ -212,11 +233,6 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
     for opt in req.extra_options or []:
         if opt:
             argv.append(str(opt))
-
-    # App-wide Preferences last: they lose to everything above (see docstring).
-    for entry in req.ssh_overrides or []:
-        if entry:
-            argv.append(str(entry))
 
     if req.force_tty:
         argv.append("-t")

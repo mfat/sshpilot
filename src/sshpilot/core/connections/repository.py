@@ -51,6 +51,7 @@ from ...api.models.connection_store import (
     GroupSummary,
     MoveConnectionsRequest,
     SetConnectionLayoutRequest,
+    SshConfigUnavailableReason,
     thaw_safe_metadata,
     validate_safe_metadata,
 )
@@ -88,7 +89,13 @@ from .identity_state_v2 import (
 from .service import ConnectionService
 from .target_summary import describe as describe_target
 from .ssh_config_loader import LoadedSshConfiguration
-from .ssh_config_store import SshConfigStore, _atomic_write_text, _source_of
+from .ssh_config_store import (
+    SshConfigStore,
+    _atomic_write_text,
+    _source_of,
+    config_file_writable,
+    resolve_config_link,
+)
 from .transient import TransientConnections, is_transient_connection_id
 from .state_file import (
     ConnectionStateFileKind,
@@ -419,6 +426,9 @@ class ConnectionRepository:
         self._identity_unavailable_reason: Optional[str] = None
         self._pending_identity_target: Optional[IdentityStateV2] = None
         self._loaded_ssh_config: Optional[LoadedSshConfiguration] = None
+        #: Set while the SSH config cannot be read: (reason, path).
+        self._ssh_unavailable: Optional[Tuple[SshConfigUnavailableReason, str]] = None
+        self._initial_loading = False
         self._metadata: Dict[str, Dict[str, Any]] = {}
         self._persisted_root_order: Tuple[str, ...] = ()
         self._non_ssh_generations: Dict[str, int] = {}
@@ -502,6 +512,9 @@ class ConnectionRepository:
     def discover_paths(self) -> frozenset:
         with self._lock:
             paths = {self._state_path}
+            if self._ssh_unavailable is not None:
+                # Watch the root so restoring access reloads.
+                return frozenset(paths | {Path(self._ssh_store.root_path)})
             loaded = self._ssh_store.load()
             paths.update(Path(p) for p in (loaded.watch_paths or loaded.source_paths))
             return frozenset(paths)
@@ -661,7 +674,11 @@ class ConnectionRepository:
 
     def _initial_load(self) -> None:
         with self._lock:
-            self._load_state_locked()
+            self._initial_loading = True
+            try:
+                self._load_state_locked()
+            finally:
+                self._initial_loading = False
 
     def _read_state(self) -> Tuple[ConnectionFileState, bool]:
         """Read the dedicated file, or the legacy values when it is absent."""
@@ -673,7 +690,23 @@ class ConnectionRepository:
 
     def _load_state_locked(self) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
-        ssh_config = self._ssh_store.load()
+        access = self._ssh_store.unavailable_access()
+        if access is None:
+            try:
+                ssh_config = self._ssh_store.load()
+            except CoreError as exc:
+                # At startup a config that cannot be read must not stop the
+                # daemon (the window then only says the background service
+                # timed out). A later reload keeps the last good state.
+                if not self._initial_loading:
+                    raise
+                access = _unavailable_from_load_error(
+                    exc, self._ssh_store.root_path
+                )
+        if access is not None:
+            self._hold_ssh_unavailable_locked(*access)
+            return
+        self._ssh_unavailable = None
         self._loaded_ssh_config = ssh_config
         projections = projections_from_records(ssh_config.connections)
         try:
@@ -771,6 +804,38 @@ class ConnectionRepository:
                 ConnectionFileState(),
                 migrated=False,
             )
+
+    def _hold_ssh_unavailable_locked(
+        self, reason: SshConfigUnavailableReason, path: str
+    ) -> None:
+        """Show the store without SSH connections, and touch nothing.
+
+        An SSH config the daemon cannot see is not an empty one. Reconciling
+        the sidecar against it would tombstone every SSH identity (dropping
+        its groups and metadata for good), so the sidecar is only read, for
+        the non-SSH connections and groups it holds, and every change is
+        refused until the config can be read again.
+        """
+        self._ssh_unavailable = (reason, str(path))
+        empty = LoadedSshConfiguration(
+            connections=(),
+            rules=(),
+            source_paths=frozenset(),
+            root_revision="",
+        )
+        file_state = ConnectionFileState()
+        try:
+            if probe_connection_state_file(self._state_path) is ConnectionStateFileKind.V2:
+                state = read_identity_state_v2(self._state_path)
+                if state is not None:
+                    file_state = state_to_service_file_state(state, ())
+        except Exception:
+            logger.debug("Sidecar not shown while the SSH config is unreadable", exc_info=True)
+        self._identity_state = None
+        self._identity_state_unavailable = True
+        self._identity_recovery_required = False
+        self._loaded_ssh_config = empty
+        self._publish_state_locked(empty, file_state, migrated=False)
 
     def _salvage_state_locked(
         self,
@@ -1223,8 +1288,53 @@ class ConnectionRepository:
 
     def _build_snapshot_locked(self) -> ConnectionStoreSnapshot:
         if self._identity_state is None:
-            return self._assemble(self._service, self._metadata, self._generation)
-        return self._assemble_uuid_snapshot_locked()
+            snapshot = self._assemble(self._service, self._metadata, self._generation)
+        else:
+            snapshot = self._assemble_uuid_snapshot_locked()
+        return self._with_write_access_locked(snapshot)
+
+    def _with_write_access_locked(
+        self, snapshot: ConnectionStoreSnapshot
+    ) -> ConnectionStoreSnapshot:
+        """Mark what the daemon cannot write, so a frontend can say so first.
+
+        An SSH connection is read-only when the file its Host block lives in
+        cannot be replaced (a Home Manager link into /nix/store, a read-only
+        mount); a new SSH connection is appended to the root config, so the
+        snapshot carries the root's state too. Non-SSH connections live in
+        the daemon's own state file and are never marked.
+        """
+        writable: Dict[str, bool] = {}
+
+        def _writable(path: str) -> bool:
+            if path not in writable:
+                writable[path] = config_file_writable(Path(path))
+            return writable[path]
+
+        root_read_only = not _writable(str(self._ssh_store.root_path))
+        sources = {
+            record.id: _source_of(record)
+            for record in self._service.ordered_records()
+            if (record.protocol or "ssh") == "ssh"
+        }
+        connections = tuple(
+            replace(summary, config_read_only=True)
+            if sources.get(summary.id) and not _writable(sources[summary.id])
+            else summary
+            for summary in snapshot.connections
+        )
+        unavailable = self._ssh_unavailable
+        if unavailable is not None:
+            root_read_only = True
+        if not root_read_only and connections == snapshot.connections:
+            return snapshot
+        return replace(
+            snapshot,
+            connections=connections,
+            ssh_config_read_only=root_read_only,
+            ssh_config_unavailable=unavailable[0] if unavailable else None,
+            ssh_config_unavailable_path=unavailable[1] if unavailable else "",
+        )
 
     def _assemble_uuid_snapshot_locked(self) -> ConnectionStoreSnapshot:
         """Build an alias-compatible snapshot from UUID-owned sidecar state."""
@@ -1355,6 +1465,19 @@ class ConnectionRepository:
     # ------------------------------------------------------------------
 
     def _begin(self) -> ConnectionStoreSnapshot:
+        if self._ssh_unavailable is not None:
+            logger.warning(
+                "Refusing a connection change: the SSH config cannot be read "
+                "(%s: %s), so nothing is saved until it can be",
+                self._ssh_unavailable[0].value,
+                self._ssh_unavailable[1],
+            )
+            raise CoreError(
+                ErrorCode.SSH_CONFIG_READ_ONLY,
+                "The SSH configuration cannot be read",
+                diagnostic_category="permission",
+                diagnostic_reason="ssh config not readable",
+            )
         return self._build_snapshot_locked()
 
     @contextmanager
@@ -1805,9 +1928,12 @@ class ConnectionRepository:
         several SSH sources in one transaction.
         """
         paths = {self._state_path}
+        # SSH config files are keyed by the file a link names, the same file
+        # the config store writes, so a Home Manager / Stow / chezmoi link is
+        # captured, verified and rolled back like a regular file.
         if ssh_target is not None:
-            paths.add(Path(ssh_target))
-        paths.update(Path(target) for target in more_ssh_targets)
+            paths.add(resolve_config_link(Path(ssh_target)))
+        paths.update(resolve_config_link(Path(t)) for t in more_ssh_targets)
         captured = {}
         for path in paths:
             path = Path(path)
@@ -1883,7 +2009,9 @@ class ConnectionRepository:
         ``MUTATION_AMBIGUOUS``.
         """
         if path not in captured:
-            return
+            path = resolve_config_link(Path(path))
+            if path not in captured:
+                return
         try:
             flags = _RAW_READ_FLAGS
             fd = os.open(str(path), flags)
@@ -3448,3 +3576,20 @@ class ConnectionRepository:
             and before.root_connection_ids == after.root_connection_ids
             and before.metadata == after.metadata
         )
+
+
+def _unavailable_from_load_error(
+    error: CoreError, root: Path
+) -> Tuple[SshConfigUnavailableReason, Path]:
+    """Name what kept the startup load from reading the SSH config."""
+    logger.error(
+        "SSH config could not be loaded at startup (%s); starting without "
+        "SSH connections and refusing changes until it loads",
+        error.message,
+    )
+    path = (error.details or {}).get("unreadable_path")
+    # The root itself is unreadable only as text here (a refused root was
+    # caught before loading): that is a config SSH Pilot cannot understand.
+    if path and resolve_config_link(Path(path)) != resolve_config_link(Path(root)):
+        return SshConfigUnavailableReason.UNREADABLE, Path(path)
+    return SshConfigUnavailableReason.INVALID, Path(root)

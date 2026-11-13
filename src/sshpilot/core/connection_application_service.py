@@ -20,13 +20,14 @@ instances: every read, mutation, and event flows through a
 from __future__ import annotations
 
 import dataclasses
+import types
 
 import logging
 import getpass
 import ipaddress
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
@@ -50,6 +51,9 @@ from ..api.models.connections import (
     ConnectionId,
     ConnectionMutationResult,
     ConnectionSummary,
+    ConfigConflict,
+    ConfigSyntaxError,
+    EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -90,6 +94,9 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection": Capability.CONNECTIONS_READ,
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
@@ -124,6 +131,13 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
 }
 
+
+
+def _effective_text(value: Any) -> str:
+    """One ``ssh -G`` value as text (a repeated key comes back as a list)."""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    return str(value or "").strip()
 
 
 def _target_port(record) -> int:
@@ -328,29 +342,82 @@ class ConnectionApplicationService:
                     # comment has no stored mode, and a command is what it has.
                     mode=PreCommandMode.COMMAND,
                 )
+        if not settings.configured and not (
+            settings.wake_before_connect and settings.wake_mac.strip()
+        ):
+            # Nothing runs before this launch, so there is nothing to aim.
+            # Every launch reads these settings, and resolving costs an
+            # ``ssh -G`` that also runs the configuration's ``Match exec``
+            # commands -- a user's own knock script among them.
+            return settings
         # Expanded here, where the connection's own values are, so the runner
         # never has to know what a connection is. The hostname, port and
         # route ride along for the same reason: the knock and the wake need a
         # target and nothing downstream can look one up.
         hostname = getattr(record, "hostname", "") or ""
+        port: Any = getattr(record, "port", "") or ""
+        username = getattr(record, "username", "") or ""
         data = record.data or {}
+        # Through a jump host, a proxy or an RD Gateway the host is not on
+        # this network: Wake-on-LAN cannot reach it and a probe from here
+        # says nothing about it.
+        direct = not any(
+            data.get(key) for key in ("proxy_jump", "proxy_command", "gateway")
+        )
+        if (record.protocol or "ssh") == "ssh":
+            # An SSH connection goes where OpenSSH resolves it, which a
+            # ``Host *`` block, a Match block or an included file may decide
+            # rather than the saved block. Knock, wake and the %h/%p/%u tokens
+            # must aim at that same machine.
+            effective = self._resolve_ssh_destination(record, connection_id)
+            if effective:
+                hostname = str(effective.get("hostname") or hostname)
+                port = str(effective.get("port") or port)
+                username = str(effective.get("user") or username)
+                direct = not (
+                    _effective_text(effective.get("proxyjump")).lower()
+                    not in ("", "none")
+                    or _effective_text(effective.get("proxycommand")).lower()
+                    not in ("", "none")
+                )
+        target_port = _target_port(types.SimpleNamespace(port=port))
         return dataclasses.replace(
             settings,
             command=expand_pre_command_tokens(
                 settings.command,
                 hostname=hostname,
-                port=getattr(record, "port", "") or "",
-                username=getattr(record, "username", "") or "",
+                port=port,
+                username=username,
             ),
             hostname=hostname,
-            target_port=_target_port(record),
-            # Through a jump host, a proxy or an RD Gateway the host is not on
-            # this network: Wake-on-LAN cannot reach it and a probe from here
-            # says nothing about it.
-            direct=not any(
-                data.get(key) for key in ("proxy_jump", "proxy_command", "gateway")
-            ),
+            target_port=target_port,
+            direct=direct,
         )
+
+    def _resolve_ssh_destination(self, record, connection_id) -> Dict[str, Any]:
+        """``ssh -G`` for a saved SSH host, as its launch resolves it."""
+        from .ssh_config_effective import get_effective_ssh_config, launch_config_file
+
+        try:
+            if is_transient_connection_id(connection_id):
+                if not record.source or not record.host:
+                    return {}
+                return dict(get_effective_ssh_config(
+                    record.host,
+                    config_file=str(record.source),
+                    overrides=self._forced_ssh_option_args(),
+                ))
+            root = getattr(self._repository, "root_config_path", None)
+            if root is None or not record.nickname:
+                return {}
+            return dict(get_effective_ssh_config(
+                record.nickname,
+                config_file=launch_config_file(root, record.source or None),
+                overrides=self._forced_ssh_option_args(),
+            ))
+        except Exception:
+            logger.debug("Could not resolve the SSH destination", exc_info=True)
+            return {}
 
     def prepare_external_terminal_launch(
         self, connection_id: ConnectionId
@@ -1034,7 +1101,13 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         from ..ssh_config_formatter import format_ssh_config_entry
-        from .ssh_config_effective import collect_host_block_lines, diff_effective_config
+        from .ssh_config_effective import (
+            collect_host_block_lines,
+            diff_effective_config,
+            earlier_directives,
+            get_effective_ssh_config,
+            launch_config_file,
+        )
 
         before_generation = self._repository.snapshot().generation
         if transient:
@@ -1042,11 +1115,15 @@ class ConnectionApplicationService:
             # never apply to the session and must not apply here either.
             host = record.host
             root = str(record.source)
-            include_system_defaults = False
+            launch_file: Optional[str] = root
         else:
             host = record.nickname
             root = str(self._repository.root_config_path)
-            include_system_defaults = not self._repository.ssh_config_isolated
+            # The file the launch names with -F (none for ~/.ssh/config, when
+            # OpenSSH also reads the system-wide configuration).
+            launch_file = launch_config_file(root, record.source or None)
+        include_system_defaults = launch_file is None
+        compare_file = launch_file or root
         logger.debug(
             "Effective-config resolve start: id=%s host=%s mode=%s root=%s "
             "root_file=%s generation=%s",
@@ -1068,12 +1145,24 @@ class ConnectionApplicationService:
             len(own_lines),
             not bool(own_lines),
         )
+        earlier: Tuple[EarlierDirective, ...] = ()
+        resolved: Dict[str, Any] = {}
         try:
+            # What a launch sends: Settings ▸ SSH Options, then the app's
+            # keepalive when the configuration itself sets none.
+            forced = self._forced_ssh_option_args()
+            resolved = get_effective_ssh_config(
+                host, config_file=launch_file, overrides=forced
+            )
+            overrides = forced + self._keepalive_fallback_args(
+                resolved, self._configured_keys(host, launch_file, resolved)
+            )
             result = diff_effective_config(
                 host,
-                root,
+                compare_file,
                 own_block,
                 include_system_defaults_in_display=include_system_defaults,
+                overrides=overrides,
             )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
@@ -1088,10 +1177,30 @@ class ConnectionApplicationService:
         except Exception:
             logger.debug("Daemon effective-config resolution failed", exc_info=True)
             result = None
+        if not transient:
+            # Read from the files, so it is still known when OpenSSH rejects
+            # the configuration (a line it cannot parse) and the comparison
+            # above is unavailable. *resolved* is then empty, which only
+            # leaves out Match blocks that need OpenSSH's evidence.
+            try:
+                earlier = tuple(
+                    EarlierDirective(
+                        key=str(item["key"]),
+                        value=str(item["value"]),
+                        block=str(item["block"]),
+                        file=str(item["file"]),
+                        line=int(item["line"]),
+                    )
+                    for item in earlier_directives(host, compare_file, resolved)
+                )
+            except Exception:
+                logger.debug("Earlier-directive scan failed", exc_info=True)
+                earlier = ()
         after_generation = self._repository.snapshot().generation
         # A reload/mode transition raced the resolver.  Never publish a
         # comparison tagged with the pre-transition snapshot.
         if before_generation != after_generation:
+            earlier = ()
             logger.debug(
                 "Effective-config generation raced: id=%s generation=%s->%s, "
                 "discarding result",
@@ -1106,6 +1215,7 @@ class ConnectionApplicationService:
                 host=host,
                 available=False,
                 generation=max(0, int(after_generation)),
+                earlier=earlier,
             )
         return EffectiveConfigComparison(
             connection_id=connection_id,
@@ -1116,7 +1226,148 @@ class ConnectionApplicationService:
             own=tuple(result.get("own") or ()),
             full=tuple(result.get("full") or ()),
             generation=max(0, int(after_generation)),
+            earlier=earlier,
         )
+
+    def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
+        """What the configuration already decides for a host not saved yet.
+
+        A new Host block is appended to the end of the root file, so every
+        line that applies to *host* comes before it, and OpenSSH keeps the
+        first value it obtains. The connection editor asks this for the
+        alias being typed, to mark a field whose value would not be used.
+        An alias that is not a valid ``Host`` name yields nothing. For a
+        saved host see ``EffectiveConfigComparison.earlier``.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from ..api.models.common import validate_ssh_host_alias
+        from .ssh_config_effective import (
+            earlier_directives,
+            get_effective_ssh_config,
+            launch_config_file,
+        )
+
+        try:
+            validate_ssh_host_alias(host)
+        except (TypeError, ValueError):
+            return ()
+        # One literal Host token: no blanks, patterns or negation.
+        if not host or host != host.strip() or any(
+            char.isspace() or char in "*?!" for char in host
+        ):
+            return ()
+        root = str(self._repository.root_config_path)
+        try:
+            resolved = get_effective_ssh_config(
+                host,
+                config_file=launch_config_file(root),
+                overrides=self._forced_ssh_option_args(),
+            )
+            found = earlier_directives(host, root, resolved, new_host=True)
+        except Exception:
+            logger.debug("Earlier-directive lookup failed", exc_info=True)
+            return ()
+        return tuple(
+            EarlierDirective(
+                key=str(item["key"]),
+                value=str(item["value"]),
+                block=str(item["block"]),
+                file=str(item["file"]),
+                line=int(item["line"]),
+            )
+            for item in found
+        )
+
+    def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:
+        """The lines that make OpenSSH refuse the SSH configuration.
+
+        OpenSSH stops at a line it cannot parse, wherever it is, so one such
+        line keeps every SSH connection from starting. OpenSSH itself is
+        asked, about the file a launch reads; empty when it accepts the
+        configuration, and when it could not be asked.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .ssh_config_effective import launch_config_file, openssh_config_errors
+
+        root = str(self._repository.root_config_path)
+        try:
+            found = openssh_config_errors(launch_config_file(root))
+        except Exception:
+            logger.debug("SSH config syntax check failed", exc_info=True)
+            return ()
+        errors = []
+        for item in found:
+            try:
+                errors.append(
+                    ConfigSyntaxError(
+                        file=str(item["file"]),
+                        line=int(item["line"]),
+                        diagnostic=str(item["diagnostic"]),
+                    )
+                )
+            except (TypeError, ValueError):
+                logger.debug("Skipping an unrepresentable SSH config error")
+        return tuple(errors)
+
+    def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
+        """Every saved host's own value that an earlier block keeps unused.
+
+        The same judgement the connection editor makes for one host
+        (``EffectiveConfigComparison.earlier`` against the block's own
+        lines), over all saved SSH hosts, from the files alone: a ``Match``
+        block that only OpenSSH could judge is left out, so nothing reported
+        is a guess. Hosts are walked in store order; a host whose files
+        cannot be read contributes nothing.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .ssh_config_effective import (
+            ConfigScanCache,
+            collect_host_block_lines,
+            launch_config_file,
+            losing_directives,
+        )
+
+        root = str(self._repository.root_config_path)
+        cache = ConfigScanCache()
+        conflicts = []
+        for record in self._repository.list_records():
+            if (record.protocol or "ssh").strip().lower() != "ssh":
+                continue
+            host = (record.nickname or "").strip()
+            if not host or not record.source:
+                continue
+            try:
+                own_lines = collect_host_block_lines(host, root, cache=cache)
+                compare_file = (
+                    launch_config_file(root, record.source, cache=cache) or root
+                )
+                found = losing_directives(host, compare_file, own_lines, cache=cache)
+            except Exception:
+                logger.debug("Config conflict check failed for %s", host, exc_info=True)
+                continue
+            for item in found:
+                try:
+                    conflicts.append(
+                        ConfigConflict(
+                            connection_id=str(record.id),
+                            host=host,
+                            key=str(item["key"]),
+                            own_value=str(item["own"]),
+                            earlier=EarlierDirective(
+                                key=str(item["key"]),
+                                value=str(item["value"]),
+                                block=str(item["block"]),
+                                file=str(item["file"]),
+                                line=int(item["line"]),
+                            ),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    logger.debug("Skipping an unrepresentable conflict for %s", host)
+        return tuple(conflicts)
 
     def check_unsaved_host(
         self, request: UnsavedHostCheckRequest
@@ -1209,9 +1460,65 @@ class ConnectionApplicationService:
         return request.port is None or request.port == record.port
 
     def _active_config_file(self) -> Optional[str]:
+        """The ``-F`` file a saved host's launch uses; ``None`` for no ``-F``."""
+        from .ssh_config_effective import launch_config_file
+
         root = getattr(self._repository, "root_config_path", None)
-        isolated = bool(getattr(self._repository, "ssh_config_isolated", False))
-        return str(root) if root is not None and isolated else None
+        return launch_config_file(root) if root is not None else None
+
+    def _global_ssh_options(self) -> Tuple[str, ...]:
+        """The composed Settings ▸ SSH Options fragment, or nothing.
+
+        A launch puts it ahead of the typed account, port and jump host, so
+        the identity a destination resolves to has to be worked out with it.
+        """
+        service = self._ssh_overrides_service
+        if service is None:
+            return ()
+        try:
+            composed = service.get_ssh_config().get("ssh_overrides") or ()
+            return tuple(str(entry) for entry in composed if entry)
+        except Exception:
+            logger.debug("Could not read global SSH options", exc_info=True)
+            return ()
+
+    @staticmethod
+    def _configured_keys(host: str, launch_file: Optional[str], effective) -> Set[str]:
+        """Options a line of the configuration a launch reads sets for *host*."""
+        from .ssh_config_effective import launch_configured_directives
+
+        try:
+            return set(launch_configured_directives(host, launch_file, effective))
+        except Exception:
+            logger.debug("Could not read configured directives", exc_info=True)
+            return set()
+
+    def _keepalive_fallback_args(self, effective, configured=None) -> Tuple[str, ...]:
+        """The keepalive pair a launch adds for a host that configures none."""
+        service = self._ssh_overrides_service
+        compose = getattr(service, "keepalive_fallback_args", None)
+        if not callable(compose):
+            return ()
+        try:
+            return tuple(compose(effective, configured))
+        except Exception:
+            logger.debug("Could not read the keepalive fallback", exc_info=True)
+            return ()
+
+    def _forced_ssh_option_args(self) -> Tuple[str, ...]:
+        """Everything a launch sends ahead of a connection's own options.
+
+        :meth:`_global_ssh_options` plus the keepalive pair, for showing the
+        configuration a session really runs with.
+        """
+        service = self._ssh_overrides_service
+        if service is None:
+            return ()
+        try:
+            return tuple(service.forced_option_args())
+        except Exception:
+            logger.debug("Could not read forced SSH options", exc_info=True)
+            return ()
 
     def _destination_identity(
         self,
@@ -1229,6 +1536,7 @@ class ConnectionApplicationService:
             user=username or None,
             port=port,
             proxy_jump=proxy or None,
+            overrides=self._global_ssh_options(),
         )
         resolved_host = str(effective.get("hostname") or hostname).strip()
         resolved_user = str(effective.get("user") or username or getpass.getuser()).strip()
@@ -1277,11 +1585,38 @@ class ConnectionApplicationService:
             user = str(requested[1]) if inherits("user") else getpass.getuser()
         port = int(requested[2]) if inherits("port") else int(record.port or 22)
         proxy = ",".join(proxy_jump).casefold() or "none"
-        return {
-            (self._normalize_host(str(value)), user, port, proxy)
-            for value in values
-            if str(value or "").strip()
-        }
+        # Settings ▸ SSH Options outrank what the record saved, and the
+        # requested side was resolved with them. Apply the ones that replace a
+        # value here too, or a saved host would never match once one is set.
+        from .settings.ssh_overrides import forced_destination, forced_option
+
+        overrides = self._global_ssh_options()
+        # A forced ProxyCommand ahead of a ProxyJump wins and leaves no jump
+        # host to resolve; the requested side then keeps its typed value too.
+        forced_proxy = forced_option(overrides, "proxyjump")
+        if forced_proxy and not self._proxy_command_comes_first(overrides):
+            proxy = forced_proxy.casefold()
+        identities = set()
+        for value in values:
+            if not str(value or "").strip():
+                continue
+            host, saved_user, saved_port = forced_destination(
+                overrides, hostname=str(value).strip(), username=user, port=port
+            )
+            identities.add(
+                (self._normalize_host(host), saved_user, saved_port, proxy)
+            )
+        return identities
+
+    @staticmethod
+    def _proxy_command_comes_first(overrides: Tuple[str, ...]) -> bool:
+        for entry in overrides:
+            keyword = str(entry).partition("=")[0].strip().lower()
+            if keyword == "proxycommand":
+                return True
+            if keyword == "proxyjump":
+                return False
+        return False
 
     @staticmethod
     def _normalize_host(value: str) -> str:
@@ -2329,6 +2664,11 @@ def _map_core_error(error: Any) -> SshPilotError:
         return SshPilotError(
             ErrorCode.PERSISTENCE_FAILED,
             "The connection state could not be stored",
+        )
+    if code is CoreErrorCode.SSH_CONFIG_READ_ONLY:
+        return SshPilotError(
+            ErrorCode.SSH_CONFIG_READ_ONLY,
+            "The SSH configuration file is read-only",
         )
     return SshPilotError(
         ErrorCode.PERSISTENCE_FAILED,

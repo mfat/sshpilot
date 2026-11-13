@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.88",
+  "api_implementation_version": "0.101",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -293,6 +293,10 @@
       "capability": "daemon.status",
       "status": "daemon-only"
     },
+    "get_earlier_directives": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "get_effective_config": {
       "capability": "connections.config.read",
       "status": "implemented"
@@ -420,6 +424,14 @@
     "list_bitwarden_backups": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
+    },
+    "list_config_conflicts": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
+    "list_config_syntax_errors": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "list_connections": {
       "capability": "connections.read",
@@ -819,6 +831,7 @@
     "get_connection_store_snapshot",
     "get_daemon_diagnostics",
     "get_daemon_status",
+    "get_earlier_directives",
     "get_effective_config",
     "get_forward",
     "get_global_ssh_overrides",
@@ -852,6 +865,8 @@
     "list_agent_keys",
     "list_authorized_keys",
     "list_bitwarden_backups",
+    "list_config_conflicts",
+    "list_config_syntax_errors",
     "list_connections",
     "list_forwards",
     "list_interactions",
@@ -1487,6 +1502,16 @@
       "parameters": [],
       "return": "DaemonStatus"
     },
+    "get_earlier_directives": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "host",
+          "type": "str"
+        }
+      ],
+      "return": "tuple[EarlierDirective, ...]"
+    },
     "get_effective_config": {
       "parameters": [
         {
@@ -1783,6 +1808,14 @@
     "list_bitwarden_backups": {
       "parameters": [],
       "return": "list[dict[str, str]]"
+    },
+    "list_config_conflicts": {
+      "parameters": [],
+      "return": "tuple[ConfigConflict, ...]"
+    },
+    "list_config_syntax_errors": {
+      "parameters": [],
+      "return": "tuple[ConfigSyntaxError, ...]"
     },
     "list_connections": {
       "parameters": [],
@@ -2869,6 +2902,9 @@
     "connections.get": {
       "capability": "connections.read"
     },
+    "connections.get_earlier_directives": {
+      "capability": "connections.config.read"
+    },
     "connections.get_editor": {
       "capability": "connections.config.read"
     },
@@ -2895,6 +2931,12 @@
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.list_config_conflicts": {
+      "capability": "connections.config.read"
+    },
+    "connections.list_config_syntax_errors": {
+      "capability": "connections.config.read"
     },
     "connections.metadata.add_tag": {
       "capability": "connections.metadata.write"
@@ -3457,6 +3499,7 @@
     "sftp_protocol_lost",
     "sftp_service_not_found",
     "sftp_service_not_ready",
+    "ssh_config_read_only",
     "stale_editor",
     "terminal_attachment_required",
     "terminal_continuity_lost",
@@ -3566,6 +3609,8 @@
     "CloseSessionRequest",
     "CloseSftpRequest",
     "CompatibilityResult",
+    "ConfigConflict",
+    "ConfigSyntaxError",
     "ConfirmationPrompt",
     "ConnectionDetails",
     "ConnectionEditorCapabilities",
@@ -3613,6 +3658,7 @@
     "DetachedConnectionInfo",
     "EDITABLE_CONFIG_FIELDS",
     "EDITABLE_FIELDS",
+    "EarlierDirective",
     "EffectiveConfigComparison",
     "ExecutionInteractionMode",
     "ExternalTerminalLaunchSpec",
@@ -3818,6 +3864,7 @@
     "SocketDirection",
     "SplitConnectionRequest",
     "SshConfigText",
+    "SshConfigUnavailableReason",
     "StartScpTransferRequest",
     "StartTransferBatchRequest",
     "StartTransferRequest",
@@ -3987,6 +4034,18 @@
       "protocol_version",
       "message"
     ],
+    "ConfigConflict": [
+      "connection_id",
+      "host",
+      "key",
+      "own_value",
+      "earlier"
+    ],
+    "ConfigSyntaxError": [
+      "file",
+      "line",
+      "diagnostic"
+    ],
     "ConfirmationPrompt": [
       "text"
     ],
@@ -4002,6 +4061,7 @@
       "groups",
       "display_name",
       "target_summary",
+      "config_read_only",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -4030,6 +4090,7 @@
       "groups",
       "display_name",
       "target_summary",
+      "config_read_only",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -4089,7 +4150,10 @@
       "connections",
       "groups",
       "root_connection_ids",
-      "metadata"
+      "metadata",
+      "ssh_config_read_only",
+      "ssh_config_unavailable",
+      "ssh_config_unavailable_path"
     ],
     "ConnectionSummary": [
       "id",
@@ -4102,7 +4166,8 @@
       "health",
       "groups",
       "display_name",
-      "target_summary"
+      "target_summary",
+      "config_read_only"
     ],
     "ConnectionValidationError": [
       "field",
@@ -4290,6 +4355,13 @@
       "profile_name",
       "reason"
     ],
+    "EarlierDirective": [
+      "key",
+      "value",
+      "block",
+      "file",
+      "line"
+    ],
     "EffectiveConfigComparison": [
       "connection_id",
       "host",
@@ -4298,7 +4370,8 @@
       "changes",
       "own",
       "full",
-      "generation"
+      "generation",
+      "earlier"
     ],
     "ErrorData": [
       "code",
@@ -5491,6 +5564,7 @@
       "connection_already_exists",
       "connection_not_found",
       "persistence_failed",
+      "ssh_config_read_only",
       "mutation_ambiguous",
       "session_not_found",
       "session_already_closed",
@@ -5970,6 +6044,13 @@
     "SocketDirection": [
       "incoming",
       "outgoing"
+    ],
+    "SshConfigUnavailableReason": [
+      "dangling_link",
+      "permission_denied",
+      "sandbox_hidden",
+      "unreadable",
+      "invalid"
     ],
     "TransferBackend": [
       "sftp",

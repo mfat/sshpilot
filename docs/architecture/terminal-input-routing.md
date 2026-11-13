@@ -95,6 +95,16 @@ unchanged. Use it whenever both halves of a press/release pair are needed.
 `SelectionFeedPauseController` (`terminal_display_pause.py`) is the worked
 example.
 
+## The app-owned context menu must hand focus back
+
+When VTE's native menu is unavailable (pyte on Windows, PyXterm), SSH Pilot
+shows its own `Gtk.PopoverMenu` parented to the backend box. When a popover
+that held focus closes, GTK moves focus to an *ancestor container* (the split
+pane), not back to the terminal, so the next Enter goes to the sidebar (#1378).
+The popover's `closed` handler reclaims focus on idle, but only when focus
+is nowhere, inside the popover, or on a container around the terminal. An
+action that moved focus somewhere real, such as the search entry, keeps it.
+
 ## Teardown must match attachment
 
 `_remove_custom_shortcut_controllers()` detaches from `controller_host()`, so

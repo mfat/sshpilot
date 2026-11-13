@@ -70,7 +70,11 @@ def test_ssh_target_keeps_the_users_host_patterns(tmp_path):
     text = config.read_text()
     assert text.index("Host box.corp") < text.index("Include")
     assert str(tmp_path / "ssh_config") in text
-    assert "-p" in argv and argv[argv.index("-p") + 1] == "2222"
+    # The typed port lives in that block, which OpenSSH reads first; it is
+    # not repeated on the command line.
+    block = text[text.index("Host box.corp"):text.index("Include")]
+    assert "Port 2222" in block
+    assert "-p" not in argv
 
 
 def test_plugin_target_carries_its_fields(tmp_path):

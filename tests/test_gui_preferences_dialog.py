@@ -148,6 +148,30 @@ def test_group_preview_follows_group_settings_live(gui):
         assert rebuilt[0] is not built[0], 'preview did not rebuild'
         assert not rebuilt[0].has_css_class('tinted')
         assert rebuilt[0].has_css_class('color-bar')
+
+        # Coloured text: the icon and title carry the colour, nothing else.
+        config.set_setting('ui.group_color_display', 'text')
+        _settle(gui, lambda: rows()[0] is not rebuilt[0])
+        text_rows = rows()
+        group = text_rows[0]
+        assert not group.has_css_class('color-bar')
+        assert not group.has_css_class('tinted')
+        assert group.icon.has_css_class('sidebar-color-text')
+        assert group.name_label.has_css_class('sidebar-color-text')
+        assert not group.count_label.has_css_class('sidebar-color-text')
+        assert not group.color_dot.get_visible()
+        assert not group.color_badge.get_visible()
+        member = next(r for r in text_rows if isinstance(r, ConnectionRow))
+        assert member.connection_icon.has_css_class('sidebar-color-text')
+        assert member.nickname_label.has_css_class('sidebar-color-text')
+
+        # Switching back to a different style strips the text colour.
+        config.set_setting('ui.group_color_display', 'dot')
+        _settle(gui, lambda: rows()[0] is not group)
+        group = rows()[0]
+        assert not group.icon.has_css_class('sidebar-color-text')
+        assert not group.name_label.has_css_class('sidebar-color-text')
+        assert group.color_dot.get_visible()
     finally:
         config.set_setting('ui.group_color_display', old_mode)
 

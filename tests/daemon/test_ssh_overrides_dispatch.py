@@ -122,17 +122,18 @@ def test_get_returns_wire_snapshot(tmp_path):
     assert set(result.value) == {
         "revision",
         "connect_timeout",
-        "connection_attempts",
-        "server_alive_interval",
-        "server_alive_count_max",
         "strict_host_key_checking",
-        "batch_mode",
         "compression",
         "verbosity",
         "debug_enabled",
         "applies_immediately",
+        "extra_options",
+        "address_family",
+        "legacy_algorithms",
+        "forced_options",
     }
-    assert result.value["strict_host_key_checking"] == "accept-new"
+    assert result.value["extra_options"] == []
+    assert result.value["strict_host_key_checking"] == ""
 
 
 def test_get_requires_empty_params(tmp_path):

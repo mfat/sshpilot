@@ -45,6 +45,13 @@ class DaemonSshConfigTextService:
 
     # -- editor-facing interface -------------------------------------------
 
+    @staticmethod
+    def read_only_notice() -> str:
+        """Why the SSH config opened read-only (worded by the GTK presenter)."""
+        from .gtk.ssh_config_access_messages import read_only_body
+
+        return read_only_body()
+
     def load(self) -> Future:
         """Load the daemon-selected SSH config text off the GTK thread."""
 
@@ -60,8 +67,8 @@ class DaemonSshConfigTextService:
     def save_text(self, text: str, *, make_backup: bool = True) -> Future:
         """Save the edited text through the daemon's hardened write path.
 
-        ``make_backup`` is accepted for interface parity; the daemon always
-        performs the one-shot ``.bak`` backup and validates/reloads the edited
+        ``make_backup`` is accepted for interface parity and ignored: the
+        daemon keeps no ``.bak`` copy. It validates/reloads the edited
         document before publishing it.
         """
         del make_backup

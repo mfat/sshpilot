@@ -88,6 +88,7 @@ from ..models.connection_store import (
     ReorderConnectionRequest,
     SetConnectionLayoutRequest,
     SetGroupColorRequest,
+    SshConfigUnavailableReason,
     thaw_safe_metadata,
     validate_safe_metadata,
 )
@@ -104,6 +105,9 @@ from ..models.connections import (
     ConnectionDetails,
     ConnectionEditorCapabilities,
     ConnectionEditorDetails,
+    ConfigConflict,
+    ConfigSyntaxError,
+    EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -1282,6 +1286,16 @@ def connection_store_snapshot_to_wire(
         "groups": [group_summary_to_wire(item) for item in snapshot.groups],
         "root_connection_ids": list(snapshot.root_connection_ids),
         "metadata": [connection_metadata_summary_to_wire(item) for item in snapshot.metadata],
+        # Additive: sent only when set, like a summary's target_summary.
+        **({"ssh_config_read_only": True} if snapshot.ssh_config_read_only else {}),
+        **(
+            {
+                "ssh_config_unavailable": snapshot.ssh_config_unavailable.value,
+                "ssh_config_unavailable_path": snapshot.ssh_config_unavailable_path,
+            }
+            if snapshot.ssh_config_unavailable is not None
+            else {}
+        ),
     }
 
 
@@ -1289,6 +1303,11 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
     data = _strict_fields(
         value,
         required={"generation", "connections", "groups", "root_connection_ids", "metadata"},
+        optional={
+            "ssh_config_read_only",
+            "ssh_config_unavailable",
+            "ssh_config_unavailable_path",
+        },
         context="connection store snapshot",
     )
     connections = data["connections"]
@@ -1303,6 +1322,15 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
         raise ValueError("connection store root ids must be an array")
     if type(metadata) is not list:
         raise ValueError("connection store metadata must be an array")
+    unavailable = data.get("ssh_config_unavailable")
+    if unavailable is not None:
+        try:
+            unavailable = SshConfigUnavailableReason(unavailable)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "connection store snapshot contains an unknown ssh config "
+                "unavailable reason"
+            ) from None
     return ConnectionStoreSnapshot(
         generation=_integer(data["generation"], "connection store generation"),
         connections=tuple(connection_summary_from_wire(item) for item in connections),
@@ -1311,6 +1339,15 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
             ConnectionId(_identifier(item, "root connection id")) for item in root_ids
         ),
         metadata=tuple(connection_metadata_summary_from_wire(item) for item in metadata),
+        ssh_config_read_only=_boolean(
+            data.get("ssh_config_read_only", False), "store ssh config read-only"
+        ),
+        ssh_config_unavailable=unavailable,
+        ssh_config_unavailable_path=_text(
+            data.get("ssh_config_unavailable_path", ""),
+            "store ssh config unavailable path",
+            allow_empty=True,
+        ),
     )
 
 
@@ -1829,6 +1866,7 @@ def connection_summary_to_wire(summary: ConnectionSummary) -> Dict[str, Any]:
         # validates fields strictly still reads SSH-only lists.
         **({"target_summary": summary.target_summary}
            if summary.target_summary else {}),
+        **({"config_read_only": True} if summary.config_read_only else {}),
     }
 
 
@@ -1849,7 +1887,7 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS,
-        optional={"display_name", "target_summary"},
+        optional={"display_name", "target_summary", "config_read_only"},
         context="connection summary",
     )
     try:
@@ -1877,6 +1915,9 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
         display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
         target_summary=_text(
             data.get("target_summary", ""), "connection target summary", allow_empty=True
+        ),
+        config_read_only=_boolean(
+            data.get("config_read_only", False), "connection config read-only"
         ),
     )
 
@@ -1945,11 +1986,11 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS | detail_fields,
-        optional={"display_name", "target_summary", "plugin_data"},
+        optional={"display_name", "target_summary", "config_read_only", "plugin_data"},
         context="connection details",
     )
     summary_payload = {key: data[key] for key in _SUMMARY_FIELDS}
-    for key in ("display_name", "target_summary"):
+    for key in ("display_name", "target_summary", "config_read_only"):
         if key in data:
             summary_payload[key] = data[key]
     summary = connection_summary_from_wire(summary_payload)
@@ -1978,6 +2019,7 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
         # and a plugin editor saved that back over the user's own name.
         display_name=summary.display_name,
         target_summary=summary.target_summary,
+        config_read_only=summary.config_read_only,
         aliases=aliases,
         authentication_method=authentication_method,
         identity_configured=_boolean(
@@ -2114,6 +2156,149 @@ _EDITOR_DETAIL_FIELDS = frozenset(
 )
 
 
+def earlier_directives_to_wire(value: Any) -> Dict[str, Any]:
+    if type(value) is not tuple or any(
+        not isinstance(item, EarlierDirective) for item in value
+    ):
+        raise TypeError("value must be a tuple of EarlierDirective")
+    return {
+        "earlier": [
+            {
+                "key": item.key,
+                "value": item.value,
+                "block": item.block,
+                "file": item.file,
+                "line": item.line,
+            }
+            for item in value
+        ]
+    }
+
+
+def earlier_directives_from_wire(value: Any) -> Tuple[EarlierDirective, ...]:
+    data = _strict_fields(value, required={"earlier"}, context="earlier directives")
+    if type(data["earlier"]) is not list:
+        raise ValueError("earlier directives must be a list")
+    found = []
+    for item in data["earlier"]:
+        fields = _strict_fields(
+            item,
+            required={"key", "value", "block", "file", "line"},
+            context="earlier directive",
+        )
+        found.append(
+            EarlierDirective(
+                key=fields["key"],
+                value=fields["value"],
+                block=fields["block"],
+                file=fields["file"],
+                line=fields["line"],
+            )
+        )
+    return tuple(found)
+
+
+def _earlier_directive_to_wire(item: EarlierDirective) -> Dict[str, Any]:
+    return {
+        "key": item.key,
+        "value": item.value,
+        "block": item.block,
+        "file": item.file,
+        "line": item.line,
+    }
+
+
+def _earlier_directive_from_wire(value: Any) -> EarlierDirective:
+    fields = _strict_fields(
+        value,
+        required={"key", "value", "block", "file", "line"},
+        context="earlier directive",
+    )
+    return EarlierDirective(
+        key=fields["key"],
+        value=fields["value"],
+        block=fields["block"],
+        file=fields["file"],
+        line=fields["line"],
+    )
+
+
+def config_conflicts_to_wire(value: Any) -> Dict[str, Any]:
+    if type(value) is not tuple or any(
+        not isinstance(item, ConfigConflict) for item in value
+    ):
+        raise TypeError("value must be a tuple of ConfigConflict")
+    return {
+        "conflicts": [
+            {
+                "connection_id": item.connection_id,
+                "host": item.host,
+                "key": item.key,
+                "own_value": item.own_value,
+                "earlier": _earlier_directive_to_wire(item.earlier),
+            }
+            for item in value
+        ]
+    }
+
+
+def config_conflicts_from_wire(value: Any) -> Tuple[ConfigConflict, ...]:
+    data = _strict_fields(value, required={"conflicts"}, context="config conflicts")
+    if type(data["conflicts"]) is not list:
+        raise ValueError("config conflicts must be a list")
+    found = []
+    for item in data["conflicts"]:
+        fields = _strict_fields(
+            item,
+            required={"connection_id", "host", "key", "own_value", "earlier"},
+            context="config conflict",
+        )
+        found.append(
+            ConfigConflict(
+                connection_id=fields["connection_id"],
+                host=fields["host"],
+                key=fields["key"],
+                own_value=fields["own_value"],
+                earlier=_earlier_directive_from_wire(fields["earlier"]),
+            )
+        )
+    return tuple(found)
+
+
+def config_syntax_errors_to_wire(value: Any) -> Dict[str, Any]:
+    if type(value) is not tuple or any(
+        not isinstance(item, ConfigSyntaxError) for item in value
+    ):
+        raise TypeError("value must be a tuple of ConfigSyntaxError")
+    return {
+        "errors": [
+            {"file": item.file, "line": item.line, "diagnostic": item.diagnostic}
+            for item in value
+        ]
+    }
+
+
+def config_syntax_errors_from_wire(value: Any) -> Tuple[ConfigSyntaxError, ...]:
+    data = _strict_fields(value, required={"errors"}, context="config syntax errors")
+    if type(data["errors"]) is not list:
+        raise ValueError("config syntax errors must be a list")
+    found = []
+    for item in data["errors"]:
+        fields = _strict_fields(
+            item,
+            required={"file", "line", "diagnostic"},
+            context="config syntax error",
+        )
+        found.append(
+            ConfigSyntaxError(
+                file=fields["file"],
+                line=fields["line"],
+                diagnostic=fields["diagnostic"],
+            )
+        )
+    return tuple(found)
+
+
 def effective_config_comparison_to_wire(
     value: EffectiveConfigComparison,
 ) -> Dict[str, Any]:
@@ -2128,6 +2313,7 @@ def effective_config_comparison_to_wire(
         "own": list(value.own),
         "full": list(value.full),
         "generation": value.generation,
+        "earlier": earlier_directives_to_wire(value.earlier)["earlier"],
     }
 
 
@@ -2140,8 +2326,11 @@ def effective_config_comparison_from_wire(
             "connection_id", "host", "available", "has_diff", "changes",
             "own", "full", "generation",
         },
+        # Absent from a daemon older than API 0.98.
+        optional={"earlier"},
         context="effective config comparison",
     )
+    earlier = earlier_directives_from_wire({"earlier": data.get("earlier", [])})
     if type(data["changes"]) is not list:
         raise ValueError("effective config changes must be a list")
     if any(type(item) is not dict for item in data["changes"]):
@@ -2157,6 +2346,7 @@ def effective_config_comparison_from_wire(
         own=tuple(data["own"]),
         full=tuple(data["full"]),
         generation=data["generation"],
+        earlier=earlier,
     )
 
 
@@ -2272,11 +2462,17 @@ def connection_editor_details_from_wire(
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
         # Additive: a daemon predating authorship evidence simply omits it, and
         # an empty tuple already means "no evidence".
-        optional={"display_name", "target_summary", "authored_directives", "plugin_data"},
+        optional={
+            "display_name",
+            "target_summary",
+            "config_read_only",
+            "authored_directives",
+            "plugin_data",
+        },
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
-    for key in ("display_name", "target_summary"):
+    for key in ("display_name", "target_summary", "config_read_only"):
         if key in data:
             summary_payload[key] = data[key]
     summary = connection_summary_from_wire(summary_payload)
@@ -2319,6 +2515,7 @@ def connection_editor_details_from_wire(
         health=summary.health,
         groups=summary.groups,
         display_name=summary.display_name,
+        config_read_only=summary.config_read_only,
         aliases=aliases,
         authentication_method=authentication_method,
         identity_configured=_boolean(data["identity_configured"], "identity configured"),
@@ -6438,6 +6635,18 @@ def daemon_stop_result_from_wire(value: Any) -> DaemonStopResult:
 # ---------------------------------------------------------------------------
 
 
+def _extra_ssh_options(value: Any) -> tuple:
+    if type(value) is not list:
+        raise ValueError("extra_options must be an array")
+    return tuple(_text(item, "extra_options") for item in value)
+
+
+def _forced_ssh_options(value: Any) -> tuple:
+    if type(value) is not list:
+        raise ValueError("forced_options must be an array")
+    return tuple(_text(item, "forced_options") for item in value)
+
+
 def global_ssh_overrides_to_wire(
     overrides: Any,
 ) -> Dict[str, Any]:
@@ -6448,15 +6657,15 @@ def global_ssh_overrides_to_wire(
     return {
         "revision": overrides.revision,
         "connect_timeout": overrides.connect_timeout,
-        "connection_attempts": overrides.connection_attempts,
-        "server_alive_interval": overrides.server_alive_interval,
-        "server_alive_count_max": overrides.server_alive_count_max,
         "strict_host_key_checking": overrides.strict_host_key_checking,
-        "batch_mode": overrides.batch_mode,
         "compression": overrides.compression,
         "verbosity": overrides.verbosity,
         "debug_enabled": overrides.debug_enabled,
         "applies_immediately": overrides.applies_immediately,
+        "extra_options": list(overrides.extra_options),
+        "address_family": overrides.address_family,
+        "legacy_algorithms": overrides.legacy_algorithms,
+        "forced_options": list(overrides.forced_options),
     }
 
 
@@ -6468,34 +6677,40 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
         required={
             "revision",
             "connect_timeout",
-            "connection_attempts",
-            "server_alive_interval",
-            "server_alive_count_max",
             "strict_host_key_checking",
-            "batch_mode",
             "compression",
             "verbosity",
             "debug_enabled",
         },
-        optional={"applies_immediately"},
+        optional={
+            "applies_immediately",
+            "extra_options",
+            "address_family",
+            "legacy_algorithms",
+            "forced_options",
+        },
         context="global ssh overrides",
     )
     return GlobalSshOverrides(
         revision=_identifier(data["revision"], "revision"),
         connect_timeout=_integer(data["connect_timeout"], "connect_timeout"),
-        connection_attempts=_integer(data["connection_attempts"], "connection_attempts"),
-        server_alive_interval=_integer(data["server_alive_interval"], "server_alive_interval"),
-        server_alive_count_max=_integer(data["server_alive_count_max"], "server_alive_count_max"),
         strict_host_key_checking=_text(
             data["strict_host_key_checking"],
             "strict_host_key_checking",
             allow_empty=True,
         ),
-        batch_mode=_boolean(data["batch_mode"], "batch_mode"),
-        compression=_boolean(data["compression"], "compression"),
+        compression=_text(data["compression"], "compression", allow_empty=True),
         verbosity=_integer(data["verbosity"], "verbosity"),
         debug_enabled=_boolean(data["debug_enabled"], "debug_enabled"),
         applies_immediately=_boolean(data.get("applies_immediately", True), "applies_immediately"),
+        extra_options=_extra_ssh_options(data.get("extra_options", [])),
+        address_family=_text(
+            data.get("address_family", ""), "address_family", allow_empty=True
+        ),
+        legacy_algorithms=_boolean(
+            data.get("legacy_algorithms", False), "legacy_algorithms"
+        ),
+        forced_options=_forced_ssh_options(data.get("forced_options", [])),
     )
 
 
@@ -6506,7 +6721,12 @@ def update_global_ssh_overrides_request_to_wire(
 
     if type(request) is not UpdateGlobalSshOverridesRequest:
         raise TypeError("UpdateGlobalSshOverridesRequest is required")
-    result: Dict[str, Any] = {"patch": dict(request.patch)}
+    result: Dict[str, Any] = {
+        "patch": {
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in request.patch.items()
+        }
+    }
     if request.expected_revision is not None:
         result["expected_revision"] = request.expected_revision
     return result

@@ -24,6 +24,7 @@ from ..api.models.common import validate_ssh_hostname
 from ..api.models.connections import ConnectionId
 from ..api.models.sessions import PluginSessionFailure
 from ..core.connections.models import ConnectionRecord
+from ..core.connections.transient import is_transient_connection_id
 
 logger = logging.getLogger(__name__)
 
@@ -123,9 +124,20 @@ class HeadlessConnectionView:
         record: ConnectionRecord,
         *,
         manager: Optional[Any] = None,
+        config_root: Optional[Any] = None,
     ) -> None:
         self._record = record
         self._manager = manager
+        #: The SSH configuration root the daemon loaded this record from.
+        #: Decides which file (if any) a launch names with ``-F``.
+        self.config_root: str = _string(config_root)
+        self._effective_config: Optional[Dict[str, Any]] = None
+        self._configured_directives: Optional[Dict[str, Any]] = None
+        #: The composed Settings ▸ SSH Options fragment, set by the launch
+        #: provider. Effective-config queries pass it on so they resolve what
+        #: the launch will use (an overridden User decides which stored
+        #: password matches).
+        self.global_ssh_options: Tuple[str, ...] = ()
         self.data = dict(record.data or {})
         self._status = None
         self.is_connected = False
@@ -169,9 +181,10 @@ class HeadlessConnectionView:
     def effective_username(self) -> str:
         """The account OpenSSH resolves for this host.
 
-        Equals :attr:`username` whenever the Host block authored ``User``. When
-        it did not, the account is inherited — from a global block or from
-        OpenSSH's own local-user default — and only ``ssh -G`` knows it. Secret
+        Equals :attr:`username` whenever the Host block authored ``User`` and
+        Settings ▸ SSH Options do not force another one. Otherwise the account
+        is inherited — from a global block or from OpenSSH's own local-user
+        default — or overridden, and only ``ssh -G`` knows it. Secret
         lookup and user-facing labels must use this, never the authored value,
         which is empty in exactly that case.
 
@@ -180,25 +193,120 @@ class HeadlessConnectionView:
         """
         if self._effective_username is not None:
             return self._effective_username
+        from ..core.settings.ssh_overrides import forced_option
+
         resolved = self.username
-        if not resolved:
+        forced = forced_option(self.global_ssh_options, "user")
+        # A host declared in the configuration is resolved by OpenSSH even
+        # when its block sets User: an earlier ``Host *`` may set it first.
+        if forced or not resolved or self._declared_in_config():
+            effective = self.effective_ssh_config()
+            if effective:
+                resolved = _string(effective.get("user")) or (
+                    self.username if forced else ""
+                )
+            elif forced or not resolved:
+                resolved = self.username if forced else ""
+        self._effective_username = resolved
+        return resolved
+
+    def _declared_in_config(self) -> bool:
+        """Whether this record was loaded from an SSH configuration file.
+
+        Only then does ``ssh -G <alias>`` describe it. A record from anywhere
+        else (a test, another store) has just its saved values, and resolving
+        its name would report OpenSSH's defaults for an unknown host.
+        """
+        source = self.source
+        return bool(source) and os.path.isfile(
+            os.path.abspath(os.path.expanduser(os.path.expandvars(source)))
+        )
+
+    def effective_ssh_config(self) -> Dict[str, Any]:
+        """What OpenSSH resolves for this host in a launch (``ssh -G``).
+
+        Uses the configuration file a launch uses and Settings ▸ SSH Options,
+        so every value is the one the session gets, wherever it comes from:
+        the Host block, a ``Host *`` or ``Match`` block, an included file, the
+        system configuration, or OpenSSH's own default. Resolved once per
+        view; empty when ``ssh -G`` cannot run.
+        """
+        if self._effective_config is None:
+            resolved: Dict[str, Any] = {}
             host_label = self.resolve_host_identifier() or self.get_effective_host()
             if host_label:
                 try:
                     from ..core.ssh_config_effective import get_effective_ssh_config
 
-                    config_override = self._resolve_config_override_path()
-                    effective = get_effective_ssh_config(
-                        host_label, config_file=config_override
+                    resolved = dict(
+                        get_effective_ssh_config(
+                            host_label,
+                            config_file=self._resolve_config_override_path(),
+                            overrides=self.global_ssh_options,
+                        )
                     )
-                    resolved = _string(effective.get("user"))
                 except Exception:
-                    logger.debug(
-                        "Could not resolve effective username", exc_info=True
+                    logger.debug("Could not resolve effective config", exc_info=True)
+            self._effective_config = resolved
+        return self._effective_config
+
+    def configured_ssh_directives(self) -> Dict[str, Any]:
+        """The first configuration line that sets each option for this host.
+
+        Read from the files a launch makes OpenSSH read: the ``-F`` file, or
+        ``~/.ssh/config`` and then the system-wide file when there is no
+        ``-F``. Needed where ``ssh -G`` is ambiguous: it prints an explicit
+        ``ServerAliveInterval 0`` exactly like an unset one. Resolved once per
+        view; empty when nothing can be read.
+        """
+        if self._configured_directives is None:
+            found: Dict[str, Any] = {}
+            host_label = self.resolve_host_identifier() or self.get_effective_host()
+            if host_label:
+                try:
+                    from ..core.ssh_config_effective import (
+                        launch_configured_directives,
                     )
-                    resolved = ""
-        self._effective_username = resolved
-        return resolved
+
+                    found = launch_configured_directives(
+                        host_label,
+                        self._resolve_config_override_path(),
+                        self.effective_ssh_config(),
+                    )
+                except Exception:
+                    logger.debug("Could not read configured directives", exc_info=True)
+            self._configured_directives = found
+        return self._configured_directives
+
+    def effective_destination(self) -> Tuple[str, str, int]:
+        """``(hostname, username, port)`` the launch will really use.
+
+        All three come from OpenSSH's own resolution, so a ``HostName`` or
+        ``Port`` inherited from a ``Host *`` block is reported as used. The
+        saved values stand in only when ``ssh -G`` cannot run.
+        """
+        from ..core.settings.ssh_overrides import forced_destination
+
+        hostname = _string(
+            self.hostname or self.get_effective_host() or self.host
+        )
+        hostname, _user, port = forced_destination(
+            self.global_ssh_options,
+            hostname=hostname,
+            username="",
+            port=self.port,
+            alias=_string(self.resolve_host_identifier()) or None,
+        )
+        effective = self.effective_ssh_config() if self._declared_in_config() else {}
+        if effective:
+            hostname = _string(effective.get("hostname")) or hostname
+            try:
+                resolved_port = int(_string(effective.get("port")))
+                if 1 <= resolved_port <= 65535:
+                    port = resolved_port
+            except (TypeError, ValueError):
+                pass
+        return hostname, _string(self.effective_username), port
 
     @property
     def port(self) -> int:
@@ -295,19 +403,28 @@ class HeadlessConnectionView:
         return ""
 
     def _resolve_config_override_path(self) -> Optional[str]:
+        """The file a launch names with ``-F``, or ``None`` for no ``-F``.
+
+        A saved host resolves through the configuration root it was loaded
+        from, so the root's ``Host *`` and ``Match`` blocks apply even when
+        the host is declared in an included file -- and through no ``-F`` at
+        all when that root is ``~/.ssh/config``, exactly like ``ssh host`` in
+        a terminal (see ``launch_config_file``). A typed, unsaved target has
+        a private file of its own and always uses it.
+        """
         def _existing(path: str) -> Optional[str]:
             if not path:
                 return None
             expanded = os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
             return expanded if os.path.exists(expanded) else None
 
-        root = _existing(_string(self.data.get("config_root")))
-        if root:
-            return root
         source = _existing(self.source)
-        if source:
-            return source
-        return None
+        root = self.config_root or _string(self.data.get("config_root"))
+        if root and not is_transient_connection_id(self.id):
+            from ..core.ssh_config_effective import launch_config_file
+
+            return launch_config_file(root, source)
+        return source
 
     def collect_identity_file_candidates(
         self,
@@ -339,12 +456,11 @@ class HeadlessConnectionView:
                     from ..core.ssh_config_effective import get_effective_ssh_config
 
                     config_override = self._resolve_config_override_path()
-                    if config_override:
-                        effective_cfg = get_effective_ssh_config(
-                            host_label, config_file=config_override
-                        )
-                    else:
-                        effective_cfg = get_effective_ssh_config(host_label)
+                    effective_cfg = get_effective_ssh_config(
+                        host_label,
+                        config_file=config_override or None,
+                        overrides=self.global_ssh_options,
+                    )
                 except Exception:
                     effective_cfg = {}
             else:
@@ -460,10 +576,14 @@ class DaemonConnectionLaunchProvider:
         app_config: Any = None,
         headless_settings: Any = None,
         identity_env: Optional[Callable[[Dict[str, str]], Dict[str, str]]] = None,
+        config_root: Optional[Callable[[], Any]] = None,
     ) -> None:
         if resolver is None:
             raise ValueError("a connection resolver is required")
         self._resolver = resolver
+        # The SSH root the daemon repository loads; None for compositions
+        # (tests) without one, which resolve each host from its own file.
+        self._config_root = config_root
         self._secret_provider = secret_provider
         self._app_config_view = app_config
         self._headless_settings = headless_settings
@@ -537,6 +657,28 @@ class DaemonConnectionLaunchProvider:
 
         return _ManagerShim()
 
+    def _current_config_root(self) -> Optional[str]:
+        if self._config_root is None:
+            return None
+        try:
+            root = self._config_root()
+        except Exception:
+            logger.debug("Could not read the SSH configuration root", exc_info=True)
+            return None
+        return str(root) if root else None
+
+    def _view(self, record: ConnectionRecord) -> "HeadlessConnectionView":
+        """A connection view that knows the current Settings overrides."""
+        view = HeadlessConnectionView(record, config_root=self._current_config_root())
+        try:
+            app_config = self._get_app_config()
+            ssh_config = app_config.get_ssh_config() if app_config else {}
+            composed = (ssh_config or {}).get("ssh_overrides") or ()
+            view.global_ssh_options = tuple(str(entry) for entry in composed if entry)
+        except Exception:
+            logger.debug("Could not read global SSH options", exc_info=True)
+        return view
+
     def _get_app_config(self):
         if self._app_config_view is not None:
             return self._app_config_view
@@ -546,9 +688,20 @@ class DaemonConnectionLaunchProvider:
 
     @staticmethod
     def _connection_is_forwarding_only(connection: HeadlessConnectionView) -> bool:
-        """True when this Host authors ``SessionType none`` (forwarding-only)."""
+        """True when OpenSSH resolves ``SessionType none`` for this launch.
+
+        The value may come from a ``Host *.tunnel`` or ``Match`` block, an
+        included file or Settings ▸ SSH Options rather than the Host block, so
+        ``ssh -G`` decides for a host declared in a configuration file. Only
+        when that cannot answer (no such file, ``ssh -G`` failed, an OpenSSH
+        without SessionType) does the authored block decide.
+        """
         from ..forwarding_only_ui import connection_forwarding_only
 
+        if connection._declared_in_config():
+            session_type = _string(connection.effective_ssh_config().get("sessiontype"))
+            if session_type:
+                return session_type.casefold() == "none"
         return connection_forwarding_only(connection) is True
 
     @staticmethod
@@ -574,8 +727,17 @@ class DaemonConnectionLaunchProvider:
                     continue
                 if len(seen) >= _MAX_JUMP_HOSTS:
                     raise ValueError("ProxyJump names too many hosts")
+                first = not seen
                 seen.append(host)
-                effective = get_effective_ssh_config(host, config_file=config_file)
+                # The destination itself was already resolved for this view;
+                # each jump host needs a resolution of its own.
+                effective = connection.effective_ssh_config() if first else (
+                    get_effective_ssh_config(
+                        host,
+                        config_file=config_file,
+                        overrides=connection.global_ssh_options,
+                    )
+                )
                 validate_ssh_hostname(effective.get("hostname"), "HostName")
                 for hop in _string(effective.get("proxyjump")).split(","):
                     if hop:
@@ -615,8 +777,8 @@ class DaemonConnectionLaunchProvider:
             # options before the destination -- the only position OpenSSH
             # reads as options. (Appending to the finished argv would land
             # after the remote command, where the remote shell executes it.)
-            # OpenSSH is first-value-wins: this fragment is placed before
-            # authored Host options and before preference ssh_overrides, so
+            # OpenSSH is first-value-wins: extra_args are emitted before the
+            # Settings ssh_overrides and before authored Host options, so
             # Host Info holds a master even when ssh.controlmaster is off or
             # the Host block authored ControlMaster no. When the preference
             # already provided the identical fragment it may appear twice;
@@ -670,16 +832,10 @@ class DaemonConnectionLaunchProvider:
         if askpass_active:
             environment["SSHPILOT_DAEMON_ASKPASS_ACTIVE"] = "1"
         environment = self._apply_identity_env(environment)
-        local_command = _string(connection.local_command)
-        if local_command and len(argv) >= 2:
-            argv = (
-                *argv[:-1],
-                "-o",
-                "PermitLocalCommand=yes",
-                "-o",
-                f"LocalCommand={local_command}",
-                argv[-1],
-            )
+        # The Host block's LocalCommand is in the configuration file, next to
+        # the PermitLocalCommand the editor writes with it, and OpenSSH runs
+        # it from there. Nothing is repeated here: options appended after the
+        # build landed behind the destination, inside a remote command.
         executable = shutil.which(argv[0], path=environment.get("PATH"))
         if executable is None:
             raise SshPilotError(
@@ -698,7 +854,7 @@ class DaemonConnectionLaunchProvider:
         force_tty: bool = False,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         protocol = connection.protocol
         if protocol != "ssh":
             argv, environment = self._prepare_protocol_launch(
@@ -709,8 +865,8 @@ class DaemonConnectionLaunchProvider:
             # ControlMaster=auto + ControlPersist preference. OpenSSH then
             # backgrounds the mux master and the watched foreground process exits
             # 0, which the UI treats as a clean shell exit and destroys the tab.
-            # Force ControlMaster=no first (OpenSSH first-value-wins; preference
-            # overrides are emitted last) so the -N process stays in the
+            # Force ControlMaster=no first (OpenSSH first-value-wins; extra_args
+            # are emitted before the Settings overrides) so the -N process stays in the
             # foreground. Normal shell tabs keep multiplexing unchanged.
             extra_args: Optional[List[str]] = None
             if self._connection_is_forwarding_only(connection):
@@ -745,7 +901,7 @@ class DaemonConnectionLaunchProvider:
         target_override: Optional[str] = None,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -762,7 +918,7 @@ class DaemonConnectionLaunchProvider:
 
     def scp_target(self, connection_id: ConnectionId) -> str:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         host = connection.resolve_host_identifier() if hasattr(
             connection, "resolve_host_identifier"
         ) else connection.host
@@ -775,7 +931,9 @@ class DaemonConnectionLaunchProvider:
             )
         if ":" in host and not (host.startswith("[") and host.endswith("]")):
             host = f"[{host}]"
-        return f"{connection.username}@{host}" if connection.username else host
+        # The alias alone: a ``user@`` here would beat the configuration, and
+        # OpenSSH resolves the account from it as `scp file alias:` does.
+        return host
 
     def remote_identity(self, connection_id: ConnectionId) -> Tuple[str, str, int]:
         """``(hostname, username, port)`` for prompts and secret lookup.
@@ -793,14 +951,8 @@ class DaemonConnectionLaunchProvider:
         """
 
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
-        hostname = str(
-            connection.hostname
-            or connection.get_effective_host()
-            or connection.host
-            or ""
-        ).strip()
-        return hostname, str(connection.effective_username or "").strip(), connection.port
+        connection = self._view(record)
+        return connection.effective_destination()
 
     def prepare_sftp_launch(
         self,
@@ -809,7 +961,7 @@ class DaemonConnectionLaunchProvider:
         interaction_policy: str = "broker",
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -841,12 +993,12 @@ class DaemonConnectionLaunchProvider:
         ``ssh -N`` foreground exits 0 — Host Info / plugin local forwards fail
         with ``forward_not_active`` while an orphaned master may still hold the
         bind. Force ``ControlMaster=no`` first (OpenSSH first-value-wins;
-        preference overrides are emitted last) so the dedicated forward child
+        ``extra_args`` are emitted before the Settings overrides) so the dedicated forward child
         stays in the foreground for the daemon's lifetime tracking.
         """
 
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -872,6 +1024,10 @@ class DaemonConnectionLaunchProvider:
             extra_args=[
                 "-o",
                 "ControlMaster=no",
+                # A ClearAllForwardings=yes from anywhere would drop the very
+                # forward this process exists for.
+                "-o",
+                "ClearAllForwardings=no",
                 "-N",
                 "-T",
                 forward_flag,
@@ -934,7 +1090,7 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection_id,
             )
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -976,7 +1132,7 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection_id,
             )
         record = self._resolve(connection_id)
-        connection = HeadlessConnectionView(record)
+        connection = self._view(record)
         if connection.protocol != "ssh":
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
@@ -984,7 +1140,13 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection_id,
             )
 
-        host_value = connection.hostname or connection.host
+        # The Host alias, as every other launch: OpenSSH then applies the
+        # Host block and the blocks around it, as `ssh-copy-id <alias>` does.
+        host_value = (
+            connection.resolve_host_identifier()
+            or connection.host
+            or connection.hostname
+        )
         if not host_value:
             raise SshPilotError(
                 ErrorCode.VALIDATION_FAILED,
@@ -993,19 +1155,14 @@ class DaemonConnectionLaunchProvider:
             )
         config_file = connection._resolve_config_override_path()
         app_cfg = self._get_app_config()
-        from ..core.ssh_config_effective import get_effective_ssh_config
         from ..ssh_connection_builder import (
             _build_base_ssh_command,
+            _isolated_known_hosts_override,
             resolve_native_auth,
         )
 
         self._refuse_shell_text_in_host_names(connection)
-        try:
-            effective_config = get_effective_ssh_config(
-                host_value, config_file=config_file
-            )
-        except Exception:
-            effective_config = {}
+        effective_config = connection.effective_ssh_config()
         try:
             argv = _build_base_ssh_command(
                 connection,
@@ -1024,21 +1181,9 @@ class DaemonConnectionLaunchProvider:
             argv.append("-f")
         argv.extend(["-i", public_key_path])
 
-        # Which known_hosts file this is depends on the operation mode, not on
-        # where the declaring file happens to sit: -F is given the file that
-        # declared the Host, so for anything pulled in through an Include that
-        # directory is a fragment's, not the root's.
-        known_hosts_path = None
-        try:
-            from sshpilot.platform.paths import known_hosts_path_for
-
-            known_hosts_path = str(
-                known_hosts_path_for(bool(connection.data.get("isolated_mode")))
-            )
-        except Exception:
-            known_hosts_path = None
-        if known_hosts_path:
-            argv += ["-o", f"UserKnownHostsFile={known_hosts_path}"]
+        # Isolated Mode keeps its own known_hosts; Default Mode leaves the
+        # file to OpenSSH and the user's configuration, as a session does.
+        argv += _isolated_known_hosts_override(connection, effective_config)
 
         # Authentication preferences mirror the frontend runner: password
         # method narrows PreferredAuthentications; a stored password alongside
@@ -1063,12 +1208,7 @@ class DaemonConnectionLaunchProvider:
                 "publickey,keyboard-interactive,password",
             ]
 
-        target = (
-            f"{connection.username}@{host_value}"
-            if connection.username
-            else host_value
-        )
-        argv.append(target)
+        argv.append(host_value)
 
         # Sanitized daemon base environment (same allowlist the session path
         # uses), then the daemon-owned identity agent environment.
@@ -1102,7 +1242,7 @@ class DaemonConnectionLaunchProvider:
                 argv = windows_copy_id.ssh_argv_from_copy_id(
                     argv, ssh_executable, public_key, force=force
                 )
-                _log_copy_id_program(ssh_executable, target, fallback=True)
+                _log_copy_id_program(ssh_executable, host_value, fallback=True)
                 return tuple(argv), environment
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_CAPABILITY,
@@ -1110,7 +1250,7 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection_id,
             )
         argv[0] = executable
-        _log_copy_id_program(executable, target, fallback=False)
+        _log_copy_id_program(executable, host_value, fallback=False)
         return tuple(argv), environment
 
     def describe_target(self, protocol: str, data: Any) -> str:

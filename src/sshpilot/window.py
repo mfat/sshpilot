@@ -1038,6 +1038,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(self.client, bridge=self.client_bridge)
         self._maybe_restore_daemon_sessions()
+        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        if callable(schedule):
+            schedule()
         self._run_client_ready_callbacks(True)
 
     def when_daemon_client_ready(self, callback) -> None:
@@ -2108,6 +2111,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not unique_connections:
             return
 
+        # A connection in a read-only SSH config (Home Manager) cannot be
+        # removed here: explain that instead of asking to confirm a delete
+        # that can only fail.
+        from .gtk.ssh_config_access_messages import (
+            is_config_read_only,
+            read_only_body,
+            read_only_heading,
+        )
+        unavailable = bool(getattr(self, '_ssh_config_unavailable', None))
+        if unavailable or any(is_config_read_only(c) for c in unique_connections):
+            self._error_dialog(
+                read_only_heading(unavailable), read_only_body(unavailable)
+            )
+            return
+
         active_connections = [
             connection
             for connection in unique_connections
@@ -2209,6 +2227,124 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
 
+    def _sync_ssh_config_link_notice(self, manager=None):
+        """Explain an empty list caused by an SSH config the daemon can't read.
+
+        The daemon names why (a link it can't follow -- inside the Flatpak
+        usually a NixOS Home Manager link into /nix/store --, a folder or
+        file that refuses access, a folder the sandbox doesn't share, an
+        unreadable include, a config it can't parse) and the path at fault.
+        Without this the list is just empty.
+        """
+        try:
+            snapshot = (manager or self.connection_manager).snapshot()
+            reason = getattr(snapshot, 'ssh_config_unavailable', None)
+            path = str(getattr(snapshot, 'ssh_config_unavailable_path', '') or '')
+        except Exception:
+            reason, path = None, ''
+        self._ssh_config_unavailable = (reason, path) if reason is not None else None
+        container = getattr(self, 'ssh_config_banner_container', None)
+        if container is None:
+            return
+        banner = self.ssh_config_link_banner
+        if reason is None:
+            if banner is not None:
+                banner.set_revealed(False)
+            container.set_visible(False)
+            return
+        from .gtk.ssh_config_access_messages import (
+            details_button_label,
+            unavailable_banner_title,
+        )
+        from .platform.detect import is_flatpak
+        if banner is None:
+            banner = Adw.Banner()
+            try:
+                banner.set_use_markup(False)
+            except Exception:
+                pass
+            banner.set_button_label(details_button_label())
+            banner.connect('button-clicked', self._on_ssh_config_link_details)
+            container.append(banner)
+            self.ssh_config_link_banner = banner
+        banner.set_title(unavailable_banner_title(reason, is_flatpak()))
+        container.set_visible(True)
+        banner.set_revealed(True)
+
+    def _schedule_config_precedence_check(self) -> None:
+        """Look for unused host settings shortly after the store settles.
+
+        Store refreshes come in bursts; one check follows the last of them.
+        """
+        notice = getattr(self, '_config_precedence_notice', None)
+        if notice is None:
+            return
+        if getattr(self, '_config_precedence_check_timer', 0):
+            GLib.source_remove(self._config_precedence_check_timer)
+
+        def fire():
+            self._config_precedence_check_timer = 0
+            if self._daemon_ready():
+                notice.check()
+                # Same moment, same files: whether OpenSSH accepts them.
+                syntax_notice = getattr(self, '_config_syntax_notice', None)
+                if syntax_notice is not None:
+                    syntax_notice.check()
+            return False
+
+        self._config_precedence_check_timer = GLib.timeout_add(1000, fire)
+
+    def _on_active_for_config_syntax(self, *_args) -> None:
+        """Ask again whether OpenSSH accepts the config on return to the window.
+
+        A file corrected in another program changes no connection, so the
+        daemon announces nothing; coming back to this window is the cue.
+        """
+        notice = getattr(self, '_config_syntax_notice', None)
+        if notice is None or not self.is_active() or not self._daemon_ready():
+            return
+        logger.debug("Window active again: asking whether OpenSSH accepts the config")
+        notice.check()
+
+    def _on_ssh_config_link_details(self, *_args):
+        from .gtk.ssh_config_access_messages import (
+            copy_command_label,
+            fix_command,
+            unavailable_details_body,
+            unavailable_details_heading,
+        )
+        from .platform.detect import is_flatpak
+
+        if not self._ssh_config_unavailable:
+            return
+        reason, path = self._ssh_config_unavailable
+        flatpak = is_flatpak()
+        command = fix_command(reason, path, flatpak)
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=unavailable_details_heading(reason),
+            body=unavailable_details_body(reason, path, flatpak),
+        )
+        if command:
+            dialog.add_response('copy', copy_command_label())
+            dialog.set_response_appearance('copy', Adw.ResponseAppearance.SUGGESTED)
+        dialog.add_response('close', _('_Close'))
+        dialog.set_default_response('copy' if command else 'close')
+        dialog.set_close_response('close')
+
+        def _on_response(_dialog, response):
+            if response != 'copy':
+                return
+            try:
+                self.get_clipboard().set(command)
+                self.toast_overlay.add_toast(Adw.Toast.new(_('Copied to clipboard')))
+            except Exception:
+                logger.warning("Could not copy the SSH config fix command")
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
     def _ensure_update_banner(self):
         """Build the update banner only when an update is ready to display."""
         if getattr(self, 'update_banner', None) is not None:
@@ -2277,6 +2413,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.update_banner_container.set_visible(False)
+        # SSH config the daemon cannot read (#1373); built on first use.
+        self.ssh_config_link_banner = None
+        self._ssh_config_unavailable = None
+        self.ssh_config_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.ssh_config_banner_container.set_visible(False)
+        # Saved hosts whose own settings an earlier block beats; shown until
+        # dismissed, and again for a conflict not dismissed before.
+        self.config_precedence_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.config_precedence_banner_container.set_visible(False)
+        from .gtk.config_precedence_notice import ConfigPrecedenceNotice
+        self._config_precedence_notice = ConfigPrecedenceNotice(
+            self, self.config_precedence_banner_container
+        )
+        self._config_precedence_check_timer = 0
+        # A line OpenSSH rejects: no SSH connection starts until it is fixed.
+        self.config_syntax_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.config_syntax_banner_container.set_visible(False)
+        from .gtk.config_syntax_notice import ConfigSyntaxNotice
+        self._config_syntax_notice = ConfigSyntaxNotice(
+            self, self.config_syntax_banner_container
+        )
+        self.connect('notify::is-active', self._on_active_for_config_syntax)
         self.tips_revealer = None
         self.tips_label = None
         self.tips_next_button = None
@@ -4062,6 +4226,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._add_content_top_bars(content_box)
             # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.ssh_config_banner_container)
+            content_wrapper.append(self.config_syntax_banner_container)
+            content_wrapper.append(self.config_precedence_banner_container)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
@@ -4078,6 +4245,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         else:
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.ssh_config_banner_container)
+            main_box.append(self.config_syntax_banner_container)
+            main_box.append(self.config_precedence_banner_container)
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
@@ -5731,6 +5901,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
         dialog.connect('connection-saved', self.on_connection_saved)
 
+        # Read-only SSH config (Home Manager link into /nix/store): open the
+        # editor view-only with the reason up front. An existing connection
+        # carries its own file's state; a new or duplicated one is appended
+        # to the root config.
+        from .gtk.ssh_config_access_messages import is_config_read_only
+        if connection is None or as_new:
+            try:
+                read_only = bool(getattr(
+                    self.connection_manager.snapshot(),
+                    'ssh_config_read_only',
+                    False,
+                ))
+            except Exception:
+                read_only = False
+        else:
+            read_only = is_config_read_only(connection)
+        # Nothing saves while the SSH config can't be read, whatever the
+        # protocol: the daemon refuses every change rather than guess.
+        unavailable = bool(getattr(self, '_ssh_config_unavailable', None))
+        if read_only or unavailable:
+            dialog.set_config_read_only(True, unavailable=unavailable)
+
         # The authoritative daemon editor snapshot gates existing SSH edits.  A
         # blank/new connection (``connection is None`` or ``as_new``) needs no
         # generation and must never enter the load-failed state; an existing
@@ -6198,13 +6390,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to present group edit options: {e}")
             self.show_connection_dialog(connection, skip_group_warning=True)
 
-    def _open_ssh_config_editor(self):
+    def _open_ssh_config_editor(self, parent=None, on_saved=None):
         """Open the SSH config text editor backed by the daemon.
 
         GTK never decides which SSH config file is active and never writes it:
         the daemon resolves the root (normal or isolated mode), serves the
         text, performs the hardened atomic write, and reloads connection
         state. This reuses the existing raw text editor UI unchanged.
+
+        *parent* is a modal window the editor is opened from (the connection
+        dialog). A window transient for this one could not be used while that
+        dialog is open, so the editor is then modal over *parent* instead.
+        *on_saved* runs after each save. Returns the editor, or None.
         """
         try:
             from .text_editor import RemoteFileEditorWindow
@@ -6222,11 +6419,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     "SSH config editing requires the background service. "
                     "Start it and try again."
                 ))
-                return
+                return None
+
+            def saved():
+                # A corrected line or a moved block changes no connection, so
+                # no store refresh follows: look at the notices again here.
+                schedule = getattr(self, '_schedule_config_precedence_check', None)
+                if callable(schedule):
+                    schedule()
+                if callable(on_saved):
+                    on_saved()
 
             service = DaemonSshConfigTextService(client)
             editor = RemoteFileEditorWindow(
-                parent=self,
+                parent=parent or self,
                 file_path="",  # the daemon resolves the active config file
                 file_name=_("SSH Config"),
                 is_local=False,
@@ -6234,7 +6440,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 file_manager_window=None,
                 language_id="sshconfig",
                 show_outline=True,
+                on_saved=saved,
             )
+            if parent is not None:
+                editor.set_modal(True)
 
             # Window/taskbar title; the header title shows the daemon-resolved
             # display name as the subtitle automatically.
@@ -6243,9 +6452,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 editor.set_editor_title(_("SSH Config"))
 
             editor.present()
+            return editor
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
             self.show_toast(_("Could not open the SSH config editor."))
+            return None
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its
@@ -7208,6 +7419,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     type(error).__name__,
                 )
             if not self._is_quitting:
+                from .gtk.ssh_config_access_messages import (
+                    is_read_only_error,
+                    read_only_body,
+                    read_only_heading,
+                )
+                if is_read_only_error(error):
+                    unavailable = bool(getattr(self, '_ssh_config_unavailable', None))
+                    self._error_dialog(
+                        read_only_heading(unavailable), read_only_body(unavailable)
+                    )
+                    return
                 self._error_dialog(
                     _("Failed to delete connection"),
                     _(
@@ -7295,6 +7517,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         mutation runs when it finishes -- then costs a single rebuild.
         """
         self.group_manager.bind_connections(manager.connections)
+        self._sync_ssh_config_link_notice(manager)
+        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        if callable(schedule):
+            schedule()
         # A rebuild that runs after this reset, before the idle one, already
         # shows this state; the idle callback then has nothing left to do.
         self._projection_rebuild_mark = getattr(
@@ -9270,6 +9496,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     type(error).__name__,
                     exc_info=error,
                 )
+            from .gtk.ssh_config_access_messages import (
+                is_read_only_error,
+                read_only_body,
+            )
+            if is_read_only_error(error):
+                # The file turned read-only after the editor opened (or the
+                # daemon's access check disagreed): say why, not "failed".
+                complete_save(
+                    False,
+                    None,
+                    meta_error=read_only_body(
+                        bool(getattr(self, '_ssh_config_unavailable', None))
+                    ),
+                )
+                return
             complete_save(False)
 
         if checkpoint is not None:

@@ -27,14 +27,14 @@ def test_missing_config_uses_defaults(tmp_path):
     settings = DaemonBootstrapSettings(tmp_path / "does-not-exist.json")
     ssh = settings.get_ssh_config()
     assert ssh["use_isolated_config"] is False
-    assert ssh["batch_mode"] is False
+    assert "batch_mode" not in ssh
     assert ssh["auto_add_host_keys"] is True
 
 
 def test_malformed_config_uses_defaults(tmp_path):
     settings = _settings(tmp_path, raw_text="{not valid json")
     assert settings.use_isolated_config is False
-    assert settings.get_ssh_config()["strict_host_key_checking"] == "accept-new"
+    assert settings.get_ssh_config()["strict_host_key_checking"] == ""
 
 
 def test_non_dict_config_uses_defaults(tmp_path):

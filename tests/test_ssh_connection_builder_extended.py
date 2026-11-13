@@ -531,13 +531,15 @@ def test_build_native_command_overrides_and_remote_command():
 # --- app config: batch mode + overrides ---
 
 
-def test_app_config_batch_mode_added_for_key_auth():
-    cfg = _ConfigStub({'batch_mode': True})
+def test_removed_global_batch_mode_setting_is_ignored():
+    # The global BatchMode override is gone; a value left in an old settings
+    # dict must not switch prompts off.
+    cfg = _ConfigStub({'batch_mode': 'yes'})
     cmd, _ = _build(
         {'host': 'appcfg.example', 'hostname': 'appcfg.example', 'auth_method': 0},
         config=cfg,
     )
-    assert _has_o_option(cmd, 'BatchMode=yes')
+    assert not _has_o_option(cmd, 'BatchMode')
 
 
 def test_app_config_batch_mode_skipped_for_password_mode():
@@ -585,8 +587,10 @@ def test_app_config_batch_mode_skipped_for_combined_auth_pty_password():
 
 
 def test_keepalive_and_timeout_only_via_ssh_overrides():
-    # Native mode no longer derives ServerAlive*/ConnectTimeout from app config
-    # keys; they must be passed verbatim via ssh_overrides (written to config).
+    # Native mode does not derive ConnectTimeout from the app config key; it
+    # must be passed verbatim via ssh_overrides. The removed keepalive override
+    # key is ignored, and the app keepalive is a fallback that needs to know
+    # the host's configuration sets none (this connection cannot say).
     cfg = _ConfigStub({'keepalive_interval': 33, 'connection_timeout': 12})
     cmd, _ = _build(
         {'host': 'ka.example', 'hostname': 'ka.example'},
@@ -659,8 +663,8 @@ def test_native_sftp_limits_password_prompts_terminal_does_not():
 
 
 def test_base_command_copy_id_skips_unsupported_flags():
-    # ssh-copy-id rejects -v/-C/-A and BatchMode defeats its interactive purpose.
-    cfg = _ConfigStub({'verbosity': 2, 'compression': True, 'batch_mode': True})
+    # ssh-copy-id rejects -v/-C/-A.
+    cfg = _ConfigStub({'verbosity': 2, 'compression': True})
     cmd = _base_cmd('ssh-copy-id', app_config=cfg,
                     effective_config={'forwardagent': 'yes', 'forwardx11': 'yes'})
     assert '-v' not in cmd
@@ -671,8 +675,7 @@ def test_base_command_copy_id_skips_unsupported_flags():
     # ...while scp still honors the app-level flags.
     scp_cmd = _base_cmd('scp', app_config=cfg)
     assert '-v' in scp_cmd
-    assert '-C' in scp_cmd
-    assert _has_o_option(scp_cmd, 'BatchMode=yes')
+    assert _has_o_option(scp_cmd, 'Compression=yes')
 
 
 def test_base_command_copy_id_never_injects_identity(tmp_path):
@@ -802,3 +805,45 @@ def test_a_connection_authoring_its_own_known_hosts_is_left_alone(monkeypatch, t
     })
 
     assert _known_hosts_value(cmd) is None
+
+
+def test_copy_id_takes_the_whole_settings_page_minus_what_it_cannot_use():
+    """ssh-copy-id used to see only a few typed settings, not the composed list."""
+    import types
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    prefs = {
+        "verbosity": 2,
+        "address_family": "inet",
+        "controlmaster": True,
+        "extra_options": [
+            "Ciphers=aes128-ctr", "RemoteCommand=uptime", "BatchMode=yes",
+        ],
+    }
+    composed = compose_ssh_overrides(
+        prefs, controlmaster_extra=["-o", "ControlMaster=auto", "-o", "ControlPersist=60"]
+    )
+    app_config = types.SimpleNamespace(
+        get_ssh_config=lambda: {**prefs, "ssh_overrides": composed}
+    )
+    connection = Connection({
+        'host': 'demo', 'hostname': 'demo', 'username': 'alice',
+        '__authored_directives': ('hostname', 'user'),
+    })
+    # The resolved configuration sets no keepalive, so the app's applies.
+    command = _build_base_ssh_command(
+        connection, {'serveraliveinterval': '0'}, app_config, 'ssh-copy-id'
+    )
+
+    assert _has_o_option(command, 'AddressFamily=inet')
+    assert _has_o_option(command, 'Ciphers=aes128-ctr')
+    assert _has_o_option(command, 'ServerAliveInterval=15')
+    # The Host block's own values stay in the file.
+    assert not _has_o_option(command, 'User=alice')
+    # Not usable by ssh-copy-id, or fatal to an interactive key install.
+    assert '-v' not in command
+    assert not _has_o_option(command, 'RemoteCommand=uptime')
+    for unwanted in ('BatchMode', 'ControlMaster', 'ControlPersist'):
+        assert not _has_o_option(command, unwanted), command

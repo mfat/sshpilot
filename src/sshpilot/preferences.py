@@ -15,12 +15,17 @@ from typing import Any, Dict, Optional
 from gettext import gettext as _, ngettext
 
 from .platform_utils import is_macos, is_windows
-from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES, TERMINAL_PANE_CHOICES
+from .core.settings.defaults import (
+    DEFAULT_WHEEL_SCROLL_LINES,
+    GROUP_COLOR_DISPLAY_MODES,
+    TERMINAL_PANE_CHOICES,
+)
 from .i18n import N_, available_languages
 from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .shortcut_editor import ShortcutsPreferencesPage
 from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
+from .core.settings import INTEGER_RANGES as _SSH_OVERRIDE_RANGES
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 from .terminal_osc52 import (
     OSC52_MAX_MAX_KIB,
@@ -47,18 +52,22 @@ from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 logger = logging.getLogger(__name__)
 
 
+# StrictHostKeyChecking choices after the leading "Not set" dropdown entry.
+# Unset (empty string in storage) sends no option; OpenSSH then resolves it
+# from the SSH config.
+_STRICT_HOST_KEY_CHOICES = ("accept-new", "yes", "no", "ask")
+
 # Presentation-only values used while daemon-owned SSH overrides are
 # unavailable. They must never be written back to Config.
 _UNAVAILABLE_SSH_OVERRIDE_VALUES = {
     "connect_timeout": 0,
-    "connection_attempts": 0,
-    "server_alive_interval": 0,
-    "server_alive_count_max": 0,
-    "strict_host_key_checking": "accept-new",
-    "batch_mode": False,
-    "compression": False,
+    "strict_host_key_checking": "",
+    "compression": "",
     "verbosity": 0,
     "debug_enabled": False,
+    "extra_options": (),
+    "address_family": "",
+    "legacy_algorithms": False,
 }
 
 
@@ -1307,7 +1316,7 @@ class PreferencesWindow(Adw.Window):
         group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
 
         # Sidebar group color display mode
-        self._group_color_display_values = ['fill', 'badge', 'bar', 'dot']
+        self._group_color_display_values = list(GROUP_COLOR_DISPLAY_MODES)
         self.group_color_display_row = Adw.ComboRow()
         self.group_color_display_row.set_title(_("Sidebar Group Colors"))
         self.group_color_display_row.set_subtitle(
@@ -1319,6 +1328,7 @@ class PreferencesWindow(Adw.Window):
         color_display_options.append(_("Color Badges"))
         color_display_options.append(_("Accent Bars"))
         color_display_options.append(_("Color Dots"))
+        color_display_options.append(_("Colored Text"))
         self.group_color_display_row.set_model(color_display_options)
 
         current_mode = 'fill'
@@ -2799,7 +2809,7 @@ class PreferencesWindow(Adw.Window):
 
 
     def _ssh_override_page_values(self):
-        """Return the nine SSH override field values for the page.
+        """Return the SSH override field values for the page.
 
         The daemon-backed controller is authoritative when injected; the page
         then reflects daemon state instead of the local config cache. Without a
@@ -2812,14 +2822,13 @@ class PreferencesWindow(Adw.Window):
                 snapshot = self.ssh_overrides_controller.load()
                 return {
                     "connect_timeout": snapshot.connect_timeout,
-                    "connection_attempts": snapshot.connection_attempts,
-                    "server_alive_interval": snapshot.server_alive_interval,
-                    "server_alive_count_max": snapshot.server_alive_count_max,
                     "strict_host_key_checking": snapshot.strict_host_key_checking,
-                    "batch_mode": snapshot.batch_mode,
                     "compression": snapshot.compression,
                     "verbosity": snapshot.verbosity,
                     "debug_enabled": snapshot.debug_enabled,
+                    "extra_options": tuple(snapshot.extra_options),
+                    "address_family": snapshot.address_family,
+                    "legacy_algorithms": snapshot.legacy_algorithms,
                 }
             except Exception as error:
                 logger.debug(
@@ -2835,14 +2844,13 @@ class PreferencesWindow(Adw.Window):
         """Return already-built daemon-owned SSH override rows."""
         names = (
             "connect_timeout_row",
-            "connection_attempts_row",
-            "keepalive_interval_row",
-            "keepalive_count_row",
             "strict_host_row",
-            "batch_mode_row",
             "compression_row",
             "verbosity_row",
             "debug_enabled_row",
+            "extra_options_list",
+            "address_family_row",
+            "legacy_algorithms_row",
         )
         return tuple(
             row for name in names if (row := getattr(self, name, None)) is not None
@@ -2892,6 +2900,28 @@ class PreferencesWindow(Adw.Window):
             row.set_sensitive(True)
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
+    def _optional_ssh_number_row(self, title, field, *, step, initial, value):
+        """A number row with a Not-set dropdown until the user opts in.
+
+        Stored as before: 0 means the option is not sent. The row never shows
+        that 0 -- unset is the first dropdown choice -- and its range is the
+        model's own, so a saved value is never clamped by the widget.
+        """
+        from .optional_rows import OptionalIntRow
+
+        _lower, upper = _SSH_OVERRIDE_RANGES[field]
+        row = OptionalIntRow(
+            title=title,
+            lower=1,
+            upper=upper,
+            step=step,
+            initial=initial,
+            dont_set_label=_("Not set"),
+            custom_label=_("Set"),
+        )
+        row.set_value(value)
+        return row
+
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
         ssh_settings_page = Adw.PreferencesPage()
@@ -2901,113 +2931,167 @@ class PreferencesWindow(Adw.Window):
         # Group description wraps fully; ActionRow subtitles ellipsize at one
         # line by default, which is too tight for this precedence note.
         help_group = Adw.PreferencesGroup()
-        help_group.set_title(_("Custom SSH Options"))
+        help_group.set_title(_("Override SSH Configuration"))
         help_group.set_description(
-            _("These settings apply to all connections and override values from "
-              "~/.ssh/config. Explicit per-connection settings always win.")
+            _("Options you set here are added to every SSH command. "
+              "They win over your SSH configuration file and over each "
+              "connection's own settings.")
         )
 
-        advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
+        # Two groups, because unset means different things in each. Under
+        # Overrides, unset is "Not set" in a dropdown (nothing injected).
+        # Under Application Behavior a switch is the app's own feature and
+        # off simply means off.
+        advanced_group = Adw.PreferencesGroup(title=_("Overrides"))
+        app_group = Adw.PreferencesGroup(title=_("Application Behavior"))
+        reset_group = Adw.PreferencesGroup()
 
         values = self._ssh_override_page_values()
+        dont_set_label = _("Not set")
 
         # Connect timeout
-        self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
-        self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
-        self.connect_timeout_row.set_value(int(values['connect_timeout']))
+        self.connect_timeout_row = self._optional_ssh_number_row(
+            _("Connect Timeout (s)"), 'connect_timeout', step=1, initial=30,
+            value=values['connect_timeout'],
+        )
         advanced_group.add(self.connect_timeout_row)
 
-        # Connection attempts
-        self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
-        self.connection_attempts_row.set_title(_("Connection Attempts"))
-        self.connection_attempts_row.set_value(int(values['connection_attempts']))
-        advanced_group.add(self.connection_attempts_row)
+        # Keepalive: one switch with its two numbers folded underneath. When
+        # on (default), SSH Pilot sends ServerAlive options so dropped links
+        # are detected. Unlike the overrides around it this is a fallback: it
+        # is sent only for a host whose SSH configuration (its own block, a
+        # `Host *` block, an included file) sets no ServerAliveInterval.
+        from .optional_rows import SwitchExpanderRow
 
-        # Default keepalive opt-out. When on (default) and the user hasn't
-        # set an explicit ServerAlive interval below or in ~/.ssh/config,
-        # SSH Pilot applies a sane default so dropped links are detected.
-        self.apply_default_keepalive_row = Adw.SwitchRow()
-        self.apply_default_keepalive_row.set_title(_("Apply default keepalive"))
-        self.apply_default_keepalive_row.set_subtitle(
-            _("Detect dropped connections automatically when no ServerAlive "
-            "value is set here or in ~/.ssh/config. Explicit values always win.")
-        )
+        self.apply_default_keepalive_row = SwitchExpanderRow(title=_("Keepalive"))
         self.apply_default_keepalive_row.set_active(
             bool(self.config.get_setting('ssh.apply_default_keepalive', True))
         )
-        advanced_group.add(self.apply_default_keepalive_row)
-
-        # Keepalive interval
-        self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
+        self.keepalive_interval_row = Adw.SpinRow.new_with_range(1, 86400, 5)
         self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
-        self.keepalive_interval_row.set_value(int(values['server_alive_interval']))
-        advanced_group.add(self.keepalive_interval_row)
-
-        # Keepalive count max
-        self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
+        self.keepalive_interval_row.set_value(
+            int(self.config.get_setting('ssh.default_keepalive_interval', 15) or 15)
+        )
+        self.keepalive_count_row = Adw.SpinRow.new_with_range(1, 100, 1)
         self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
-        self.keepalive_count_row.set_value(int(values['server_alive_count_max']))
-        advanced_group.add(self.keepalive_count_row)
+        self.keepalive_count_row.set_value(
+            int(self.config.get_setting('ssh.default_keepalive_count', 3) or 3)
+        )
+        self.apply_default_keepalive_row.add_row(self.keepalive_interval_row)
+        self.apply_default_keepalive_row.add_row(self.keepalive_count_row)
+        self._sync_keepalive_subtitle()
+        app_group.add(self.apply_default_keepalive_row)
 
-        # Strict host key checking
-        self.strict_host_row = Adw.ComboRow()
-        self.strict_host_row.set_title(_("StrictHostKeyChecking"))
-        strict_model = Gtk.StringList()
-        strict_options = ["accept-new", "yes", "no", "ask"]
-        for item in strict_options:
-            strict_model.append(item)
-        self.strict_host_row.set_model(strict_model)
-        current_strict = str(values['strict_host_key_checking'])
-        try:
-            idx = strict_options.index(current_strict)
-        except ValueError:
-            idx = 0
-        self.strict_host_row.set_selected(idx)
+        # Strict host key / Compression — Not set / OpenSSH keywords, so
+        # force-yes and force-no are both possible.
+        from .optional_rows import OptionalChoiceRow
+
+        self.strict_host_row = OptionalChoiceRow(
+            title=_("StrictHostKeyChecking"),
+            choices=_STRICT_HOST_KEY_CHOICES,
+            dont_set_label=dont_set_label,
+        )
+        self.strict_host_row.set_value(str(values['strict_host_key_checking']))
         advanced_group.add(self.strict_host_row)
 
-        # BatchMode (non-interactive)
-        self.batch_mode_row = Adw.SwitchRow()
-        self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
-        self.batch_mode_row.set_active(bool(values['batch_mode']))
-        advanced_group.add(self.batch_mode_row)
-
-        # Compression
-        self.compression_row = Adw.SwitchRow()
-        self.compression_row.set_title(_("Enable Compression (-C)"))
-        self.compression_row.set_active(bool(values['compression']))
+        self.compression_row = OptionalChoiceRow(
+            title=_("Compression"),
+            choices=("yes", "no"),
+            dont_set_label=dont_set_label,
+        )
+        self.compression_row.set_value(str(values['compression'] or ""))
         advanced_group.add(self.compression_row)
+
+        # AddressFamily: the keywords say little ("inet"), so they get labels.
+        self.address_family_row = OptionalChoiceRow(
+            title=_("AddressFamily"),
+            choices=("inet", "inet6"),
+            labels=(_("IPv4 only"), _("IPv6 only")),
+            dont_set_label=dont_set_label,
+        )
+        self.address_family_row.set_value(str(values['address_family'] or ""))
+        advanced_group.add(self.address_family_row)
+
+        # Options without a row of their own: the same keyword/value list the
+        # connection dialog's Advanced tab uses. A row is saved when it is
+        # finished and OpenSSH accepts it, like every other row on the page.
+        from .core.settings import (
+            EXTRA_OPTIONS_ADDED_NOT_REPLACED,
+            EXTRA_OPTIONS_WITH_OWN_SETTING,
+        )
+        from .ssh_option_list import (
+            OPENSSH_KEYWORDS,
+            SshOptionList,
+            check_ssh_option,
+            options_from_strings,
+        )
+
+        extra_group = Adw.PreferencesGroup(title=_("Additional Options"))
+        own_setting = _("“{keyword}” has its own setting on this page.")
+        added_note = _(
+            "Added to each connection's own values; it does not replace them."
+        )
+        self.extra_options_list = SshOptionList(
+            keywords=tuple(
+                name for name in OPENSSH_KEYWORDS
+                if name.lower() not in EXTRA_OPTIONS_WITH_OWN_SETTING
+            ),
+            validate=lambda keyword, value: check_ssh_option(
+                keyword, value,
+                reserved=EXTRA_OPTIONS_WITH_OWN_SETTING,
+                reserved_message=own_setting,
+            ),
+            note=lambda keyword, _value: (
+                added_note
+                if keyword.lower() in EXTRA_OPTIONS_ADDED_NOT_REPLACED
+                else None
+            ),
+        )
+        self.extra_options_list.set_options(
+            options_from_strings(values['extra_options'])
+        )
+        self.extra_options_list.connect(
+            'changed', lambda _list: self._on_advanced_ssh_field_changed(None, None)
+        )
+        extra_group.add(self.extra_options_list)
 
         # Connection multiplexing (ControlMaster). When on, the first
         # connection to a host opens a master socket that later connections
         # reuse (no re-handshake) — faster reconnects and chatty operations.
         self.controlmaster_row = Adw.SwitchRow()
         self.controlmaster_row.set_title(_("Enable SSH connection multiplexing"))
-        self.controlmaster_row.set_subtitle(
-            _("Reuse one connection per host (ControlMaster) for faster reconnects")
-        )
         self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
-        advanced_group.add(self.controlmaster_row)
+        app_group.add(self.controlmaster_row)
         if is_windows():
             # OpenSSH for Windows cannot multiplex connections.
             self.controlmaster_row.set_visible(False)
 
+        # Legacy devices: re-enable algorithms current OpenSSH has turned off.
+        # It weakens what the client will agree to, so unlike the other rows
+        # it says so.
+        self.legacy_algorithms_row = Adw.SwitchRow()
+        self.legacy_algorithms_row.set_title(_("Legacy device compatibility"))
+        self.legacy_algorithms_row.set_subtitle(
+            _("Allows old, weaker algorithms that some older network devices need")
+        )
+        self.legacy_algorithms_row.set_active(bool(values['legacy_algorithms']))
+        app_group.add(self.legacy_algorithms_row)
+
         # SSH verbosity (-v levels)
-        self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
-        self.verbosity_row.set_title(_("SSH Verbosity (-v)"))
-        self.verbosity_row.set_value(int(values['verbosity']))
-        advanced_group.add(self.verbosity_row)
+        self.verbosity_row = self._optional_ssh_number_row(
+            _("SSH Verbosity (-v)"), 'verbosity', step=1, initial=1,
+            value=values['verbosity'],
+        )
+        app_group.add(self.verbosity_row)
 
         # Debug logging toggle
         self.debug_enabled_row = Adw.SwitchRow()
         self.debug_enabled_row.set_title(_("Enable SSH Debug Logging"))
         self.debug_enabled_row.set_active(bool(values['debug_enabled']))
-        advanced_group.add(self.debug_enabled_row)
+        app_group.add(self.debug_enabled_row)
 
 
         # Reset button
-        # Add spacing before reset button
-        advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-
         # Use Adw.ActionRow for proper spacing and layout
         reset_row = Adw.ActionRow()
         reset_row.set_title(_("Reset Advanced SSH Settings"))
@@ -3019,25 +3103,27 @@ class PreferencesWindow(Adw.Window):
         reset_btn.connect('clicked', self.on_reset_advanced_ssh)
         reset_row.add_suffix(reset_btn)
 
-        advanced_group.add(reset_row)
+        reset_group.add(reset_row)
 
         ssh_settings_page.add(help_group)
         ssh_settings_page.add(advanced_group)
+        ssh_settings_page.add(extra_group)
+        ssh_settings_page.add(app_group)
+        ssh_settings_page.add(reset_group)
 
         if self.ssh_overrides_controller is None:
             # No daemon overrides service: there is no authoritative owner for
-            # the nine semantic fields, so they stay visible but disabled
+            # the semantic fields, so they stay visible but disabled
             # rather than being persisted locally.
             for row in (
                 self.connect_timeout_row,
-                self.connection_attempts_row,
-                self.keepalive_interval_row,
-                self.keepalive_count_row,
                 self.strict_host_row,
-                self.batch_mode_row,
                 self.compression_row,
                 self.verbosity_row,
                 self.debug_enabled_row,
+                self.extra_options_list,
+                self.address_family_row,
+                self.legacy_algorithms_row,
             ):
                 row.set_sensitive(False)
 
@@ -3051,20 +3137,20 @@ class PreferencesWindow(Adw.Window):
         for row in (
             self.apply_default_keepalive_row,
             self.controlmaster_row,
-            self.batch_mode_row,
-            self.compression_row,
             self.debug_enabled_row,
+            self.legacy_algorithms_row,
         ):
             row.connect('notify::active', self._on_advanced_ssh_field_changed)
         for row in (
             self.connect_timeout_row,
-            self.connection_attempts_row,
             self.keepalive_interval_row,
             self.keepalive_count_row,
             self.verbosity_row,
+            self.strict_host_row,
+            self.compression_row,
+            self.address_family_row,
         ):
             row.connect('notify::value', self._on_advanced_ssh_field_changed)
-        self.strict_host_row.connect('notify::selected', self._on_advanced_ssh_field_changed)
 
         self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
@@ -5718,7 +5804,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             normalized = 'fill'
 
-        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar', 'dot']):
+        if normalized not in getattr(self, '_group_color_display_values', list(GROUP_COLOR_DISPLAY_MODES)):
             normalized = 'fill'
 
         target_index = self._group_color_display_values.index(normalized)
@@ -5923,21 +6009,47 @@ class PreferencesWindow(Adw.Window):
         except Exception as e:
             logger.error(f"Failed to remove color override provider: {e}")
 
+    def _sync_keepalive_subtitle(self):
+        """Show the values the keepalive switch sends on its collapsed row."""
+        self.apply_default_keepalive_row.set_subtitle(
+            _(
+                "ServerAliveInterval {interval}, ServerAliveCountMax {count}. "
+                "Used for hosts whose SSH configuration sets no keepalive."
+            ).format(
+                interval=int(self.keepalive_interval_row.get_value()),
+                count=int(self.keepalive_count_row.get_value()),
+            )
+        )
+
+    def _extra_ssh_option_strings(self):
+        """The usable Additional Options rows as stored ``Keyword=value`` strings."""
+        option_list = getattr(self, 'extra_options_list', None)
+        if option_list is None:
+            return []
+        from .ssh_option_list import strings_from_options
+
+        return list(strings_from_options(option_list.get_options()))
+
+    def _show_applied_extra_ssh_options(self, options):
+        """Make the Additional Options rows show *options* as the saved value."""
+        option_list = getattr(self, 'extra_options_list', None)
+        if option_list is None:
+            return
+        from .ssh_option_list import options_from_strings
+
+        option_list.set_options(options_from_strings(options))
+
     def _collect_ssh_override_patch(self):
-        """Read the nine SSH override fields from the page rows."""
-        options = ["accept-new", "yes", "no", "ask"]
-        idx = self.strict_host_row.get_selected()
-        strict_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+        """Read the SSH override fields from the page rows."""
         return {
             "connect_timeout": int(self.connect_timeout_row.get_value()),
-            "connection_attempts": int(self.connection_attempts_row.get_value()),
-            "server_alive_interval": int(self.keepalive_interval_row.get_value()),
-            "server_alive_count_max": int(self.keepalive_count_row.get_value()),
-            "strict_host_key_checking": strict_value,
-            "batch_mode": bool(self.batch_mode_row.get_active()),
-            "compression": bool(self.compression_row.get_active()),
+            "strict_host_key_checking": str(self.strict_host_row.get_value() or ""),
+            "compression": str(self.compression_row.get_value() or ""),
             "verbosity": int(self.verbosity_row.get_value()),
             "debug_enabled": bool(self.debug_enabled_row.get_active()),
+            "extra_options": self._extra_ssh_option_strings(),
+            "address_family": str(self.address_family_row.get_value() or ""),
+            "legacy_algorithms": bool(self.legacy_algorithms_row.get_active()),
         }
 
     def _apply_ssh_override_values_to_rows(self, snapshot):
@@ -5949,18 +6061,13 @@ class PreferencesWindow(Adw.Window):
         self._suppress_advanced_ssh_autosave = True
         try:
             self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
-            self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
-            self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
-            self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
-            options = ["accept-new", "yes", "no", "ask"]
-            try:
-                self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
-            except ValueError:
-                self.strict_host_row.set_selected(0)
-            self.batch_mode_row.set_active(bool(snapshot.batch_mode))
-            self.compression_row.set_active(bool(snapshot.compression))
+            self.strict_host_row.set_value(str(snapshot.strict_host_key_checking or ""))
+            self.compression_row.set_value(str(snapshot.compression or ""))
             self.verbosity_row.set_value(int(snapshot.verbosity))
             self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+            self._show_applied_extra_ssh_options(snapshot.extra_options)
+            self.address_family_row.set_value(str(snapshot.address_family or ""))
+            self.legacy_algorithms_row.set_active(bool(snapshot.legacy_algorithms))
         finally:
             self._suppress_advanced_ssh_autosave = False
 
@@ -5968,6 +6075,8 @@ class PreferencesWindow(Adw.Window):
         """Read every row on the Advanced SSH page into a plain dict."""
         snapshot = dict(self._collect_ssh_override_patch())
         snapshot['apply_default_keepalive'] = bool(self.apply_default_keepalive_row.get_active())
+        snapshot['default_keepalive_interval'] = int(self.keepalive_interval_row.get_value())
+        snapshot['default_keepalive_count'] = int(self.keepalive_count_row.get_value())
         snapshot['controlmaster'] = bool(self.controlmaster_row.get_active())
         return snapshot
 
@@ -5981,18 +6090,15 @@ class PreferencesWindow(Adw.Window):
         self._suppress_advanced_ssh_autosave = True
         try:
             self.connect_timeout_row.set_value(snapshot['connect_timeout'])
-            self.connection_attempts_row.set_value(snapshot['connection_attempts'])
-            self.keepalive_interval_row.set_value(snapshot['server_alive_interval'])
-            self.keepalive_count_row.set_value(snapshot['server_alive_count_max'])
-            options = ["accept-new", "yes", "no", "ask"]
-            try:
-                self.strict_host_row.set_selected(options.index(snapshot['strict_host_key_checking']))
-            except ValueError:
-                self.strict_host_row.set_selected(0)
-            self.batch_mode_row.set_active(snapshot['batch_mode'])
-            self.compression_row.set_active(snapshot['compression'])
+            self.keepalive_interval_row.set_value(snapshot['default_keepalive_interval'])
+            self.keepalive_count_row.set_value(snapshot['default_keepalive_count'])
+            self.strict_host_row.set_value(str(snapshot.get('strict_host_key_checking') or ""))
+            self.compression_row.set_value(str(snapshot.get('compression') or ""))
             self.verbosity_row.set_value(snapshot['verbosity'])
             self.debug_enabled_row.set_active(snapshot['debug_enabled'])
+            self._show_applied_extra_ssh_options(snapshot.get('extra_options', ()))
+            self.address_family_row.set_value(str(snapshot.get('address_family') or ""))
+            self.legacy_algorithms_row.set_active(bool(snapshot.get('legacy_algorithms', False)))
             self.apply_default_keepalive_row.set_active(snapshot['apply_default_keepalive'])
             self.controlmaster_row.set_active(snapshot['controlmaster'])
         finally:
@@ -6020,7 +6126,7 @@ class PreferencesWindow(Adw.Window):
 
         Config-owned rows (``ssh.apply_default_keepalive``, ``ssh.controlmaster``,
         file-manager settings) persist first — each ``set_setting`` writes the
-        file immediately.  The nine daemon-owned SSH override fields are
+        file immediately.  The daemon-owned SSH override fields are
         submitted through the controller last; on success the legacy Config
         cache is refreshed from the authoritative file without writing it back,
         so a later Config-owned write cannot clobber the daemon state.
@@ -6078,6 +6184,15 @@ class PreferencesWindow(Adw.Window):
                     'ssh.apply_default_keepalive',
                     bool(self.apply_default_keepalive_row.get_active()),
                 )
+                for key, row, default in (
+                    ('ssh.default_keepalive_interval', self.keepalive_interval_row, 15),
+                    ('ssh.default_keepalive_count', self.keepalive_count_row, 3),
+                ):
+                    config_owned_rollback[key] = int(
+                        self.config.get_setting(key, default) or default
+                    )
+                    self.config.set_setting(key, int(row.get_value()))
+                self._sync_keepalive_subtitle()
             if hasattr(self, 'controlmaster_row'):
                 config_owned_rollback['ssh.controlmaster'] = bool(
                     self.config.get_setting('ssh.controlmaster', False)
@@ -6100,7 +6215,7 @@ class PreferencesWindow(Adw.Window):
                     'file_manager.max_concurrent_transfers', concurrent_value
                 )
 
-            # 2. The nine daemon-owned fields go through the controller last.
+            # 2. The daemon-owned fields go through the controller last.
             if controller is not None and page_built:
                 try:
                     controller.update(self._collect_ssh_override_patch())
@@ -6164,7 +6279,7 @@ class PreferencesWindow(Adw.Window):
     def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI.
 
-        Config-owned rows persist first; the nine daemon-owned SSH override
+        Config-owned rows persist first; the daemon-owned SSH override
         fields reset through the controller last.  Returns ``True`` on
         success.  On a daemon failure the page keeps its state and no
         ControlMaster sessions are expired.
@@ -6201,26 +6316,18 @@ class PreferencesWindow(Adw.Window):
                     default_apply = bool(defaults.get('apply_default_keepalive', True))
                     self.config.set_setting('ssh.apply_default_keepalive', default_apply)
                     self.apply_default_keepalive_row.set_active(default_apply)
+                    for key, row in (
+                        ('default_keepalive_interval', self.keepalive_interval_row),
+                        ('default_keepalive_count', self.keepalive_count_row),
+                    ):
+                        self.config.set_setting(f'ssh.{key}', int(defaults[key]))
+                        row.set_value(int(defaults[key]))
+                    self._sync_keepalive_subtitle()
                 if hasattr(self, 'controlmaster_row'):
                     self.config.set_setting('ssh.controlmaster', False)
                     self.controlmaster_row.set_active(False)
             finally:
                 self._suppress_advanced_ssh_autosave = False
-
-            file_manager_defaults = self.config.get_default_config().get('file_manager', {})
-            default_open_external = bool(file_manager_defaults.get('open_externally', False))
-            self.config.set_setting('file_manager.open_externally', default_open_external)
-            if getattr(self, 'open_file_manager_externally_row', None) is not None:
-                self.open_file_manager_externally_row.set_active(default_open_external)
-            concurrent_default = int(
-                file_manager_defaults.get('max_concurrent_transfers', 4) or 4
-            )
-            concurrent_default = max(1, min(10, concurrent_default))
-            self.config.set_setting(
-                'file_manager.max_concurrent_transfers', concurrent_default
-            )
-            if getattr(self, 'max_concurrent_transfers_row', None) is not None:
-                self.max_concurrent_transfers_row.set_value(concurrent_default)
 
             if controller is None:
                 # No Preferences row exists for this Config-owned key, but the
@@ -6229,7 +6336,7 @@ class PreferencesWindow(Adw.Window):
                     'ssh.auto_add_host_keys', defaults.get('auto_add_host_keys')
                 )
 
-            # The nine daemon-owned fields reset through the controller last.
+            # The daemon-owned fields reset through the controller last.
             if controller is not None and page_built:
                 try:
                     snapshot = controller.reset()
@@ -6281,10 +6388,31 @@ class PreferencesWindow(Adw.Window):
             )
 
     def on_reset_advanced_ssh(self, *args):
+        """Ask before resetting: the button wipes every value on the page."""
+        dialog = Adw.AlertDialog(
+            heading=_("Reset SSH options?"),
+            body=_(
+                "All settings on this page return to their defaults. "
+                "Per-connection settings are not changed."
+            ),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('reset', _("Reset"))
+        dialog.set_response_appearance('reset', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_reset_advanced_ssh_response)
+        dialog.present(self._dialog_parent())
+
+    def _on_reset_advanced_ssh_response(self, _dialog, response):
+        if response == 'reset':
+            self.reset_advanced_ssh()
+
+    def reset_advanced_ssh(self):
         """Reset only advanced SSH keys to defaults and update UI.
 
         A failed reset is a *partial* reset — the Config-owned keys are
-        already persisted while the nine daemon-owned fields keep their old
+        already persisted while the daemon-owned fields keep their old
         values — so the failure is surfaced rather than discarded, the same
         way a failed save is.  Silently swallowing it left the user looking at
         a page where Reset had visibly worked on half the rows.

@@ -544,6 +544,134 @@ def _load_grant_for_host(target_host: str):
     return None
 
 
+def _grant_entry(path: str) -> Optional[str]:
+    """The exported entry of the portal grant ``path`` lives in
+    (``/run/user/<uid>/doc/<id>/<name>``), or ``None`` for non-portal paths."""
+    root = _portal_grant_root(path)
+    if not root:
+        return None
+    rest = path[len(root):].lstrip("/")
+    if not rest:
+        return root
+    return os.path.join(root, rest.split("/", 1)[0])
+
+
+def _sandbox_path_for_host(host_path: str, current: Optional[str] = None) -> Optional[str]:
+    """Map a real host path back to the portal path that reaches it (Flatpak).
+
+    The local path bar shows granted folders by their host path. Navigating to
+    that text inside the sandbox opens an empty throwaway directory, and any
+    folder or file created there never reaches the host (#1376). Resolve it
+    through the grant the pane is in (``current``) first, then the saved
+    grants. Returns ``None`` outside Flatpak, for paths that are already
+    portal paths, or when no grant covers ``host_path``.
+    """
+    if not host_path or not is_flatpak() or _portal_grant_root(host_path):
+        return None
+    target = os.path.normpath(host_path)
+
+    candidates: List[str] = []
+    entry = _grant_entry(current) if current else None
+    if entry:
+        candidates.append(entry)
+    for doc_id in reversed(list(_load_doc_config())):
+        portal_path = _lookup_document_path(doc_id)
+        entry = _grant_entry(portal_path) if portal_path else None
+        if entry and entry not in candidates:
+            candidates.append(entry)
+
+    for entry in candidates:
+        host = _portal_path_to_host(entry)
+        if not host:
+            continue
+        host = os.path.normpath(host)
+        if target == host:
+            return entry
+        if target.startswith(host.rstrip("/") + "/"):
+            return os.path.join(entry, os.path.relpath(target, host))
+    return None
+
+
+_FLATPAK_INFO = "/.flatpak-info"
+
+_XDG_SPECIAL_DIRS = {
+    "xdg-desktop": GLib.UserDirectory.DIRECTORY_DESKTOP,
+    "xdg-documents": GLib.UserDirectory.DIRECTORY_DOCUMENTS,
+    "xdg-download": GLib.UserDirectory.DIRECTORY_DOWNLOAD,
+    "xdg-music": GLib.UserDirectory.DIRECTORY_MUSIC,
+    "xdg-pictures": GLib.UserDirectory.DIRECTORY_PICTURES,
+    "xdg-public-share": GLib.UserDirectory.DIRECTORY_PUBLIC_SHARE,
+    "xdg-templates": GLib.UserDirectory.DIRECTORY_TEMPLATES,
+    "xdg-videos": GLib.UserDirectory.DIRECTORY_VIDEOS,
+}
+
+
+def _shared_filesystem_roots() -> Optional[List[str]]:
+    """Host folders the sandbox shares directly (``--filesystem=``), read
+    from ``/.flatpak-info``. Returns ``None`` when the whole host is shared."""
+    import configparser
+
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        with open(_FLATPAK_INFO, encoding="utf-8") as fh:
+            parser.read_file(fh)
+        raw = parser.get("Context", "filesystems", fallback="")
+    except (OSError, configparser.Error):
+        return []
+    home = os.path.expanduser("~")
+    roots: List[str] = []
+    for item in raw.split(";"):
+        item = item.strip()
+        if not item or item.startswith("!"):
+            continue
+        name = re.sub(r":(ro|rw|create)$", "", item)
+        head, _sep, sub = name.partition("/")
+        if head in ("host", "host-os", "host-etc") and not sub:
+            if head == "host":
+                return None
+            continue
+        if head == "home":
+            base = home
+        elif head == "~":
+            base = home
+        elif head in _XDG_SPECIAL_DIRS:
+            base = GLib.get_user_special_dir(_XDG_SPECIAL_DIRS[head]) or ""
+        elif head == "xdg-config":
+            base = os.path.join(home, ".config")
+        elif head == "xdg-data":
+            base = os.path.join(home, ".local", "share")
+        elif head == "xdg-cache":
+            base = os.path.join(home, ".cache")
+        elif name.startswith("/"):
+            base, sub = name, ""
+        else:
+            continue
+        if base:
+            roots.append(os.path.normpath(os.path.join(base, sub) if sub else base))
+    return roots
+
+
+def _is_reachable_local_path(path: str) -> bool:
+    """Whether the local pane may open ``path``: true for every path outside
+    Flatpak. Inside it, only portal grants, folders the sandbox shares and
+    the app's own data folder are the real host folders; anything else is
+    the sandbox's own empty copy, where created files vanish (#1376)."""
+    if not is_flatpak():
+        return True
+    if not path:
+        return False
+    if _portal_grant_root(path):
+        return True
+    target = os.path.normpath(path)
+    roots = _shared_filesystem_roots()
+    if roots is None:
+        return True
+    app_id = os.environ.get("FLATPAK_ID", "")
+    if app_id:
+        roots.append(os.path.join(os.path.expanduser("~"), ".var", "app", app_id))
+    return any(target == root or target.startswith(root.rstrip("/") + "/") for root in roots)
+
+
 def _pretty_path_for_display(path: str) -> str:
     """Convert a filesystem path to a human-friendly display string.
 

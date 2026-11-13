@@ -45,6 +45,7 @@ from .accent_override_css import NAVIGATION_SIDEBAR_SELECTION_CSS
 from .shortcut_utils import get_primary_modifier_label
 from .connection_sort import CONNECTION_SORT_MENU, CONNECTION_SORT_PRESETS
 from .tag_groups import compute_tag_groups, effective_tags
+from .core.settings.defaults import GROUP_COLOR_DISPLAY_MODES
 
 # Feature detection for libadwaita versions across distros
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
@@ -679,7 +680,7 @@ def _get_color_display_mode(config) -> str:
     except Exception:
         return 'fill'
 
-    if mode not in {'fill', 'badge', 'bar', 'dot'}:
+    if mode not in GROUP_COLOR_DISPLAY_MODES:
         return 'fill'
     return mode
 
@@ -877,6 +878,58 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     row.color_dot.set_visible(True)
 
 
+def _color_text_widgets(row: Gtk.Widget) -> List[Gtk.Widget]:
+    """The row icon and title that 'text' mode colours."""
+    widgets = []
+    for attr in ('icon', 'connection_icon', 'name_label', 'nickname_label'):
+        widget = getattr(row, attr, None)
+        if isinstance(widget, Gtk.Widget):
+            widgets.append(widget)
+    return widgets
+
+
+def _clear_color_text(row: Gtk.Widget):
+    providers = getattr(row, '_color_text_providers', None)
+    if not providers:
+        return
+    for widget, provider in providers:
+        try:
+            widget.remove_css_class("sidebar-color-text")
+            widget.get_style_context().remove_provider(provider)
+        except Exception:
+            pass
+    row._color_text_providers = None  # type: ignore[attr-defined]
+
+
+def _set_color_text(row: Gtk.Widget, rgba: Gdk.RGBA):
+    """Colour the row's icon and title ('text' mode).
+
+    Same contrast-adjusted colour as the badge glyph, so light or dark group
+    colours stay legible on the sidebar. Like the dot and badge, the colour
+    stays on when the row is selected (selection is a neutral overlay).
+    """
+    r = int(rgba.red * 255)
+    g = int(rgba.green * 255)
+    b = int(rgba.blue * 255)
+    css_data = (
+        ".sidebar-color-text { color: %s; }"
+        % _standalone_glyph_color(f"#{r:02x}{g:02x}{b:02x}")
+    ).encode('utf-8')
+    providers = []
+    for widget in _color_text_widgets(row):
+        try:
+            provider = Gtk.CssProvider()
+            provider.load_from_data(css_data)
+            widget.add_css_class("sidebar-color-text")
+            widget.get_style_context().add_provider(
+                provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+            )
+            providers.append((widget, provider))
+        except Exception:
+            logger.debug("Failed to apply text color", exc_info=True)
+    row._color_text_providers = providers  # type: ignore[attr-defined]
+
+
 
 #: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
 #: floor GTK never lays the label out below (~80px at 10 characters); natural
@@ -922,17 +975,24 @@ def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
     Modes: ``fill`` (tinted card), ``badge`` (tag icon before the row icon),
-    ``bar`` (leading accent bar), ``dot`` (dot before the row icon). Mutually
-    exclusive, so we always clear the others first. ``row`` must expose
-    ``color_badge``, ``_update_color_badge`` and ``color_dot``.
+    ``bar`` (leading accent bar), ``dot`` (dot before the row icon), ``text``
+    (coloured icon and title). Mutually exclusive, so we always clear the
+    others first. ``row`` must expose ``color_badge``, ``_update_color_badge``
+    and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
+    _clear_color_text(row)
     row.color_badge.set_visible(False)
     row.color_dot.set_visible(False)
 
     if mode == 'dot':
         _update_color_dot(row, rgba)
+        return
+
+    if mode == 'text':
+        if rgba:
+            _set_color_text(row, rgba)
         return
 
     if mode == 'bar':

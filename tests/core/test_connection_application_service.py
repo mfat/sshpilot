@@ -9,6 +9,7 @@ a minimal in-memory ``ConnectionRepositoryProtocol`` fake. No filesystem, no
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -598,7 +599,7 @@ def test_unsaved_host_omitted_port_does_not_override_ssh_config(monkeypatch):
     assert service.check_unsaved_host(
         UnsavedHostCheckRequest(hostname="alias", username="alice")
     ).saved is True
-    assert calls == [{"user": "alice", "port": None, "proxy_jump": None}]
+    assert calls == [{"user": "alice", "port": None, "proxy_jump": None, "overrides": ()}]
 
 
 def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
@@ -617,7 +618,7 @@ def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
     assert service.check_unsaved_host(
         UnsavedHostCheckRequest(hostname="alias", username="alice", port=22)
     ).saved is True
-    assert calls == [{"user": "alice", "port": 22, "proxy_jump": None}]
+    assert calls == [{"user": "alice", "port": 22, "proxy_jump": None, "overrides": ()}]
 
 
 def test_effective_config_uses_daemon_root_in_default_mode(
@@ -655,7 +656,8 @@ def test_effective_config_uses_daemon_root_in_default_mode(
         ]
 
     def fake_diff_effective_config(
-        host, config_file, own_block_text, *, include_system_defaults_in_display=None
+        host, config_file, own_block_text, *, include_system_defaults_in_display=None,
+        overrides=None
     ):
         calls["diff"] = (host, config_file, own_block_text)
         calls["diff_display_flag"] = include_system_defaults_in_display
@@ -690,8 +692,16 @@ def test_effective_config_uses_daemon_root_in_default_mode(
     assert result.has_diff is False
     assert calls["collect"] == ("GoogleRouter", str(root))
     assert calls["diff"][0:2] == ("GoogleRouter", str(root))
-    # Default (non-isolated) mode: real launches run ssh without -F, so the
-    # displayed full side must still include /etc/ssh/ssh_config (#1138).
+    # A root that is not ~/.ssh/config is launched with -F, which makes
+    # OpenSSH skip /etc/ssh/ssh_config; the display must not add it back.
+    assert calls["diff_display_flag"] is False
+
+    # The user's own ~/.ssh/config is launched without -F, so OpenSSH also
+    # reads /etc/ssh/ssh_config and the displayed side includes it (#1138).
+    monkeypatch.setattr(
+        ssh_config_effective, "is_openssh_user_config", lambda path: True
+    )
+    service.get_effective_config(ConnectionId("google-router"))
     assert calls["diff_display_flag"] is True
 
 
@@ -724,7 +734,8 @@ def test_effective_config_excludes_system_defaults_in_isolated_mode(
         return ["Host GoogleRouter", "    HostName 192.168.8.1", "    User root"]
 
     def fake_diff_effective_config(
-        host, config_file, own_block_text, *, include_system_defaults_in_display=None
+        host, config_file, own_block_text, *, include_system_defaults_in_display=None,
+        overrides=None
     ):
         calls["diff_display_flag"] = include_system_defaults_in_display
         return {"has_diff": False, "changes": [], "own": ["x"], "full": ["x"]}
@@ -1011,3 +1022,255 @@ def test_subscribe_then_close_detaches_listener():
     service.close()
     assert repo.listeners == []
     assert seen == []
+
+
+def test_unsaved_host_check_applies_global_overrides_to_the_saved_side(tmp_path):
+    """A saved host still matches once Settings force its account and port.
+
+    The requested side is resolved by the real ssh with the overrides; the
+    saved side has to be compared with the same forced values, not with what
+    the record stored.
+    """
+    import shutil
+    from types import SimpleNamespace
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text("")
+    composed = [
+        "-o", "User=bob", "-v", "-o", "Port=2022", "-o", "ProxyJump=bastion",
+    ]
+    repo = FakeRepository(
+        [_record(record_id="prod", hostname="example.com", username="alice", port=2200)]
+    )
+    service = ConnectionApplicationService(
+        repo,
+        client_name="test",
+        ssh_overrides=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": composed}
+        ),
+    )
+    service._active_config_file = lambda: str(config)
+
+    # What the user types is irrelevant where an override forces the value.
+    for typed_user, typed_port in (("alice", 2200), ("bob", 2022), ("", None)):
+        result = service.check_unsaved_host(
+            UnsavedHostCheckRequest(
+                hostname="example.com", username=typed_user, port=typed_port
+            )
+        )
+        assert result.saved is True, (typed_user, typed_port)
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="other.example.com", username="bob")
+    ).saved is False
+
+
+def test_forced_destination_applies_only_what_it_can_resolve():
+    from sshpilot.core.settings.ssh_overrides import forced_destination, forced_option
+
+    composed = ["-o", "User=bob", "-v", "-o", "Port=2022", "-o", "User=later"]
+    assert forced_option(composed, "USER") == "bob"          # first value wins
+    assert forced_option(composed, "hostname") is None
+    assert forced_destination(
+        composed, hostname="web", username="alice", port=2200
+    ) == ("web", "bob", 2022)
+    assert forced_destination(
+        ["-o", "HostName=%h.corp.example", "-o", "Port=nope"],
+        hostname="web", username="alice", port=2200,
+    ) == ("web.corp.example", "alice", 2200)
+    # A token only OpenSSH can expand leaves the given value alone.
+    assert forced_destination(
+        ["-o", "HostName=%n-%C"], hostname="web", username="alice", port=22
+    ) == ("web", "alice", 22)
+
+
+def test_effective_config_resolves_with_what_a_launch_sends(
+    monkeypatch, tmp_path
+):
+    """Settings ▸ SSH Options, then the keepalive fallback for a host whose
+    configuration sets none. Nothing from the Host block is added: the launch
+    leaves the block to OpenSSH, and so must the resolved configuration."""
+    from sshpilot.core import ssh_config_effective
+
+    root = tmp_path / "config"
+    root.write_text("Host web\n    User alice\n", encoding="utf-8")
+    repo = FakeRepository([_record(record_id="web", nickname="web", host="web")])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+
+    class Overrides:
+        def forced_option_args(self):
+            return ("-o", "User=forced")
+
+        def keepalive_fallback_args(self, effective, configured=None):
+            seen["resolved_for_keepalive"] = dict(effective)
+            return ("-o", "ServerAliveInterval=15")
+
+    seen = {}
+
+    def fake_diff(host, config_file, own_block_text, *,
+                  include_system_defaults_in_display=None, overrides=None):
+        seen["overrides"] = overrides
+        return {"has_diff": False, "changes": [], "own": [], "full": []}
+
+    def fake_resolve(host, config_file=None, *, overrides=None, **_kwargs):
+        seen["resolve"] = (host, config_file, overrides)
+        return {"user": "forced", "serveraliveinterval": "0"}
+
+    monkeypatch.setattr(ssh_config_effective, "diff_effective_config", fake_diff)
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_resolve)
+    monkeypatch.setattr(
+        ssh_config_effective, "collect_host_block_lines", lambda h, c: ["Host web"]
+    )
+    service = ConnectionApplicationService(repo, ssh_overrides=Overrides())
+
+    service.get_effective_config(ConnectionId("web"))
+
+    assert seen["resolve"] == ("web", str(root), ("-o", "User=forced"))
+    assert seen["resolved_for_keepalive"]["serveraliveinterval"] == "0"
+    assert seen["overrides"] == (
+        "-o", "User=forced", "-o", "ServerAliveInterval=15",
+    )
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_effective_config_reports_what_an_earlier_block_decides(tmp_path):
+    """`Host *` before the host's own block wins in OpenSSH. The comparison
+    says so, and names the line, so the editor can mark the losing field."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User deploy\n    Port 2222\n\n"
+        "Host web\n    HostName web.example.com\n    User admin\n",
+        encoding="utf-8",
+    )
+    record = _record(record_id="web", nickname="web", host="web", source=str(root))
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    result = service.get_effective_config(ConnectionId("web"))
+
+    assert result.available is True
+    assert "user deploy" in result.full
+    earlier = {item.key: item for item in result.earlier}
+    assert set(earlier) == {"user", "port"}
+    assert earlier["user"].value == "deploy"
+    assert earlier["user"].block == "Host *"
+    assert earlier["user"].file == str(root)
+    assert earlier["user"].line == 2
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_earlier_directives_survive_a_config_openssh_rejects(tmp_path):
+    """A line OpenSSH cannot parse makes `ssh -G` fail, so there is no
+    comparison. The earlier lines are read from the file and are still
+    reported, without the unparseable line posing as an option."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User deploy\n    Port 2222\n *   IdentityAgent none\n\n"
+        "Host web\n    HostName web.example.com\n    User admin\n",
+        encoding="utf-8",
+    )
+    record = _record(record_id="web", nickname="web", host="web", source=str(root))
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    result = service.get_effective_config(ConnectionId("web"))
+
+    assert result.available is False
+    earlier = {item.key: item for item in result.earlier}
+    assert set(earlier) == {"user", "port"}
+    assert earlier["port"].value == "2222"
+    assert earlier["port"].line == 3
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_config_syntax_errors_name_the_line_openssh_rejects(tmp_path):
+    """One line OpenSSH cannot parse stops every SSH connection, so the
+    service names it; a configuration OpenSSH accepts yields nothing."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User deploy\n *   IdentityAgent none\n\n"
+        "Host web\n    HostName web.example.com\n",
+        encoding="utf-8",
+    )
+    record = _record(record_id="web", nickname="web", host="web", source=str(root))
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    errors = service.list_config_syntax_errors()
+
+    assert [(item.file, item.line) for item in errors] == [(str(root), 3)]
+    assert errors[0].diagnostic == "Bad configuration option: *"
+
+    root.write_text("Host web\n    HostName web.example.com\n", encoding="utf-8")
+    assert service.list_config_syntax_errors() == ()
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_earlier_directives_for_a_host_not_saved_yet(tmp_path):
+    """A new block is appended to the end of the root file, so every line that
+    applies to the alias comes before it: both `Host *` blocks decide."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *.lab\n    User labuser\n\n"
+        "Host saved\n    User admin\n\n"
+        "Host *\n    User deploy\n    Port 2222\n",
+        encoding="utf-8",
+    )
+    repo = FakeRepository([])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    found = {item.key: item for item in service.get_earlier_directives("new.lab")}
+    assert (found["user"].value, found["user"].block) == ("labuser", "Host *.lab")
+    assert (found["port"].value, found["port"].line) == ("2222", 9)
+
+    plain = {item.key: item.value for item in service.get_earlier_directives("newhost")}
+    assert plain == {"user": "deploy", "port": "2222"}
+
+    # Not a Host name: nothing to ask OpenSSH about.
+    assert service.get_earlier_directives("-oProxyCommand=x") == ()
+    assert service.get_earlier_directives("two words") == ()
+
+
+def test_config_conflicts_list_every_saved_host_value_an_earlier_block_beats(tmp_path):
+    """The upgrade notice's list: a saved host's own value is reported when an
+    earlier block sets the option to something else. An equal value, a block
+    after the host, a Match only OpenSSH could judge, and collected options
+    such as IdentityFile are not conflicts."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User admin\n    ForwardAgent no\n    IdentityFile ~/.ssh/a\n\n"
+        "Host web\n    User deploy\n    ForwardAgent NO\n    IdentityFile ~/.ssh/b\n\n"
+        "Match exec \"true\"\n    Port 2200\n\n"
+        "Host db\n    User admin\n    Port 2222\n\n"
+        "Host *\n    User late\n",
+        encoding="utf-8",
+    )
+    records = [
+        _record(record_id="web", nickname="web", host="web", source=str(root)),
+        _record(record_id="db", nickname="db", host="db", source=str(root)),
+    ]
+    repo = FakeRepository(records)
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    conflicts = service.list_config_conflicts()
+
+    assert len(conflicts) == 1
+    conflict = conflicts[0]
+    assert (conflict.connection_id, conflict.host) == ("web", "web")
+    assert (conflict.key, conflict.own_value) == ("user", "deploy")
+    assert conflict.earlier.value == "admin"
+    assert conflict.earlier.block == "Host *"
+    assert (conflict.earlier.file, conflict.earlier.line) == (str(root), 2)
+

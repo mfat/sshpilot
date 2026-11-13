@@ -41,6 +41,34 @@ new daemon records are also forwarded into the frontend console/master stream
 using a `daemon.forwarded.*` logger namespace, while the Log Viewer continues
 to read `daemon.log` directly.
 
+## Tracing an empty or read-only connection list
+
+The daemon reads and writes `~/.ssh/config`, so `daemon.log` says why the list
+is empty or view-only. Each state is logged once when it changes, not on every
+reload, under `sshpilot.core.connections.ssh_config_store`:
+
+| Log line contains | Meaning |
+| --- | --- |
+| `does not exist; no connections are loaded from it` | No config file yet (INFO). Adding a connection creates it. |
+| `(a link to …) points to a file that does not exist or is not visible here` | A dangling link (WARNING). Inside the Flatpak this is a link out of `~/.ssh` (a NixOS Home Manager link into `/nix/store`, a dotfiles repo); the line ends with the `flatpak override … --filesystem=…:ro` command that shares it. |
+| `cannot be opened: permission denied on the folder …` | A folder on the way (usually `~/.ssh`) refuses access: another owner (often after `sudo`), mode 000, or AppArmor/SELinux (WARNING). Without this check it looked like a missing config. |
+| `is not visible because the Flatpak sandbox has no access to …` | The Flatpak's `~/.ssh` permission was removed, so the folder looks missing inside the sandbox; the line ends with the command that restores it (WARNING). |
+| `exists but cannot be read (permission denied)` | Unreadable config (WARNING). `ssh_config_loader` also names any unreadable `Include`d file and the OS reason. |
+| `SSH config could not be loaded at startup` | An included file could not be read or the config could not be parsed (ERROR). The daemon starts anyway instead of failing. |
+| `is read-only because …; its connections are view-only` | The file (or the one a link names) cannot be written: read-only filesystem, directory not writable, or file mode. The GUI offers those connections view-only (INFO). |
+| `Not saving the SSH config:` | A save was refused, with the same reason (WARNING). |
+| `Refusing a connection change: the SSH config cannot be read` | A change was refused while the config could not be read (WARNING). |
+
+In every "cannot be read" case above (dangling link, refused folder or file,
+unshared folder, unreadable include, parse error) the window shows a notice
+with the reason and, where one is safe, a command that fixes it. The daemon
+then shows no SSH connections and refuses every change. It does not treat
+the unseen config as empty, which used to retire every saved connection's
+identity and empty its groups.
+
+Links are followed like OpenSSH follows them: a save edits the file the link
+names, in place, and the link survives.
+
 ## Tracing a pre-connection command
 
 A connection's **port knock sequence** and **Pre-Connection Command** (a VPN

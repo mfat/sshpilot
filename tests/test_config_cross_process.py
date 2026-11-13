@@ -7,6 +7,7 @@ import json
 import multiprocessing
 
 from sshpilot.config import Config
+from sshpilot.core.settings import CONFIG_VERSION
 
 
 def _write_preference(path, key, value, barrier):
@@ -30,7 +31,7 @@ def test_stale_frontend_tree_cannot_delete_daemon_setting(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "config_version": 3,
+                "config_version": CONFIG_VERSION,
                 "plugins": {},
                 "ui": {"language": ""},
             }

@@ -2,8 +2,7 @@
 
 Native mode composes app-level SSH options from ``ssh_overrides`` (the flat
 list produced by Preferences ▸ SSH Settings) and appends them verbatim to the
-command, so keepalive is provided that way rather than via the old
-``keepalive_interval`` / ``keepalive_count_max`` keys. The plain native
+command, so a keepalive carried there reaches the command. The plain native
 command builder is the contract surface — no event loop or removed
 ``Connection.connect()`` involved.
 """

@@ -116,7 +116,7 @@ def test_search_uses_keywords_pages_and_skips_hidden_rows(gui):
     prefs = _open_preferences(gui)
     assert 'Application Theme' in _search(prefs, gui, 'dark mode')
     keepalive = _search(prefs, gui, 'keepalive')
-    assert {'Apply default keepalive', 'ServerAlive Interval (s)'} <= set(keepalive)
+    assert {'Keepalive', 'ServerAlive Interval (s)'} <= set(keepalive)
     # A page whose name matches comes first.
     assert _search(prefs, gui, 'terminal')[0] == 'Terminal'
 

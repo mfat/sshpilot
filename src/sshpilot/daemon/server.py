@@ -2295,6 +2295,7 @@ class DaemonServer:
 
         from .process_registry import (
             OwnedProcessRegistry,
+            RegistryCorrupt,
             registry_path_for,
             set_active_registry,
         )
@@ -2304,11 +2305,22 @@ class DaemonServer:
             # A registry surviving here describes a previous daemon's
             # children; entries whose process is gone are dropped, and any
             # genuine orphan stays listed for the application to reap.
-            registry.prune()
+            try:
+                registry.prune()
+            except RegistryCorrupt:
+                # Undecodable bytes name no process, so nothing is lost by
+                # setting them aside; keeping them would leave this daemon
+                # without a registry and refuse every quit from now on.
+                moved = registry.quarantine_if_corrupt()
+                logger.warning(
+                    "The owned-process registry was corrupt; moved it to %s",
+                    moved,
+                )
+                registry.prune()
             set_active_registry(registry)
             self._process_registry = registry
         except Exception:
-            logger.debug("Could not install the process registry", exc_info=True)
+            logger.warning("Could not install the process registry", exc_info=True)
 
     def _release_process_registry(self) -> None:
         """Drop the registry after a clean shutdown reaped its children."""

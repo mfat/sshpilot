@@ -654,6 +654,77 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConfigConflict -->
+## `ConfigConflict`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A saved host's own value that an earlier block keeps from being used.
+
+The host's block sets ``key`` to ``own_value``, but ``earlier`` sets it
+first, and OpenSSH keeps the first value it obtains. ``key`` is the
+lower-case keyword, the same as ``earlier.key``.
+
+**Related methods:** `list_config_conflicts`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `str` | Yes | — | No |
+| `host` | `str` | Yes | — | No |
+| `key` | `str` | Yes | — | No |
+| `own_value` | `str` | Yes | — | No |
+| `earlier` | `EarlierDirective` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "earlier": {
+    "block": "example",
+    "file": "example",
+    "key": "example",
+    "line": 0,
+    "value": "example"
+  },
+  "host": "example",
+  "key": "example",
+  "own_value": "example"
+}
+```
+
+<!-- api-model: ConfigSyntaxError -->
+## `ConfigSyntaxError`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A line of the SSH configuration that OpenSSH rejects.
+
+OpenSSH refuses the whole configuration over one such line, so no SSH
+connection starts until it is corrected. ``file`` and ``line`` locate it;
+``diagnostic`` is OpenSSH's own text for it, shown as it is and never
+interpreted.
+
+**Related methods:** `list_config_syntax_errors`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "diagnostic": "",
+  "file": "example",
+  "line": 0
+}
+```
+
 <!-- api-model: ConfirmationPrompt -->
 ## `ConfirmationPrompt`
 
@@ -699,6 +770,7 @@ Synthetic representation:
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
 | `target_summary` | `str` | No | `` | No |
+| `config_read_only` | `bool` | No | `false` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -715,6 +787,7 @@ Synthetic representation:
   "aliases": [],
   "authentication_method": "key",
   "certificate_configured": false,
+  "config_read_only": false,
   "display_name": "",
   "forwarding_rule_count": 0,
   "groups": [],
@@ -794,6 +867,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
 | `target_summary` | `str` | No | `` | No |
+| `config_read_only` | `bool` | No | `false` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -838,6 +912,7 @@ Synthetic representation:
   "authored_directives": [],
   "certificate_configured": false,
   "certificate_files": [],
+  "config_read_only": false,
   "display_name": "",
   "extra_ssh_config": "",
   "forward_agent": false,
@@ -984,6 +1059,9 @@ Synthetic representation:
 | `groups` | `Tuple[GroupSummary, ...]` | Yes | — | No |
 | `root_connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
 | `metadata` | `Tuple[ConnectionMetadataSummary, ...]` | Yes | — | No |
+| `ssh_config_read_only` | `bool` | No | `false` | No |
+| `ssh_config_unavailable` | `Optional[SshConfigUnavailableReason]` | No | `null` | No |
+| `ssh_config_unavailable_path` | `str` | No | `` | No |
 
 Synthetic representation:
 
@@ -993,7 +1071,10 @@ Synthetic representation:
   "generation": {},
   "groups": {},
   "metadata": {},
-  "root_connection_ids": {}
+  "root_connection_ids": {},
+  "ssh_config_read_only": false,
+  "ssh_config_unavailable": null,
+  "ssh_config_unavailable_path": ""
 }
 ```
 
@@ -1020,11 +1101,13 @@ Synthetic representation:
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
 | `display_name` | `str` | No | `` | No |
 | `target_summary` | `str` | No | `` | No |
+| `config_read_only` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "config_read_only": false,
   "display_name": "",
   "groups": [],
   "health": "unknown",
@@ -1903,6 +1986,41 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: EarlierDirective -->
+## `EarlierDirective`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** An option OpenSSH obtains before it reaches a host's own block.
+
+OpenSSH keeps the first value it obtains, so this line decides the option
+for the host whatever the host's own block says. ``block`` is the header
+of the block that holds the line (``Host *``, ``Match all``), empty for a
+line above every block; ``file`` and ``line`` locate it.
+
+**Related methods:** `get_earlier_directives`, `get_effective_config`, `list_config_conflicts`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | No |
+| `block` | `str` | Yes | — | No |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "block": "example",
+  "file": "example",
+  "key": "example",
+  "line": 0,
+  "value": "example"
+}
+```
+
 <!-- api-model: EffectiveConfigComparison -->
 ## `EffectiveConfigComparison`
 
@@ -1923,6 +2041,7 @@ Synthetic representation:
 | `own` | `tuple[str, ...]` | No | `[]` | No |
 | `full` | `tuple[str, ...]` | No | `[]` | No |
 | `generation` | `int` | No | `0` | No |
+| `earlier` | `tuple[EarlierDirective, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -1931,6 +2050,7 @@ Synthetic representation:
   "available": false,
   "changes": [],
   "connection_id": "production",
+  "earlier": [],
   "full": [],
   "generation": 0,
   "has_diff": false,

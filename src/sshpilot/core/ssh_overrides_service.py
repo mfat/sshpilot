@@ -35,9 +35,11 @@ from .settings import (
     compute_ssh_overrides_revision,
     get_default_config,
     get_nested,
+    keepalive_fallback_args,
     load_settings_strict,
     normalize_ssh_overrides,
     save_settings,
+    select_override_args,
     set_nested,
     settings_transaction_lock,
 )
@@ -68,6 +70,7 @@ class SshOverridesService:
         settings_path: Path | str,
         *,
         controlmaster_extra: Optional[Sequence[str]] = None,
+        legacy_extra: Optional[Sequence[str]] = None,
         on_mutation: Optional[Callable[[], None]] = None,
     ) -> None:
         self._path = Path(settings_path)
@@ -75,6 +78,10 @@ class SshOverridesService:
         self._controlmaster_extra = (
             tuple(controlmaster_extra) if controlmaster_extra is not None else None
         )
+        # ``-o`` args that re-enable old algorithms, already filtered to what
+        # the installed OpenSSH supports. Composed only while the
+        # ``ssh.legacy_algorithms`` switch is on.
+        self._legacy_extra = tuple(legacy_extra) if legacy_extra is not None else None
         # The daemon may inject a post-persistence runtime hook.  Core owns the
         # mutation; it never imports or manages the runtime implementation.
         self._on_mutation = on_mutation
@@ -204,15 +211,49 @@ class SshOverridesService:
         defaults, and the derived ``ssh_overrides`` argv fragment is always
         regenerated so the launch path and the overrides API agree.
         """
-        config = self._load_view()
+        return self._ssh_view(self._load_view())
+
+    def forced_option_args(self) -> tuple:
+        """Every ``-o`` pair a launch sends ahead of a connection's own options.
+
+        The composed Settings ▸ SSH Options fragment without its bare flags.
+        Queries that have to resolve what a launch will really use
+        (``ssh -G``) pass exactly this. The keepalive is not part of it: it
+        is a fallback, see :meth:`keepalive_fallback_args`.
+        """
+        return self._forced_option_args(self._load_view())
+
+    def keepalive_fallback_args(self, effective, configured=None) -> tuple:
+        """The keepalive ``-o`` pairs a launch adds for a host, or nothing.
+
+        *effective* is what OpenSSH resolved for that host without them; the
+        app's keepalive applies only when the configuration sets none.
+        """
+        try:
+            return tuple(
+                keepalive_fallback_args(
+                    self._ssh_view(self._load_view()), effective, configured
+                )
+            )
+        except (TypeError, ValueError):
+            logger.debug("Keepalive settings unreadable; no fallback applied")
+            return ()
+
+    def _ssh_view(self, config: Dict[str, Any]) -> Dict[str, Any]:
         ssh = dict(get_default_config()["ssh"])
         persisted = config.get("ssh")
         if isinstance(persisted, dict):
             ssh.update({key: value for key, value in persisted.items() if value is not None})
         ssh["ssh_overrides"] = compose_ssh_overrides(
-            ssh, controlmaster_extra=self._controlmaster_extra
+            ssh,
+            controlmaster_extra=self._controlmaster_extra,
+            legacy_extra=self._legacy_extra,
         )
         return ssh
+
+    def _forced_option_args(self, config: Dict[str, Any]) -> tuple:
+        ssh = self._ssh_view(config)
+        return tuple(select_override_args(ssh["ssh_overrides"], flags=False))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -278,14 +319,14 @@ class SshOverridesService:
         return GlobalSshOverrides(
             revision=compute_ssh_overrides_revision(semantic),
             connect_timeout=semantic["connect_timeout"],
-            connection_attempts=semantic["connection_attempts"],
-            server_alive_interval=semantic["server_alive_interval"],
-            server_alive_count_max=semantic["server_alive_count_max"],
             strict_host_key_checking=semantic["strict_host_key_checking"],
-            batch_mode=semantic["batch_mode"],
             compression=semantic["compression"],
             verbosity=semantic["verbosity"],
             debug_enabled=semantic["debug_enabled"],
+            extra_options=tuple(semantic["extra_options"]),
+            address_family=semantic["address_family"],
+            legacy_algorithms=semantic["legacy_algorithms"],
+            forced_options=self._forced_option_args(config)[1::2],
         )
 
     def _write_semantic(
@@ -316,7 +357,9 @@ class SshOverridesService:
             )
         try:
             overrides = compose_ssh_overrides(
-                ssh, controlmaster_extra=self._controlmaster_extra
+                ssh,
+                controlmaster_extra=self._controlmaster_extra,
+                legacy_extra=self._legacy_extra,
             )
         except Exception as exc:
             raise SshPilotError(
@@ -345,4 +388,6 @@ class SshOverridesService:
             )
         for field, config_key in FIELD_TO_CONFIG_KEY.items():
             raw_key = config_key.split(".", 1)[1]
-            ssh[raw_key] = DEFAULT_SSH_OVERRIDES[field]
+            default = DEFAULT_SSH_OVERRIDES[field]
+            # A fresh list each time: the default must never be shared and mutated.
+            ssh[raw_key] = list(default) if isinstance(default, list) else default

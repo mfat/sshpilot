@@ -77,8 +77,8 @@ def test_get_ssh_config_defaults(tmp_path, monkeypatch):
 
     ssh_cfg = cfg.get_ssh_config()
 
-    assert ssh_cfg['strict_host_key_checking'] == 'accept-new'
-    assert ssh_cfg['batch_mode'] is False
+    assert ssh_cfg['strict_host_key_checking'] == ''
+    assert ssh_cfg['compression'] == ''
 
 
 def test_get_ssh_config_respects_saved_values(tmp_path, monkeypatch):
@@ -96,19 +96,17 @@ def test_get_ssh_config_respects_saved_values(tmp_path, monkeypatch):
 
     cfg.set_setting('ssh.strict_host_key_checking', 'no')
     cfg.set_setting('ssh.connection_timeout', '45')
-    cfg.set_setting('ssh.connection_attempts', '3')
-    cfg.set_setting('ssh.batch_mode', 'false')
+    cfg.set_setting('ssh.compression', 'no')
 
     ssh_cfg = cfg.get_ssh_config()
 
     assert ssh_cfg['strict_host_key_checking'] == 'no'
     assert ssh_cfg['connection_timeout'] == 45
-    assert ssh_cfg['connection_attempts'] == 3
-    assert ssh_cfg['batch_mode'] is False
+    assert ssh_cfg['compression'] == 'no'
 
     cfg.set_setting('ssh.strict_host_key_checking', 'maybe')
     ssh_cfg_invalid = cfg.get_ssh_config()
-    assert ssh_cfg_invalid['strict_host_key_checking'] == 'accept-new'
+    assert ssh_cfg_invalid['strict_host_key_checking'] == ''
 
 
 

@@ -196,13 +196,22 @@ def test_no_client_path_authority(provider):
     assert view.source == "/tmp/evil-config"
 
 
-def test_local_command_injected_only_when_present(provider):
+def test_local_command_is_left_to_the_config_file(provider):
+    """The Host block's LocalCommand (and the PermitLocalCommand the editor
+    writes with it) is in the file, which OpenSSH reads. Repeating it here
+    put the options behind the destination of a remote-command launch."""
     prov, records = provider
     records["web"] = _record(data={"local_command": "echo hi"})
-    command, _environment = prov.prepare_terminal_launch(
+    terminal, _environment = prov.prepare_terminal_launch(
         "web", interaction_policy="none"
     )
-    assert "PermitLocalCommand=yes" in command
+    probe, _environment = prov.prepare_remote_command_launch("web", "uptime")
+    for command in (terminal, probe):
+        assert not any(token.startswith("LocalCommand=") for token in command)
+        assert "PermitLocalCommand=yes" not in command
+    assert command[-2:] == ("web", "uptime")
+    # A probe is no login, so the block's LocalCommand must not fire for it.
+    assert probe.index("PermitLocalCommand=no") < probe.index("web")
 
 
 def test_terminal_launch_appends_remote_command_after_host(provider):
@@ -291,9 +300,9 @@ def test_require_master_coexists_with_preference_multiplex(provider):
 def test_require_master_overrides_authored_controlmaster_no(provider):
     """Host Info must hold a master even when the Host block disabled mux.
 
-    OpenSSH is first-value-wins: the forced fragment is emitted before
-    authored Advanced-tab options, so ControlMaster=auto beats an authored
-    ControlMaster no (and the forced ControlPath beats ControlPath none).
+    The forced fragment is on the command line, which beats the Host block
+    in the file: ControlMaster=auto wins over an authored ControlMaster no
+    (and the forced ControlPath over ControlPath none).
     """
     prov, records = provider
     records["web"] = _record(
@@ -309,15 +318,13 @@ def test_require_master_overrides_authored_controlmaster_no(provider):
     )
     tokens = [str(token) for token in command]
     first_master = tokens.index("ControlMaster=auto")
-    authored_no = tokens.index("ControlMaster=no")
-    assert first_master < authored_no
     assert tokens[-1] == "uptime"
     assert first_master < len(tokens) - 2
     assert tokens[first_master - 1] == "-o"
-    # Forced path is the first ControlPath; authored none comes later and loses.
-    control_paths = [t for t in tokens if t.startswith("ControlPath=")]
-    assert control_paths[0] != "ControlPath=none"
-    assert "ControlPath=none" in control_paths[1:]
+    # The block's own values stay in the file, where the forced command-line
+    # options beat them.
+    assert "ControlMaster=no" not in tokens
+    assert "ControlPath=none" not in tokens
     assert any(token.startswith("ControlPath=") and "/%C" in token for token in tokens)
 
 
@@ -326,8 +333,8 @@ def test_remote_command_overrides_authored_session_type_none(provider):
 
     ``SessionType none`` (ssh -N) makes OpenSSH ignore the remote command and
     exit 0 with empty stdout — Host Info then "succeeds" with a blank
-    snapshot. Forced ``SessionType=default`` is first-value-wins before the
-    authored Advanced-tab option.
+    snapshot. Forced ``SessionType=default`` is on the command line, which
+    beats the block's own line in the file.
     """
     prov, records = provider
     records["web"] = _record(
@@ -341,9 +348,8 @@ def test_remote_command_overrides_authored_session_type_none(provider):
     command, _environment = prov.prepare_remote_command_launch("web", "uptime")
     tokens = [str(token) for token in command]
     forced = tokens.index("SessionType=default")
-    authored_none = tokens.index("SessionType=none")
     assert tokens[forced - 1] == "-o"
-    assert forced < authored_none
+    assert "SessionType=none" not in tokens
     assert forced < len(tokens) - 2
     assert tokens[-2]  # destination alias / host
     assert tokens[-1] == "uptime"
@@ -353,7 +359,7 @@ def test_terminal_forwarding_only_disables_preference_multiplex(provider):
     """SessionType none terminal launches must not inherit ControlMaster=auto.
 
     Preference multiplexing injects ControlMaster=auto + ControlPersist via
-    ssh_overrides (last). Combined with SessionType none, OpenSSH backgrounds
+    ssh_overrides. Combined with SessionType none, OpenSSH backgrounds
     the master and the watched process exits 0 — the tab closes as a clean
     exit. Forced ControlMaster=no is first-value-wins before those overrides.
     """
@@ -417,7 +423,7 @@ def test_forward_launch_disables_preference_multiplex(provider):
     """Daemon ``ssh -N`` forwards must not inherit ControlMaster=auto.
 
     Preference multiplexing injects ControlMaster=auto + ControlPersist via
-    ssh_overrides (last). Combined with ``ssh -N``, OpenSSH backgrounds the
+    ssh_overrides. Combined with ``ssh -N``, OpenSSH backgrounds the
     master and the watched process exits 0 — Host Info web-UI opens fail with
     ``forward_not_active``. Forced ControlMaster=no is first-value-wins before
     those overrides.
@@ -852,3 +858,314 @@ def test_launch_follows_a_proxy_jump_loop_only_once(tmp_path):
     )
 
     assert command[-1] == "prod"
+
+
+# --- Settings overrides vs. what an app operation needs ----------------------
+
+_HOSTILE_OVERRIDES = (
+    "RemoteCommand=uptime",
+    "SessionType=none",
+    "ClearAllForwardings=yes",
+    "ForkAfterAuthentication=yes",
+    "StdinNull=yes",
+    "RequestTTY=force",
+    "PermitLocalCommand=yes",
+    "LocalCommand=touch /tmp/ran",
+    "Ciphers=aes128-ctr",
+)
+
+
+def _hostile_provider(provider, extra=()):
+    from types import SimpleNamespace
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+
+    prov, _records = provider
+    composed = compose_ssh_overrides(
+        {"extra_options": [*_HOSTILE_OVERRIDES, *extra]}
+    )
+    return DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {
+                "ssh_overrides": composed,
+                "apply_default_keepalive": False,
+            }
+        ),
+    )
+
+
+def _ssh_resolves(command):
+    """What the real ssh makes of *command* (``-G`` prints, never connects)."""
+    import shutil
+    import subprocess
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    tokens = [str(token) for token in command]
+    if not any(token == "-F" for token in tokens):
+        tokens[1:1] = ["-F", "/dev/null"]  # not the developer's own ~/.ssh/config
+    result = subprocess.run(
+        [tokens[0], "-G", *tokens[1:]], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.lower().splitlines()
+
+
+def _launches(prov):
+    return {
+        "forward": prov.prepare_forward_launch(
+            "web", forward_type="local", bind_host="127.0.0.1", bind_port=18080,
+            destination_host="127.0.0.1", destination_port=80,
+        )[0],
+        "command": prov.prepare_remote_command_launch("web", "uptime")[0],
+        # The file manager appends the subsystem name to the prepared argv.
+        "sftp": (*prov.prepare_sftp_launch("web")[0], "sftp"),
+    }
+
+
+@pytest.mark.parametrize("operation", ["forward", "command", "sftp"])
+def test_operations_drop_the_overrides_they_own(provider, operation):
+    """Global options that decide what a launch is stay out of app operations.
+
+    Each of these made OpenSSH refuse to start or do something else entirely:
+    RemoteCommand next to a command, SessionType next to -N/-s, and
+    ClearAllForwardings=yes dropping the forward itself.
+    """
+    tokens = [str(t) for t in _launches(_hostile_provider(provider))[operation]]
+    for hostile in _HOSTILE_OVERRIDES[:-1]:
+        assert hostile not in tokens, tokens
+    # An ordinary override still applies to the operation.
+    assert "Ciphers=aes128-ctr" in tokens
+
+    resolved = _ssh_resolves(tokens)
+    assert "ciphers aes128-ctr" in resolved
+    assert "forkafterauthentication no" in resolved
+    assert "stdinnull no" in resolved
+    assert not any(line.startswith("remotecommand ") for line in resolved)
+    expected_session = {
+        "forward": "sessiontype none",
+        "command": "sessiontype default",
+        "sftp": "sessiontype subsystem",
+    }[operation]
+    assert expected_session in resolved
+    if operation == "forward":
+        assert "clearallforwardings no" in resolved
+        assert any(
+            line.startswith("localforward") and "18080" in line for line in resolved
+        )
+
+
+def test_terminal_session_keeps_every_override(provider):
+    """A plain terminal tab is the user's session: nothing is filtered."""
+    command, _env = _hostile_provider(provider).prepare_terminal_launch("web")
+    tokens = [str(t) for t in command]
+    for option in _HOSTILE_OVERRIDES:
+        assert option in tokens
+
+
+def test_effective_username_follows_a_global_user_override(provider, tmp_path, monkeypatch):
+    """Credential lookup has to resolve the account the launch will use."""
+    import shutil
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text("Host web\n    HostName example.com\n    User fromfile\n")
+    prov = _hostile_provider(provider, extra=("User=forced",))
+    record = prov._resolver("web")
+    view = prov._view(
+        ConnectionRecord(
+            id=record.id, nickname=record.nickname, hostname=record.hostname,
+            username="", port=22, protocol="ssh", source="", data={},
+        )
+    )
+    monkeypatch.setattr(view, "_resolve_config_override_path", lambda: str(config))
+    assert "User=forced" in view.global_ssh_options
+    assert view.effective_username == "forced"
+
+    plain = provider[0]._view(view._record)
+    monkeypatch.setattr(plain, "_resolve_config_override_path", lambda: str(config))
+    assert plain.effective_username == "fromfile"
+
+
+def test_quick_connect_identity_follows_global_overrides(tmp_path, monkeypatch):
+    """Matching a typed destination to a saved one uses what a launch would use."""
+    import shutil
+    from types import SimpleNamespace
+
+    from sshpilot.core.connection_application_service import (
+        ConnectionApplicationService,
+    )
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text("Host *\n    User fromfile\n")
+
+    def _identity(composed):
+        service = ConnectionApplicationService.__new__(ConnectionApplicationService)
+        service._ssh_overrides_service = (
+            SimpleNamespace(get_ssh_config=lambda: {"ssh_overrides": composed})
+            if composed is not None else None
+        )
+        monkeypatch.setattr(service, "_active_config_file", lambda: str(config))
+        return service._destination_identity("example.com", "typed", 2200, ())
+
+    assert _identity(None)[1:3] == ("typed", 2200)
+    assert _identity(["-o", "User=forced", "-v", "-o", "Port=2022"])[1:3] == (
+        "forced", 2022,
+    )
+
+
+def test_backup_views_carry_the_global_overrides(tmp_path):
+    import json
+
+    from sshpilot.daemon.secret_transfer import _selected_views
+
+    settings = tmp_path / "config.json"
+    settings.write_text(json.dumps(
+        {"ssh": {"ssh_overrides": ["-o", "User=forced"]}}
+    ))
+    views = _selected_views(None, [_record()], settings_path=settings)
+    assert [view.global_ssh_options for view in views] == [("-o", "User=forced")]
+
+
+def test_remote_identity_follows_overrides_over_authored_values(
+    provider, tmp_path, monkeypatch
+):
+    """An authored User/Port loses to Settings, so prompts and the stored
+    password lookup must name the forced account, port and host."""
+    import shutil
+
+    from sshpilot.daemon import connection_launch_provider as module
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+    config = tmp_path / "config"
+    config.write_text(
+        "Host web\n    HostName example.com\n    User alice\n    Port 2200\n"
+    )
+    monkeypatch.setattr(
+        module.HeadlessConnectionView,
+        "_resolve_config_override_path",
+        lambda self: str(config),
+    )
+    prov, records = provider
+    records["web"] = _record(username="alice", port=2200)
+    assert prov.remote_identity("web") == ("example.com", "alice", 2200)
+
+    forced = _hostile_provider(
+        provider, extra=("User=bob", "Port=2022", "HostName=%h.internal")
+    )
+    # %h is the name ssh is given: the alias, as `ssh -G` confirms.
+    assert forced.remote_identity("web") == ("web.internal", "bob", 2022)
+    assert "hostname web.internal" in _ssh_resolves(
+        ["ssh", "-F", str(config), "-o", "HostName=%h.internal", "web"]
+    )
+    assert forced._view(records["web"]).effective_username == "bob"
+
+
+def _authored_record():
+    return _record(
+        nickname="production",
+        hostname="production.example.com",
+        username="alice",
+        port=2200,
+        data={
+            "__authored_directives": ["hostname", "user", "port", "compression"],
+            "extra_ssh_config": "Compression no",
+        },
+    )
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_launch_resolves_like_plain_ssh_when_host_star_comes_first(tmp_path):
+    """An earlier ``Host *`` says Compression yes and User deploy, the block
+    says no and alice. OpenSSH keeps the first value, so `ssh production`
+    uses yes and deploy -- and the launch adds nothing that would change it."""
+    import subprocess
+
+    config = tmp_path / "config"
+    config.write_text(
+        "Host *\n    Compression yes\n    User deploy\n"
+        "    ServerAliveInterval 60\n\n"
+        "Host production\n"
+        "    HostName production.example.com\n"
+        "    User alice\n"
+        "    Port 2200\n"
+        "    Compression no\n"
+    )
+    from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+
+    records = {r.id: r for r in load_ssh_configuration(config, isolated=False).connections}
+    prov = DaemonConnectionLaunchProvider(
+        records.get, config_root=lambda: config
+    )
+
+    argv, _env = prov.prepare_terminal_launch("production", interaction_policy="broker")
+
+    assert list(argv[1:]) == ["-F", str(config), "production"]
+
+    def resolved(args):
+        out = subprocess.run(
+            ["ssh", "-G", *args], capture_output=True, text=True, check=True
+        ).stdout
+        return sorted(out.splitlines())
+
+    assert resolved(list(argv[1:])) == resolved(["-F", str(config), "production"])
+    assert prov.remote_identity("production") == (
+        "production.example.com", "deploy", 2200,
+    )
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+@pytest.mark.parametrize(
+    ("host", "forced"),
+    [("web.tunnel", True), ("plain", False)],
+)
+def test_inherited_session_type_none_disables_preference_multiplex(
+    tmp_path, host, forced
+):
+    """``SessionType none`` from ``Host *.tunnel`` makes web.tunnel a tunnel.
+
+    OpenSSH applies it although web.tunnel's own block never says so; the
+    launch must then hold the -N process in the foreground exactly as for an
+    authored one, or ControlMaster=auto backgrounds it and the tab closes
+    while the tunnel stays up. A host the wildcard does not match keeps the
+    preference multiplexing.
+    """
+    from types import SimpleNamespace
+
+    from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    config = tmp_path / "config"
+    config.write_text(
+        "Host *.tunnel\n"
+        "    SessionType none\n"
+        "    LocalForward 8080 localhost:80\n\n"
+        "Host web.tunnel\n"
+        "    HostName example.com\n\n"
+        "Host plain\n"
+        "    HostName example.org\n"
+    )
+    records = {r.id: r for r in load_ssh_configuration(config, isolated=False).connections}
+    assert "SessionType" not in str(records[host].data.get("extra_ssh_config") or "")
+    prov = DaemonConnectionLaunchProvider(
+        records.get,
+        config_root=lambda: config,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+
+    argv, _env = prov.prepare_terminal_launch(host, interaction_policy="none")
+
+    tokens = [str(token) for token in argv]
+    assert ("ControlMaster=no" in tokens) is forced
+    if forced:
+        assert tokens[tokens.index("ControlMaster=no") - 1] == "-o"
+        if "ControlMaster=auto" in tokens:
+            assert tokens.index("ControlMaster=no") < tokens.index("ControlMaster=auto")

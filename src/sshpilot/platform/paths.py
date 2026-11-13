@@ -29,6 +29,57 @@ def get_ssh_dir() -> Path:
     return get_home_dir() / ".ssh"
 
 
+def openssh_user_dir() -> Path:
+    """``~/.ssh`` as OpenSSH itself finds it.
+
+    OpenSSH takes the home directory from the password database, never from
+    ``$HOME`` (Windows: the user profile). This is where ``ssh`` reads its
+    per-user ``config`` when no ``-F`` is given, and where it looks for a
+    relative ``Include`` of any user configuration file -- even one named
+    with ``-F`` somewhere else.
+    """
+    if os.name != "nt":
+        try:
+            import pwd
+
+            home = pwd.getpwuid(os.getuid()).pw_dir
+            if home:
+                return Path(home) / ".ssh"
+        except (ImportError, KeyError, OSError):
+            pass
+    return get_home_dir() / ".ssh"
+
+
+def is_openssh_user_config(path) -> bool:
+    """Whether *path* is the file plain ``ssh host`` reads (``~/.ssh/config``)."""
+    if not path:
+        return False
+    try:
+        candidate = os.path.abspath(os.path.expanduser(str(path)))
+        default = os.path.abspath(str(openssh_user_dir() / "config"))
+    except (OSError, ValueError):
+        return False
+    return os.path.normcase(candidate) == os.path.normcase(default)
+
+
+def include_base_dir(root_path, including_file) -> str:
+    """Directory a relative ``Include`` in *including_file* is resolved in.
+
+    OpenSSH resolves it in ``~/.ssh``, whichever file holds the line. That is
+    applied when *root_path* is the user's own ``~/.ssh/config``, so the app
+    discovers exactly the files ``ssh`` reads.
+
+    A root anywhere else (``SSHPILOT_SSH_DIR``, Isolated Mode) is a
+    configuration ``ssh`` has no notion of: the app treats the root's folder
+    as the SSH folder and resolves next to the including file, as it always
+    has. :func:`sshpilot.core.ssh_config_effective.openssh_reachable_files`
+    tells which of those files ``ssh -F <root>`` can really reach.
+    """
+    if is_openssh_user_config(root_path):
+        return str(openssh_user_dir())
+    return os.path.dirname(os.path.abspath(str(including_file)))
+
+
 def known_hosts_path_for(isolated: bool) -> Path:
     """The known_hosts file that belongs to one operation mode.
 

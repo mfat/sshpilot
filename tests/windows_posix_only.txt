@@ -77,10 +77,20 @@ tests/core/test_ssh_config_store.py::test_parent_directory_fsync  # assumes POSI
 tests/core/test_ssh_config_store.py::test_parent_fsync_failure_is_reported_after_replacement  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_ssh_config_store.py::test_split_allows_recreating_removed_source_token[True]  # path separators
 tests/core/test_ssh_config_store.py::test_symlink_swap_detected_before_replacement  # POSIX-only API
-tests/core/test_ssh_config_store.py::test_symlink_target_refused  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_linked_root_is_edited_in_place_like_openssh  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_linked_root_into_read_only_store_is_not_writable  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_dangling_linked_root_reads_empty_and_creates_nothing  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_link_retargeted_at_identical_content_is_not_followed  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_edit_writes_the_file_it_read_even_if_the_link_moves  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_access_reasons_name_the_file_and_the_problem  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_dangling_root_warns_with_the_link_target  # POSIX-only API
+tests/core/test_ssh_config_store.py::test_unreadable_included_file_is_named_in_the_log  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_daemon_resolves_normal_config_root  # path separators
-tests/core/test_ssh_config_text_editor.py::test_store_refuses_symlinked_root_and_reports_not_writable  # POSIX-only API
+tests/core/test_ssh_config_text_editor.py::test_store_saves_linked_root_in_place  # POSIX-only API
+tests/core/test_ssh_config_text_editor.py::test_repository_edits_linked_root_through_daemon_transaction  # POSIX-only API
 tests/core/test_ssh_config_text_editor.py::test_store_save_writes_exact_text_and_updates_revision  # POSIX file modes
+tests/core/test_ssh_config_text_editor.py::test_flatpak_grant_list_is_parsed_like_flatpak_writes_it  # path separators
+tests/core/test_ssh_config_text_editor.py::test_a_flatpak_without_ssh_folder_access_says_so  # path separators
 tests/core/test_transient_connections.py::test_issue_1320_jump_host_sees_the_users_config  # assumes POSIX behaviour (reviewed by sample)
 tests/core/test_transient_connections.py::test_issue_1320_save_dialog_sees_what_the_target_inherited  # assumes POSIX behaviour (reviewed by sample)
 tests/daemon/test_connection_launch_provider.py::test_builtin_plugin_failure_survives_provider_and_session_runtime  # assumes POSIX behaviour (reviewed by sample)
@@ -319,7 +329,6 @@ tests/test_sftp_client_large_files.py::test_read_small_files_stays_within_the_se
 tests/test_sftp_client_large_files.py::test_tree_delete_resolves_a_root_spelled_through_a_symlink  # Win32-OpenSSH REALPATH does not follow symlinks
 tests/test_ssh_config_document.py::test_parse_file_matches_parse_text  # assumes POSIX behaviour (reviewed by sample)
 tests/test_ssh_config_safe_write.py::test_atomic_write_creates_file_with_requested_mode  # POSIX file modes
-tests/test_ssh_config_safe_write.py::test_atomic_write_makes_backup_and_keeps_perms  # POSIX file modes
 tests/test_ssh_config_safe_write.py::test_atomic_write_preserves_existing_mode_when_mode_none  # POSIX file modes
 tests/test_ssh_copy_id_operation_scope.py::test_deploy_failure_does_not_commit_remembered_secret  # POSIX paths in fixtures
 tests/test_ssh_copy_id_operation_scope.py::test_deploy_interaction_scope_is_public_operation_id  # POSIX paths in fixtures

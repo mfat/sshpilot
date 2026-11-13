@@ -220,3 +220,25 @@ if __name__ == "__main__":
     test_global_override_and_accumulation_detected()
     test_clean_config_reports_no_diff()
     print("ok")
+
+
+def test_settings_overrides_show_up_as_differences_from_the_host_block():
+    """Settings ▸ SSH Options are sent ahead of the Host block, so the
+    effective side reports them; the authored side stays what was written."""
+    path = _write(OWN_BLOCK + "    ServerAliveInterval 90\n")
+    try:
+        result = diff_effective_config(
+            "foo",
+            path,
+            OWN_BLOCK + "    ServerAliveInterval 90\n",
+            overrides=["-o", "User=forced", "-o", "ServerAliveInterval=15", "-v"],
+        )
+    finally:
+        os.unlink(path)
+    assert result is not None
+    changes = {change["key"]: change for change in result["changes"]}
+    assert changes["user"]["effective"] == ["forced"]
+    assert changes["user"]["own"] == ["hostuser"]
+    assert changes["serveraliveinterval"]["effective"] == ["15"]
+    assert "user forced" in result["full"]
+    assert "user hostuser" in result["own"]

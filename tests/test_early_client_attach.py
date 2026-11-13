@@ -106,6 +106,9 @@ class _EarlyWindow:
         )
         self.group_manager = SimpleNamespace(bind_connections=lambda _c: None)
 
+    def _sync_ssh_config_link_notice(self, manager=None):
+        """The linked-config notice is not under test here."""
+
     def _apply_client_selection(self, selection):
         """Like production, the attach queues the store's projection reset."""
         self.selections.append(selection)

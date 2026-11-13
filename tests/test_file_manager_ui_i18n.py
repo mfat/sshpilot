@@ -94,7 +94,12 @@ def _dialog_response(dialog):
 def test_create_dialog_localizes_heading_body_and_creates_folder(monkeypatch, tmp_path):
     window_module, _, _ = _modules()
     pane = MagicMock()
-    pane.toolbar.path_entry.get_text.return_value = str(tmp_path)
+    # Flatpak (#1376): the bar shows the real host path of a portal folder,
+    # which inside the sandbox is a throwaway directory. The folder must land
+    # in the pane's current (portal) path, not the displayed one.
+    displayed = tmp_path / "displayed-host-path"
+    pane.toolbar.path_entry.get_text.return_value = str(displayed)
+    pane._current_path = str(tmp_path)
     window = _window(window_module, left=pane)
     window._pending_highlights = {pane: None}
     window._load_local = MagicMock()
@@ -114,8 +119,34 @@ def test_create_dialog_localizes_heading_body_and_creates_folder(monkeypatch, tm
     entry.set_text("created")
     _dialog_response(dialog)(dialog, "ok")
     assert (tmp_path / "created").is_dir()
+    assert not displayed.exists()
     window._load_local.assert_called_once_with(str(tmp_path))
     assert window._pending_highlights[pane] == "created"
+
+
+def test_new_file_lands_in_current_path_not_displayed_path(monkeypatch, tmp_path):
+    window_module, _, _ = _modules()
+    pane = MagicMock()
+    displayed = tmp_path / "displayed-host-path"
+    pane.toolbar.path_entry.get_text.return_value = str(displayed)
+    pane._current_path = str(tmp_path)
+    window = _window(window_module, left=pane)
+    window._pending_highlights = {pane: None}
+    window._load_local = MagicMock()
+    window._embedded_parent = None
+    dialog = MagicMock()
+    alert_dialog = SimpleNamespace(new=MagicMock(return_value=dialog))
+    monkeypatch.setattr(window_module.Adw, "AlertDialog", alert_dialog, raising=False)
+    monkeypatch.setattr(window_module.Gtk, "Entry", _EntryWidget)
+    monkeypatch.setattr(window_module, "_", lambda msg: f"translated:{msg}")
+
+    window._op_newfile(pane)
+
+    entry = dialog.set_extra_child.call_args.args[0]
+    entry.set_text("notes.txt")
+    _dialog_response(dialog)(dialog, "ok")
+    assert (tmp_path / "notes.txt").is_file()
+    assert not displayed.exists()
 
 
 def test_rename_and_delete_dialogs_keep_file_operations(monkeypatch, tmp_path):

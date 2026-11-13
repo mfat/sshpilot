@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple
 
-from .defaults import get_default_config
+from .defaults import GROUP_COLOR_DISPLAY_MODES, get_default_config
 
 
 def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
@@ -160,7 +160,7 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         if not isinstance(display_value, str):
             display_value = str(display_value)
         normalized = display_value.lower()
-        if normalized not in {'fill', 'badge', 'bar', 'dot'}:
+        if normalized not in GROUP_COLOR_DISPLAY_MODES:
             normalized = 'fill'
         if ui_cfg.get('group_color_display') != normalized:
             ui_cfg['group_color_display'] = normalized

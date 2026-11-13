@@ -116,3 +116,52 @@ def test_tab_title_and_subtitle():
     assert "forwards" in forwarding_only_tab_title("prod-db")
     assert "prod-db" in forwarding_only_tab_title("prod-db")
     assert "SessionType none" in forwarding_only_subtitle("prod-db")
+
+
+def test_effective_context_reads_inherited_session_type_and_forwards():
+    from sshpilot.forwarding_only_ui import effective_forwarding_context
+
+    flag, rules = effective_forwarding_context(
+        [
+            "hostname example.com",
+            "localforward 8080 [localhost]:80",
+            "remoteforward 9000 [localhost]:22",
+            "remoteforward 1080",
+            "dynamicforward [127.0.0.1]:1081",
+            "sessiontype none",
+        ]
+    )
+    assert flag is True
+    rows = format_forwarding_rule_rows(rules, status="active")
+    assert [(r["kind"], r["bind"], r["destination"]) for r in rows] == [
+        ("L", "8080", "localhost:80"),
+        ("R", "9000", "localhost:22"),
+        ("R", "1080", "dynamic"),
+        ("D", "127.0.0.1:1081", "dynamic"),
+    ]
+
+
+def test_effective_context_default_session_and_missing_keyword():
+    from sshpilot.forwarding_only_ui import effective_forwarding_context
+
+    assert effective_forwarding_context(["sessiontype default"]) == (False, ())
+    # An OpenSSH without SessionType prints no line: unknown, not "no".
+    assert effective_forwarding_context(["hostname example.com"]) == (None, ())
+
+
+def test_effective_context_socket_forward_is_not_doubled():
+    """``ssh -G`` prints a LocalForward to a socket as a DynamicForward too."""
+    from sshpilot.forwarding_only_ui import effective_forwarding_context
+
+    _flag, rules = effective_forwarding_context(
+        [
+            "dynamicforward [127.0.0.1]:5000",
+            "localforward [127.0.0.1]:5000 /tmp/app.sock",
+            "localforward /tmp/in.sock [db]:5432",
+        ]
+    )
+    rows = format_forwarding_rule_rows(rules, status="active")
+    assert [(r["kind"], r["bind"], r["destination"]) for r in rows] == [
+        ("L", "127.0.0.1:5000", "/tmp/app.sock"),
+        ("L", "/tmp/in.sock", "db:5432"),
+    ]

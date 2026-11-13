@@ -17,6 +17,9 @@ from .models.connections import (
     AsbruImportResult,
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConfigConflict,
+    ConfigSyntaxError,
+    EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -242,6 +245,15 @@ class SshPilotClient(Protocol):
     def get_effective_config(
         self, connection_id: ConnectionId
     ) -> EffectiveConfigComparison:
+        ...
+
+    def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
+        ...
+
+    def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
+        ...
+
+    def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:
         ...
 
     def check_unsaved_host(

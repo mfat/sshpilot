@@ -17,7 +17,7 @@ from sshpilot.core.settings import (
 def test_default_config_has_version():
     cfg = get_default_config()
     assert cfg["config_version"] == CONFIG_VERSION
-    assert cfg["ssh"]["strict_host_key_checking"] == "accept-new"
+    assert cfg["ssh"]["strict_host_key_checking"] == ""
 
 
 def test_ensure_config_defaults_backfills_encoding():
@@ -85,21 +85,18 @@ def test_compose_ssh_overrides_verbosity_and_timeouts():
     overrides = compose_ssh_overrides(
         ssh_settings_from_values(
             connect_timeout=10,
-            keepalive_interval=30,
-            keepalive_count_max=3,
             verbosity=2,
-            compression=True,
-            batch_mode=True,
+            compression="yes",
             strict_host_key_checking="accept-new",
         )
     )
     assert "-o" in overrides
     assert "ConnectTimeout=10" in overrides
-    assert "ServerAliveInterval=30" in overrides
+    assert not any("ServerAlive" in o for o in overrides)
     assert overrides.count("-v") == 2
     # Compression is an option, not the ``-C`` flag: ``-C`` force-enables it
     # wherever it sits, so a connection's own "Compression no" could never win.
     assert "Compression=yes" in overrides
     assert "-C" not in overrides
-    assert "BatchMode=yes" in overrides
+    assert not any("BatchMode" in o for o in overrides)
     assert "LogLevel=DEBUG2" in overrides

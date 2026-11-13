@@ -24,17 +24,6 @@ def test_atomic_write_creates_file_with_requested_mode(tmp_path):
     assert _mode(str(target)) == 0o600
 
 
-def test_atomic_write_makes_backup_and_keeps_perms(tmp_path):
-    target = tmp_path / "config"
-    target.write_text("old contents\n")
-    os.chmod(target, 0o600)
-    atomic_write_text(str(target), "new contents\n", mode=0o600, backup=True)
-    assert target.read_text() == "new contents\n"
-    bak = tmp_path / "config.bak"
-    assert bak.exists() and bak.read_text() == "old contents\n"
-    assert _mode(str(bak)) == 0o600
-
-
 def test_atomic_write_preserves_existing_mode_when_mode_none(tmp_path):
     target = tmp_path / "config"
     target.write_text("x\n")

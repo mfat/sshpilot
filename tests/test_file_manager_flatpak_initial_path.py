@@ -58,3 +58,61 @@ def test_initial_local_path_flatpak_none_without_grant(monkeypatch):
     monkeypatch.setattr(fmw, "_load_first_doc_path", lambda: None)
 
     assert fmw.FileManagerWindow._initial_local_path() is None
+
+
+def test_path_bar_host_path_reopens_the_portal_folder(monkeypatch):
+    """#1376: the bar shows a grant's host path; pressing Enter on it (or a
+    subfolder typed after it) must load the portal folder, not the empty
+    sandbox directory of the same name where created folders vanish."""
+    _ensure_cairo_stub()
+    from unittest.mock import MagicMock
+    import sshpilot.file_manager_window as fmw
+
+    portal = "/run/user/1000/doc/AAA/Downloads"
+    monkeypatch.setattr(
+        fmw, "_sandbox_path_for_host",
+        lambda path, current: portal + path[len("/home/u/Downloads"):]
+        if path.startswith("/home/u/Downloads") else None,
+    )
+    window = fmw.FileManagerWindow.__new__(fmw.FileManagerWindow)
+    pane = MagicMock()
+    pane._current_path = portal
+    pane._suppress_history_push = False
+    window._left_pane = pane
+    window._right_pane = MagicMock()
+    window._refreshing_panes = set()
+    window._load_local = MagicMock()
+
+    window._on_path_changed(pane, "/home/u/Downloads/sub")
+    window._load_local.assert_called_once_with(portal + "/sub")
+    pane.push_history.assert_called_once_with(portal + "/sub")
+    assert pane not in window._refreshing_panes
+
+    window._load_local.reset_mock()
+    window._on_path_changed(pane, "/home/u/Downloads")
+    window._load_local.assert_called_once_with(portal)
+    assert pane in window._refreshing_panes
+
+
+def test_path_bar_refuses_folders_outside_the_grants(monkeypatch):
+    """A typed folder no grant covers is the sandbox's empty copy: refuse it
+    and offer Request Access instead of opening it."""
+    _ensure_cairo_stub()
+    from unittest.mock import MagicMock
+    import sshpilot.file_manager_window as fmw
+
+    monkeypatch.setattr(fmw, "_sandbox_path_for_host", lambda path, current: None)
+    monkeypatch.setattr(fmw, "_is_reachable_local_path", lambda path: False)
+    window = fmw.FileManagerWindow.__new__(fmw.FileManagerWindow)
+    pane = MagicMock()
+    pane._current_path = "/run/user/1000/doc/AAA/Downloads"
+    window._left_pane = pane
+    window._right_pane = MagicMock()
+    window._refreshing_panes = set()
+    window._load_local = MagicMock()
+
+    window._on_path_changed(pane, "/home/u/Music")
+
+    window._load_local.assert_not_called()
+    pane.push_history.assert_not_called()
+    pane.show_no_access_toast.assert_called_once_with()

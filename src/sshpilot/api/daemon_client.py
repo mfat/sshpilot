@@ -21,6 +21,7 @@ from typing import (
     List,
     NoReturn,
     Optional,
+    Tuple,
     Union,
 )
 
@@ -51,6 +52,9 @@ from .models.connections import (
     AsbruImportResult,
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConfigConflict,
+    ConfigSyntaxError,
+    EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -194,6 +198,9 @@ from .transport.codec import (
     close_sftp_request_to_wire,
     connection_details_from_wire,
     connection_editor_details_from_wire,
+    config_conflicts_from_wire,
+    config_syntax_errors_from_wire,
+    earlier_directives_from_wire,
     effective_config_comparison_from_wire,
     unsaved_host_check_request_to_wire,
     unsaved_host_check_result_from_wire,
@@ -418,6 +425,9 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_daemon_status": Capability.DAEMON_STATUS,
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "set_operation_mode": Capability.OPERATION_MODE,
     "get_operation_mode": Capability.OPERATION_MODE,
@@ -868,6 +878,32 @@ class DaemonClient:
             return effective_config_comparison_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid effective SSH configuration")
+
+    def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(host) is not str or not host.strip():
+            raise TypeError("host must be a non-empty string")
+        result = self._request("connections.get_earlier_directives", {"host": host})
+        try:
+            return earlier_directives_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid earlier SSH directives")
+
+    def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("connections.list_config_conflicts", {})
+        try:
+            return config_conflicts_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid SSH config conflicts")
+
+    def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("connections.list_config_syntax_errors", {})
+        try:
+            return config_syntax_errors_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid SSH config syntax errors")
 
     def check_unsaved_host(
         self, request: UnsavedHostCheckRequest

@@ -59,10 +59,10 @@ def test_proxy_jump_agent_forwards_hostkey():
                 ForwardSpec("dynamic", "1080"),
             ],
             host_key_mode=HostKeyMode.YES,
-            compression=True,
+            compression="yes",
             keepalive_interval=30,
             keepalive_count_max=3,
-            batch_mode=True,
+            batch_mode="yes",
             remote_command="uptime",
         )
     )
@@ -77,8 +77,8 @@ def test_proxy_jump_agent_forwards_hostkey():
         "-o",
         "ServerAliveCountMax=3",
         "-C",
-        "-J",
-        "jump1,jump2",
+        "-o",
+        "ProxyJump=jump1,jump2",
         "-A",
         "-L",
         "8080:127.0.0.1:80",
@@ -110,7 +110,7 @@ def test_local_command_and_contradictions():
         )
     with pytest.raises(CoreError):
         build_ssh_process_spec(
-            SSHLaunchRequest(destination="demo", batch_mode=True, askpass_required=True)
+            SSHLaunchRequest(destination="demo", batch_mode="yes", askpass_required=True)
         )
     with pytest.raises(CoreError):
         build_ssh_process_spec(
@@ -180,7 +180,7 @@ def test_scp_binary_keeps_safe_flags_when_launch_mode_is_batch():
             username="alice",
             port=2222,
             launch_mode=LaunchMode.BATCH,
-            batch_mode=True,
+            batch_mode="yes",
         )
     )
     assert spec.argv[0] == "/usr/bin/scp"
@@ -191,13 +191,44 @@ def test_scp_binary_keeps_safe_flags_when_launch_mode_is_batch():
     assert "BatchMode=yes" in spec.argv
 
 
-def test_scp_preference_overrides_follow_extra_options_before_destination():
-    """Preference defaults trail extra_options (ssh first-wins); destination last.
+def test_overrides_precede_typed_fields_and_extra_options():
+    """Settings overrides win: they sit ahead of everything a connection sets.
 
-    Only scp *flags* belong in ``extra_options``. Path operands must be inserted
-    after this prepared argv (see NativeScpBackend.build_argv): a local path in
-    ``extra_options`` would land before ``-o``/``-v`` and OpenSSH would treat
-    those flags as more source filenames.
+    The app's own ``priority_options`` are the only thing ahead of them.
+    """
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="host",
+            port=2200,
+            username="alice",
+            proxy_jump=["bastion"],
+            priority_options=["-o", "ControlMaster=no"],
+            ssh_overrides=["-o", "Compression=yes", "-o", "ProxyJump=global"],
+            extra_options=["-o", "compression=no"],
+        )
+    )
+    assert spec.argv == (
+        "ssh",
+        "-o", "ControlMaster=no",
+        "-o", "Compression=yes",
+        "-o", "ProxyJump=global",
+        "-p", "2200",
+        "-l", "alice",
+        "-o", "ProxyJump=bastion",
+        "-o", "compression=no",
+        "host",
+    )
+    # ``-J`` after an ``-o ProxyJump=`` makes ssh refuse to start.
+    assert "-J" not in spec.argv
+
+
+def test_scp_options_all_precede_the_destination():
+    """Only scp *flags* belong in the option slots; destination stays last.
+
+    Path operands must be inserted after this prepared argv (see
+    NativeScpBackend.build_argv): a local path ahead of ``-o``/``-v`` would make
+    OpenSSH treat those flags as more source filenames.
     """
 
     spec = build_ssh_process_spec(
@@ -205,7 +236,7 @@ def test_scp_preference_overrides_follow_extra_options_before_destination():
             destination="host:/dst",
             executable="scp",
             launch_mode=LaunchMode.SCP,
-            extra_options=["-r"],
+            priority_options=["-r"],
             ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
         )
     )
@@ -217,27 +248,6 @@ def test_scp_preference_overrides_follow_extra_options_before_destination():
         "-v",
         "host:/dst",
     )
-
-
-def test_scp_path_operand_in_extra_options_lands_before_preference_flags():
-    """Pin the footgun that made Preference ``-v``/``-o`` look like sources.
-
-    Production must not put transfer paths in ``extra_options``; this documents
-    why (overrides intentionally follow extra_options for ssh defaults).
-    """
-
-    broken = build_ssh_process_spec(
-        SSHLaunchRequest(
-            destination="host:/dst",
-            executable="scp",
-            launch_mode=LaunchMode.SCP,
-            extra_options=["/tmp/payload"],
-            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
-        )
-    )
-    payload_i = broken.argv.index("/tmp/payload")
-    assert broken.argv.index("-v") > payload_i
-    assert broken.argv.index("ServerAliveInterval=25") > payload_i
 
 
 def test_scp_inserting_sources_before_destination_keeps_overrides_as_options():

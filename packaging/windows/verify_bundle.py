@@ -11,6 +11,7 @@ fail on first launch. This fails the build instead.
 from __future__ import annotations
 
 import sys
+import subprocess
 from pathlib import Path
 
 REQUIRED_FILES = [
@@ -53,6 +54,13 @@ def main(argv=None) -> int:
     if problems:
         print("Bundle check failed:\n  " + "\n  ".join(problems))
         return 1
+    if sys.platform == "win32":
+        check = Path(__file__).resolve().parent / "check-rdp-crypto.py"
+        result = subprocess.run([sys.executable, str(check), str(root / "_internal"),
+                                 str(root / "_internal")])
+        if result.returncode:
+            print("Bundle check failed: RDP MD4/RC4 support unavailable")
+            return 1
     size = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
     print(f"Bundle OK: {root} ({size / (1 << 20):.1f} MiB)")
     return 0

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.88",
+  "api_implementation_version": "0.101",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -197,6 +197,10 @@
       "capability": "daemon.status",
       "status": "daemon-only"
     },
+    "get_earlier_directives": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "get_effective_config": {
       "capability": "connections.config.read",
       "status": "implemented"
@@ -324,6 +328,14 @@
     "list_bitwarden_backups": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
+    },
+    "list_config_conflicts": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
+    "list_config_syntax_errors": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "list_connections": {
       "capability": "connections.read",
@@ -724,6 +736,9 @@
     "connections.get": {
       "capability": "connections.read"
     },
+    "connections.get_earlier_directives": {
+      "capability": "connections.config.read"
+    },
     "connections.get_editor": {
       "capability": "connections.config.read"
     },
@@ -750,6 +765,12 @@
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.list_config_conflicts": {
+      "capability": "connections.config.read"
+    },
+    "connections.list_config_syntax_errors": {
+      "capability": "connections.config.read"
     },
     "connections.metadata.add_tag": {
       "capability": "connections.metadata.write"
@@ -1399,6 +1420,7 @@
       "connection_already_exists",
       "connection_not_found",
       "persistence_failed",
+      "ssh_config_read_only",
       "mutation_ambiguous",
       "session_not_found",
       "session_already_closed",
@@ -1878,6 +1900,13 @@
     "SocketDirection": [
       "incoming",
       "outgoing"
+    ],
+    "SshConfigUnavailableReason": [
+      "dangling_link",
+      "permission_denied",
+      "sandbox_hidden",
+      "unreadable",
+      "invalid"
     ],
     "TransferBackend": [
       "sftp",
@@ -2589,6 +2618,72 @@
       ],
       "status": "Implemented"
     },
+    "ConfigConflict": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "own_value",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "earlier",
+          "required": true,
+          "sensitive": false,
+          "type": "EarlierDirective"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConfigSyntaxError": {
+      "fields": [
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ConfirmationPrompt": {
       "fields": [
         {
@@ -2679,6 +2774,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": false,
+          "name": "config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         },
         {
           "default": [],
@@ -2857,6 +2959,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": false,
+          "name": "config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         },
         {
           "default": [],
@@ -3241,6 +3350,27 @@
           "required": true,
           "sensitive": false,
           "type": "Tuple[ConnectionMetadataSummary, ...]"
+        },
+        {
+          "default": false,
+          "name": "ssh_config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "ssh_config_unavailable",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SshConfigUnavailableReason]"
+        },
+        {
+          "default": "",
+          "name": "ssh_config_unavailable_path",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -3323,6 +3453,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": false,
+          "name": "config_read_only",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -4359,6 +4496,46 @@
       ],
       "status": "Schema only"
     },
+    "EarlierDirective": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "block",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
     "EffectiveConfigComparison": {
       "fields": [
         {
@@ -4416,6 +4593,13 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": [],
+          "name": "earlier",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[EarlierDirective, ...]"
         }
       ],
       "status": "Implemented"

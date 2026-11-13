@@ -264,18 +264,19 @@ def test_suspended_accelerators_clear_fullscreen():
 # -- the overview shows the configured binding, not a literal --------------
 
 
-def test_overview_renders_the_configured_binding_not_hardcoded_f11(monkeypatch):
-    recorded = []
+def _install_shortcut_doubles(monkeypatch, recorded):
+    """Stand-in Gtk.Shortcuts* widgets that mirror the real property API.
+
+    Gtk.ShortcutsShortcut has a ``subtitle`` GObject property but no
+    ``set_subtitle()`` method — keep the double honest so regressions that
+    call a missing helper fail here instead of only at runtime.
+    """
 
     class _Shortcut:
-        # Tolerate keywords this test does not assert on (action_name, ...) so
-        # the double does not have to track every Gtk.ShortcutsShortcut
-        # argument the help overview grows.
-        def __init__(self, title=None, accelerator=None, **_kwargs):
-            recorded.append((title, accelerator))
-
-        def set_subtitle(self, _subtitle):
-            pass
+        def __init__(self, title=None, accelerator=None, subtitle=None, **_kwargs):
+            recorded.append(
+                {'title': title, 'accelerator': accelerator, 'subtitle': subtitle}
+            )
 
     class _Group:
         def __init__(self, **_kwargs):
@@ -290,6 +291,12 @@ def test_overview_renders_the_configured_binding_not_hardcoded_f11(monkeypatch):
 
     monkeypatch.setattr(help_mod.Gtk, 'ShortcutsShortcut', _Shortcut, raising=False)
     monkeypatch.setattr(help_mod.Gtk, 'ShortcutsGroup', _Group, raising=False)
+    return _Section
+
+
+def test_overview_renders_the_configured_binding_not_hardcoded_f11(monkeypatch):
+    recorded = []
+    section_cls = _install_shortcut_doubles(monkeypatch, recorded)
 
     class _Win:
         _add_safe_current_shortcuts = help_mod.WindowHelpMixin._add_safe_current_shortcuts
@@ -297,11 +304,50 @@ def test_overview_renders_the_configured_binding_not_hardcoded_f11(monkeypatch):
         def _get_safe_current_shortcuts(self):
             return {ACTION: ['<Primary><Shift>f']}
 
-    _Win()._add_safe_current_shortcuts(_Section(), '<primary>')
+    _Win()._add_safe_current_shortcuts(section_cls(), '<primary>')
 
-    titles = {title: accel for title, accel in recorded}
+    titles = {row['title']: row['accelerator'] for row in recorded}
     assert titles.get('Toggle Fullscreen') == '<Primary><Shift>f'
     assert 'F11' not in str(titles.get('Toggle Fullscreen'))
+
+
+def test_overview_lists_unassigned_command_snippets_with_subtitle(monkeypatch):
+    """Command Snippets defaults to no accelerator; the overview must still
+    render a row via the subtitle property (not a nonexistent set_subtitle)."""
+    recorded = []
+    section_cls = _install_shortcut_doubles(monkeypatch, recorded)
+
+    class _Win:
+        _add_safe_current_shortcuts = help_mod.WindowHelpMixin._add_safe_current_shortcuts
+
+        def _get_safe_current_shortcuts(self):
+            # Empty / missing — same as the registered default.
+            return {'toggle-command-blocks': []}
+
+    _Win()._add_safe_current_shortcuts(section_cls(), '<primary>')
+
+    snippets = [row for row in recorded if row['title'] == 'Command Snippets']
+    assert len(snippets) == 1
+    assert snippets[0]['accelerator'] is None
+    assert snippets[0]['subtitle'] == 'No shortcut assigned'
+
+
+def test_overview_lists_assigned_command_snippets_accelerator(monkeypatch):
+    recorded = []
+    section_cls = _install_shortcut_doubles(monkeypatch, recorded)
+
+    class _Win:
+        _add_safe_current_shortcuts = help_mod.WindowHelpMixin._add_safe_current_shortcuts
+
+        def _get_safe_current_shortcuts(self):
+            return {'toggle-command-blocks': ['<primary><shift>c']}
+
+    _Win()._add_safe_current_shortcuts(section_cls(), '<primary>')
+
+    snippets = [row for row in recorded if row['title'] == 'Command Snippets']
+    assert len(snippets) == 1
+    assert snippets[0]['accelerator'] == '<primary><shift>c'
+    assert snippets[0]['subtitle'] is None
 
 
 def test_button_tooltip_follows_the_configured_binding():

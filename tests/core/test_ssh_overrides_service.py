@@ -63,31 +63,27 @@ def test_missing_file_returns_canonical_defaults(tmp_path):
 
     assert snapshot.revision == compute_ssh_overrides_revision(DEFAULT_SSH_OVERRIDES)
     assert snapshot.connect_timeout == 0
-    assert snapshot.connection_attempts == 0
-    assert snapshot.server_alive_interval == 0
-    assert snapshot.server_alive_count_max == 0
-    assert snapshot.strict_host_key_checking == "accept-new"
-    assert snapshot.batch_mode is False
-    assert snapshot.compression is False
+    assert snapshot.strict_host_key_checking == ""
+    assert snapshot.compression == ""
     assert snapshot.verbosity == 0
     assert snapshot.debug_enabled is False
     # The missing file is never materialized by a read.
     assert not (tmp_path / "config.json").exists()
 
 
-def test_missing_strict_host_key_equates_to_explicit_accept_new(tmp_path):
+def test_missing_strict_host_key_equates_to_explicit_unset(tmp_path):
     path = _write(
         tmp_path / "config.json",
         {"ssh": {"connection_timeout": 5}},
     )
     service = _service(path)
     snapshot = service.get()
-    assert snapshot.strict_host_key_checking == "accept-new"
+    assert snapshot.strict_host_key_checking == ""
 
     explicit = _write(
         tmp_path / "config.json",
         {
-            "ssh": {"connection_timeout": 5, "strict_host_key_checking": "accept-new"},
+            "ssh": {"connection_timeout": 5, "strict_host_key_checking": ""},
         },
     )
     other = _service(explicit).get()
@@ -135,7 +131,7 @@ def test_blank_or_whitespace_file_raises_malformed_unchanged(tmp_path, raw):
 def test_invalid_config_version_raises_malformed_unchanged(tmp_path, version):
     path = tmp_path / "config.json"
     path.write_text(
-        json.dumps({"config_version": version, "ssh": {"batch_mode": True}}),
+        json.dumps({"config_version": version, "ssh": {"compression": "yes"}}),
         encoding="utf-8",
     )
     before = path.read_text(encoding="utf-8")
@@ -200,10 +196,16 @@ def test_obsolete_version_upgraded_keeping_values_and_a_backup(tmp_path):
 def test_numeric_strings_rejected():
     with pytest.raises(TypeError):
         normalize_ssh_overrides({"connection_timeout": "10"})
-    with pytest.raises(TypeError):
-        normalize_ssh_overrides({"batch_mode": "true"})
+    with pytest.raises(ValueError):
+        normalize_ssh_overrides({"compression": "true"})
     with pytest.raises(TypeError):
         normalize_ssh_overrides({"verbosity": True})
+
+
+def test_legacy_bool_compression_normalizes():
+    assert normalize_ssh_overrides({"compression": True})["compression"] == "yes"
+    assert normalize_ssh_overrides({"compression": False})["compression"] == ""
+    assert normalize_ssh_overrides({"compression": "no"})["compression"] == "no"
 
 
 def test_revision_changes_with_semantic_values():
@@ -225,27 +227,27 @@ def test_revision_changes_with_semantic_values():
 def test_update_persists_patch_and_derived_overrides(tmp_path):
     path = _write(
         tmp_path / "config.json",
-        {"ssh": {"batch_mode": False}},
+        {"ssh": {"compression": ""}},
     )
     service = _service(path)
     before = service.get()
-    assert before.batch_mode is False
+    assert before.compression == ""
 
     updated = service.update(
         UpdateGlobalSshOverridesRequest(
-            patch={"batch_mode": True, "connect_timeout": 12},
+            patch={"compression": "yes", "connect_timeout": 12},
             expected_revision=before.revision,
         )
     )
-    assert updated.batch_mode is True
+    assert updated.compression == "yes"
     assert updated.connect_timeout == 12
     assert updated.revision != before.revision
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["ssh"]["batch_mode"] is True
+    assert on_disk["ssh"]["compression"] == "yes"
     assert on_disk["ssh"]["connection_timeout"] == 12
     assert "-o" in on_disk["ssh"]["ssh_overrides"]
-    assert "BatchMode=yes" in on_disk["ssh"]["ssh_overrides"]
+    assert "Compression=yes" in on_disk["ssh"]["ssh_overrides"]
     assert "ConnectTimeout=12" in on_disk["ssh"]["ssh_overrides"]
 
 
@@ -291,7 +293,7 @@ def test_reset_restores_defaults_and_preserves_other_keys(tmp_path):
         {
             "ssh": {
                 "connection_timeout": 12,
-                "batch_mode": True,
+                "compression": "yes",
                 "some_other_key": "kept",
             },
             "app": {"theme": "dark"},
@@ -303,7 +305,7 @@ def test_reset_restores_defaults_and_preserves_other_keys(tmp_path):
     reset = service.reset(expected_revision=before.revision)
     assert reset.revision == compute_ssh_overrides_revision(DEFAULT_SSH_OVERRIDES)
     assert reset.connect_timeout == 0
-    assert reset.batch_mode is False
+    assert reset.compression == ""
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert on_disk["ssh"]["some_other_key"] == "kept"
@@ -339,16 +341,54 @@ def test_reset_writes_defaults_for_absent_keys(tmp_path):
 def test_get_ssh_config_includes_derived_overrides(tmp_path):
     path = _write(
         tmp_path / "config.json",
-        {"ssh": {"batch_mode": True, "connection_timeout": 7}},
+        {"ssh": {"compression": "yes", "connection_timeout": 7}},
     )
     service = _service(path)
     ssh = service.get_ssh_config()
-    assert ssh["batch_mode"] is True
+    assert ssh["compression"] == "yes"
     assert ssh["ssh_overrides"] == [
-        "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=7",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "Compression=yes",
     ]
+
+
+def test_unset_host_key_checking_sends_no_option(tmp_path):
+    """"Do not configure" leaves StrictHostKeyChecking to the SSH config."""
+    service = _service(_write(tmp_path / "config.json", {"ssh": {}}))
+    assert service.get().strict_host_key_checking == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []
+
+
+@pytest.mark.parametrize(
+    "field, option",
+    [("compression", "Compression")],
+)
+@pytest.mark.parametrize("value", ["yes", "no"])
+def test_explicit_yes_no_override_is_sent_and_can_be_unset(tmp_path, field, option, value):
+    service = _service(_write(tmp_path / "config.json", {"ssh": {}}))
+    changed = service.update(UpdateGlobalSshOverridesRequest(patch={field: value}))
+    assert getattr(changed, field) == value
+    assert service.get_ssh_config()["ssh_overrides"] == ["-o", f"{option}={value}"]
+    cleared = service.update(UpdateGlobalSshOverridesRequest(patch={field: ""}))
+    assert getattr(cleared, field) == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []
+
+
+@pytest.mark.parametrize("value", ["accept-new", "yes", "no", "ask"])
+def test_explicit_host_key_checking_is_sent_and_can_be_unset_again(tmp_path, value):
+    service = _service(_write(tmp_path / "config.json", {"ssh": {}}))
+    changed = service.update(
+        UpdateGlobalSshOverridesRequest(patch={"strict_host_key_checking": value})
+    )
+    assert changed.strict_host_key_checking == value
+    assert service.get_ssh_config()["ssh_overrides"] == [
+        "-o", f"StrictHostKeyChecking={value}",
+    ]
+    cleared = service.update(
+        UpdateGlobalSshOverridesRequest(patch={"strict_host_key_checking": ""})
+    )
+    assert cleared.strict_host_key_checking == ""
+    assert service.get_ssh_config()["ssh_overrides"] == []
 
 
 def test_get_setting_reads_namespaced_and_top_level(tmp_path):
@@ -367,8 +407,8 @@ def test_get_ssh_config_degrades_to_defaults_on_malformed(tmp_path):
     path.write_text("{ not json", encoding="utf-8")
     service = _service(path)
     ssh = service.get_ssh_config()
-    assert ssh["batch_mode"] is False
-    assert ssh["ssh_overrides"] == ["-o", "StrictHostKeyChecking=accept-new"]
+    assert ssh["compression"] == ""
+    assert ssh["ssh_overrides"] == []
     # The malformed file is untouched.
     assert path.read_text(encoding="utf-8") == "{ not json"
 
@@ -431,7 +471,7 @@ def test_controlmaster_fragment_only_injected_when_enabled(tmp_path):
     service = SshOverridesService(path, controlmaster_extra=_MUX_ARGS)
 
     ssh = service.get_ssh_config()
-    assert ssh["ssh_overrides"] == ["-o", "StrictHostKeyChecking=accept-new"]
+    assert ssh["ssh_overrides"] == []
 
     _write(path, {"ssh": {"controlmaster": True}})
     ssh = service.get_ssh_config()
@@ -454,3 +494,62 @@ def test_persisted_mutation_composes_controlmaster_when_enabled(tmp_path):
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert "ControlMaster=auto" in on_disk["ssh"]["ssh_overrides"]
+
+
+def test_snapshot_reports_everything_a_launch_forces(tmp_path):
+    """The dedicated controls, the free-form options and the legacy-algorithm
+    extras, in the order a launch sends them. The keepalive is not forced: it
+    is a fallback for hosts whose configuration sets none."""
+    path = _write(
+        tmp_path / "config.json",
+        {"ssh": {
+            "connection_timeout": 20,
+            "verbosity": 1,
+            "legacy_algorithms": True,
+            "extra_options": ["User=root"],
+            "default_keepalive_interval": 40,
+        }},
+    )
+    service = SshOverridesService(
+        path, legacy_extra=("-o", "KexAlgorithms=+diffie-hellman-group1-sha1")
+    )
+
+    snapshot = service.get()
+
+    assert snapshot.forced_options == (
+        "ConnectTimeout=20",
+        "LogLevel=VERBOSE",
+        "KexAlgorithms=+diffie-hellman-group1-sha1",
+        "User=root",
+    )
+    assert service.forced_option_args()[:2] == ("-o", "ConnectTimeout=20")
+    assert "-v" not in service.forced_option_args()
+    assert service.keepalive_fallback_args({"serveraliveinterval": "0"}) == (
+        "-o", "ServerAliveInterval=40", "-o", "ServerAliveCountMax=3",
+    )
+    assert service.keepalive_fallback_args({"serveraliveinterval": "60"}) == ()
+
+
+def test_keepalive_switch_off_adds_no_fallback(tmp_path):
+    path = _write(
+        tmp_path / "config.json", {"ssh": {"apply_default_keepalive": False}}
+    )
+    service = _service(path)
+    assert service.get().forced_options == ()
+    assert service.keepalive_fallback_args({"serveraliveinterval": "0"}) == ()
+
+
+def test_forced_options_do_not_move_the_revision(tmp_path):
+    plain = _service(_write(tmp_path / "a.json", {"ssh": {}})).get()
+    legacy = SshOverridesService(
+        _write(tmp_path / "b.json", {"ssh": {"legacy_algorithms": True}}),
+        legacy_extra=("-o", "KexAlgorithms=+diffie-hellman-group1-sha1"),
+    ).get()
+    bare = _service(
+        _write(tmp_path / "c.json", {"ssh": {"legacy_algorithms": True}})
+    ).get()
+    # Same settings, different installed OpenSSH: the list differs, the
+    # revision (settings only) does not.
+    assert legacy.forced_options != bare.forced_options
+    assert legacy.revision == bare.revision
+    assert plain.forced_options == ()
