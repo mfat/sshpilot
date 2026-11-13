@@ -1242,7 +1242,14 @@ class PreferencesWindow(Adw.Window):
         self.restore_sessions_switch.set_subtitle(
             _("Automatically reattach to daemon sessions from previous session")
         )
-        restore_sessions_active = bool(self.config.get_setting('terminal.daemon_restore_sessions', False))
+        from .daemon_terminal_policy import (
+            RESTORE_SESSIONS_DEFAULT,
+            RESTORE_SESSIONS_SETTING,
+        )
+
+        restore_sessions_active = bool(
+            self.config.get_setting(RESTORE_SESSIONS_SETTING, RESTORE_SESSIONS_DEFAULT)
+        )
         self.restore_sessions_switch.set_active(restore_sessions_active)
         self.restore_sessions_switch.connect(
             'notify::active', self.on_restore_sessions_toggled

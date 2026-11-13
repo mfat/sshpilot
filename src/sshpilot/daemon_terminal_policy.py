@@ -75,6 +75,9 @@ class DaemonTerminalReadiness:
 TAB_CLOSE_POLICY_SETTING = "terminal.daemon_tab_close_policy"
 APP_CLOSE_POLICY_SETTING = "terminal.daemon_app_close_policy"
 RESTORE_SESSIONS_SETTING = "terminal.daemon_restore_sessions"
+# No config default exists for this key; every reader must use this fallback
+# so Preferences shows what startup actually does.
+RESTORE_SESSIONS_DEFAULT = True
 AUTO_ATTACH_SETTING = "terminal.daemon_auto_attach"
 # Retained as a compatibility setting name; internal SSH routing is daemon-only.
 PREFERRED_EMULATOR_SETTING = "terminal.daemon_emulator"

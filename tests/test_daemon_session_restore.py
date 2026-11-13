@@ -82,3 +82,37 @@ def test_restore_session_replays_retained_scrollback_into_blank_widget(
 
     assert captured["session_id"] == "sess-1"
     assert captured["from_sequence"] == 0
+
+
+def test_restore_setting_has_one_default_for_every_reader():
+    """Preferences must show what startup does when the key is unset.
+
+    The key has no config default, so each reader supplies a fallback. They
+    once disagreed (Preferences False, startup True); all must use the
+    shared constant.
+    """
+    import re
+    from pathlib import Path
+
+    import sshpilot
+
+    package = Path(sshpilot.__file__).parent
+    literal = re.compile(
+        r"get_setting\(\s*['\"]terminal\.daemon_restore_sessions['\"]"
+    )
+    readers = []
+    for path in package.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert not literal.search(text), (
+            f"{path.name} reads the restore setting with its own fallback"
+        )
+        if re.search(
+            r"get_setting\(\s*RESTORE_SESSIONS_SETTING,\s*RESTORE_SESSIONS_DEFAULT",
+            text,
+        ):
+            readers.append(path.name)
+    assert sorted(readers) == [
+        "daemon_session_restore.py",
+        "preferences.py",
+        "window.py",
+    ]

@@ -1165,7 +1165,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
 
         try:
-            if not self.config.get_setting("terminal.daemon_restore_sessions", True):
+            from .daemon_terminal_policy import (
+                RESTORE_SESSIONS_DEFAULT,
+                RESTORE_SESSIONS_SETTING,
+            )
+
+            if not self.config.get_setting(
+                RESTORE_SESSIONS_SETTING, RESTORE_SESSIONS_DEFAULT
+            ):
                 return
             if self.client_bridge is None or self.client is None:
                 return

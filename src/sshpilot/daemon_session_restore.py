@@ -11,6 +11,7 @@ from typing import List
 from .api.models.common import ConnectionId, SessionId
 from .api.models.sessions import SessionState
 from .daemon_terminal_policy import (
+    RESTORE_SESSIONS_DEFAULT,
     RESTORE_SESSIONS_SETTING,
     SESSION_RESTORE_STATE_SETTING,
 )
@@ -70,7 +71,9 @@ class DaemonSessionRestoreManager:
         sessions=None,
     ) -> List[SessionRestoreMetadata]:
         try:
-            if not self.config.get_setting(RESTORE_SESSIONS_SETTING, True):
+            if not self.config.get_setting(
+                RESTORE_SESSIONS_SETTING, RESTORE_SESSIONS_DEFAULT
+            ):
                 return []
             restore_state = self.config.get_setting(SESSION_RESTORE_STATE_SETTING, [])
             if not isinstance(restore_state, list):
