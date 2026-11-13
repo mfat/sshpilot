@@ -54,6 +54,72 @@ def connection_forwarding_only(connection: Any) -> Optional[bool]:
     return extra_ssh_config_has_session_type_none(str(extra))
 
 
+def _split_forward_endpoint(spec: str) -> Tuple[str, Optional[int]]:
+    """``[addr]:port`` / ``port`` / ``/socket`` as printed by ``ssh -G``."""
+    spec = spec.strip()
+    if spec.startswith("["):
+        addr, _sep, rest = spec[1:].partition("]")
+        port_text = rest.lstrip(":")
+    elif spec.isdigit():
+        addr, port_text = "", spec
+    elif "/" in spec:
+        return spec, None
+    else:
+        addr, _sep, port_text = spec.rpartition(":")
+    try:
+        return addr, int(port_text)
+    except ValueError:
+        return spec, None
+
+
+def effective_forwarding_context(
+    lines: Sequence[str],
+) -> Tuple[Optional[bool], Tuple[dict, ...]]:
+    """SessionType-none and the forwards from resolved ``ssh -G`` lines.
+
+    OpenSSH applies ``SessionType`` and collects ``LocalForward`` /
+    ``RemoteForward`` / ``DynamicForward`` from every matching block, so a
+    host inheriting them from ``Host *.tunnel`` is a tunnel even though its
+    own block says nothing. The flag is ``None`` when the lines carry no
+    ``sessiontype`` (an OpenSSH that predates it).
+    """
+    forwarding_only: Optional[bool] = None
+    local_binds = set()
+    rules: List[dict] = []
+    dynamic: List[Tuple[str, dict]] = []
+    for raw in lines or ():
+        key, _sep, value = str(raw).strip().partition(" ")
+        key = key.casefold()
+        value = value.strip()
+        if key == "sessiontype":
+            forwarding_only = value.casefold() == "none"
+            continue
+        if key not in ("localforward", "remoteforward", "dynamicforward") or not value:
+            continue
+        parts = value.split()
+        listen_addr, listen_port = _split_forward_endpoint(parts[0])
+        rule: dict = {"listen_addr": listen_addr, "listen_port": listen_port}
+        if key == "dynamicforward":
+            rule["type"] = "dynamic"
+            dynamic.append((parts[0], rule))
+            continue
+        destination = parts[1] if len(parts) > 1 else ""
+        dest_host, dest_port = _split_forward_endpoint(destination)
+        if key == "localforward":
+            local_binds.add(parts[0])
+            rule.update(type="local", remote_host=dest_host, remote_port=dest_port)
+        elif destination:
+            rule.update(type="remote", local_host=dest_host, local_port=dest_port)
+        else:
+            # ``RemoteForward port`` with no target is a remote SOCKS proxy.
+            rule.update(type="remote", socks=True)
+        rules.append(rule)
+    # ``ssh -G`` also prints a LocalForward to a socket path as a
+    # DynamicForward on the same bind; it is one forward, not two.
+    rules.extend(rule for bind, rule in dynamic if bind not in local_binds)
+    return forwarding_only, tuple(rules)
+
+
 def apply_forwarding_only_flag(connection: Any, extra_ssh_config: Optional[str]) -> bool:
     """Cache SessionType-none on *connection*; return the resolved flag."""
     flag = extra_ssh_config_has_session_type_none(extra_ssh_config)
@@ -115,8 +181,11 @@ def format_bind_endpoint(rule: Mapping[str, Any]) -> str:
         port_s = str(int(port))
     except (TypeError, ValueError):
         port_s = str(port or "")
-    if addr:
+    if addr and port_s:
         return f"{addr}:{port_s}"
+    if addr:
+        # A socket path binds no port.
+        return addr
     return port_s or "?"
 
 

@@ -1376,10 +1376,19 @@ class TerminalWidget(Gtk.Box):
                 self._set_session_overlay_mode("connecting")
 
     def ensure_forwarding_only_context(self, client=None, bridge=None) -> None:
-        """Resolve SessionType none + rules if not already known on the connection."""
+        """Resolve SessionType none + rules as OpenSSH resolves them.
+
+        A cached answer is shown at once; the daemon is still asked, because
+        ``SessionType none`` and the forwards may come from another block
+        (``Host *.tunnel``, ``Match``, an include) that the Host block's own
+        text does not show, and the configuration may have changed since.
+        The effective configuration decides; the authored block only when
+        that is unavailable.
+        """
         from .forwarding_only_ui import (
             apply_forwarding_only_flag,
             connection_forwarding_only,
+            effective_forwarding_context,
         )
 
         connection = getattr(self, "connection", None)
@@ -1388,8 +1397,11 @@ class TerminalWidget(Gtk.Box):
             self._forwarding_only_known = flagged
             if flagged:
                 self._update_forwarding_only_tab_title()
-            return
         if client is None or bridge is None or connection is None:
+            return
+        if getattr(connection, "is_local_shell", False) or (
+            str(getattr(connection, "protocol", None) or "ssh").casefold() != "ssh"
+        ):
             return
         try:
             from .api.connection_identity import connection_id_for
@@ -1397,7 +1409,33 @@ class TerminalWidget(Gtk.Box):
 
             connection_id = connection_id_for(connection)
 
-            def on_success(details):
+            def resolve():
+                getter = getattr(client, "get_effective_config", None)
+                if callable(getter):
+                    try:
+                        effective = getter(connection_id)
+                    except Exception:
+                        logger.debug(
+                            "Effective config unavailable for forwarding-only",
+                            exc_info=True,
+                        )
+                    else:
+                        if getattr(effective, "available", False):
+                            flag, rules = effective_forwarding_context(
+                                getattr(effective, "full", ()) or ()
+                            )
+                            if flag is not None:
+                                return flag, rules
+                return None, client.get_connection_editor(connection_id)
+
+            def on_success(result):
+                flag, payload = result
+                if flag is not None:
+                    self.apply_forwarding_only_context(
+                        forwarding_only=flag, rules=payload
+                    )
+                    return
+                details = payload
                 extra = getattr(details, "extra_ssh_config", None) or ""
                 flag = apply_forwarding_only_flag(connection, extra)
                 raw = getattr(details, "forwarding_rules", None) or ()
@@ -1411,10 +1449,11 @@ class TerminalWidget(Gtk.Box):
                 )
 
             def on_error(_error):
-                self._forwarding_only_known = False
+                if self._forwarding_only_known is None:
+                    self._forwarding_only_known = False
 
             bridge.submit(
-                lambda: client.get_connection_editor(connection_id),
+                resolve,
                 on_success=on_success,
                 on_error=on_error,
             )

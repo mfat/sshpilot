@@ -688,9 +688,20 @@ class DaemonConnectionLaunchProvider:
 
     @staticmethod
     def _connection_is_forwarding_only(connection: HeadlessConnectionView) -> bool:
-        """True when this Host authors ``SessionType none`` (forwarding-only)."""
+        """True when OpenSSH resolves ``SessionType none`` for this launch.
+
+        The value may come from a ``Host *.tunnel`` or ``Match`` block, an
+        included file or Settings ▸ SSH Options rather than the Host block, so
+        ``ssh -G`` decides for a host declared in a configuration file. Only
+        when that cannot answer (no such file, ``ssh -G`` failed, an OpenSSH
+        without SessionType) does the authored block decide.
+        """
         from ..forwarding_only_ui import connection_forwarding_only
 
+        if connection._declared_in_config():
+            session_type = _string(connection.effective_ssh_config().get("sessiontype"))
+            if session_type:
+                return session_type.casefold() == "none"
         return connection_forwarding_only(connection) is True
 
     @staticmethod

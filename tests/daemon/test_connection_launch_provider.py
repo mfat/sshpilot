@@ -1118,3 +1118,54 @@ def test_launch_resolves_like_plain_ssh_when_host_star_comes_first(tmp_path):
     assert prov.remote_identity("production") == (
         "production.example.com", "deploy", 2200,
     )
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+@pytest.mark.parametrize(
+    ("host", "forced"),
+    [("web.tunnel", True), ("plain", False)],
+)
+def test_inherited_session_type_none_disables_preference_multiplex(
+    tmp_path, host, forced
+):
+    """``SessionType none`` from ``Host *.tunnel`` makes web.tunnel a tunnel.
+
+    OpenSSH applies it although web.tunnel's own block never says so; the
+    launch must then hold the -N process in the foreground exactly as for an
+    authored one, or ControlMaster=auto backgrounds it and the tab closes
+    while the tunnel stays up. A host the wildcard does not match keeps the
+    preference multiplexing.
+    """
+    from types import SimpleNamespace
+
+    from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    config = tmp_path / "config"
+    config.write_text(
+        "Host *.tunnel\n"
+        "    SessionType none\n"
+        "    LocalForward 8080 localhost:80\n\n"
+        "Host web.tunnel\n"
+        "    HostName example.com\n\n"
+        "Host plain\n"
+        "    HostName example.org\n"
+    )
+    records = {r.id: r for r in load_ssh_configuration(config, isolated=False).connections}
+    assert "SessionType" not in str(records[host].data.get("extra_ssh_config") or "")
+    prov = DaemonConnectionLaunchProvider(
+        records.get,
+        config_root=lambda: config,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+
+    argv, _env = prov.prepare_terminal_launch(host, interaction_policy="none")
+
+    tokens = [str(token) for token in argv]
+    assert ("ControlMaster=no" in tokens) is forced
+    if forced:
+        assert tokens[tokens.index("ControlMaster=no") - 1] == "-o"
+        if "ControlMaster=auto" in tokens:
+            assert tokens.index("ControlMaster=no") < tokens.index("ControlMaster=auto")
