@@ -913,6 +913,10 @@ class MachineInfoDialog:
         self._cpu_gauge: Optional[_Gauge] = None
         self._memory_gauge: Optional[_Gauge] = None
         self._cpu_section: Optional[_CpuSection] = None
+        #: The tab switcher on screen (Adw.ViewStack or Gtk.Notebook), and
+        #: the page the user had open, so a refresh rebuilds onto that page.
+        self._tabs: Optional[Gtk.Widget] = None
+        self._selected_tab: Optional[str] = None
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(self._build_header())
@@ -1111,6 +1115,7 @@ class MachineInfoDialog:
             self._refresh_button.set_sensitive(True)
 
     def _on_refresh(self) -> None:
+        self._remember_selected_tab()
         self._refresh_button.set_sensitive(False)
         self._stop_live_timer()
         self._show_status(_("Gathering host information…"), spinner=True)
@@ -1158,6 +1163,7 @@ class MachineInfoDialog:
     # -- status / age ---------------------------------------------------
 
     def _clear_content(self) -> None:
+        self._tabs = None
         child = self._content.get_first_child()
         while child is not None:
             following = child.get_next_sibling()
@@ -1460,6 +1466,24 @@ class MachineInfoDialog:
 
     # -- tabs -----------------------------------------------------------
 
+    _TAB_NAMES = ("overview", "resources", "storage", "network", "traffic", "system")
+
+    def _remember_selected_tab(self) -> None:
+        """Record the open page so the rebuilt tabs reopen it.
+
+        Read before the tabs are torn down; a status screen in between (a
+        failed refresh) keeps the last remembered page.
+        """
+        tabs = self._tabs
+        if isinstance(tabs, Gtk.Notebook):
+            index = tabs.get_current_page()
+            if 0 <= index < len(self._TAB_NAMES):
+                self._selected_tab = self._TAB_NAMES[index]
+        elif tabs is not None:
+            name = tabs.get_visible_child_name()
+            if name:
+                self._selected_tab = name
+
     def _build_tabs(self) -> None:
         self._clear_content()
         self._rate_labels = {}
@@ -1492,6 +1516,8 @@ class MachineInfoDialog:
             scrolled.set_vexpand(True)
             scrolled.set_child(widget)
             stack.add_titled(scrolled, name, title)
+        if self._selected_tab is not None:
+            stack.set_visible_child_name(self._selected_tab)
 
         switcher = Adw.InlineViewSwitcher()
         switcher.set_stack(stack)
@@ -1524,6 +1550,7 @@ class MachineInfoDialog:
         container.append(switcher_card)
         container.append(stack)
         self._content.append(container)
+        self._tabs = stack
 
     def _build_tabs_notebook(
         self, pages: Sequence[Tuple[str, str, Gtk.Widget]]
@@ -1541,6 +1568,9 @@ class MachineInfoDialog:
             scrolled.set_child(widget)
             notebook.append_page(scrolled, Gtk.Label(label=title))
         self._content.append(notebook)
+        if self._selected_tab in self._TAB_NAMES:
+            notebook.set_current_page(self._TAB_NAMES.index(self._selected_tab))
+        self._tabs = notebook
 
     # -- Overview -------------------------------------------------------
 

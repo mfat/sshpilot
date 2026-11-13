@@ -1012,3 +1012,77 @@ def test_five_or_fewer_top_processes_need_no_button():
         isinstance(w, Gtk.Button) and (w.get_label() or "").startswith("Show ")
         for w in _walk(page)
     )
+
+
+def _refreshable_dialog():
+    """A dialog shell that can run the real refresh-and-rebuild cycle."""
+
+    dialog = _dialog(_snapshot())
+    dialog._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    dialog._tabs = None
+    dialog._selected_tab = None
+    return dialog
+
+
+def _refresh(dialog):
+    """Run what the Refresh button does, minus the daemon round trip."""
+
+    dialog._remember_selected_tab()
+    dialog._show_status("Gathering host information…", spinner=True)
+    dialog._build_tabs()
+
+
+def test_refresh_keeps_the_tab_the_user_was_on():
+    """#1372: refreshing on Storage must not drop the user back on Overview."""
+
+    from gi.repository import Adw
+
+    if not hasattr(Adw, "InlineViewSwitcher"):
+        pytest.skip("libadwaita < 1.7 builds the notebook fallback")
+    dialog = _refreshable_dialog()
+    dialog._build_tabs()
+    dialog._tabs.set_visible_child_name("storage")
+
+    _refresh(dialog)
+
+    assert dialog._tabs.get_visible_child_name() == "storage"
+
+
+def test_refresh_after_a_failed_gather_still_returns_to_that_tab():
+    from gi.repository import Adw
+
+    if not hasattr(Adw, "InlineViewSwitcher"):
+        pytest.skip("libadwaita < 1.7 builds the notebook fallback")
+    dialog = _refreshable_dialog()
+    dialog._build_tabs()
+    dialog._tabs.set_visible_child_name("traffic")
+
+    dialog._remember_selected_tab()
+    dialog._show_status("Could not gather host information.")
+    _refresh(dialog)
+
+    assert dialog._tabs.get_visible_child_name() == "traffic"
+
+
+def test_refresh_keeps_the_tab_on_the_notebook_fallback(monkeypatch):
+    """The AppImage (libadwaita < 1.7) tabs must keep the page too."""
+
+    from gi.repository import Adw
+
+    import sshpilot.machine_info_dialog as module
+
+    class _OldAdw:
+        def __getattr__(self, name):
+            if name == "InlineViewSwitcher":
+                raise AttributeError(name)
+            return getattr(Adw, name)
+
+    monkeypatch.setattr(module, "Adw", _OldAdw())
+    dialog = _refreshable_dialog()
+    dialog._build_tabs()
+    assert isinstance(dialog._tabs, Gtk.Notebook)
+    dialog._tabs.set_current_page(module.MachineInfoDialog._TAB_NAMES.index("network"))
+
+    _refresh(dialog)
+
+    assert dialog._tabs.get_current_page() == module.MachineInfoDialog._TAB_NAMES.index("network")
