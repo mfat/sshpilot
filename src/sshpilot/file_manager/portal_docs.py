@@ -592,6 +592,86 @@ def _sandbox_path_for_host(host_path: str, current: Optional[str] = None) -> Opt
     return None
 
 
+_FLATPAK_INFO = "/.flatpak-info"
+
+_XDG_SPECIAL_DIRS = {
+    "xdg-desktop": GLib.UserDirectory.DIRECTORY_DESKTOP,
+    "xdg-documents": GLib.UserDirectory.DIRECTORY_DOCUMENTS,
+    "xdg-download": GLib.UserDirectory.DIRECTORY_DOWNLOAD,
+    "xdg-music": GLib.UserDirectory.DIRECTORY_MUSIC,
+    "xdg-pictures": GLib.UserDirectory.DIRECTORY_PICTURES,
+    "xdg-public-share": GLib.UserDirectory.DIRECTORY_PUBLIC_SHARE,
+    "xdg-templates": GLib.UserDirectory.DIRECTORY_TEMPLATES,
+    "xdg-videos": GLib.UserDirectory.DIRECTORY_VIDEOS,
+}
+
+
+def _shared_filesystem_roots() -> Optional[List[str]]:
+    """Host folders the sandbox shares directly (``--filesystem=``), read
+    from ``/.flatpak-info``. Returns ``None`` when the whole host is shared."""
+    import configparser
+
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        with open(_FLATPAK_INFO, encoding="utf-8") as fh:
+            parser.read_file(fh)
+        raw = parser.get("Context", "filesystems", fallback="")
+    except (OSError, configparser.Error):
+        return []
+    home = os.path.expanduser("~")
+    roots: List[str] = []
+    for item in raw.split(";"):
+        item = item.strip()
+        if not item or item.startswith("!"):
+            continue
+        name = re.sub(r":(ro|rw|create)$", "", item)
+        head, _sep, sub = name.partition("/")
+        if head in ("host", "host-os", "host-etc") and not sub:
+            if head == "host":
+                return None
+            continue
+        if head == "home":
+            base = home
+        elif head == "~":
+            base = home
+        elif head in _XDG_SPECIAL_DIRS:
+            base = GLib.get_user_special_dir(_XDG_SPECIAL_DIRS[head]) or ""
+        elif head == "xdg-config":
+            base = os.path.join(home, ".config")
+        elif head == "xdg-data":
+            base = os.path.join(home, ".local", "share")
+        elif head == "xdg-cache":
+            base = os.path.join(home, ".cache")
+        elif name.startswith("/"):
+            base, sub = name, ""
+        else:
+            continue
+        if base:
+            roots.append(os.path.normpath(os.path.join(base, sub) if sub else base))
+    return roots
+
+
+def _is_reachable_local_path(path: str) -> bool:
+    """Whether the local pane may open ``path``: true for every path outside
+    Flatpak. Inside it, only portal grants, folders the sandbox shares and
+    the app's own data folder are the real host folders; anything else is
+    the sandbox's own empty copy, where created files vanish (#1376)."""
+    if not is_flatpak():
+        return True
+    if not path:
+        return False
+    if _portal_grant_root(path):
+        return True
+    target = os.path.normpath(path)
+    roots = _shared_filesystem_roots()
+    if roots is None:
+        return True
+    app_id = os.environ.get("FLATPAK_ID", "")
+    if app_id:
+        roots.append(os.path.join(os.path.expanduser("~"), ".var", "app", app_id))
+    return any(target == root or target.startswith(root.rstrip("/") + "/") for root in roots)
+
+
 def _pretty_path_for_display(path: str) -> str:
     """Convert a filesystem path to a human-friendly display string.
 

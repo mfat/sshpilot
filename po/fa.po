@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-13 19:24+0330\n"
+"POT-Creation-Date: 2026-11-13 20:17+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -126,12 +126,12 @@ msgstr "اتصالات باز شود؟"
 #: src/sshpilot/file_manager/pane.py:2729
 #: src/sshpilot/file_manager/pane.py:3379
 #: src/sshpilot/file_manager/progress_dialog.py:293
-#: src/sshpilot/file_manager_window.py:1384
-#: src/sshpilot/file_manager_window.py:1700
-#: src/sshpilot/file_manager_window.py:1761
-#: src/sshpilot/file_manager_window.py:1848
-#: src/sshpilot/file_manager_window.py:1928
-#: src/sshpilot/file_manager_window.py:2780 src/sshpilot/key_sources.py:274
+#: src/sshpilot/file_manager_window.py:1395
+#: src/sshpilot/file_manager_window.py:1711
+#: src/sshpilot/file_manager_window.py:1772
+#: src/sshpilot/file_manager_window.py:1859
+#: src/sshpilot/file_manager_window.py:1939
+#: src/sshpilot/file_manager_window.py:2791 src/sshpilot/key_sources.py:274
 #: src/sshpilot/login_profile_dialogs.py:96
 #: src/sshpilot/login_profile_dialogs.py:166
 #: src/sshpilot/login_profile_dialogs.py:542
@@ -297,7 +297,7 @@ msgstr "آیا از حذف {count} گروه خالی انتخاب‌شده اط�
 #: src/sshpilot/actions.py:1162 src/sshpilot/authorized_keys_window.py:428
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:697
 #: src/sshpilot/file_manager/pane.py:2266
-#: src/sshpilot/file_manager_window.py:1929
+#: src/sshpilot/file_manager_window.py:1940
 #: src/sshpilot/login_profile_dialogs.py:770
 #: src/sshpilot/login_profile_dialogs.py:780
 #: src/sshpilot/login_profile_dialogs.py:968 src/sshpilot/sidebar.py:5182
@@ -463,7 +463,7 @@ msgstr "پین به صفحه شروع"
 
 #: src/sshpilot/actions.py:1099 src/sshpilot/actions.py:1130
 #: src/sshpilot/file_manager/pane.py:691
-#: src/sshpilot/file_manager_window.py:1849
+#: src/sshpilot/file_manager_window.py:1860
 msgid "Rename"
 msgstr "تغییر نام دهید"
 
@@ -702,7 +702,7 @@ msgstr "خطا در بارگیری authorized_keys"
 
 #: src/sshpilot/authorized_keys_window.py:293
 #: src/sshpilot/file_manager/pane.py:3174
-#: src/sshpilot/file_manager_window.py:495 src/sshpilot/rdp_tab.py:172
+#: src/sshpilot/file_manager_window.py:497 src/sshpilot/rdp_tab.py:172
 #: src/sshpilot/rdp_tab.py:258 src/sshpilot/rdp_tab.py:482
 #: src/sshpilot/scp_window.py:1002 src/sshpilot/scp_window.py:1099
 msgid "Connecting…"
@@ -714,7 +714,7 @@ msgid "Failed to connect: {error}"
 msgstr "اتصال ناموفق: {error}"
 
 #: src/sshpilot/authorized_keys_window.py:307
-#: src/sshpilot/file_manager_window.py:946 src/sshpilot/sidebar.py:2631
+#: src/sshpilot/file_manager_window.py:948 src/sshpilot/sidebar.py:2631
 msgid "Connection failed"
 msgstr "اتصال ناموفق بود"
 
@@ -3382,15 +3382,15 @@ msgid "Delete failed"
 msgstr "حذف انجام نشد"
 
 #: src/sshpilot/daemon_sftp_backend.py:1107
-#: src/sshpilot/file_manager_window.py:3187
-#: src/sshpilot/file_manager_window.py:3325
+#: src/sshpilot/file_manager_window.py:3198
+#: src/sshpilot/file_manager_window.py:3336
 #, python-brace-format
 msgid "Transferred {done} of {total}"
 msgstr "{done} از فایل‌های {total}"
 
 #: src/sshpilot/daemon_sftp_backend.py:1116
-#: src/sshpilot/file_manager_window.py:3192
-#: src/sshpilot/file_manager_window.py:3331
+#: src/sshpilot/file_manager_window.py:3203
+#: src/sshpilot/file_manager_window.py:3342
 #, python-brace-format
 msgid "Transferred {size}"
 msgstr "{size} منتقل شد"
@@ -3635,6 +3635,7 @@ msgid "Paste"
 msgstr "چسباندن"
 
 #: src/sshpilot/file_manager/pane.py:710 src/sshpilot/file_manager/pane.py:716
+#: src/sshpilot/file_manager/pane.py:3978
 msgid "Request Access"
 msgstr "درخواست دسترسی"
 
@@ -3677,14 +3678,14 @@ msgid "Modified"
 msgstr "اصلاح شد"
 
 #: src/sshpilot/file_manager/pane.py:2233
-#: src/sshpilot/file_manager_window.py:1696
-#: src/sshpilot/file_manager_window.py:1698
+#: src/sshpilot/file_manager_window.py:1707
+#: src/sshpilot/file_manager_window.py:1709
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:12
 msgid "New Folder"
 msgstr "پوشه جدید"
 
 #: src/sshpilot/file_manager/pane.py:2234
-#: src/sshpilot/file_manager_window.py:1757
+#: src/sshpilot/file_manager_window.py:1768
 msgid "New File"
 msgstr "پوشه جدید"
 
@@ -3852,7 +3853,7 @@ msgid "Failed to show properties: {error}"
 msgstr "ذخیرهٔ فایل انجام نشد: {error}"
 
 #: src/sshpilot/file_manager/pane.py:3057
-#: src/sshpilot/file_manager_window.py:1611 src/sshpilot/window_dialogs.py:2830
+#: src/sshpilot/file_manager_window.py:1622 src/sshpilot/window_dialogs.py:2830
 msgid "Nothing selected"
 msgstr "چیزی انتخاب نشده است"
 
@@ -3931,8 +3932,8 @@ msgstr "بارگذاری ناموفق بود: زمینهٔ پنجره نامعت
 
 #: src/sshpilot/file_manager/pane.py:3799
 #: src/sshpilot/file_manager/pane.py:3804
-#: src/sshpilot/file_manager_window.py:2226
-#: src/sshpilot/file_manager_window.py:2242 src/sshpilot/text_editor.py:1539
+#: src/sshpilot/file_manager_window.py:2237
+#: src/sshpilot/file_manager_window.py:2253 src/sshpilot/text_editor.py:1539
 #, python-brace-format
 msgid "Upload failed: {error}"
 msgstr "بارگذاری انجام نشد: {error}"
@@ -3943,10 +3944,14 @@ msgstr "بارگیری ناموفق بود: زمینهٔ پنجره نامعتب
 
 #: src/sshpilot/file_manager/pane.py:3856
 #: src/sshpilot/file_manager/pane.py:3861
-#: src/sshpilot/file_manager_window.py:2315
+#: src/sshpilot/file_manager_window.py:2326
 #, python-brace-format
 msgid "Download failed: {error}"
 msgstr "بارگذاری انجام نشد: {error}"
+
+#: src/sshpilot/file_manager/pane.py:3976
+msgid "No access to this folder. Use Request Access to open it."
+msgstr "به این پوشه دسترسی ندارید. برای باز کردن آن از «درخواست دسترسی» استفاده کنید."
 
 #: src/sshpilot/file_manager/pane_controls.py:32
 msgid "Forward"
@@ -4362,111 +4367,111 @@ msgstr "تنظیم مجوزهای سفارشی"
 msgid "Could not change the permissions of “{name}”: {error}"
 msgstr "تغییر مجوزهای «{name}» ممکن نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:205
-#: src/sshpilot/file_manager_window.py:825
+#: src/sshpilot/file_manager_window.py:207
+#: src/sshpilot/file_manager_window.py:827
 msgid "Hide Local Pane"
 msgstr "پانل محلی را پنهان کنید"
 
-#: src/sshpilot/file_manager_window.py:417
+#: src/sshpilot/file_manager_window.py:419
 #, python-brace-format
 msgid "Failed to load local home: {error}"
 msgstr "بارگیری نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:502 src/sshpilot/sidebar.py:2625
+#: src/sshpilot/file_manager_window.py:504 src/sshpilot/sidebar.py:2625
 #, python-brace-format
 msgid "Connecting to {host}…"
 msgstr "در حال اتصال به {host}…"
 
-#: src/sshpilot/file_manager_window.py:549
+#: src/sshpilot/file_manager_window.py:551
 msgid "Choose remote host"
 msgstr "میزبان راه دور را انتخاب کنید"
 
-#: src/sshpilot/file_manager_window.py:575
-#: src/sshpilot/file_manager_window.py:649 src/sshpilot/split_view.py:711
+#: src/sshpilot/file_manager_window.py:577
+#: src/sshpilot/file_manager_window.py:651 src/sshpilot/split_view.py:711
 msgid "Select host"
 msgstr "میزبان را انتخاب کنید"
 
-#: src/sshpilot/file_manager_window.py:588
+#: src/sshpilot/file_manager_window.py:590
 msgid "No connections available"
 msgstr "هیچ اتصالی در دسترس نیست"
 
-#: src/sshpilot/file_manager_window.py:644
+#: src/sshpilot/file_manager_window.py:646
 msgid "No server selected"
 msgstr "هیچ سروری انتخاب نشده است"
 
-#: src/sshpilot/file_manager_window.py:672
+#: src/sshpilot/file_manager_window.py:674
 msgid "Connection has no host"
 msgstr "اتصال میزبانی ندارد"
 
-#: src/sshpilot/file_manager_window.py:821
+#: src/sshpilot/file_manager_window.py:823
 msgid "Show Local Pane"
 msgstr "نمایش پانل محلی"
 
-#: src/sshpilot/file_manager_window.py:841
+#: src/sshpilot/file_manager_window.py:843
 msgid "Connected"
 msgstr "قطع شده"
 
-#: src/sshpilot/file_manager_window.py:843
+#: src/sshpilot/file_manager_window.py:845
 msgid "Connected — loading files…"
 msgstr "در حال اتصال…"
 
-#: src/sshpilot/file_manager_window.py:871
+#: src/sshpilot/file_manager_window.py:873
 #, python-brace-format
 msgid "File operation failed: {error}"
 msgstr "بارگذاری انجام نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:872
+#: src/sshpilot/file_manager_window.py:874
 msgid "File operation failed"
 msgstr "تولید کلید ناموفق بود"
 
-#: src/sshpilot/file_manager_window.py:945
+#: src/sshpilot/file_manager_window.py:947
 #, python-brace-format
 msgid "Connection failed: {error}"
 msgstr "اتصال ناموفق بود: {error}"
 
-#: src/sshpilot/file_manager_window.py:1093
+#: src/sshpilot/file_manager_window.py:1095
 msgid "Directory refreshed"
 msgstr "دایرکتوری"
 
-#: src/sshpilot/file_manager_window.py:1134
+#: src/sshpilot/file_manager_window.py:1136
 #, python-brace-format
 msgid "Not a directory: {path}"
 msgstr "یک پوشه نیست: {path}"
 
-#: src/sshpilot/file_manager_window.py:1162
+#: src/sshpilot/file_manager_window.py:1164
 msgid "Directory reloaded"
 msgstr "دایرکتوری"
 
-#: src/sshpilot/file_manager_window.py:1169
-#: src/sshpilot/file_manager_window.py:1232
+#: src/sshpilot/file_manager_window.py:1171
+#: src/sshpilot/file_manager_window.py:1243
 #, python-brace-format
 msgid "Failed to load directory: {error}"
 msgstr "بارگیری نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:1268
+#: src/sshpilot/file_manager_window.py:1279
 msgid "Loading directory…"
 msgstr "دایرکتوری کار"
 
-#: src/sshpilot/file_manager_window.py:1339
-#: src/sshpilot/file_manager_window.py:1348
-#: src/sshpilot/file_manager_window.py:1364
-#: src/sshpilot/file_manager_window.py:1402
-#: src/sshpilot/file_manager_window.py:1494
-#: src/sshpilot/file_manager_window.py:1511
+#: src/sshpilot/file_manager_window.py:1350
+#: src/sshpilot/file_manager_window.py:1359
+#: src/sshpilot/file_manager_window.py:1375
+#: src/sshpilot/file_manager_window.py:1413
+#: src/sshpilot/file_manager_window.py:1505
+#: src/sshpilot/file_manager_window.py:1522
 msgid "Connection lost. Please reconnect and try again."
 msgstr "مجدداً به دیمن SSH Pilot متصل شوید و دوباره تلاش کنید."
 
-#: src/sshpilot/file_manager_window.py:1353
+#: src/sshpilot/file_manager_window.py:1364
 #, python-brace-format
 msgid "Connection error: {error}"
 msgstr "خطای اتصال: {error}"
 
-#: src/sshpilot/file_manager_window.py:1373
+#: src/sshpilot/file_manager_window.py:1384
 #, python-brace-format
 msgid "'{filename}' already exists in the destination folder."
 msgstr "«{filename}» از قبل در پوشهٔ مقصد وجود دارد."
 
-#: src/sshpilot/file_manager_window.py:1376
+#: src/sshpilot/file_manager_window.py:1387
 #, python-brace-format
 msgid "{count} of {total} file already exists in the destination folder."
 msgid_plural ""
@@ -4474,218 +4479,218 @@ msgid_plural ""
 msgstr[0] "{count} از {total} فایل از قبل در پوشهٔ مقصد وجود دارد."
 msgstr[1] "{count} از {total} فایل از قبل در پوشهٔ مقصد وجود دارند."
 
-#: src/sshpilot/file_manager_window.py:1381
+#: src/sshpilot/file_manager_window.py:1392
 msgid "File Already Exists"
 msgid_plural "Files Already Exist"
 msgstr[0] "فایل از قبل وجود دارد"
 msgstr[1] "فایل از قبل وجود دارد"
 
-#: src/sshpilot/file_manager_window.py:1385
+#: src/sshpilot/file_manager_window.py:1396
 msgid "Skip Existing"
 msgstr "رد شدن از موجود"
 
-#: src/sshpilot/file_manager_window.py:1386 src/sshpilot/text_editor.py:491
+#: src/sshpilot/file_manager_window.py:1397 src/sshpilot/text_editor.py:491
 msgid "Replace All"
 msgstr "جایگزینی همه"
 
-#: src/sshpilot/file_manager_window.py:1414
+#: src/sshpilot/file_manager_window.py:1425
 #, python-brace-format
 msgid "Skipped existing file: {filename}"
 msgstr "فایل موجود نادیده گرفته شد: {filename}"
 
-#: src/sshpilot/file_manager_window.py:1417
+#: src/sshpilot/file_manager_window.py:1428
 #, python-brace-format
 msgid "Skipped {count} existing file"
 msgid_plural "Skipped {count} existing files"
 msgstr[0] "{count} فایل موجود نادیده گرفته شد"
 msgstr[1] "{count} فایل موجود نادیده گرفته شدند"
 
-#: src/sshpilot/file_manager_window.py:1573
-#: src/sshpilot/file_manager_window.py:1591
+#: src/sshpilot/file_manager_window.py:1584
+#: src/sshpilot/file_manager_window.py:1602
 msgid "Terminal is not available"
 msgstr "ترمینال در دسترس نیست"
 
-#: src/sshpilot/file_manager_window.py:1634
+#: src/sshpilot/file_manager_window.py:1645
 #, python-brace-format
 msgid "Cut {name}"
 msgstr "برچسب: {name}"
 
-#: src/sshpilot/file_manager_window.py:1634
+#: src/sshpilot/file_manager_window.py:1645
 #, python-brace-format
 msgid "Copied {name}"
 msgstr "{name} کپی شد"
 
-#: src/sshpilot/file_manager_window.py:1638
+#: src/sshpilot/file_manager_window.py:1649
 #, python-brace-format
 msgid "Cut {count} item"
 msgid_plural "Cut {count} items"
 msgstr[0] "{count} مورد"
 msgstr[1] "{count} مورد"
 
-#: src/sshpilot/file_manager_window.py:1640
-#: src/sshpilot/file_manager_window.py:2884
+#: src/sshpilot/file_manager_window.py:1651
+#: src/sshpilot/file_manager_window.py:2895
 #, python-brace-format
 msgid "Copied {count} item"
 msgid_plural "Copied {count} items"
 msgstr[0] "{count} مورد"
 msgstr[1] "{count} مورد"
 
-#: src/sshpilot/file_manager_window.py:1646
+#: src/sshpilot/file_manager_window.py:1657
 msgid "Clipboard is empty"
 msgstr "(log خالی است)"
 
-#: src/sshpilot/file_manager_window.py:1693
+#: src/sshpilot/file_manager_window.py:1704
 msgid "Paste target is unavailable"
 msgstr "فضای ذخیره‌سازی امن در دسترس نیست."
 
-#: src/sshpilot/file_manager_window.py:1696
+#: src/sshpilot/file_manager_window.py:1707
 msgid "Enter a name for the new folder"
 msgstr "نامی برای گروه جدید وارد کنید:"
 
-#: src/sshpilot/file_manager_window.py:1701
-#: src/sshpilot/file_manager_window.py:1762
+#: src/sshpilot/file_manager_window.py:1712
+#: src/sshpilot/file_manager_window.py:1773
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:312
 #: src/sshpilot/window_dialogs.py:3382
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:25
 msgid "Create"
 msgstr "ایجاد کنید"
 
-#: src/sshpilot/file_manager_window.py:1719
+#: src/sshpilot/file_manager_window.py:1730
 msgid "Folder already exists"
 msgstr "فایل از قبل وجود دارد"
 
-#: src/sshpilot/file_manager_window.py:1721
+#: src/sshpilot/file_manager_window.py:1732
 #, python-brace-format
 msgid "Failed to create folder: {error}"
 msgstr "ایجاد گروه شکست خورد: {error}"
 
-#: src/sshpilot/file_manager_window.py:1757
+#: src/sshpilot/file_manager_window.py:1768
 msgid "Enter a name for the new file"
 msgstr "نامی برای گروه جدید وارد کنید:"
 
-#: src/sshpilot/file_manager_window.py:1778
-#: src/sshpilot/file_manager_window.py:1793 src/sshpilot/preferences.py:4295
+#: src/sshpilot/file_manager_window.py:1789
+#: src/sshpilot/file_manager_window.py:1804 src/sshpilot/preferences.py:4295
 msgid "File already exists"
 msgstr "فایل از قبل وجود دارد"
 
-#: src/sshpilot/file_manager_window.py:1780
-#: src/sshpilot/file_manager_window.py:1796
+#: src/sshpilot/file_manager_window.py:1791
+#: src/sshpilot/file_manager_window.py:1807
 #, python-brace-format
 msgid "Failed to create file: {error}"
 msgstr "ذخیرهٔ فایل انجام نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:1843
+#: src/sshpilot/file_manager_window.py:1854
 msgid "Rename Item"
 msgstr "تغییر نام دهید"
 
-#: src/sshpilot/file_manager_window.py:1843
+#: src/sshpilot/file_manager_window.py:1854
 #, python-brace-format
 msgid "Enter a new name for {name}"
 msgstr "یک نام جدید برای «{name}» وارد کنید."
 
-#: src/sshpilot/file_manager_window.py:1859
+#: src/sshpilot/file_manager_window.py:1870
 msgid "Name cannot be empty"
 msgstr "نام نمی‌تواند خالی باشد"
 
-#: src/sshpilot/file_manager_window.py:1870
+#: src/sshpilot/file_manager_window.py:1881
 #, python-brace-format
 msgid "Failed to rename item: {error}"
 msgstr "تغییر نام برچسب شکست خورد: {error}"
 
-#: src/sshpilot/file_manager_window.py:1872
+#: src/sshpilot/file_manager_window.py:1883
 #, python-brace-format
 msgid "Renamed to {name}"
 msgstr "ترمینال: {name}"
 
-#: src/sshpilot/file_manager_window.py:1889
+#: src/sshpilot/file_manager_window.py:1900
 #, python-brace-format
 msgid "Renaming to {name}…"
 msgstr "در حال تغییر نام به {name}…"
 
-#: src/sshpilot/file_manager_window.py:1921
+#: src/sshpilot/file_manager_window.py:1932
 #, python-brace-format
 msgid "Delete {name}?"
 msgstr "{name} حذف شود؟"
 
-#: src/sshpilot/file_manager_window.py:1923
+#: src/sshpilot/file_manager_window.py:1934
 #, python-brace-format
 msgid "Delete {count} item?"
 msgid_plural "Delete {count} items?"
 msgstr[0] "{count} مورد"
 msgstr[1] "{count} مورد"
 
-#: src/sshpilot/file_manager_window.py:1925
+#: src/sshpilot/file_manager_window.py:1936
 msgid "Delete Item"
 msgid_plural "Delete Items"
 msgstr[0] "حذف کنید"
 msgstr[1] "حذف کنید"
 
-#: src/sshpilot/file_manager_window.py:1951
+#: src/sshpilot/file_manager_window.py:1962
 #, python-brace-format
 msgid "{name} no longer exists"
 msgstr "{name} دیگر وجود ندارد"
 
-#: src/sshpilot/file_manager_window.py:1953
-#: src/sshpilot/file_manager_window.py:2015
-#: src/sshpilot/file_manager_window.py:2048
+#: src/sshpilot/file_manager_window.py:1964
+#: src/sshpilot/file_manager_window.py:2026
+#: src/sshpilot/file_manager_window.py:2059
 #, python-brace-format
 msgid "Failed to delete {name}: {error}"
 msgstr "حذف {name} ناموفق بود: {error}"
 
-#: src/sshpilot/file_manager_window.py:1957
-#: src/sshpilot/file_manager_window.py:2580
+#: src/sshpilot/file_manager_window.py:1968
+#: src/sshpilot/file_manager_window.py:2591
 #, python-brace-format
 msgid "Deleted {count} item"
 msgid_plural "Deleted {count} items"
 msgstr[0] "{count} مورد"
 msgstr[1] "{count} مورد"
 
-#: src/sshpilot/file_manager_window.py:2001
-#: src/sshpilot/file_manager_window.py:2086
+#: src/sshpilot/file_manager_window.py:2012
+#: src/sshpilot/file_manager_window.py:2097
 #, python-brace-format
 msgid "Failed to delete {count} items: {error}"
 msgstr "حذف {count} مورد ناموفق بود: {error}"
 
-#: src/sshpilot/file_manager_window.py:2012
-#: src/sshpilot/file_manager_window.py:2524
+#: src/sshpilot/file_manager_window.py:2023
+#: src/sshpilot/file_manager_window.py:2535
 msgid "Delete was cancelled"
 msgstr "رمزگشایی لغو شد"
 
-#: src/sshpilot/file_manager_window.py:2179
+#: src/sshpilot/file_manager_window.py:2190
 msgid "No files selected for upload"
 msgstr "فایل‌هایی را برای آپلود انتخاب کنید"
 
-#: src/sshpilot/file_manager_window.py:2194
+#: src/sshpilot/file_manager_window.py:2205
 msgid "Selected items are not accessible"
 msgstr "پوشه را برای اعطای دسترسی انتخاب کنید"
 
-#: src/sshpilot/file_manager_window.py:2197
+#: src/sshpilot/file_manager_window.py:2208
 #, python-brace-format
 msgid "Skipping inaccessible items: {name}"
 msgstr "نادیده گرفتن موارد غیرقابل‌دسترس: {name}"
 
-#: src/sshpilot/file_manager_window.py:2213
+#: src/sshpilot/file_manager_window.py:2224
 msgid "Upload failed: Connection lost"
 msgstr "بارگذاری ناموفق بود: اتصال قطع شد"
 
-#: src/sshpilot/file_manager_window.py:2221
+#: src/sshpilot/file_manager_window.py:2232
 msgid "Upload failed: Connection closed. Please reconnect."
 msgstr "بارگذاری ناموفق بود: اتصال بسته شد. لطفاً دوباره متصل شوید."
 
-#: src/sshpilot/file_manager_window.py:2284
+#: src/sshpilot/file_manager_window.py:2295
 msgid "Invalid download request"
 msgstr "درخواست بارگیری نامعتبر است"
 
 #. All files failed
-#: src/sshpilot/file_manager_window.py:2512
-#: src/sshpilot/file_manager_window.py:2534
-#: src/sshpilot/file_manager_window.py:2537
-#: src/sshpilot/file_manager_window.py:3624 src/sshpilot/window.py:1667
+#: src/sshpilot/file_manager_window.py:2523
+#: src/sshpilot/file_manager_window.py:2545
+#: src/sshpilot/file_manager_window.py:2548
+#: src/sshpilot/file_manager_window.py:3635 src/sshpilot/window.py:1667
 #: src/sshpilot/window_dialogs.py:2020
 msgid "Unknown error"
 msgstr "خطای ناشناخته"
 
-#: src/sshpilot/file_manager_window.py:2543
+#: src/sshpilot/file_manager_window.py:2554
 #, python-brace-format
 msgid "{count} of {total} item failed"
 msgid_plural "{count} of {total} items failed"
@@ -4695,70 +4700,70 @@ msgstr[1] "{count} از {total} مورد با شکست مواجه شدند"
 #. Try to reconnect and then refresh
 #. The connection should be automatically re-established on next operation
 #. For now, just show a message and let user manually refresh
-#: src/sshpilot/file_manager_window.py:2667
+#: src/sshpilot/file_manager_window.py:2678
 msgid "Connection closed. Please refresh manually."
 msgstr "اتصال بسته شد. لطفاً به‌صورت دستی بازخوانی کنید."
 
-#: src/sshpilot/file_manager_window.py:2670
-#: src/sshpilot/file_manager_window.py:2679
+#: src/sshpilot/file_manager_window.py:2681
+#: src/sshpilot/file_manager_window.py:2690
 #, python-brace-format
 msgid "Refresh failed: {error}"
 msgstr "ذخیره انجام نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:2774
+#: src/sshpilot/file_manager_window.py:2785
 msgid "You cannot move a folder into itself."
 msgstr "یک فهرست را نمی‌توان در خودش کپی کرد"
 
-#: src/sshpilot/file_manager_window.py:2776
+#: src/sshpilot/file_manager_window.py:2787
 msgid "You cannot copy a folder into itself."
 msgstr "یک فهرست را نمی‌توان در خودش کپی کرد"
 
-#: src/sshpilot/file_manager_window.py:2778
+#: src/sshpilot/file_manager_window.py:2789
 msgid "The destination folder is inside the source folder."
 msgstr "پوشهٔ مقصد درون پوشهٔ مبدأ قرار دارد."
 
-#: src/sshpilot/file_manager_window.py:2782
+#: src/sshpilot/file_manager_window.py:2793
 msgid "Skip"
 msgstr "رد کردن"
 
-#: src/sshpilot/file_manager_window.py:2784
+#: src/sshpilot/file_manager_window.py:2795
 msgid "Skip All"
 msgstr "رد کردن همه"
 
-#: src/sshpilot/file_manager_window.py:2859
-#: src/sshpilot/file_manager_window.py:2865
+#: src/sshpilot/file_manager_window.py:2870
+#: src/sshpilot/file_manager_window.py:2876
 #, python-brace-format
 msgid "{name} already exists"
 msgstr "{name} از قبل وجود دارد"
 
-#: src/sshpilot/file_manager_window.py:2881
+#: src/sshpilot/file_manager_window.py:2892
 #, python-brace-format
 msgid "Moved {count} item"
 msgid_plural "Moved {count} items"
 msgstr[0] "{count} مورد"
 msgstr[1] "{count} مورد"
 
-#: src/sshpilot/file_manager_window.py:2891
+#: src/sshpilot/file_manager_window.py:2902
 #, python-brace-format
 msgid "Local copy or move failed: {error}"
 msgstr "ذخیره انجام نشد: {error}"
 
-#: src/sshpilot/file_manager_window.py:2917
-#: src/sshpilot/file_manager_window.py:3005
+#: src/sshpilot/file_manager_window.py:2928
+#: src/sshpilot/file_manager_window.py:3016
 msgid "Remote connection unavailable"
 msgstr "اتصال به دیمون در دسترس نیست."
 
-#: src/sshpilot/file_manager_window.py:2979
+#: src/sshpilot/file_manager_window.py:2990
 msgid "Files are no longer available"
 msgstr "مدیر فایل موجود نیست"
 
-#: src/sshpilot/file_manager_window.py:3083
+#: src/sshpilot/file_manager_window.py:3094
 #, python-brace-format
 msgid "Failed to remove {name}: {error}"
 msgstr "حذف {name} ناموفق بود: {error}"
 
-#: src/sshpilot/file_manager_window.py:3382
-#: src/sshpilot/file_manager_window.py:3630
+#: src/sshpilot/file_manager_window.py:3393
+#: src/sshpilot/file_manager_window.py:3641
 #, python-brace-format
 msgid "{count} of {total} file could not be transferred"
 msgid_plural "{count} of {total} files could not be transferred"
@@ -5382,8 +5387,7 @@ msgstr "نشست SSH با وضعیت {status} خارج شد"
 msgid "Could not list suggestions: {error}"
 msgstr "مقصد انتخاب نشد: {error}"
 
-#. : Shown while the command is still running, so a slow knock or VPN dial-up
-#. is
+#. : Shown while the command is still running, so a slow knock or VPN dial-up is
 #. : not a silent multi-second hang on connect.
 #: src/sshpilot/gtk/pre_command_messages.py:32
 msgid "Running pre-connect command…"
@@ -5396,8 +5400,7 @@ msgstr "فرمان پیش از اتصال"
 msgid "Sending the port knock…"
 msgstr "در حال ارسال پورت ناکینگ…"
 
-#. : Wake-on-LAN: the host did not answer, so it was sent a wake packet and
-#. the
+#. : Wake-on-LAN: the host did not answer, so it was sent a wake packet and the
 #. : launch waits for it -- up to a minute and a half, which without this line
 #. : would look like a hang.
 #: src/sshpilot/gtk/pre_command_messages.py:42
@@ -5884,7 +5887,7 @@ msgstr "هیچ نام فایل راه دور رایگان یافت نشد"
 msgid "The root folder and your home folder cannot be deleted"
 msgstr "جایگزینی فایل دوردست امکان‌پذیر نبود."
 
-#: src/sshpilot/gtk/config_precedence_notice.py:74
+#: src/sshpilot/gtk/config_precedence_notice.py:102
 #, python-brace-format
 msgid ""
 "{count} saved host does not use some of its own settings, because an earlier "
@@ -5899,15 +5902,15 @@ msgstr[1] ""
 "{count} میزبان ذخیره‌شده از برخی تنظیمات خود استفاده نمی‌کنند، چون یک بلوک "
 "قبلی در پیکربندی SSH شما آن‌ها را زودتر تعیین می‌کند."
 
-#: src/sshpilot/gtk/config_precedence_notice.py:83
+#: src/sshpilot/gtk/config_precedence_notice.py:111
 msgid "Review"
 msgstr "بررسی"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:87
+#: src/sshpilot/gtk/config_precedence_notice.py:115
 msgid "Settings Not Used"
 msgstr "تنظیمات استفاده‌نشده"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:92
+#: src/sshpilot/gtk/config_precedence_notice.py:120
 msgid ""
 "Some values set by these hosts are not used because an earlier block in your "
 "SSH config already sets them. To use them, remove the line from the earlier "
@@ -5917,7 +5920,7 @@ msgstr ""
 "در پیکربندی SSH شما از پیش آن‌ها را تعیین کرده است. برای استفاده از آن‌ها، خط "
 "را از بلوک قبلی حذف کنید یا آن بلوک را به زیر میزبان منتقل کنید."
 
-#: src/sshpilot/gtk/config_precedence_notice.py:116
+#: src/sshpilot/gtk/config_precedence_notice.py:144
 #, python-brace-format
 msgid ""
 "{keyword}: uses “{value}” from “{block}” ({file}, line {line}), not “{own}”"
@@ -5925,7 +5928,7 @@ msgstr ""
 "{keyword}: از «{value}» در «{block}» ({file}، خط {line}) استفاده می‌کند، نه "
 "«{own}»"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:121
+#: src/sshpilot/gtk/config_precedence_notice.py:149
 #, python-brace-format
 msgid ""
 "{keyword}: uses “{value}” from {file}, line {line}, above every Host block, "
@@ -5934,20 +5937,20 @@ msgstr ""
 "{keyword}: از «{value}» در {file}، خط {line}، بالای همهٔ بلوک‌های Host استفاده "
 "می‌کند، نه «{own}»"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:135
+#: src/sshpilot/gtk/config_precedence_notice.py:163
 msgid "Every saved host uses its own settings now."
 msgstr "اکنون همهٔ میزبان‌های ذخیره‌شده از تنظیمات خود استفاده می‌کنند."
 
-#: src/sshpilot/gtk/config_precedence_notice.py:139
+#: src/sshpilot/gtk/config_precedence_notice.py:167
 msgid "Edit this connection"
 msgstr "ویرایش این اتصال"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:271
+#: src/sshpilot/gtk/config_precedence_notice.py:352
 #: src/sshpilot/sidebar_peek_hint.py:64
 msgid "Don't Show Again"
 msgstr "دیگر نشان داده نشود"
 
-#: src/sshpilot/gtk/config_precedence_notice.py:273
+#: src/sshpilot/gtk/config_precedence_notice.py:354
 msgid ""
 "Hide this notice for these hosts. It returns only if another setting stops "
 "being used. The connection editor still marks each setting that is not used."
@@ -10878,8 +10881,7 @@ msgid "Lock"
 msgstr "قفل کنید"
 
 #. Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
-#. specific account (incl. a self-hosted Vaultwarden). Empty = default
-#. account.
+#. specific account (incl. a self-hosted Vaultwarden). Empty = default account.
 #. Only shown when the Bitwarden backend is selected.
 #: src/sshpilot/preferences.py:2622 src/sshpilot/settings_index.py:188
 msgid "bw data directory (account/profile)"
@@ -13247,14 +13249,12 @@ msgstr "کلید SSH انتخاب‌شده پیدا نشد."
 msgid "The public-key deployment request is invalid."
 msgstr "درخواست استقرار کلید عمومی نامعتبر است."
 
-#. : Trailing dropdown entry that opens the file chooser instead of selecting
-#. a key.
+#. : Trailing dropdown entry that opens the file chooser instead of selecting a key.
 #: src/sshpilot/sshcopyid_window.py:78
 msgid "Browse for a key file…"
 msgstr "مرور برای فایل کلید…"
 
-#. Radio option 1: Use existing key (using CheckButton with group for radio
-#. behavior)
+#. Radio option 1: Use existing key (using CheckButton with group for radio behavior)
 #: src/sshpilot/sshcopyid_window.py:166
 msgid "Copy existing key"
 msgstr "کپی کلید موجود"

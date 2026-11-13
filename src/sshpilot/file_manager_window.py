@@ -60,6 +60,7 @@ from .file_manager import (
     _load_first_doc_path,
     _load_grant_for_host,
     _sandbox_path_for_host,
+    _is_reachable_local_path,
     safe_display_text,
 )
 from .file_manager.format_utils import filename_extension_offset
@@ -1222,6 +1223,11 @@ class FileManagerWindow(Adw.Window):
             # Under Flatpak the path bar shows host paths; entering one must
             # reopen the granted folder, not its empty sandbox twin (#1376).
             local_path = _sandbox_path_for_host(local_path, current_path) or local_path
+            if not _is_reachable_local_path(local_path):
+                # Any other path is the sandbox's own empty copy: refuse it
+                # and point at the portal grant instead.
+                pane.show_no_access_toast()
+                return
             is_refresh = bool(current_path) and os.path.normpath(local_path) == os.path.normpath(current_path)
             # Mark as refreshing if it's a refresh
             if is_refresh:

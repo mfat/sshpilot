@@ -3966,6 +3966,25 @@ class FilePane(Gtk.Box):
             if button is not None:
                 button.set_sensitive(enabled)
 
+    def show_no_access_toast(self) -> None:
+        """Flatpak: the typed folder is outside every grant. Say so and offer
+        the Request Access flow from the toast itself."""
+        try:
+            if self._current_toast:
+                self._current_toast.dismiss()
+            toast = Adw.Toast.new(
+                _("No access to this folder. Use Request Access to open it.")
+            )
+            toast.set_button_label(_("Request Access"))
+            toast.connect("button-clicked", lambda *_: self._on_request_access_clicked())
+            self._overlay.add_toast(toast)
+            self._current_toast = toast
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+        # Put the bar back on the folder still shown.
+        if self._current_path:
+            self._set_current_pathbar_text(self._current_path)
+
     def show_toast(self, text: str, timeout: int = -1) -> None:
         """Show a toast; messages too long for a toast escalate to an alert."""
         # Messages routinely embed a filename or path, which on the local side
