@@ -138,6 +138,11 @@ def _dialog(snapshot, counters=()):
     dialog._cpu_gauge = None
     dialog._memory_gauge = None
     dialog._cpu_section = None
+    dialog._last_utilization = {}
+    dialog._last_rates = {}
+    dialog._page_scrolls = {}
+    dialog._tabs = None
+    dialog._selected_tab = None
     dialog._previous_live = LiveSample(
         counters=counters,
         cpu_times=snapshot.cpu_times,
@@ -1015,80 +1020,6 @@ def test_five_or_fewer_top_processes_need_no_button():
     )
 
 
-def _refreshable_dialog():
-    """A dialog shell that can run the real refresh-and-rebuild cycle."""
-
-    dialog = _dialog(_snapshot())
-    dialog._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    dialog._tabs = None
-    dialog._selected_tab = None
-    return dialog
-
-
-def _refresh(dialog):
-    """Run what the Refresh button does, minus the daemon round trip."""
-
-    dialog._remember_selected_tab()
-    dialog._show_status("Gathering host information…", spinner=True)
-    dialog._build_tabs()
-
-
-def test_refresh_keeps_the_tab_the_user_was_on():
-    """#1372: refreshing on Storage must not drop the user back on Overview."""
-
-    from gi.repository import Adw
-
-    if not hasattr(Adw, "InlineViewSwitcher"):
-        pytest.skip("libadwaita < 1.7 builds the notebook fallback")
-    dialog = _refreshable_dialog()
-    dialog._build_tabs()
-    dialog._tabs.set_visible_child_name("storage")
-
-    _refresh(dialog)
-
-    assert dialog._tabs.get_visible_child_name() == "storage"
-
-
-def test_refresh_after_a_failed_gather_still_returns_to_that_tab():
-    from gi.repository import Adw
-
-    if not hasattr(Adw, "InlineViewSwitcher"):
-        pytest.skip("libadwaita < 1.7 builds the notebook fallback")
-    dialog = _refreshable_dialog()
-    dialog._build_tabs()
-    dialog._tabs.set_visible_child_name("traffic")
-
-    dialog._remember_selected_tab()
-    dialog._show_status("Could not gather host information.")
-    _refresh(dialog)
-
-    assert dialog._tabs.get_visible_child_name() == "traffic"
-
-
-def test_refresh_keeps_the_tab_on_the_notebook_fallback(monkeypatch):
-    """The AppImage (libadwaita < 1.7) tabs must keep the page too."""
-
-    from gi.repository import Adw
-
-    import sshpilot.machine_info_dialog as module
-
-    class _OldAdw:
-        def __getattr__(self, name):
-            if name == "InlineViewSwitcher":
-                raise AttributeError(name)
-            return getattr(Adw, name)
-
-    monkeypatch.setattr(module, "Adw", _OldAdw())
-    dialog = _refreshable_dialog()
-    dialog._build_tabs()
-    assert isinstance(dialog._tabs, Gtk.Notebook)
-    dialog._tabs.set_current_page(module.MachineInfoDialog._TAB_NAMES.index("network"))
-
-    _refresh(dialog)
-
-    assert dialog._tabs.get_current_page() == module.MachineInfoDialog._TAB_NAMES.index("network")
-
-
 class _RecordingController:
     """Keeps every probe's callbacks so a test decides when each one answers."""
 
@@ -1099,13 +1030,19 @@ class _RecordingController:
         _RecordingController.instances.append(self)
 
     def start(self, connection_id, probe, on_result, on_error, on_started=None):
-        self.calls.append((probe, on_result))
+        self.calls.append((probe, on_result, on_error))
 
     def is_running(self, probe):
         return False
 
     def close(self):
         pass
+
+    def last(self, probe):
+        for kind, on_result, on_error in reversed(self.calls):
+            if kind is probe:
+                return on_result, on_error
+        raise AssertionError(f"no {probe} probe was started")
 
 
 class _ActiveWindow:
@@ -1131,40 +1068,270 @@ def _cpu_times(busy, idle):
     return (CpuTimes("cpu", user=busy, nice=0, system=0, idle=idle),)
 
 
-def test_a_live_sample_from_before_a_refresh_is_not_applied_after_it(monkeypatch):
-    """A sample in flight when Refresh is clicked predates the new gather.
-
-    Applying it blanked the CPU gauge and made it the baseline, so the next
-    rates were measured against a reading older than the one on screen.
-    """
+@pytest.fixture
+def live_dialog(monkeypatch):
+    """The real dialog, with a controller the test answers by hand."""
 
     import sshpilot.machine_info_dialog as module
 
     monkeypatch.setattr(module, "HostInfoController", _RecordingController)
     monkeypatch.setattr(module.GLib, "idle_add", lambda func, *args: func(*args))
     dialog = module.MachineInfoDialog(_ActiveWindow(), _Connection(), as_tab=True)
-    controller = _RecordingController.instances[-1]
+    dialog.controller = _RecordingController.instances[-1]
+    yield dialog
+    dialog.cleanup()
+
+
+def _answer_gather(dialog, snapshot=None):
+    on_result, _on_error = dialog.controller.last(HostInfoProbe.FULL)
+    on_result(_Summary(snapshot=snapshot or _snapshot(cpu_times=_cpu_times(100, 900))))
+
+
+def _answer_live(dialog, busy, idle):
+    dialog._tick_live()
+    on_result, _on_error = dialog.controller.last(HostInfoProbe.LIVE)
+    on_result(_Summary(live=LiveSample(cpu_times=_cpu_times(busy, idle))))
+
+
+def _has_status_page(dialog):
+    return any(isinstance(w, Gtk.Spinner) for w in _walk(dialog._content))
+
+
+def test_the_first_load_cannot_be_refreshed_until_it_answers(live_dialog):
+    assert not live_dialog._refresh_button.get_sensitive()
+    assert _has_status_page(live_dialog)
+
+    _answer_gather(live_dialog)
+
+    assert live_dialog._refresh_button.get_sensitive()
+    assert live_dialog._tabs is not None
+
+
+def test_refresh_keeps_the_data_on_screen_until_the_new_data_arrives(live_dialog):
+    _answer_gather(live_dialog)
+    tabs = live_dialog._tabs
+
+    live_dialog._on_refresh()
+
+    assert live_dialog._tabs is tabs, "the dashboard was torn down for the gather"
+    assert not _has_status_page(live_dialog)
+    assert not live_dialog._refresh_button.get_sensitive()
+    assert isinstance(live_dialog._refresh_button.get_child(), Gtk.Spinner)
+
+    _answer_gather(live_dialog)
+
+    assert live_dialog._tabs is not tabs
+    assert live_dialog._refresh_button.get_sensitive()
+    assert not isinstance(live_dialog._refresh_button.get_child(), Gtk.Spinner)
+
+
+def test_refresh_keeps_the_tab_the_user_was_on(live_dialog):
+    """#1372: refreshing on Storage must not drop the user back on Overview."""
+
+    from gi.repository import Adw
+
+    if not hasattr(Adw, "InlineViewSwitcher"):
+        pytest.skip("libadwaita < 1.7 builds the notebook fallback")
+    _answer_gather(live_dialog)
+    live_dialog._tabs.set_visible_child_name("storage")
+
+    live_dialog._on_refresh()
+    _answer_gather(live_dialog)
+
+    assert live_dialog._tabs.get_visible_child_name() == "storage"
+
+
+def test_refresh_keeps_the_tab_on_the_notebook_fallback(monkeypatch):
+    """The AppImage (libadwaita < 1.7) tabs must keep the page too."""
+
+    from gi.repository import Adw
+
+    import sshpilot.machine_info_dialog as module
+
+    class _OldAdw:
+        def __getattr__(self, name):
+            if name == "InlineViewSwitcher":
+                raise AttributeError(name)
+            return getattr(Adw, name)
+
+    monkeypatch.setattr(module, "Adw", _OldAdw())
+    dialog = _dialog(_snapshot())
+    dialog._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    dialog._build_tabs()
+    assert isinstance(dialog._tabs, Gtk.Notebook)
+    network = module.MachineInfoDialog._TAB_NAMES.index("network")
+    dialog._tabs.set_current_page(network)
+
+    dialog._remember_selected_tab()
+    dialog._build_tabs()
+
+    assert dialog._tabs.get_current_page() == network
+
+
+def test_a_failed_refresh_keeps_the_data_and_says_so_in_a_banner(live_dialog):
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    _answer_gather(live_dialog)
+    tabs = live_dialog._tabs
+    live_dialog._on_refresh()
+
+    _on_result, on_error = live_dialog.controller.last(HostInfoProbe.FULL)
+    on_error(SshPilotError(ErrorCode.CONNECTION_NOT_FOUND, "gone"))
+
+    assert live_dialog._tabs is tabs
+    assert live_dialog._banner.get_revealed()
+    assert "no longer exists" in live_dialog._banner.get_title()
+    assert live_dialog._refresh_button.get_sensitive()
+    assert live_dialog._live_timer_id, "the kept data must stay live"
+
+    # Retry from the banner; success clears it.
+    live_dialog._banner.emit("button-clicked")
+    _answer_gather(live_dialog)
+    assert not live_dialog._banner.get_revealed()
+
+
+def test_a_failed_refresh_with_raw_output_keeps_the_banner_to_one_line(live_dialog):
+    _answer_gather(live_dialog)
+    live_dialog._on_refresh()
+
+    _on_result, on_error = live_dialog.controller.last(HostInfoProbe.FULL)
+    on_error(RuntimeError("ssh: <stderr> & more\nsecond line"))
+
+    assert live_dialog._banner.get_title() == "Could not refresh host information."
+    assert "<stderr> & more" in live_dialog._banner.get_tooltip_text()
+
+
+def test_a_failed_first_load_shows_the_error_page_not_a_banner(live_dialog):
+    _on_result, on_error = live_dialog.controller.last(HostInfoProbe.FULL)
+    on_error(RuntimeError("boom"))
+
+    assert live_dialog._tabs is None
+    assert not live_dialog._banner.get_revealed()
+    assert any("boom" in text for text in _texts(live_dialog._content))
+    assert live_dialog._refresh_button.get_sensitive()
+
+
+def test_refresh_keeps_the_last_cpu_reading_and_both_traces(live_dialog):
+    """The gather has one CPU reading; utilization needs two, so the rebuilt
+    gauge would blank until the next sample without carrying the last one."""
+
+    _answer_gather(live_dialog)
+    _answer_live(live_dialog, 150, 950)  # 50% busy
+    _answer_live(live_dialog, 200, 1000)  # 50% busy
+    cpu_trace = live_dialog._cpu_gauge.sparkline.values
+    memory_trace = live_dialog._memory_gauge.sparkline.values
+
+    live_dialog._on_refresh()
+    _answer_gather(live_dialog, _snapshot(cpu_times=_cpu_times(300, 1100)))
+
+    assert live_dialog._cpu_gauge._percent.get_text() == "50%"
+    assert live_dialog._cpu_gauge.sparkline.values == cpu_trace
+    assert live_dialog._memory_gauge.sparkline.values[: len(memory_trace)] == memory_trace
+    assert len(live_dialog._memory_gauge.sparkline.values) == len(memory_trace) + 1
+
+
+def test_a_live_sample_from_before_a_refresh_is_not_applied_after_it(live_dialog):
+    """A sample in flight when Refresh is clicked predates the new gather.
+
+    Applying it blanked the CPU gauge and made it the baseline, so the next
+    rates were measured against a reading older than the one on screen.
+    """
+
+    _answer_gather(live_dialog)
+    live_dialog._tick_live()
+    answer_stale_live, _on_error = live_dialog.controller.last(HostInfoProbe.LIVE)
+
+    live_dialog._on_refresh()
+    _answer_gather(live_dialog, _snapshot(cpu_times=_cpu_times(500, 1500)))
+    baseline = live_dialog._previous_live
+
+    answer_stale_live(_Summary(live=LiveSample(cpu_times=_cpu_times(150, 1050))))
+    assert live_dialog._previous_live is baseline
+
+    _answer_live(live_dialog, 550, 1550)
+    assert live_dialog._cpu_gauge._percent.get_text() == "50%"
+
+
+@pytest.mark.parametrize(
+    "elapsed, text",
+    [
+        (0, "Updated 0 seconds ago"),
+        (59, "Updated 59 seconds ago"),
+        (60, "Updated 1 minute ago"),
+        (3599, "Updated 59 minutes ago"),
+        (3600, "Updated 1 hour ago"),
+        (7300, "Updated 2 hours ago"),
+        (-5, "Updated 0 seconds ago"),
+    ],
+)
+def test_the_age_label_counts_seconds_minutes_then_hours(live_dialog, monkeypatch, elapsed, text):
+    import sshpilot.machine_info_dialog as module
+
+    monkeypatch.setattr(module, "_elapsed_clock", lambda: 1000.0)
+    _answer_gather(live_dialog)
+    monkeypatch.setattr(module, "_elapsed_clock", lambda: 1000.0 + elapsed)
+
+    live_dialog._update_age_label()
+
+    assert live_dialog._age_label.get_text() == text
+
+
+def test_a_failed_refresh_keeps_counting_from_the_data_on_screen(live_dialog, monkeypatch):
+    import sshpilot.machine_info_dialog as module
+
+    monkeypatch.setattr(module, "_elapsed_clock", lambda: 1000.0)
+    _answer_gather(live_dialog)
+    live_dialog._on_refresh()
+    monkeypatch.setattr(module, "_elapsed_clock", lambda: 1300.0)
+    _on_result, on_error = live_dialog.controller.last(HostInfoProbe.FULL)
+    on_error(RuntimeError("boom"))
+
+    live_dialog._update_age_label()
+
+    assert live_dialog._age_label.get_text() == "Updated 5 minutes ago"
+
+
+def test_the_age_clock_keeps_running_through_suspend():
+    """GLib's monotonic clock stops while asleep; the age must not."""
+
+    import time
+
+    from sshpilot.machine_info_dialog import _elapsed_clock
+
+    if not hasattr(time, "CLOCK_BOOTTIME"):
+        pytest.skip("no CLOCK_BOOTTIME on this platform")
+    assert abs(_elapsed_clock() - time.clock_gettime(time.CLOCK_BOOTTIME)) < 1.0
+
+
+def _pump(seconds=0.3):
+    import time
+
+    from gi.repository import GLib
+
+    context = GLib.MainContext.default()
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        context.iteration(False)
+
+
+def test_refresh_keeps_the_page_scrolled_where_the_user_left_it(live_dialog):
+    window = Gtk.Window()
+    window.set_default_size(700, 320)
+    window.set_child(live_dialog.widget)
+    window.present()
     try:
-        _probe, answer_first_gather = controller.calls[-1]
-        answer_first_gather(_Summary(snapshot=_snapshot(cpu_times=_cpu_times(100, 900))))
+        _answer_gather(live_dialog)
+        _pump()
+        adjustment = live_dialog._page_scrolls["overview"].get_vadjustment()
+        assert adjustment.get_upper() > adjustment.get_page_size() + 150, "page too short"
+        adjustment.set_value(150)
 
-        dialog._tick_live()
-        probe, answer_stale_live = controller.calls[-1]
-        assert probe is HostInfoProbe.LIVE
+        live_dialog._on_refresh()
+        _answer_gather(live_dialog)
+        _pump()
 
-        dialog._on_refresh()
-        probe, answer_refresh = controller.calls[-1]
-        assert probe is HostInfoProbe.FULL
-        answer_refresh(_Summary(snapshot=_snapshot(cpu_times=_cpu_times(500, 1500))))
-        baseline = dialog._previous_live
-
-        answer_stale_live(_Summary(live=LiveSample(cpu_times=_cpu_times(150, 1050))))
-        assert dialog._previous_live is baseline
-
-        dialog._tick_live()
-        probe, answer_fresh_live = controller.calls[-1]
-        assert probe is HostInfoProbe.LIVE
-        answer_fresh_live(_Summary(live=LiveSample(cpu_times=_cpu_times(550, 1550))))
-        assert dialog._cpu_gauge._percent.get_text() == "50%"
+        restored = live_dialog._page_scrolls["overview"].get_vadjustment()
+        assert restored is not adjustment
+        assert restored.get_value() == pytest.approx(150)
     finally:
-        dialog.cleanup()
+        window.destroy()

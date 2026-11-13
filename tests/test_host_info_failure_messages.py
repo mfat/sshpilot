@@ -20,6 +20,22 @@ def _failure():
     )
 
 
+def _gtk_dashboard(rendered, refreshed=None):
+    """A GTK dashboard stand-in with no data on screen yet (the error page path)."""
+
+    sensitive = refreshed if refreshed is not None else []
+    dashboard = SimpleNamespace(
+        _closed=False,
+        _tabs=None,
+        _set_gathering=lambda gathering: sensitive.append(not gathering),
+        _show_status=rendered.append,
+    )
+    dashboard._gather_failed = lambda page, reason: MachineInfoDialog._gather_failed(
+        dashboard, page, reason
+    )
+    return dashboard
+
+
 def test_every_host_info_failure_code_has_a_frontend_template():
     assert set(messages._FAILURE_TEMPLATES) == set(HostInfoFailureCode)
 
@@ -55,11 +71,7 @@ def test_rpc_error_uses_stable_code_and_unknown_diagnostic_is_separate(monkeypat
 def test_gtk_and_webkit_show_the_same_structured_failure():
     rendered_gtk = []
     refreshed = []
-    gtk = SimpleNamespace(
-        _closed=False,
-        _refresh_button=SimpleNamespace(set_sensitive=refreshed.append),
-        _show_status=rendered_gtk.append,
-    )
+    gtk = _gtk_dashboard(rendered_gtk, refreshed)
     rendered_web = []
     web = SimpleNamespace(_closed=False, _push_status=rendered_web.append)
     summary = SimpleNamespace(failure=_failure(), snapshot=None)
@@ -74,11 +86,7 @@ def test_gtk_and_webkit_show_the_same_structured_failure():
 
 def test_gtk_and_webkit_show_the_same_localized_rpc_error():
     gtk_status = []
-    gtk = SimpleNamespace(
-        _closed=False,
-        _refresh_button=SimpleNamespace(set_sensitive=lambda _value: None),
-        _show_status=gtk_status.append,
-    )
+    gtk = _gtk_dashboard(gtk_status)
     web_status = []
     web = SimpleNamespace(_closed=False, _push_status=web_status.append)
     error = SshPilotError(ErrorCode.OPERATION_NOT_FOUND, "daemon English message")
@@ -95,3 +103,13 @@ def test_failure_model_rejects_wrong_parameter_shape():
             HostInfoFailureCode.REMOTE_COMMAND_FAILED,
             ErrorCode.REMOTE_COMMAND_FAILED,
         )
+
+
+def test_the_short_reasons_drop_the_diagnostic_and_unknown_errors_have_none():
+    assert messages.host_info_failure_reason(_failure()) == (
+        "The host information command exited with status 127."
+    )
+    assert messages.host_info_error_reason(
+        SshPilotError(ErrorCode.OPERATION_NOT_FOUND, "daemon English message")
+    ) == "The requested host information probe does not exist."
+    assert messages.host_info_error_reason(RuntimeError("external diagnostic")) is None

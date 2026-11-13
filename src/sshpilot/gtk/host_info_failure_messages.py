@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from gettext import gettext as _
+from typing import Optional
 
 from ..api.errors import ErrorCode, SshPilotError
 from ..api.models.host_info import HostInfoFailure, HostInfoFailureCode
@@ -42,8 +43,8 @@ _RPC_ERROR_TEMPLATES = {
 }
 
 
-def format_host_info_failure(failure: HostInfoFailure) -> str:
-    """Translate a stable reason, then format and append any raw diagnostic."""
+def host_info_failure_reason(failure: HostInfoFailure) -> str:
+    """The translated one-line reason for a failed probe, without diagnostic."""
 
     if type(failure) is not HostInfoFailure:
         raise ValueError("invalid Host Info failure")
@@ -51,17 +52,32 @@ def format_host_info_failure(failure: HostInfoFailure) -> str:
         template = _FAILURE_TEMPLATES[failure.code]
     except KeyError:
         raise ValueError("Host Info failure code has no presentation") from None
-    message = _(template).format(**failure.parameters)
+    return _(template).format(**failure.parameters)
+
+
+def format_host_info_failure(failure: HostInfoFailure) -> str:
+    """Translate a stable reason, then format and append any raw diagnostic."""
+
+    message = host_info_failure_reason(failure)
     return f"{message}\n\n{failure.diagnostic}" if failure.diagnostic else message
 
 
-def format_host_info_error(error: BaseException) -> str:
-    """Use a stable RPC code where available; keep other details opaque."""
+def host_info_error_reason(error: BaseException) -> Optional[str]:
+    """The translated reason for an RPC error with a known code, else None."""
 
     if isinstance(error, SshPilotError):
         template = _RPC_ERROR_TEMPLATES.get(error.code)
         if template is not None:
             return _(template)
+    return None
+
+
+def format_host_info_error(error: BaseException) -> str:
+    """Use a stable RPC code where available; keep other details opaque."""
+
+    reason = host_info_error_reason(error)
+    if reason is not None:
+        return reason
     message = _("Could not gather host information.")
     diagnostic = str(error).strip()
     return f"{message}\n\n{diagnostic}" if diagnostic else message

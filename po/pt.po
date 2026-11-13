@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-13 20:17+0330\n"
+"POT-Creation-Date: 2026-11-13 21:29+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -122,7 +122,7 @@ msgstr "Abrir ligações?"
 #: src/sshpilot/daemon_quit_policy.py:624
 #: src/sshpilot/file_manager/pane.py:1009
 #: src/sshpilot/file_manager/pane.py:2729
-#: src/sshpilot/file_manager/pane.py:3379
+#: src/sshpilot/file_manager/pane.py:3382
 #: src/sshpilot/file_manager/progress_dialog.py:293
 #: src/sshpilot/file_manager_window.py:1395
 #: src/sshpilot/file_manager_window.py:1711
@@ -142,8 +142,8 @@ msgstr "Abrir ligações?"
 #: src/sshpilot/preferences.py:5669 src/sshpilot/preferences.py:6394
 #: src/sshpilot/rdp_tab.py:470 src/sshpilot/rdp_tab.py:538
 #: src/sshpilot/rdp_tab.py:571 src/sshpilot/rbw_setup.py:167
-#: src/sshpilot/scp_window.py:313 src/sshpilot/scp_window.py:1135
-#: src/sshpilot/shortcut_editor.py:605 src/sshpilot/terminal.py:2406
+#: src/sshpilot/scp_window.py:320 src/sshpilot/scp_window.py:1142
+#: src/sshpilot/shortcut_editor.py:605 src/sshpilot/terminal.py:2427
 #: src/sshpilot/terminal_manager.py:1032 src/sshpilot/terminal_manager.py:1691
 #: src/sshpilot/terminal_theme_editor.py:85
 #: src/sshpilot/terminal_theme_editor.py:278 src/sshpilot/text_editor.py:1352
@@ -193,7 +193,7 @@ msgstr "Vista dividida — {name}"
 
 #: src/sshpilot/actions.py:519 src/sshpilot/actions.py:671
 #: src/sshpilot/connection_dialog.py:5880 src/sshpilot/file_manager/pane.py:57
-#: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1165
+#: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1186
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
 #: src/sshpilot/window.py:1640 src/sshpilot/window.py:6750
 #: src/sshpilot/window.py:8573 src/sshpilot/window.py:8597
@@ -220,7 +220,7 @@ msgstr ""
 #: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:5883
 #: src/sshpilot/daemon_quit_policy.py:531 src/sshpilot/file_manager/pane.py:58
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
-#: src/sshpilot/file_manager/pane.py:3139
+#: src/sshpilot/file_manager/pane.py:3142
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:4141
 #: src/sshpilot/preferences.py:4264 src/sshpilot/preferences.py:4693
@@ -500,7 +500,7 @@ msgstr "O SSH Pilot {version} está disponível!"
 
 #: src/sshpilot/actions.py:1242 src/sshpilot/file_manager/pane.py:655
 #: src/sshpilot/file_manager/pane.py:2254
-#: src/sshpilot/file_manager/pane.py:3382 src/sshpilot/scp_window.py:425
+#: src/sshpilot/file_manager/pane.py:3385 src/sshpilot/scp_window.py:432
 #: src/sshpilot/resources/ui/scp_download_window.ui:31
 msgid "Download"
 msgstr "Descarregar"
@@ -534,10 +534,10 @@ msgstr "Chave de segurança"
 #: src/sshpilot/askpass_utils.py:856
 #: src/sshpilot/daemon_interaction_dialogs.py:462
 #: src/sshpilot/daemon_sessions_dialog.py:35
-#: src/sshpilot/machine_info_dialog.py:979
+#: src/sshpilot/machine_info_dialog.py:1037
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:449
 #: src/sshpilot/preferences.py:5414 src/sshpilot/sshcopyid_window.py:678
-#: src/sshpilot/terminal.py:1202 src/sshpilot/window.py:3380
+#: src/sshpilot/terminal.py:1223 src/sshpilot/window.py:3380
 #: src/sshpilot/window.py:8037 src/sshpilot/window_tabs.py:328
 #: src/sshpilot/window_tabs.py:1190 src/sshpilot/window_tabs.py:1366
 #: src/sshpilot/window_tabs.py:1416
@@ -688,7 +688,7 @@ msgstr "Importar do GitHub, GitLab ou URL…"
 #: src/sshpilot/file_manager/properties_dialog.py:613
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:295
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:386
-#: src/sshpilot/scp_window.py:1009 src/sshpilot/text_editor.py:617
+#: src/sshpilot/scp_window.py:1016 src/sshpilot/text_editor.py:617
 #: src/sshpilot/resources/ui/authorized_keys_window.ui:57
 msgid "Loading…"
 msgstr "A carregar…"
@@ -703,10 +703,10 @@ msgid "Error loading authorized_keys"
 msgstr "Erro ao carregar authorized_keys"
 
 #: src/sshpilot/authorized_keys_window.py:293
-#: src/sshpilot/file_manager/pane.py:3174
+#: src/sshpilot/file_manager/pane.py:3177
 #: src/sshpilot/file_manager_window.py:497 src/sshpilot/rdp_tab.py:172
 #: src/sshpilot/rdp_tab.py:258 src/sshpilot/rdp_tab.py:482
-#: src/sshpilot/scp_window.py:1002 src/sshpilot/scp_window.py:1099
+#: src/sshpilot/scp_window.py:1009 src/sshpilot/scp_window.py:1106
 msgid "Connecting…"
 msgstr "A ligar…"
 
@@ -1494,7 +1494,7 @@ msgstr "Etiquetas (separadas por vírgula)"
 msgid "(No folder)"
 msgstr "(Sem pasta)"
 
-#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2839
+#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2842
 #: src/sshpilot/file_manager/properties_dialog.py:35
 #: src/sshpilot/window_dialogs.py:1211
 msgid "Folder"
@@ -1804,9 +1804,9 @@ msgstr "Nova ligação"
 #: src/sshpilot/connection_dialog.py:1817
 #: src/sshpilot/forwarding_only_ui.py:236
 #: src/sshpilot/forwarding_only_ui.py:241
-#: src/sshpilot/login_profile_dialogs.py:800 src/sshpilot/terminal.py:1154
-#: src/sshpilot/terminal.py:1159 src/sshpilot/terminal.py:1472
-#: src/sshpilot/terminal.py:1501 src/sshpilot/window.py:3368
+#: src/sshpilot/login_profile_dialogs.py:800 src/sshpilot/terminal.py:1175
+#: src/sshpilot/terminal.py:1180 src/sshpilot/terminal.py:1493
+#: src/sshpilot/terminal.py:1522 src/sshpilot/window.py:3368
 msgid "Connection"
 msgstr "Ligação"
 
@@ -2027,7 +2027,7 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:3414
 #: src/sshpilot/file_manager/permissions.py:76
 #: src/sshpilot/login_profile_dialogs.py:659
-#: src/sshpilot/machine_info_dialog.py:2295
+#: src/sshpilot/machine_info_dialog.py:2503
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:209
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:216
 #: src/sshpilot/preferences.py:3244 src/sshpilot/shortcut_editor.py:442
@@ -2096,7 +2096,7 @@ msgstr "Selecionar biblioteca de fornecedor de chave de segurança FIDO"
 #: src/sshpilot/connection_dialog.py:4567
 #: src/sshpilot/connection_dialog_port_forwarding.py:209
 #: src/sshpilot/host_info_tab.py:103 src/sshpilot/host_info_tab.py:569
-#: src/sshpilot/machine_info_dialog.py:2497
+#: src/sshpilot/machine_info_dialog.py:2705
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:312
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
@@ -2146,7 +2146,7 @@ msgstr "Nome de utilizador"
 #: src/sshpilot/connection_dialog_port_forwarding.py:211
 #: src/sshpilot/connection_dialog_port_forwarding.py:578
 #: src/sshpilot/effective_config_dialog.py:34
-#: src/sshpilot/machine_info_dialog.py:2327
+#: src/sshpilot/machine_info_dialog.py:2535
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:314
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:41
 msgid "Port"
@@ -2224,7 +2224,7 @@ msgstr "Anfitriões de salto (separados por vírgula)"
 msgid "Comma-separated ProxyJump chain, e.g. bastion1, bastion2"
 msgstr "Cadeia ProxyJump separada por vírgulas, ex.: bastion1, bastion2"
 
-#: src/sshpilot/connection_dialog.py:3658 src/sshpilot/scp_window.py:335
+#: src/sshpilot/connection_dialog.py:3658 src/sshpilot/scp_window.py:342
 #: src/sshpilot/sshcopyid_window.py:135 src/sshpilot/window_dialogs.py:1205
 #: src/sshpilot/window_dialogs.py:2517
 msgid "Pick from inventory"
@@ -2538,7 +2538,7 @@ msgstr "Dispositivo"
 #: src/sshpilot/split_view.py:611 src/sshpilot/split_view.py:809
 #: src/sshpilot/split_view.py:832 src/sshpilot/split_view.py:834
 #: src/sshpilot/split_view.py:1000 src/sshpilot/split_view.py:1647
-#: src/sshpilot/terminal.py:860 src/sshpilot/terminal.py:3699
+#: src/sshpilot/terminal.py:881 src/sshpilot/terminal.py:3720
 #: src/sshpilot/terminal_manager.py:1067 src/sshpilot/terminal_manager.py:1109
 #: src/sshpilot/terminal_manager.py:1671 src/sshpilot/window_tabs.py:1609
 #: src/sshpilot/window_tabs.py:1707
@@ -3359,7 +3359,7 @@ msgstr "state={state} {attachments} input_owner={owner}"
 msgid "Open in new tab"
 msgstr "Abrir num novo separador"
 
-#: src/sshpilot/daemon_sessions_dialog.py:138 src/sshpilot/terminal.py:2405
+#: src/sshpilot/daemon_sessions_dialog.py:138 src/sshpilot/terminal.py:2426
 msgid "Terminate"
 msgstr "Terminar"
 
@@ -3618,7 +3618,7 @@ msgid "SSH will use"
 msgstr "O SSH utilizará"
 
 #: src/sshpilot/file_manager/format_utils.py:17
-#: src/sshpilot/file_manager/pane.py:3026
+#: src/sshpilot/file_manager/pane.py:3029
 #, python-brace-format
 msgid "{count} item"
 msgid_plural "{count} items"
@@ -3629,18 +3629,19 @@ msgstr[1] "{count} itens"
 #. peer: each attempt runs the launcher's full recovery, which
 #. stops or kills a daemon that cannot serve this build before
 #. starting a current one.
-#: src/sshpilot/file_manager/pane.py:541 src/sshpilot/window.py:1152
+#: src/sshpilot/file_manager/pane.py:541
+#: src/sshpilot/machine_info_dialog.py:973 src/sshpilot/window.py:1152
 msgid "Retry"
 msgstr "Tentar novamente"
 
-#: src/sshpilot/file_manager/pane.py:661 src/sshpilot/scp_window.py:417
-#: src/sshpilot/scp_window.py:1136
+#: src/sshpilot/file_manager/pane.py:661 src/sshpilot/scp_window.py:424
+#: src/sshpilot/scp_window.py:1143
 msgid "Upload"
 msgstr "Enviar"
 
 #: src/sshpilot/file_manager/pane.py:667 src/sshpilot/file_manager/pane.py:2259
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
-#: src/sshpilot/terminal.py:1201 src/sshpilot/terminal.py:3633
+#: src/sshpilot/terminal.py:1222 src/sshpilot/terminal.py:3654
 #: src/sshpilot/window_dialogs.py:3598
 msgid "Copy"
 msgstr "Copiar"
@@ -3656,7 +3657,7 @@ msgid "Paste"
 msgstr "Colar"
 
 #: src/sshpilot/file_manager/pane.py:710 src/sshpilot/file_manager/pane.py:716
-#: src/sshpilot/file_manager/pane.py:3978
+#: src/sshpilot/file_manager/pane.py:3981
 msgid "Request Access"
 msgstr "Pedir acesso"
 
@@ -3826,151 +3827,151 @@ msgstr "Selecionar pasta para conceder acesso"
 msgid "Access granted to: {path}"
 msgstr "Acesso concedido a: {path}"
 
-#: src/sshpilot/file_manager/pane.py:2839 src/sshpilot/macos_menubar.py:64
+#: src/sshpilot/file_manager/pane.py:2842 src/sshpilot/macos_menubar.py:64
 msgid "File"
 msgstr "Ficheiro"
 
-#: src/sshpilot/file_manager/pane.py:2849
-#: src/sshpilot/machine_info_dialog.py:345
-#: src/sshpilot/machine_info_dialog.py:353
-#: src/sshpilot/machine_info_dialog.py:2442
+#: src/sshpilot/file_manager/pane.py:2852
+#: src/sshpilot/machine_info_dialog.py:367
+#: src/sshpilot/machine_info_dialog.py:375
+#: src/sshpilot/machine_info_dialog.py:2650
 msgid "Unknown"
 msgstr "Desconhecido"
 
-#: src/sshpilot/file_manager/pane.py:2863
+#: src/sshpilot/file_manager/pane.py:2866
 msgid "No file selected"
 msgstr "Nenhum servidor selecionado"
 
-#: src/sshpilot/file_manager/pane.py:2867
+#: src/sshpilot/file_manager/pane.py:2870
 msgid "Cannot edit directories"
 msgstr "Escolher diretório de dados"
 
-#: src/sshpilot/file_manager/pane.py:2873
+#: src/sshpilot/file_manager/pane.py:2876
 msgid "Cannot edit file - window not available"
 msgstr "Não é possível editar o ficheiro — janela não disponível"
 
-#: src/sshpilot/file_manager/pane.py:2880
+#: src/sshpilot/file_manager/pane.py:2883
 msgid "Cannot edit file - connection not available"
 msgstr "Ligação ao daemon indisponível."
 
-#: src/sshpilot/file_manager/pane.py:2911
-#: src/sshpilot/file_manager/pane.py:2930
+#: src/sshpilot/file_manager/pane.py:2914
+#: src/sshpilot/file_manager/pane.py:2933
 #, python-brace-format
 msgid "Failed to open editor: {error}"
 msgstr "Falha ao ligar: {error}"
 
-#: src/sshpilot/file_manager/pane.py:2995
+#: src/sshpilot/file_manager/pane.py:2998
 msgid "Current directory is not accessible"
 msgstr "A pasta atual não está acessível"
 
-#: src/sshpilot/file_manager/pane.py:2999
+#: src/sshpilot/file_manager/pane.py:3002
 msgid "Unable to get directory properties"
 msgstr "Não foi possível obter as propriedades da pasta"
 
-#: src/sshpilot/file_manager/pane.py:3037
-#: src/sshpilot/file_manager/pane.py:3103
+#: src/sshpilot/file_manager/pane.py:3040
+#: src/sshpilot/file_manager/pane.py:3106
 #, python-brace-format
 msgid "Failed to show properties: {error}"
 msgstr "Falha ao guardar ficheiro: {error}"
 
-#: src/sshpilot/file_manager/pane.py:3057
+#: src/sshpilot/file_manager/pane.py:3060
 #: src/sshpilot/file_manager_window.py:1622 src/sshpilot/window_dialogs.py:2830
 msgid "Nothing selected"
 msgstr "Nada selecionado"
 
-#: src/sshpilot/file_manager/pane.py:3063
+#: src/sshpilot/file_manager/pane.py:3066
 msgid "Cannot show properties - window not available"
 msgstr "Não é possível mostrar as propriedades — janela não disponível"
 
-#: src/sshpilot/file_manager/pane.py:3122
+#: src/sshpilot/file_manager/pane.py:3125
 #, python-brace-format
 msgid "{name} Properties"
 msgstr "Propriedades de {name}"
 
-#: src/sshpilot/file_manager/pane.py:3122
+#: src/sshpilot/file_manager/pane.py:3125
 #: src/sshpilot/resources/ui/properties_dialog.ui:10
 #: src/sshpilot/resources/ui/properties_dialog.ui:19
 msgid "Properties"
 msgstr "Propriedades"
 
-#: src/sshpilot/file_manager/pane.py:3124
+#: src/sshpilot/file_manager/pane.py:3127
 #, python-brace-format
 msgid "Name: {value}"
 msgstr "Nome: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3125
+#: src/sshpilot/file_manager/pane.py:3128
 #, python-brace-format
 msgid "Type: {value}"
 msgstr "Tipo: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3126
+#: src/sshpilot/file_manager/pane.py:3129
 #, python-brace-format
 msgid "Size: {value}"
 msgstr "Tamanho: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3127
+#: src/sshpilot/file_manager/pane.py:3130
 #, python-brace-format
 msgid "Modified: {value}"
 msgstr "Modificado: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3128
+#: src/sshpilot/file_manager/pane.py:3131
 #, python-brace-format
 msgid "Location: {value}"
 msgstr "Localização: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3163
+#: src/sshpilot/file_manager/pane.py:3166
 msgid "Failed to load directory"
 msgstr "Falha ao carregar a pasta"
 
-#: src/sshpilot/file_manager/pane.py:3367
+#: src/sshpilot/file_manager/pane.py:3370
 #, python-brace-format
 msgid "Could not open {name}"
 msgstr "Não foi possível abrir {name}"
 
-#: src/sshpilot/file_manager/pane.py:3375
+#: src/sshpilot/file_manager/pane.py:3378
 msgid "Download the file to this computer or open it in the editor?"
 msgstr "Descarregar o ficheiro para este computador ou abri-lo no editor?"
 
-#: src/sshpilot/file_manager/pane.py:3377
+#: src/sshpilot/file_manager/pane.py:3380
 msgid "Download the file to this computer?"
 msgstr "Descarregar o ficheiro para este computador?"
 
-#: src/sshpilot/file_manager/pane.py:3381
+#: src/sshpilot/file_manager/pane.py:3384
 msgid "Edit as Text"
 msgstr "Editar como texto"
 
-#: src/sshpilot/file_manager/pane.py:3626
-#: src/sshpilot/file_manager/pane.py:3643
-#: src/sshpilot/file_manager/pane.py:3649
-#: src/sshpilot/file_manager/pane.py:3658
-#: src/sshpilot/file_manager/pane.py:3678
+#: src/sshpilot/file_manager/pane.py:3629
+#: src/sshpilot/file_manager/pane.py:3646
+#: src/sshpilot/file_manager/pane.py:3652
+#: src/sshpilot/file_manager/pane.py:3661
+#: src/sshpilot/file_manager/pane.py:3681
 msgid "Dragged item is no longer available"
 msgstr "A ligação guardada para esta sessão já não está disponível"
 
-#: src/sshpilot/file_manager/pane.py:3767
+#: src/sshpilot/file_manager/pane.py:3770
 msgid "Upload failed: Invalid window context"
 msgstr "Falha ao enviar: contexto de janela inválido"
 
-#: src/sshpilot/file_manager/pane.py:3799
-#: src/sshpilot/file_manager/pane.py:3804
+#: src/sshpilot/file_manager/pane.py:3802
+#: src/sshpilot/file_manager/pane.py:3807
 #: src/sshpilot/file_manager_window.py:2237
 #: src/sshpilot/file_manager_window.py:2253 src/sshpilot/text_editor.py:1539
 #, python-brace-format
 msgid "Upload failed: {error}"
 msgstr "Falha no envio: {error}"
 
-#: src/sshpilot/file_manager/pane.py:3826
+#: src/sshpilot/file_manager/pane.py:3829
 msgid "Download failed: Invalid window context"
 msgstr "Falha ao descarregar: contexto de janela inválido"
 
-#: src/sshpilot/file_manager/pane.py:3856
-#: src/sshpilot/file_manager/pane.py:3861
+#: src/sshpilot/file_manager/pane.py:3859
+#: src/sshpilot/file_manager/pane.py:3864
 #: src/sshpilot/file_manager_window.py:2326
 #, python-brace-format
 msgid "Download failed: {error}"
 msgstr "Falha no envio: {error}"
 
-#: src/sshpilot/file_manager/pane.py:3976
+#: src/sshpilot/file_manager/pane.py:3979
 msgid "No access to this folder. Use Request Access to open it."
 msgstr "Sem acesso a esta pasta. Use «Pedir acesso» para a abrir."
 
@@ -4093,7 +4094,7 @@ msgid "To {host}"
 msgstr "Para {host}"
 
 #: src/sshpilot/file_manager/progress_dialog.py:288
-#: src/sshpilot/scp_window.py:1263
+#: src/sshpilot/scp_window.py:1270
 msgid "Show in Files"
 msgstr "Mostrar painel de ficheiros"
 
@@ -4938,19 +4939,19 @@ msgid "Ásbrú import is unavailable on this daemon."
 msgstr "A edição como root não está disponível neste anfitrião."
 
 #: src/sshpilot/gtk/asbru_import_messages.py:46
-#: src/sshpilot/gtk/host_info_failure_messages.py:37
+#: src/sshpilot/gtk/host_info_failure_messages.py:38
 #: src/sshpilot/gtk/transfer_error_messages.py:22
 msgid "The daemon API version does not match this application."
 msgstr "O servidor não suporta esta operação"
 
 #: src/sshpilot/gtk/asbru_import_messages.py:47
 #: src/sshpilot/gtk/asbru_import_messages.py:48
-#: src/sshpilot/gtk/host_info_failure_messages.py:34
 #: src/sshpilot/gtk/host_info_failure_messages.py:35
+#: src/sshpilot/gtk/host_info_failure_messages.py:36
 #: src/sshpilot/gtk/login_profile_messages.py:110
 #: src/sshpilot/gtk/login_profile_messages.py:111
-#: src/sshpilot/host_info_tab.py:367 src/sshpilot/machine_info_dialog.py:1110
-#: src/sshpilot/machine_info_dialog.py:1410
+#: src/sshpilot/host_info_tab.py:367 src/sshpilot/machine_info_dialog.py:1175
+#: src/sshpilot/machine_info_dialog.py:1549
 msgid "Daemon connection unavailable."
 msgstr "Ligação ao daemon indisponível."
 
@@ -4995,37 +4996,37 @@ msgstr "Importados {connections} e {groups}."
 msgid "Could not import the Ásbrú export."
 msgstr "Não foi possível ligar ao servidor."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:13
+#: src/sshpilot/gtk/host_info_failure_messages.py:14
 msgid "The host information probe timed out."
 msgstr "A ligação excedeu o tempo limite"
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:15
+#: src/sshpilot/gtk/host_info_failure_messages.py:16
 #, python-brace-format
 msgid "The host information command exited with status {exit_code}."
 msgstr ""
 "O comando de informações do anfitrião terminou com o estado {exit_code}."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:18
+#: src/sshpilot/gtk/host_info_failure_messages.py:19
 msgid "The host information probe could not be started."
 msgstr "Não foi possível iniciar a transferência"
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:21
+#: src/sshpilot/gtk/host_info_failure_messages.py:22
 msgid "The remote host returned unreadable system information."
 msgstr "O anfitrião não devolveu informação do sistema."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:23
+#: src/sshpilot/gtk/host_info_failure_messages.py:24
 msgid "The host information probe failed."
 msgstr "Atualizar a informação do anfitrião"
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:24
+#: src/sshpilot/gtk/host_info_failure_messages.py:25
 msgid "The host information probe was cancelled."
 msgstr "A operação com privilégios foi cancelada."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:29
+#: src/sshpilot/gtk/host_info_failure_messages.py:30
 msgid "The requested host information probe does not exist."
 msgstr "A sonda de informações do anfitrião solicitada não existe."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:32
+#: src/sshpilot/gtk/host_info_failure_messages.py:33
 #: src/sshpilot/gtk/identity_failure_messages.py:16
 #: src/sshpilot/gtk/scp_failure_messages.py:19
 #: src/sshpilot/gtk/transfer_error_messages.py:25 src/sshpilot/window.py:8710
@@ -5033,11 +5034,11 @@ msgstr "A sonda de informações do anfitrião solicitada não existe."
 msgid "The selected connection no longer exists in the daemon."
 msgstr "A ligação selecionada já não existe no daemon."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:40
+#: src/sshpilot/gtk/host_info_failure_messages.py:41
 msgid "Host information is unavailable on this daemon."
 msgstr "A edição como root não está disponível neste anfitrião."
 
-#: src/sshpilot/gtk/host_info_failure_messages.py:65
+#: src/sshpilot/gtk/host_info_failure_messages.py:81
 msgid "Could not gather host information."
 msgstr "Não foi possível recolher informações do anfitrião."
 
@@ -5547,7 +5548,7 @@ msgid "Could not be started."
 msgstr "Não foi possível reiniciar o daemon"
 
 #: src/sshpilot/gtk/scp_failure_messages.py:13 src/sshpilot/scp_window.py:42
-#: src/sshpilot/scp_window.py:1223
+#: src/sshpilot/scp_window.py:1230
 msgid "Native SCP transfers are unavailable on the daemon."
 msgstr "Transferências SCP nativas indisponíveis no daemon."
 
@@ -5592,7 +5593,7 @@ msgstr ""
 msgid "The transfer could not be started"
 msgstr "Não foi possível iniciar a transferência"
 
-#: src/sshpilot/gtk/scp_failure_messages.py:43 src/sshpilot/scp_window.py:1375
+#: src/sshpilot/gtk/scp_failure_messages.py:43 src/sshpilot/scp_window.py:1387
 msgid "The SCP transfer failed."
 msgstr "A transferência SCP falhou."
 
@@ -5810,7 +5811,7 @@ msgid "The daemon transfer command queue is full"
 msgstr "A fila de comandos de transferência do daemon está cheia"
 
 #: src/sshpilot/gtk/transfer_error_messages.py:17 src/sshpilot/scp_window.py:46
-#: src/sshpilot/scp_window.py:484 src/sshpilot/scp_window.py:1192
+#: src/sshpilot/scp_window.py:491 src/sshpilot/scp_window.py:1199
 msgid "The daemon transfer service is unavailable."
 msgstr "O serviço de transferências do daemon está indisponível."
 
@@ -6678,34 +6679,34 @@ msgstr[1] ""
 #: src/sshpilot/host_info_payload.py:114 src/sshpilot/host_info_payload.py:132
 #: src/sshpilot/host_info_payload.py:143 src/sshpilot/host_info_payload.py:307
 #: src/sshpilot/host_info_payload.py:383 src/sshpilot/host_info_payload.py:392
-#: src/sshpilot/machine_info_dialog.py:192
-#: src/sshpilot/machine_info_dialog.py:208
-#: src/sshpilot/machine_info_dialog.py:236
-#: src/sshpilot/machine_info_dialog.py:254
-#: src/sshpilot/machine_info_dialog.py:271
-#: src/sshpilot/machine_info_dialog.py:286
-#: src/sshpilot/machine_info_dialog.py:1812
-#: src/sshpilot/machine_info_dialog.py:1951
+#: src/sshpilot/machine_info_dialog.py:214
+#: src/sshpilot/machine_info_dialog.py:230
+#: src/sshpilot/machine_info_dialog.py:258
+#: src/sshpilot/machine_info_dialog.py:276
+#: src/sshpilot/machine_info_dialog.py:293
+#: src/sshpilot/machine_info_dialog.py:308
+#: src/sshpilot/machine_info_dialog.py:2020
 #: src/sshpilot/machine_info_dialog.py:2159
-#: src/sshpilot/machine_info_dialog.py:2407
+#: src/sshpilot/machine_info_dialog.py:2367
+#: src/sshpilot/machine_info_dialog.py:2615
 msgid "N/A"
 msgstr "N/D"
 
 #: src/sshpilot/host_info_payload.py:74 src/sshpilot/host_info_payload.py:88
-#: src/sshpilot/machine_info_dialog.py:194
-#: src/sshpilot/machine_info_dialog.py:210
+#: src/sshpilot/machine_info_dialog.py:216
+#: src/sshpilot/machine_info_dialog.py:232
 #, python-format
 msgid "%d B"
 msgstr "%d B"
 
 #: src/sshpilot/host_info_payload.py:102
-#: src/sshpilot/machine_info_dialog.py:224
+#: src/sshpilot/machine_info_dialog.py:246
 #, python-format
 msgid "%d B/s"
 msgstr "%d B/s"
 
 #: src/sshpilot/host_info_payload.py:120
-#: src/sshpilot/machine_info_dialog.py:242
+#: src/sshpilot/machine_info_dialog.py:264
 #, python-format
 msgid "%d day"
 msgid_plural "%d days"
@@ -6713,7 +6714,7 @@ msgstr[0] "%d dia"
 msgstr[1] "%d dias"
 
 #: src/sshpilot/host_info_payload.py:122
-#: src/sshpilot/machine_info_dialog.py:244
+#: src/sshpilot/machine_info_dialog.py:266
 #, python-format
 msgid "%d hour"
 msgid_plural "%d hours"
@@ -6721,7 +6722,7 @@ msgstr[0] "%d hora"
 msgstr[1] "%d horas"
 
 #: src/sshpilot/host_info_payload.py:124
-#: src/sshpilot/machine_info_dialog.py:246
+#: src/sshpilot/machine_info_dialog.py:268
 #, python-format
 msgid "%d minute"
 msgid_plural "%d minutes"
@@ -6729,42 +6730,42 @@ msgstr[0] "%d minuto"
 msgstr[1] "%d minutos"
 
 #: src/sshpilot/host_info_payload.py:126
-#: src/sshpilot/machine_info_dialog.py:248
+#: src/sshpilot/machine_info_dialog.py:270
 msgid "Less than a minute"
 msgstr "Menos de um minuto"
 
 #: src/sshpilot/host_info_payload.py:127
-#: src/sshpilot/machine_info_dialog.py:249
-#: src/sshpilot/machine_info_dialog.py:2173 src/sshpilot/window_dialogs.py:3106
+#: src/sshpilot/machine_info_dialog.py:271
+#: src/sshpilot/machine_info_dialog.py:2381 src/sshpilot/window_dialogs.py:3106
 msgid ", "
 msgstr ", "
 
 #: src/sshpilot/host_info_payload.py:134
-#: src/sshpilot/machine_info_dialog.py:256
+#: src/sshpilot/machine_info_dialog.py:278
 #, python-format
 msgid "%.2f GHz"
 msgstr "%.2f GHz"
 
 #: src/sshpilot/host_info_payload.py:135
-#: src/sshpilot/machine_info_dialog.py:257
+#: src/sshpilot/machine_info_dialog.py:279
 #, python-format
 msgid "%.0f MHz"
 msgstr "%.0f MHz"
 
 #: src/sshpilot/host_info_payload.py:139
-#: src/sshpilot/machine_info_dialog.py:261
+#: src/sshpilot/machine_info_dialog.py:283
 #, python-format
 msgid "%d%%"
 msgstr "%d%%"
 
 #: src/sshpilot/host_info_payload.py:151
-#: src/sshpilot/machine_info_dialog.py:1625
+#: src/sshpilot/machine_info_dialog.py:1833
 #, python-format
 msgid "%(cores)d cores · %(threads)d threads · %(sockets)d sockets"
 msgstr "%(cores)d núcleos · %(threads)d threads · %(sockets)d sockets"
 
 #: src/sshpilot/host_info_payload.py:157
-#: src/sshpilot/machine_info_dialog.py:1631
+#: src/sshpilot/machine_info_dialog.py:1839
 #, python-format
 msgid "%d core"
 msgid_plural "%d cores"
@@ -6772,104 +6773,104 @@ msgstr[0] "%d núcleo"
 msgstr[1] "%d núcleos"
 
 #: src/sshpilot/host_info_payload.py:161
-#: src/sshpilot/machine_info_dialog.py:1635
+#: src/sshpilot/machine_info_dialog.py:1843
 #, python-format
 msgid "%(model)s (%(topology)s)"
 msgstr "%(model)s (%(topology)s)"
 
 #: src/sshpilot/host_info_payload.py:171
-#: src/sshpilot/machine_info_dialog.py:1347
+#: src/sshpilot/machine_info_dialog.py:1486
 #, python-format
 msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
 msgstr "carga %(one).2f · %(five).2f · %(fifteen).2f"
 
 #: src/sshpilot/host_info_payload.py:181
-#: src/sshpilot/machine_info_dialog.py:1357
+#: src/sshpilot/machine_info_dialog.py:1496
 #, python-format
 msgid "swap %(used)s / %(total)s"
 msgstr "swap %(used)s / %(total)s"
 
 #: src/sshpilot/host_info_payload.py:225 src/sshpilot/host_info_payload.py:286
 #: src/sshpilot/host_info_payload.py:421 src/sshpilot/host_info_payload.py:479
-#: src/sshpilot/machine_info_dialog.py:1334
-#: src/sshpilot/machine_info_dialog.py:1571
-#: src/sshpilot/machine_info_dialog.py:1581
-#: src/sshpilot/machine_info_dialog.py:2062
+#: src/sshpilot/machine_info_dialog.py:1473
+#: src/sshpilot/machine_info_dialog.py:1779
+#: src/sshpilot/machine_info_dialog.py:1789
+#: src/sshpilot/machine_info_dialog.py:2270
 #, python-format
 msgid "%(used)s / %(total)s"
 msgstr "%(used)s / %(total)s"
 
 #: src/sshpilot/host_info_payload.py:230
-#: src/sshpilot/machine_info_dialog.py:1586
+#: src/sshpilot/machine_info_dialog.py:1794
 #, python-format
 msgid "%(fstype)s on %(device)s"
 msgstr "%(fstype)s em %(device)s"
 
 #: src/sshpilot/host_info_payload.py:236 src/sshpilot/host_info_payload.py:386
-#: src/sshpilot/machine_info_dialog.py:1601
+#: src/sshpilot/machine_info_dialog.py:1809
 msgid "Hostname"
 msgstr "Nome do anfitrião"
 
 #: src/sshpilot/host_info_payload.py:238
-#: src/sshpilot/machine_info_dialog.py:1604
-#: src/sshpilot/machine_info_dialog.py:2021
+#: src/sshpilot/machine_info_dialog.py:1812
+#: src/sshpilot/machine_info_dialog.py:2229
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:203
 msgid "Device"
 msgstr "Dispositivo"
 
 #: src/sshpilot/host_info_payload.py:241
-#: src/sshpilot/machine_info_dialog.py:1607
+#: src/sshpilot/machine_info_dialog.py:1815
 msgid "Operating system"
 msgstr "Sistema operativo"
 
 #: src/sshpilot/host_info_payload.py:242
-#: src/sshpilot/machine_info_dialog.py:1608
+#: src/sshpilot/machine_info_dialog.py:1816
 msgid "Kernel"
 msgstr "Kernel"
 
 #: src/sshpilot/host_info_payload.py:243
-#: src/sshpilot/machine_info_dialog.py:1609
+#: src/sshpilot/machine_info_dialog.py:1817
 msgid "Processor"
 msgstr "Processador"
 
 #: src/sshpilot/host_info_payload.py:245
-#: src/sshpilot/machine_info_dialog.py:1610
+#: src/sshpilot/machine_info_dialog.py:1818
 msgid "CPU frequency"
 msgstr "Frequência da CPU"
 
 #: src/sshpilot/host_info_payload.py:249 src/sshpilot/host_info_payload.py:419
 #: src/sshpilot/host_info_payload.py:506
-#: src/sshpilot/machine_info_dialog.py:1567
-#: src/sshpilot/machine_info_dialog.py:1611
-#: src/sshpilot/machine_info_dialog.py:1719
-#: src/sshpilot/machine_info_dialog.py:1832
-#: src/sshpilot/machine_info_dialog.py:1868
+#: src/sshpilot/machine_info_dialog.py:1775
+#: src/sshpilot/machine_info_dialog.py:1819
+#: src/sshpilot/machine_info_dialog.py:1927
+#: src/sshpilot/machine_info_dialog.py:2040
+#: src/sshpilot/machine_info_dialog.py:2076
 #: src/sshpilot/plugins/builtin/docker_manager/tab_stats.py:24
 msgid "Memory"
 msgstr "Memória"
 
 #: src/sshpilot/host_info_payload.py:250
-#: src/sshpilot/machine_info_dialog.py:1612
+#: src/sshpilot/machine_info_dialog.py:1820
 msgid "Uptime"
 msgstr "Tempo de atividade"
 
 #: src/sshpilot/host_info_payload.py:251
-#: src/sshpilot/machine_info_dialog.py:1613
+#: src/sshpilot/machine_info_dialog.py:1821
 msgid "Booted"
 msgstr "Arrancado"
 
 #: src/sshpilot/host_info_payload.py:259
-#: src/sshpilot/machine_info_dialog.py:1655
+#: src/sshpilot/machine_info_dialog.py:1863
 msgid "1 min"
 msgstr "1 min"
 
 #: src/sshpilot/host_info_payload.py:260
-#: src/sshpilot/machine_info_dialog.py:1656
+#: src/sshpilot/machine_info_dialog.py:1864
 msgid "5 min"
 msgstr "5 min"
 
 #: src/sshpilot/host_info_payload.py:261
-#: src/sshpilot/machine_info_dialog.py:1657
+#: src/sshpilot/machine_info_dialog.py:1865
 msgid "15 min"
 msgstr "15 min"
 
@@ -6879,8 +6880,8 @@ msgid "inodes %(pct)s"
 msgstr "inodes %(pct)s"
 
 #: src/sshpilot/host_info_payload.py:345 src/sshpilot/host_info_payload.py:348
-#: src/sshpilot/machine_info_dialog.py:271
-#: src/sshpilot/machine_info_dialog.py:282
+#: src/sshpilot/machine_info_dialog.py:293
+#: src/sshpilot/machine_info_dialog.py:304
 #, python-format
 msgid "%.1f%%"
 msgstr "%.1f%%"
@@ -6903,7 +6904,7 @@ msgid "OS version"
 msgstr "Versão da API"
 
 #: src/sshpilot/host_info_payload.py:389
-#: src/sshpilot/machine_info_dialog.py:2319
+#: src/sshpilot/machine_info_dialog.py:2527
 msgid "Architecture"
 msgstr "Arquitetura"
 
@@ -6917,7 +6918,7 @@ msgid "SSH process"
 msgstr "Processos principais"
 
 #: src/sshpilot/host_info_payload.py:396
-#: src/sshpilot/machine_info_dialog.py:2172
+#: src/sshpilot/machine_info_dialog.py:2380
 msgid "Default gateway"
 msgstr "Gateway predefinido"
 
@@ -6935,58 +6936,58 @@ msgstr "DSA"
 #. load average: load is a queue length, and showing it here under a
 #. "CPU" heading is what this replaced.
 #: src/sshpilot/host_info_payload.py:412 src/sshpilot/host_info_payload.py:501
-#: src/sshpilot/machine_info_dialog.py:1559
-#: src/sshpilot/machine_info_dialog.py:1718
-#: src/sshpilot/machine_info_dialog.py:1831
+#: src/sshpilot/machine_info_dialog.py:1767
+#: src/sshpilot/machine_info_dialog.py:1926
+#: src/sshpilot/machine_info_dialog.py:2039
 msgid "CPU"
 msgstr "CPU"
 
 #. Storage does not move between samples, so this gauge keeps no history.
 #: src/sshpilot/host_info_payload.py:429
-#: src/sshpilot/machine_info_dialog.py:1592
+#: src/sshpilot/machine_info_dialog.py:1800
 msgid "Root filesystem"
 msgstr "Sistema de ficheiros raiz"
 
-#: src/sshpilot/host_info_shell.py:21 src/sshpilot/machine_info_dialog.py:1471
+#: src/sshpilot/host_info_shell.py:21 src/sshpilot/machine_info_dialog.py:1640
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:108
 msgid "Overview"
 msgstr "Visão geral"
 
-#: src/sshpilot/host_info_shell.py:22 src/sshpilot/machine_info_dialog.py:1472
+#: src/sshpilot/host_info_shell.py:22 src/sshpilot/machine_info_dialog.py:1641
 msgid "Resources"
 msgstr "Recursos"
 
-#: src/sshpilot/host_info_shell.py:23 src/sshpilot/machine_info_dialog.py:1473
+#: src/sshpilot/host_info_shell.py:23 src/sshpilot/machine_info_dialog.py:1642
 msgid "Storage"
 msgstr "Armazenamento"
 
-#: src/sshpilot/host_info_shell.py:24 src/sshpilot/machine_info_dialog.py:1474
+#: src/sshpilot/host_info_shell.py:24 src/sshpilot/machine_info_dialog.py:1643
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:357
 msgid "Network"
 msgstr "Rede"
 
-#: src/sshpilot/host_info_shell.py:25 src/sshpilot/machine_info_dialog.py:1475
+#: src/sshpilot/host_info_shell.py:25 src/sshpilot/machine_info_dialog.py:1644
 msgid "Traffic"
 msgstr "Tráfego"
 
-#: src/sshpilot/host_info_shell.py:26 src/sshpilot/machine_info_dialog.py:1476
+#: src/sshpilot/host_info_shell.py:26 src/sshpilot/machine_info_dialog.py:1645
 msgid "System"
 msgstr "Sistema"
 
 #: src/sshpilot/host_info_shell.py:27 src/sshpilot/log_viewer.py:574
-#: src/sshpilot/machine_info_dialog.py:983
+#: src/sshpilot/machine_info_dialog.py:1041
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:641
 #: src/sshpilot/preferences.py:1271
 msgid "Refresh"
 msgstr "Atualizar"
 
 #: src/sshpilot/host_info_shell.py:28 src/sshpilot/host_info_tab.py:93
-#: src/sshpilot/host_info_tab.py:371 src/sshpilot/machine_info_dialog.py:941
-#: src/sshpilot/machine_info_dialog.py:1116
+#: src/sshpilot/host_info_tab.py:371 src/sshpilot/machine_info_dialog.py:998
+#: src/sshpilot/machine_info_dialog.py:1201
 msgid "Gathering host information…"
 msgstr "A recolher informação do anfitrião…"
 
-#: src/sshpilot/host_info_shell.py:29 src/sshpilot/machine_info_dialog.py:1652
+#: src/sshpilot/host_info_shell.py:29 src/sshpilot/machine_info_dialog.py:1860
 msgid "Load average"
 msgstr "Carga média"
 
@@ -6994,11 +6995,11 @@ msgstr "Carga média"
 msgid "Per-core CPU"
 msgstr "CPU por núcleo"
 
-#: src/sshpilot/host_info_shell.py:31 src/sshpilot/machine_info_dialog.py:2017
+#: src/sshpilot/host_info_shell.py:31 src/sshpilot/machine_info_dialog.py:2225
 msgid "Filesystems"
 msgstr "Sistemas de ficheiros"
 
-#: src/sshpilot/host_info_shell.py:32 src/sshpilot/machine_info_dialog.py:2097
+#: src/sshpilot/host_info_shell.py:32 src/sshpilot/machine_info_dialog.py:2305
 msgid "Interfaces"
 msgstr "Interfaces"
 
@@ -7010,11 +7011,11 @@ msgstr "Porta SSH à escuta"
 msgid "Established sockets"
 msgstr "Sockets estabelecidos"
 
-#: src/sshpilot/host_info_shell.py:35 src/sshpilot/machine_info_dialog.py:1827
+#: src/sshpilot/host_info_shell.py:35 src/sshpilot/machine_info_dialog.py:2035
 msgid "Top processes"
 msgstr "Processos principais"
 
-#: src/sshpilot/host_info_shell.py:36 src/sshpilot/machine_info_dialog.py:1947
+#: src/sshpilot/host_info_shell.py:36 src/sshpilot/machine_info_dialog.py:2155
 msgid "Temperatures"
 msgstr "Temperaturas"
 
@@ -7022,11 +7023,11 @@ msgstr "Temperaturas"
 msgid "Login sessions"
 msgstr "A carregar sessões…"
 
-#: src/sshpilot/host_info_shell.py:38 src/sshpilot/machine_info_dialog.py:2372
+#: src/sshpilot/host_info_shell.py:38 src/sshpilot/machine_info_dialog.py:2580
 msgid "Failed units"
 msgstr "Unidades falhadas"
 
-#: src/sshpilot/host_info_shell.py:39 src/sshpilot/machine_info_dialog.py:2392
+#: src/sshpilot/host_info_shell.py:39 src/sshpilot/machine_info_dialog.py:2600
 msgid "SSH host keys"
 msgstr "Chaves de anfitrião SSH"
 
@@ -7038,7 +7039,7 @@ msgstr "Recebido"
 msgid "Transmit"
 msgstr "Transmitido"
 
-#: src/sshpilot/host_info_shell.py:42 src/sshpilot/machine_info_dialog.py:2056
+#: src/sshpilot/host_info_shell.py:42 src/sshpilot/machine_info_dialog.py:2264
 msgid "read-only"
 msgstr "apenas leitura"
 
@@ -7051,22 +7052,22 @@ msgid "Updated"
 msgstr "Atualizações"
 
 #: src/sshpilot/host_info_tab.py:104 src/sshpilot/host_info_tab.py:570
-#: src/sshpilot/machine_info_dialog.py:2498
+#: src/sshpilot/machine_info_dialog.py:2706
 #, python-format
 msgid "%s — Dashboard"
 msgstr "%s — Painel"
 
-#: src/sshpilot/host_info_tab.py:111 src/sshpilot/machine_info_dialog.py:1014
+#: src/sshpilot/host_info_tab.py:111 src/sshpilot/machine_info_dialog.py:1078
 #, python-format
 msgid "%(nickname)s — %(user)s@%(host)s"
 msgstr "%(nickname)s — %(user)s@%(host)s"
 
-#: src/sshpilot/host_info_tab.py:117 src/sshpilot/machine_info_dialog.py:1018
+#: src/sshpilot/host_info_tab.py:117 src/sshpilot/machine_info_dialog.py:1082
 #, python-format
 msgid "%(nickname)s — %(host)s"
 msgstr "%(nickname)s — %(host)s"
 
-#: src/sshpilot/host_info_tab.py:382 src/sshpilot/machine_info_dialog.py:1125
+#: src/sshpilot/host_info_tab.py:382 src/sshpilot/machine_info_dialog.py:1234
 #, python-format
 msgid ""
 "Could not gather host information.\n"
@@ -7077,7 +7078,7 @@ msgstr ""
 "\n"
 "%s"
 
-#: src/sshpilot/host_info_tab.py:388 src/sshpilot/machine_info_dialog.py:1130
+#: src/sshpilot/host_info_tab.py:388 src/sshpilot/machine_info_dialog.py:1240
 msgid "The host returned no system information."
 msgstr "O anfitrião não devolveu informação do sistema."
 
@@ -7520,59 +7521,59 @@ msgid_plural "{count} connections were detached and kept their settings."
 msgstr[0] "{count} ligação foi desanexada e manteve as suas definições."
 msgstr[1] "{count} ligações foram desanexadas e mantiveram as suas definições."
 
-#: src/sshpilot/machine_info_dialog.py:342
+#: src/sshpilot/machine_info_dialog.py:364
 msgid "Loopback"
 msgstr "Loopback"
 
-#: src/sshpilot/machine_info_dialog.py:343
+#: src/sshpilot/machine_info_dialog.py:365
 msgid "Wi-Fi"
 msgstr "Wi-Fi"
 
-#: src/sshpilot/machine_info_dialog.py:344
+#: src/sshpilot/machine_info_dialog.py:366
 msgid "Ethernet"
 msgstr "Ethernet"
 
-#: src/sshpilot/machine_info_dialog.py:350
+#: src/sshpilot/machine_info_dialog.py:372
 msgid "Up"
 msgstr "Ativa"
 
-#: src/sshpilot/machine_info_dialog.py:351
+#: src/sshpilot/machine_info_dialog.py:373
 #: src/sshpilot/plugins/builtin/docker_manager/tab_compose.py:192
 msgid "Down"
 msgstr "Inativa"
 
-#: src/sshpilot/machine_info_dialog.py:352
+#: src/sshpilot/machine_info_dialog.py:374
 msgid "No carrier"
 msgstr "Sem portadora"
 
-#: src/sshpilot/machine_info_dialog.py:369
+#: src/sshpilot/machine_info_dialog.py:391
 #, python-format
 msgid "Show %d more"
 msgid_plural "Show %d more"
 msgstr[0] "Mostrar mais %d"
 msgstr[1] "Mostrar mais %d"
 
-#: src/sshpilot/machine_info_dialog.py:381
+#: src/sshpilot/machine_info_dialog.py:403
 msgid "Show fewer"
 msgstr "Mostrar menos"
 
-#: src/sshpilot/machine_info_dialog.py:754
+#: src/sshpilot/machine_info_dialog.py:786
 msgid "CPU utilization"
 msgstr "Utilização da CPU"
 
-#: src/sshpilot/machine_info_dialog.py:764
-#: src/sshpilot/machine_info_dialog.py:1800
+#: src/sshpilot/machine_info_dialog.py:796
+#: src/sshpilot/machine_info_dialog.py:2008
 msgid "Total"
 msgstr "Total"
 
-#: src/sshpilot/machine_info_dialog.py:804
+#: src/sshpilot/machine_info_dialog.py:836
 #, python-format
 msgid "%d more core"
 msgid_plural "%d more cores"
 msgstr[0] "%d núcleo adicional"
 msgstr[1] "%d núcleos adicionais"
 
-#: src/sshpilot/machine_info_dialog.py:849
+#: src/sshpilot/machine_info_dialog.py:881
 #, python-format
 msgid ""
 "user %(user)s · system %(system)s · iowait %(iowait)s · steal %(steal)s · "
@@ -7581,290 +7582,314 @@ msgstr ""
 "utilizador %(user)s · sistema %(system)s · espera E/S %(iowait)s · roubado "
 "%(steal)s · inativo %(idle)s"
 
-#: src/sshpilot/machine_info_dialog.py:965 src/sshpilot/omni_search.py:584
+#: src/sshpilot/machine_info_dialog.py:1023 src/sshpilot/omni_search.py:584
 #: src/sshpilot/omni_search.py:596 src/sshpilot/sidebar.py:1937
 #: src/sshpilot/welcome_page.py:336
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:965
 msgid "Dashboard"
 msgstr "Painel"
 
-#: src/sshpilot/machine_info_dialog.py:985
+#: src/sshpilot/machine_info_dialog.py:1043
 msgid "Refresh host information"
 msgstr "Atualizar a informação do anfitrião"
 
-#: src/sshpilot/machine_info_dialog.py:1207
+#: src/sshpilot/machine_info_dialog.py:1050
+msgid ""
+"CPU, memory and network traffic update live. Everything else is as of the "
+"last refresh."
+msgstr ""
+"A CPU, a memória e o tráfego de rede são atualizados em tempo real. Tudo o "
+"resto refere-se à última atualização."
+
+#: src/sshpilot/machine_info_dialog.py:1217
+#, python-brace-format
+msgid "Could not refresh host information: {reason}"
+msgstr "Não foi possível atualizar as informações do anfitrião: {reason}"
+
+#: src/sshpilot/machine_info_dialog.py:1221
+msgid "Could not refresh host information."
+msgstr "Não foi possível atualizar as informações do anfitrião."
+
+#: src/sshpilot/machine_info_dialog.py:1322
 #, python-format
 msgid "Updated %d second ago"
 msgid_plural "Updated %d seconds ago"
 msgstr[0] "Atualizado há %d segundo"
 msgstr[1] "Atualizado há %d segundos"
 
-#: src/sshpilot/machine_info_dialog.py:1213
+#: src/sshpilot/machine_info_dialog.py:1328
 #, python-format
 msgid "Updated %d minute ago"
 msgid_plural "Updated %d minutes ago"
 msgstr[0] "Atualizado há %d minuto"
 msgstr[1] "Atualizado há %d minutos"
 
-#: src/sshpilot/machine_info_dialog.py:1441
+#: src/sshpilot/machine_info_dialog.py:1334
+#, python-format
+msgid "Updated %d hour ago"
+msgid_plural "Updated %d hours ago"
+msgstr[0] "Atualizado há %d hora"
+msgstr[1] "Atualizado há %d horas"
+
+#: src/sshpilot/machine_info_dialog.py:1580
 #, python-format
 msgid "Could not open %(label)s: %(error)s"
 msgstr "Não foi possível abrir %(label)s: %(error)s"
 
-#: src/sshpilot/machine_info_dialog.py:1450
+#: src/sshpilot/machine_info_dialog.py:1589
 msgid "Could not open the system browser."
 msgstr "Não foi possível ligar ao servidor."
 
-#: src/sshpilot/machine_info_dialog.py:1720
+#: src/sshpilot/machine_info_dialog.py:1928
 msgid "Disk"
 msgstr "Disco"
 
-#: src/sshpilot/machine_info_dialog.py:1723
+#: src/sshpilot/machine_info_dialog.py:1931
 msgid "Time spent waiting"
 msgstr "Tempo de espera"
 
-#: src/sshpilot/machine_info_dialog.py:1731
+#: src/sshpilot/machine_info_dialog.py:1939
 msgid "This host does not report waiting times"
 msgstr "Este host não reporta tempos de espera"
 
-#: src/sshpilot/machine_info_dialog.py:1767
+#: src/sshpilot/machine_info_dialog.py:1975
 #, python-format
 msgid "nothing could run %s"
 msgstr "nada pôde ser executado %s"
 
-#: src/sshpilot/machine_info_dialog.py:1778
+#: src/sshpilot/machine_info_dialog.py:1986
 msgid "Process table"
 msgstr "Tabela de processos"
 
-#: src/sshpilot/machine_info_dialog.py:1781
+#: src/sshpilot/machine_info_dialog.py:1989
 msgid "No process counts reported"
 msgstr "Nenhuma contagem de processos reportada"
 
-#: src/sshpilot/machine_info_dialog.py:1801
+#: src/sshpilot/machine_info_dialog.py:2009
 msgid "Running"
 msgstr "Em execução"
 
-#: src/sshpilot/machine_info_dialog.py:1802
+#: src/sshpilot/machine_info_dialog.py:2010
 msgid "Sleeping"
 msgstr "Em espera"
 
-#: src/sshpilot/machine_info_dialog.py:1803
+#: src/sshpilot/machine_info_dialog.py:2011
 msgid "Stopped"
 msgstr "Paradas"
 
-#: src/sshpilot/machine_info_dialog.py:1804
+#: src/sshpilot/machine_info_dialog.py:2012
 msgid "Zombie"
 msgstr "Zombie"
 
-#: src/sshpilot/machine_info_dialog.py:1805
+#: src/sshpilot/machine_info_dialog.py:2013
 msgid "Threads"
 msgstr "Threads"
 
-#: src/sshpilot/machine_info_dialog.py:1806
+#: src/sshpilot/machine_info_dialog.py:2014
 msgid "PID limit"
 msgstr "Limite de PID"
 
-#: src/sshpilot/machine_info_dialog.py:1830
+#: src/sshpilot/machine_info_dialog.py:2038
 msgid "Process"
 msgstr "Processo"
 
-#: src/sshpilot/machine_info_dialog.py:1851
+#: src/sshpilot/machine_info_dialog.py:2059
 msgid "No process list reported"
 msgstr "Nenhuma lista de processos reportada"
 
-#: src/sshpilot/machine_info_dialog.py:1923
+#: src/sshpilot/machine_info_dialog.py:2131
 msgid "Swap"
 msgstr "Swap"
 
-#: src/sshpilot/machine_info_dialog.py:1930
+#: src/sshpilot/machine_info_dialog.py:2138
 #, python-format
 msgid "%(used)s / %(total)s · %(percent)s"
 msgstr "%(used)s / %(total)s · %(percent)s"
 
-#: src/sshpilot/machine_info_dialog.py:1983
+#: src/sshpilot/machine_info_dialog.py:2191
 #, python-format
 msgid "%d °C"
 msgstr "%d °C"
 
-#: src/sshpilot/machine_info_dialog.py:2008
+#: src/sshpilot/machine_info_dialog.py:2216
 #, python-format
 msgid "inodes %s"
 msgstr "inodes %s"
 
-#: src/sshpilot/machine_info_dialog.py:2020
+#: src/sshpilot/machine_info_dialog.py:2228
 msgid "Mount point"
 msgstr "Ponto de montagem"
 
-#: src/sshpilot/machine_info_dialog.py:2022
+#: src/sshpilot/machine_info_dialog.py:2230
 msgid "Usage"
 msgstr "Utilização"
 
-#: src/sshpilot/machine_info_dialog.py:2023
+#: src/sshpilot/machine_info_dialog.py:2231
 msgid "Used / Size"
 msgstr "Utilizado / Tamanho"
 
-#: src/sshpilot/machine_info_dialog.py:2024
+#: src/sshpilot/machine_info_dialog.py:2232
 msgid "Available"
 msgstr "Disponível"
 
-#: src/sshpilot/machine_info_dialog.py:2057
-#: src/sshpilot/machine_info_dialog.py:2136
-#: src/sshpilot/machine_info_dialog.py:2449
+#: src/sshpilot/machine_info_dialog.py:2265
+#: src/sshpilot/machine_info_dialog.py:2344
+#: src/sshpilot/machine_info_dialog.py:2657
 msgid " · "
 msgstr " · "
 
-#: src/sshpilot/machine_info_dialog.py:2087
+#: src/sshpilot/machine_info_dialog.py:2295
 msgid "No filesystems reported"
 msgstr "Nenhum sistema de ficheiros reportado"
 
-#: src/sshpilot/machine_info_dialog.py:2135
+#: src/sshpilot/machine_info_dialog.py:2343
 #, python-format
 msgid "MTU %d"
 msgstr "MTU %d"
 
-#: src/sshpilot/machine_info_dialog.py:2146
+#: src/sshpilot/machine_info_dialog.py:2354
 msgid "No interfaces reported"
 msgstr "Nenhuma interface reportada"
 
-#: src/sshpilot/machine_info_dialog.py:2153
+#: src/sshpilot/machine_info_dialog.py:2361
 msgid "Routing & resolution"
 msgstr "Encaminhamento e resolução"
 
-#: src/sshpilot/machine_info_dialog.py:2156
+#: src/sshpilot/machine_info_dialog.py:2364
 #, python-format
 msgid "%(gateway)s via %(interface)s"
 msgstr "%(gateway)s através de %(interface)s"
 
-#: src/sshpilot/machine_info_dialog.py:2162
+#: src/sshpilot/machine_info_dialog.py:2370
 #, python-format
 msgid "%(port)d/tcp (%(process)s)"
 msgstr "%(port)d/tcp (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:2166
-#: src/sshpilot/machine_info_dialog.py:2333
+#: src/sshpilot/machine_info_dialog.py:2374
+#: src/sshpilot/machine_info_dialog.py:2541
 #, python-format
 msgid "%d/tcp"
 msgstr "%d/tcp"
 
-#: src/sshpilot/machine_info_dialog.py:2173
+#: src/sshpilot/machine_info_dialog.py:2381
 msgid "DNS servers"
 msgstr "Servidores DNS"
 
-#: src/sshpilot/machine_info_dialog.py:2174
+#: src/sshpilot/machine_info_dialog.py:2382
 msgid "Listening SSH port"
 msgstr "Porta SSH à escuta"
 
-#: src/sshpilot/machine_info_dialog.py:2184
+#: src/sshpilot/machine_info_dialog.py:2392
 msgid "Bandwidth"
 msgstr "Largura de banda"
 
-#: src/sshpilot/machine_info_dialog.py:2187
+#: src/sshpilot/machine_info_dialog.py:2395
 msgid "Network interface"
 msgstr "Interface de rede"
 
-#: src/sshpilot/machine_info_dialog.py:2188
+#: src/sshpilot/machine_info_dialog.py:2396
 msgid "Received"
 msgstr "Recebido"
 
-#: src/sshpilot/machine_info_dialog.py:2189
+#: src/sshpilot/machine_info_dialog.py:2397
 msgid "Transmitted"
 msgstr "Transmitido"
 
-#: src/sshpilot/machine_info_dialog.py:2190
+#: src/sshpilot/machine_info_dialog.py:2398
 msgid "Rate ↓"
 msgstr "Taxa ↓"
 
-#: src/sshpilot/machine_info_dialog.py:2191
+#: src/sshpilot/machine_info_dialog.py:2399
 msgid "Rate ↑"
 msgstr "Taxa ↑"
 
-#: src/sshpilot/machine_info_dialog.py:2218
+#: src/sshpilot/machine_info_dialog.py:2426
 msgid "No interface counters reported"
 msgstr "Nenhum contador de interface reportado"
 
-#: src/sshpilot/machine_info_dialog.py:2221
+#: src/sshpilot/machine_info_dialog.py:2429
 msgid "Remote sessions"
 msgstr "Sessões remotas"
 
-#: src/sshpilot/machine_info_dialog.py:2234
+#: src/sshpilot/machine_info_dialog.py:2442
 #, python-format
 msgid "Incoming · %d established"
 msgid_plural "Incoming · %d established"
 msgstr[0] "Entrada · %d estabelecida"
 msgstr[1] "Entrada · %d estabelecidas"
 
-#: src/sshpilot/machine_info_dialog.py:2236
+#: src/sshpilot/machine_info_dialog.py:2444
 #, python-format
 msgid "Outgoing · %d established"
 msgid_plural "Outgoing · %d established"
 msgstr[0] "Saída · %d estabelecida"
 msgstr[1] "Saída · %d estabelecidas"
 
-#: src/sshpilot/machine_info_dialog.py:2318
+#: src/sshpilot/machine_info_dialog.py:2526
 msgid "Distribution"
 msgstr "Distribuição"
 
-#: src/sshpilot/machine_info_dialog.py:2324
+#: src/sshpilot/machine_info_dialog.py:2532
 msgid "Running services"
 msgstr "Serviços à escuta"
 
-#: src/sshpilot/machine_info_dialog.py:2328
+#: src/sshpilot/machine_info_dialog.py:2536
 msgid "Service"
 msgstr "Serviço"
 
-#: src/sshpilot/machine_info_dialog.py:2329
+#: src/sshpilot/machine_info_dialog.py:2537
 msgid "Web UI"
 msgstr "Interface web"
 
-#: src/sshpilot/machine_info_dialog.py:2342
+#: src/sshpilot/machine_info_dialog.py:2550
 #, python-format
 msgid "%(label)s (%(process)s)"
 msgstr "%(label)s (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:2359
+#: src/sshpilot/machine_info_dialog.py:2567
 #, python-format
 msgid "Open %(label)s in the system browser"
 msgstr "Abrir %(label)s no navegador do sistema"
 
-#: src/sshpilot/machine_info_dialog.py:2369
+#: src/sshpilot/machine_info_dialog.py:2577
 msgid "No listening services reported"
 msgstr "Nenhum serviço à escuta reportado"
 
 #. Also what a host without systemd looks like: neither has a
 #. failed unit to report.
-#: src/sshpilot/machine_info_dialog.py:2385
+#: src/sshpilot/machine_info_dialog.py:2593
 msgid "No failed units"
 msgstr "Sem unidades falhadas"
 
-#: src/sshpilot/machine_info_dialog.py:2395
+#: src/sshpilot/machine_info_dialog.py:2603
 msgid "Algorithm"
 msgstr "Algoritmo"
 
-#: src/sshpilot/machine_info_dialog.py:2396
+#: src/sshpilot/machine_info_dialog.py:2604
 msgid "Fingerprint"
 msgstr "Impressão digital"
 
-#: src/sshpilot/machine_info_dialog.py:2397
+#: src/sshpilot/machine_info_dialog.py:2605
 msgid "Bits"
 msgstr "Bits"
 
-#: src/sshpilot/machine_info_dialog.py:2412
+#: src/sshpilot/machine_info_dialog.py:2620
 msgid "No host keys reported"
 msgstr "Nenhuma chave de anfitrião reportada"
 
-#: src/sshpilot/machine_info_dialog.py:2415
+#: src/sshpilot/machine_info_dialog.py:2623
 msgid "Logged-in users"
 msgstr "Utilizadores com sessão iniciada"
 
-#: src/sshpilot/machine_info_dialog.py:2427
+#: src/sshpilot/machine_info_dialog.py:2635
 msgid "No remote sessions"
 msgstr "Sem sessões remotas"
 
-#: src/sshpilot/machine_info_dialog.py:2427
+#: src/sshpilot/machine_info_dialog.py:2635
 msgid "No logged-in users"
 msgstr "Sem utilizadores com sessão iniciada"
 
-#: src/sshpilot/machine_info_dialog.py:2448
+#: src/sshpilot/machine_info_dialog.py:2656
 msgid "local console"
 msgstr "consola local"
 
@@ -8982,7 +9007,7 @@ msgstr "Abrir terminal"
 
 #. Details button — opens a dialog with the full error report (and Copy).
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:355
-#: src/sshpilot/terminal.py:593
+#: src/sshpilot/terminal.py:614
 msgid "Details"
 msgstr "Detalhes"
 
@@ -12015,7 +12040,7 @@ msgid "Custom"
 msgstr "Personalizado"
 
 #: src/sshpilot/rdp_tab.py:145 src/sshpilot/split_view.py:454
-#: src/sshpilot/terminal.py:584 src/sshpilot/terminal_manager.py:1692
+#: src/sshpilot/terminal.py:605 src/sshpilot/terminal_manager.py:1692
 #: src/sshpilot/window_tabs.py:308
 msgid "Reconnect"
 msgstr "Voltar a ligar"
@@ -12264,180 +12289,180 @@ msgstr "Autenticação falhou ou foi cancelada."
 msgid "The background service is shutting down."
 msgstr "O serviço de fundo está a encerrar."
 
-#: src/sshpilot/scp_window.py:104
+#: src/sshpilot/scp_window.py:111
 #, python-brace-format
 msgid "{count} second"
 msgid_plural "{count} seconds"
 msgstr[0] "{count} segundo"
 msgstr[1] "{count} segundos"
 
-#: src/sshpilot/scp_window.py:110
+#: src/sshpilot/scp_window.py:117
 #, python-brace-format
 msgid "{count} minute"
 msgid_plural "{count} minutes"
 msgstr[0] "{count} item"
 msgstr[1] "{count} itens"
 
-#: src/sshpilot/scp_window.py:113
+#: src/sshpilot/scp_window.py:120
 #, python-brace-format
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes}m {seconds}s"
 
-#: src/sshpilot/scp_window.py:116
+#: src/sshpilot/scp_window.py:123
 #, python-brace-format
 msgid "{count} hour"
 msgid_plural "{count} hours"
 msgstr[0] "{count} hora"
 msgstr[1] "{count} horas"
 
-#: src/sshpilot/scp_window.py:117
+#: src/sshpilot/scp_window.py:124
 #, python-brace-format
 msgid "{hours}h {minutes}m"
 msgstr "{hours}h {minutes}m"
 
-#: src/sshpilot/scp_window.py:127
+#: src/sshpilot/scp_window.py:134
 #, python-brace-format
 msgid "{count} file"
 msgid_plural "{count} files"
 msgstr[0] "{count} item"
 msgstr[1] "{count} itens"
 
-#: src/sshpilot/scp_window.py:149
+#: src/sshpilot/scp_window.py:156
 msgid "Upload complete"
 msgstr "Conclusão automática de comandos"
 
-#: src/sshpilot/scp_window.py:150
+#: src/sshpilot/scp_window.py:157
 msgid "Download complete"
 msgstr "Descarregar ficheiros"
 
-#: src/sshpilot/scp_window.py:296
+#: src/sshpilot/scp_window.py:303
 msgid "Legacy: Transfer files with scp"
 msgstr "Legado: transferir ficheiros com scp"
 
-#: src/sshpilot/scp_window.py:327 src/sshpilot/sshcopyid_window.py:127
+#: src/sshpilot/scp_window.py:334 src/sshpilot/sshcopyid_window.py:127
 #: src/sshpilot/window_dialogs.py:1197 src/sshpilot/window_dialogs.py:2509
 msgid "Server"
 msgstr "Servidor"
 
-#: src/sshpilot/scp_window.py:347 src/sshpilot/sshcopyid_window.py:403
+#: src/sshpilot/scp_window.py:354 src/sshpilot/sshcopyid_window.py:403
 #: src/sshpilot/window_dialogs.py:1190 src/sshpilot/window_dialogs.py:1221
 #: src/sshpilot/window_dialogs.py:2527
 msgid "Choose a server…"
 msgstr "Escolher um servidor…"
 
-#: src/sshpilot/scp_window.py:418
+#: src/sshpilot/scp_window.py:425
 msgid "Choose local files and send them with scp"
 msgstr "Escolher ficheiros locais e enviá-los com scp"
 
-#: src/sshpilot/scp_window.py:426
+#: src/sshpilot/scp_window.py:433
 msgid "Browse remote paths and save them locally"
 msgstr "Navegar em caminhos remotos e guardá-los localmente"
 
-#: src/sshpilot/scp_window.py:442
+#: src/sshpilot/scp_window.py:449
 msgid "Select files to upload"
 msgstr "Selecionar ficheiros para enviar"
 
-#: src/sshpilot/scp_window.py:490
+#: src/sshpilot/scp_window.py:497
 msgid "Remote browsing requires the daemon SFTP service."
 msgstr "A navegação remota requer o serviço SFTP do daemon."
 
-#: src/sshpilot/scp_window.py:587
+#: src/sshpilot/scp_window.py:594
 msgid "Locations"
 msgstr "Localizações"
 
-#: src/sshpilot/scp_window.py:590 src/sshpilot/scp_window.py:1131
+#: src/sshpilot/scp_window.py:597 src/sshpilot/scp_window.py:1138
 #: src/sshpilot/window_dialogs.py:2549
 msgid "Remote directory"
 msgstr "Diretório remoto"
 
-#: src/sshpilot/scp_window.py:595
+#: src/sshpilot/scp_window.py:602
 msgid "Example: ~/ or /var/tmp"
 msgstr "Exemplo: ~/ ou /var/tmp"
 
-#: src/sshpilot/scp_window.py:600
+#: src/sshpilot/scp_window.py:607
 msgid "Refresh remote listing"
 msgstr "Atualizar listagem remota"
 
-#: src/sshpilot/scp_window.py:612
+#: src/sshpilot/scp_window.py:619
 msgid "Remote files"
 msgstr "Ficheiros remotos"
 
-#: src/sshpilot/scp_window.py:648
+#: src/sshpilot/scp_window.py:655
 msgid "Destination"
 msgstr "Destino"
 
-#: src/sshpilot/scp_window.py:657 src/sshpilot/scp_window.py:663
+#: src/sshpilot/scp_window.py:664 src/sshpilot/scp_window.py:670
 msgid "Local destination"
 msgstr "Destino local"
 
-#: src/sshpilot/scp_window.py:709
+#: src/sshpilot/scp_window.py:716
 msgid "Example: ~/Downloads"
 msgstr "Exemplo: ~/Downloads"
 
-#: src/sshpilot/scp_window.py:722
+#: src/sshpilot/scp_window.py:729
 msgid "Choose download folder"
 msgstr "Escolher pasta de transferências"
 
-#: src/sshpilot/scp_window.py:735
+#: src/sshpilot/scp_window.py:742
 msgid "Choose destination folder"
 msgstr "Escolher pasta de destino"
 
-#: src/sshpilot/scp_window.py:746
+#: src/sshpilot/scp_window.py:753
 msgid "Select destination folder"
 msgstr "Selecionar pasta de destino"
 
-#: src/sshpilot/scp_window.py:771
+#: src/sshpilot/scp_window.py:778
 #, python-brace-format
 msgid "Could not select destination: {error}"
 msgstr "Não foi possível selecionar o destino: {error}"
 
-#: src/sshpilot/scp_window.py:797
+#: src/sshpilot/scp_window.py:804
 msgid "Could not get write access to the selected folder."
 msgstr "Não foi possível obter acesso de escrita à pasta selecionada."
 
-#: src/sshpilot/scp_window.py:811
+#: src/sshpilot/scp_window.py:818
 #, python-brace-format
 msgid "Could not open destination chooser: {error}"
 msgstr "Não foi possível abrir o seletor de destino: {error}"
 
-#: src/sshpilot/scp_window.py:867
+#: src/sshpilot/scp_window.py:874
 #, python-brace-format
 msgid "Cannot access {dest}. Choose the destination folder again."
 msgstr "Não é possível aceder a {dest}. Escolha novamente a pasta de destino."
 
-#: src/sshpilot/scp_window.py:875
+#: src/sshpilot/scp_window.py:882
 msgid "Click “Choose download folder” to pick a destination first."
 msgstr ""
 "Clique em «Escolher pasta de transferências» para selecionar primeiro um "
 "destino."
 
-#: src/sshpilot/scp_window.py:892
+#: src/sshpilot/scp_window.py:899
 #, python-brace-format
 msgid "Cannot access {dest}: {error}"
 msgstr "Não é possível aceder a {dest}: {error}"
 
-#: src/sshpilot/scp_window.py:912
+#: src/sshpilot/scp_window.py:919
 msgid "Parent directory"
 msgstr "Diretório ascendente"
 
-#: src/sshpilot/scp_window.py:915
+#: src/sshpilot/scp_window.py:922
 msgid "Directory"
 msgstr "Diretório"
 
-#: src/sshpilot/scp_window.py:987
+#: src/sshpilot/scp_window.py:994
 msgid "Select an item to download."
 msgstr "Selecione um item para descarregar."
 
-#: src/sshpilot/scp_window.py:990
+#: src/sshpilot/scp_window.py:997
 #, python-brace-format
 msgid "No entries found for {path}."
 msgstr "Nenhuma entrada encontrada para {path}."
 
-#: src/sshpilot/scp_window.py:1127
+#: src/sshpilot/scp_window.py:1134
 msgid "Remote destination"
 msgstr "Destino remoto"
 
-#: src/sshpilot/scp_window.py:1128
+#: src/sshpilot/scp_window.py:1135
 msgid ""
 "Enter a remote directory (e.g., ~/ or /var/tmp). Files will be uploaded "
 "using scp."
@@ -12445,62 +12470,62 @@ msgstr ""
 "Introduza um diretório remoto (ex.: ~/ ou /var/tmp). Os ficheiros serão "
 "enviados utilizando o scp."
 
-#: src/sshpilot/scp_window.py:1239
+#: src/sshpilot/scp_window.py:1246
 msgid "The SCP transfer request is invalid."
 msgstr "O pedido de transferência SCP é inválido."
 
-#: src/sshpilot/scp_window.py:1243
+#: src/sshpilot/scp_window.py:1250
 msgid "Upload files (SCP)"
 msgstr "Enviar ficheiros (SCP)"
 
-#: src/sshpilot/scp_window.py:1245
+#: src/sshpilot/scp_window.py:1252
 msgid "Download files (SCP)"
 msgstr "Descarregar ficheiros (SCP)"
 
-#: src/sshpilot/scp_window.py:1278
+#: src/sshpilot/scp_window.py:1285
 msgid "Could not open the download location in the file manager."
 msgstr "Não foi possível carregar a ligação a partir do daemon"
 
-#: src/sshpilot/scp_window.py:1287 src/sshpilot/scp_window.py:1315
+#: src/sshpilot/scp_window.py:1297 src/sshpilot/scp_window.py:1327
 #, python-brace-format
 msgid "From: {path}"
 msgstr "De: {path}"
 
-#: src/sshpilot/scp_window.py:1289 src/sshpilot/scp_window.py:1318
+#: src/sshpilot/scp_window.py:1299 src/sshpilot/scp_window.py:1330
 #, python-brace-format
 msgid "To: {path}"
 msgstr "Para: {path}"
 
-#: src/sshpilot/scp_window.py:1367
+#: src/sshpilot/scp_window.py:1379
 msgid "Cancelled"
 msgstr "Cancelado"
 
-#: src/sshpilot/scp_window.py:1376
+#: src/sshpilot/scp_window.py:1388
 #, python-brace-format
 msgid "Failed: {failure}"
 msgstr "Falhou: {failure}"
 
-#: src/sshpilot/scp_window.py:1380
+#: src/sshpilot/scp_window.py:1392
 msgid "Starting…"
 msgstr "A iniciar…"
 
-#: src/sshpilot/scp_window.py:1383
+#: src/sshpilot/scp_window.py:1395
 msgid "Cancelling…"
 msgstr "A cancelar…"
 
-#: src/sshpilot/scp_window.py:1387 src/sshpilot/text_editor.py:1484
+#: src/sshpilot/scp_window.py:1399 src/sshpilot/text_editor.py:1484
 msgid "Uploading…"
 msgstr "A enviar…"
 
-#: src/sshpilot/scp_window.py:1389 src/sshpilot/text_editor.py:618
+#: src/sshpilot/scp_window.py:1401 src/sshpilot/text_editor.py:618
 msgid "Downloading…"
 msgstr "A descarregar…"
 
-#: src/sshpilot/scp_window.py:1437
+#: src/sshpilot/scp_window.py:1449
 msgid "Starting SCP transfer…"
 msgstr "A iniciar transferência SCP…"
 
-#: src/sshpilot/scp_window.py:1476
+#: src/sshpilot/scp_window.py:1488
 #, python-brace-format
 msgid "Transfer failed: {error}"
 msgstr "Falha na transferência: {error}"
@@ -13567,7 +13592,7 @@ msgstr "A chave pública foi instalada no servidor."
 msgid "Public-key deployment was cancelled."
 msgstr "A implementação da chave pública foi cancelada."
 
-#: src/sshpilot/terminal.py:173
+#: src/sshpilot/terminal.py:194
 msgid ""
 "Nothing selected — the remote app is using the mouse; hold Shift while "
 "dragging to select text"
@@ -13575,125 +13600,125 @@ msgstr ""
 "Nada selecionado — a aplicação remota está a utilizar o rato; mantenha "
 "premido Shift enquanto arrasta para selecionar texto"
 
-#: src/sshpilot/terminal.py:176
+#: src/sshpilot/terminal.py:197
 msgid "Nothing selected to copy"
 msgstr "Nada selecionado para copiar"
 
-#: src/sshpilot/terminal.py:456
+#: src/sshpilot/terminal.py:477
 msgid "Connecting"
 msgstr "Ligação"
 
-#: src/sshpilot/terminal.py:485
+#: src/sshpilot/terminal.py:506
 msgid "Port forwarding"
 msgstr "Encaminhamento de portas"
 
-#: src/sshpilot/terminal.py:501 src/sshpilot/terminal.py:1561
+#: src/sshpilot/terminal.py:522 src/sshpilot/terminal.py:1582
 msgid "Close this tab to disconnect"
 msgstr "Confirmar antes de desligar"
 
 #. A local shell's exit status is never an ssh error.
-#: src/sshpilot/terminal.py:582 src/sshpilot/terminal.py:2640
-#: src/sshpilot/terminal.py:5973
+#: src/sshpilot/terminal.py:603 src/sshpilot/terminal.py:2661
+#: src/sshpilot/terminal.py:6012
 msgid "Session ended."
 msgstr "Sessão terminada."
 
 #. Dismiss button to hide the banner manually
-#: src/sshpilot/terminal.py:602 src/sshpilot/terminal.py:676
+#: src/sshpilot/terminal.py:623 src/sshpilot/terminal.py:697
 #: src/sshpilot/window.py:2340 src/sshpilot/window.py:2366
 msgid "Dismiss"
 msgstr "Dispensar"
 
-#: src/sshpilot/terminal.py:660
+#: src/sshpilot/terminal.py:681
 msgid "Save this connection for next time?"
 msgstr "Guardar esta ligação para a próxima vez?"
 
-#: src/sshpilot/terminal.py:667
+#: src/sshpilot/terminal.py:688
 msgid "Save as new connection"
 msgstr "Guardar como nova ligação"
 
-#: src/sshpilot/terminal.py:868
+#: src/sshpilot/terminal.py:889
 #, python-brace-format
 msgid "Terminal: {name}"
 msgstr "Terminal: {name}"
 
-#: src/sshpilot/terminal.py:1161
+#: src/sshpilot/terminal.py:1182
 msgid "Reason"
 msgstr "Motivo"
 
-#: src/sshpilot/terminal.py:1169
+#: src/sshpilot/terminal.py:1190
 msgid "--- SSH output ---"
 msgstr "--- Saída SSH ---"
 
-#: src/sshpilot/terminal.py:1175
+#: src/sshpilot/terminal.py:1196
 msgid "No additional details available."
 msgstr "Nenhum detalhe adicional disponível."
 
-#: src/sshpilot/terminal.py:1198
+#: src/sshpilot/terminal.py:1219
 msgid "Connection Error Details"
 msgstr "Detalhes do erro de ligação"
 
-#: src/sshpilot/terminal.py:1230 src/sshpilot/terminal.py:1232
-#: src/sshpilot/terminal.py:1238 src/sshpilot/terminal_manager.py:1797
+#: src/sshpilot/terminal.py:1251 src/sshpilot/terminal.py:1253
+#: src/sshpilot/terminal.py:1259 src/sshpilot/terminal_manager.py:1797
 #: src/sshpilot/terminal_manager.py:1799
 msgid "Reconnect failed to start"
 msgstr "Falha ao iniciar religação"
 
-#: src/sshpilot/terminal.py:1237
+#: src/sshpilot/terminal.py:1258
 msgid "Daemon reconnect handler is unavailable"
 msgstr "O gestor de religação do daemon está indisponível"
 
-#: src/sshpilot/terminal.py:1241 src/sshpilot/terminal.py:1242
+#: src/sshpilot/terminal.py:1262 src/sshpilot/terminal.py:1263
 msgid "Reconnect failed"
 msgstr "Falha ao restabelecer ligação"
 
-#: src/sshpilot/terminal.py:1521
+#: src/sshpilot/terminal.py:1542
 msgid "No forwarding rules configured"
 msgstr "Nenhuma regra de encaminhamento de portas configurada"
 
-#: src/sshpilot/terminal.py:1563
+#: src/sshpilot/terminal.py:1584
 msgid "Close tab · or reconnect from the error banner"
 msgstr "Não foi possível carregar a ligação a partir do daemon"
 
-#: src/sshpilot/terminal.py:2105
+#: src/sshpilot/terminal.py:2126
 msgid "Terminal input was not delivered; please try again."
 msgstr "A entrada do terminal não foi entregue; por favor, tente novamente."
 
-#: src/sshpilot/terminal.py:2218
+#: src/sshpilot/terminal.py:2239
 msgid "View only — another user controls this terminal"
 msgstr "Apenas visualização — outro utilizador controla este terminal"
 
-#: src/sshpilot/terminal.py:2400
+#: src/sshpilot/terminal.py:2421
 msgid "Close Terminal Session"
 msgstr "Sessões de terminal do daemon"
 
-#: src/sshpilot/terminal.py:2401
+#: src/sshpilot/terminal.py:2422
 msgid "What should happen to the remote terminal session?"
 msgstr "O que deve acontecer à sessão de terminal remota?"
 
-#: src/sshpilot/terminal.py:2404
+#: src/sshpilot/terminal.py:2425
 msgid "Detach"
 msgstr "Detalhes"
 
-#: src/sshpilot/terminal.py:2636 src/sshpilot/terminal.py:5970
+#: src/sshpilot/terminal.py:2657 src/sshpilot/terminal.py:6009
 #, python-brace-format
 msgid "SSH exited with status {code}"
 msgstr "O SSH terminou com o estado {code}"
 
-#: src/sshpilot/terminal.py:2638
+#: src/sshpilot/terminal.py:2659
 #, python-brace-format
 msgid "Session terminated by signal {sig}"
 msgstr "Sessão terminada pelo sinal {sig}"
 
-#: src/sshpilot/terminal.py:3353 src/sshpilot/terminal.py:6135
-#: src/sshpilot/terminal.py:6155 src/sshpilot/window.py:2325
+#: src/sshpilot/terminal.py:3374 src/sshpilot/terminal.py:6174
+#: src/sshpilot/terminal.py:6194 src/sshpilot/window.py:2325
 msgid "Copied to clipboard"
 msgstr "Copiado para a área de transferência"
 
-#: src/sshpilot/terminal.py:3374
+#: src/sshpilot/terminal.py:3395
 msgid "Save Terminal Output"
 msgstr "Guardar saída do terminal"
 
-#: src/sshpilot/terminal.py:3602
+#: src/sshpilot/terminal.py:3623
 #, python-brace-format
 msgid "Remote program copied {count} character to the clipboard"
 msgid_plural "Remote program copied {count} characters to the clipboard"
@@ -13702,7 +13727,7 @@ msgstr[0] ""
 msgstr[1] ""
 "O programa remoto copiou {count} carateres para a área de transferência"
 
-#: src/sshpilot/terminal.py:3629
+#: src/sshpilot/terminal.py:3650
 #, python-brace-format
 msgid "Remote program wants to copy {count} character to the clipboard"
 msgid_plural "Remote program wants to copy {count} characters to the clipboard"
@@ -13713,82 +13738,82 @@ msgstr[1] ""
 "O programa remoto pretende copiar {count} carateres para a área de "
 "transferência"
 
-#: src/sshpilot/terminal.py:3682
+#: src/sshpilot/terminal.py:3703
 #, python-brace-format
 msgid "Encoding '{requested}' is not supported. Using {fallback} instead."
 msgstr ""
 "A codificação '{requested}' não é suportada. A utilizar {fallback} em "
 "alternativa."
 
-#: src/sshpilot/terminal.py:4510
+#: src/sshpilot/terminal.py:4531
 msgid "Open Link"
 msgstr "Abrir ligação"
 
-#: src/sshpilot/terminal.py:4511
+#: src/sshpilot/terminal.py:4532
 msgid "Copy Link"
 msgstr "Copiar ligação"
 
-#: src/sshpilot/terminal.py:4514
+#: src/sshpilot/terminal.py:4535
 msgid "Copy\t⌘C"
 msgstr "Copiar\t⌘C"
 
-#: src/sshpilot/terminal.py:4517 src/sshpilot/terminal.py:4534
+#: src/sshpilot/terminal.py:4538 src/sshpilot/terminal.py:4555
 msgid "Copy as HTML"
 msgstr "Copiar como HTML"
 
-#: src/sshpilot/terminal.py:4518
+#: src/sshpilot/terminal.py:4539
 msgid "Paste\t⌘V"
 msgstr "Colar\t⌘V"
 
-#: src/sshpilot/terminal.py:4519
+#: src/sshpilot/terminal.py:4540
 msgid "Select All\t⌘A"
 msgstr "Selecionar tudo\t⌘A"
 
-#: src/sshpilot/terminal.py:4521
+#: src/sshpilot/terminal.py:4542
 msgid "Zoom In\t⌘="
 msgstr "Ampliar\t⌘="
 
-#: src/sshpilot/terminal.py:4522
+#: src/sshpilot/terminal.py:4543
 msgid "Zoom Out\t⌘-"
 msgstr "Reduzir\t⌘-"
 
-#: src/sshpilot/terminal.py:4523
+#: src/sshpilot/terminal.py:4544
 msgid "Reset Zoom\t⌘0"
 msgstr "Repor zoom\t⌘0"
 
-#: src/sshpilot/terminal.py:4526
+#: src/sshpilot/terminal.py:4547
 msgid "Search\t⌘F"
 msgstr "Procurar\t⌘F"
 
-#: src/sshpilot/terminal.py:4527 src/sshpilot/terminal.py:4545
+#: src/sshpilot/terminal.py:4548 src/sshpilot/terminal.py:4566
 msgid "Save Output…"
 msgstr "Guardar saída…"
 
-#: src/sshpilot/terminal.py:4531
+#: src/sshpilot/terminal.py:4552
 msgid "Copy\tCtrl+Shift+C"
 msgstr "Copiar\tCtrl+Shift+C"
 
-#: src/sshpilot/terminal.py:4536
+#: src/sshpilot/terminal.py:4557
 msgid "Paste\tCtrl+Shift+V"
 msgstr "Colar\tCtrl+Shift+V"
 
-#: src/sshpilot/terminal.py:4537
+#: src/sshpilot/terminal.py:4558
 msgid "Select All\tCtrl+Shift+A"
 msgstr "Selecionar tudo\tCtrl+Shift+A"
 
-#: src/sshpilot/terminal.py:4539
+#: src/sshpilot/terminal.py:4560
 msgid "Zoom In\tCtrl++"
 msgstr "Ampliar\tCtrl++"
 
-#: src/sshpilot/terminal.py:4540
+#: src/sshpilot/terminal.py:4561
 msgid "Zoom Out\tCtrl+-"
 msgstr "Reduzir\tCtrl+-"
 
-#: src/sshpilot/terminal.py:4541
+#: src/sshpilot/terminal.py:4562
 msgid "Reset Zoom\tCtrl+0"
 msgstr "Repor zoom\tCtrl+0"
 
-#: src/sshpilot/terminal.py:4544
+#: src/sshpilot/terminal.py:4565
 msgid "Search\tCtrl+Shift+F"
 msgstr "Procurar\tCtrl+Shift+F"
 
