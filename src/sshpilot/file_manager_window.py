@@ -59,6 +59,7 @@ from .file_manager import (
     _HAS_ALERT_DIALOG,
     _load_first_doc_path,
     _load_grant_for_host,
+    _sandbox_path_for_host,
     safe_display_text,
 )
 from .file_manager.format_utils import filename_extension_offset
@@ -1218,6 +1219,10 @@ class FileManagerWindow(Adw.Window):
             local_path = os.path.expanduser(path) if path.startswith("~") else path
             if not local_path:
                 local_path = os.path.expanduser("~")
+            # Under Flatpak the path bar shows host paths; entering one must
+            # reopen the granted folder, not its empty sandbox twin (#1376).
+            local_path = _sandbox_path_for_host(local_path, current_path) or local_path
+            is_refresh = bool(current_path) and os.path.normpath(local_path) == os.path.normpath(current_path)
             # Mark as refreshing if it's a refresh
             if is_refresh:
                 self._refreshing_panes.add(pane)

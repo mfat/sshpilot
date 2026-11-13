@@ -544,6 +544,54 @@ def _load_grant_for_host(target_host: str):
     return None
 
 
+def _grant_entry(path: str) -> Optional[str]:
+    """The exported entry of the portal grant ``path`` lives in
+    (``/run/user/<uid>/doc/<id>/<name>``), or ``None`` for non-portal paths."""
+    root = _portal_grant_root(path)
+    if not root:
+        return None
+    rest = path[len(root):].lstrip("/")
+    if not rest:
+        return root
+    return os.path.join(root, rest.split("/", 1)[0])
+
+
+def _sandbox_path_for_host(host_path: str, current: Optional[str] = None) -> Optional[str]:
+    """Map a real host path back to the portal path that reaches it (Flatpak).
+
+    The local path bar shows granted folders by their host path. Navigating to
+    that text inside the sandbox opens an empty throwaway directory, and any
+    folder or file created there never reaches the host (#1376). Resolve it
+    through the grant the pane is in (``current``) first, then the saved
+    grants. Returns ``None`` outside Flatpak, for paths that are already
+    portal paths, or when no grant covers ``host_path``.
+    """
+    if not host_path or not is_flatpak() or _portal_grant_root(host_path):
+        return None
+    target = os.path.normpath(host_path)
+
+    candidates: List[str] = []
+    entry = _grant_entry(current) if current else None
+    if entry:
+        candidates.append(entry)
+    for doc_id in reversed(list(_load_doc_config())):
+        portal_path = _lookup_document_path(doc_id)
+        entry = _grant_entry(portal_path) if portal_path else None
+        if entry and entry not in candidates:
+            candidates.append(entry)
+
+    for entry in candidates:
+        host = _portal_path_to_host(entry)
+        if not host:
+            continue
+        host = os.path.normpath(host)
+        if target == host:
+            return entry
+        if target.startswith(host.rstrip("/") + "/"):
+            return os.path.join(entry, os.path.relpath(target, host))
+    return None
+
+
 def _pretty_path_for_display(path: str) -> str:
     """Convert a filesystem path to a human-friendly display string.
 
