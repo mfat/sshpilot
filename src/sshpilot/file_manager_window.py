@@ -1671,7 +1671,7 @@ class FileManagerWindow(Adw.Window):
             else:
                 destination = self._normalize_local_path(destination or pane.toolbar.path_entry.get_text() or "/")
         else:
-            destination = pane.toolbar.path_entry.get_text() or "/"
+            destination = destination or self._pane_directory_text(pane) or "/"
 
         move_requested = force_move or self._clipboard_operation == "cut"
         source_pane = self._clipboard_source_pane

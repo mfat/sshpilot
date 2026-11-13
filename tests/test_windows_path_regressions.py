@@ -321,3 +321,54 @@ def test_windows_backup_config_is_rebased_with_either_separator(monkeypatch):
 
     assert r"IdentityFile C:\Users\bob\.ssh\id_ed25519" "\n" in out
     assert "Include C:/Users/bob/.ssh/extra.conf\n" in out
+
+
+# --- transfers: Windows folder uploads -----------------------------------
+
+
+def test_folder_upload_keeps_nested_folders_on_the_server(monkeypatch):
+    import stat as stat_mod
+
+    from sshpilot.daemon import transfer_runtime
+    from sshpilot.daemon.transfer_runtime import TransferRuntime
+
+    root = "C:\\Users\\me\\proj"
+    tree = [
+        (root, ["a"], ["top.txt"]),
+        (root + "\\a", ["b"], []),
+        (root + "\\a\\b", [], ["deep.txt"]),
+    ]
+    _windows_os_path(monkeypatch, transfer_runtime)
+    fake_os = transfer_runtime.os
+    fake_os.lstat = lambda path: SimpleNamespace(st_mode=stat_mod.S_IFDIR)
+    fake_os.walk = lambda path: iter(tree)
+    monkeypatch.setattr(ntpath, "getsize", lambda path: 1)
+    runtime = SimpleNamespace(
+        _check_cancel=lambda record: None,
+        _join_remote=TransferRuntime._join_remote,
+    )
+
+    directories, files, _total = TransferRuntime._scan_upload_tree(
+        runtime, None, root, "/home/u/proj"
+    )
+
+    assert directories == [
+        (0, "/home/u/proj"),
+        (1, "/home/u/proj/a"),
+        (2, "/home/u/proj/a/b"),
+    ]
+    assert [remote for _local, remote, _size in files] == [
+        "/home/u/proj/top.txt",
+        "/home/u/proj/a/b/deep.txt",
+    ]
+
+
+def test_scp_labels_show_remote_paths_as_the_server_gives_them(monkeypatch):
+    from sshpilot import scp_window
+
+    monkeypatch.setattr(
+        scp_window, "_pretty_path_for_display", lambda path: path.replace("/", "\\")
+    )
+
+    assert scp_window._display_scp_path("/home/u", local=False) == "/home/u"
+    assert scp_window._display_scp_path_list(("/a", "/b"), local=False) == "/a, /b"

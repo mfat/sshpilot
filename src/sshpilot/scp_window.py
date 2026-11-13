@@ -57,12 +57,19 @@ def _format_scp_start_error(error: BaseException) -> str:
     return str(error)
 
 
-def _display_scp_path(path: str) -> str:
-    """Return a UI-safe, human-friendly path for SCP status labels."""
-    return safe_display_text(_pretty_path_for_display(str(path)))
+def _display_scp_path(path: str, *, local: bool = True) -> str:
+    """Return a UI-safe, human-friendly path for SCP status labels.
+
+    Remote paths are shown as the server gives them: GLib's local display
+    form would turn ``/home/u`` into ``\\home\\u`` on Windows.
+    """
+    shown = _pretty_path_for_display(str(path)) if local else str(path)
+    return safe_display_text(shown)
 
 
-def _display_scp_path_list(paths: Tuple[str, ...] | List[str] | str) -> str:
+def _display_scp_path_list(
+    paths: Tuple[str, ...] | List[str] | str, *, local: bool = True
+) -> str:
     """Format one or more SCP source paths for display."""
     if isinstance(paths, str):
         items = [part.strip() for part in paths.split(", ") if part.strip()]
@@ -73,8 +80,8 @@ def _display_scp_path_list(paths: Tuple[str, ...] | List[str] | str) -> str:
     if not items:
         return ""
     if len(items) == 1:
-        return _display_scp_path(items[0])
-    return ", ".join(_display_scp_path(item) for item in items)
+        return _display_scp_path(items[0], local=local)
+    return ", ".join(_display_scp_path(item, local=local) for item in items)
 
 
 def _format_scp_byte_count(size_bytes: int) -> str:
@@ -1282,8 +1289,11 @@ class ScpWindowController:
 
         locate_btn.connect("clicked", _on_locate_clicked)
 
-        initial_source = _display_scp_path_list(tuple(str(s) for s in sources))
-        initial_destination = _display_scp_path(str(destination))
+        upload = direction == "upload"
+        initial_source = _display_scp_path_list(
+            tuple(str(s) for s in sources), local=upload
+        )
+        initial_destination = _display_scp_path(str(destination), local=not upload)
         from_label.set_text(_("From: {path}").format(path=initial_source))
         from_label.set_tooltip_text(initial_source)
         to_label.set_text(_("To: {path}").format(path=initial_destination))
@@ -1306,10 +1316,12 @@ class ScpWindowController:
 
         def _update_path_labels(summary) -> None:
             source = _display_scp_path_list(
-                getattr(summary, "source_display", "") or initial_source
+                getattr(summary, "source_display", "") or initial_source,
+                local=upload,
             )
             dest = _display_scp_path(
-                getattr(summary, "destination_display", "") or initial_destination
+                getattr(summary, "destination_display", "") or initial_destination,
+                local=not upload,
             )
             if source:
                 from_label.set_text(_("From: {path}").format(path=source))

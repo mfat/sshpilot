@@ -1243,7 +1243,10 @@ class TransferRuntime:
         total = 0
         for root, dirs, names in os.walk(local_root):
             rel_dir = os.path.relpath(root, local_root)
-            remote_dir = remote_root if rel_dir == "." else self._join_remote(remote_root, rel_dir)
+            # relpath uses the local separator; on Windows "a\\b" must become
+            # two remote folders, not one named "a\\b".
+            remote_rel = rel_dir.replace(os.sep, "/")
+            remote_dir = remote_root if rel_dir == "." else self._join_remote(remote_root, remote_rel)
             depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
             directories.append((depth, remote_dir))
             for name in names:
