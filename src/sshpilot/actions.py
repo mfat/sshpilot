@@ -41,48 +41,6 @@ HEADERBAR_VISIBILITY_ACTIONS = (
 )
 
 
-#: View ▸ Status Bar, mirrored by the Settings ▸ Interface switch.
-STATUS_BAR_ACTION = 'show-status-bar'
-STATUS_BAR_SETTING = 'ui.show_status_bar'
-#: Opens the notification center (the status bar's bell).
-NOTIFICATIONS_ACTION = 'show-notifications'
-
-
-def _register_status_bar_actions(window):
-    """``win.show-status-bar`` (stateful) and ``win.show-notifications``."""
-    config = getattr(window, 'config', None)
-    enabled = bool(config.get_setting(STATUS_BAR_SETTING, True)) if config else True
-    action = Gio.SimpleAction.new_stateful(
-        STATUS_BAR_ACTION, None, GLib.Variant.new_boolean(enabled)
-    )
-
-    def _on_change_state(current_action, value):
-        visible = value.get_boolean()
-        if config:
-            config.set_setting(STATUS_BAR_SETTING, visible)
-        current_action.set_state(GLib.Variant.new_boolean(visible))
-        updater = getattr(window, 'update_status_bar_visibility', None)
-        if callable(updater):
-            updater()
-
-    action.connect('change-state', _on_change_state)
-    window.add_action(action)
-    window._status_bar_action = action
-
-    notifications = Gio.SimpleAction.new(NOTIFICATIONS_ACTION, None)
-
-    def _on_notifications(_action, _param):
-        opener = getattr(window, 'show_notification_center', None)
-        if callable(opener):
-            try:
-                opener()
-            except Exception:
-                logger.error("Could not open the notification center", exc_info=True)
-
-    notifications.connect('activate', _on_notifications)
-    window.add_action(notifications)
-
-
 def _register_headerbar_visibility_actions(window):
     """Expose the Preferences header-bar switches as stateful menu actions."""
     window._headerbar_visibility_actions = {}
@@ -1565,7 +1523,6 @@ def register_fullscreen_action(window):
 def register_window_actions(window):
     """Register SimpleActions with the provided main window."""
     _register_headerbar_visibility_actions(window)
-    _register_status_bar_actions(window)
 
     # Context menu action to force opening a new connection tab
     window.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)

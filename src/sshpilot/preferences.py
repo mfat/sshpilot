@@ -2116,39 +2116,6 @@ class PreferencesWindow(Adw.Window):
 
         interface_page.add(headerbar_group)
 
-        # Status bar and the notification center's news feed.
-        status_group = Adw.PreferencesGroup(title=_("Status Bar"))
-        status_bar_switch = Adw.SwitchRow()
-        status_bar_switch.set_title(_("Show Status Bar"))
-        status_bar_switch.set_subtitle(
-            _("Show the bar at the bottom of the window with the log and notification buttons")
-        )
-        status_bar_switch.set_active(
-            bool(self.config.get_setting('ui.show_status_bar', True))
-        )
-
-        def _on_status_bar_toggled(row, _param):
-            self.config.set_setting('ui.show_status_bar', bool(row.get_active()))
-            window = self.parent_window
-            if window is not None and hasattr(window, 'update_status_bar_visibility'):
-                window.update_status_bar_visibility()
-
-        status_bar_switch.connect('notify::active', _on_status_bar_toggled)
-        status_group.add(status_bar_switch)
-
-        news_switch = Adw.SwitchRow()
-        news_switch.set_title(_("Show News and Announcements"))
-        news_switch.set_subtitle(
-            _("Check the SSH Pilot project for announcements when the app starts")
-        )
-        news_switch.set_active(bool(self.config.get_setting('ui.show_news', True)))
-        news_switch.connect(
-            'notify::active',
-            lambda row, _p: self.config.set_setting('ui.show_news', bool(row.get_active())),
-        )
-        status_group.add(news_switch)
-        interface_page.add(status_group)
-
         # Tips group, just above Window. Lets users
         # re-enable the tips banner after dismissing it with "Don't show again".
         tips_group = Adw.PreferencesGroup(title=_("Tips"))

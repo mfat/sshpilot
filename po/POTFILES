@@ -40,8 +40,6 @@ src/sshpilot/gtk/login_profile_messages.py
 src/sshpilot/gtk/plugin_session_failure_messages.py
 src/sshpilot/gtk/protocol_suggestion_messages.py
 src/sshpilot/gtk/pre_command_messages.py
-src/sshpilot/gtk/notification_messages.py
-src/sshpilot/gtk/status_bar_messages.py
 src/sshpilot/gtk/scp_failure_messages.py
 src/sshpilot/gtk/session_failure_messages.py
 src/sshpilot/gtk/secrets_interaction_presenter.py
@@ -98,8 +96,6 @@ src/sshpilot/shortcut_editor.py
 src/sshpilot/settings_index.py
 src/sshpilot/shutdown.py
 src/sshpilot/sidebar.py
-src/sshpilot/status_bar.py
-src/sshpilot/notification_center.py
 src/sshpilot/sftp_service_controller.py
 src/sshpilot/split_view.py
 src/sshpilot/ssh_connection_validator.py

@@ -468,8 +468,6 @@ class SshPilotApplication(Adw.Application):
 
         # Initialize window reference
         self.window = None
-        # Notification center history; created on first use (status bar bell).
-        self._notification_store = None
 
         # Emit startup diagnostics once the daemon client selection has settled
         # (see _schedule_startup_diagnostics). The secrets diagnostic reads the
@@ -1482,42 +1480,9 @@ class SshPilotApplication(Adw.Application):
         except ValueError:
             pass
 
-    @property
-    def notification_store(self):
-        """The app-wide notification history behind the status bar's bell."""
-        store = getattr(self, '_notification_store', None)
-        if store is None:
-            from .notification_store import NotificationStore, default_store_path
-
-            store = NotificationStore(default_store_path())
-            self._notification_store = store
-        return store
-
-    def notify_center(self, code, **params):
-        """Record a catalogued entry in the notification center (see
-        ``gtk/notification_messages.py``). Returns the entry id or None."""
-        return self.notification_store.notify(code, **params)
-
-    def post_status(self, code, **params):
-        """Show a catalogued message (see ``gtk/status_bar_messages.py``) in
-        the active main window's status bar."""
-        window = self.get_active_window()
-        controller = getattr(window, 'status_bar_controller', None)
-        if controller is None:
-            window = self.window
-            controller = getattr(window, 'status_bar_controller', None)
-        if controller is not None:
-            controller.post(code, **params)
-
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
-        store = getattr(self, '_notification_store', None)
-        if store is not None:
-            try:
-                store.flush()
-            except Exception:
-                logger.debug("Failed to save notification history", exc_info=True)
         try:
             from .logging_support import stop_daemon_log_forwarder
 
