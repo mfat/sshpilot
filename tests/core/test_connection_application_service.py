@@ -1163,6 +1163,32 @@ def test_effective_config_reports_what_an_earlier_block_decides(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_earlier_directives_survive_a_config_openssh_rejects(tmp_path):
+    """A line OpenSSH cannot parse makes `ssh -G` fail, so there is no
+    comparison. The earlier lines are read from the file and are still
+    reported, without the unparseable line posing as an option."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User deploy\n    Port 2222\n *   IdentityAgent none\n\n"
+        "Host web\n    HostName web.example.com\n    User admin\n",
+        encoding="utf-8",
+    )
+    record = _record(record_id="web", nickname="web", host="web", source=str(root))
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    result = service.get_effective_config(ConnectionId("web"))
+
+    assert result.available is False
+    earlier = {item.key: item for item in result.earlier}
+    assert set(earlier) == {"user", "port"}
+    assert earlier["port"].value == "2222"
+    assert earlier["port"].line == 3
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
 def test_earlier_directives_for_a_host_not_saved_yet(tmp_path):
     """A new block is appended to the end of the root file, so every line that
     applies to the alias comes before it: both `Host *` blocks decide."""

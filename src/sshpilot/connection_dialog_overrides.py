@@ -465,7 +465,12 @@ class ConnectionDialogOverridesMixin:
                     from .api.connection_identity import connection_id_for
 
                     result = client.get_effective_config(connection_id_for(connection))
-                    if getattr(result, "available", False):
+                    # The earlier lines come from the files, so they are
+                    # reported even when OpenSSH rejects the configuration
+                    # and the comparison itself is unavailable.
+                    if getattr(result, "available", False) or getattr(
+                        result, "earlier", None
+                    ):
                         earlier = earlier_map(result)
                 else:
                     earlier = earlier_map(

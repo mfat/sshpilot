@@ -1144,6 +1144,7 @@ class ConnectionApplicationService:
             not bool(own_lines),
         )
         earlier: Tuple[EarlierDirective, ...] = ()
+        resolved: Dict[str, Any] = {}
         try:
             # What a launch sends: Settings ▸ SSH Options, then the app's
             # keepalive when the configuration itself sets none.
@@ -1161,17 +1162,6 @@ class ConnectionApplicationService:
                 include_system_defaults_in_display=include_system_defaults,
                 overrides=overrides,
             )
-            if not transient:
-                earlier = tuple(
-                    EarlierDirective(
-                        key=str(item["key"]),
-                        value=str(item["value"]),
-                        block=str(item["block"]),
-                        file=str(item["file"]),
-                        line=int(item["line"]),
-                    )
-                    for item in earlier_directives(host, compare_file, resolved)
-                )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
                 "changes=%d own=%d full=%d",
@@ -1185,10 +1175,30 @@ class ConnectionApplicationService:
         except Exception:
             logger.debug("Daemon effective-config resolution failed", exc_info=True)
             result = None
+        if not transient:
+            # Read from the files, so it is still known when OpenSSH rejects
+            # the configuration (a line it cannot parse) and the comparison
+            # above is unavailable. *resolved* is then empty, which only
+            # leaves out Match blocks that need OpenSSH's evidence.
+            try:
+                earlier = tuple(
+                    EarlierDirective(
+                        key=str(item["key"]),
+                        value=str(item["value"]),
+                        block=str(item["block"]),
+                        file=str(item["file"]),
+                        line=int(item["line"]),
+                    )
+                    for item in earlier_directives(host, compare_file, resolved)
+                )
+            except Exception:
+                logger.debug("Earlier-directive scan failed", exc_info=True)
+                earlier = ()
         after_generation = self._repository.snapshot().generation
         # A reload/mode transition raced the resolver.  Never publish a
         # comparison tagged with the pre-transition snapshot.
         if before_generation != after_generation:
+            earlier = ()
             logger.debug(
                 "Effective-config generation raced: id=%s generation=%s->%s, "
                 "discarding result",
@@ -1203,6 +1213,7 @@ class ConnectionApplicationService:
                 host=host,
                 available=False,
                 generation=max(0, int(after_generation)),
+                earlier=earlier,
             )
         return EffectiveConfigComparison(
             connection_id=connection_id,

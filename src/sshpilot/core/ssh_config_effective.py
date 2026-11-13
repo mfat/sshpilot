@@ -815,6 +815,9 @@ def earlier_directives(
                 continue
             if keyword in ACCUMULATING_DIRECTIVES:
                 continue
+            if not keyword.isalnum():
+                # Not an option name (a stray "*"): OpenSSH rejects the line.
+                continue
             value = _unquoted(remainder)
             if not value:
                 continue
