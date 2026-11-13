@@ -1708,7 +1708,7 @@ class FileManagerWindow(Adw.Window):
                 if name:
                     current_dir = pane.toolbar.path_entry.get_text() or "/"
                     if pane is self._left_pane:
-                        target_dir = self._normalize_local_path(current_dir)
+                        target_dir = self._local_pane_directory(pane)
                         new_path = os.path.join(target_dir, name)
                     else:
                         new_path = posixpath.join(current_dir or "/", name)
@@ -1769,7 +1769,7 @@ class FileManagerWindow(Adw.Window):
                 if name:
                     current_dir = pane.toolbar.path_entry.get_text() or "/"
                     if pane is self._left_pane:
-                        target_dir = self._normalize_local_path(current_dir)
+                        target_dir = self._local_pane_directory(pane)
                         new_path = os.path.join(target_dir, name)
                         try:
                             with open(new_path, "x"):
@@ -3668,6 +3668,20 @@ class FileManagerWindow(Adw.Window):
     def _normalize_local_path(path: Optional[str]) -> str:
         expanded = os.path.expanduser(path or "/")
         return os.path.abspath(expanded)
+
+    def _local_pane_directory(self, pane) -> str:
+        """The folder the local pane is showing, as a path the app can write to.
+
+        The path bar shows a display path: under Flatpak a document-portal
+        folder reads as its real host path (``/home/u/Downloads``), which
+        inside the sandbox is an empty, throwaway directory. Writing there
+        "succeeds" and the result never reaches the host (#1376), so prefer
+        the pane's own current path and only fall back to the bar's text.
+        """
+        current = getattr(pane, "_current_path", None)
+        if current:
+            return current
+        return self._normalize_local_path(pane.toolbar.path_entry.get_text())
 
 
 def launch_file_manager_window(
