@@ -118,8 +118,6 @@ PLUGIN_FACADE_SURFACE = {
     "_UiFacade.register_page": "legitimate frontend/platform-local",
     "_UiFacade.open_page": "legitimate frontend/platform-local",
     "_UiFacade.notify": "legitimate frontend/platform-local",
-    "_UiFacade.show_status": "legitimate frontend/platform-local",
-    "_UiFacade.add_notification": "legitimate frontend/platform-local",
     "_UiFacade.register_connection_action": "legitimate frontend/platform-local",
     "_UiFacade.open_web_tab": "legitimate frontend/platform-local",
     "_SecretStore.get": "API/daemon owned",
@@ -143,7 +141,7 @@ PLUGIN_FACADE_CLASSES = frozenset(
     {identity.split(".", 1)[0] for identity in PLUGIN_FACADE_SURFACE}
 )
 
-# Supporting implementation identities are kept separate from the 55 public
+# Supporting implementation identities are kept separate from the 53 public
 # facade identities.  They are still closure blockers and must remain visible
 # to the guard until the corresponding facade capability is migrated.
 PLUGIN_SUPPORTING_IMPLEMENTATIONS = {

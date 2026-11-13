@@ -192,26 +192,6 @@ class UiHost:
             return
         self._show_toast(message, timeout)
 
-    def show_status(self, message: str, *, level: str = "info",
-                    timeout: Optional[int] = 5, plugin_id: str = "") -> None:
-        controller = getattr(self._window, "status_bar_controller", None)
-        if controller is None:
-            logger.debug("No status bar yet; dropping plugin %s status", plugin_id)
-            return
-        controller.show_text(message, level=level, timeout_s=timeout)
-
-    def add_notification(self, title: str, *, details: str = "",
-                         severity: str = "info", plugin_id: str = "") -> None:
-        # Reached through the window's application rather than an import: this
-        # module is also loaded by the daemon, which must not pull in the
-        # notification store's GTK-side catalogue.
-        app = self._window.get_application() if self._window is not None else None
-        store = getattr(app, "notification_store", None)
-        if store is None:
-            logger.debug("No notification store; dropping plugin %s entry", plugin_id)
-            return
-        store.add_text_entry(title, details=details, severity=severity, source=plugin_id)
-
     # --- binding ------------------------------------------------------
     def bind_window(self, window) -> None:
         self._window = window

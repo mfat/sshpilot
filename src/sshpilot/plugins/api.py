@@ -67,8 +67,6 @@ logger = logging.getLogger(__name__)
 # 1.16: ProtocolBackend.summary(data) — the one-line target shown under a
 #      connection's name; FieldSpec.suggest — live suggestions for a text
 #      field; PluginContext.for_editor.
-# 1.17: ctx.ui.show_status / ctx.ui.add_notification — a message in the main
-#      window's status bar, and an entry in the notification center.
 #
 # Headless contracts (Capability, SpawnSpec, FieldSpec, Events, …) live in
 # ``sshpilot.core.plugins``; this module re-exports them for plugin compatibility.
@@ -281,29 +279,6 @@ class _UiFacade:
         """Show a transient in-app toast. Valid after ``app_started``;
         earlier calls are queued."""
         self._ui.notify(message, timeout)
-
-    def show_status(self, message: str, *, level: str = "info",
-                    timeout: Optional[int] = 5) -> None:
-        """Show ``message`` in the main window's status bar (API >= 1.17).
-
-        ``level`` is ``info``, ``success``, ``warning`` or ``error``;
-        ``timeout`` is in seconds (``None`` keeps it until the next message).
-        The text is shown as given, so translate it in the plugin. Dropped
-        when there is no window yet."""
-        show = getattr(self._ui, "show_status", None)
-        if callable(show):
-            show(str(message), level=level, timeout=timeout, plugin_id=self._plugin_id)
-
-    def add_notification(self, title: str, *, details: str = "",
-                         severity: str = "info") -> None:
-        """Record an entry in the notification center's Activity tab
-        (API >= 1.17). ``severity`` is ``info``, ``success``, ``important``,
-        ``warning``, ``error`` or ``critical``. Text is shown and stored as
-        given (translate it in the plugin; never include secrets)."""
-        add = getattr(self._ui, "add_notification", None)
-        if callable(add):
-            add(str(title), details=str(details or ""), severity=severity,
-                plugin_id=self._plugin_id)
 
     def register_connection_action(self, action_id: str, label: str,
                                    icon_name: str,
