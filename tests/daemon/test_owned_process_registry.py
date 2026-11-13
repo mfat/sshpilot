@@ -273,3 +273,82 @@ def test_registry_survives_the_process_that_wrote_it(tmp_path):
         assert [item.pid for item in reopened.live_entries()] == [child.pid]
     finally:
         _reap(child)
+
+
+def test_a_registry_lost_to_power_failure_reads_as_corrupt(tmp_path):
+    """The bytes found in the field: a write the disk never received.
+
+    A VM powered off after the rename but before the data was flushed left
+    the registry as 235 zero bytes. That must still refuse to read as empty.
+    """
+    from sshpilot.daemon.process_registry import RegistryCorrupt
+
+    path = tmp_path / "processes.json"
+    path.write_bytes(b"\x00" * 235)
+    with pytest.raises(RegistryCorrupt):
+        OwnedProcessRegistry(path).entries()
+
+
+def test_only_an_undecodable_registry_is_quarantined(tmp_path):
+    """Another build's valid-looking record is kept; zeros are set aside."""
+    path = tmp_path / "processes.json"
+    path.write_text(json.dumps({"version": 999, "entries": []}), encoding="utf-8")
+    assert OwnedProcessRegistry(path).quarantine_if_corrupt() is None
+    assert path.exists()
+
+    path.write_bytes(b"\x00" * 235)
+    moved = OwnedProcessRegistry(path).quarantine_if_corrupt()
+    assert moved == path.with_name(path.name + ".corrupt")
+    assert moved.read_bytes() == b"\x00" * 235
+    assert not path.exists()
+    assert OwnedProcessRegistry(path).entries() == ()
+
+
+def test_a_starting_daemon_recovers_from_a_corrupt_registry(tmp_path):
+    """Without this, every quit was refused for good after one power cut."""
+    from sshpilot.daemon import process_registry
+    from sshpilot.daemon.server import DaemonServer
+
+    socket_path = tmp_path / "sshpilotd.sock"
+    path = registry_path_for(socket_path)
+    path.write_bytes(b"\x00" * 235)
+
+    class _Stub:
+        pass
+
+    stub = _Stub()
+    stub.socket_path = socket_path
+    try:
+        DaemonServer._install_process_registry(stub)
+        assert stub._process_registry is not None
+        assert process_registry.active_registry() is stub._process_registry
+        assert stub._process_registry.entries() == ()
+        assert path.with_name(path.name + ".corrupt").exists()
+    finally:
+        process_registry.set_active_registry(None)
+
+
+def test_registry_writes_reach_the_disk_before_the_rename(tmp_path, monkeypatch):
+    """The rename is journaled, the data is not: fsync must come first."""
+    calls = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def fsync(fd):
+        calls.append("fsync")
+        return real_fsync(fd)
+
+    def replace(src, dst):
+        calls.append("replace")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    process = _sleeper()
+    try:
+        OwnedProcessRegistry(tmp_path / "processes.json").register(
+            process.pid, kind=KIND_SESSION
+        )
+    finally:
+        _reap(process)
+    assert calls.index("fsync") < calls.index("replace")

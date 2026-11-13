@@ -241,10 +241,23 @@ class RegistryUnreadable(RuntimeError):
     """
 
 
+class RegistryCorrupt(RegistryUnreadable):
+    """The registry file exists but its bytes do not decode as a document.
+
+    A subset of :class:`RegistryUnreadable` with one property the others
+    lack: it describes no process at all. Typically it is a write that never
+    reached the disk before a power loss, which NTFS and ext4 can leave as a
+    file of the right length filled with zeros. Nothing in it can ever be
+    proven ours, so a starting daemon may set it aside rather than inherit a
+    registry that blocks every quit for good. An unsupported version or an
+    unusable entry is *not* this: those may be another build's valid record.
+    """
+
+
 class OwnedProcessRegistry:
     """File-backed set of the processes this daemon is responsible for.
 
-    Writes are whole-file and atomic (``os.replace``), which is sufficient
+    Writes are whole-file, flushed to disk, then atomic (``os.replace``), which is sufficient
     because exactly one daemon owns a given socket at a time — the same
     single-instance guarantee the socket bind provides.
 
@@ -322,6 +335,28 @@ class OwnedProcessRegistry:
                 self._write(alive)
             return tuple(alive)
 
+    def quarantine_if_corrupt(self) -> Optional[Path]:
+        """Move an undecodable registry aside. Returns where it went, or ``None``.
+
+        Only for a daemon taking over its endpoint: a corrupt file names no
+        process, so keeping it cannot protect any child — it only makes every
+        later shutdown check fail with no way for the user to recover. The
+        file is renamed, not deleted, so the evidence stays on disk.
+        """
+
+        with self._lock:
+            try:
+                self._read()
+            except RegistryCorrupt:
+                pass
+            except RegistryUnreadable:
+                return None
+            else:
+                return None
+            target = self._path.with_name(self._path.name + ".corrupt")
+            os.replace(self._path, target)
+            return target
+
     def clear(self) -> None:
         with self._lock:
             try:
@@ -345,7 +380,7 @@ class OwnedProcessRegistry:
         try:
             document = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise RegistryUnreadable(
+            raise RegistryCorrupt(
                 "the owned-process registry is corrupt"
             ) from error
         if type(document) is not dict:
@@ -381,10 +416,17 @@ class OwnedProcessRegistry:
                 temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
             )
             try:
-                os.write(descriptor, payload)
+                view = memoryview(payload)
+                while view:
+                    view = view[os.write(descriptor, view):]
+                # Without this, a power loss after the rename can leave the
+                # registry as the right number of zero bytes: the rename is
+                # journaled, the data is not.
+                os.fsync(descriptor)
             finally:
                 os.close(descriptor)
             os.replace(temporary, self._path)
+            _fsync_directory(self._path.parent)
         except OSError:
             try:
                 temporary.unlink()
@@ -393,6 +435,25 @@ class OwnedProcessRegistry:
             # Never swallowed: an unrecorded child is one nothing could prove
             # ownership of afterwards, so the caller has to fail the launch.
             raise
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make a rename in ``directory`` durable, where the platform allows it."""
+
+    if os.name == "nt":
+        # Directories cannot be opened for fsync on Windows; NTFS journals
+        # the rename itself.
+        return
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
 
 
 # The daemon process installs its registry here so the runtimes that spawn
