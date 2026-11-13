@@ -85,7 +85,6 @@ def main() -> int:
         present_daemon_quit_dialog,
         terminate_all_daemon_work,
     )
-    from sshpilot.daemon_session_restore import DaemonSessionRestoreManager
 
     evidence_dir = SMOKE_HOME / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -150,91 +149,8 @@ def main() -> int:
             f"{report.evidence['initial_size']} -> stty 36 100",
         )
 
-        # --- Restore ---
-        session_id = harness.detach_terminal_keep_session(term)
-        # Quit always stops the daemon now; simulate the crash-style exit
-        # that session restore exists for.
-        harness.gui.app._stop_daemon_for_quit = lambda *_a, **_k: None
-        try:
-            harness.gui.shutdown()
-        except Exception:
-            pass
-        harness.gui = None
-        harness.send_input_while_detached(
-            session_id, f"echo REPLAY_{OUTPUT_MARKER}\n"
-        )
-        harness.restart_app(
-            application_id=f"io.github.mfat.sshpilot.p14smoker{os.getpid()}"
-        )
-        win = harness.gui.window
-        win.config.set_setting("terminal.daemon_restore_sessions", True)
-        win.config.set_setting("terminal.daemon_auto_attach", True)
-        harness.start_auth_helper(submit_password=harness.openssh.password)
-        restore = DaemonSessionRestoreManager(win.config)
-        meta = next(
-            m
-            for m in restore.get_restorable_sessions(harness.daemon_client)
-            if str(m.session_id) == session_id
-        )
-        assert restore.restore_session(
-            win, meta, harness.daemon_client, win.client_bridge
-        )
-        harness.pump(500)
-
-        def _ok():
-            t = harness.find_terminal_widget()
-            if t is None or not getattr(t, "_daemon_mode", False):
-                return False
-            if getattr(t, "is_connected", False):
-                return True
-            ctrl = getattr(t, "_daemon_controller", None)
-            if ctrl is None:
-                return False
-            try:
-                from sshpilot.terminal_session_controller import TerminalSessionState
-
-                return ctrl.state in {
-                    TerminalSessionState.ACTIVE,
-                    TerminalSessionState.REPLAYING,
-                }
-            except Exception:
-                return False
-
-        harness.pump_until(_ok, timeout=45.0, label="restored connected")
-        term2 = harness.find_terminal_widget()
-        if not getattr(term2, "has_input_ownership", True):
-            ctrl = getattr(term2, "_daemon_controller", None)
-            if ctrl is not None and hasattr(ctrl, "claim_input"):
-                ctrl.claim_input()
-                harness.pump(300)
-        text_b = harness.wait_for_marker(
-            f"REPLAY_{OUTPUT_MARKER}", terminal=term2, timeout=45.0
-        )
-        report.evidence["restored_terminal"] = True
-        report.evidence["replay_ok"] = f"REPLAY_{OUTPUT_MARKER}" in text_b
-        harness.emit_terminal_input(f"echo LIVE_{OUTPUT_MARKER}\n", term2)
-        text_c = harness.wait_for_marker(
-            f"LIVE_{OUTPUT_MARKER}", terminal=term2, timeout=45.0
-        )
-        report.evidence["live_output_ok"] = f"LIVE_{OUTPUT_MARKER}" in text_c
-        report.add(
-            "gtk_restore",
-            "restore + replay + live",
-            report.evidence["replay_ok"] and report.evidence["live_output_ok"],
-            str(
-                {
-                    k: report.evidence[k]
-                    for k in (
-                        "restored_terminal",
-                        "replay_ok",
-                        "live_output_ok",
-                    )
-                }
-            ),
-        )
-
-        # Close restored session before FM — avoid restore→FM sequencing races.
-        print("[info] preparing file-manager after restore…", flush=True)
+        # Close the terminal session before FM — avoid sequencing races.
+        print("[info] preparing file-manager…", flush=True)
         harness.prepare_file_manager_after_restore()
         print("[info] opening file manager…", flush=True)
 
@@ -457,7 +373,6 @@ def main() -> int:
         "Daemon/API regression": _layer_score(report, "daemon_api"),
         "GTK terminal integration": _layer_score(report, "gtk_terminal"),
         "GTK interaction dialogs": (0, 0),  # exercised via auth helper; GTK dialog suite separate
-        "GTK terminal restoration": _layer_score(report, "gtk_restore"),
         "GTK file-manager integration": _layer_score(report, "gtk_fm"),
         "GTK transfer UI": _layer_score(report, "gtk_transfer"),
         "GTK quit policy": _layer_score(report, "gtk_quit"),
@@ -473,9 +388,6 @@ def main() -> int:
             "terminal_output_visible",
             "terminal_input_verified",
             "terminal_resize_verified",
-            "restored_terminal",
-            "replay_ok",
-            "live_output_ok",
             "fm_connected",
             "listing_model_populated",
         )
@@ -511,9 +423,6 @@ def main() -> int:
         "terminal_output_visible",
         "terminal_input_verified",
         "terminal_resize_verified",
-        "restored_terminal",
-        "replay_ok",
-        "live_output_ok",
         "fm_connected",
         "listing_model_populated",
         "transfer_ui_connected",

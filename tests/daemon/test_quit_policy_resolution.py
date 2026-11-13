@@ -27,8 +27,8 @@ class TestQuitPolicy:
         policy = resolve_tab_close_policy(FakeConfig())
         assert policy == TerminalClosePolicy.TERMINATE
 
-    def test_tab_close_policy_detach(self):
-        """Tab close policy can still be set back to DETACH."""
+    def test_tab_close_policy_retired_detach_terminates(self):
+        """A stored ``detach`` (retired) resolves to TERMINATE."""
         from sshpilot.daemon_terminal_policy import (
             resolve_tab_close_policy,
             TerminalClosePolicy,
@@ -41,7 +41,7 @@ class TestQuitPolicy:
                 return default
 
         policy = resolve_tab_close_policy(FakeConfig())
-        assert policy == TerminalClosePolicy.DETACH
+        assert policy == TerminalClosePolicy.TERMINATE
 
     def test_tab_close_policy_unrecognized_terminates(self):
         """An unrecognized stored value falls back to the terminate default."""

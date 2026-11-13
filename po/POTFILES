@@ -20,7 +20,6 @@ src/sshpilot/connection_sort.py
 src/sshpilot/core/validation/connection.py
 src/sshpilot/daemon_interaction_dialogs.py
 src/sshpilot/daemon_quit_policy.py
-src/sshpilot/daemon_sessions_dialog.py
 src/sshpilot/daemon_sftp_backend.py
 src/sshpilot/daemon_terminal_policy.py
 src/sshpilot/effective_config_dialog.py

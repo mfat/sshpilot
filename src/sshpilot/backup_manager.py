@@ -69,8 +69,9 @@ def _transfer_message(
 # chosen. They are dropped on the way into a backup and kept local on the way
 # out (a backup written before this still carries them).
 #
-# ``terminal.daemon_session_restore_state`` is the list of live daemon sessions
-# to reattach — session ids, the daemon instance id that owns them, and each
+# ``terminal.daemon_session_restore_state`` is no longer written, but older
+# configs still carry it: the list of live daemon sessions to reattach —
+# session ids, the daemon instance id that owns them, and each
 # session's replay sequence number. Every entry is dead the moment that daemon
 # exits, let alone on another machine, so restoring it can only point the app
 # at sessions that do not exist. It is also, by a wide margin, the largest

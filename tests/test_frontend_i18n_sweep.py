@@ -86,19 +86,17 @@ def test_terminal_close_dialog_localizes_copy_and_actions(monkeypatch):
 
     terminal.TerminalWidget._show_daemon_close_dialog(widget)
 
-    assert dialog.heading == "localized:Close Terminal Session"
-    assert dialog.body.startswith("localized:What should happen")
+    assert dialog.heading == "localized:Close Connection?"
+    assert dialog.body == "localized:Closing this tab ends the SSH session."
     assert dialog.responses == {
-        "detach": "localized:Detach",
-        "terminate": "localized:Terminate",
         "cancel": "localized:Cancel",
+        "terminate": "localized:Close",
     }
     assert msgids == [
-        "Close Terminal Session",
-        "What should happen to the remote terminal session?",
-        "Detach",
-        "Terminate",
+        "Close Connection?",
+        "Closing this tab ends the SSH session.",
         "Cancel",
+        "Close",
     ]
 
 

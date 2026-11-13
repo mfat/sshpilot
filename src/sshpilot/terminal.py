@@ -2363,35 +2363,15 @@ class TerminalWidget(Gtk.Box):
                 ) is True:
                     policy = TerminalClosePolicy.TERMINATE
 
-            if policy == TerminalClosePolicy.DETACH:
-                try:
-                    from .daemon_session_restore import DaemonSessionRestoreManager
-
-                    DaemonSessionRestoreManager(self.config).save_session_metadata(
-                        self._daemon_tab_state,
-                        tab_title=getattr(self.connection, "nickname", "Terminal"),
-                    )
-                except Exception:
-                    logger.debug("Failed to persist daemon restore metadata", exc_info=True)
-                self._daemon_controller.detach()
-                logger.debug(f"Detached from daemon session {self._daemon_tab_state.session_id}")
-            elif policy == TerminalClosePolicy.TERMINATE:
-                self._daemon_controller.close()
-                logger.debug(f"Terminated daemon session {self._daemon_tab_state.session_id}")
-            elif policy == TerminalClosePolicy.ASK and not is_quitting:
+            if policy == TerminalClosePolicy.ASK and not is_quitting:
                 self._show_daemon_close_dialog()
                 return  # Dialog will handle the actual close
-            elif is_quitting:
-                # Quit ends every session. Detaching here used to leave the
-                # session (and the daemon holding it) alive after the app was
-                # gone, which is exactly what quit must not do.
-                self._daemon_controller.close()
-                logger.debug(
-                    f"Terminated daemon session {self._daemon_tab_state.session_id} on quit"
-                )
-            else:
-                self._daemon_controller.detach()
-                logger.debug(f"Detached from daemon session {self._daemon_tab_state.session_id}")
+            # Closing a tab or quitting ends the session. Detaching left it
+            # running with nothing able to reach it again (GH #1176).
+            self._daemon_controller.close()
+            logger.debug(
+                f"Terminated daemon session {self._daemon_tab_state.session_id}"
+            )
 
             # Clean up daemon state
             self._uninstall_daemon_backend_io()
@@ -2413,22 +2393,20 @@ class TerminalWidget(Gtk.Box):
 
             root = self.get_root() if hasattr(self, 'get_root') else None
             if not root:
-                # Fall back to detach if no parent window
-                self._daemon_controller.detach()
+                # Nothing to ask over: close, as the tab is going away.
+                self._on_daemon_close_dialog_response(None, "terminate")
                 return
 
             dialog = Adw.AlertDialog.new(
-                _("Close Terminal Session"),
-                _("What should happen to the remote terminal session?"),
+                _("Close Connection?"),
+                _("Closing this tab ends the SSH session."),
             )
 
-            dialog.add_response("detach", _("Detach"))
-            dialog.add_response("terminate", _("Terminate"))
             dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("terminate", _("Close"))
 
             dialog.set_response_appearance("terminate", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_response_appearance("detach", Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response("detach")
+            dialog.set_default_response("terminate")
             dialog.set_close_response("cancel")
 
             dialog.connect("response", self._on_daemon_close_dialog_response)
@@ -2436,16 +2414,12 @@ class TerminalWidget(Gtk.Box):
 
         except Exception as e:
             logger.error(f"Failed to show daemon close dialog: {e}")
-            # Fall back to detach on error
-            self._daemon_controller.detach()
+            self._on_daemon_close_dialog_response(None, "terminate")
 
     def _on_daemon_close_dialog_response(self, dialog, response):
         """Handle daemon close dialog response."""
         try:
-            if response == "detach":
-                self._daemon_controller.detach()
-                logger.debug(f"User chose to detach from daemon session {self._daemon_tab_state.session_id}")
-            elif response == "terminate":
+            if response == "terminate":
                 self._daemon_controller.close()
                 logger.debug(f"User chose to terminate daemon session {self._daemon_tab_state.session_id}")
             elif response == "cancel":

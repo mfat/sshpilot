@@ -1185,33 +1185,34 @@ class PreferencesWindow(Adw.Window):
             terminal_page.add(terminal_choice_group)
 
     def _add_terminal_daemon_group(self, terminal_page):
-        """Add the Daemon Terminal Settings group."""
-        daemon_group = Adw.PreferencesGroup(title=_("Daemon Terminal Settings"))
-        daemon_group.set_description(
-            _("Configure daemon-backed SSH terminals for better session management")
+        """Add the Closing Connections and Background Service groups."""
+        from .daemon_terminal_policy import (
+            effective_idle_shutdown_seconds,
+            resolve_tab_close_policy,
+            TerminalClosePolicy,
         )
 
-        # Tab close policy
+        closing_group = Adw.PreferencesGroup(title=_("Closing Tabs and Quitting"))
+
+        # Tab close policy. Detach is retired (GH #1176): it left the
+        # session running with nothing able to reach it again.
         self.tab_close_policy_row = Adw.ComboRow()
         self.tab_close_policy_row.set_title(_("Tab close policy"))
         self.tab_close_policy_row.set_subtitle(
-            _("Action when closing daemon-backed terminal tabs")
+            _("What happens to the SSH session when you close its tab")
         )
 
         policy_model = Gtk.StringList()
-        policy_model.append(_("Detach (keep session running)"))
         policy_model.append(_("Terminate (end session)"))
         policy_model.append(_("Ask each time"))
         self.tab_close_policy_row.set_model(policy_model)
 
-        # Default matches resolve_tab_close_policy: closing a tab ends the session.
-        current_policy = self.config.get_setting(
-            'terminal.daemon_tab_close_policy', 'terminate'
+        current_policy = resolve_tab_close_policy(self.config)
+        self.tab_close_policy_row.set_selected(
+            1 if current_policy is TerminalClosePolicy.ASK else 0
         )
-        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 1)
-        self.tab_close_policy_row.set_selected(policy_index)
         self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
-        daemon_group.add(self.tab_close_policy_row)
+        closing_group.add(self.tab_close_policy_row)
 
         # App quit policy
         self.app_close_policy_row = Adw.ComboRow()
@@ -1234,32 +1235,16 @@ class PreferencesWindow(Adw.Window):
         self.app_close_policy_row.connect(
             'notify::selected', self.on_app_close_policy_changed
         )
-        daemon_group.add(self.app_close_policy_row)
+        closing_group.add(self.app_close_policy_row)
+        terminal_page.add(closing_group)
 
-        # Session restore
-        self.restore_sessions_switch = Adw.SwitchRow()
-        self.restore_sessions_switch.set_title(_("Restore daemon sessions on startup"))
-        self.restore_sessions_switch.set_subtitle(
-            _("Automatically reattach to daemon sessions from previous session")
-        )
-        from .daemon_terminal_policy import (
-            RESTORE_SESSIONS_DEFAULT,
-            RESTORE_SESSIONS_SETTING,
-        )
+        daemon_group = Adw.PreferencesGroup(title=_("Background Service"))
 
-        restore_sessions_active = bool(
-            self.config.get_setting(RESTORE_SESSIONS_SETTING, RESTORE_SESSIONS_DEFAULT)
-        )
-        self.restore_sessions_switch.set_active(restore_sessions_active)
-        self.restore_sessions_switch.connect(
-            'notify::active', self.on_restore_sessions_toggled
-        )
-        daemon_group.add(self.restore_sessions_switch)
-
-        # Idle shutdown (seconds); 0 disables.
+        # Idle shutdown (seconds); 0 disables. Shows the value the service
+        # really uses, which differs per platform when unset.
         self.daemon_idle_timeout_row = Adw.SpinRow(
             adjustment=Gtk.Adjustment(
-                value=float(self.config.get_setting('daemon.idle_shutdown_seconds', 300)),
+                value=float(effective_idle_shutdown_seconds(self.config)),
                 lower=0,
                 upper=86400,
                 step_increment=30,
@@ -1267,9 +1252,10 @@ class PreferencesWindow(Adw.Window):
             ),
             digits=0,
         )
-        self.daemon_idle_timeout_row.set_title(_("Daemon idle shutdown (seconds)"))
+        self.daemon_idle_timeout_row.set_title(_("Idle shutdown (seconds)"))
         self.daemon_idle_timeout_row.set_subtitle(
-            _("Exit when idle with no clients or live resources. 0 keeps the daemon running.")
+            _("Stop the background service after it has been unused this long. "
+              "0 keeps it running.")
         )
         self.daemon_idle_timeout_row.connect(
             'notify::value', self.on_daemon_idle_timeout_changed
@@ -1277,7 +1263,7 @@ class PreferencesWindow(Adw.Window):
         daemon_group.add(self.daemon_idle_timeout_row)
 
         self.daemon_status_row = Adw.ActionRow()
-        self.daemon_status_row.set_title(_("Daemon status"))
+        self.daemon_status_row.set_title(_("Service status"))
         self.daemon_status_row.set_subtitle(_("Not queried yet"))
         refresh_btn = Gtk.Button(label=_("Refresh"))
         refresh_btn.set_valign(Gtk.Align.CENTER)
@@ -1286,10 +1272,10 @@ class PreferencesWindow(Adw.Window):
         daemon_group.add(self.daemon_status_row)
 
         restart_row = Adw.ActionRow()
-        restart_row.set_title(_("Restart daemon"))
+        restart_row.set_title(_("Restart background service"))
         restart_row.set_subtitle(
-            _("Stops the daemon and reconnects automatically. "
-              "Live sessions cannot survive a restart.")
+            _("Stops the background service and reconnects automatically. "
+              "Open connections are closed.")
         )
         restart_btn = Gtk.Button(label=_("Restart"))
         restart_btn.set_valign(Gtk.Align.CENTER)
@@ -4439,7 +4425,7 @@ class PreferencesWindow(Adw.Window):
     def on_tab_close_policy_changed(self, row, _pspec):
         """Persist the tab close policy preference."""
         try:
-            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
+            policy_map = {0: 'terminate', 1: 'ask'}
             policy = policy_map.get(row.get_selected(), 'terminate')
             self.config.set_setting('terminal.daemon_tab_close_policy', policy)
         except Exception as exc:
@@ -4453,13 +4439,6 @@ class PreferencesWindow(Adw.Window):
             self.config.set_setting('terminal.daemon_app_close_policy', policy)
         except Exception as exc:
             logger.error("Failed to update app close policy: %s", exc)
-
-    def on_restore_sessions_toggled(self, switch, _pspec):
-        """Persist the restore sessions preference."""
-        try:
-            self.config.set_setting('terminal.daemon_restore_sessions', bool(switch.get_active()))
-        except Exception as exc:
-            logger.error("Failed to update restore sessions setting: %s", exc)
 
     def on_daemon_idle_timeout_changed(self, row, _pspec):
         try:
@@ -4522,10 +4501,10 @@ class PreferencesWindow(Adw.Window):
 
     def on_daemon_restart_clicked(self, _button):
         dialog = Adw.AlertDialog(
-            heading=_("Restart the local daemon?"),
+            heading=_("Restart the background service?"),
             body=_(
-                "Live terminal sessions, SFTP services, transfers, and forwards "
-                "owned by this daemon will be lost. They cannot survive a restart."
+                "Open terminal sessions, file browser connections, transfers "
+                "and port forwards will be closed."
             ),
         )
         dialog.add_response('cancel', _("Cancel"))

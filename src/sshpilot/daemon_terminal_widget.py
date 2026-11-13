@@ -181,5 +181,5 @@ class DaemonTerminalWidget(Gtk.Box):
         self._display_feed_pause.reset()
         self._terminal.disable_grid_tracking()
         self._interaction_dialogs.close()
-        # Detach by default so experimental teardown matches production policy.
-        self._controller.detach()
+        # End the session, as closing a production tab does.
+        self._controller.close()

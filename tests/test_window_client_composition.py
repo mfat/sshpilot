@@ -318,7 +318,6 @@ def test_apply_client_selection_uses_the_same_helper():
     window._api_client_selection_pending = True
     window._api_client_selection_request = object()
     window.get_application = lambda: None
-    window._maybe_restore_daemon_sessions = lambda: None
     attached = []
     window._attach_client_backed_services = lambda: attached.append(True)
     controller = object()
