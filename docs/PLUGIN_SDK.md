@@ -12,7 +12,7 @@ change without notice.
 > and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.16` (see [Versioning](#9-versioning)).
+- **Current API version:** `1.17` (see [Versioning](#9-versioning)).
 - **Worked examples** — both are **IP/SSH** providers (provision → get an address
   → `add_connection` a normal SSH connection); they differ in how much they do:
   - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — the minimal shape, against a fake provider.
@@ -28,6 +28,8 @@ change without notice.
 | Register a connection protocol (telnet, mosh, …) | `ctx.register_protocol(backend)` |
 | Add a UI page (opens as a tab from the **Tools** menu) | `ctx.ui.register_page(...)` / `ctx.ui.open_page(...)` |
 | Show a transient notification | `ctx.ui.notify(message)` |
+| Show a message in the status bar | `ctx.ui.show_status(message, level=, timeout=)` *(1.17)* |
+| Record an entry in the notification center | `ctx.ui.add_notification(title, details=, severity=)` *(1.17)* |
 | React to app activity | `ctx.events.subscribe(event, callback)` |
 | Create & persist a connection | `ctx.add_connection(data)` |
 | Open a terminal for a connection | `ctx.open_connection(nickname)` |
@@ -206,6 +208,19 @@ SSH and authentication path.
   WebKit tab, falling back to the system browser when WebKit is unavailable.
   Returns `True` when something opened. *(after `app_started`)* Pair the two to
   surface a remote web UI without asking the user to set up a tunnel.
+
+### Status bar & notification center *(API ≥ 1.17)*
+- `ctx.ui.show_status(message, *, level="info", timeout=5)` — show `message` in
+  the main window's status bar. `level` is `info`, `success`, `warning` or
+  `error`; `timeout` is seconds (`None` keeps it until the next message).
+  Dropped when no window exists yet. *(after `app_started`)*
+- `ctx.ui.add_notification(title, *, details="", severity="info")` — record an
+  entry in the notification center's Activity tab (the bell in the status bar
+  shows an unread count). `severity` is `info`, `success`, `important`,
+  `warning`, `error` or `critical`. Entries are kept across restarts, so never
+  put a secret in them.
+
+Both show your text as given: translate it in the plugin.
 
 ### Connection reuse — nothing to do *(was API 1.9)*
 `acquire_multiplex(nickname)` / `release_multiplex(nickname)` shipped in 1.9 as an
@@ -439,7 +454,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 16)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 17)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -461,7 +476,7 @@ must be made on the UI thread.
   `run_command_stream` / `run_local_command_stream` (line-oriented streams +
   `StreamHandle.stop()`); `1.14` remote commands, streams, settings and session
   views became daemon-owned, which turned `acquire_multiplex` /
-  `release_multiplex` into no-ops; `1.15` `ProtocolBackend.pre_connect`; `1.16` `ProtocolBackend.summary`, `FieldSpec.suggest`, `PluginContext.for_editor`.
+  `release_multiplex` into no-ops; `1.15` `ProtocolBackend.pre_connect`; `1.16` `ProtocolBackend.summary`, `FieldSpec.suggest`, `PluginContext.for_editor`; `1.17` `ui.show_status`, `ui.add_notification`.
 
 ---
 

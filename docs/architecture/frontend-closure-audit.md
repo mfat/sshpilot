@@ -81,7 +81,7 @@ update both this audit and `tests/architecture/test_frontend_closure.py`.
 | Local forwarding, active route | Docker service links | `PluginContext.ensure_local_forward` | daemon forward runtime via `open_forward`/`get_forward` | `tests/daemon/test_forward_*`, `tests/integration/test_forward_phase10.py` | API/daemon owned | Current production policy requires the daemon route and rejects silent fallback. |
 | Local forwarding, daemon-only route | `PluginContext.ensure_local_forward` | `open_forward` / `get_forward` | daemon forward runtime | daemon forward tests | API/daemon owned | The old frontend process branch was deleted; no ControlMaster or `ssh -N` fallback remains. |
 | Plugin-local files and HTTP | plugin data/cache and external provider integrations | `_FilesFacade.path`, `_FilesFacade.exists`, `_FilesFacade.read_text`, `_FilesFacade.read_bytes`, `_FilesFacade.write_text`, `_FilesFacade.write_bytes`, `_HttpFacade.get`, `_HttpFacade.post`, `PluginContext.data_dir` | Plugin-private XDG data and OS/network adapters | plugin facade and built-in plugin tests | legitimate frontend/platform-local | These do not mutate SSH Pilot backend state, remote files, transfers, or daemon-owned configuration. |
-| UI and event registration | plugin activation and panels | `_EventsFacade.subscribe`, `_EventsFacade.unsubscribe`, `_UiFacade.register_page`, `_UiFacade.open_page`, `_UiFacade.notify`, `_UiFacade.register_connection_action`, `_UiFacade.open_web_tab`, `PluginContext.run_on_ui_thread` | GTK/UI event bus and desktop presentation | plugin host/UI tests | legitimate frontend/platform-local | Registration, notifications, browser tabs, and UI-thread scheduling are presentation behavior. |
+| UI and event registration | plugin activation and panels | `_EventsFacade.subscribe`, `_EventsFacade.unsubscribe`, `_UiFacade.register_page`, `_UiFacade.open_page`, `_UiFacade.notify`, `_UiFacade.show_status`, `_UiFacade.add_notification`, `_UiFacade.register_connection_action`, `_UiFacade.open_web_tab`, `PluginContext.run_on_ui_thread` | GTK/UI event bus and desktop presentation | plugin host/UI tests | legitimate frontend/platform-local | Registration, notifications, browser tabs, and UI-thread scheduling are presentation behavior. |
 
 The following machine-readable classification is the synchronization source
 checked by the closure guard.  It intentionally contains one row per public
@@ -124,6 +124,8 @@ identity; the prose matrix above remains the human-readable operation audit.
 `_UiFacade.register_page` | `legitimate frontend/platform-local`
 `_UiFacade.open_page` | `legitimate frontend/platform-local`
 `_UiFacade.notify` | `legitimate frontend/platform-local`
+`_UiFacade.show_status` | `legitimate frontend/platform-local`
+`_UiFacade.add_notification` | `legitimate frontend/platform-local`
 `_UiFacade.register_connection_action` | `legitimate frontend/platform-local`
 `_UiFacade.open_web_tab` | `legitimate frontend/platform-local`
 `_SecretStore.get` | `API/daemon owned`
@@ -198,9 +200,9 @@ compatibility methods are inert no-ops.
 ## Required Phase 7 report
 
 <!-- phase7-plugin-report:start -->
-plugin capabilities audited: 53
+plugin capabilities audited: 55
 api/daemon owned: 30
-legitimate frontend/platform-local: 21
+legitimate frontend/platform-local: 23
 dead/unreachable compatibility: 2
 migration-required public identities: 0
 semantic migration capabilities: 0
