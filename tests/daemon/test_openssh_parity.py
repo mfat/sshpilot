@@ -556,3 +556,83 @@ def test_forward_config_copy_reads_the_system_file_last(tmp_path, monkeypatch):
     other.write_text("Host web\n    HostName 192.0.2.30\n")
     got = _resolved(["-F", strip.materialize_ssh_config_without_port_forwards(str(other)), "web"])
     assert "sendenv" not in got
+
+
+# --- review of a537e0fb: conditional blocks, user commands, idle resolves ------
+
+
+def test_a_conditional_block_openssh_skips_does_not_count_as_configured(tmp_path):
+    """`Match exec "false"` never applies, so its `ServerAliveInterval 0` is
+    not the user's choice for this host and the app default still fills in."""
+    root = tmp_path / "config"
+    root.write_text(
+        'Match exec "false"\n    ServerAliveInterval 0\n\n'
+        "Match host other\n    ServerAliveInterval 0\n\n"
+        "Host server\n    HostName 192.0.2.4\n\n"
+        "Host quiet\n    HostName 192.0.2.5\n\n"
+        "Host aliased\n    HostName 192.0.2.7\n\n"
+        # `Match host` compares the HostName, not the alias.
+        "Match host 192.0.2.5\n    ServerAliveInterval 0\n\n"
+        "Match host aliased\n    ServerAliveInterval 0\n"
+    )
+    _records, provider = _provider(root)
+
+    def launch(alias):
+        return provider.prepare_terminal_launch(alias, interaction_policy="broker")[0]
+
+    assert "ServerAliveInterval=15" in launch("server")
+    assert "ServerAliveInterval=15" in launch("aliased")
+    # A Match block that does apply is still the user's choice.
+    assert not any("ServerAlive" in token for token in launch("quiet"))
+
+
+def test_a_terminal_running_a_users_command_keeps_local_command(tmp_path):
+    """`ssh lc uptime` runs LocalCommand; so does a terminal tab opened with a
+    command (CLI `sshpilot ssh lc uptime`, a plugin's command tab)."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host lc\n    HostName 192.0.2.9\n"
+        "    PermitLocalCommand yes\n    LocalCommand echo connected\n"
+    )
+    _records, provider = _provider(root)
+
+    argv, _env = provider.prepare_terminal_launch(
+        "lc", interaction_policy="broker", remote_command="uptime"
+    )
+    assert "PermitLocalCommand=no" not in argv
+    assert list(argv[-2:]) == ["lc", "uptime"]
+    resolved = _resolved(_ssh_g_args(argv))
+    assert resolved["permitlocalcommand"] == ["yes"]
+    assert resolved == _resolved(["-F", str(root), "lc"]) | {
+        key: resolved[key] for key in ("serveraliveinterval", "serveralivecountmax")
+        if key in resolved
+    }
+
+
+def test_a_launch_with_nothing_to_run_first_does_not_resolve_the_host(
+    tmp_path, monkeypatch
+):
+    """Every launch reads these settings; `ssh -G` also runs `Match exec`
+    commands, so resolving when there is no knock, command or wake costs a
+    subprocess and can fire the user's own scripts."""
+    from sshpilot.core import connection_application_service as cas
+
+    root = tmp_path / "config"
+    root.write_text("Host plain\n    HostName 192.0.2.6\n")
+    records, _provider_ = _provider(root)
+    service = _service(root, records)
+    service._repository._metadata.clear()
+    calls = []
+    real = ssh_config_effective.get_effective_ssh_config
+    monkeypatch.setattr(
+        ssh_config_effective, "get_effective_ssh_config",
+        lambda *a, **k: calls.append(a) or real(*a, **k),
+    )
+
+    settings = service.get_pre_connection_settings("plain")
+    assert not settings.configured and not settings.runs_wake
+    assert calls == []
+
+    service._repository._metadata["plain"] = {"wol_mac": "00:11:22:33:44:55"}
+    assert service.get_pre_connection_settings("plain").hostname == "192.0.2.6"
+    assert calls

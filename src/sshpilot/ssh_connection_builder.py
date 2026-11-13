@@ -744,12 +744,24 @@ _COPY_ID_DROPPED_KEYWORDS = OPERATION_OWNED_KEYWORDS | frozenset({
     'batchmode', 'controlmaster', 'controlpath', 'controlpersist',
 })
 
+# A terminal the user opened with a command (``sshpilot ssh host uptime``, a
+# plugin's command tab) is ``ssh host uptime``: a login like any other, so it
+# keeps the Settings overrides and the configuration's LocalCommand. Only the
+# two options OpenSSH refuses next to a command are left out.
+_COMMAND_CONFLICT_KEYWORDS = frozenset({'remotecommand', 'sessiontype'})
+
+# Every app operation passes one of these: forwards ``-N``, the file manager
+# ``-s``, Host Info, dashboard probes and broadcasts ``-T``.
 _HELPER_FLAGS = frozenset({'-N', '-s', '-T'})
 
 
-def _is_helper_launch(command_type: str, remote_command, extra_args) -> bool:
-    """Whether this launch is an app operation rather than a terminal session."""
-    if command_type != 'ssh' or remote_command:
+def _is_helper_launch(command_type: str, extra_args) -> bool:
+    """Whether this launch is an app operation rather than a terminal session.
+
+    A remote command alone does not make one: a terminal opened with a
+    command is still the user's login.
+    """
+    if command_type != 'ssh':
         return True
     return any(str(arg) in _HELPER_FLAGS for arg in (extra_args or ()))
 
@@ -1172,7 +1184,7 @@ def build_ssh_connection(
         if extra_args:
             priority_options.extend(str(a) for a in extra_args if a)
 
-        if _is_helper_launch(ctx.command_type, ctx.remote_command, extra_args):
+        if _is_helper_launch(ctx.command_type, extra_args):
             overrides = select_override_args(
                 overrides, drop=OPERATION_OWNED_KEYWORDS
             )
@@ -1184,6 +1196,10 @@ def build_ssh_connection(
                 'permitlocalcommand=' in str(o).lower() for o in priority_options
             ):
                 priority_options.extend(['-o', 'PermitLocalCommand=no'])
+        elif ctx.remote_command:
+            overrides = select_override_args(
+                overrides, drop=_COMMAND_CONFLICT_KEYWORDS
+            )
         if (
             ctx.command_type != 'scp'
             and (ctx.remote_command or '-s' in priority_options)

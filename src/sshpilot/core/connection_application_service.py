@@ -338,6 +338,14 @@ class ConnectionApplicationService:
                     # comment has no stored mode, and a command is what it has.
                     mode=PreCommandMode.COMMAND,
                 )
+        if not settings.configured and not (
+            settings.wake_before_connect and settings.wake_mac.strip()
+        ):
+            # Nothing runs before this launch, so there is nothing to aim.
+            # Every launch reads these settings, and resolving costs an
+            # ``ssh -G`` that also runs the configuration's ``Match exec``
+            # commands -- a user's own knock script among them.
+            return settings
         # Expanded here, where the connection's own values are, so the runner
         # never has to know what a connection is. The hostname, port and
         # route ride along for the same reason: the knock and the wake need a
@@ -1372,20 +1380,13 @@ class ConnectionApplicationService:
     @staticmethod
     def _configured_keys(host: str, launch_file: Optional[str], effective) -> Set[str]:
         """Options a line of the configuration a launch reads sets for *host*."""
-        from .ssh_config_effective import configured_directives, openssh_system_config
-        from ..platform.paths import openssh_user_dir
+        from .ssh_config_effective import launch_configured_directives
 
-        files = [launch_file] if launch_file else [
-            str(openssh_user_dir() / "config"), openssh_system_config(),
-        ]
-        keys: Set[str] = set()
-        for path in files:
-            if path:
-                try:
-                    keys.update(configured_directives(host, path, effective))
-                except Exception:
-                    logger.debug("Could not read configured directives", exc_info=True)
-        return keys
+        try:
+            return set(launch_configured_directives(host, launch_file, effective))
+        except Exception:
+            logger.debug("Could not read configured directives", exc_info=True)
+            return set()
 
     def _keepalive_fallback_args(self, effective, configured=None) -> Tuple[str, ...]:
         """The keepalive pair a launch adds for a host that configures none."""

@@ -552,6 +552,7 @@ def earlier_directives(
     max_depth: int = 32,
     new_host: bool = False,
     _whole: bool = False,
+    _undecided: Optional[Set[str]] = None,
 ) -> List[Dict[str, object]]:
     """Options OpenSSH obtains for *host* before it reaches the host's own block.
 
@@ -659,6 +660,8 @@ def earlier_directives(
                 # Undecided Match block: believed only on OpenSSH's evidence.
                 if effective_value(keyword).lower() != value.lower():
                     continue
+                if _undecided is not None:
+                    _undecided.add(keyword)
             seen_keys.add(keyword)
             found[keyword] = {
                 "key": keyword,
@@ -678,6 +681,8 @@ def configured_directives(
     host: str,
     root_path: str,
     effective: Optional[Dict[str, Union[str, List[str]]]] = None,
+    *,
+    _undecided: Optional[Set[str]] = None,
 ) -> Dict[str, Dict[str, object]]:
     """The first line of the configuration that sets each option for *host*.
 
@@ -686,11 +691,102 @@ def configured_directives(
     option the configuration sets to its default from one it does not set at
     all -- ``ssh -G`` prints both the same (``serveraliveinterval 0``).
     Options OpenSSH accumulates are not reported.
+
+    A line in a ``Match`` block this walk cannot judge (``exec``, ``host``,
+    ``user``, ...) is believed when ``ssh -G`` shows its value, and its key is
+    added to *_undecided*: for a default value that evidence proves nothing.
+    :func:`launch_configured_directives` settles those keys with OpenSSH.
     """
     return {
         str(item["key"]): item
-        for item in earlier_directives(host, root_path, effective, _whole=True)
+        for item in earlier_directives(
+            host, root_path, effective, _whole=True, _undecided=_undecided
+        )
     }
+
+
+#: A value no one configures, per option :func:`launch_configured_directives`
+#: can ask OpenSSH about. Only the keepalive pair needs asking: it is what the
+#: app fills in when the configuration sets nothing.
+_UNSET_PROBE_SENTINELS = {
+    "serveraliveinterval": "86399",
+    "serveralivecountmax": "86399",
+}
+
+
+def launch_configured_directives(
+    host: str,
+    launch_file: Optional[str],
+    effective: Optional[Dict[str, Union[str, List[str]]]] = None,
+) -> Dict[str, Dict[str, object]]:
+    """What the files a launch makes OpenSSH read set for *host*.
+
+    *launch_file* is the ``-F`` file of the launch (see
+    :func:`launch_config_file`); ``None`` means no ``-F``, so OpenSSH reads
+    ``~/.ssh/config`` and then the system-wide file.
+
+    A key only an undecided ``Match`` block sets, with the value ``ssh -G``
+    shows anyway, is put to OpenSSH: the host is resolved through a wrapper
+    that includes those files and then sets a sentinel. OpenSSH keeps the
+    first value it obtains, so the sentinel comes out exactly when no line of
+    the configuration applied -- whatever ``Match exec`` or ``Match host``
+    decided. This costs one more ``ssh -G`` (which runs ``Match exec``
+    commands again), so it runs only for such a key.
+    """
+    from ..platform.paths import openssh_user_dir
+
+    files = [launch_file] if launch_file else [
+        str(openssh_user_dir() / "config"), openssh_system_config(),
+    ]
+    files = [os.path.abspath(os.path.expanduser(str(f))) for f in files if f]
+    found: Dict[str, Dict[str, object]] = {}
+    undecided: Set[str] = set()
+    for path in files:
+        for key, item in configured_directives(
+            host, path, effective, _undecided=undecided
+        ).items():
+            found.setdefault(key, item)
+    ask = sorted(key for key in undecided if key in found and key in _UNSET_PROBE_SENTINELS)
+    if ask:
+        for key in _keys_openssh_leaves_unset(host, files, ask):
+            found.pop(key, None)
+    return found
+
+
+def _keys_openssh_leaves_unset(
+    host: str, files: Sequence[str], keys: Sequence[str]
+) -> List[str]:
+    """Which of *keys* no line of *files* sets for *host*, as OpenSSH decides.
+
+    The wrapper is read with ``-F``, so OpenSSH resolves a relative
+    ``Include`` in it under ``~/.ssh`` -- as it does for the user's own
+    configuration. On any failure nothing is reported unset, which keeps the
+    walk's answer.
+    """
+    lines = [f'Include "{path}"' for path in files if os.path.isfile(path)]
+    if not lines:
+        return []
+    lines.append("Match all")
+    lines += [f"    {key} {_UNSET_PROBE_SENTINELS[key]}" for key in keys]
+    try:
+        with tempfile.TemporaryDirectory(prefix="sshpilot-probe-") as folder:
+            wrapper = os.path.join(folder, "config")
+            with open(wrapper, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+            resolved = get_effective_ssh_config(host, config_file=wrapper)
+    except Exception:
+        logger.debug("Could not ask OpenSSH which options are unset", exc_info=True)
+        return []
+    if not resolved:
+        return []
+    unset = []
+    for key in keys:
+        value = resolved.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else ""
+        if str(value or "").strip() == _UNSET_PROBE_SENTINELS[key]:
+            unset.append(key)
+    return unset
 
 
 def openssh_system_config() -> Optional[str]:

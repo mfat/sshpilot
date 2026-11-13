@@ -265,24 +265,14 @@ class HeadlessConnectionView:
             if host_label:
                 try:
                     from ..core.ssh_config_effective import (
-                        configured_directives,
-                        openssh_system_config,
+                        launch_configured_directives,
                     )
-                    from ..platform.paths import openssh_user_dir
 
-                    config_file = self._resolve_config_override_path()
-                    files = [config_file] if config_file else [
-                        str(openssh_user_dir() / "config"),
-                        openssh_system_config(),
-                    ]
-                    effective = self.effective_ssh_config()
-                    for path in files:
-                        if not path:
-                            continue
-                        for key, item in configured_directives(
-                            host_label, path, effective
-                        ).items():
-                            found.setdefault(key, item)
+                    found = launch_configured_directives(
+                        host_label,
+                        self._resolve_config_override_path(),
+                        self.effective_ssh_config(),
+                    )
                 except Exception:
                     logger.debug("Could not read configured directives", exc_info=True)
             self._configured_directives = found
