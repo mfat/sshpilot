@@ -80,6 +80,27 @@ from .terminal_display_pause import (
 _terminal_padding_css_installed = False
 
 
+def _menu_close_should_refocus_terminal(focus, terminal_widget, popover) -> bool:
+    """Whether focus is stranded after the app-owned context menu closed.
+
+    When a GtkPopover that held focus unmaps, GTK hands focus to an ancestor
+    container (the split pane), not back to the terminal, so the next Enter
+    lands in the sidebar (#1378). Reclaim it only when focus is nowhere, still
+    inside the popover, or on a container around the terminal; an action that
+    moved focus somewhere real (the search entry, a dialog) keeps it.
+    """
+    if focus is None:
+        return True
+    # The popover is parented to the terminal box: test it before the box.
+    if popover is not None and (focus is popover or focus.is_ancestor(popover)):
+        return True
+    if terminal_widget is None:
+        return False
+    if focus is terminal_widget or focus.is_ancestor(terminal_widget):
+        return False
+    return terminal_widget.is_ancestor(focus)
+
+
 def _finish_capture_gesture(gesture, handled: bool) -> None:
     """Resolve a capture gesture without leaving it competing with VTE."""
     state = (
@@ -4593,6 +4614,8 @@ class TerminalWidget(Gtk.Box):
             # menus itself. Only the legacy/WebView popover is application-owned.
             if not self._native_vte_context_menu and parent_widget:
                 self._menu_popover.set_parent(parent_widget)
+                self._menu_popover.connect(
+                    "closed", lambda _p: GLib.idle_add(self._refocus_after_context_menu))
 
             self._menu_needs_manual_dismiss = not self.backend.supports_feature("hyperlinks")
             if self._menu_needs_manual_dismiss:
@@ -4774,6 +4797,22 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
+
+    def _refocus_after_context_menu(self):
+        """Return keyboard focus to the terminal once its context menu closed."""
+        try:
+            if getattr(self, '_destroyed', False) or self.backend is None:
+                return False
+            widget = self.backend.widget
+            root = widget.get_root() if widget is not None else None
+            if root is None:
+                return False
+            if _menu_close_should_refocus_terminal(
+                    root.get_focus(), widget, getattr(self, '_menu_popover', None)):
+                self.backend.grab_focus()
+        except Exception:
+            logger.debug("Could not refocus terminal after context menu", exc_info=True)
+        return False
 
     def _dismiss_context_menu(self):
         """Hide the context menu popover if it is showing (manual-dismiss backends)."""
