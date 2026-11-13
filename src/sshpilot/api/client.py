@@ -18,6 +18,7 @@ from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
     ConfigConflict,
+    ConfigSyntaxError,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -250,6 +251,9 @@ class SshPilotClient(Protocol):
         ...
 
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
+        ...
+
+    def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:
         ...
 
     def check_unsaved_host(

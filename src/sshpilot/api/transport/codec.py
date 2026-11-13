@@ -106,6 +106,7 @@ from ..models.connections import (
     ConnectionEditorCapabilities,
     ConnectionEditorDetails,
     ConfigConflict,
+    ConfigSyntaxError,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -2259,6 +2260,40 @@ def config_conflicts_from_wire(value: Any) -> Tuple[ConfigConflict, ...]:
                 key=fields["key"],
                 own_value=fields["own_value"],
                 earlier=_earlier_directive_from_wire(fields["earlier"]),
+            )
+        )
+    return tuple(found)
+
+
+def config_syntax_errors_to_wire(value: Any) -> Dict[str, Any]:
+    if type(value) is not tuple or any(
+        not isinstance(item, ConfigSyntaxError) for item in value
+    ):
+        raise TypeError("value must be a tuple of ConfigSyntaxError")
+    return {
+        "errors": [
+            {"file": item.file, "line": item.line, "diagnostic": item.diagnostic}
+            for item in value
+        ]
+    }
+
+
+def config_syntax_errors_from_wire(value: Any) -> Tuple[ConfigSyntaxError, ...]:
+    data = _strict_fields(value, required={"errors"}, context="config syntax errors")
+    if type(data["errors"]) is not list:
+        raise ValueError("config syntax errors must be a list")
+    found = []
+    for item in data["errors"]:
+        fields = _strict_fields(
+            item,
+            required={"file", "line", "diagnostic"},
+            context="config syntax error",
+        )
+        found.append(
+            ConfigSyntaxError(
+                file=fields["file"],
+                line=fields["line"],
+                diagnostic=fields["diagnostic"],
             )
         )
     return tuple(found)

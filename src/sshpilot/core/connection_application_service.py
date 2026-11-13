@@ -52,6 +52,7 @@ from ..api.models.connections import (
     ConnectionMutationResult,
     ConnectionSummary,
     ConfigConflict,
+    ConfigSyntaxError,
     EarlierDirective,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
@@ -95,6 +96,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
+    "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
@@ -1276,6 +1278,38 @@ class ConnectionApplicationService:
             )
             for item in found
         )
+
+    def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:
+        """The lines that make OpenSSH refuse the SSH configuration.
+
+        OpenSSH stops at a line it cannot parse, wherever it is, so one such
+        line keeps every SSH connection from starting. OpenSSH itself is
+        asked, about the file a launch reads; empty when it accepts the
+        configuration, and when it could not be asked.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .ssh_config_effective import launch_config_file, openssh_config_errors
+
+        root = str(self._repository.root_config_path)
+        try:
+            found = openssh_config_errors(launch_config_file(root))
+        except Exception:
+            logger.debug("SSH config syntax check failed", exc_info=True)
+            return ()
+        errors = []
+        for item in found:
+            try:
+                errors.append(
+                    ConfigSyntaxError(
+                        file=str(item["file"]),
+                        line=int(item["line"]),
+                        diagnostic=str(item["diagnostic"]),
+                    )
+                )
+            except (TypeError, ValueError):
+                logger.debug("Skipping an unrepresentable SSH config error")
+        return tuple(errors)
 
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         """Every saved host's own value that an earlier block keeps unused.

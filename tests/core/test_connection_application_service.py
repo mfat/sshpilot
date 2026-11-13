@@ -1189,6 +1189,31 @@ def test_earlier_directives_survive_a_config_openssh_rejects(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
+def test_config_syntax_errors_name_the_line_openssh_rejects(tmp_path):
+    """One line OpenSSH cannot parse stops every SSH connection, so the
+    service names it; a configuration OpenSSH accepts yields nothing."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User deploy\n *   IdentityAgent none\n\n"
+        "Host web\n    HostName web.example.com\n",
+        encoding="utf-8",
+    )
+    record = _record(record_id="web", nickname="web", host="web", source=str(root))
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+
+    errors = service.list_config_syntax_errors()
+
+    assert [(item.file, item.line) for item in errors] == [(str(root), 3)]
+    assert errors[0].diagnostic == "Bad configuration option: *"
+
+    root.write_text("Host web\n    HostName web.example.com\n", encoding="utf-8")
+    assert service.list_config_syntax_errors() == ()
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
 def test_earlier_directives_for_a_host_not_saved_yet(tmp_path):
     """A new block is appended to the end of the root file, so every line that
     applies to the alias comes before it: both `Host *` blocks decide."""

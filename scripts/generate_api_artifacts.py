@@ -122,6 +122,7 @@ IMPLEMENTED_MODELS = {
     "ConnectionDetails",
     "ConnectionSummary",
     "ConfigConflict",
+    "ConfigSyntaxError",
     "EarlierDirective",
     "EffectiveConfigComparison",
     "UnsavedHostCheckRequest",
@@ -241,6 +242,7 @@ RELATED_METHODS = {
     ),
     "ConnectionSummary": ("list_connections",),
     "ConfigConflict": ("list_config_conflicts",),
+    "ConfigSyntaxError": ("list_config_syntax_errors",),
     "EarlierDirective": (
         "get_effective_config", "get_earlier_directives", "list_config_conflicts",
     ),

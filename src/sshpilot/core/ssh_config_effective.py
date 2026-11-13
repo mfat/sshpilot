@@ -422,6 +422,69 @@ def get_effective_ssh_config(
     return config
 
 
+#: The probe name: OpenSSH parses every line of every file it reads whatever
+#: host is asked about, so no saved host has to be involved.
+_SYNTAX_PROBE_HOST = "sshpilot-config-check"
+#: ``<file>: line 5: Bad configuration option: x`` and, for a bad argument,
+#: ``<file> line 5: Bad port 'x'.``
+_SYNTAX_ERROR_RE = re.compile(r"^(?P<file>.+?):? line (?P<line>\d+): (?P<text>.+)$")
+
+
+def parse_openssh_config_errors(stderr: str) -> List[Dict[str, object]]:
+    """The configuration lines OpenSSH names as invalid in *stderr*.
+
+    One entry per line it rejects, ``{"file", "line", "diagnostic"}``, in the
+    order reported. ``diagnostic`` is OpenSSH's own text for the line. A
+    complaint about an option given on the command line is not about the
+    configuration and is left out.
+    """
+    found: List[Dict[str, object]] = []
+    for raw_line in str(stderr or "").splitlines():
+        match = _SYNTAX_ERROR_RE.match(raw_line.strip())
+        if match is None:
+            continue
+        line = int(match.group("line"))
+        path = match.group("file").strip()
+        if line < 1 or not path or path == "command-line":
+            continue
+        found.append(
+            {"file": path, "line": line, "diagnostic": match.group("text").strip()}
+        )
+    return found
+
+
+def openssh_config_errors(config_file: Optional[str] = None) -> List[Dict[str, object]]:
+    """Lines that make OpenSSH refuse the configuration a launch reads.
+
+    OpenSSH stops at a line it cannot parse, in any block of any file it
+    reads, and then connects to nothing. *config_file* is the file a launch
+    names with ``-F`` (None for the user's own configuration, when OpenSSH
+    also reads the system-wide one). Empty when OpenSSH accepts the
+    configuration, and when it could not be asked.
+    """
+    command = ["ssh"]
+    if config_file:
+        expanded = os.path.abspath(os.path.expanduser(os.path.expandvars(config_file)))
+        if not os.path.isfile(expanded):
+            return []
+        command.extend(["-F", expanded])
+    command.extend(["-G", _SYNTAX_PROBE_HOST])
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
+            **hidden_console_kwargs(),
+        )
+    except Exception:
+        return []
+    if result.returncode == 0:
+        return []
+    return parse_openssh_config_errors(result.stderr)
+
+
 def _effective_config_lines(config: Dict[str, Union[str, List[str]]]) -> List[str]:
     lines: List[str] = []
     for key in sorted(config):

@@ -499,6 +499,31 @@ class ConfigConflict:
 
 
 @dataclass(frozen=True)
+class ConfigSyntaxError:
+    """A line of the SSH configuration that OpenSSH rejects.
+
+    OpenSSH refuses the whole configuration over one such line, so no SSH
+    connection starts until it is corrected. ``file`` and ``line`` locate it;
+    ``diagnostic`` is OpenSSH's own text for it, shown as it is and never
+    interpreted.
+    """
+
+    file: str
+    line: int
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("file", "diagnostic"):
+            text = getattr(self, name)
+            if type(text) is not str or "\x00" in text:
+                raise ValueError(f"config syntax error {name} is invalid")
+        if not self.file:
+            raise ValueError("config syntax error file must not be empty")
+        if type(self.line) is not int or self.line < 1:
+            raise ValueError("config syntax error line must be a positive integer")
+
+
+@dataclass(frozen=True)
 class EffectiveConfigComparison:
     """Daemon-owned authored-vs-effective OpenSSH comparison."""
 

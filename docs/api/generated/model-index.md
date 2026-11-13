@@ -694,6 +694,37 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConfigSyntaxError -->
+## `ConfigSyntaxError`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A line of the SSH configuration that OpenSSH rejects.
+
+OpenSSH refuses the whole configuration over one such line, so no SSH
+connection starts until it is corrected. ``file`` and ``line`` locate it;
+``diagnostic`` is OpenSSH's own text for it, shown as it is and never
+interpreted.
+
+**Related methods:** `list_config_syntax_errors`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "diagnostic": "",
+  "file": "example",
+  "line": 0
+}
+```
+
 <!-- api-model: ConfirmationPrompt -->
 ## `ConfirmationPrompt`
 

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.100",
+  "api_implementation_version": "0.101",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -330,6 +330,10 @@
       "status": "daemon-only"
     },
     "list_config_conflicts": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
+    "list_config_syntax_errors": {
       "capability": "connections.config.read",
       "status": "implemented"
     },
@@ -763,6 +767,9 @@
       "capability": "connections.read"
     },
     "connections.list_config_conflicts": {
+      "capability": "connections.config.read"
+    },
+    "connections.list_config_syntax_errors": {
       "capability": "connections.config.read"
     },
     "connections.metadata.add_tag": {
@@ -2647,6 +2654,32 @@
           "required": true,
           "sensitive": false,
           "type": "EarlierDirective"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConfigSyntaxError": {
+      "fields": [
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"

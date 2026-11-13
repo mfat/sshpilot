@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `connections.list_config_syntax_errors()` returns a `ConfigSyntaxError` for
+  every line that makes OpenSSH refuse the SSH configuration a launch reads:
+  the file, the line and OpenSSH's own text for it (an opaque diagnostic).
+  OpenSSH is asked (`ssh -G`), so a line in any block or included file it
+  reads is found. Empty when the configuration is accepted, and when OpenSSH
+  could not be asked. The main window shows a banner while there is one,
+  since no SSH connection starts until it is corrected. `EffectiveConfigComparison.earlier`
+  is now filled also when `available` is false for that reason. Requires
+  `connections.config.read`. The API implementation version is 0.101;
+  Protocol remains 1.0.
 - `connections.list_config_conflicts()` returns a `ConfigConflict` for every
   saved SSH host whose own Host block sets a value that an earlier block
   (`Host *`, `Match all`, ...) already decides, so the host's value is never

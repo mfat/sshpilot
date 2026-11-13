@@ -77,6 +77,7 @@ from sshpilot.api.transport.codec import (
     connection_details_to_wire,
     connection_editor_details_to_wire,
     config_conflicts_to_wire,
+    config_syntax_errors_to_wire,
     earlier_directives_to_wire,
     effective_config_comparison_to_wire,
     set_operation_mode_request_from_wire,
@@ -224,6 +225,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
     "daemon.set_operation_mode": Capability.OPERATION_MODE,
     "daemon.get_operation_mode": Capability.OPERATION_MODE,
@@ -505,6 +507,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_effective_config",
         "connections.get_earlier_directives",
         "connections.list_config_conflicts",
+        "connections.list_config_syntax_errors",
         "connections.check_unsaved_host",
         "connections.prepare_external_terminal_launch",
         "connections.get_launch_command",
@@ -789,6 +792,9 @@ class RequestDispatcher:
             "connections.get_effective_config": self._handle_get_effective_config,
             "connections.get_earlier_directives": self._handle_get_earlier_directives,
             "connections.list_config_conflicts": self._handle_list_config_conflicts,
+            "connections.list_config_syntax_errors": (
+                self._handle_list_config_syntax_errors
+            ),
             "connections.check_unsaved_host": self._handle_check_unsaved_host,
             "daemon.set_operation_mode": self._handle_set_operation_mode,
             "daemon.get_operation_mode": self._handle_get_operation_mode,
@@ -1454,6 +1460,23 @@ class RequestDispatcher:
         return DeferredResult(
             operation=lambda: config_conflicts_to_wire(
                 self._connections.list_config_conflicts()
+            ),
+            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_list_config_syntax_errors(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if request.params:
+            raise ValueError(
+                "connections.list_config_syntax_errors takes no parameters"
+            )
+        return DeferredResult(
+            operation=lambda: config_syntax_errors_to_wire(
+                self._connections.list_config_syntax_errors()
             ),
             command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
             on_rejected=lambda: None,

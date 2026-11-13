@@ -2286,9 +2286,25 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._config_precedence_check_timer = 0
             if self._daemon_ready():
                 notice.check()
+                # Same moment, same files: whether OpenSSH accepts them.
+                syntax_notice = getattr(self, '_config_syntax_notice', None)
+                if syntax_notice is not None:
+                    syntax_notice.check()
             return False
 
         self._config_precedence_check_timer = GLib.timeout_add(1000, fire)
+
+    def _on_active_for_config_syntax(self, *_args) -> None:
+        """Ask again whether OpenSSH accepts the config on return to the window.
+
+        A file corrected in another program changes no connection, so the
+        daemon announces nothing; coming back to this window is the cue.
+        """
+        notice = getattr(self, '_config_syntax_notice', None)
+        if notice is None or not self.is_active() or not self._daemon_ready():
+            return
+        logger.debug("Window active again: asking whether OpenSSH accepts the config")
+        notice.check()
 
     def _on_ssh_config_link_details(self, *_args):
         from .gtk.ssh_config_access_messages import (
@@ -2415,6 +2431,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self, self.config_precedence_banner_container
         )
         self._config_precedence_check_timer = 0
+        # A line OpenSSH rejects: no SSH connection starts until it is fixed.
+        self.config_syntax_banner_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL
+        )
+        self.config_syntax_banner_container.set_visible(False)
+        from .gtk.config_syntax_notice import ConfigSyntaxNotice
+        self._config_syntax_notice = ConfigSyntaxNotice(
+            self, self.config_syntax_banner_container
+        )
+        self.connect('notify::is-active', self._on_active_for_config_syntax)
         self.tips_revealer = None
         self.tips_label = None
         self.tips_next_button = None
@@ -4201,6 +4227,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.ssh_config_banner_container)
+            content_wrapper.append(self.config_syntax_banner_container)
             content_wrapper.append(self.config_precedence_banner_container)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
@@ -4219,6 +4246,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(self.ssh_config_banner_container)
+            main_box.append(self.config_syntax_banner_container)
             main_box.append(self.config_precedence_banner_container)
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
@@ -6393,6 +6421,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 ))
                 return None
 
+            def saved():
+                # A corrected line or a moved block changes no connection, so
+                # no store refresh follows: look at the notices again here.
+                schedule = getattr(self, '_schedule_config_precedence_check', None)
+                if callable(schedule):
+                    schedule()
+                if callable(on_saved):
+                    on_saved()
+
             service = DaemonSshConfigTextService(client)
             editor = RemoteFileEditorWindow(
                 parent=parent or self,
@@ -6403,7 +6440,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 file_manager_window=None,
                 language_id="sshconfig",
                 show_outline=True,
-                on_saved=on_saved,
+                on_saved=saved,
             )
             if parent is not None:
                 editor.set_modal(True)

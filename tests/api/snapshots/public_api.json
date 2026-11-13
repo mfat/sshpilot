@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.100",
+  "api_implementation_version": "0.101",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -426,6 +426,10 @@
       "status": "daemon-only"
     },
     "list_config_conflicts": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
+    "list_config_syntax_errors": {
       "capability": "connections.config.read",
       "status": "implemented"
     },
@@ -862,6 +866,7 @@
     "list_authorized_keys",
     "list_bitwarden_backups",
     "list_config_conflicts",
+    "list_config_syntax_errors",
     "list_connections",
     "list_forwards",
     "list_interactions",
@@ -1807,6 +1812,10 @@
     "list_config_conflicts": {
       "parameters": [],
       "return": "tuple[ConfigConflict, ...]"
+    },
+    "list_config_syntax_errors": {
+      "parameters": [],
+      "return": "tuple[ConfigSyntaxError, ...]"
     },
     "list_connections": {
       "parameters": [],
@@ -2926,6 +2935,9 @@
     "connections.list_config_conflicts": {
       "capability": "connections.config.read"
     },
+    "connections.list_config_syntax_errors": {
+      "capability": "connections.config.read"
+    },
     "connections.metadata.add_tag": {
       "capability": "connections.metadata.write"
     },
@@ -3598,6 +3610,7 @@
     "CloseSftpRequest",
     "CompatibilityResult",
     "ConfigConflict",
+    "ConfigSyntaxError",
     "ConfirmationPrompt",
     "ConnectionDetails",
     "ConnectionEditorCapabilities",
@@ -4027,6 +4040,11 @@
       "key",
       "own_value",
       "earlier"
+    ],
+    "ConfigSyntaxError": [
+      "file",
+      "line",
+      "diagnostic"
     ],
     "ConfirmationPrompt": [
       "text"

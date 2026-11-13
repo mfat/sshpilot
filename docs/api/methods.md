@@ -14,6 +14,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-method: get_effective_config -->
 <!-- api-method: get_earlier_directives -->
 <!-- api-method: list_config_conflicts -->
+<!-- api-method: list_config_syntax_errors -->
 <!-- api-method: check_unsaved_host -->
 <!-- api-method: set_operation_mode -->
 <!-- api-method: get_operation_mode -->
@@ -68,6 +69,7 @@ direct core service compositions are test-only and are not client choices.
 | `get_operation_mode` | Daemon only | `operation.mode` |
 | `get_earlier_directives` | Implemented | `connections.config.read` |
 | `list_config_conflicts` | Implemented | `connections.config.read` |
+| `list_config_syntax_errors` | Implemented | `connections.config.read` |
 | `check_unsaved_host` | Implemented | `connections.read` |
 | `prepare_external_terminal_launch` | Daemon only | `terminal.external_launch` |
 | `get_launch_command` | Implemented | `terminal.external_launch` |
@@ -193,6 +195,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: get_effective_config status=implemented capability=connections.config.read -->
 <!-- api-method-contract: get_earlier_directives status=implemented capability=connections.config.read -->
 <!-- api-method-contract: list_config_conflicts status=implemented capability=connections.config.read -->
+<!-- api-method-contract: list_config_syntax_errors status=implemented capability=connections.config.read -->
 <!-- api-method-contract: check_unsaved_host status=implemented capability=connections.read -->
 <!-- api-method-contract: set_operation_mode status=daemon-only capability=operation.mode -->
 <!-- api-method-contract: get_operation_mode status=daemon-only capability=operation.mode -->
@@ -496,6 +499,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get_effective_config capability=connections.config.read -->
 <!-- api-daemon-method: connections.get_earlier_directives capability=connections.config.read -->
 <!-- api-daemon-method: connections.list_config_conflicts capability=connections.config.read -->
+<!-- api-daemon-method: connections.list_config_syntax_errors capability=connections.config.read -->
 <!-- api-daemon-method: connections.check_unsaved_host capability=connections.read -->
 <!-- api-daemon-method: daemon.set_operation_mode capability=operation.mode -->
 <!-- api-daemon-method: daemon.get_operation_mode capability=operation.mode -->
