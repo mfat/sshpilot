@@ -21,6 +21,6 @@ def find_test_files(scope: RepoScope, path_prefix: Optional[str] = None) -> dict
     files: List[str] = []
     for relative in scope.iter_files(prefix=path_prefix, include_suffixes={".py"}):
         if any(pattern.match(relative.name) for pattern in TEST_NAME_PATTERNS):
-            files.append(str(relative))
+            files.append(relative.as_posix())
     files.sort()
     return {"test_files": files, "total": len(files)}

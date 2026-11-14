@@ -51,7 +51,7 @@ def search_files(
         for lineno, line in enumerate(text.splitlines(), start=1):
             if regex.search(line):
                 matches.append(
-                    {"file": str(relative), "line": lineno, "snippet": _clip(line)}
+                    {"file": relative.as_posix(), "line": lineno, "snippet": _clip(line)}
                 )
                 if len(matches) >= max_results:
                     return {"matches": matches, "total": len(matches), "truncated": True}

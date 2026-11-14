@@ -8,7 +8,7 @@ SOURCE = ROOT / "src" / "sshpilot"
 
 
 def test_login_profile_gettext_sources_are_in_potfiles():
-    potfiles = set((ROOT / "po" / "POTFILES").read_text().splitlines())
+    potfiles = set((ROOT / "po" / "POTFILES").read_text(encoding="utf-8").splitlines())
     for relative in (
         "gtk/login_profile_messages.py",
         "login_profile_dialogs.py",
@@ -23,7 +23,7 @@ def test_login_profile_backend_sends_no_display_text():
         *(SOURCE / "core" / "login_profiles").glob("*.py"),
     ]
     for path in backend:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "gettext" not in text, path
         # The preview diff once carried English labels and value wording.
         for display in ('"Key selection"', '"Specific keys only"', '"Extra directives"'):
@@ -31,13 +31,13 @@ def test_login_profile_backend_sends_no_display_text():
 
 
 def test_controller_holds_no_display_text():
-    controller = (SOURCE / "gtk" / "login_profile_controller.py").read_text()
+    controller = (SOURCE / "gtk" / "login_profile_controller.py").read_text(encoding="utf-8")
     for display in ('"password"', '"automatic keys"', "The profile was saved, but", "Don't use"):
         assert display not in controller
 
 
 def test_dialogs_present_errors_and_previews_through_the_presenter():
-    dialogs = (SOURCE / "login_profile_dialogs.py").read_text()
+    dialogs = (SOURCE / "login_profile_dialogs.py").read_text(encoding="utf-8")
     assert "from sshpilot.gtk.login_profile_messages import" in dialogs
     assert "format_login_profile_error(error)" in dialogs
     assert ".label}" not in dialogs  # no daemon-supplied preview labels

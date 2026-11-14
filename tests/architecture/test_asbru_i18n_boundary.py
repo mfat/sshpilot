@@ -8,7 +8,7 @@ SOURCE = ROOT / "src" / "sshpilot"
 
 
 def test_asbru_presenter_is_extracted_into_pot():
-    potfiles = (ROOT / "po" / "POTFILES").read_text()
+    potfiles = (ROOT / "po" / "POTFILES").read_text(encoding="utf-8")
     assert "src/sshpilot/gtk/asbru_import_messages.py" in potfiles
 
 
@@ -17,7 +17,7 @@ def test_asbru_backend_has_no_gettext_or_finished_summary():
         "core/import_export/asbru.py",
         "core/connection_application_service.py",
     ):
-        text = (SOURCE / relative).read_text()
+        text = (SOURCE / relative).read_text(encoding="utf-8")
         asbru = text if relative.endswith("asbru.py") else text.split("def preview_asbru_import", 1)[1].split("def _build_create_data", 1)[0]
         assert "gettext" not in asbru
         assert "connection(s)" not in asbru
@@ -25,7 +25,7 @@ def test_asbru_backend_has_no_gettext_or_finished_summary():
 
 
 def test_window_uses_presenter_for_every_asbru_message_field():
-    window = (SOURCE / "window_dialogs.py").read_text()
+    window = (SOURCE / "window_dialogs.py").read_text(encoding="utf-8")
     asbru = window.split("def _begin_asbru_import", 1)[1].split("def _import_from_file", 1)[0]
     for rendered in (
         "format_asbru_messages(preview.errors)",

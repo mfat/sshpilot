@@ -445,6 +445,11 @@ def parse_openssh_config_errors(stderr: str) -> List[Dict[str, object]]:
             continue
         line = int(match.group("line"))
         path = match.group("file").strip()
+        if os.name == "nt":
+            # Win32-OpenSSH escapes the separators in the file it names
+            # (``C:\\Users\\me\\.ssh\\config``); a Windows path never
+            # holds a doubled one.
+            path = path.replace("\\\\", "\\")
         if line < 1 or not path or path == "command-line":
             continue
         found.append(

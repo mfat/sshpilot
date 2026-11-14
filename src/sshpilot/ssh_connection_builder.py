@@ -943,6 +943,30 @@ def _keepalive_fallback(app_ssh_config, effective, configured=None) -> List[str]
         return []
 
 
+def _windows_x11_trusted_fallback(effective, configured=None, overrides=()) -> List[str]:
+    """``-o ForwardX11Trusted=yes`` for a Windows launch that forwards X11.
+
+    Windows has no xauth, so OpenSSH refuses untrusted X11 forwarding there
+    ("xauth key data not generated"); trusted forwarding is the only kind
+    that works (issue #1365). Like the keepalive this is a fallback, the one
+    known deviation from ``ssh <alias>`` on Windows: it is added only when
+    OpenSSH resolves ``ForwardX11 yes`` and neither a configuration line nor
+    a Settings option chooses ``ForwardX11Trusted`` itself.
+    """
+    if not effective:
+        return []
+    value = effective.get('forwardx11')
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ''
+    if str(value or '').strip().lower() != 'yes':
+        return []
+    if 'forwardx11trusted' in {str(key).lower() for key in (configured or ())}:
+        return []
+    if any('forwardx11trusted' in str(entry).lower() for entry in (overrides or ())):
+        return []
+    return ['-o', 'ForwardX11Trusted=yes']
+
+
 def _configured_for(connection) -> Dict[str, Any]:
     """The options a configuration line sets for *connection*, if known."""
     resolve = getattr(connection, 'configured_ssh_directives', None)
@@ -1246,17 +1270,15 @@ def build_ssh_connection(
         # its own argv via _build_base_ssh_command.
         executable = 'scp' if ctx.command_type == 'scp' else 'ssh'
 
-        # Windows has no xauth, so OpenSSH refuses untrusted X11 forwarding
-        # there ("xauth key data not generated"). ForwardX11 itself comes from
-        # the config file, so ask for trusted forwarding here; it only takes
-        # effect when forwarding is on (issue #1365).
         platform_options: List[str] = []
         if (
             os.name == 'nt'
             and executable == 'ssh'
             and launch_mode is LaunchMode.INTERACTIVE
         ):
-            platform_options = ['-o', 'ForwardX11Trusted=yes']
+            platform_options = _windows_x11_trusted_fallback(
+                effective, _configured_for(connection), overrides
+            )
 
         # The isolated known_hosts fallback is last of all.
         req = SSHLaunchRequest(

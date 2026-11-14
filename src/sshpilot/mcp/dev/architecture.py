@@ -67,7 +67,7 @@ def _python_files(
         f"src/sshpilot/{prefix}/" for prefix in prefixes
     )
     for relative in scope.iter_files(include_suffixes={".py"}):
-        text = str(relative)
+        text = relative.as_posix()
         if not any(text.startswith(target) for target in targets):
             continue
         try:
@@ -161,7 +161,7 @@ def review_public_api(scope: RepoScope) -> dict:
     model_classes: Set[str] = set()
     unscanned: List[dict] = []
     for relative in scope.iter_files(include_suffixes={".py"}):
-        text = str(relative)
+        text = relative.as_posix()
         if not text.startswith("src/sshpilot/api/models/"):
             continue
         try:
@@ -478,7 +478,7 @@ def recommend_tests(scope: RepoScope, paths: List[str]) -> dict:
                 pass
     if source_stems:
         for relative in scope.iter_files(include_suffixes={".py"}):
-            text = str(relative)
+            text = relative.as_posix()
             basename = text.rsplit("/", 1)[-1]
             if text.startswith("tests/") and any(
                 basename.startswith(f"test_{stem}") for stem in source_stems

@@ -110,10 +110,10 @@ def test_frontend_gettext_owners_are_in_potfiles():
 
 
 def test_suggestion_failure_reason_boundary_is_internal_and_locale_neutral():
-    helper = (BUILTINS / "_summary.py").read_text()
-    model = (SOURCE / "plugins" / "_command_failure.py").read_text()
-    presenter = (SOURCE / "gtk" / "protocol_suggestion_messages.py").read_text()
-    dialog = (SOURCE / "connection_dialog.py").read_text()
+    helper = (BUILTINS / "_summary.py").read_text(encoding="utf-8")
+    model = (SOURCE / "plugins" / "_command_failure.py").read_text(encoding="utf-8")
+    presenter = (SOURCE / "gtk" / "protocol_suggestion_messages.py").read_text(encoding="utf-8")
+    dialog = (SOURCE / "connection_dialog.py").read_text(encoding="utf-8")
     for source in (helper, model):
         assert "gettext" not in source
         assert "N_(" not in source

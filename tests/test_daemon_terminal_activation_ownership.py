@@ -1,7 +1,8 @@
 """Activation ownership — no silent legacy fallback for daemon route."""
 
+import contextlib
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.version import PROTOCOL_VERSION
@@ -10,6 +11,19 @@ from sshpilot.terminal_manager import TerminalManager
 from sshpilot.terminal_session_controller import (
     required_daemon_terminal_capabilities as required_caps,
 )
+
+
+@contextlib.contextmanager
+def _tm_global(name):
+    """Patch *name* in the globals TerminalManager's code reads.
+
+    Not the ``sshpilot.terminal_manager`` attribute: another test in the same
+    worker can replace that module in ``sys.modules``, and the patch would
+    then miss the module this class was defined in.
+    """
+    fake = MagicMock()
+    with patch.dict(TerminalManager.connect_to_host.__globals__, {name: fake}):
+        yield fake
 
 
 REQUIRED_CAPS = required_caps()
@@ -97,11 +111,7 @@ class TestDaemonActivationOwnership:
         with patch(
             "sshpilot.daemon_terminal_policy.should_hide_external_terminal_options",
             return_value=False,
-        ), patch(
-            "sshpilot.terminal_manager.TerminalWidget"
-        ) as mock_terminal_widget, patch(
-            "sshpilot.terminal_manager.GLib"
-        ), patch.object(
+        ), _tm_global("TerminalWidget") as mock_terminal_widget, _tm_global("GLib"), patch.object(
             manager, "_maybe_unlock_secrets_then", return_value=False
         ) as unlock, patch.object(
             manager, "_show_daemon_error_dialog"
@@ -183,9 +193,7 @@ class TestDaemonActivationOwnership:
         with patch(
             "sshpilot.daemon_terminal_policy.should_hide_external_terminal_options",
             return_value=False,
-        ), patch(
-            "sshpilot.terminal_manager.TerminalWidget"
-        ) as mock_terminal_widget, patch.object(
+        ), _tm_global("TerminalWidget") as mock_terminal_widget, patch.object(
             manager, "_try_start_daemon_client",
             return_value=DaemonTerminalReadinessReason.DAEMON_START_FAILED,
         ), patch.object(
@@ -213,9 +221,7 @@ class TestDaemonActivationOwnership:
         with patch(
             "sshpilot.daemon_terminal_policy.should_hide_external_terminal_options",
             return_value=False,
-        ), patch(
-            "sshpilot.terminal_manager.TerminalWidget"
-        ) as mock_terminal_widget, patch.object(
+        ), _tm_global("TerminalWidget") as mock_terminal_widget, patch.object(
             manager, "_maybe_unlock_secrets_then", return_value=False
         ) as unlock, patch.object(
             manager, "_show_daemon_error_dialog"
@@ -241,11 +247,7 @@ class TestDaemonActivationOwnership:
         with patch(
             "sshpilot.daemon_terminal_policy.should_hide_external_terminal_options",
             return_value=False,
-        ), patch(
-            "sshpilot.terminal_manager.TerminalWidget"
-        ) as mock_terminal_widget, patch(
-            "sshpilot.terminal_manager.GLib"
-        ), patch.object(
+        ), _tm_global("TerminalWidget") as mock_terminal_widget, _tm_global("GLib"), patch.object(
             manager, "_maybe_unlock_secrets_then", return_value=False
         ) as unlock, patch.object(
             manager, "_show_daemon_error_dialog"
@@ -279,9 +281,7 @@ class TestDaemonActivationOwnership:
         with patch(
             "sshpilot.daemon_terminal_policy.should_hide_external_terminal_options",
             return_value=False,
-        ), patch(
-            "sshpilot.terminal_manager.TerminalWidget"
-        ) as mock_terminal_widget, patch.object(
+        ), _tm_global("TerminalWidget") as mock_terminal_widget, patch.object(
             manager, "_maybe_unlock_secrets_then", return_value=False
         ):
             manager.connect_to_host(connection)
