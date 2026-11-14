@@ -6757,9 +6757,17 @@ class PreferencesWindow(Adw.Window):
         import importlib.util
 
         pyte_available = importlib.util.find_spec('pyte') is not None
+        try:
+            from .ghostty_terminal_model import load_libghostty
+            load_libghostty()
+            ghostty_error = None
+        except Exception as exc:  # noqa: BLE001
+            ghostty_error = str(exc)
         # Where VTE exists the built-in backend is opt-in: list it only once
-        # pyte is installed, so Linux/macOS Preferences are unchanged otherwise.
-        if pyte_available or not VTE_AVAILABLE:
+        # pyte or libghostty-vt is installed, so Linux/macOS Preferences are
+        # unchanged otherwise.
+        legacy_models = pyte_available or not VTE_AVAILABLE
+        if legacy_models or ghostty_error is None:
             # The built-in backend is listed once per emulator model
             # (``terminal.builtin_model``); both entries share the 'pyte' id.
             from .terminal_model_common import default_builtin_model
@@ -6767,52 +6775,47 @@ class PreferencesWindow(Adw.Window):
             # built-in backend is the only one (no VTE): libvterm on Windows.
             default_model = None if VTE_AVAILABLE else default_builtin_model()
             builtin = []
-            builtin.append(
-                {
-                    'id': 'pyte',
-                    'model': 'pyte',
-                    'label': (
-                        (_('pyte (default)') if default_model == 'pyte' else _('pyte'))
-                        if pyte_available else _('pyte (unavailable)')
-                    ),
-                    'description': (
-                        _('Pure-Python terminal emulator drawn with GTK')
-                        if pyte_available else _('Requires the pyte Python package')
-                    ),
-                    'available': pyte_available,
-                    'error': None if pyte_available else 'pyte is not installed',
-                }
-            )
-            try:
-                from .vterm_terminal_model import load_libvterm
-                load_libvterm()
-                vterm_error = None
-            except Exception as exc:  # noqa: BLE001
-                vterm_error = str(exc)
-            builtin.append(
-                {
-                    'id': 'pyte',
-                    'model': 'vterm',
-                    'label': (
-                        (_('libvterm (default)') if default_model == 'vterm' else _('libvterm'))
-                        if vterm_error is None else _('libvterm (unavailable)')
-                    ),
-                    'description': (
-                        _('Native terminal emulator drawn with GTK, faster on bulk output')
-                        if vterm_error is None else _('Requires the libvterm library')
-                    ),
-                    'available': vterm_error is None,
-                    'error': vterm_error,
-                }
-            )
+            if legacy_models:
+                builtin.append(
+                    {
+                        'id': 'pyte',
+                        'model': 'pyte',
+                        'label': (
+                            (_('pyte (default)') if default_model == 'pyte' else _('pyte'))
+                            if pyte_available else _('pyte (unavailable)')
+                        ),
+                        'description': (
+                            _('Pure-Python terminal emulator drawn with GTK')
+                            if pyte_available else _('Requires the pyte Python package')
+                        ),
+                        'available': pyte_available,
+                        'error': None if pyte_available else 'pyte is not installed',
+                    }
+                )
+                try:
+                    from .vterm_terminal_model import load_libvterm
+                    load_libvterm()
+                    vterm_error = None
+                except Exception as exc:  # noqa: BLE001
+                    vterm_error = str(exc)
+                builtin.append(
+                    {
+                        'id': 'pyte',
+                        'model': 'vterm',
+                        'label': (
+                            (_('libvterm (default)') if default_model == 'vterm' else _('libvterm'))
+                            if vterm_error is None else _('libvterm (unavailable)')
+                        ),
+                        'description': (
+                            _('Native terminal emulator drawn with GTK, faster on bulk output')
+                            if vterm_error is None else _('Requires the libvterm library')
+                        ),
+                        'available': vterm_error is None,
+                        'error': vterm_error,
+                    }
+                )
             if default_model == 'vterm':
                 builtin.reverse()  # the default first
-            try:
-                from .ghostty_terminal_model import load_libghostty
-                load_libghostty()
-                ghostty_error = None
-            except Exception as exc:  # noqa: BLE001
-                ghostty_error = str(exc)
             # Bundled on Windows only; elsewhere listed once the library loads.
             if ghostty_error is None or is_windows():
                 builtin.append(

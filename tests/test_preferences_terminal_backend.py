@@ -89,3 +89,43 @@ def test_missing_model_setting_uses_the_platform_default(monkeypatch):
     prefs = _prefs(backend='pyte')
     prefs._settings.pop('terminal.builtin_model')
     assert preferences.PreferencesWindow._backend_choice_index(prefs, 'pyte') == 2
+
+
+def _choices(monkeypatch, *, vte, pyte, ghostty, windows=False):
+    import importlib.util
+
+    from sshpilot import ghostty_terminal_model, terminal_backends
+
+    monkeypatch.setattr(terminal_backends, "VTE_AVAILABLE", vte)
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec",
+        lambda name, *a: (object() if pyte else None) if name == "pyte" else real_find_spec(name, *a),
+    )
+
+    def load():
+        if not ghostty:
+            raise ghostty_terminal_model.GhosttyUnavailable("not built")
+
+    monkeypatch.setattr(ghostty_terminal_model, "load_libghostty", load)
+    monkeypatch.setattr(preferences, "is_windows", lambda: windows)
+    monkeypatch.setattr(preferences, "is_macos", lambda: False)
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    prefs._detect_pyxterm_backend = lambda: (False, "no webkit")
+    return [(c["id"], c.get("model"), c["available"]) for c in prefs._build_backend_choices()]
+
+
+def test_linux_lists_libghostty_once_it_loads_even_without_pyte(monkeypatch):
+    builtin = [c for c in _choices(monkeypatch, vte=True, pyte=False, ghostty=True) if c[0] == "pyte"]
+    assert builtin == [("pyte", "ghostty", True)]
+
+
+def test_linux_without_any_builtin_engine_is_unchanged(monkeypatch):
+    choices = _choices(monkeypatch, vte=True, pyte=False, ghostty=False)
+    assert [c for c in choices if c[0] == "pyte"] == []
+
+
+def test_windows_lists_libghostty_even_when_missing(monkeypatch):
+    builtin = [c[1:] for c in _choices(monkeypatch, vte=False, pyte=True, ghostty=False, windows=True) if c[0] == "pyte"]
+    assert ("ghostty", False) in builtin
+    assert {model for model, _available in builtin} == {"pyte", "vterm", "ghostty"}
