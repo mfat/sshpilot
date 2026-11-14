@@ -191,8 +191,9 @@ _EXTRA_COMMANDS = (
 # Settings pages: (page id, title as registered by Preferences, keywords).
 # The page id is derived from the English title (PreferencesWindow._page_id).
 _SETTINGS_PAGES = (
-    ("interface", N_("Interface"), N_(
-        "language;tabs;start page;startup;header bar;tips;window size;interface"
+    ("general", N_("General"), N_(
+        "language;tabs;start page;startup;header bar;tips;window size;interface;"
+        "quit;confirm"
     )),
     ("appearance", N_("Appearance"), N_(
         "theme;accent color;accent colour;monospace font;group colors;"

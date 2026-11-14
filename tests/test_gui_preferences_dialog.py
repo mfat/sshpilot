@@ -89,7 +89,7 @@ def test_appearance_and_sidebar_have_their_own_pages(gui):
     while row is not None:
         ids.append(row.get_name())
         row = row.get_next_sibling()
-    assert ids[:4] == ['interface', 'appearance', 'sidebar', 'terminal']
+    assert ids[:4] == ['general', 'appearance', 'sidebar', 'terminal']
 
     appearance = prefs.pages['appearance']
     sidebar = prefs.pages['sidebar']
@@ -178,7 +178,7 @@ def test_group_preview_follows_group_settings_live(gui):
 
 def test_layout_cards_and_startup_toggles_stay_in_sync(gui):
     """A layout card writes the startup settings the other pages show, and back."""
-    prefs = _open_preferences(gui, page_id='interface')
+    prefs = _open_preferences(gui, page_id='general')
     for page_id in ('sidebar',):
         prefs._ensure_page_built(page_id)
     config = gui.window.config

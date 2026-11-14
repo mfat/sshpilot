@@ -295,7 +295,7 @@ def test_dark_mode_targets_the_dark_style(gui):
     ("group colors", "appearance"),
     ("compact sidebar", "sidebar"),
     ("flat rows", "sidebar"),
-    ("window size", "interface"),
+    ("window size", "general"),
 ])
 def test_settings_wording_opens_the_settings_page(gui, query, page):
     result = _top(gui.window, query)

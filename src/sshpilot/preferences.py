@@ -1184,48 +1184,36 @@ class PreferencesWindow(Adw.Window):
 
             terminal_page.add(terminal_choice_group)
 
-    def _add_interface_closing_group(self, interface_page):
-        """Add the Closing Tabs and Quitting group to the Interface page.
+    def _add_general_closing_group(self, general_page):
+        """Add the Closing Tabs and Quitting group to the General page.
 
         It lives here, not under Terminal, because it covers every tab with a
         live connection (terminals, split views) and quitting the whole app.
         Closing a tab always ends its session; the only choice is whether to
         confirm first, and the dialogs' "Don't ask me again" flips these rows.
         """
+        from .daemon_terminal_policy import TerminalClosePolicy, resolve_app_close_policy
+
         closing_group = Adw.PreferencesGroup(title=_("Closing Tabs and Quitting"))
 
         self.confirm_disconnect_switch = Adw.SwitchRow()
-        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
-        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
+        self.confirm_disconnect_switch.set_title(_("Ask before closing a tab"))
         self.confirm_disconnect_switch.set_active(
             self.config.get_setting('confirm-disconnect', True)
         )
         self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
         closing_group.add(self.confirm_disconnect_switch)
 
-        # App quit policy
-        self.app_close_policy_row = Adw.ComboRow()
-        self.app_close_policy_row.set_title(_("Quit policy"))
-        self.app_close_policy_row.set_subtitle(
-            _("Quitting always closes remote sessions and the background service")
+        # Quit always ends everything; the switch only decides whether to
+        # confirm first ('ask') or not ('terminate').
+        self.confirm_quit_switch = Adw.SwitchRow()
+        self.confirm_quit_switch.set_title(_("Ask before quitting"))
+        self.confirm_quit_switch.set_active(
+            resolve_app_close_policy(self.config) is TerminalClosePolicy.ASK
         )
-        app_policy_model = Gtk.StringList()
-        app_policy_model.append(_("Ask before closing active connections"))
-        app_policy_model.append(_("Quit immediately"))
-        self.app_close_policy_row.set_model(app_policy_model)
-        current_app_policy = self.config.get_setting(
-            'terminal.daemon_app_close_policy', 'ask'
-        )
-        # 'detach' is retired; a config still carrying it falls back to Ask.
-        app_policy_index = {
-            'ask': 0, 'terminate': 1
-        }.get(current_app_policy, 0)
-        self.app_close_policy_row.set_selected(app_policy_index)
-        self.app_close_policy_row.connect(
-            'notify::selected', self.on_app_close_policy_changed
-        )
-        closing_group.add(self.app_close_policy_row)
-        interface_page.add(closing_group)
+        self.confirm_quit_switch.connect('notify::active', self.on_confirm_quit_changed)
+        closing_group.add(self.confirm_quit_switch)
+        general_page.add(closing_group)
 
     def _add_advanced_service_group(self, advanced_page):
         """Add the Background Service group to the Advanced page.
@@ -2125,19 +2113,19 @@ class PreferencesWindow(Adw.Window):
         tips_group.add(show_tips_switch)
         interface_page.add(tips_group)
 
-    def _build_interface_preferences_page(self):
-        """Build the Interface preferences page."""
-        interface_page = Adw.PreferencesPage()
-        interface_page.set_title(_("Interface"))
-        interface_page.set_icon_name("brush-monitor-symbolic")
+    def _build_general_preferences_page(self):
+        """Build the General preferences page."""
+        general_page = Adw.PreferencesPage()
+        general_page.set_title(_("General"))
+        general_page.set_icon_name("brush-monitor-symbolic")
 
-        self._add_interface_language_group(interface_page)
-        self._add_interface_layout_group(interface_page)
-        self._add_interface_startup_group(interface_page)
-        self._add_interface_closing_group(interface_page)
-        self._add_interface_headerbar_and_tips_groups(interface_page)
-        self._add_interface_window_group(interface_page)
-        return interface_page
+        self._add_interface_language_group(general_page)
+        self._add_interface_layout_group(general_page)
+        self._add_interface_startup_group(general_page)
+        self._add_interface_headerbar_and_tips_groups(general_page)
+        self._add_interface_window_group(general_page)
+        self._add_general_closing_group(general_page)
+        return general_page
 
     def _build_appearance_preferences_page(self):
         """Build the Appearance preferences page."""
@@ -3269,9 +3257,9 @@ class PreferencesWindow(Adw.Window):
         """Set up preferences UI with current values"""
         try:
             # Build initial page immediately; register remaining page builders lazily
-            interface_page = self._build_interface_preferences_page()
+            general_page = self._build_general_preferences_page()
 
-            self.add_page_to_layout(N_("Interface"), "brush-monitor-symbolic", interface_page)
+            self.add_page_to_layout(N_("General"), "brush-monitor-symbolic", general_page)
             self.add_page_to_layout(N_("Appearance"), "color-symbolic", self._build_appearance_preferences_page)
             self.add_page_to_layout(N_("Sidebar"), "sidebar-show-symbolic", self._build_sidebar_preferences_page)
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
@@ -4398,11 +4386,10 @@ class PreferencesWindow(Adw.Window):
         except Exception as exc:
             logger.error("Failed to update wheel scroll lines: %s", exc)
 
-    def on_app_close_policy_changed(self, row, _pspec):
-        """Persist the application quit policy preference."""
+    def on_confirm_quit_changed(self, switch, _pspec):
+        """Persist "Ask before quitting" as the app-close policy."""
         try:
-            policy_map = {0: 'ask', 1: 'terminate'}
-            policy = policy_map.get(row.get_selected(), 'ask')
+            policy = 'ask' if switch.get_active() else 'terminate'
             self.config.set_setting('terminal.daemon_app_close_policy', policy)
         except Exception as exc:
             logger.error("Failed to update app close policy: %s", exc)
