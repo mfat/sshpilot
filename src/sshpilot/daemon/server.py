@@ -1988,13 +1988,22 @@ class DaemonServer:
             self._app_watcher.poke()
 
     def _watch_app_peer(self, state: "_ClientConnection") -> None:
-        from .app_watch import identify_peer_process, is_app_frontend
+        from .app_watch import (
+            identify_peer_process,
+            is_app_frontend,
+            peer_is_this_process,
+        )
 
         info = state.protocol.client_info
         if info is None or not is_app_frontend(getattr(info, "frontend_type", None)):
             return
+        if peer_is_this_process(state.sock):
+            return  # an in-process app ends with the daemon anyway
         identity = identify_peer_process(state.sock)
         if identity is None:
+            # Its exit could not be seen, so another app exiting must not be
+            # read as "the app is gone": keep the normal idle lifetime.
+            self._app_watcher.disable("an app client's process could not be identified")
             return
         state.app_peer = True
         self._app_watcher.register(identity)

@@ -46,11 +46,18 @@ def is_app_frontend(frontend_type: object) -> bool:
     return isinstance(frontend_type, str) and frontend_type in APP_FRONTEND_TYPES
 
 
+def peer_is_this_process(sock: socket.socket) -> bool:
+    """A client inside the daemon's own process dies with it: nothing to watch."""
+
+    return _peer_pid(sock) == os.getpid()
+
+
 def identify_peer_process(sock: socket.socket) -> Optional[ProcessIdentity]:
     """Identify the process on the other end of ``sock``, or ``None``.
 
-    ``None`` (unknown peer, or a client inside the daemon's own process)
-    means "do not watch"; it never causes a shutdown.
+    ``None`` means the peer could not be identified (or is this process).
+    The server treats an unidentified *app* peer as grounds to stop
+    watching altogether, never as an exited app.
     """
 
     pid = _peer_pid(sock)
@@ -136,11 +143,31 @@ class AppProcessWatcher:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._fired = False
+        self._disabled = False
         self._thread: Optional[threading.Thread] = None
+
+    def disable(self, reason: str) -> None:
+        """Never fire again: an app process could not be tracked.
+
+        With an unidentified app connected, "every watched process exited"
+        no longer means the app is gone, so the daemon falls back to its
+        normal idle lifetime instead of guessing.
+        """
+
+        with self._lock:
+            if self._disabled or self._fired:
+                return
+            self._disabled = True
+        logger.warning("App exit watching disabled: %s", reason)
+        self._wake.set()
+
+    @property
+    def disabled(self) -> bool:
+        return self._disabled
 
     def register(self, identity: ProcessIdentity) -> None:
         with self._lock:
-            if self._fired or self._stop.is_set():
+            if self._fired or self._disabled or self._stop.is_set():
                 return
             known = self._watched.get(identity.pid)
             if known == identity:
@@ -164,12 +191,12 @@ class AppProcessWatcher:
         """Drop exited processes; fire and return True when none remain."""
 
         with self._lock:
-            if self._fired or not self._watched:
+            if self._fired or self._disabled or not self._watched:
                 return False
             watched = tuple(self._watched.values())
         gone = tuple(identity for identity in watched if not self._alive(identity))
         with self._lock:
-            if self._fired:
+            if self._fired or self._disabled:
                 return False
             for identity in gone:
                 if self._watched.get(identity.pid) == identity:
@@ -201,6 +228,8 @@ class AppProcessWatcher:
             self._wake.clear()
             if self._stop.is_set():
                 return
+            if self._disabled:
+                return
             try:
                 if self.check():
                     return
@@ -214,5 +243,6 @@ __all__ = [
     "ProcessIdentity",
     "identify_peer_process",
     "is_app_frontend",
+    "peer_is_this_process",
     "process_alive",
 ]

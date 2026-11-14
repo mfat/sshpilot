@@ -227,3 +227,50 @@ def test_a_cli_client_leaving_does_not_stop_the_daemon(daemon):
     cli.wait(timeout=10)
     time.sleep(2.5)
     assert not daemon.stopped
+
+
+def test_disabled_watcher_never_fires():
+    fake = _Fake()
+    watcher = fake.watcher()
+    only = ProcessIdentity(100, 1.0)
+    watcher.register(only)
+    watcher.disable("an app client's process could not be identified")
+    fake.alive[only] = False
+    try:
+        assert watcher.check() is False
+        assert fake.fired == []
+        watcher.register(ProcessIdentity(300, 3.0))  # ignored once disabled
+        assert watcher.check() is False
+    finally:
+        watcher.stop()
+
+
+def test_unidentified_app_falls_back_to_idle_lifetime(daemon, monkeypatch):
+    """App A is identified, app B is not; A exiting must not stop the daemon.
+
+    The daemon cannot see B's process, so "every watched app exited" no
+    longer means the app is gone: it falls back to its idle lifetime.
+    """
+    from sshpilot.daemon import app_watch
+
+    real = app_watch.identify_peer_process
+    calls = []
+
+    def first_only(sock):
+        calls.append(sock)
+        return real(sock) if len(calls) == 1 else None
+
+    monkeypatch.setattr(app_watch, "identify_peer_process", first_only)
+    app_a = _spawn(daemon, "gtk", "stay")
+    app_b = _spawn(daemon, "gtk", "stay")
+    try:
+        time.sleep(0.5)
+        app_a.kill()
+        app_a.wait()
+        time.sleep(3)
+        assert not daemon.stopped
+    finally:
+        for app in (app_a, app_b):
+            if app.poll() is None:
+                app.kill()
+                app.wait()
