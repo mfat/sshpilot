@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.4.0}
+Version:        %{?version}%{!?version:6.4.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -168,6 +168,15 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sat Nov 14 2026 mFat <newmfat@gmail.com> - 6.4.1-1
+- Closing a connected tab asks once instead of twice; cancelling no longer leaves a session running with no tab
+- Quitting can be confirmed with the same "Don't ask me again" option
+- If the app crashes or is killed, its SSH sessions, forwards and transfers now stop with it instead of running on unreachable
+- Detach and restore-sessions-on-startup are retired: detached sessions could never be reopened, and restore never covered a crash
+- Settings: Interface is now General and holds Ask before closing a tab and Ask before quitting; Background Service moves to Advanced and shows the real idle shutdown time
+- The About dialog shows the bundled app icon, not an outdated system copy
+- Spanish: "Close" now reads "Cerrar"
+
 * Fri Nov 13 2026 mFat <newmfat@gmail.com> - 6.4.0-1
 - Saved hosts now connect exactly as `ssh <alias>` does in a terminal: earlier Host * and Match blocks, /etc/ssh/ssh_config and the main config of hosts in included files all apply as OpenSSH applies them
 - If a setting you typed is no longer the one used, a banner in the main window says so and the connection editor marks the field with the value that wins and where it comes from; open Effective Config for details

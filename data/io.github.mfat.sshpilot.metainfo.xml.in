@@ -35,6 +35,17 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.4.1" date="2026-11-14">
+      <description>
+        <p>Closing a connected tab asks once instead of twice; cancelling no longer leaves a session running with no tab</p>
+        <p>Quitting can be confirmed with the same &quot;Don&#x27;t ask me again&quot; option</p>
+        <p>If the app crashes or is killed, its SSH sessions, forwards and transfers now stop with it instead of running on unreachable</p>
+        <p>Detach and restore-sessions-on-startup are retired: detached sessions could never be reopened, and restore never covered a crash</p>
+        <p>Settings: Interface is now General and holds Ask before closing a tab and Ask before quitting; Background Service moves to Advanced and shows the real idle shutdown time</p>
+        <p>The About dialog shows the bundled app icon, not an outdated system copy</p>
+        <p>Spanish: &quot;Close&quot; now reads &quot;Cerrar&quot;</p>
+      </description>
+    </release>
     <release version="6.4.0" date="2026-11-13">
       <description>
         <p>Saved hosts now connect exactly as `ssh &lt;alias&gt;` does in a terminal: earlier Host * and Match blocks, /etc/ssh/ssh_config and the main config of hosts in included files all apply as OpenSSH applies them</p>
