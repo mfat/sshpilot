@@ -70,7 +70,11 @@ class RecordingDialog:
         pass
 
     def connect(self, signal, handler, *args):
-        pass
+        self.response_handler = (handler, args)
+
+    def emit_response(self, response_id):
+        handler, args = self.response_handler
+        handler(self, response_id, *args)
 
     def set_focus_visible(self, visible):
         self.focus_visible = visible
@@ -78,7 +82,8 @@ class RecordingDialog:
 
 class FakeCheckButton:
     def __init__(self, *args, **kwargs):
-        pass
+        self.label = kwargs.get("label")
+        self.active = False
 
     def set_halign(self, value):
         pass
@@ -87,7 +92,7 @@ class FakeCheckButton:
         pass
 
     def get_active(self):
-        return False
+        return self.active
 
 
 class FocusRecordingWindow:
@@ -139,19 +144,59 @@ def assert_default_is_registered(dialog):
 # --- Quit -----------------------------------------------------------------
 
 
-def test_daemon_quit_dialog_defaults_to_quit(monkeypatch):
+@pytest.fixture
+def fake_quit_gtk(monkeypatch):
     adw = types.SimpleNamespace(
         AlertDialog=RecordingDialog,
         ResponseAppearance=types.SimpleNamespace(DESTRUCTIVE=object()),
     )
-    # daemon_quit_policy imports Adw inside the function, so the swap has to
-    # happen on the gi.repository package itself.
+    gtk = types.SimpleNamespace(
+        CheckButton=FakeCheckButton,
+        Align=types.SimpleNamespace(START=object()),
+    )
+    # daemon_quit_policy imports Adw/Gtk inside the function, so the swap has
+    # to happen on the gi.repository package itself.
     monkeypatch.setattr(sys.modules["gi.repository"], "Adw", adw)
+    monkeypatch.setattr(sys.modules["gi.repository"], "Gtk", gtk)
     monkeypatch.setattr(
         daemon_quit_policy,
         "daemon_active_work_summary",
         lambda client: {"sessions_active": 2},
     )
+
+
+@pytest.mark.parametrize("ticked, expected_policy", [(True, "terminate"), (False, None)])
+def test_daemon_quit_dialog_dont_ask_again_sets_quit_immediately(
+    fake_quit_gtk, ticked, expected_policy
+):
+    """The quit prompt offers the same opt-out as the tab-close prompt."""
+    config = FakeConfig()
+    decisions = []
+    window = FocusRecordingWindow(config=config)
+    daemon_quit_policy.present_daemon_quit_dialog(window, on_decision=decisions.append)
+
+    dialog = only_dialog()
+    assert dialog.extra_child.label == "Don't ask me again"
+    dialog.extra_child.active = ticked
+    dialog.emit_response("terminate")
+
+    assert decisions == [daemon_quit_policy.DaemonQuitDecision.TERMINATE_ALL]
+    assert config.settings.get("terminal.daemon_app_close_policy") == expected_policy
+
+
+def test_daemon_quit_dialog_cancel_ignores_dont_ask_again(fake_quit_gtk):
+    config = FakeConfig()
+    window = FocusRecordingWindow(config=config)
+    daemon_quit_policy.present_daemon_quit_dialog(window, on_decision=lambda d: None)
+
+    dialog = only_dialog()
+    dialog.extra_child.active = True
+    dialog.emit_response("cancel")
+
+    assert "terminal.daemon_app_close_policy" not in config.settings
+
+
+def test_daemon_quit_dialog_defaults_to_quit(fake_quit_gtk):
 
     window = FocusRecordingWindow()
     daemon_quit_policy.present_daemon_quit_dialog(window, on_decision=lambda d: None)

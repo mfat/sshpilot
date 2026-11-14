@@ -72,13 +72,13 @@ class DaemonTerminalReadiness:
     missing_capabilities: tuple[Capability, ...] = ()
 
 
-TAB_CLOSE_POLICY_SETTING = "terminal.daemon_tab_close_policy"
+# Closing a tab has no policy of its own: it always ends the session, and
+# whether to confirm first is the "confirm-disconnect" setting. The retired
+# "terminal.daemon_tab_close_policy" raised a second dialog on top of that one.
 APP_CLOSE_POLICY_SETTING = "terminal.daemon_app_close_policy"
-RESTORE_SESSIONS_SETTING = "terminal.daemon_restore_sessions"
-AUTO_ATTACH_SETTING = "terminal.daemon_auto_attach"
 # Retained as a compatibility setting name; internal SSH routing is daemon-only.
 PREFERRED_EMULATOR_SETTING = "terminal.daemon_emulator"
-SESSION_RESTORE_STATE_SETTING = "terminal.daemon_session_restore_state"
+IDLE_SHUTDOWN_SETTING = "daemon.idle_shutdown_seconds"
 
 # Stage C: default on for supported installs.
 
@@ -327,28 +327,13 @@ def daemon_readiness_user_message(readiness: DaemonTerminalReadiness) -> str:
 def resolve_close_policy(
     config,
     setting_key: str,
-    default: TerminalClosePolicy = TerminalClosePolicy.DETACH,
+    default: TerminalClosePolicy = TerminalClosePolicy.TERMINATE,
 ) -> TerminalClosePolicy:
     raw = str(_get_setting(config, setting_key, default.value) or "")
     try:
         return TerminalClosePolicy(raw.strip().lower())
     except ValueError:
         return default
-
-
-def resolve_tab_close_policy(config) -> TerminalClosePolicy:
-    """Resolve what closing a terminal tab does to its daemon session.
-
-    Closing a tab ends the session by default. Detaching left the session
-    RUNNING in the daemon with no tab owning it, which the sidebar (rightly)
-    kept reporting as connected, so the indicator stayed green after the user
-    had closed the connection — and the orphan then outvoted every later
-    session for that host, so even a clean ``exit`` could not turn it red
-    (GH #1176). Detach is still available, but only when asked for.
-    """
-    return resolve_close_policy(
-        config, TAB_CLOSE_POLICY_SETTING, TerminalClosePolicy.TERMINATE
-    )
 
 
 def resolve_app_close_policy(config) -> TerminalClosePolicy:
@@ -370,6 +355,37 @@ def resolve_app_close_policy(config) -> TerminalClosePolicy:
     if policy is TerminalClosePolicy.DETACH:
         return TerminalClosePolicy.ASK
     return policy
+
+
+def effective_idle_shutdown_seconds(config) -> int:
+    """The idle shutdown the daemon will actually use, for display.
+
+    Mirrors ``daemon/cli.py``: an explicit setting wins; otherwise the
+    environment default applies (none in service mode, shorter in packaged
+    builds, which the launcher marks when frozen). 0 means never.
+    """
+    import os
+    import sys
+
+    from .api.models.daemon import default_idle_shutdown_seconds
+
+    raw = _get_setting(config, IDLE_SHUTDOWN_SETTING, None)
+    if raw is not None:
+        try:
+            return max(0, int(float(raw)))
+        except (TypeError, ValueError):
+            pass
+    service_mode = bool(
+        _get_setting(config, "daemon.service_mode", False)
+        or os.environ.get("SSHPILOT_DAEMON_SERVICE_MODE")
+    )
+    packaged = bool(
+        getattr(sys, "frozen", False) or os.environ.get("SSHPILOT_PACKAGED")
+    )
+    seconds = default_idle_shutdown_seconds(
+        service_mode=service_mode, packaged=packaged
+    )
+    return 0 if seconds is None else int(seconds)
 
 
 def preferred_daemon_emulator(config) -> str:

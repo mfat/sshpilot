@@ -92,7 +92,7 @@ def test_settings_index_matches_the_real_rows(gui):
 
 
 def test_search_finds_a_setting_and_reveals_it(gui):
-    prefs = _open_preferences(gui, page_id='interface')
+    prefs = _open_preferences(gui, page_id='general')
     titles = _search(prefs, gui, 'scroll lines')
     assert titles == ['Mouse wheel scroll lines']
     assert prefs.sidebar_stack.get_visible_child_name() == 'results'
@@ -134,11 +134,11 @@ def test_search_finds_groups_of_custom_controls(gui):
     prefs = _open_preferences(gui, page_id='terminal')
     assert _search(prefs, gui, 'start page') == ['App Startup']
     result = prefs.search_results.get_row_at_index(0)
-    assert result.get_subtitle() == 'Interface'
+    assert result.get_subtitle() == 'General'
     prefs.search_results.emit('row-activated', result)
     gui.pump(500)
     group = result._search_target[1]
-    assert prefs._selected_page_name == 'interface'
+    assert prefs._selected_page_name == 'general'
     focus = prefs.get_focus()
     assert isinstance(focus, Gtk.CheckButton) and focus.is_ancestor(group)
     assert group.has_css_class('settings-search-highlight')
@@ -166,7 +166,7 @@ def test_search_empty_state_and_escape(gui):
 def test_enter_opens_the_first_result(gui):
     from gi.repository import Adw
 
-    prefs = _open_preferences(gui, page_id='interface')
+    prefs = _open_preferences(gui, page_id='general')
     _search(prefs, gui, 'row style')
     prefs.search_entry.emit('activate')
     gui.pump(500)

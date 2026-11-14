@@ -1092,21 +1092,9 @@ class WindowTabsMixin:
         if child is None:
             return
         from .split_view import SplitViewTab
-        if isinstance(child, SplitViewTab):
-            terminals = child.get_all_terminals()
-        elif hasattr(child, 'disconnect'):
-            terminals = [child]
-        else:
+        if not isinstance(child, SplitViewTab) and not hasattr(child, 'disconnect'):
             return
 
-        # Mark the batch so an ASK close policy resolves without a dialog per
-        # tab: these closes are either already confirmed for the whole batch or
-        # programmatic.
-        for terminal in terminals:
-            try:
-                terminal._daemon_batch_close = True
-            except Exception:
-                pass
         try:
             if isinstance(child, SplitViewTab):
                 child.cleanup_all()

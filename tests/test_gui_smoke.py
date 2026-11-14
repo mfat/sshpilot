@@ -150,13 +150,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     daemon_client.list_connections = _recorded_list
     app._api_client_bridge = bridge
     window.client_bridge = bridge
-    previous_restore = window.config.get_setting(
-        "terminal.daemon_restore_sessions", True
-    )
     try:
-        # Disable restore so it cannot enqueue a second control RPC behind the
-        # intentionally blocked connections.list (single request gate).
-        window.config.set_setting("terminal.daemon_restore_sessions", False)
         window._apply_client_selection(
             ClientSelection(client=daemon_client)
         )
@@ -180,12 +174,6 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         assert completed.is_set()
     finally:
         release.set()
-        try:
-            window.config.set_setting(
-                "terminal.daemon_restore_sessions", previous_restore
-            )
-        except Exception:
-            pass
         app.clear_api_event_subscription()
         daemon_client.close()
         bridge.shutdown()

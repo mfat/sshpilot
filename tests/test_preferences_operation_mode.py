@@ -706,7 +706,6 @@ def _window_with_preferences(preferences):
         _api_client_selection_request=object(),
         _attach_client_backed_services=lambda: None,
         _build_ssh_overrides_controller=lambda: None,
-        _maybe_restore_daemon_sessions=lambda: None,
         _run_client_ready_callbacks=lambda _ready: None,
         get_application=lambda: None,
     )
@@ -750,10 +749,10 @@ def test_the_first_attach_ignores_a_failing_mode_resync():
         reset_operation_mode_confirmation=_boom,
     )
     MainWindow, window = _window_with_preferences(preferences)
-    restored = []
-    window._maybe_restore_daemon_sessions = lambda: restored.append(True)
+    ready = []
+    window._run_client_ready_callbacks = ready.append
 
     MainWindow._apply_client_selection(window, SimpleNamespace(client=object()))
 
-    assert restored == [True]
+    assert ready == [True]
     assert window._api_client_selection_pending is False

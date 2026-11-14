@@ -1,5 +1,14 @@
 # Session Reattachment and Persistence (Phase 9)
 
+> **GTK no longer detaches or restores terminal sessions (November 2026).**
+> The Detach tab-close policy, the "Restore daemon sessions on startup"
+> setting, `terminal.daemon_auto_attach`, `DaemonSessionRestoreManager` and the
+> developer sessions dialog were removed: nothing in the app could reach a
+> detached session, and restore only ever covered sessions saved on Detach
+> (never a crash). A stored `detach` tab-close value resolves to `terminate`.
+> The daemon's attach/detach/replay API below is unchanged and still used for
+> recovery inside a running app. The GTK sections are kept as history.
+
 This document covers daemon SSH session persistence across GTK restarts, including detachment policies, restoration metadata, and reattachment mechanisms.
 
 ## Routing boundary

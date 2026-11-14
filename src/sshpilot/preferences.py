@@ -1184,75 +1184,52 @@ class PreferencesWindow(Adw.Window):
 
             terminal_page.add(terminal_choice_group)
 
-    def _add_terminal_daemon_group(self, terminal_page):
-        """Add the Daemon Terminal Settings group."""
-        daemon_group = Adw.PreferencesGroup(title=_("Daemon Terminal Settings"))
-        daemon_group.set_description(
-            _("Configure daemon-backed SSH terminals for better session management")
-        )
+    def _add_general_closing_group(self, general_page):
+        """Add the Closing Tabs and Quitting group to the General page.
 
-        # Tab close policy
-        self.tab_close_policy_row = Adw.ComboRow()
-        self.tab_close_policy_row.set_title(_("Tab close policy"))
-        self.tab_close_policy_row.set_subtitle(
-            _("Action when closing daemon-backed terminal tabs")
-        )
+        It lives here, not under Terminal, because it covers every tab with a
+        live connection (terminals, split views) and quitting the whole app.
+        Closing a tab always ends its session; the only choice is whether to
+        confirm first, and the dialogs' "Don't ask me again" flips these rows.
+        """
+        from .daemon_terminal_policy import TerminalClosePolicy, resolve_app_close_policy
 
-        policy_model = Gtk.StringList()
-        policy_model.append(_("Detach (keep session running)"))
-        policy_model.append(_("Terminate (end session)"))
-        policy_model.append(_("Ask each time"))
-        self.tab_close_policy_row.set_model(policy_model)
+        closing_group = Adw.PreferencesGroup(title=_("Closing Tabs and Quitting"))
 
-        # Default matches resolve_tab_close_policy: closing a tab ends the session.
-        current_policy = self.config.get_setting(
-            'terminal.daemon_tab_close_policy', 'terminate'
+        self.confirm_disconnect_switch = Adw.SwitchRow()
+        self.confirm_disconnect_switch.set_title(_("Ask before closing a tab"))
+        self.confirm_disconnect_switch.set_active(
+            self.config.get_setting('confirm-disconnect', True)
         )
-        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 1)
-        self.tab_close_policy_row.set_selected(policy_index)
-        self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
-        daemon_group.add(self.tab_close_policy_row)
+        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+        closing_group.add(self.confirm_disconnect_switch)
 
-        # App quit policy
-        self.app_close_policy_row = Adw.ComboRow()
-        self.app_close_policy_row.set_title(_("Quit policy"))
-        self.app_close_policy_row.set_subtitle(
-            _("Quitting always closes remote sessions and the background service")
+        # Quit always ends everything; the switch only decides whether to
+        # confirm first ('ask') or not ('terminate').
+        self.confirm_quit_switch = Adw.SwitchRow()
+        self.confirm_quit_switch.set_title(_("Ask before quitting"))
+        self.confirm_quit_switch.set_active(
+            resolve_app_close_policy(self.config) is TerminalClosePolicy.ASK
         )
-        app_policy_model = Gtk.StringList()
-        app_policy_model.append(_("Ask before closing active connections"))
-        app_policy_model.append(_("Quit immediately"))
-        self.app_close_policy_row.set_model(app_policy_model)
-        current_app_policy = self.config.get_setting(
-            'terminal.daemon_app_close_policy', 'ask'
-        )
-        # 'detach' is retired; a config still carrying it falls back to Ask.
-        app_policy_index = {
-            'ask': 0, 'terminate': 1
-        }.get(current_app_policy, 0)
-        self.app_close_policy_row.set_selected(app_policy_index)
-        self.app_close_policy_row.connect(
-            'notify::selected', self.on_app_close_policy_changed
-        )
-        daemon_group.add(self.app_close_policy_row)
+        self.confirm_quit_switch.connect('notify::active', self.on_confirm_quit_changed)
+        closing_group.add(self.confirm_quit_switch)
+        general_page.add(closing_group)
 
-        # Session restore
-        self.restore_sessions_switch = Adw.SwitchRow()
-        self.restore_sessions_switch.set_title(_("Restore daemon sessions on startup"))
-        self.restore_sessions_switch.set_subtitle(
-            _("Automatically reattach to daemon sessions from previous session")
-        )
-        restore_sessions_active = bool(self.config.get_setting('terminal.daemon_restore_sessions', False))
-        self.restore_sessions_switch.set_active(restore_sessions_active)
-        self.restore_sessions_switch.connect(
-            'notify::active', self.on_restore_sessions_toggled
-        )
-        daemon_group.add(self.restore_sessions_switch)
+    def _add_advanced_service_group(self, advanced_page):
+        """Add the Background Service group to the Advanced page.
 
-        # Idle shutdown (seconds); 0 disables.
+        The service runs SSH, SFTP and every other connection, not just
+        terminals, so it is not a Terminal setting.
+        """
+        from .daemon_terminal_policy import effective_idle_shutdown_seconds
+
+        daemon_group = Adw.PreferencesGroup(title=_("Background Service"))
+
+        # Idle shutdown (seconds); 0 disables. Shows the value the service
+        # really uses, which differs per platform when unset.
         self.daemon_idle_timeout_row = Adw.SpinRow(
             adjustment=Gtk.Adjustment(
-                value=float(self.config.get_setting('daemon.idle_shutdown_seconds', 300)),
+                value=float(effective_idle_shutdown_seconds(self.config)),
                 lower=0,
                 upper=86400,
                 step_increment=30,
@@ -1260,9 +1237,10 @@ class PreferencesWindow(Adw.Window):
             ),
             digits=0,
         )
-        self.daemon_idle_timeout_row.set_title(_("Daemon idle shutdown (seconds)"))
+        self.daemon_idle_timeout_row.set_title(_("Idle shutdown (seconds)"))
         self.daemon_idle_timeout_row.set_subtitle(
-            _("Exit when idle with no clients or live resources. 0 keeps the daemon running.")
+            _("Stop the background service after it has been unused this long. "
+              "0 keeps it running.")
         )
         self.daemon_idle_timeout_row.connect(
             'notify::value', self.on_daemon_idle_timeout_changed
@@ -1270,7 +1248,7 @@ class PreferencesWindow(Adw.Window):
         daemon_group.add(self.daemon_idle_timeout_row)
 
         self.daemon_status_row = Adw.ActionRow()
-        self.daemon_status_row.set_title(_("Daemon status"))
+        self.daemon_status_row.set_title(_("Service status"))
         self.daemon_status_row.set_subtitle(_("Not queried yet"))
         refresh_btn = Gtk.Button(label=_("Refresh"))
         refresh_btn.set_valign(Gtk.Align.CENTER)
@@ -1279,10 +1257,10 @@ class PreferencesWindow(Adw.Window):
         daemon_group.add(self.daemon_status_row)
 
         restart_row = Adw.ActionRow()
-        restart_row.set_title(_("Restart daemon"))
+        restart_row.set_title(_("Restart background service"))
         restart_row.set_subtitle(
-            _("Stops the daemon and reconnects automatically. "
-              "Live sessions cannot survive a restart.")
+            _("Stops the background service and reconnects automatically. "
+              "Open connections are closed.")
         )
         restart_btn = Gtk.Button(label=_("Restart"))
         restart_btn.set_valign(Gtk.Align.CENTER)
@@ -1291,7 +1269,7 @@ class PreferencesWindow(Adw.Window):
         restart_row.add_suffix(restart_btn)
         daemon_group.add(restart_row)
 
-        terminal_page.add(daemon_group)
+        advanced_page.add(daemon_group)
         # Best-effort status fill without blocking dialog open.
         GLib.idle_add(self._refresh_daemon_status_row)
 
@@ -1306,7 +1284,6 @@ class PreferencesWindow(Adw.Window):
         self._add_terminal_highlight_group(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
-        self._add_terminal_daemon_group(terminal_page)
         self._add_terminal_preferred_group(terminal_page)
         return terminal_page
 
@@ -2136,18 +2113,19 @@ class PreferencesWindow(Adw.Window):
         tips_group.add(show_tips_switch)
         interface_page.add(tips_group)
 
-    def _build_interface_preferences_page(self):
-        """Build the Interface preferences page."""
-        interface_page = Adw.PreferencesPage()
-        interface_page.set_title(_("Interface"))
-        interface_page.set_icon_name("brush-monitor-symbolic")
+    def _build_general_preferences_page(self):
+        """Build the General preferences page."""
+        general_page = Adw.PreferencesPage()
+        general_page.set_title(_("General"))
+        general_page.set_icon_name("brush-monitor-symbolic")
 
-        self._add_interface_language_group(interface_page)
-        self._add_interface_layout_group(interface_page)
-        self._add_interface_startup_group(interface_page)
-        self._add_interface_headerbar_and_tips_groups(interface_page)
-        self._add_interface_window_group(interface_page)
-        return interface_page
+        self._add_interface_language_group(general_page)
+        self._add_interface_layout_group(general_page)
+        self._add_interface_startup_group(general_page)
+        self._add_interface_headerbar_and_tips_groups(general_page)
+        self._add_interface_window_group(general_page)
+        self._add_general_closing_group(general_page)
+        return general_page
 
     def _build_appearance_preferences_page(self):
         """Build the Appearance preferences page."""
@@ -2471,27 +2449,6 @@ class PreferencesWindow(Adw.Window):
             if callable(setter):
                 setter(bool(sensitive))
 
-    def _add_advanced_behavior_group(self, advanced_page):
-        """Add the Application Behavior group to the Advanced page."""
-        # Application behavior group
-        behavior_group = Adw.PreferencesGroup(title=_("Application Behavior"))
-
-        # Confirm before disconnecting
-        self.confirm_disconnect_switch = Adw.SwitchRow()
-        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
-        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
-        self.confirm_disconnect_switch.set_active(
-            self.config.get_setting('confirm-disconnect', True)
-        )
-        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
-        behavior_group.add(self.confirm_disconnect_switch)
-
-        # ssh.agent_preload_keys stays on by default (no Preferences toggle):
-        # the terminal worker force-unlocks configured identities into the
-        # agent so locked gcr keys cannot fall through to the system askpass.
-
-        advanced_page.add(behavior_group)
-
     def _add_advanced_logging_group(self, advanced_page):
         """Add the Logging group to the Advanced page."""
         # Logging group ------------------------------------------------
@@ -2792,7 +2749,7 @@ class PreferencesWindow(Adw.Window):
         advanced_page.set_icon_name("applications-system-symbolic")
 
         self._add_advanced_operation_mode_group(advanced_page)
-        self._add_advanced_behavior_group(advanced_page)
+        self._add_advanced_service_group(advanced_page)
         self._add_advanced_logging_group(advanced_page)
         return advanced_page
 
@@ -3300,9 +3257,9 @@ class PreferencesWindow(Adw.Window):
         """Set up preferences UI with current values"""
         try:
             # Build initial page immediately; register remaining page builders lazily
-            interface_page = self._build_interface_preferences_page()
+            general_page = self._build_general_preferences_page()
 
-            self.add_page_to_layout(N_("Interface"), "brush-monitor-symbolic", interface_page)
+            self.add_page_to_layout(N_("General"), "brush-monitor-symbolic", general_page)
             self.add_page_to_layout(N_("Appearance"), "color-symbolic", self._build_appearance_preferences_page)
             self.add_page_to_layout(N_("Sidebar"), "sidebar-show-symbolic", self._build_sidebar_preferences_page)
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
@@ -4429,30 +4386,13 @@ class PreferencesWindow(Adw.Window):
         except Exception as exc:
             logger.error("Failed to update wheel scroll lines: %s", exc)
 
-    def on_tab_close_policy_changed(self, row, _pspec):
-        """Persist the tab close policy preference."""
+    def on_confirm_quit_changed(self, switch, _pspec):
+        """Persist "Ask before quitting" as the app-close policy."""
         try:
-            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
-            policy = policy_map.get(row.get_selected(), 'terminate')
-            self.config.set_setting('terminal.daemon_tab_close_policy', policy)
-        except Exception as exc:
-            logger.error("Failed to update tab close policy: %s", exc)
-
-    def on_app_close_policy_changed(self, row, _pspec):
-        """Persist the application quit policy preference."""
-        try:
-            policy_map = {0: 'ask', 1: 'terminate'}
-            policy = policy_map.get(row.get_selected(), 'ask')
+            policy = 'ask' if switch.get_active() else 'terminate'
             self.config.set_setting('terminal.daemon_app_close_policy', policy)
         except Exception as exc:
             logger.error("Failed to update app close policy: %s", exc)
-
-    def on_restore_sessions_toggled(self, switch, _pspec):
-        """Persist the restore sessions preference."""
-        try:
-            self.config.set_setting('terminal.daemon_restore_sessions', bool(switch.get_active()))
-        except Exception as exc:
-            logger.error("Failed to update restore sessions setting: %s", exc)
 
     def on_daemon_idle_timeout_changed(self, row, _pspec):
         try:
@@ -4515,10 +4455,10 @@ class PreferencesWindow(Adw.Window):
 
     def on_daemon_restart_clicked(self, _button):
         dialog = Adw.AlertDialog(
-            heading=_("Restart the local daemon?"),
+            heading=_("Restart the background service?"),
             body=_(
-                "Live terminal sessions, SFTP services, transfers, and forwards "
-                "owned by this daemon will be lost. They cannot survive a restart."
+                "Open terminal sessions, file browser connections, transfers "
+                "and port forwards will be closed."
             ),
         )
         dialog.add_response('cancel', _("Cancel"))

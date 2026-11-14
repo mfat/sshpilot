@@ -240,7 +240,6 @@ def test_bulk_close_confirmation_uses_in_window_alert_dialog(fake_gtk):
     # and waiting for widget destruction let daemon sessions outlive their tabs
     # (GH #1176).
     assert terminal.disconnect_calls == 1
-    assert terminal._daemon_batch_close is True
 
     dialog.emit_response("cancel")
     assert dialog.close_calls == 2

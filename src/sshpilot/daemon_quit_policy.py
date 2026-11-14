@@ -25,7 +25,11 @@ from gettext import gettext as _, ngettext
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .daemon_terminal_policy import TerminalClosePolicy, resolve_app_close_policy
+from .daemon_terminal_policy import (
+    APP_CLOSE_POLICY_SETTING,
+    TerminalClosePolicy,
+    resolve_app_close_policy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -631,8 +635,25 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     dialog.set_default_response("terminate")
     dialog.set_close_response("cancel")
 
+    # Same opt-out as the tab-close confirmation: ticking it switches the
+    # Quit policy to "Quit immediately".
+    from gi.repository import Gtk
+
+    opt_out = Gtk.CheckButton(label=_("Don't ask me again"))
+    opt_out.set_halign(Gtk.Align.START)
+    opt_out.set_margin_top(6)
+    dialog.set_extra_child(opt_out)
+
     def _on_response(_dialog, response: str) -> None:
         if response == "terminate":
+            config = getattr(window, "config", None)
+            if opt_out.get_active() and config is not None:
+                try:
+                    config.set_setting(
+                        APP_CLOSE_POLICY_SETTING, TerminalClosePolicy.TERMINATE.value
+                    )
+                except Exception:
+                    logger.debug("Failed to save the quit opt-out", exc_info=True)
             on_decision(DaemonQuitDecision.TERMINATE_ALL)
         else:
             on_decision(DaemonQuitDecision.CANCEL)

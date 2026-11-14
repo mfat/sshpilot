@@ -1037,7 +1037,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 app.install_api_event_subscription(self.client)
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(self.client, bridge=self.client_bridge)
-        self._maybe_restore_daemon_sessions()
         schedule = getattr(self, '_schedule_config_precedence_check', None)
         if callable(schedule):
             schedule()
@@ -1155,94 +1154,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.warning("Unable to display daemon recovery diagnostics")
         return False
-
-    def _maybe_restore_daemon_sessions(self) -> None:
-        """Offer or auto-reattach retained daemon sessions after GTK restart.
-
-        Session listing runs on the client bridge worker so a slow or blocked
-        control RPC cannot stall the GTK main loop (and cannot serialize behind
-        an in-flight welcome ``connections.list`` on the single request gate).
-        """
-
-        try:
-            if not self.config.get_setting("terminal.daemon_restore_sessions", True):
-                return
-            if self.client_bridge is None or self.client is None:
-                return
-            try:
-                if not self.client.get_capabilities().supports(ApiCapability.SESSIONS_READ):
-                    return
-            except Exception:
-                return
-            from .daemon_session_restore import DaemonSessionRestoreManager
-
-            restore = DaemonSessionRestoreManager(self.config)
-            client = self.client
-            bridge = self.client_bridge
-            expected_instance = getattr(client, "server_instance_id", "") or ""
-
-            def _list_sessions():
-                return list(client.list_sessions() or [])
-
-            def _on_listed(sessions):
-                if self._is_quitting or self.client is not client:
-                    return
-                if (
-                    expected_instance
-                    and getattr(client, "server_instance_id", "") != expected_instance
-                ):
-                    return
-                restorable = restore.get_restorable_sessions(
-                    client,
-                    sessions=sessions,
-                )
-                if not restorable:
-                    return
-                if self.config.get_setting("terminal.daemon_auto_attach", False):
-                    for metadata in restorable:
-                        restore.restore_session(
-                            self, metadata, self.client, self.client_bridge
-                        )
-                    return
-                dialog = Adw.AlertDialog.new(
-                    _("Restore Daemon Sessions?"),
-                    _(
-                        "One or more SSH sessions are still running in the local "
-                        "service. Restore them into tabs now?"
-                    ),
-                )
-                dialog.add_response("skip", _("Not Now"))
-                dialog.add_response("restore", _("Restore"))
-                dialog.set_response_appearance(
-                    "restore", Adw.ResponseAppearance.SUGGESTED
-                )
-                dialog.set_default_response("restore")
-                dialog.set_close_response("skip")
-
-                def _respond(_dialog, response):
-                    if response != "restore":
-                        return
-                    for metadata in restorable:
-                        restore.restore_session(
-                            self, metadata, self.client, self.client_bridge
-                        )
-
-                dialog.connect("response", _respond)
-                dialog.present(self)
-
-            def _on_error(error):
-                logger.warning(
-                    "Failed to list daemon sessions for restore code=%s",
-                    getattr(getattr(error, "code", None), "value", type(error).__name__),
-                )
-
-            bridge.submit(
-                _list_sessions,
-                on_success=_on_listed,
-                on_error=_on_error,
-            )
-        except Exception:
-            logger.error("Daemon session restore failed", exc_info=True)
 
     @property
     def sshcopyid_runner(self):
@@ -1594,56 +1505,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             threading.Thread(target=_work, daemon=True).start()
 
         file_dialog.save(self, None, _on_save)
-
-    def on_daemon_sessions_action(self, action=None, param=None):
-        """Show live daemon sessions management dialog."""
-        del action, param
-        try:
-            try:
-                supports_sessions = self.client is not None and self.client.get_capabilities().supports(
-                    ApiCapability.SESSIONS_READ
-                )
-            except Exception:
-                supports_sessions = False
-            if not supports_sessions:
-                dialog = Adw.AlertDialog.new(
-                    _("Daemon Sessions Unavailable"),
-                    _(
-                        "Daemon sessions are not available. Enable daemon-backed "
-                        "SSH terminals and ensure the local service is running."
-                    ),
-                )
-                dialog.add_response("ok", _("OK"))
-                dialog.set_default_response("ok")
-                dialog.set_close_response("ok")
-                dialog.present(self)
-                return
-
-            bridge = getattr(self, "client_bridge", None)
-            if bridge is None:
-                dialog = Adw.AlertDialog.new(
-                    _("Daemon Sessions Unavailable"),
-                    _("The local SSH Pilot service bridge is unavailable."),
-                )
-                dialog.add_response("ok", _("OK"))
-                dialog.set_default_response("ok")
-                dialog.set_close_response("ok")
-                dialog.present(self)
-                return
-
-            from .daemon_sessions_dialog import DaemonSessionsDialog
-
-            DaemonSessionsDialog(self, self.client, bridge).show()
-        except Exception:
-            logger.error("Failed to show daemon sessions", exc_info=True)
-            dialog = Adw.AlertDialog.new(
-                _("Error"),
-                _("Failed to open the daemon sessions dialog."),
-            )
-            dialog.add_response("ok", _("OK"))
-            dialog.set_default_response("ok")
-            dialog.set_close_response("ok")
-            dialog.present(self)
 
     def _on_export_diagnostics_done(self, ok, error, path):
         if ok:

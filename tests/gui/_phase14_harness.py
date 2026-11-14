@@ -79,10 +79,7 @@ class Phase14Harness:
 
         win.config.set_setting("terminal.daemon_backed_ssh", True)
         win.config.set_setting("terminal.removed_local_ssh_setting", False)
-        win.config.set_setting("terminal.daemon_tab_close_policy", "detach")
         win.config.set_setting("terminal.daemon_app_close_policy", "ask")
-        win.config.set_setting("terminal.daemon_restore_sessions", True)
-        win.config.set_setting("terminal.daemon_auto_attach", True)
         win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
 
         iso = Path(os.environ["XDG_CONFIG_HOME"]) / "sshpilot"
@@ -206,8 +203,6 @@ class Phase14Harness:
         self.gui.pump(400)
         win.config.set_setting("terminal.daemon_backed_ssh", True)
         win.config.set_setting("terminal.removed_local_ssh_setting", False)
-        win.config.set_setting("terminal.daemon_restore_sessions", True)
-        win.config.set_setting("terminal.daemon_auto_attach", True)
         bridge = GtkClientBridge()
         self.gui.app._api_client_bridge = bridge
         win.client_bridge = bridge
@@ -938,7 +933,6 @@ class Phase14Harness:
         """Close terminal/FM tabs so the next step starts from a clean UI."""
         win = self.gui.window
         try:
-            win.config.set_setting("terminal.daemon_tab_close_policy", "terminate")
         except Exception:
             pass
         # Bounded attempts — close_page can no-op while an ASK dialog is open.
@@ -1286,28 +1280,6 @@ class Phase14Harness:
             "row_count": row_count,
             "names": names[:20],
         }
-
-    def detach_terminal_keep_session(self, terminal=None) -> str:
-        """Detach GTK view, persist restore metadata, return session_id."""
-        term = terminal or self.find_terminal_widget()
-        if term is None:
-            raise Phase14EvidenceError("no terminal to detach")
-        ctrl = getattr(term, "_daemon_controller", None)
-        tab = getattr(ctrl, "tab_state", None) if ctrl else None
-        session_id = getattr(tab, "session_id", None)
-        if not session_id:
-            raise Phase14EvidenceError("terminal has no session_id")
-        from sshpilot.daemon_session_restore import DaemonSessionRestoreManager
-
-        DaemonSessionRestoreManager(self.gui.window.config).save_session_metadata(
-            tab,
-            tab_title=getattr(term.connection, "nickname", "Terminal"),
-        )
-        ctrl.detach()
-        term._daemon_mode = False
-        term.is_connected = False
-        self.pump(200)
-        return str(session_id)
 
     def send_input_while_detached(self, session_id: str, command: str) -> None:
         """Attach a temporary client view and run a remote command."""

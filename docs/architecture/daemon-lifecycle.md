@@ -35,6 +35,27 @@ service may disable idle shutdown later via `service_mode` environment wiring.
 Idle shutdown is cooperative: the selector observes deadlines and transitions to
 `draining` before tearing down clients.
 
+## App exit (crash or kill)
+
+Quitting the app stops the daemon with `stop_daemon(force=True)`. When the app
+crashes, is killed or the session ends without a quit, nothing sends that, so
+the daemon watches for it (`daemon/app_watch.py`):
+
+* A client whose handshake declares an app frontend type (`APP_FRONTEND_TYPES`,
+  today `gtk`) has its process recorded: PID from Unix-socket peer credentials
+  (Linux `SO_PEERCRED`, macOS `LOCAL_PEERPID`), or from the TCP table on the
+  Windows loopback transport, pinned by process creation time.
+* One watcher thread checks those processes about once a second, and at once
+  when an app connection closes. When every recorded app process has exited
+  (a zombie counts as exited), the daemon issues the same forced stop quit
+  uses: sessions, SFTP, transfers and forwards end, then the daemon exits.
+* A dropped connection is not an exit: the app's client closes and reopens
+  its transport on a request timeout. Only the process ending counts.
+* Clients that are not the app (CLI, MCP servers, diagnostics) are never
+  recorded, so a daemon used without the app keeps its idle lifetime. A peer
+  that cannot be identified, or one inside the daemon's own process, is not
+  watched and never causes a shutdown.
+
 ## Management RPCs
 
 Wire methods (daemon-only):

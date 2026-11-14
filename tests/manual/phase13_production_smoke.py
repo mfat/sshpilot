@@ -177,10 +177,7 @@ def run_smoke() -> int:
 
     # Daemon-backed SSH is the production route under test.
     win.config.set_setting("terminal.daemon_backed_ssh", True)
-    win.config.set_setting("terminal.daemon_tab_close_policy", "detach")
-    win.config.set_setting("terminal.daemon_app_close_policy", "detach")
-    win.config.set_setting("terminal.daemon_restore_sessions", True)
-    win.config.set_setting("terminal.daemon_auto_attach", True)
+    win.config.set_setting("terminal.daemon_app_close_policy", "ask")
     win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
 
     iso_ssh = Path(os.environ["XDG_CONFIG_HOME"]) / "sshpilot"
@@ -1201,8 +1198,6 @@ def run_smoke() -> int:
         gm = win.group_manager
         app = ctx.gui.app
         win.config.set_setting("terminal.daemon_backed_ssh", True)
-        win.config.set_setting("terminal.daemon_restore_sessions", True)
-        win.config.set_setting("terminal.daemon_auto_attach", True)
         bridge = GtkClientBridge()
         app._api_client_bridge = bridge
         win.client_bridge = bridge
