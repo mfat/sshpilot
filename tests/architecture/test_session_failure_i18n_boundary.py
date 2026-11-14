@@ -7,11 +7,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_session_failure_gettext_boundary_and_potfiles():
-    runtime = (ROOT / "src/sshpilot/daemon/session_runtime.py").read_text()
-    presenter = (ROOT / "src/sshpilot/gtk/session_failure_messages.py").read_text()
-    sidebar = (ROOT / "src/sshpilot/gtk/connection_runtime_status.py").read_text()
-    controller = (ROOT / "src/sshpilot/terminal_session_controller.py").read_text()
-    potfiles = (ROOT / "po/POTFILES").read_text().splitlines()
+    runtime = (ROOT / "src/sshpilot/daemon/session_runtime.py").read_text(encoding="utf-8")
+    presenter = (ROOT / "src/sshpilot/gtk/session_failure_messages.py").read_text(encoding="utf-8")
+    sidebar = (ROOT / "src/sshpilot/gtk/connection_runtime_status.py").read_text(encoding="utf-8")
+    controller = (ROOT / "src/sshpilot/terminal_session_controller.py").read_text(encoding="utf-8")
+    potfiles = (ROOT / "po/POTFILES").read_text(encoding="utf-8").splitlines()
 
     assert "gettext" not in runtime
     assert "N_(" not in runtime

@@ -710,12 +710,27 @@ def test_windows_terminal_asks_for_trusted_x11(monkeypatch):
     # (it has no xauth) must be requested on the terminal argv itself.
     import os
 
-    conn = {'host': 'x11.example', 'hostname': 'x11.example'}
+    # It is a fallback, like the keepalive: only when OpenSSH resolves
+    # ForwardX11 yes and nothing chooses ForwardX11Trusted, so a launch
+    # otherwise resolves exactly like `ssh <alias>`.
+    def build(effective, configured=(), command_type='ssh'):
+        conn = Connection({'host': 'x11.example', 'hostname': 'x11.example'})
+        conn.effective_ssh_config = lambda: dict(effective)
+        conn.configured_ssh_directives = lambda: {key: True for key in configured}
+        return _build_from(conn, command_type=command_type)[0]
+
+    forwarding = {'forwardx11': 'yes', 'forwardx11trusted': 'no'}
     monkeypatch.setattr(os, "name", "nt")
-    assert _has_o_option(_build(conn)[0], 'ForwardX11Trusted=yes')
-    assert not _has_o_option(_build(conn, command_type='sftp')[0], 'ForwardX11Trusted')
+    assert _has_o_option(build(forwarding), 'ForwardX11Trusted=yes')
+    assert not _has_o_option(build(forwarding, command_type='sftp'), 'ForwardX11Trusted')
+    # No forwarding, nothing known, or the user's own choice: left alone.
+    assert not _has_o_option(build({'forwardx11': 'no'}), 'ForwardX11Trusted')
+    assert not _has_o_option(build({}), 'ForwardX11Trusted')
+    assert not _has_o_option(
+        build(forwarding, configured=('forwardx11trusted',)), 'ForwardX11Trusted'
+    )
     monkeypatch.setattr(os, "name", "posix")
-    assert not _has_o_option(_build(conn)[0], 'ForwardX11Trusted')
+    assert not _has_o_option(build(forwarding), 'ForwardX11Trusted')
 
 
 def test_base_command_x11_is_trusted_on_windows(monkeypatch):

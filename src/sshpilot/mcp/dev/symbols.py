@@ -91,7 +91,7 @@ def find_symbols(
         collector.found = []
         collector.visit(tree)
         for symbol in collector.found:
-            found.append({"file": str(relative), **symbol})
+            found.append({"file": relative.as_posix(), **symbol})
             if len(found) >= max_results:
                 return {"symbols": found, "total": len(found), "truncated": True}
     return {"symbols": found, "total": len(found), "truncated": False}

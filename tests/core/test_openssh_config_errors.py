@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 
 import pytest
@@ -31,12 +32,22 @@ def test_parses_both_spellings_openssh_uses():
     ]
 
 
-def test_a_windows_path_keeps_its_drive_colon():
+def test_a_windows_path_keeps_its_drive_colon(monkeypatch):
+    """Win32-OpenSSH names the file with doubled separators
+    (``C:\\\\Users\\\\me\\\\.ssh\\\\config: line 2: ...``, seen on 10.0p2);
+    the path the app shows is the real one."""
+    monkeypatch.setattr(os, "name", "nt")
     found = parse_openssh_config_errors(
-        "C:\\\\Users\\\\me/.ssh/config: line 7: Bad configuration option: x\n"
+        "C:\\\\Users\\\\me\\\\.ssh\\\\config: line 7: Bad configuration option: x\n"
     )
-    assert found[0]["file"] == "C:\\\\Users\\\\me/.ssh/config"
+    assert found[0]["file"] == "C:\\Users\\me\\.ssh\\config"
     assert found[0]["line"] == 7
+
+
+def test_a_backslash_in_a_posix_path_is_left_alone(monkeypatch):
+    monkeypatch.setattr(os, "name", "posix")
+    found = parse_openssh_config_errors("/srv/a\\\\b/config: line 1: Bad x\n")
+    assert found[0]["file"] == "/srv/a\\\\b/config"
 
 
 def test_a_bad_command_line_option_is_not_a_config_error():

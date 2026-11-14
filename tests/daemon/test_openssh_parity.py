@@ -94,9 +94,9 @@ Match originalhost own
 
 
 def _resolved(args):
-    out = subprocess.run(
-        ["ssh", "-G", *args], capture_output=True, text=True, check=True
-    ).stdout
+    result = subprocess.run(["ssh", "-G", *args], capture_output=True, text=True)
+    assert result.returncode == 0, (args, result.returncode, result.stderr)
+    out = result.stdout
     found = {}
     for line in out.splitlines():
         key, _sep, value = line.partition(" ")

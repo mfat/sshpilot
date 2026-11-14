@@ -1825,5 +1825,6 @@ def test_fragment_include_is_relative_only_in_the_users_own_config(tmp_path, mon
             paths, "openssh_user_dir", lambda d=(root_dir if standard else tmp_path / "x"): d
         )
         manager._ensure_include(str(main), str(fragment))
-        wanted = bm._IMPORT_FRAGMENT_NAME if standard else str(fragment)
+        # Written with forward slashes, which OpenSSH reads on Windows too.
+        wanted = bm._IMPORT_FRAGMENT_NAME if standard else fragment.as_posix()
         assert f"    Include {wanted}\n" in main.read_text()

@@ -8,7 +8,7 @@ SOURCE = ROOT / "src" / "sshpilot"
 
 
 def test_host_info_gettext_sources_are_in_potfiles():
-    potfiles = set((ROOT / "po" / "POTFILES").read_text().splitlines())
+    potfiles = set((ROOT / "po" / "POTFILES").read_text(encoding="utf-8").splitlines())
     for relative in (
         "gtk/host_info_failure_messages.py",
         "machine_info_dialog.py",
@@ -20,7 +20,7 @@ def test_host_info_gettext_sources_are_in_potfiles():
 
 
 def test_host_info_backend_has_no_gettext_or_finished_failure_message():
-    service = (SOURCE / "daemon" / "host_info_service.py").read_text()
+    service = (SOURCE / "daemon" / "host_info_service.py").read_text(encoding="utf-8")
     assert "gettext" not in service
     assert "The host information probe failed" not in service
     assert "The remote host returned unreadable system information" not in service
@@ -28,7 +28,7 @@ def test_host_info_backend_has_no_gettext_or_finished_failure_message():
 
 def test_both_host_info_views_use_the_same_presenter():
     for relative in ("machine_info_dialog.py", "host_info_tab.py"):
-        view = (SOURCE / relative).read_text()
+        view = (SOURCE / relative).read_text(encoding="utf-8")
         assert "from .gtk.host_info_failure_messages import" in view
         assert "format_host_info_failure(summary.failure)" in view
         assert "format_host_info_error(error)" in view
