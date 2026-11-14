@@ -437,3 +437,22 @@ def test_a_note_saying_the_value_is_unused_draws_the_row_in_error_style(gui):
     options.refresh_notes()
     assert not unused.value_entry.has_css_class("error")
     assert not unused.note_label.get_visible()
+
+
+def test_add_option_without_button_row(gui, monkeypatch):
+    from sshpilot import ssh_option_list
+
+    adw = ssh_option_list.Adw
+
+    class OlderAdw:
+        def __getattr__(self, name):
+            if name == "ButtonRow":
+                raise AttributeError(name)
+            return getattr(adw, name)
+
+    monkeypatch.setattr(ssh_option_list, "Adw", OlderAdw())
+    options = _list(gui)
+    assert isinstance(options.add_row, adw.ActionRow)
+    assert options.add_row.get_activatable()
+    options.add_row.activate()
+    assert len(options.rows()) == 1

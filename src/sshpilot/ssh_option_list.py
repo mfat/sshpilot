@@ -269,8 +269,14 @@ class SshOptionList(Gtk.Box):
         self._listbox = Gtk.ListBox()
         self._listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self._listbox.add_css_class("boxed-list")
-        self.add_row = Adw.ButtonRow(title=_("Add Option"))
-        self.add_row.set_start_icon_name("list-add-symbolic")
+        if hasattr(Adw, "ButtonRow"):
+            self.add_row = Adw.ButtonRow(title=_("Add Option"))
+            self.add_row.set_start_icon_name("list-add-symbolic")
+        else:
+            # ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
+            self.add_row = Adw.ActionRow(title=_("Add Option"))
+            self.add_row.set_activatable(True)
+            self.add_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
         self.add_row.connect("activated", self._on_add_activated)
         self._listbox.append(self.add_row)
         self.append(self._listbox)
