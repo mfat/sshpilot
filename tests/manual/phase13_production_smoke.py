@@ -177,7 +177,6 @@ def run_smoke() -> int:
 
     # Daemon-backed SSH is the production route under test.
     win.config.set_setting("terminal.daemon_backed_ssh", True)
-    win.config.set_setting("terminal.daemon_tab_close_policy", "terminate")
     win.config.set_setting("terminal.daemon_app_close_policy", "ask")
     win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
 

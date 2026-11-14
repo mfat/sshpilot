@@ -79,7 +79,6 @@ class Phase14Harness:
 
         win.config.set_setting("terminal.daemon_backed_ssh", True)
         win.config.set_setting("terminal.removed_local_ssh_setting", False)
-        win.config.set_setting("terminal.daemon_tab_close_policy", "terminate")
         win.config.set_setting("terminal.daemon_app_close_policy", "ask")
         win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
 
@@ -934,7 +933,6 @@ class Phase14Harness:
         """Close terminal/FM tabs so the next step starts from a clean UI."""
         win = self.gui.window
         try:
-            win.config.set_setting("terminal.daemon_tab_close_policy", "terminate")
         except Exception:
             pass
         # Bounded attempts — close_page can no-op while an ASK dialog is open.

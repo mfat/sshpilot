@@ -2341,33 +2341,18 @@ class TerminalWidget(Gtk.Box):
         self._pending_shell_ready_feeds.append(data)
 
     def _handle_daemon_close(self, is_quitting=False):
-        """Handle close policy for daemon terminals."""
+        """End this terminal's daemon session.
+
+        Never asks: whoever calls disconnect() has already confirmed with the
+        user ("Confirm before disconnecting" on tab close, sidebar disconnect,
+        bulk close; the quit policy on quit). A second, terminal-level prompt
+        here used to stack on top of that one, and when cancelled it left the
+        session running behind a tab that was already gone.
+        """
+        del is_quitting  # Quitting and closing a tab both end the session.
         try:
-            from .daemon_terminal_policy import resolve_tab_close_policy, TerminalClosePolicy
-
-            if is_quitting:
-                override = getattr(self, "_daemon_quit_close_policy", None)
-                if override is not None:
-                    policy = override
-                else:
-                    from .daemon_terminal_policy import resolve_app_close_policy
-                    policy = resolve_app_close_policy(self.config)
-            else:
-                policy = resolve_tab_close_policy(self.config)
-                # A batch close (Close Other Tabs, Close to the Right, a
-                # programmatic replace) confirms once for the whole batch, so
-                # ASK must not then raise one dialog per tab on top of it. Use
-                # an identity check so a Mock test double is not read as a batch.
-                if policy == TerminalClosePolicy.ASK and getattr(
-                    self, "_daemon_batch_close", False
-                ) is True:
-                    policy = TerminalClosePolicy.TERMINATE
-
-            if policy == TerminalClosePolicy.ASK and not is_quitting:
-                self._show_daemon_close_dialog()
-                return  # Dialog will handle the actual close
-            # Closing a tab or quitting ends the session. Detaching left it
-            # running with nothing able to reach it again (GH #1176).
+            # Detaching left the session running with nothing able to reach
+            # it again (GH #1176), so closing always terminates.
             self._daemon_controller.close()
             logger.debug(
                 f"Terminated daemon session {self._daemon_tab_state.session_id}"
@@ -2385,62 +2370,6 @@ class TerminalWidget(Gtk.Box):
 
         except Exception as e:
             logger.error(f"Failed to handle daemon close: {e}")
-
-    def _show_daemon_close_dialog(self):
-        """Show close policy dialog for daemon terminals."""
-        try:
-            from gi.repository import Adw
-
-            root = self.get_root() if hasattr(self, 'get_root') else None
-            if not root:
-                # Nothing to ask over: close, as the tab is going away.
-                self._on_daemon_close_dialog_response(None, "terminate")
-                return
-
-            dialog = Adw.AlertDialog.new(
-                _("Close Connection?"),
-                _("Closing this tab ends the SSH session."),
-            )
-
-            dialog.add_response("cancel", _("Cancel"))
-            dialog.add_response("terminate", _("Close"))
-
-            dialog.set_response_appearance("terminate", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("terminate")
-            dialog.set_close_response("cancel")
-
-            dialog.connect("response", self._on_daemon_close_dialog_response)
-            dialog.present(root)
-
-        except Exception as e:
-            logger.error(f"Failed to show daemon close dialog: {e}")
-            self._on_daemon_close_dialog_response(None, "terminate")
-
-    def _on_daemon_close_dialog_response(self, dialog, response):
-        """Handle daemon close dialog response."""
-        try:
-            if response == "terminate":
-                self._daemon_controller.close()
-                logger.debug(f"User chose to terminate daemon session {self._daemon_tab_state.session_id}")
-            elif response == "cancel":
-                return  # Don't close
-
-            # Clean up daemon state if we proceeded with close
-            if response != "cancel":
-                self._uninstall_daemon_backend_io()
-                self._daemon_mode = False
-                self._daemon_controller = None
-                self._daemon_tab_state = None
-                self._hide_view_only_indicator()
-
-                # Update connection state
-                self.is_connected = False
-
-                # Emit connection-lost signal to close the tab
-                self.emit('connection-lost')
-
-        except Exception as e:
-            logger.error(f"Failed to handle daemon close dialog response: {e}")
 
     def _update_daemon_connection_state(self):
         """Update connection state based on daemon session state."""

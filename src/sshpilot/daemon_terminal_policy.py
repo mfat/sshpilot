@@ -72,7 +72,9 @@ class DaemonTerminalReadiness:
     missing_capabilities: tuple[Capability, ...] = ()
 
 
-TAB_CLOSE_POLICY_SETTING = "terminal.daemon_tab_close_policy"
+# Closing a tab has no policy of its own: it always ends the session, and
+# whether to confirm first is the "confirm-disconnect" setting. The retired
+# "terminal.daemon_tab_close_policy" raised a second dialog on top of that one.
 APP_CLOSE_POLICY_SETTING = "terminal.daemon_app_close_policy"
 # Retained as a compatibility setting name; internal SSH routing is daemon-only.
 PREFERRED_EMULATOR_SETTING = "terminal.daemon_emulator"
@@ -332,23 +334,6 @@ def resolve_close_policy(
         return TerminalClosePolicy(raw.strip().lower())
     except ValueError:
         return default
-
-
-def resolve_tab_close_policy(config) -> TerminalClosePolicy:
-    """Resolve what closing a terminal tab does to its daemon session.
-
-    Closing a tab ends the session (TERMINATE) or confirms first (ASK).
-    DETACH is retired: it left the session RUNNING in the daemon with no tab
-    owning it and nothing in the app able to reach it again, while the
-    sidebar kept the host green (GH #1176). A configuration still carrying
-    ``detach`` (or anything unrecognized) resolves to TERMINATE, the default.
-    """
-    policy = resolve_close_policy(
-        config, TAB_CLOSE_POLICY_SETTING, TerminalClosePolicy.TERMINATE
-    )
-    if policy is TerminalClosePolicy.DETACH:
-        return TerminalClosePolicy.TERMINATE
-    return policy
 
 
 def resolve_app_close_policy(config) -> TerminalClosePolicy:

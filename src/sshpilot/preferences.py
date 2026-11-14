@@ -1184,35 +1184,24 @@ class PreferencesWindow(Adw.Window):
 
             terminal_page.add(terminal_choice_group)
 
-    def _add_terminal_daemon_group(self, terminal_page):
-        """Add the Closing Connections and Background Service groups."""
-        from .daemon_terminal_policy import (
-            effective_idle_shutdown_seconds,
-            resolve_tab_close_policy,
-            TerminalClosePolicy,
-        )
+    def _add_interface_closing_group(self, interface_page):
+        """Add the Closing Tabs and Quitting group to the Interface page.
 
+        It lives here, not under Terminal, because it covers every tab with a
+        live connection (terminals, split views) and quitting the whole app.
+        Closing a tab always ends its session; the only choice is whether to
+        confirm first, and the dialogs' "Don't ask me again" flips these rows.
+        """
         closing_group = Adw.PreferencesGroup(title=_("Closing Tabs and Quitting"))
 
-        # Tab close policy. Detach is retired (GH #1176): it left the
-        # session running with nothing able to reach it again.
-        self.tab_close_policy_row = Adw.ComboRow()
-        self.tab_close_policy_row.set_title(_("Tab close policy"))
-        self.tab_close_policy_row.set_subtitle(
-            _("What happens to the SSH session when you close its tab")
+        self.confirm_disconnect_switch = Adw.SwitchRow()
+        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
+        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
+        self.confirm_disconnect_switch.set_active(
+            self.config.get_setting('confirm-disconnect', True)
         )
-
-        policy_model = Gtk.StringList()
-        policy_model.append(_("Terminate (end session)"))
-        policy_model.append(_("Ask each time"))
-        self.tab_close_policy_row.set_model(policy_model)
-
-        current_policy = resolve_tab_close_policy(self.config)
-        self.tab_close_policy_row.set_selected(
-            1 if current_policy is TerminalClosePolicy.ASK else 0
-        )
-        self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
-        closing_group.add(self.tab_close_policy_row)
+        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+        closing_group.add(self.confirm_disconnect_switch)
 
         # App quit policy
         self.app_close_policy_row = Adw.ComboRow()
@@ -1236,7 +1225,15 @@ class PreferencesWindow(Adw.Window):
             'notify::selected', self.on_app_close_policy_changed
         )
         closing_group.add(self.app_close_policy_row)
-        terminal_page.add(closing_group)
+        interface_page.add(closing_group)
+
+    def _add_advanced_service_group(self, advanced_page):
+        """Add the Background Service group to the Advanced page.
+
+        The service runs SSH, SFTP and every other connection, not just
+        terminals, so it is not a Terminal setting.
+        """
+        from .daemon_terminal_policy import effective_idle_shutdown_seconds
 
         daemon_group = Adw.PreferencesGroup(title=_("Background Service"))
 
@@ -1284,7 +1281,7 @@ class PreferencesWindow(Adw.Window):
         restart_row.add_suffix(restart_btn)
         daemon_group.add(restart_row)
 
-        terminal_page.add(daemon_group)
+        advanced_page.add(daemon_group)
         # Best-effort status fill without blocking dialog open.
         GLib.idle_add(self._refresh_daemon_status_row)
 
@@ -1299,7 +1296,6 @@ class PreferencesWindow(Adw.Window):
         self._add_terminal_highlight_group(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
-        self._add_terminal_daemon_group(terminal_page)
         self._add_terminal_preferred_group(terminal_page)
         return terminal_page
 
@@ -2138,6 +2134,7 @@ class PreferencesWindow(Adw.Window):
         self._add_interface_language_group(interface_page)
         self._add_interface_layout_group(interface_page)
         self._add_interface_startup_group(interface_page)
+        self._add_interface_closing_group(interface_page)
         self._add_interface_headerbar_and_tips_groups(interface_page)
         self._add_interface_window_group(interface_page)
         return interface_page
@@ -2464,27 +2461,6 @@ class PreferencesWindow(Adw.Window):
             if callable(setter):
                 setter(bool(sensitive))
 
-    def _add_advanced_behavior_group(self, advanced_page):
-        """Add the Application Behavior group to the Advanced page."""
-        # Application behavior group
-        behavior_group = Adw.PreferencesGroup(title=_("Application Behavior"))
-
-        # Confirm before disconnecting
-        self.confirm_disconnect_switch = Adw.SwitchRow()
-        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
-        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
-        self.confirm_disconnect_switch.set_active(
-            self.config.get_setting('confirm-disconnect', True)
-        )
-        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
-        behavior_group.add(self.confirm_disconnect_switch)
-
-        # ssh.agent_preload_keys stays on by default (no Preferences toggle):
-        # the terminal worker force-unlocks configured identities into the
-        # agent so locked gcr keys cannot fall through to the system askpass.
-
-        advanced_page.add(behavior_group)
-
     def _add_advanced_logging_group(self, advanced_page):
         """Add the Logging group to the Advanced page."""
         # Logging group ------------------------------------------------
@@ -2785,7 +2761,7 @@ class PreferencesWindow(Adw.Window):
         advanced_page.set_icon_name("applications-system-symbolic")
 
         self._add_advanced_operation_mode_group(advanced_page)
-        self._add_advanced_behavior_group(advanced_page)
+        self._add_advanced_service_group(advanced_page)
         self._add_advanced_logging_group(advanced_page)
         return advanced_page
 
@@ -4421,15 +4397,6 @@ class PreferencesWindow(Adw.Window):
             self.config.set_setting('terminal.wheel_scroll_lines', value)
         except Exception as exc:
             logger.error("Failed to update wheel scroll lines: %s", exc)
-
-    def on_tab_close_policy_changed(self, row, _pspec):
-        """Persist the tab close policy preference."""
-        try:
-            policy_map = {0: 'terminate', 1: 'ask'}
-            policy = policy_map.get(row.get_selected(), 'terminate')
-            self.config.set_setting('terminal.daemon_tab_close_policy', policy)
-        except Exception as exc:
-            logger.error("Failed to update tab close policy: %s", exc)
 
     def on_app_close_policy_changed(self, row, _pspec):
         """Persist the application quit policy preference."""
