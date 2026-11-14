@@ -8,7 +8,6 @@ the daemon down, and it does so through the same forced stop quit uses.
 from __future__ import annotations
 
 import os
-import signal
 import socket
 import subprocess
 import sys
@@ -82,7 +81,8 @@ def test_a_recycled_pid_is_a_different_process():
 
 
 def test_in_process_clients_are_not_watched():
-    left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    # AF_UNIX on POSIX, loopback TCP on Windows: the daemon's own transport.
+    left, right = socket.socketpair()
     try:
         assert identify_peer_process(left) is None
     finally:
@@ -90,26 +90,42 @@ def test_in_process_clients_are_not_watched():
         right.close()
 
 
-def test_peer_process_is_identified_across_processes(tmp_path):
-    path = tmp_path / "s.sock"
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(str(path))
+_TRANSPORTS = ["tcp"] + (["unix"] if hasattr(socket, "AF_UNIX") else [])
+
+
+@pytest.mark.parametrize("transport", _TRANSPORTS)
+def test_peer_process_is_identified_across_processes(tmp_path, transport):
+    if transport == "unix":
+        address = str(tmp_path / "s.sock")
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(address)
+        connect = f"s=socket.socket(socket.AF_UNIX);s.connect({address!r})"
+    else:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        connect = f"s=socket.create_connection(('127.0.0.1', {port}))"
     listener.listen(1)
     child = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            "import socket,sys,time;s=socket.socket(socket.AF_UNIX);"
-            f"s.connect({str(path)!r});time.sleep(30)",
-        ]
+        [sys.executable, "-c", f"import socket,time;{connect};time.sleep(30)"]
     )
     try:
+        import psutil
+
         conn, _ = listener.accept()
         identity = identify_peer_process(conn)
-        assert identity is not None and identity.pid == child.pid
+        # A Windows venv python.exe is a launcher; the socket's owner is
+        # then its child, which dies with it.
+        launched = {child.pid} | {
+            p.pid for p in psutil.Process(child.pid).children(recursive=True)
+        }
+        assert identity is not None and identity.pid in launched
         assert process_alive(identity)
         child.kill()
         child.wait()
+        deadline = time.monotonic() + 5
+        while process_alive(identity) and time.monotonic() < deadline:
+            time.sleep(0.05)
         assert not process_alive(identity)
         conn.close()
     finally:
@@ -181,13 +197,12 @@ def _spawn(server, frontend, mode):
     return child
 
 
-@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix transport")
 def test_killing_the_app_stops_the_daemon(daemon):
     app = _spawn(daemon, "gtk", "stay")
     try:
         time.sleep(0.5)
         assert not daemon.stopped
-        app.send_signal(signal.SIGKILL)
+        app.kill()  # SIGKILL / TerminateProcess: no clean shutdown
         app.wait()
         assert daemon.wait_stopped(timeout=10)
     finally:
@@ -195,7 +210,6 @@ def test_killing_the_app_stops_the_daemon(daemon):
             app.kill()
 
 
-@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix transport")
 def test_app_reconnecting_does_not_stop_the_daemon(daemon):
     app = _spawn(daemon, "gtk", "reconnect")
     try:
@@ -208,7 +222,6 @@ def test_app_reconnecting_does_not_stop_the_daemon(daemon):
     assert daemon.wait_stopped(timeout=10)
 
 
-@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix transport")
 def test_a_cli_client_leaving_does_not_stop_the_daemon(daemon):
     cli = _spawn(daemon, "cli", "leave")
     cli.wait(timeout=10)
