@@ -148,3 +148,16 @@ def test_unknown_cell_layout_is_refused():
         _parse_layout({"schema": 2, "types": {}})
     with pytest.raises((KeyError, ValueError)):
         _parse_layout({"schema": 1, "types": {"GhosttyCell": {"kind": "struct", "size": 16}}})
+
+
+def test_osc8_link_targets_on_screen_and_in_history(make_model):
+    model = make_model(30, 4)
+    model.feed(b"see \x1b]8;;https://example.org/osc8\x1b\\docs\x1b]8;;\x1b\\ here\r\n")
+    row = model.history_length
+    assert [model.hyperlink_uri(row, column) for column in (3, 4, 7, 8)] == [
+        None, "https://example.org/osc8", "https://example.org/osc8", None,
+    ]
+    _fill(model, 10)
+    assert model.history_length > row  # now in the scrollback
+    assert model.hyperlink_uri(row, 5) == "https://example.org/osc8"
+    assert model.hyperlink_uri(-1, 0) is None and model.hyperlink_uri(row, 99) is None

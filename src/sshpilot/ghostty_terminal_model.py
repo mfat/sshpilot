@@ -14,6 +14,15 @@ answers what the view reads:
   libghostty's effect callbacks,
 * a ``screen`` object with the attributes the view reads from pyte's screen.
 
+Keys and mouse reports are encoded by the view
+(``terminal_model_common.encode_key``), not by libghostty's encoders, on
+purpose: on Windows every session runs under ConPTY, which passes a
+program's kitty keyboard request (``CSI > 1 u``) through to us but cannot
+parse kitty-encoded keys coming back (``CSI 99;5u`` reached cmd as literal
+text instead of Ctrl+C). The legacy encoding is what conhost understands.
+
+OSC 8 link targets survive ConPTY and are answered by :meth:`hyperlink_uri`.
+
 Nothing here imports pyte or GTK. The shared library is located by
 :func:`load_libghostty`; when it is missing, constructing a model raises
 :class:`GhosttyUnavailable` (an ``ImportError``).
@@ -60,6 +69,7 @@ class GhosttyUnavailable(ImportError):
 # C declarations (ghostty/vt.h, 1.x)
 
 _SUCCESS = 0
+_OUT_OF_SPACE = -3
 _NO_VALUE = -4
 
 # GhosttyTerminalOption
@@ -148,6 +158,10 @@ class _String(ctypes.Structure):
 
 class _ModeConfig(ctypes.Structure):
     _fields_ = [("mode", ctypes.c_uint16), ("value", ctypes.c_bool)]
+
+
+class _GridRef(ctypes.Structure):
+    _fields_ = [("node", ctypes.c_void_p), ("x", ctypes.c_uint16), ("y", ctypes.c_uint16)]
 
 
 class _CellsView(ctypes.Structure):
@@ -280,6 +294,8 @@ def _declare(lib: ctypes.CDLL) -> None:
         "ghostty_terminal_set": (i32, [vp, i32, vp]),
         "ghostty_terminal_get": (i32, [vp, i32, vp]),
         "ghostty_terminal_scroll_viewport": (i32, [vp, _ScrollViewport]),
+        "ghostty_terminal_grid_ref": (i32, [vp, _Point, ctypes.POINTER(_GridRef)]),
+        "ghostty_grid_ref_hyperlink_uri": (i32, [ctypes.POINTER(_GridRef), vp, sz, ctypes.POINTER(sz)]),
         "ghostty_terminal_grid_ref_track": (i32, [vp, _Point, ctypes.POINTER(vp)]),
         "ghostty_tracked_grid_ref_free": (None, [vp]),
         "ghostty_tracked_grid_ref_has_value": (ctypes.c_bool, [vp]),
@@ -883,6 +899,29 @@ class GhosttyTerminalModel(LineIndexMixin):
         if self._window_generation != self._generation or not (top <= row < top + len(self._window)):
             self._load_window(row, history)
         return self._window[row - self._window_top]
+
+    def hyperlink_uri(self, row: int, column: int) -> Optional[str]:
+        """The OSC 8 link target of the cell at absolute ``(row, column)``."""
+
+        if not (0 <= row < self.history_length + self._lines and 0 <= column < self._columns):
+            return None
+        point = _Point()
+        point.tag = _POINT_SCREEN
+        point.value.coordinate.x = column
+        point.value.coordinate.y = row
+        ref = _GridRef()
+        lib = self._lib
+        if lib.ghostty_terminal_grid_ref(self._terminal, point, ctypes.byref(ref)) != _SUCCESS:
+            return None
+        length = ctypes.c_size_t()
+        buffer = ctypes.create_string_buffer(512)
+        result = lib.ghostty_grid_ref_hyperlink_uri(ctypes.byref(ref), buffer, len(buffer), ctypes.byref(length))
+        if result == _OUT_OF_SPACE and length.value <= 65536:
+            buffer = ctypes.create_string_buffer(length.value)
+            result = lib.ghostty_grid_ref_hyperlink_uri(ctypes.byref(ref), buffer, len(buffer), ctypes.byref(length))
+        if result != _SUCCESS or not length.value:
+            return None
+        return buffer.raw[:length.value].decode("utf-8", "replace")
 
     # -- reading rows --------------------------------------------------------------
 

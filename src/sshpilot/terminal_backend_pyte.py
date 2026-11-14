@@ -1390,8 +1390,18 @@ class PyteTerminalBackend:
         return None
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
-        # Neither model keeps OSC 8 targets per cell, so plain-text links are
-        # the only kind.
+        # OSC 8 first, then plain-text links, as the VTE backend does. Only
+        # the libghostty-vt model keeps OSC 8 targets per cell.
+        view = self.view
+        lookup = getattr(view.model, "hyperlink_uri", None)
+        if lookup is not None:
+            row, column = view._cell_at(x, y)
+            try:
+                uri = lookup(row, column)
+            except Exception:
+                uri = None
+            if uri:
+                return uri
         return self.plain_text_link_at(x, y)
 
     def plain_text_link_at(self, x: float, y: float) -> Optional[str]:

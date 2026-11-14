@@ -122,3 +122,25 @@ def test_plain_text_link_under_the_pointer(model, monkeypatch):
     assert backend.hyperlink_at(x, y) == "https://example.org/guide"
     assert backend.hyperlink_at(_PAD_X + 0.5 * view._cell_w, y) is None
     backend.destroy()
+
+
+def test_osc8_link_under_the_pointer_with_libghostty(monkeypatch):
+    from types import SimpleNamespace
+
+    from sshpilot.terminal_backend_pyte import PyteTerminalBackend
+
+    monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", "ghostty")
+    backend = PyteTerminalBackend(SimpleNamespace(config=None))
+    view = backend.view
+    require_model(view, "ghostty")
+    view.model.resize(80, 5)
+    view.feed(b"see \x1b]8;;https://example.org/osc8\x1b\\docs\x1b]8;;\x1b\\ https://plain.example/x\r\n")
+    y = _PAD_Y + 0.5 * view._cell_h
+
+    def x(column):
+        return _PAD_X + (column + 0.5) * view._cell_w
+
+    assert backend.hyperlink_at(x(5), y) == "https://example.org/osc8"
+    assert backend.hyperlink_at(x(2), y) is None
+    assert backend.hyperlink_at(x(12), y) == "https://plain.example/x"
+    backend.destroy()
