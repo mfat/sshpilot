@@ -36,6 +36,8 @@ def _require(path: Path, hint: str) -> str:
 binaries = [
     (_require(VENDOR / "libvterm" / ARCH / "libvterm-0.dll",
               "run packaging/windows/libvterm/build.py --compiler msvc"), "."),
+    (_require(VENDOR / "libghostty-vt" / ARCH / "ghostty-vt.dll",
+              "run packaging/windows/libghostty-vt/build.py"), "."),
     (_require(VENDOR / "conpty" / ARCH / "conpty.dll", "run scripts/fetch-conpty.py"), "."),
     (_require(VENDOR / "conpty" / ARCH / "OpenConsole.exe", "run scripts/fetch-conpty.py"), "."),
 ]
@@ -64,6 +66,9 @@ if not frdp.available:
 frdp_binaries, frdp_datas, frdp_hiddenimports = frdp.collect_typelib_data()
 binaries += frdp_binaries
 datas += frdp_datas
+for _name in ("LICENSE", "third-party.json"):
+    datas.append((_require(VENDOR / "libghostty-vt" / ARCH / _name,
+                           "run packaging/windows/libghostty-vt/build.py"), "share/licenses/libghostty-vt"))
 datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "NOTICE",
                        "run scripts/fetch-gtk.py"), "share/licenses/gtk4-frdp"))
 datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "COPYING",

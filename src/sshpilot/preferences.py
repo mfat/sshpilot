@@ -6807,6 +6807,27 @@ class PreferencesWindow(Adw.Window):
             )
             if default_model == 'vterm':
                 builtin.reverse()  # the default first
+            try:
+                from .ghostty_terminal_model import load_libghostty
+                load_libghostty()
+                ghostty_error = None
+            except Exception as exc:  # noqa: BLE001
+                ghostty_error = str(exc)
+            # Bundled on Windows only; elsewhere listed once the library loads.
+            if ghostty_error is None or is_windows():
+                builtin.append(
+                    {
+                        'id': 'pyte',
+                        'model': 'ghostty',
+                        'label': 'libghostty-vt' if ghostty_error is None else _('libghostty-vt (unavailable)'),
+                        'description': (
+                            _("Ghostty's terminal emulator drawn with GTK, fastest on bulk output")
+                            if ghostty_error is None else _('Requires the libghostty-vt library')
+                        ),
+                        'available': ghostty_error is None,
+                        'error': ghostty_error,
+                    }
+                )
             choices.extend(builtin)
         # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
         if not is_macos() and not is_windows():
@@ -6937,9 +6958,8 @@ class PreferencesWindow(Adw.Window):
         """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
         model = self._backend_choice_data[index].get('model')
-        backend_name = {'pyxterm': 'xterm.js', 'pyte': 'libvterm' if model == 'vterm' else 'pyte'}.get(
-            backend_id.lower(), 'VTE'
-        )
+        builtin_name = {'vterm': 'libvterm', 'ghostty': 'libghostty-vt'}.get(model, 'pyte')
+        backend_name = {'pyxterm': 'xterm.js', 'pyte': builtin_name}.get(backend_id.lower(), 'VTE')
         dialog = Adw.AlertDialog(
             heading=_("Terminal backend switched to {backend}").format(backend=backend_name),
             body=_("Only new terminal tabs will use the selected backend."),

@@ -1,4 +1,4 @@
-"""The Terminal Backend picker lists pyte and libvterm as separate entries."""
+"""The Terminal Backend picker lists pyte, libvterm and libghostty-vt as separate entries."""
 
 from unittest import mock
 
@@ -8,6 +8,7 @@ CHOICES = [
     {'id': 'vte', 'available': True},
     {'id': 'pyte', 'model': 'pyte', 'available': True},
     {'id': 'pyte', 'model': 'vterm', 'available': True},
+    {'id': 'pyte', 'model': 'ghostty', 'available': True},
 ]
 
 
@@ -40,6 +41,14 @@ def test_choosing_libvterm_saves_backend_and_model():
     preferences.PreferencesWindow._apply_backend_change(prefs, 2, 'pyte')
 
     assert prefs._settings == {'terminal.backend': 'pyte', 'terminal.builtin_model': 'vterm'}
+
+
+def test_choosing_libghostty_saves_backend_and_model():
+    prefs = _prefs()
+    preferences.PreferencesWindow._apply_backend_change(prefs, 3, 'pyte')
+    assert prefs._settings == {'terminal.backend': 'pyte', 'terminal.builtin_model': 'ghostty'}
+    prefs = _prefs(backend='pyte', model='ghostty')
+    assert preferences.PreferencesWindow._backend_choice_index(prefs, 'pyte') == 3
 
 
 def test_switching_between_models_counts_as_a_change():

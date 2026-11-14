@@ -1,6 +1,6 @@
 """Headless emulator models behind the built-in terminal backend.
 
-Every model test runs against both the pyte model and the libvterm model
+Every model test runs against the pyte, libvterm and libghostty-vt models
 (``make_model`` fixture); each is skipped when its library is missing.
 """
 
@@ -29,7 +29,16 @@ def _vterm_model(*args, **kwargs):
         pytest.skip(str(exc))
 
 
-@pytest.fixture(params=[_pyte_model, _vterm_model], ids=["pyte", "vterm"])
+def _ghostty_model(*args, **kwargs):
+    from sshpilot.ghostty_terminal_model import GhosttyTerminalModel, GhosttyUnavailable
+
+    try:
+        return GhosttyTerminalModel(*args, **kwargs)
+    except GhosttyUnavailable as exc:
+        pytest.skip(str(exc))
+
+
+@pytest.fixture(params=[_pyte_model, _vterm_model, _ghostty_model], ids=["pyte", "vterm", "ghostty"])
 def make_model(request):
     return request.param
 
@@ -95,9 +104,14 @@ def test_prompt_survives_resizes_inside_alternate_screen(make_model, request, si
         model.feed(b"\x1b[2J\x1b[Hredrawn")
     model.feed(b"\x1b[?1049lX")
     top = model.history_length
-    assert top == history
-    assert model.row_text(top - 1).rstrip() == f"line{history - 1}"
-    assert model.row_text(top + model.screen.cursor.y).rstrip() == "$ lessX"
+    prompt = top + model.screen.cursor.y
+    assert model.row_text(prompt).rstrip() == "$ lessX"
+    assert model.row_text(prompt - 1).rstrip() == "line11"
+    assert _transcript(model) == [f"line{index}" for index in range(12)] + ["$ lessX"]
+    if "ghostty" not in request.node.callspec.id:
+        # How much history a grow pulls back is emulator policy: libghostty
+        # reflows on a width change and leaves the new rows blank instead.
+        assert top == history
     assert "pager" not in model.all_text() and "redrawn" not in model.all_text()
 
 

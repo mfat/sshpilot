@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests._gui_harness import requires_gui
+from tests._gui_harness import require_model, requires_gui
 
 Gtk, _Adw, _Gio, _GLib = requires_gui()
 
@@ -42,13 +42,14 @@ class _CancelledDrag:
         return Gdk.ModifierType(0)
 
 
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_left_click_reports_press_and_release(model, monkeypatch):
     # GTK runs the drag gesture's "drag-end" while the click gesture claims
     # the press, before the button is up; that must not swallow the release
     # (htop acts on button-1 release).
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     view = PyteTerminalView()
+    require_model(view, model)
     view.feed(b"\x1b[?1000h\x1b[?1006h")
     sent = []
     monkeypatch.setattr(view, "_send", sent.append)

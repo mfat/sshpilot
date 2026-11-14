@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-14 04:16+0330\n"
+"POT-Creation-Date: 2026-11-14 23:01+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -75,10 +75,10 @@ msgstr "{connections} 和 {subgroups}"
 #. current (possibly overridden) accelerators like every other group.
 #: src/sshpilot/actions.py:346 src/sshpilot/actions.py:409
 #: src/sshpilot/shortcut_editor.py:258 src/sshpilot/split_view.py:2321
-#: src/sshpilot/window_help.py:219 src/sshpilot/window_session.py:150
+#: src/sshpilot/window_help.py:250 src/sshpilot/window_session.py:150
 #: src/sshpilot/window_tabs.py:1560 src/sshpilot/window_tabs.py:1708
 #: src/sshpilot/window_tabs.py:1917
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:990
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1001
 msgid "Split View"
 msgstr "分屏视图"
 
@@ -219,7 +219,7 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:4103
 #: src/sshpilot/preferences.py:4226 src/sshpilot/preferences.py:4638
-#: src/sshpilot/preferences.py:5251 src/sshpilot/preferences.py:6947
+#: src/sshpilot/preferences.py:5251 src/sshpilot/preferences.py:6967
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -1464,7 +1464,7 @@ msgstr "为需要 PTY 或 Ctrl+C 的命令打开终端会话"
 #: src/sshpilot/command_blocks.py:1158 src/sshpilot/omni_search.py:181
 #: src/sshpilot/preferences.py:3272 src/sshpilot/shortcut_editor.py:72
 #: src/sshpilot/settings_index.py:55 src/sshpilot/window.py:3967
-#: src/sshpilot/window_help.py:172
+#: src/sshpilot/window_help.py:203
 msgid "Command Snippets"
 msgstr "命令片段"
 
@@ -1590,7 +1590,7 @@ msgstr "创建副本"
 #: src/sshpilot/command_blocks.py:2370 src/sshpilot/macos_menubar.py:90
 #: src/sshpilot/shortcut_editor.py:63 src/sshpilot/window.py:4017
 #: src/sshpilot/window.py:4042 src/sshpilot/window.py:4273
-#: src/sshpilot/window_help.py:171
+#: src/sshpilot/window_help.py:202
 msgid "Broadcast Command"
 msgstr "广播命令"
 
@@ -1727,7 +1727,7 @@ msgstr "编辑连接"
 
 #: src/sshpilot/connection_dialog.py:1691 src/sshpilot/macos_menubar.py:49
 #: src/sshpilot/shortcut_editor.py:51 src/sshpilot/sidebar.py:4758
-#: src/sshpilot/window.py:4265 src/sshpilot/window_help.py:149
+#: src/sshpilot/window.py:4265 src/sshpilot/window_help.py:180
 msgid "New Connection"
 msgstr "新建连接"
 
@@ -3185,7 +3185,7 @@ msgid "Quit SSH Pilot?"
 msgstr "退出 SSH Pilot？"
 
 #: src/sshpilot/daemon_quit_policy.py:629 src/sshpilot/shortcut_editor.py:50
-#: src/sshpilot/window.py:4332 src/sshpilot/window_help.py:25
+#: src/sshpilot/window.py:4332 src/sshpilot/window_help.py:55
 msgid "Quit"
 msgstr "退出"
 
@@ -7245,7 +7245,7 @@ msgstr ""
 #: src/sshpilot/machine_info_dialog.py:1023 src/sshpilot/omni_search.py:585
 #: src/sshpilot/omni_search.py:597 src/sshpilot/sidebar.py:1997
 #: src/sshpilot/welcome_page.py:336
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:982
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:993
 msgid "Dashboard"
 msgstr "仪表盘"
 
@@ -7592,7 +7592,7 @@ msgstr "重做"
 
 #: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:179
 #: src/sshpilot/shortcut_editor.py:73 src/sshpilot/window.py:2411
-#: src/sshpilot/window_help.py:22
+#: src/sshpilot/window_help.py:52
 msgid "Toggle Sidebar"
 msgstr "切换侧边栏"
 
@@ -7601,7 +7601,7 @@ msgid "Toggle Full Screen"
 msgstr "切换全屏"
 
 #: src/sshpilot/macos_menubar.py:81 src/sshpilot/shortcut_editor.py:70
-#: src/sshpilot/window_help.py:204
+#: src/sshpilot/window_help.py:235
 msgid "Tab Overview"
 msgstr "标签页概览"
 
@@ -7612,20 +7612,20 @@ msgstr "视图"
 #: src/sshpilot/macos_menubar.py:89 src/sshpilot/omni_search.py:71
 #: src/sshpilot/shortcut_editor.py:57 src/sshpilot/sidebar.py:5173
 #: src/sshpilot/sidebar.py:5553 src/sshpilot/sshcopyid_window.py:1167
-#: src/sshpilot/window.py:4272 src/sshpilot/window_help.py:153
+#: src/sshpilot/window.py:4272 src/sshpilot/window_help.py:184
 msgid "Copy Key to Server"
 msgstr "复制密钥到服务器"
 
 #: src/sshpilot/macos_menubar.py:91 src/sshpilot/shortcut_editor.py:58
 #: src/sshpilot/sidebar.py:1985 src/sshpilot/sidebar.py:5172
 #: src/sshpilot/sidebar.py:5573 src/sshpilot/split_view.py:455
-#: src/sshpilot/window.py:4274 src/sshpilot/window_help.py:154
+#: src/sshpilot/window.py:4274 src/sshpilot/window_help.py:185
 #: src/sshpilot/window_tabs.py:309
 msgid "Manage Files"
 msgstr "管理文件"
 
 #: src/sshpilot/macos_menubar.py:94 src/sshpilot/shortcut_editor.py:59
-#: src/sshpilot/window.py:4278 src/sshpilot/window_help.py:29
+#: src/sshpilot/window.py:4278 src/sshpilot/window_help.py:59
 msgid "SSH Config Editor"
 msgstr "SSH 配置编辑器"
 
@@ -7644,12 +7644,12 @@ msgid "Tools"
 msgstr "工具"
 
 #: src/sshpilot/macos_menubar.py:110 src/sshpilot/shortcut_editor.py:66
-#: src/sshpilot/window_help.py:199
+#: src/sshpilot/window_help.py:230
 msgid "Next Tab"
 msgstr "下一个标签页"
 
 #: src/sshpilot/macos_menubar.py:111 src/sshpilot/shortcut_editor.py:67
-#: src/sshpilot/window_help.py:200
+#: src/sshpilot/window_help.py:231
 msgid "Previous Tab"
 msgstr "上一个标签页"
 
@@ -7661,13 +7661,13 @@ msgstr "窗口"
 
 #: src/sshpilot/macos_menubar.py:121 src/sshpilot/preferences.py:2156
 #: src/sshpilot/shortcut_editor.py:65 src/sshpilot/window.py:4321
-#: src/sshpilot/window_help.py:28 src/sshpilot/window_help.py:109
-#: src/sshpilot/window_help.py:115
+#: src/sshpilot/window_help.py:58 src/sshpilot/window_help.py:140
+#: src/sshpilot/window_help.py:146
 msgid "Keyboard Shortcuts"
 msgstr "快捷键"
 
 #: src/sshpilot/macos_menubar.py:122 src/sshpilot/shortcut_editor.py:64
-#: src/sshpilot/window.py:4322 src/sshpilot/window_help.py:27
+#: src/sshpilot/window.py:4322 src/sshpilot/window_help.py:57
 msgid "Documentation"
 msgstr "文档"
 
@@ -7690,7 +7690,7 @@ msgid "Help"
 msgstr "帮助"
 
 #: src/sshpilot/omni_search.py:63
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:986
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:997
 msgid "SFTP File Manager"
 msgstr "SFTP 文件管理器"
 
@@ -7960,7 +7960,7 @@ msgstr "无法解析 SSH 目标：{command}"
 
 #: src/sshpilot/omni_search.py:946 src/sshpilot/preferences.py:215
 #: src/sshpilot/shortcut_editor.py:61 src/sshpilot/window.py:4315
-#: src/sshpilot/window_help.py:26
+#: src/sshpilot/window_help.py:56
 #: src/sshpilot/resources/ui/preferences_window.ui:10
 #: src/sshpilot/resources/ui/preferences_window.ui:30
 #: src/sshpilot/resources/ui/preferences_window.ui:123
@@ -11483,30 +11483,42 @@ msgstr ""
 msgid "Requires the libvterm library"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6819
+#: src/sshpilot/preferences.py:6822
+msgid "libghostty-vt (unavailable)"
+msgstr "libghostty-vt（不可用）"
+
+#: src/sshpilot/preferences.py:6824
+msgid "Ghostty's terminal emulator drawn with GTK, fastest on bulk output"
+msgstr "Ghostty 的终端模拟器，由 GTK 绘制，大量输出时最快"
+
+#: src/sshpilot/preferences.py:6825
+msgid "Requires the libghostty-vt library"
+msgstr "需要 libghostty-vt 库"
+
+#: src/sshpilot/preferences.py:6840
 msgid "Web-based terminal running in WebKitGTK"
 msgstr "在 WebKitGTK 中运行的网页终端"
 
-#: src/sshpilot/preferences.py:6828
+#: src/sshpilot/preferences.py:6849
 msgid "xterm.js (unavailable)"
 msgstr "xterm.js（不可用）"
 
-#: src/sshpilot/preferences.py:6829
+#: src/sshpilot/preferences.py:6850
 msgid "Requires WebKitGTK 6.0"
 msgstr "需要 WebKitGTK 6.0"
 
-#: src/sshpilot/preferences.py:6944
+#: src/sshpilot/preferences.py:6964
 #, python-brace-format
 msgid "Terminal backend switched to {backend}"
 msgstr "终端后端已切换为 {backend}"
 
-#: src/sshpilot/preferences.py:6945
+#: src/sshpilot/preferences.py:6965
 msgid "Only new terminal tabs will use the selected backend."
 msgstr "只有新的终端标签页会使用所选后端。"
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7497 src/sshpilot/preferences.py:7516
+#: src/sshpilot/preferences.py:7517 src/sshpilot/preferences.py:7536
 #: src/sshpilot/terminal_theme_selector.py:204
 msgid "Custom"
 msgstr "自定义"
@@ -12087,46 +12099,46 @@ msgstr "正在解锁您的密码库…"
 msgid "Open New Connection Tab"
 msgstr "打开新连接标签页"
 
-#: src/sshpilot/shortcut_editor.py:53 src/sshpilot/window_help.py:151
+#: src/sshpilot/shortcut_editor.py:53 src/sshpilot/window_help.py:182
 msgid "Focus Connection List"
 msgstr "聚焦连接列表"
 
 #: src/sshpilot/shortcut_editor.py:54 src/sshpilot/text_editor.py:426
-#: src/sshpilot/window_help.py:150
+#: src/sshpilot/window_help.py:181
 msgid "Search"
 msgstr "搜索"
 
-#: src/sshpilot/shortcut_editor.py:55 src/sshpilot/window_help.py:24
+#: src/sshpilot/shortcut_editor.py:55 src/sshpilot/window_help.py:54
 msgid "Omnisearch"
 msgstr "全局搜索 (Omnisearch)"
 
-#: src/sshpilot/shortcut_editor.py:56 src/sshpilot/window_help.py:170
+#: src/sshpilot/shortcut_editor.py:56 src/sshpilot/window_help.py:201
 msgid "Search in Terminal"
 msgstr "在终端中搜索"
 
 #: src/sshpilot/shortcut_editor.py:60 src/sshpilot/sidebar.py:2761
 #: src/sshpilot/sidebar.py:2816 src/sshpilot/sidebar.py:2876
-#: src/sshpilot/window_help.py:169
+#: src/sshpilot/window_help.py:200
 msgid "Local Terminal"
 msgstr "本地终端"
 
-#: src/sshpilot/shortcut_editor.py:62 src/sshpilot/window_help.py:203
+#: src/sshpilot/shortcut_editor.py:62 src/sshpilot/window_help.py:234
 msgid "Close Tab"
 msgstr "关闭标签页"
 
-#: src/sshpilot/shortcut_editor.py:68 src/sshpilot/window_help.py:201
+#: src/sshpilot/shortcut_editor.py:68 src/sshpilot/window_help.py:232
 msgid "Move Tab Left"
 msgstr "标签页向左移动"
 
-#: src/sshpilot/shortcut_editor.py:69 src/sshpilot/window_help.py:202
+#: src/sshpilot/shortcut_editor.py:69 src/sshpilot/window_help.py:233
 msgid "Move Tab Right"
 msgstr "标签页向右移动"
 
-#: src/sshpilot/shortcut_editor.py:71 src/sshpilot/window_help.py:205
+#: src/sshpilot/shortcut_editor.py:71 src/sshpilot/window_help.py:236
 msgid "New Split View Tab"
 msgstr "新建分屏视图标签页"
 
-#: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window_help.py:23
+#: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window_help.py:53
 msgid "Toggle Fullscreen"
 msgstr "切换全屏"
 
@@ -12191,7 +12203,7 @@ msgid "Active whenever a split view tab is open."
 msgstr "只要分屏视图标签页处于打开状态即激活。"
 
 #: src/sshpilot/shortcut_editor.py:290 src/sshpilot/shortcut_editor.py:544
-#: src/sshpilot/window_help.py:187
+#: src/sshpilot/window_help.py:218
 msgid "No shortcut assigned"
 msgstr "未分配快捷键"
 
@@ -12821,12 +12833,13 @@ msgstr "选择关键字"
 msgid "Value"
 msgstr "值"
 
-#: src/sshpilot/ssh_option_list.py:272
+#. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
+#: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
 msgid "Add Option"
 msgstr "添加选项"
 
 #. Half an option. Saying so beats leaving it out without a word.
-#: src/sshpilot/ssh_option_list.py:411
+#: src/sshpilot/ssh_option_list.py:417
 msgid "Enter both a keyword and a value."
 msgstr "请同时填写关键字和值。"
 
@@ -15257,11 +15270,11 @@ msgstr "守护进程拥有的 SFTP 文件管理器不可用。"
 msgid "Opening file manager…"
 msgstr "正在打开文件管理器…"
 
-#: src/sshpilot/window_help.py:85
+#: src/sshpilot/window_help.py:116
 msgid "Failed to open help"
 msgstr "打开帮助失败"
 
-#: src/sshpilot/window_help.py:86
+#: src/sshpilot/window_help.py:117
 #, python-brace-format
 msgid ""
 "Please open this page manually:\n"
@@ -15270,51 +15283,51 @@ msgstr ""
 "请手动打开此页面：\n"
 "{url}"
 
-#: src/sshpilot/window_help.py:152
+#: src/sshpilot/window_help.py:183
 msgid "Open New Tab"
 msgstr "打开新标签页"
 
-#: src/sshpilot/window_help.py:221
+#: src/sshpilot/window_help.py:252
 msgid "Focus pane left"
 msgstr "聚焦左侧窗格"
 
-#: src/sshpilot/window_help.py:222
+#: src/sshpilot/window_help.py:253
 msgid "Focus pane down"
 msgstr "聚焦下方窗格"
 
-#: src/sshpilot/window_help.py:223
+#: src/sshpilot/window_help.py:254
 msgid "Focus pane up"
 msgstr "聚焦上方窗格"
 
-#: src/sshpilot/window_help.py:224
+#: src/sshpilot/window_help.py:255
 msgid "Focus pane right"
 msgstr "聚焦右侧窗格"
 
-#: src/sshpilot/window_help.py:225
+#: src/sshpilot/window_help.py:256
 msgid "Resize pane left"
 msgstr "向左调整窗格大小"
 
-#: src/sshpilot/window_help.py:226
+#: src/sshpilot/window_help.py:257
 msgid "Resize pane down"
 msgstr "向下调整窗格大小"
 
-#: src/sshpilot/window_help.py:227
+#: src/sshpilot/window_help.py:258
 msgid "Resize pane up"
 msgstr "向上调整窗格大小"
 
-#: src/sshpilot/window_help.py:228
+#: src/sshpilot/window_help.py:259
 msgid "Resize pane right"
 msgstr "向右调整窗格大小"
 
-#: src/sshpilot/window_help.py:229
+#: src/sshpilot/window_help.py:260
 msgid "Side-by-side layout"
 msgstr "左右平铺布局"
 
-#: src/sshpilot/window_help.py:230
+#: src/sshpilot/window_help.py:261
 msgid "Top / bottom layout"
 msgstr "上下平铺布局"
 
-#: src/sshpilot/window_help.py:231
+#: src/sshpilot/window_help.py:262
 msgid "Add pane"
 msgstr "添加窗格"
 
@@ -15467,838 +15480,876 @@ msgstr "mFat"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:40
 msgid ""
+"Closing a connected tab asks once instead of twice; cancelling no longer "
+"leaves a session running with no tab"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:41
+msgid "Quitting can be confirmed with the same \"Don't ask me again\" option"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:42
+msgid ""
+"If the app crashes or is killed, its SSH sessions, forwards and transfers "
+"now stop with it instead of running on unreachable"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:43
+msgid ""
+"Detach and restore-sessions-on-startup are retired: detached sessions could "
+"never be reopened, and restore never covered a crash"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:44
+msgid ""
+"Settings: Interface is now General and holds Ask before closing a tab and "
+"Ask before quitting; Background Service moves to Advanced and shows the real "
+"idle shutdown time"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:45
+msgid ""
+"The About dialog shows the bundled app icon, not an outdated system copy"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:46
+msgid "Spanish: \"Close\" now reads \"Cerrar\""
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:51
+msgid ""
 "Saved hosts now connect exactly as `ssh <alias>` does in a terminal: earlier "
 "Host * and Match blocks, /etc/ssh/ssh_config and the main config of hosts in "
 "included files all apply as OpenSSH applies them"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:41
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:52
 msgid ""
 "If a setting you typed is no longer the one used, a banner in the main "
 "window says so and the connection editor marks the field with the value that "
 "wins and where it comes from; open Effective Config for details"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:42
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:53
 msgid ""
 "Saved passwords are looked up by the user and host OpenSSH resolves, so a "
 "Host * that changes User or HostName may ask for the password once more"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:43
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:54
 msgid ""
 "The app keepalive is now only a fallback; a ServerAliveInterval in your SSH "
 "config wins"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:44
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:55
 msgid ""
 "Host key checking is left to your SSH config unless you set it in Settings"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:45
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:56
 msgid ""
 "Settings > SSH Options is now a page of overrides that win over the SSH "
 "config, with Not set by default, keyword suggestions, an address family "
 "option, a legacy device compatibility switch and free-form extra options"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:46
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:57
 msgid ""
 "Clear messages when the SSH config cannot be read, is read-only, is a link "
 "the app cannot see, or is rejected by OpenSSH; no more .bak copy beside it"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:47
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:58
 msgid "A linked ~/.ssh/config is followed the way OpenSSH does"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:48
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:59
 msgid ""
 "File manager: Windows servers keep nested folders on upload and show their "
 "paths as the server gives them; Flatpak users get Request Access for folders "
 "the sandbox cannot reach"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:49
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:60
 msgid "Dashboard keeps its data and tab while refreshing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:50
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:61
 #, fuzzy
 msgid "New Colored Text style for sidebar group colours"
 msgstr "侧边栏新增“紧凑”样式"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:51
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:62
 msgid ""
 "RDP: gtk4-frdp 0.2.4, OpenSSL legacy provider bundled on Windows, FreeRDP "
 "diagnostics in the app log"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:52
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:63
 msgid ""
 "Fixed a crash in the shortcuts overview, an X11 ibus crash when closing the "
 "SSH config editor, and a corrupt process registry after a power cut on "
 "Windows"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:57
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:68
 #, fuzzy
 msgid "more rdp fixes"
 msgstr "细微界面修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:62
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:73
 msgid ""
 "Added terminal output highlighter - network addresses and important debug "
 "messages are now highlighted with profiles for several network devices"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:63
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:74
 msgid "RDP tab ships gtk4-frdp 0.2.1 everywhere"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:64
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:75
 msgid "Recent and Pinned titles stay in sync when a connection is renamed"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:69
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:80
 msgid ""
 "RDP connections can open in an embedded tab, and the tab can move to its own "
 "window and back without reconnecting"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:70
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:81
 msgid ""
 "Sleeping hosts are woken before connecting, and pre-connect steps now run "
 "for RDP tabs too"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:82
 msgid "X11 forwarding now works on Windows (#1365)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:72
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:83
 msgid "Serial connections: new \"Backspace key sends\" option (#1366)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:73
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:84
 msgid ""
 "The key passphrase prompt offers remember options, and a rejected saved "
 "passphrase is no longer retried"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:74
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:85
 msgid "Large pastes into the terminal arrive whole instead of failing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:75
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:86
 #, fuzzy
 msgid "Bitwarden backups that are too large are stored as a note attachment"
 msgstr "这么大的备份需存储为附件，这需要 Bitwarden Premium。"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:76
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:87
 #, fuzzy
 msgid "View menu: new toggle for the tab overview button"
 msgstr "顶栏按钮的新切换开关"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
 msgid ""
 "Files edited through Manage Files, including \"Edit as root\", no longer "
 "create automatic backups"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:78
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:89
 msgid ""
 "Fixed: quitting could be blocked by \"multiplexed SSH connection could not "
 "be checked\" (#1361)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:79
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
 msgid ""
 "Fixed: lost clicks and a flood of terminal input on wheel scroll on macOS; "
 "the main window dropping behind when a dialog closes on Windows; GSSAPI in "
 "Flatpak; the sidebar recovering when loading rows fails (#1363)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:84
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:95
 msgid "New app icon on every platform"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:85
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:96
 msgid ""
 "Sidebar: actions moved into a single title row, and they come along in the "
 "hover/search popup"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:86
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:97
 msgid "Sidebar view menu: new Filter by Tag and Privacy sections"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:87
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:98
 msgid ""
 "Omnisearch centred over the tab area; Start tab shows only while no other "
 "tab is open"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:99
 msgid ""
 "Terminal theme and command snippets buttons hidden by default (theme button "
 "kept in the header bar)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:89
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:100
 msgid "Dragging a connection shows its name on an accent chip"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:101
 msgid "A newly added split pane scrolls into view"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:91
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:102
 msgid ""
 "Docker Console: filter field on the Images, Volumes, Networks and Compose "
 "tabs (#1335)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:92
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:103
 msgid ""
 "Tag picker shows existing tags and an empty state when there are none (#1336)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:93
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:104
 msgid ""
 "Server Metrics: \"Show more\" now expands the established connection lists, "
 "and Top processes lists up to 50 (#1337)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:94
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:105
 msgid ""
 "Windows installer: asks about the startup update check, new artwork, "
 "prepared for SignPath code signing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:95
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:106
 msgid "Fixed a crash when a drag left the sidebar over the drop gap (#1334)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:100
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:111
 msgid ""
 "A session saved while Settings is open now appears in Settings' startup "
 "session list without restarting"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:101
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:112
 msgid ""
 "Starting the app with a saved session now opens the session shown in Settings"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:106
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:117
 msgid ""
 "Using a right-click menu action on several selected connections (such as "
 "Delete) keeps all of them selected"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:118
 msgid "Clicking a terminal's own tab pill keeps that terminal active"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:119
 msgid "The window controls stay visible in a narrow window"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:109
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:120
 msgid "Restoring a backup puts keys kept outside ~/.ssh into the key directory"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:110
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:121
 msgid "Restoring a backup made on Windows also restores its Include files"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:111
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:122
 msgid ""
 "After a merge restore, the app tells you what was left as it was on this "
 "machine"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:112
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:123
 msgid "The connection-sort message is worded more clearly"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:113
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:124
 msgid ""
 "The Windows installer is now named SSHPilot-<version>-windows-<arch>-"
 "setup.exe"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:118
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:129
 msgid "Initial release of Windows port"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:119
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:130
 msgid ""
 "Option to remember a password for the current session (until SSH Pilot quits)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:120
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:133
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:131
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:144
 msgid ""
 "Security hardening: refuse shell text in HostName/ProxyJump, control "
 "characters typed into terminals, and unsafe paths in SCP downloads and "
 "backup restores"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:121
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:134
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:132
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:145
 msgid "Old config.json files are upgraded instead of reset to defaults"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:122
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:135
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:133
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:146
 #, fuzzy
 msgid "Various fixes and improvements"
 msgstr "各种错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:127
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:138
 msgid ""
 "Experimental Windows port: run from source or install with the new NSIS "
 "installer"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:128
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:139
 msgid ""
 "Local shell tabs on the built-in terminal backend, with ConPTY and libvterm "
 "on Windows"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:129
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:140
 msgid ""
 "Faster startup: the daemon starts while the GUI loads and the sidebar shows "
 "in the first frame"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:130
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
 msgid ""
 "Faster full-screen redraws and synchronized output support in the built-in "
 "terminal"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:131
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
 #, fuzzy
 msgid "Option to remember a password until SSH Pilot quits"
 msgstr "密码提示中添加了记住密码的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:132
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:143
 msgid "Save search-box connections with options inherited from Host *"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:140
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:151
 msgid ""
 "New Settings dialog with built-in search and dedicated pages for Appearance "
 "and Sidebar"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:152
 #, fuzzy
 msgid "Improved look and feel for split view terminals"
 msgstr "内置文件管理器拥有更好的外观与体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:153
 msgid ""
 "New layout chooser in settings - choose between default look with sidebar "
 "and plain terminal look"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:143
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:154
 msgid "Reveal a hidden sidebar by hovering over the sidebar toggle"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:144
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:155
 msgid "Improved Broadcast command experience, disable autohide"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:145
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:156
 #, fuzzy
 msgid "Various UI fixes and improvements"
 msgstr "各种错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:150
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:161
 msgid "Connections are now automatically tagged by protocol"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:151
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:162
 #, fuzzy
 msgid "Improved sorting behavior in connection list"
 msgstr "连接列表新增排序功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:152
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:163
 #, fuzzy
 msgid "Create your own custom terminal themes"
 msgstr "创建终端配色方案"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:157
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:236
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:168
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:247
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:265
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:303
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:276
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:314
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:319
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:424
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:436
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:507
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:512
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:517
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:522
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:565
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:571
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:325
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:330
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:435
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:447
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:518
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:523
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:528
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:533
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:576
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:584
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:612
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:617
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:624
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:658
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:670
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:676
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:582
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:587
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:595
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:623
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:628
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:635
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:669
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:681
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:696
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:701
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:728
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:748
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:687
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:692
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:707
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:712
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:739
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:759
 msgid "Bug fixes"
 msgstr "错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:158
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:169
 #, fuzzy
 msgid "New logo"
 msgstr "新建文件夹"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:163
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:174
 #, fuzzy
 msgid "New \"Open in Terminal\" option in file manager"
 msgstr "打开文件管理器失败"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:164
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:175
 msgid ""
 "Open local and remote terminal panes in file manager with optional "
 "synchronized browsing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:169
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:180
 #, fuzzy
 msgid "SFTP file manager improvements"
 msgstr "文件管理器界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:174
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:180
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:185
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:191
 msgid "Added RDP support (requries freerdp3)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:175
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:181
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:186
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:192
 #, fuzzy
 msgid "Improved UX for non-SSH protocol plugins"
 msgstr "改进非 SSH 协议插件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:186
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:197
 msgid ""
 "Introducing \"Login Profiles\", reusable, saved idenities you can assign to "
 "any connection or group"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:187
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:198
 #, fuzzy
 msgid "New \"Dashboard\" button in connection rows"
 msgstr "在连接行中显示计算机图标"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:188
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:199
 #, fuzzy
 msgid "UI improvements"
 msgstr "细微界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:189
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:200
 #, fuzzy
 msgid "Updated translations"
 msgstr "更新通知"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:194
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:205
 msgid "More SFTP improvemnets"
 msgstr "细微界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:195
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:206
 msgid "Added support for OSC 52"
 msgstr "添加对嵌套分组的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:200
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:211
 msgid "Various improvemnets to SFTP file manager"
 msgstr "SFTP 文件管理器的性能改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:201
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:379
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:212
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:390
 msgid "Minor bug fixes"
 msgstr "细微错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:206
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:217
 msgid ""
 "Fixed KeePass database creation failing with a false \"pykeepass is not "
 "installed\" error"
 msgstr "修复了创建 KeePass 数据库时出现错误的“未安装 pykeepass”报错问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:207
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:218
 msgid "Fixed auto-unlock after creating a KeePass database"
 msgstr "修复了创建 KeePass 数据库后的自动解锁问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:208
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
 msgid ""
 "Fixed Bitwarden US cloud setup leaving a previous EU or self-hosted server "
 "URL in place"
 msgstr "修复了 Bitwarden 美国云配置时遗留旧的欧洲或自建服务器 URL 的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:209
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:220
 msgid ""
 "Secret vault sessions now lock when the database or account target changes"
 msgstr "当数据库或账户目标变更时，保密保管库会话现将自动锁定"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:210
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:221
 msgid "Bitwarden idle timeout is now enforced on credential lookups"
 msgstr "凭据查询时现将强制执行 Bitwarden 空闲超时设置"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:211
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:222
 msgid ""
 "New preference to set how many lines the mouse wheel scrolls in the terminal"
 msgstr "新增首选项用于设置终端中鼠标滚轮滚动的行数"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:212
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:223
 msgid ""
 "Localized File Manager, text editor, session failure, and Ásbrú import "
 "messages"
 msgstr "本地化了文件管理器、文本编辑器、会话失败和 Ásbrú 导入消息"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:217
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:228
 msgid ""
 "Local shell now follows the window size, so full-screen programs use the "
 "whole terminal"
 msgstr "本地 shell 现已跟随窗口大小，全屏程序将充分使用整个终端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:218
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:229
 msgid "Fixed scrolling being far too fast with a touchpad on macOS"
 msgstr "修复了 macOS 上使用触摸板时滚动速度过快的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:230
 msgid ""
 "Fixed the scroll wheel not working while terminal shortcut pass-through is on"
 msgstr "修复了开启终端快捷键透传时滚轮不工作的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:220
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:231
 msgid ""
 "Fixed a local terminal tab staying open with an SSH error after pressing "
 "Ctrl+C and typing exit"
 msgstr ""
 "修复了按 Ctrl+C 并输入 exit 后本地终端标签页仍停留在 SSH 报错状态的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:236
 msgid "New port-knocking/pre-connect command configuration dialog"
 msgstr "新增端口敲门/预连接命令配置对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:230
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
 msgid "Fixed arrow keys not working on macOS after recent GTK update"
 msgstr "修复了近期 GTK 更新后 macOS 上方向键不工作的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:231
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
 msgid "Fixed macOS Intel builds"
 msgstr "修复了 macOS Intel 架构的构建问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:252
 msgid "New \"Compact\" style for sidebar"
 msgstr "侧边栏新增“紧凑”样式"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:253
 msgid "Fixed mosh connection failure"
 msgstr "重新连接失败"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:243
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
 msgid "New option to add a pinned local shell to connection list"
 msgstr "连接列表的新标签视图"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:248
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
 msgid "Improvements to SplitView mode"
 msgstr "分屏视图改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:249
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:260
 msgid "Added ProxyCommand entry to connection dialog"
 msgstr "连接列表新增排序功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:270
 msgid ""
 "Added support for importing authorized keys from GitHub, GitLab, Launchpad "
 "or a URL"
 msgstr "添加了从 GitHub、GitLab、Launchpad 或 URL 导入授权密钥的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:260
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:271
 msgid "Fixed overlapping scrollbars in splitview"
 msgstr "修复了分屏视图中滚动条重叠的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:270
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:281
 msgid "Host Info renamed to Dashboard, opens in a new tab now"
 msgstr "“主机信息”已更名为“仪表盘”，现将在新标签页中打开"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:271
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:282
 msgid ""
 "Open common web UIs from Dashboard - you can open web UIs for remote "
 "services right from the dashboard"
 msgstr "从仪表盘打开常用 Web 界面——您可以直接从仪表盘打开远程服务的 Web 界面"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:272
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:283
 msgid ""
 "Port-forwarding sessions now show forwarding status instead of empty terminal"
 msgstr "端口转发会话现将显示转发状态，而非空白终端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:273
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:284
 msgid "Added option to exit on port forwarding failure"
 msgstr "添加新的端口转发规则"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:274
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:285
 msgid "Improved responsive design for dashboard"
 msgstr "改进了仪表盘的自适应响应设计"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:279
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:290
 msgid "Fixed keyboard shortcuts not working under non-Latin layouts"
 msgstr "修复了非拉丁键盘布局下键盘快捷键失效的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:280
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:291
 msgid "Added terminal cursor customization"
 msgstr "添加了终端光标自定义功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:281
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:292
 msgid "Added experimental Ásbrú importer"
 msgstr "添加了实验性的 Ásbrú 导入器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:282
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:293
 msgid "Minor UI tweaks"
 msgstr "细微界面修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:287
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:298
 msgid "Sidebar is now resizable"
 msgstr "侧边栏现已支持调整大小"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:288
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:299
 msgid "Added option to use monospace font for the user interface"
 msgstr "添加了在用户界面中使用等宽字体的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:293
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:304
 msgid "Redesigned backup dialog"
 msgstr "重新设计 SCP 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:294
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:305
 msgid "Improved Host Info dialog"
 msgstr "改进的 SSH 配置编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:295
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:306
 msgid "Added option to paste public key to ssh-copy-id dialog"
 msgstr "在 ssh-copy-id 对话框中添加了粘贴公钥的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:307
 msgid "Fixed bug that prevented deleting multiple groups at once"
 msgstr "修复了无法一次删除多个分组的错误"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:308
 msgid "Added option to reveal scp-downloaded files in file manager"
 msgstr "添加在文件管理器标签页中打开终端的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:298
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:309
 msgid "Fixed backup decryption bug during restore"
 msgstr "修复备份加密问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:308
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:319
 msgid ""
 "Introducing \"Host Info\" - detailed info about any host, available from the "
 "context menu"
 msgstr "推出“主机信息”功能——右键上下文菜单即可查看任何主机的详细信息"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:309
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:320
 msgid ""
 "New languages: Spanish, Portuguese, Brazilian Portuguese, Chinese, Russian "
 "and Persian"
 msgstr "新增语言支持：西班牙语、葡萄牙语、巴西葡萄牙语、中文、俄语和波斯语"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:324
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:330
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:335
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:341
 msgid "Improvements to isolated workspace mode"
 msgstr "改进隔离工作区模式"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:325
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:331
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:336
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:342
 msgid "Middle-click a group to open all connections in splitview"
 msgstr "中键点击分组可在分屏视图中打开所有连接"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:336
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:347
 msgid "Improvements to non-SSH protocol plugins"
 msgstr "改进非 SSH 协议插件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:337
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:348
 msgid "Fixes text selection when using remote apps such as tmux and htop"
 msgstr "修复使用 tmux 和 htop 等远程应用时的文本选择问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:338
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:349
 msgid "Fixes SFTP File Manager retry/reconnect flow"
 msgstr "修复 SFTP 文件管理器的重试/重新连接流程"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:343
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:354
 msgid "New \"Copy SSH Command\" context-menu action"
 msgstr "上下文菜单新增“复制 SSH 命令”操作"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:344
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:355
 msgid "Fixes rbw secret backend"
 msgstr "修复 rbw 机密存储后端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:345
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:356
 msgid "Other bug fixes and improvements"
 msgstr "其他错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:350
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:361
 msgid "Fixed Bitwarden login issue"
 msgstr "修复 Bitwarden 登录问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:355
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:366
 msgid "Faster startup"
 msgstr "更快的启动速度"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:356
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:367
 msgid "Vault unlock prompt now displayed on startup"
 msgstr "启动时显示密码库解锁提示"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:357
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:368
 msgid "Privacy toggle hides hostnames and IP addresses in start page too"
 msgstr "隐私开关在起始页中同样隐藏主机名和 IP 地址"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:362
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:373
 msgid "Fixed subgroups not inheriting parent group color"
 msgstr "修复子分组未继承父分组颜色的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:363
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:374
 msgid "Added option to remember passwords to password prompts"
 msgstr "密码提示中添加了记住密码的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:364
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:375
 msgid "Minor fixes to DnD in sidebar"
 msgstr "侧边栏拖放操作的小修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:369
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:380
 msgid ""
 "Added new terminal theme selector, added option to access it from tab bar"
 msgstr "添加新的终端主题选择器，并添加从标签栏访问它的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:370
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:381
 msgid "Fixed vault unlock issue"
 msgstr "修复密码库解锁问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:371
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:382
 msgid "Fixed backup encryption issue"
 msgstr "修复备份加密问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:372
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:955
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:383
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:966
 msgid "Minor UI fixes"
 msgstr "细微界面修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:377
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:388
 msgid "Improved drag & drop for connections across groups"
 msgstr "改进跨分组连接的拖放操作"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:378
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:389
 msgid "Improved connection status reporting"
 msgstr "改进连接状态报告"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:384
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:497
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:502
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:686
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:395
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:508
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:513
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:697
 msgid "Bug fixes and UI improvements"
 msgstr "错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:389
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:400
 msgid "Fixes drag and drop reordering not working"
 msgstr "修复拖放重新排序不起作用的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:390
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
 msgid "Adds manual sorting option"
 msgstr "添加手动排序选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:395
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:406
 msgid "Added French translation"
 msgstr "添加法语翻译"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:396
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:407
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
 msgid "Minor UI improvements"
 msgstr "细微界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:412
 msgid ""
 "Integrated tab bar into header for a cleaner, more minimal user interface"
 msgstr "将标签栏整合到顶栏中，打造更简洁、更小巧的用户界面"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:402
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:413
 msgid ""
 "Revamped Command Snippets panel - the snippets are now displayed in a "
 "floating panel"
 msgstr "改进命令片段面板 — 片段现在显示在浮动面板中"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:403
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:414
 msgid ""
 "Added keyboard support to Snippets - you can assign your desired shortcut "
 "for the popup"
 msgstr "为命令片段添加键盘支持 — 您可以为弹窗分配所需的快捷键"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:404
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
 msgid "Added theme selector to main menu, inspired by Ptyxis"
 msgstr "受 Ptyxis 启发，在主菜单中添加了主题选择器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:410
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:419
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:429
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:441
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:446
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:451
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:456
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:721
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:421
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:430
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:440
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:452
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:457
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:462
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:467
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:732
 msgid "Bug fixes and improvements"
 msgstr "错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:426
 msgid ""
 "Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on "
 "macOS)"
 msgstr "改进全屏体验（Linux 上按 F11 激活，macOS 上按 Cmd+Ctrl+F 激活）"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:427
 msgid "Improved app menu on macOS"
 msgstr "改进 macOS 上的应用程序菜单"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:417
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:428
 msgid "Added animated effect to omnisearch"
 msgstr "为全局搜索 (Omnisearch) 添加动画效果"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:418
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:429
 msgid "Added workaround for French keyboard layout on macOS"
 msgstr "添加针对 macOS 法语键盘布局的临时解决方案"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:434
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:445
 msgid "Improved effective config diff tool"
 msgstr "改进生效配置差异对比工具"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:435
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:446
 msgid "Improved experience when switching operation mode"
 msgstr "改进切换运行模式时的体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:461
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:472
 msgid "Migrated the code base to a new daemon-based system"
 msgstr "将代码库迁移到全新的基于守护进程的系统"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:462
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
 msgid "Introducing SSH Pilot API"
 msgstr "引入 SSH Pilot API"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:467
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:478
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
 msgid ""
 "Introducing Omnisearch—a powerful, versatile pop-up search box accessible "
 "from anywhere by double-pressing the Shift key"
@@ -16306,51 +16357,51 @@ msgstr ""
 "引入 Omnisearch — 一个功能强大、用途广泛的弹出式搜索框，双击 Shift 键即可随处"
 "访问"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:468
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:479
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
 msgid ""
 "Added a minimal sidebar mode that uses a narrow, icon-only strip to free up "
 "horizontal screen space"
 msgstr "添加极简侧边栏模式，使用狭窄的纯图标栏释放水平屏幕空间"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:469
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:480
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:491
 msgid ""
 "Added an option to open the file manager in SSH terminal panes from the tab "
 "context menu"
 msgstr "在标签页上下文菜单中添加在 SSH 终端窗格中打开文件管理器的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:470
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:481
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:492
 msgid "Added an option to open a terminal in file manager tabs"
 msgstr "添加在文件管理器标签页中打开终端的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:471
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:482
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:493
 msgid "Improved the appearance and overall experience of the SFTP file manager"
 msgstr "改进 SFTP 文件管理器的外观和整体体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:472
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:483
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:494
 msgid ""
 "Fixed an issue that delayed application shutdown when local terminal tabs "
 "were open"
 msgstr "修复在打开本地终端标签页时导致应用程序关闭延迟的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:484
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:738
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:495
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:749
 msgid "Various bug fixes and UI improvements"
 msgstr "各种错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:500
 msgid ""
 "Introducing Omnisearch - a powerful, versatile pop-up search box you can "
 "activate from anywhere by double-pressing the Shift key"
 msgstr ""
 "引入 Omnisearch — 一个功能强大的弹出式搜索框，双击 Shift 键即可随处唤出"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:501
 msgid ""
 "Introducing a minimal mode for the sidebar - use a narrow, icon-only strip "
 "instead of the default full sidebar to reclaim more horizontal screen space"
@@ -16358,12 +16409,12 @@ msgstr ""
 "引入极简侧边栏模式 — 使用狭窄的纯图标栏代替默认的完整侧边栏，以节省更多水平屏"
 "幕空间"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:491
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:528
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:502
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:539
 msgid "Various bug fixes and improvements"
 msgstr "各种错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:496
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:507
 msgid ""
 "Enhanced CLI interface - start sshpilot from commandline like \"sshpilot "
 "user@host\", use --sftp to open the file manager"
@@ -16371,69 +16422,69 @@ msgstr ""
 "增强命令行界面 — 通过类似 “sshpilot user@host” 的命令行启动 sshpilot，使用 --"
 "sftp 打开文件管理器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:527
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:538
 msgid "German translation"
 msgstr "德语翻译"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:533
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:544
 msgid "Meson build system"
 msgstr "Meson 构建系统"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:534
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:545
 msgid "Migrated to GNOME rcommended project structure"
 msgstr "迁移至 GNOME 推荐的项目结构"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:539
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:550
 msgid "Migrated to meson build system"
 msgstr "迁移至 Meson 构建系统"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:544
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:555
 msgid "Enhanced support for multi-step authentication challenges"
 msgstr "增强对多步身份验证质询的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:545
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:553
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:556
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:564
 msgid "Better support for FIDO hardware keys"
 msgstr "更好地支持 FIDO 硬件密钥"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:546
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:554
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:557
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:565
 msgid "More robust password autofill flow"
 msgstr "更健壮的密码自动填充流程"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:547
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:558
 msgid "Redesigned SCP dialog"
 msgstr "重新设计 SCP 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:552
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:563
 msgid "Enhanced suppot for multi-sttep authentication challenges"
 msgstr "增强对多步身份验证质询的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:555
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:566
 msgid "Revamped SCP dialogs"
 msgstr "改进 SCP 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:560
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:571
 msgid "Bug fixes and minor UI improvements"
 msgstr "错误修复和细微界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:570
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:581
 msgid "Improvements for Xterm.js terminal backend"
 msgstr "Xterm.js 终端后端的改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:581
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:592
 msgid "Docker Console UI improvements"
 msgstr "Docker 控制台界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:582
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:593
 msgid "File manager UI improvements"
 msgstr "文件管理器界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:583
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:594
 msgid "Reorganized main menu"
 msgstr "重新组织主菜单"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:589
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:600
 msgid ""
 "Backup settings and credentials to Bitwarden/Vaultwarden right from SSH "
 "Pilot and restore on other devices"
@@ -16441,248 +16492,248 @@ msgstr ""
 "直接在 SSH Pilot 中将设置和凭据备份到 Bitwarden/Vaultwarden，并在其他设备上恢"
 "复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:590
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:601
 msgid "More credential storage backends including Keepass, Bitwarden and rbw"
 msgstr "更多凭据存储后端，包括 KeePass、Bitwarden 和 rbw"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:591
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:602
 msgid "Improvements to Pyxtermjs terminal backend"
 msgstr "Pyxtermjs 终端后端的改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:592
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:603
 msgid "Various bug fixes and performance improvements"
 msgstr "各种错误修复和性能改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:597
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:608
 msgid "Fixes SCP bug in Flatpak"
 msgstr "修复 Flatpak 中的 SCP 错误"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:598
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:609
 msgid ""
 "Adds \"Edit as Root\" button to text editor. Edit eny remote files with sudo"
 msgstr "文本编辑器中添加“以 Root 身份编辑”按钮。使用 sudo 编辑任何远程文件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:599
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:610
 msgid "Better logging and diagnostics suite"
 msgstr "更完善的日志记录与诊断套件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:604
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:615
 msgid "Improved drag and drop and group nesting experience"
 msgstr "改进拖放和分组嵌套体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:609
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:620
 msgid "Added support for nested groups"
 msgstr "添加对嵌套分组的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:610
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:621
 msgid "Improvements to Drag & Drop experience in connection list"
 msgstr "改进连接列表中的拖放体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:611
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:622
 msgid "Fixed scp failing to download directories"
 msgstr "修复 scp 无法下载目录的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:618
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
 msgid "Performance improvements for SFTP file manager"
 msgstr "SFTP 文件管理器的性能改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:619
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:630
 msgid "Added option to copy text on select"
 msgstr "添加选择文本时自动复制的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:640
 msgid "New Docker/Podman management console"
 msgstr "新增 Docker/Podman 管理控制台"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:630
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:641
 msgid "New plugin feature + plugin SDk with a bunch of experimental plugins"
 msgstr "全新插件功能 + 插件 SDK，附带一系列实验性插件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:631
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:642
 msgid "Support for additional protocols (mosh, serial, etc.)"
 msgstr "支持其他协议（mosh、串口等）"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:632
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:641
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:643
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:652
 msgid "UI fixes and improvements"
 msgstr "界面修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:637
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:648
 msgid "Docker/Podman container management console"
 msgstr "Docker/Podman 容器管理控制台"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:638
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:649
 msgid "New plugin framework and SDK"
 msgstr "新的插件框架与 SDK"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:639
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:650
 msgid "New plugin settings to install and manage plugins"
 msgstr "用于安装和管理插件的新插件设置"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:640
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:651
 msgid "Improved SSH config editor"
 msgstr "改进的 SSH 配置编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:642
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:653
 msgid "Additional protocols"
 msgstr "其他协议"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:647
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:658
 msgid "New \"Tags\" feature: add tags to connections"
 msgstr "新增“标签”功能：为连接添加标签"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:648
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:659
 msgid "Search now supports tags"
 msgstr "搜索现在支持标签"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:649
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:660
 msgid "New tags view for the connection list"
 msgstr "连接列表的新标签视图"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:650
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:661
 msgid "Drag and drop a connection on a tag group to apply tag"
 msgstr "将连接拖放到标签分组以应用标签"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:651
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:662
 msgid "Added inline autocompletion for tags"
 msgstr "为标签添加内联自动补全"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:652
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:663
 msgid "Added inline autocompletion for jump hosts"
 msgstr "为跳板主机添加内联自动补全"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:653
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:664
 msgid "Added support for selecting connections with space key"
 msgstr "添加对使用空格键选择连接的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:663
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:674
 msgid "Updated ssh-copy-id dialog"
 msgstr "更新 ssh-copy-id 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:664
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:675
 msgid "Fixes macOS keychain prompting repeatedly"
 msgstr "修复 macOS 钥匙串重复提示的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:665
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:676
 msgid "Minor UI improvements and bug fixes"
 msgstr "细微界面改进和错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:675
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:686
 msgid "Improved connection editor"
 msgstr "改进的连接编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:691
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:702
 msgid ""
 "Added fallback for older libadwaita versions failing to load connection "
 "editor"
 msgstr "为无法加载连接编辑器的旧版本 libadwaita 添加回退方案"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:706
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:717
 msgid ""
 "Drag and drop a connection on an existing terminal to create a split view"
 msgstr "将连接拖放到现有终端以创建分屏视图"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:707
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:718
 msgid "New first-run dialog and option to back up .ssh/config"
 msgstr "新的首次运行对话框和备份 .ssh/config 的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:708
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:719
 msgid "Updated connection status indicators"
 msgstr "更新的连接状态指示器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:709
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:720
 msgid "Updated port forwarding indicators"
 msgstr "更新的端口转发指示器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:710
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:721
 msgid "New sidebar behavior options — configure autohide from Settings"
 msgstr "新的侧边栏行为选项 — 在“设置”中配置自动隐藏"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:711
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:722
 msgid "Improvements to Split View"
 msgstr "分屏视图改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:712
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:723
 msgid "Added local terminal button to the headerbar"
 msgstr "在顶栏添加本地终端按钮"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:713
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:724
 msgid "New toggles for headerbar buttons"
 msgstr "顶栏按钮的新切换开关"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:714
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:725
 msgid "More improvements for the command sidebar"
 msgstr "命令侧边栏的更多改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:715
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:726
 msgid "New option to add multiple private keys and certificates"
 msgstr "添加多个私钥和证书的新选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:716
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:727
 msgid "Improved .ssh/config parsing logic"
 msgstr "改进的 .ssh/config 解析逻辑"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:726
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:737
 msgid ""
 "Added type-ahead search - open the app, start typing and press enter. The "
 "first matching host will be connected"
 msgstr "添加即键即搜 — 打开应用，直接键入并按回车即可连接第一个匹配的主机"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:727
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:738
 msgid ""
 "Made it easier to switch between the terminal and connection list with "
 "Ctrl+Shift+L"
 msgstr "更轻松地使用 Ctrl+Shift+L 在终端和连接列表之间切换"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:733
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:743
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:744
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:754
 msgid "Better look and feel for built-in file manager"
 msgstr "内置文件管理器拥有更好的外观与体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:734
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:745
 msgid "Zoom control for file manager"
 msgstr "文件管理器的缩放控件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:735
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:746
 msgid "New option to always show Commands sidebar"
 msgstr "始终显示命令侧边栏的新选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:736
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:747
 msgid "More reliable SFTP file transfers"
 msgstr "更可靠的 SFTP 文件传输"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:737
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:748
 msgid "Changed default connection list shortcut to Ctrl+Shift+L"
 msgstr "将默认的连接列表快捷键更改为 Ctrl+Shift+L"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:753
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:764
 msgid ""
 "Introducing Command Blocks - Organize your favorite commands in folders, "
 "insert them into terminal with a simple double-click"
 msgstr "引入命令块 — 在文件夹中组织您喜爱的命令，双击即可轻松插入终端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:754
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:765
 msgid ""
 "Choose a command from your command snippet intventory to run on a single "
 "host or a group of machines"
 msgstr "从命令片段清单中选择命令，以在单个主机或一组机器上运行"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:755
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:766
 msgid "More improvements to Split View"
 msgstr "分屏视图的更多改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:760
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:771
 msgid ""
 "New \"Sessions\" feature — Save, open, rename, and delete snapshots of your "
 "open tabs and restore them automatically"
 msgstr ""
 "新增“会话”功能 — 保存、打开、重命名和删除已打开标签页的快照，并自动恢复它们"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:761
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:772
 msgid "Pin saved sessions to the start page for one-click restore"
 msgstr "将保存的会话固定到起始页，一键恢复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:762
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:773
 msgid ""
 "Copy to group — Add a connection to another group without removing it from "
 "its current group(s). Same connection can appear in multiple groups."
@@ -16690,214 +16741,214 @@ msgstr ""
 "复制到分组 — 将连接添加到另一个分组，而不从当前分组中移除。同一个连接可以出现"
 "在多个分组中。"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:763
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:774
 msgid ""
 "Jump host picker — Pick jump hosts from your saved connections when editing "
 "a connection."
 msgstr "跳板主机选择器 — 编辑连接时可从保存的连接中挑选跳板主机。"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:764
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:775
 msgid ""
 "Better Split View - Resize terminal panes freely, drag and drop an entire "
 "group onto a Split View"
 msgstr "更出色的分屏视图 — 自由调整终端窗格大小，将整个分组拖放到分屏视图中"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:765
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:776
 msgid "Minor UI fixes and improvements"
 msgstr "细微界面修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:771
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:791
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:797
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:819
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:840
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:860
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:935
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:782
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:802
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:808
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:830
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:851
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:871
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:894
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:946
 msgid "- Bug fixes"
 msgstr "- 错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:777
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:788
 msgid ""
 "- New \"Splt View\" feature - view terminals side by side inside any "
 "terminal tab"
 msgstr "- 新增“分屏视图”功能 — 在任意终端标签页内并排查看终端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:778
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:789
 msgid "- New context menu item to copy host address"
 msgstr "- 上下文菜单新增复制主机地址项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:784
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:795
 msgid "- Updated flatpak to GNOME Platform 50"
 msgstr "- 将 Flatpak 更新到 GNOME Platform 50"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:790
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:801
 msgid "- Added URL support to terminal"
 msgstr "- 终端添加 URL 支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:803
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:814
 msgid "- Fixes for Quick Connect function"
 msgstr "- 修复快速连接功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:804
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:815
 msgid "- Add option to save Quick Connect host"
 msgstr "- 添加保存快速连接主机的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:805
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:816
 msgid ""
 "- Added option to rename a tab - Double-click any terminal tab to rename"
 msgstr "- 添加重命名标签页的选项 — 双击任意终端标签页即可重命名"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:806
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:817
 msgid "- Added support for Wake on Lan"
 msgstr "- 添加对局域网唤醒 (Wake on LAN) 的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:807
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:818
 msgid "- Added pre-connection command support"
 msgstr "- 添加对连接前命令的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:813
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:824
 msgid "- Minor bug fixes"
 msgstr "- 细微错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:825
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:836
 msgid "- Fixed saved secrets not used for login"
 msgstr "- 修复保存的机密未用于登录的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:831
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:842
 msgid "- Support for sidebar resizing"
 msgstr "- 支持调整侧边栏大小"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:832
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:843
 msgid "- Toggles for info labels in sidebar"
 msgstr "- 侧边栏信息标签切换开关"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:833
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:844
 msgid "- Updated color badges"
 msgstr "- 更新颜色标记"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:834
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:845
 msgid "- Various bug fixes and UI improvements"
 msgstr "- 各种错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:846
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:857
 msgid "- Added option to resize sidebar"
 msgstr "- 添加调整侧边栏大小的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:847
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:858
 msgid "- Fixed long host values making sidebar too wide"
 msgstr "- 修复较长的主机名导致侧边栏过宽的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:848
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:859
 msgid "- Bug fixes and UI improvements"
 msgstr "- 错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:854
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:865
 msgid "- Drag and drop files and folders on terminal to upload via SCP"
 msgstr "- 拖放文件和文件夹到终端以通过 SCP 上传"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:866
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:875
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:877
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:886
 msgid "- Make terminal fullscreen with F11"
 msgstr "- 按 F11 使终端全屏"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:867
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:878
 msgid "- Improvements for SCP file transfers"
 msgstr "- 改进 SCP 文件传输"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:868
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:879
 msgid "- Drag and drop files and folders directly on terminal widget"
 msgstr "- 直接在终端部件上拖放文件和文件夹"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:869
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:880
 msgid "- Updated password/passphrase prompts with option to store secrets"
 msgstr "- 更新密码/口令提示，附带存储机密选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:876
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:887
 msgid "- Added xterm.js as an alternative terminal backend"
 msgstr "- 添加 xterm.js 作为备选终端后端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:877
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:888
 msgid "- Added graphical prompts for passwords/passphrases"
 msgstr "- 为密码/口令添加图形提示"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:889
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:900
 msgid "- Fixed black toolbar in file manager"
 msgstr "- 修复文件管理器中的黑色工具栏问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:890
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:901
 msgid "- Fixed nano editor issue when run under KDE Plasma desktop"
 msgstr "- 修复在 KDE Plasma 桌面下运行时的 nano 编辑器问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:896
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:907
 msgid "- Enhanced text editor for built-in file manager"
 msgstr "- 增强内置文件管理器的文本编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:902
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:913
 msgid "- Bug fixes for SFTP file manager"
 msgstr "- SFTP 文件管理器的错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:908
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:919
 msgid "- Improvements to built-in file manager, new text editor"
 msgstr "- 改进内置文件管理器，全新文本编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:909
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:920
 msgid "- Added file mmanager button to connection rows"
 msgstr "- 在连接行中添加文件管理器按钮"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:910
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:921
 msgid "- Sort button now sorts groups too"
 msgstr "- 排序按钮现在也对分组进行排序"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:916
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:927
 msgid "- Fixed file manager bug when password authentication is selected"
 msgstr "- 修复选择密码身份验证时的文件管理器错误"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:922
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:933
 msgid "- Redesigned start page, with card and list layouts"
 msgstr "- 重新设计的起始页，支持卡片和列表布局"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:923
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:934
 msgid "- Minor UI fixes"
 msgstr "- 细微界面修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:929
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:940
 msgid "- Update notifier fixes"
 msgstr "- 更新通知器修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:941
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:952
 msgid "- Added update notifier"
 msgstr "- 添加更新通知器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:947
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:958
 msgid "- New feature: Import/Export configuration"
 msgstr "- 新功能：导入/导出配置"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:948
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:959
 msgid "- Better log output"
 msgstr "- 更好的日志输出"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:954
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:965
 msgid "Added sorting to connection list"
 msgstr "连接列表新增排序功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:970
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:981
 msgid "Start Page"
 msgstr "起始页"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:974
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:985
 msgid "Main Window"
 msgstr "主窗口"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:978
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:989
 msgid "Terminal and File Manager in One Tab"
 msgstr "终端与文件管理器同处一个标签页"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:994
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1005
 msgid "Transfer SSH Keys"
 msgstr "传输 SSH 密钥"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:998
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1009
 msgid "Backup and Restore"
 msgstr "备份/恢复"
 

@@ -18,6 +18,8 @@ REQUIRED_FILES = [
     "sshPilot.exe",
     "sshpilot-cli.exe",
     "_internal/libvterm-0.dll",
+    "_internal/ghostty-vt.dll",
+    "_internal/share/licenses/libghostty-vt/LICENSE",
     "_internal/conpty.dll",
     "_internal/OpenConsole.exe",
     # gtk4-frdp and what it loads, for RDP connections in a tab.

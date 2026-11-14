@@ -48,7 +48,7 @@ from .terminal_cursor import normalize_cursor_shape  # noqa: E402
 logger = logging.getLogger(__name__)
 
 #: Emulator models the view can draw: ``terminal.builtin_model`` in the
-#: config, overridden by this environment variable ("pyte" or "vterm").
+#: config, overridden by this environment variable ("pyte", "vterm" or "ghostty").
 MODEL_ENV = "SSHPILOT_TERMINAL_MODEL"
 DEFAULT_MODEL = default_builtin_model()
 
@@ -65,7 +65,17 @@ def _vterm_model(columns: int, lines: int, on_reply):
     return VtermTerminalModel(columns, lines, on_reply=on_reply)
 
 
-_MODELS = {"pyte": _pyte_model, "vterm": _vterm_model}
+def _ghostty_model(columns: int, lines: int, on_reply):
+    from .ghostty_terminal_model import GhosttyTerminalModel
+
+    return GhosttyTerminalModel(columns, lines, on_reply=on_reply)
+
+
+#: Fallback order after the preferred model: the native libraries first.
+_MODELS = {"vterm": _vterm_model, "ghostty": _ghostty_model, "pyte": _pyte_model}
+
+#: Models that parse in native code: fed larger slices per GTK dispatch.
+NATIVE_MODELS = frozenset({"vterm", "ghostty"})
 
 
 def create_terminal_model(preferred: Optional[str], columns: int, lines: int, on_reply):
@@ -109,15 +119,22 @@ def _any_model_importable() -> bool:
 
     try:
         load_libvterm()
+        return True
     except VtermUnavailable:
+        pass
+    from .ghostty_terminal_model import GhosttyUnavailable, load_libghostty
+
+    try:
+        load_libghostty()
+        return True
+    except GhosttyUnavailable:
         return False
-    return True
 
 
 if not _any_model_importable():
-    # Keeps TerminalWidget's "fall back to VTE" path working where neither
+    # Keeps TerminalWidget's "fall back to VTE" path working where no
     # emulator is installed.
-    raise ImportError("The built-in terminal needs pyte or libvterm")
+    raise ImportError("The built-in terminal needs pyte, libvterm or libghostty-vt")
 
 _DEFAULT_PALETTE = (
     "#000000", "#CC0000", "#4E9A06", "#C4A000",
@@ -952,7 +969,7 @@ class PyteTerminalBackend:
         #: Most daemon output bytes fed per GTK dispatch, about one frame's
         #: worth of parsing at 120 columns (libvterm ~20 ms per 64 KB, pyte
         #: ~180 ms), so typing and repaints run between slices.
-        self.output_slice_bytes = 32 * 1024 if self.view.model_name == "vterm" else 8 * 1024
+        self.output_slice_bytes = 32 * 1024 if self.view.model_name in NATIVE_MODELS else 8 * 1024
         # A local shell this backend spawned (spawn_async), if any.
         self._local = None
         self._local_handlers: list = []

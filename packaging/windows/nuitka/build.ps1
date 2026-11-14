@@ -60,7 +60,7 @@ with open(cli, 'r+b') as f:
 if ($LASTEXITCODE -ne 0) { throw "making sshpilot-cli.exe failed" }
 
 $required = @(
-    "sshPilot.exe", "sshpilot-cli.exe", "libvterm-0.dll", "conpty.dll", "OpenConsole.exe",
+    "sshPilot.exe", "sshpilot-cli.exe", "libvterm-0.dll", "ghostty-vt.dll", "conpty.dll", "OpenConsole.exe",
     "gspawn-win64-helper.exe", "gspawn-win64-helper-console.exe",
     "gi\_gi.pyd", "gtk-4-1.dll", "adwaita-1-0.dll", "gtksourceview-5-0.dll", "girepository\Gtk-4.0.typelib",
     "share\glib-2.0\schemas\gschemas.compiled", "lib\gdk-pixbuf-2.0\2.10.0\loaders.cache",
