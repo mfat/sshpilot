@@ -16,6 +16,36 @@ from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT, TOGGLE_FULLSCREEN_ACTION
 
 logger = logging.getLogger(__name__)
 
+APP_ICON_NAME = 'io.github.mfat.sshpilot'
+
+
+def _use_bundled_app_icon(about):
+    """Show the app icon from our GResource in *about*.
+
+    Adw.AboutDialog resolves ``application-icon`` by name through the
+    system icon theme, where a stale fixed-size copy (e.g. a 128x128 one
+    left in ~/.local/share/icons) outranks the current scalable icon.
+    Swap the dialog's icon image to the bundled file so it always shows
+    the art this build ships.
+    """
+    from . import icon_utils
+
+    # Before present() an Adw.Dialog's content hangs off get_child(),
+    # not its widget children.
+    stack = [w for w in (about, about.get_child()) if w is not None]
+    while stack:
+        widget = stack.pop()
+        if (isinstance(widget, Gtk.Image)
+                and widget.get_icon_name() == APP_ICON_NAME):
+            widget.set_from_gicon(icon_utils.get_gicon_for_icon_name(APP_ICON_NAME))
+            return True
+        child = widget.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    logger.debug("About dialog icon image not found; keeping themed icon")
+    return False
+
 #: Actions listed in the overview's General group, rendered from whatever
 #: accelerator is configured for each — never a hard-coded label.
 GENERAL_SHORTCUT_ACTIONS = [
@@ -43,14 +73,15 @@ class WindowHelpMixin:
         except Exception:
             APP_VERSION = "0.0.0"
         about.set_version(APP_VERSION)
-        about.set_application_icon('io.github.mfat.sshpilot')
+        about.set_application_icon(APP_ICON_NAME)
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_website('https://sshpilot.app')
         about.set_issue_url('https://github.com/mfat/sshpilot/issues')
         about.set_copyright('© 2025 mFat')
         about.set_developers(['mFat <newmfat@gmail.com>'])
         about.set_translator_credits('')
-        
+        _use_bundled_app_icon(about)
+
         # Present the dialog as a child of this window
         about.present(self)
 
