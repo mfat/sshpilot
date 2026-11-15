@@ -74,8 +74,25 @@ datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "NO
 datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "COPYING",
                        "run scripts/fetch-gtk.py"), "share/licenses/gtk4-frdp"))
 
+# gtkghostty, the widget behind the opt-in "gtkghostty" terminal backend.
+# Optional until fetch-gtk.py pins a release: without it the backend is
+# simply not offered. Its ghostty-vt.dll is the same libghostty-vt 1.0.0 as
+# the one above, so the bundle keeps a single copy.
+ghostty_widget = GiModuleInfo("GtkGhostty", "1")
+ghostty_hiddenimports = []
+if ghostty_widget.available:
+    _binaries, _datas, ghostty_hiddenimports = ghostty_widget.collect_typelib_data()
+    binaries += _binaries
+    datas += _datas
+    for _name in ("COPYING", "NOTICE"):
+        datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtkghostty" / _name,
+                               "run scripts/fetch-gtk.py"), "share/licenses/gtkghostty"))
+else:
+    print("gtkghostty not installed: the gtkghostty terminal backend is not bundled")
+
 hiddenimports = collect_submodules("gi")
 hiddenimports += frdp_hiddenimports
+hiddenimports += ghostty_hiddenimports
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 hiddenimports += ["sshpilot.daemon.cli", "sshpilot.daemon.askpass_helper"]
 hiddenimports += collect_submodules("sshpilot")

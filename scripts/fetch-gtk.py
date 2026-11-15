@@ -14,6 +14,14 @@ and OpenSSL) go into ``bin``, the GtkFrdp-4.0 typelib into
 ``lib/girepository-1.0`` and its licence files into
 ``share/licenses/gtk4-frdp``. Same pinning and checksum rule.
 
+And gtkghostty (github.com/mfat/gtkghostty), the libghostty-vt terminal
+widget behind the opt-in "gtkghostty" backend, built against that same
+release: ``gtkghostty-1.dll`` and ``ghostty-vt.dll`` into ``bin``, the
+GtkGhostty-1 typelib into ``lib/girepository-1.0``, licences into
+``share/licenses``. It is optional: until ``GTKGHOSTTY_SHA256`` pins a
+published release it is skipped, unless ``--gtkghostty-zip`` names a local
+build of the zip (packaging/windows/build-gvsbuild.ps1 in that repo).
+
     py -3.14 scripts/fetch-gtk.py
     py -3.14 -m pip install vendor/gtk/wheels/PyGObject-*.whl vendor/gtk/wheels/pycairo-*.whl
 
@@ -42,6 +50,15 @@ FRDP_URL = f"https://github.com/mfat/gtk4-frdp/releases/download/v{FRDP_VERSION}
 FRDP_SHA256 = "9e4947a3b2da8c79e74c031c3cb319bd4d6a7cbba01b2eaa71aa7a58810b1839"
 #: Files at the top of the gtk4-frdp zip that are not part of the prefix.
 FRDP_LICENCE_FILES = ("COPYING", "NOTICE")
+
+GTKGHOSTTY_VERSION = "0.1.0"
+GTKGHOSTTY_ASSET = f"gtkghostty-{GTKGHOSTTY_VERSION}-gvsbuild-{VERSION}-x64.zip"
+GTKGHOSTTY_URL = (
+    f"https://github.com/mfat/gtkghostty/releases/download/v{GTKGHOSTTY_VERSION}/{GTKGHOSTTY_ASSET}"
+)
+#: None until the release is published; then the asset's SHA-256.
+GTKGHOSTTY_SHA256: str | None = None
+GTKGHOSTTY_LICENCE_FILES = ("COPYING", "NOTICE")
 
 ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / "vendor"
@@ -95,11 +112,16 @@ def _download(url: str, asset: str, sha256: str) -> Path:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dest", type=Path, default=VENDOR / "gtk")
+    parser.add_argument("--gtkghostty-zip", type=Path, default=None,
+                        help="a local gtkghostty gvsbuild zip, instead of the pinned release")
     args = parser.parse_args(argv)
 
     VENDOR.mkdir(parents=True, exist_ok=True)
     archive_path = _download(URL, ASSET, SHA256)
     frdp_path = _download(FRDP_URL, FRDP_ASSET, FRDP_SHA256)
+    ghostty_path = args.gtkghostty_zip
+    if ghostty_path is None and GTKGHOSTTY_SHA256:
+        ghostty_path = _download(GTKGHOSTTY_URL, GTKGHOSTTY_ASSET, GTKGHOSTTY_SHA256)
 
     if args.dest.exists():
         shutil.rmtree(args.dest)
@@ -112,8 +134,19 @@ def main(argv=None) -> int:
     licences.mkdir(parents=True, exist_ok=True)
     for name in FRDP_LICENCE_FILES:
         (args.dest / name).replace(licences / name)
-    (args.dest / "VERSION").write_text(
-        f"gvsbuild {VERSION}\ngtk4-frdp {FRDP_VERSION}\n", encoding="utf-8")
+    versions = f"gvsbuild {VERSION}\ngtk4-frdp {FRDP_VERSION}\n"
+    if ghostty_path is not None:
+        with zipfile.ZipFile(ghostty_path) as archive:
+            _safe_extract(archive, args.dest)
+        licences = args.dest / "share" / "licenses" / "gtkghostty"
+        licences.mkdir(parents=True, exist_ok=True)
+        for name in GTKGHOSTTY_LICENCE_FILES:
+            (args.dest / name).replace(licences / name)
+        versions += f"gtkghostty {GTKGHOSTTY_VERSION}"
+        versions += f" (local {ghostty_path.name})\n" if args.gtkghostty_zip else "\n"
+    else:
+        print("gtkghostty: no pinned release yet, skipped (see --gtkghostty-zip)")
+    (args.dest / "VERSION").write_text(versions, encoding="utf-8")
     print(args.dest)
     return 0
 
