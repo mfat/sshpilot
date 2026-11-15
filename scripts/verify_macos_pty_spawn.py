@@ -212,11 +212,13 @@ def main() -> int:
     executable = _bundle_executable(bundle)
 
     with tempfile.TemporaryDirectory(prefix="sshpilot-pty-smoke-") as temp_dir:
-        # Real path: macOS's temp dir is under /var, a symlink to /private/var,
-        # and the daemon refuses to write the SSH config through a symlinked
-        # path (a home with a symlink in it is treated as read-only).
+        # Real path for the fake home and XDG dirs: macOS's temp dir is under
+        # /var, a symlink to /private/var, and the daemon refuses to write the
+        # SSH config through a symlinked path (a home with a symlink in it is
+        # treated as read-only). The socket keeps the short path: the real one
+        # is 8 characters longer and runs past macOS's 104-byte AF_UNIX limit.
         temp = Path(temp_dir).resolve()
-        socket_path = temp / "runtime" / "sshpilotd.sock"
+        socket_path = Path(temp_dir) / "runtime" / "sshpilotd.sock"
         for name in (
             "HOME",
             "XDG_RUNTIME_DIR",
