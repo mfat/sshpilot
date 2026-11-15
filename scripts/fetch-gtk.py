@@ -18,9 +18,9 @@ And gtkghostty (github.com/mfat/gtkghostty), the libghostty-vt terminal
 widget behind the opt-in "gtkghostty" backend, built against that same
 release: ``gtkghostty-1.dll`` and ``ghostty-vt.dll`` into ``bin``, the
 GtkGhostty-1 typelib into ``lib/girepository-1.0``, licences into
-``share/licenses``. It is optional: until ``GTKGHOSTTY_SHA256`` pins a
-published release it is skipped, unless ``--gtkghostty-zip`` names a local
-build of the zip (packaging/windows/build-gvsbuild.ps1 in that repo).
+``share/licenses``. Same pinning and checksum rule; ``--gtkghostty-zip``
+takes a local build of the zip instead (packaging/windows/build-gvsbuild.ps1
+in that repo).
 
     py -3.14 scripts/fetch-gtk.py
     py -3.14 -m pip install vendor/gtk/wheels/PyGObject-*.whl vendor/gtk/wheels/pycairo-*.whl
@@ -56,8 +56,8 @@ GTKGHOSTTY_ASSET = f"gtkghostty-{GTKGHOSTTY_VERSION}-gvsbuild-{VERSION}-x64.zip"
 GTKGHOSTTY_URL = (
     f"https://github.com/mfat/gtkghostty/releases/download/v{GTKGHOSTTY_VERSION}/{GTKGHOSTTY_ASSET}"
 )
-#: None until the release is published; then the asset's SHA-256.
-GTKGHOSTTY_SHA256: str | None = None
+#: The asset's SHA-256 (the .sha256 CI publishes beside it). None skips it.
+GTKGHOSTTY_SHA256: str | None = "9f1ce2790240f3e8ab45761610f25f7921845a08ac1c3851b1eabd16e4d94789"
 GTKGHOSTTY_LICENCE_FILES = ("COPYING", "NOTICE")
 
 ROOT = Path(__file__).resolve().parents[1]
