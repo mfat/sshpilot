@@ -35,6 +35,11 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.4.2" date="2026-11-14">
+      <description>
+        <p>Fixes error in loading connection dialog on older libadwaita versions</p>
+      </description>
+    </release>
     <release version="6.4.1" date="2026-11-14">
       <description>
         <p>Closing a connected tab asks once instead of twice; cancelling no longer leaves a session running with no tab</p>

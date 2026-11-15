@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.4.1}
+Version:        %{?version}%{!?version:6.4.2}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -168,6 +168,9 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sat Nov 14 2026 mFat <newmfat@gmail.com> - 6.4.2-1
+- Fixes error in loading connection dialog on older libadwaita versions
+
 * Sat Nov 14 2026 mFat <newmfat@gmail.com> - 6.4.1-1
 - Closing a connected tab asks once instead of twice; cancelling no longer leaves a session running with no tab
 - Quitting can be confirmed with the same "Don't ask me again" option
