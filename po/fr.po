@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-15 07:02+0330\n"
+"POT-Creation-Date: 2026-11-15 22:52+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -139,8 +139,8 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/preferences.py:4464 src/sshpilot/preferences.py:4576
 #: src/sshpilot/preferences.py:5417 src/sshpilot/preferences.py:5568
 #: src/sshpilot/preferences.py:5614 src/sshpilot/preferences.py:6339
-#: src/sshpilot/rdp_tab.py:470 src/sshpilot/rdp_tab.py:538
-#: src/sshpilot/rdp_tab.py:571 src/sshpilot/rbw_setup.py:167
+#: src/sshpilot/rdp_tab.py:457 src/sshpilot/rdp_tab.py:525
+#: src/sshpilot/rdp_tab.py:558 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/scp_window.py:320 src/sshpilot/scp_window.py:1142
 #: src/sshpilot/shortcut_editor.py:605 src/sshpilot/terminal_manager.py:1032
 #: src/sshpilot/terminal_manager.py:1691
@@ -222,7 +222,7 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:4103
 #: src/sshpilot/preferences.py:4226 src/sshpilot/preferences.py:4638
-#: src/sshpilot/preferences.py:5251 src/sshpilot/preferences.py:6992
+#: src/sshpilot/preferences.py:5251 src/sshpilot/preferences.py:7001
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -697,8 +697,8 @@ msgstr "Erreur lors du chargement du fichier authorized_keys"
 
 #: src/sshpilot/authorized_keys_window.py:293
 #: src/sshpilot/file_manager/pane.py:3177
-#: src/sshpilot/file_manager_window.py:497 src/sshpilot/rdp_tab.py:172
-#: src/sshpilot/rdp_tab.py:258 src/sshpilot/rdp_tab.py:482
+#: src/sshpilot/file_manager_window.py:497 src/sshpilot/rdp_tab.py:159
+#: src/sshpilot/rdp_tab.py:245 src/sshpilot/rdp_tab.py:469
 #: src/sshpilot/scp_window.py:1009 src/sshpilot/scp_window.py:1106
 msgid "Connecting…"
 msgstr "Connexion…"
@@ -1879,7 +1879,7 @@ msgstr "Mot de passe (facultatif)"
 #: src/sshpilot/login_profile_dialogs.py:46
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:51
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:320
-#: src/sshpilot/rdp_tab.py:463 src/sshpilot/rdp_tab.py:566
+#: src/sshpilot/rdp_tab.py:450 src/sshpilot/rdp_tab.py:553
 #: src/sshpilot/window_dialogs.py:584
 msgid "Password"
 msgstr "Mot de passe"
@@ -2137,7 +2137,7 @@ msgstr "Nom d’hôte / adresse IP"
 #: src/sshpilot/login_profile_dialogs.py:228
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:48
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:316
-#: src/sshpilot/rdp_tab.py:562
+#: src/sshpilot/rdp_tab.py:549
 msgid "Username"
 msgstr "Nom d’utilisateur"
 
@@ -9706,7 +9706,7 @@ msgid "(asked when connecting)"
 msgstr "(demandé lors de la connexion)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:318
-#: src/sshpilot/rdp_tab.py:564
+#: src/sshpilot/rdp_tab.py:551
 msgid "Domain"
 msgstr "Domaine"
 
@@ -11991,144 +11991,145 @@ msgstr ""
 msgid "Requires the libvterm library"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6825
-msgid "libghostty-vt (unavailable)"
-msgstr "libghostty-vt (indisponible)"
+#: src/sshpilot/preferences.py:6828 src/sshpilot/preferences.py:6993
+msgid "libghostty-vt (built-in view)"
+msgstr "libghostty-vt (vue intégrée)"
 
-#: src/sshpilot/preferences.py:6827
-msgid "Ghostty's terminal emulator drawn with GTK, fastest on bulk output"
-msgstr ""
-"Émulateur de terminal de Ghostty dessiné avec GTK, le plus rapide sur les "
-"gros volumes de sortie"
+#: src/sshpilot/preferences.py:6829
+msgid "libghostty-vt (built-in view, unavailable)"
+msgstr "libghostty-vt (vue intégrée, indisponible)"
 
-#: src/sshpilot/preferences.py:6828
+#: src/sshpilot/preferences.py:6832
+msgid ""
+"Ghostty's engine drawn by SSH Pilot's built-in view, fastest on bulk output"
+msgstr "Le moteur de Ghostty dessiné par la vue intégrée de SSH Pilot, le plus rapide sur les sorties volumineuses"
+
+#: src/sshpilot/preferences.py:6833
 msgid "Requires the libghostty-vt library"
 msgstr "Nécessite la bibliothèque libghostty-vt"
 
-#: src/sshpilot/preferences.py:6841
-msgid "gtkghostty (experimental)"
-msgstr "gtkghostty (expérimental)"
+#: src/sshpilot/preferences.py:6849
+msgid ""
+"Experimental: Ghostty's engine in its own GTK widget, with input methods and "
+"the kitty keyboard protocol"
+msgstr "Expérimental : le moteur de Ghostty dans son propre widget GTK, avec les méthodes de saisie et le protocole clavier de kitty"
 
-#: src/sshpilot/preferences.py:6842
-msgid "Ghostty's terminal emulator as a native GTK widget"
-msgstr "L'émulateur de terminal de Ghostty sous forme de widget GTK natif"
-
-#: src/sshpilot/preferences.py:6855
+#: src/sshpilot/preferences.py:6864
 msgid "Web-based terminal running in WebKitGTK"
 msgstr "Terminal web exécuté dans WebKitGTK"
 
-#: src/sshpilot/preferences.py:6864
+#: src/sshpilot/preferences.py:6873
 msgid "xterm.js (unavailable)"
 msgstr "xterm.js (indisponible)"
 
-#: src/sshpilot/preferences.py:6865
+#: src/sshpilot/preferences.py:6874
 msgid "Requires WebKitGTK 6.0"
 msgstr "Nécessite WebKitGTK 6.0"
 
-#: src/sshpilot/preferences.py:6989
+#: src/sshpilot/preferences.py:6998
 #, python-brace-format
 msgid "Terminal backend switched to {backend}"
 msgstr "Moteur du terminal changé pour {backend}"
 
-#: src/sshpilot/preferences.py:6990
+#: src/sshpilot/preferences.py:6999
 msgid "Only new terminal tabs will use the selected backend."
 msgstr ""
 "Seuls les nouveaux onglets de terminal utiliseront le moteur sélectionné."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7542 src/sshpilot/preferences.py:7561
+#: src/sshpilot/preferences.py:7551 src/sshpilot/preferences.py:7570
 #: src/sshpilot/terminal_theme_selector.py:204
 msgid "Custom"
 msgstr "Personnalisé"
 
-#: src/sshpilot/rdp_tab.py:145 src/sshpilot/split_view.py:454
+#: src/sshpilot/rdp_tab.py:132 src/sshpilot/split_view.py:454
 #: src/sshpilot/terminal.py:605 src/sshpilot/terminal_manager.py:1692
 #: src/sshpilot/window_tabs.py:308
 msgid "Reconnect"
 msgstr "Reconnecter"
 
 #. : Shown only when a typed password could still get the session up.
-#: src/sshpilot/rdp_tab.py:150
+#: src/sshpilot/rdp_tab.py:137
 #, fuzzy
 msgid "Enter Password…"
 msgstr "Saisissez votre mot de passe :"
 
-#: src/sshpilot/rdp_tab.py:154
+#: src/sshpilot/rdp_tab.py:141
 msgid "Open in FreeRDP Window"
 msgstr "Ouvrir dans une fenêtre FreeRDP"
 
 #. The connection is gated on its pre-connect step and the step
 #. failed; the toast says which and why.
-#: src/sshpilot/rdp_tab.py:247 src/sshpilot/rdp_tab.py:416
-#: src/sshpilot/rdp_tab.py:426
+#: src/sshpilot/rdp_tab.py:234 src/sshpilot/rdp_tab.py:403
+#: src/sshpilot/rdp_tab.py:413
 msgid "Could Not Connect"
 msgstr "Connexion impossible"
 
-#: src/sshpilot/rdp_tab.py:391 src/sshpilot/sidebar.py:2696
+#: src/sshpilot/rdp_tab.py:378 src/sshpilot/sidebar.py:2696
 msgid "Disconnected"
 msgstr "Déconnecté"
 
-#: src/sshpilot/rdp_tab.py:392
+#: src/sshpilot/rdp_tab.py:379
 msgid "The remote session ended."
 msgstr "La session distante est terminée."
 
-#: src/sshpilot/rdp_tab.py:407
+#: src/sshpilot/rdp_tab.py:394
 #, fuzzy
 msgid "Authentication Failed"
 msgstr "Authentification requise"
 
-#: src/sshpilot/rdp_tab.py:408
+#: src/sshpilot/rdp_tab.py:395
 #, fuzzy, python-brace-format
 msgid "The server rejected the logon for {target}."
 msgstr "Le démon a refusé le redémarrage forcé."
 
-#: src/sshpilot/rdp_tab.py:417
+#: src/sshpilot/rdp_tab.py:404
 #, python-brace-format
 msgid ""
 "Could not connect to {target}: the host may be unreachable, or the user name "
 "and password may have been rejected."
 msgstr ""
 
-#: src/sshpilot/rdp_tab.py:423
+#: src/sshpilot/rdp_tab.py:410
 #, fuzzy
 msgid "Connection Cancelled"
 msgstr "Échec de la connexion"
 
-#: src/sshpilot/rdp_tab.py:424
+#: src/sshpilot/rdp_tab.py:411
 #, fuzzy, python-brace-format
 msgid "The connection to {target} was cancelled."
 msgstr "La collecte d’informations sur l’hôte a été annulée."
 
-#: src/sshpilot/rdp_tab.py:426
+#: src/sshpilot/rdp_tab.py:413
 msgid "Connection Lost"
 msgstr "Connexion perdue"
 
-#: src/sshpilot/rdp_tab.py:459
+#: src/sshpilot/rdp_tab.py:446
 #, fuzzy
 msgid "Enter Password"
 msgstr "Saisissez votre mot de passe :"
 
-#: src/sshpilot/rdp_tab.py:460
+#: src/sshpilot/rdp_tab.py:447
 #, fuzzy, python-brace-format
 msgid "Enter the password for {host}."
 msgstr "Saisissez le mot de passe principal de {backend}."
 
-#: src/sshpilot/rdp_tab.py:465
+#: src/sshpilot/rdp_tab.py:452
 #, fuzzy
 msgid "Save this password on the connection"
 msgstr "Enregistrer comme nouvelle connexion"
 
-#: src/sshpilot/rdp_tab.py:471
+#: src/sshpilot/rdp_tab.py:458
 #, fuzzy
 msgid "Connect"
 msgstr "Connecté"
 
-#: src/sshpilot/rdp_tab.py:526
+#: src/sshpilot/rdp_tab.py:513
 msgid "Server Certificate Changed"
 msgstr "Le certificat du serveur a changé"
 
-#: src/sshpilot/rdp_tab.py:527
+#: src/sshpilot/rdp_tab.py:514
 #, python-brace-format
 msgid ""
 "The certificate of {host} is different from the one accepted before. This "
@@ -12138,11 +12139,11 @@ msgstr ""
 "Le certificat de {host} diffère de celui accepté précédemment. Le serveur a "
 "peut-être été réinstallé, ou quelqu’un intercepte la connexion."
 
-#: src/sshpilot/rdp_tab.py:531
+#: src/sshpilot/rdp_tab.py:518
 msgid "Unknown Server Certificate"
 msgstr "Certificat de serveur inconnu"
 
-#: src/sshpilot/rdp_tab.py:532
+#: src/sshpilot/rdp_tab.py:519
 #, python-brace-format
 msgid ""
 "The identity of {host} cannot be verified. Check the fingerprint before you "
@@ -12151,7 +12152,7 @@ msgstr ""
 "L’identité de {host} ne peut pas être vérifiée. Vérifiez l’empreinte avant "
 "de continuer."
 
-#: src/sshpilot/rdp_tab.py:534
+#: src/sshpilot/rdp_tab.py:521
 #, python-brace-format
 msgid ""
 "Common name: {name}\n"
@@ -12162,19 +12163,19 @@ msgstr ""
 "Émetteur : {issuer}\n"
 "Empreinte : {fingerprint}"
 
-#: src/sshpilot/rdp_tab.py:539
+#: src/sshpilot/rdp_tab.py:526
 msgid "Accept Once"
 msgstr "Accepter une fois"
 
-#: src/sshpilot/rdp_tab.py:540
+#: src/sshpilot/rdp_tab.py:527
 msgid "Accept and Remember"
 msgstr "Accepter et mémoriser"
 
-#: src/sshpilot/rdp_tab.py:558 src/sshpilot/rdp_tab.py:572
+#: src/sshpilot/rdp_tab.py:545 src/sshpilot/rdp_tab.py:559
 msgid "Log In"
 msgstr "Se connecter"
 
-#: src/sshpilot/rdp_tab.py:559
+#: src/sshpilot/rdp_tab.py:546
 #, python-brace-format
 msgid "Enter your credentials for {host}."
 msgstr "Saisissez vos identifiants pour {host}."
@@ -13644,7 +13645,7 @@ msgstr "Fermez cet onglet pour vous déconnecter"
 
 #. A local shell's exit status is never an ssh error.
 #: src/sshpilot/terminal.py:603 src/sshpilot/terminal.py:2575
-#: src/sshpilot/terminal.py:5926
+#: src/sshpilot/terminal.py:5934
 msgid "Session ended."
 msgstr "Session terminée."
 
@@ -13713,7 +13714,7 @@ msgstr "La saisie n’a pas été transmise au terminal ; réessayez."
 msgid "View only — another user controls this terminal"
 msgstr "Lecture seule — un autre utilisateur contrôle ce terminal"
 
-#: src/sshpilot/terminal.py:2571 src/sshpilot/terminal.py:5923
+#: src/sshpilot/terminal.py:2571 src/sshpilot/terminal.py:5931
 #, python-brace-format
 msgid "SSH exited with status {code}"
 msgstr "SSH s’est terminé avec le code d’état {code}"
@@ -13723,8 +13724,8 @@ msgstr "SSH s’est terminé avec le code d’état {code}"
 msgid "Session terminated by signal {sig}"
 msgstr "Session terminée par le signal {sig}"
 
-#: src/sshpilot/terminal.py:3288 src/sshpilot/terminal.py:6088
-#: src/sshpilot/terminal.py:6108 src/sshpilot/window.py:2202
+#: src/sshpilot/terminal.py:3288 src/sshpilot/terminal.py:6096
+#: src/sshpilot/terminal.py:6116 src/sshpilot/window.py:2202
 msgid "Copied to clipboard"
 msgstr "Copié dans le presse-papiers"
 
@@ -18043,6 +18044,12 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#~ msgid "gtkghostty (experimental)"
+#~ msgstr "gtkghostty (expérimental)"
+
+#~ msgid "Ghostty's terminal emulator as a native GTK widget"
+#~ msgstr "L'émulateur de terminal de Ghostty sous forme de widget GTK natif"
 
 #~ msgid "Only when the tab has an open connection"
 #~ msgstr "Seulement si l’onglet a une connexion ouverte"

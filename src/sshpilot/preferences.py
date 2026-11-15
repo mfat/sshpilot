@@ -6822,9 +6822,14 @@ class PreferencesWindow(Adw.Window):
                     {
                         'id': 'pyte',
                         'model': 'ghostty',
-                        'label': 'libghostty-vt' if ghostty_error is None else _('libghostty-vt (unavailable)'),
+                        # Same engine as the gtkghostty entry below, drawn by
+                        # sshPilot's own (Python) view; the name says which.
+                        'label': (
+                            _('libghostty-vt (built-in view)') if ghostty_error is None
+                            else _('libghostty-vt (built-in view, unavailable)')
+                        ),
                         'description': (
-                            _("Ghostty's terminal emulator drawn with GTK, fastest on bulk output")
+                            _("Ghostty's engine drawn by SSH Pilot's built-in view, fastest on bulk output")
                             if ghostty_error is None else _('Requires the libghostty-vt library')
                         ),
                         'available': ghostty_error is None,
@@ -6838,8 +6843,12 @@ class PreferencesWindow(Adw.Window):
             choices.append(
                 {
                     'id': 'gtkghostty',
-                    'label': _('gtkghostty (experimental)'),
-                    'description': _("Ghostty's terminal emulator as a native GTK widget"),
+                    # Named after its project (github.com/mfat/gtkghostty).
+                    'label': 'gtkghostty',
+                    'description': _(
+                        "Experimental: Ghostty's engine in its own GTK widget, "
+                        "with input methods and the kitty keyboard protocol"
+                    ),
                     'available': True,
                     'error': None,
                 }
@@ -6981,7 +6990,7 @@ class PreferencesWindow(Adw.Window):
         """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
         model = self._backend_choice_data[index].get('model')
-        builtin_name = {'vterm': 'libvterm', 'ghostty': 'libghostty-vt'}.get(model, 'pyte')
+        builtin_name = {'vterm': 'libvterm', 'ghostty': _('libghostty-vt (built-in view)')}.get(model, 'pyte')
         backend_name = {'pyxterm': 'xterm.js', 'pyte': builtin_name, 'gtkghostty': 'gtkghostty'}.get(
             backend_id.lower(), 'VTE'
         )
