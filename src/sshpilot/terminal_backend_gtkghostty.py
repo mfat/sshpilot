@@ -151,7 +151,7 @@ class GtkGhosttyTerminalBackend:
         # to the widget's own signals).
         self._handler_ids = itertools.count(1)
         self._callbacks: Dict[str, Dict[int, Callable[..., Any]]] = {
-            kind: {} for kind in ("commit", "size", "title", "contents", "exited", "selection")
+            kind: {} for kind in ("commit", "size", "title", "contents", "exited", "selection", "termprops")
         }
         self._widget_handlers = [
             self.view.connect("input", self._on_view_bytes),
@@ -160,7 +160,19 @@ class GtkGhosttyTerminalBackend:
             self.view.connect("notify::title", self._on_view_title),
             self.view.connect("contents-changed", lambda _v: self._emit("contents")),
             self.view.connect("selection-changed", lambda _v: self._emit("selection")),
+            self.view.connect("notify::current-directory-uri", self._on_view_directory),
         ]
+
+        # Link hover feedback, as VTE gives for its matches and OSC 8 links:
+        # a hand pointer over a link. Looked up only when the pointer enters
+        # another cell.
+        self._cell_size = (0, 0)
+        self._hover_cell: Optional[Tuple[int, int]] = None
+        self._over_link = False
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_pointer_motion)
+        motion.connect("leave", lambda _c: self._set_hover(False))
+        self.view.add_controller(motion)
 
         self._local = None
         self._local_lock = threading.Lock()
@@ -196,13 +208,45 @@ class GtkGhosttyTerminalBackend:
             return
         self._emit("commit", payload, len(payload))
 
-    def _on_view_size(self, _view, columns: int, rows: int, _cw: int, _ch: int) -> None:
+    def _on_view_size(self, _view, columns: int, rows: int, cw: int, ch: int) -> None:
+        self._cell_size = (cw, ch)
         if self._local is not None:
             self._local.resize(columns, rows)
         self._emit("size", columns, rows)
 
     def _on_view_title(self, _view, _pspec) -> None:
         self._emit("title")
+
+    def _on_view_directory(self, _view, _pspec) -> None:
+        # Shaped like the VTE backend's termprops event: TerminalWidget takes
+        # the current directory from a file:// URI (OSC 7).
+        uri = self.view.get_current_directory_uri()
+        if uri:
+            self._emit("termprops", {"cwd_uri": uri})
+
+    def _on_pointer_motion(self, _controller, x: float, y: float) -> None:
+        cw, ch = self._cell_size
+        if cw <= 0 or ch <= 0:
+            return
+        cell = (int(x // cw), int(y // ch))
+        if cell == self._hover_cell:
+            return
+        self._hover_cell = cell
+        over = bool(self.view.hyperlink_at(x, y))
+        if not over:
+            try:
+                text, column = self.view.get_line_at(x, y)
+                over = url_at(text or "", int(column)) is not None
+            except Exception:
+                over = False
+        self._set_hover(over)
+
+    def _set_hover(self, over: bool) -> None:
+        if not over:
+            self._hover_cell = None
+        if over != self._over_link:
+            self._over_link = over
+            self.set_pointer_over_link(over)
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -415,7 +459,8 @@ class GtkGhosttyTerminalBackend:
         return self.view.get_title()
 
     def connect_termprops_changed(self, callback: Callable[..., None]) -> Optional[Any]:
-        return None
+        """The shell's current directory (OSC 7), as VTE's termprops event."""
+        return self._add("termprops", callback)
 
     def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
         return self._add("commit", callback)
@@ -492,7 +537,9 @@ class GtkGhosttyTerminalBackend:
         reason = "empty-selection"
         if text:
             try:
-                self.view.get_clipboard().set(text)
+                # The widget offers plain text and HTML (colours kept), so
+                # either format the caller asked for is on the clipboard.
+                self.view.copy_clipboard()
                 copied, reason = True, "written"
             except Exception:
                 reason = "exception"
@@ -603,4 +650,5 @@ class GtkGhosttyTerminalBackend:
             "daemon_resize",
             "save_output",
             "hyperlinks",
+            "clipboard-html",
         }

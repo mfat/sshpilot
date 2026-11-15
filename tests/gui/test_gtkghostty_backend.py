@@ -15,6 +15,7 @@ import pytest
 from tests._gui_harness import requires_gui
 
 Gtk, _Adw, _Gio, GLib = requires_gui()
+from gi.repository import GObject  # noqa: E402
 
 backend_module = pytest.importorskip(
     "sshpilot.terminal_backend_gtkghostty", reason="gtkghostty is not installed"
@@ -157,4 +158,61 @@ def test_local_shell_round_trip():
     backend.feed_child_data(b"exit\r" if sys.platform == "win32" else b"exit\n")
     assert _pump_until(lambda: exited)
     assert not backend.local_shell_running()
+    backend.destroy()
+
+
+_NEEDS_0_3 = pytest.mark.skipif(
+    not hasattr(backend_module.GtkGhostty.Terminal, "get_current_directory_uri"),
+    reason="needs gtkghostty 0.3 (current directory, HTML copy)",
+)
+
+
+@_NEEDS_0_3
+def test_the_shell_directory_reaches_termprops_like_vte():
+    backend = _backend()
+    events = []
+    backend.connect_termprops_changed(lambda _terminal, event: events.append(event))
+    backend.feed(b"\x1b]7;file://box/home/me/src\x1b\\")
+    assert events == [{"cwd_uri": "file://box/home/me/src"}]
+    backend.destroy()
+
+
+@_NEEDS_0_3
+def test_copy_offers_html_with_the_colours():
+    backend = _backend()
+    window = Gtk.Window()
+    window.set_child(backend.widget)
+    window.present()
+    backend.feed(b"\x1b[32mgreen\x1b[0m text")
+    backend.select_all()
+    results = []
+    backend.copy_clipboard(format="html", on_complete=results.append)
+    assert results == [True]
+    formats = backend.view.get_clipboard().get_formats()
+    assert formats.contain_mime_type("text/html") and formats.contain_gtype(GObject.TYPE_STRING)
+    window.destroy()
+    backend.destroy()
+
+
+def test_the_pointer_shows_a_hand_over_links():
+    backend = _backend()
+    window = Gtk.Window()
+    window.set_default_size(600, 200)
+    window.set_child(backend.widget)
+    window.present()
+    backend.feed(b"\x1b]8;;https://example.org/a\x1b\\link\x1b]8;;\x1b\\ text https://plain.example/b\r\n")
+    assert _pump_until(lambda: backend._cell_size[0] > 0)
+    cw, ch = backend._cell_size
+
+    def cursor_at(column):
+        backend._on_pointer_motion(None, column * cw + 1, ch // 2)
+        cursor = backend.view.get_cursor()
+        return cursor.get_name() if cursor is not None else None
+
+    assert cursor_at(1) == "pointer"          # OSC 8 link
+    assert cursor_at(6) == "text"             # plain word
+    assert cursor_at(12) == "pointer"         # plain-text URL
+    backend._set_hover(False)
+    assert backend.view.get_cursor().get_name() == "text"
+    window.destroy()
     backend.destroy()
