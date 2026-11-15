@@ -914,6 +914,17 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"Failed to create PyXterm backend: {e}")
                 logger.warning("PyXterm backend creation failed, falling back to VTE")
 
+        if backend_name == "gtkghostty":
+            # libghostty-vt as a C GTK widget (mfat/gtkghostty), opt-in.
+            try:
+                from .terminal_backend_gtkghostty import GtkGhosttyTerminalBackend
+            except ImportError as exc:
+                logger.warning("gtkghostty is unavailable (%s), falling back", exc)
+            else:
+                logger.info("Using gtkghostty terminal backend")
+                self._backend_name = "gtkghostty"
+                return GtkGhosttyTerminalBackend(self)
+
         if backend_name == "pyte" or not VTE_AVAILABLE:
             # The pure-GTK emulator: the only option where GTK 4 has no VTE
             # (Windows), and opt-in elsewhere.
@@ -5185,7 +5196,15 @@ class TerminalWidget(Gtk.Box):
         The VTE backend exposes a `vte` widget; PyXterm only has `terminal_widget`.
         Attach and detach must agree on the target, or a teardown silently leaves
         the controller on the widget it was added to.
+
+        A backend whose ``widget`` wraps the terminal in a box names the
+        terminal as ``controller_widget``: a BUBBLE controller on the box runs
+        only after the terminal declined the key, and an emulator that encodes
+        Ctrl+= or Ctrl+Shift+C never declines them (gtkghostty).
         """
+        host = getattr(getattr(self, 'backend', None), 'controller_widget', None)
+        if host is not None:
+            return host
         return getattr(self, 'terminal_widget', None) or getattr(
             getattr(self, 'backend', None), 'widget', None
         )

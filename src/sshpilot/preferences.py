@@ -6680,7 +6680,7 @@ class PreferencesWindow(Adw.Window):
 
         # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
         # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
-        if current_backend in ('vte', 'pyte'):
+        if current_backend in ('vte', 'pyte', 'gtkghostty'):
             self.encoding_row.set_visible(False)
             logger.debug("Hiding encoding dropdown for VTE backend")
             return
@@ -6832,6 +6832,18 @@ class PreferencesWindow(Adw.Window):
                     }
                 )
             choices.extend(builtin)
+        # The gtkghostty widget: listed wherever its typelib is installed.
+        gtkghostty_available, gtkghostty_error = self._detect_gtkghostty_backend()
+        if gtkghostty_available:
+            choices.append(
+                {
+                    'id': 'gtkghostty',
+                    'label': _('gtkghostty (experimental)'),
+                    'description': _("Ghostty's terminal emulator as a native GTK widget"),
+                    'available': True,
+                    'error': None,
+                }
+            )
         # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
         if not is_macos() and not is_windows():
             pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
@@ -6856,6 +6868,14 @@ class PreferencesWindow(Adw.Window):
                     }
                 )
         return choices
+
+    @staticmethod
+    def _detect_gtkghostty_backend():
+        try:
+            from .terminal_backend_gtkghostty import gtkghostty_available
+        except ImportError as exc:
+            return False, str(exc)
+        return gtkghostty_available()
 
     def _backend_choice_index(self, backend_id) -> int:
         """Index of the choice for ``backend_id`` and the configured built-in model."""
@@ -6962,7 +6982,9 @@ class PreferencesWindow(Adw.Window):
         self._apply_backend_change(index, backend_id)
         model = self._backend_choice_data[index].get('model')
         builtin_name = {'vterm': 'libvterm', 'ghostty': 'libghostty-vt'}.get(model, 'pyte')
-        backend_name = {'pyxterm': 'xterm.js', 'pyte': builtin_name}.get(backend_id.lower(), 'VTE')
+        backend_name = {'pyxterm': 'xterm.js', 'pyte': builtin_name, 'gtkghostty': 'gtkghostty'}.get(
+            backend_id.lower(), 'VTE'
+        )
         dialog = Adw.AlertDialog(
             heading=_("Terminal backend switched to {backend}").format(backend=backend_name),
             body=_("Only new terminal tabs will use the selected backend."),

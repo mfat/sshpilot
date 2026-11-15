@@ -13,7 +13,6 @@ import importlib.util
 import logging
 import os
 import re
-import sys
 import threading
 from collections import deque
 from typing import Any, Callable, Deque, Mapping, Optional, Sequence, Tuple
@@ -42,8 +41,14 @@ from .terminal_backends import (  # noqa: E402
     TerminalBackendCapabilityError,
     _log_clipboard_copy,
 )
-from .terminal_color_utils import get_contrast_color  # noqa: E402
 from .terminal_cursor import normalize_cursor_shape  # noqa: E402
+from .terminal_theme_resolve import (  # noqa: E402
+    DEFAULT_PALETTE as _DEFAULT_PALETTE,
+    Rgb,
+    daemon_output_is_rendered,
+    parse_rgb as _parse_rgb,
+    resolve_theme,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,17 +106,6 @@ def create_terminal_model(preferred: Optional[str], columns: int, lines: int, on
     raise ImportError("No terminal emulator model available (" + "; ".join(errors) + ")")
 
 
-def daemon_output_is_rendered() -> bool:
-    """True when daemon session output was already rendered by ConPTY.
-
-    The daemon is always local (a Unix socket, or loopback TCP on Windows) and
-    ``daemon/server.py`` runs sessions under ConPTY on Windows. conhost then
-    sends repaints of its own screen rather than the remote's raw stream.
-    """
-
-    return sys.platform == "win32"
-
-
 def _any_model_importable() -> bool:
     if importlib.util.find_spec("pyte") is not None:
         return True
@@ -136,12 +130,6 @@ if not _any_model_importable():
     # emulator is installed.
     raise ImportError("The built-in terminal needs pyte, libvterm or libghostty-vt")
 
-_DEFAULT_PALETTE = (
-    "#000000", "#CC0000", "#4E9A06", "#C4A000",
-    "#3465A4", "#75507B", "#06989A", "#D3D7CF",
-    "#555753", "#EF2929", "#8AE234", "#FCE94F",
-    "#729FCF", "#AD7FA8", "#34E2E2", "#EEEEEC",
-)
 # pyte's color names (and its "bfightmagenta" typo) -> palette index.
 _NAMED_COLORS = {
     "black": 0, "red": 1, "green": 2, "brown": 3, "yellow": 3,
@@ -155,16 +143,6 @@ _SEARCH_HIT = (0xF5 / 255, 0xA6 / 255, 0x23 / 255)
 #: Drawn for a column a line does not store, indexed like pyte's ``Char``
 #: (data fg bg bold italics underscore strikethrough reverse blink).
 _BLANK_CHAR = (" ", "default", "default", False, False, False, False, False, False)
-
-Rgb = Tuple[float, float, float]
-
-
-def _parse_rgb(value: str, fallback: Rgb = (0.0, 0.0, 0.0)) -> Rgb:
-    rgba = Gdk.RGBA()
-    if value and rgba.parse(value):
-        return (rgba.red, rgba.green, rgba.blue)
-    return fallback
-
 
 # Inner padding around the text grid, matching the CSS padding VTE gets on
 # Linux/macOS (terminal.py) so text clears the card's rounded corners.
@@ -1023,33 +1001,11 @@ class PyteTerminalBackend:
         self.view.set_cursor_shape(normalize_cursor_shape(shape))
 
     def apply_theme(self, theme_name: Optional[str] = None) -> None:
-        owner = self.owner
-        config = getattr(owner, "config", None)
-        try:
-            if theme_name is None and config:
-                theme_name = config.get_setting("terminal.theme", "default")
-            profile = config.get_terminal_profile(theme_name) if config else {}
-        except Exception:
-            logger.debug("Could not read terminal profile", exc_info=True)
-            profile = {}
-        fg = _parse_rgb(profile.get("foreground", "#000000"))
-        bg = _parse_rgb(profile.get("background", "#FFFFFF"), (1.0, 1.0, 1.0))
-        cursor = _parse_rgb(profile.get("cursor_color", profile.get("foreground", "#000000")))
-        try:
-            use_group = bool(config.get_setting("ui.use_group_color_in_terminal", False)) if config else False
-            override = owner._get_group_color_rgba() if hasattr(owner, "_get_group_color_rgba") else None
-            if use_group and override is not None:
-                bg = (override.red, override.green, override.blue)
-                contrast = get_contrast_color(override)
-                fg = cursor = (contrast.red, contrast.green, contrast.blue)
-        except Exception:
-            logger.debug("Group color override failed", exc_info=True)
-        palette = [_parse_rgb(c) for c in (profile.get("palette") or _DEFAULT_PALETTE)]
+        fg, bg, cursor, palette, font = resolve_theme(self.owner, theme_name)
         self.view.set_colors(fg, bg, palette, cursor)
-        highlighter = getattr(owner, "_highlighter", None)
+        highlighter = getattr(self.owner, "_highlighter", None)
         if highlighter is not None:
             highlighter.set_theme(bg, palette)
-        font = profile.get("font")
         if font:
             self.view.set_font(Pango.FontDescription.from_string(font))
 
