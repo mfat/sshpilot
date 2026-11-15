@@ -55,7 +55,7 @@ def test_daemon_sessions_pull_history_on_grow_only_without_conpty(model, platfor
     backend = terminal_backend_pyte.PyteTerminalBackend(object())
     require_model(backend.view, model)
     assert backend.view.model.pull_history_on_grow
-    monkeypatch.setattr(terminal_backend_pyte.sys, "platform", platform)
+    monkeypatch.setattr("sys.platform", platform)
     backend.prepare_pty_less_emulation()
     assert backend.view.model.pull_history_on_grow is pulls
 
