@@ -75,7 +75,9 @@ def download(url: str, sha256: str, cache: Path) -> Path:
     if not path.exists() or _sha256(path) != sha256:
         print(f"downloading {url}", flush=True)
         partial = path.with_suffix(path.suffix + ".part")
-        with urllib.request.urlopen(url, timeout=120) as response, partial.open("wb") as out:
+        # release.files.ghostty.org answers 403 to Python's default User-Agent.
+        request = urllib.request.Request(url, headers={"User-Agent": "sshpilot-build"})
+        with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
             shutil.copyfileobj(response, out)
         actual = _sha256(partial)
         if actual != sha256:
