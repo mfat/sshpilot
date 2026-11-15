@@ -8,15 +8,18 @@ where it can build them:
 | Build | Where gtkghostty comes from |
 |---|---|
 | deb and rpm built in GitHub CI, Arch | `subprojects/gtkghostty`, compiled by sshPilot's Meson build (option `gtkghostty`) into `<libdir>/sshpilot` with a copy of libghostty-vt, private to the app |
+| Flatpak | `subprojects/gtkghostty`, compiled by the Meson build against a `libghostty-vt` module the manifest builds with the Zig SDK extension (`org.freedesktop.Sdk.Extension.ziglang`) |
 | AppImage | `subprojects/gtkghostty`, compiled with libghostty-vt by `scripts/build-gtkghostty.sh` |
+| macOS (DMG) | `subprojects/gtkghostty`, compiled by `scripts/build-gtkghostty.sh` against the static libghostty-vt in Ghostty's official XCFramework (no Zig) |
 | Windows | a prebuilt zip from the gtkghostty release, pinned in `scripts/fetch-gtk.py` |
-| Launchpad PPA, COPR, Flatpak, macOS | not included: the backend is not offered |
+| Launchpad PPA, COPR | not included: the backend is not offered |
 
 libghostty-vt 1.0 needs Zig 0.17 to build.
 `packaging/windows/libghostty-vt/build.py --target native --prefix DIR` downloads
 it (pinned, checksummed) and installs libghostty-vt into DIR; the CI builds then
 set `PKG_CONFIG_PATH=DIR/lib/pkgconfig`. Arch builds it with its own Zig from the
-release tarballs (`packaging/ArchLinux/PKGBUILD`). Launchpad and COPR build
+release tarballs (`packaging/ArchLinux/PKGBUILD`), and so does the Flatpak with
+Flathub's Zig extension. Launchpad and COPR build
 without network access, and Ubuntu and Fedora have no Zig 0.17, so those builds
 leave the widget out; with option `gtkghostty=auto` that is not an error.
 

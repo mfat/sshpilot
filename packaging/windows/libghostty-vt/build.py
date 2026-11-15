@@ -17,7 +17,10 @@ signature). Zig cross-compiles, so the Windows DLL builds on Linux too.
 
 With ``--prefix`` the whole install (library, headers, pkg-config file) goes
 to DIR instead, for building the gtkghostty widget against it (meson option
-``gtkghostty``); the Linux packages do this.
+``gtkghostty``); the Linux packages do this. On macOS no Zig is needed: it
+installs the static library from Ghostty's official XCFramework (universal
+arm64/x86_64) with a pkg-config file for it (``--xcframework`` forces that
+path elsewhere, for testing).
 
 Output: ``vendor/libghostty-vt/<arch>/``, where the model finds it, with the
 library's LICENSE and third-party manifest beside it. Downloads are kept in
@@ -45,6 +48,11 @@ SOURCE = (f"{RELEASE}/libghostty-vt-{VERSION}.tar.gz",
 DEPS = (f"{RELEASE}/libghostty-vt-{VERSION}-deps.tar.gz",
         "4d5ea5e448e4c7ea8fb55ccbaa8668f2a97d44f438cee831e2b7ecd162d85c29")
 
+#: Ghostty's official macOS build: static libraries, Apple Silicon and Intel.
+#: The SHA-256 is the release's SHA256SUMS line, whose minisign signature was
+#: checked against Ghostty's public key.
+XCFRAMEWORK = (f"{RELEASE}/ghostty-vt-{VERSION}.xcframework.zip",
+               "2c32b7409b2b6c2ef6cfd606526de357762ad458bdc27134ad074e86506a8bc2")
 ZIG_VERSION = "0.17.1"  # libghostty-vt 1.0.0 needs Zig 0.17.x
 ZIG = {
     "x86_64-windows": ("zip", "b03f477a1943673e02aca0f570e8030dffd536ce1f45cbc4d3326ec31159562e"),
@@ -128,6 +136,44 @@ def fetch_zig(cache: Path, work: Path) -> Path:
     return executable
 
 
+def install_xcframework(prefix: Path, cache: Path) -> None:
+    """The official static macOS library into ``prefix``, with a .pc file."""
+    with tempfile.TemporaryDirectory(prefix="libghostty-vt-xcf-") as work:
+        work_path = Path(work)
+        unpack(download(*XCFRAMEWORK, cache), work_path)
+        slice_dir = work_path / "ghostty-vt.xcframework" / "macos-arm64_x86_64"
+        if not (slice_dir / "libghostty-vt.a").exists():
+            raise SystemExit("no macos-arm64_x86_64/libghostty-vt.a in the XCFramework")
+        (prefix / "lib" / "pkgconfig").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(slice_dir / "libghostty-vt.a", prefix / "lib" / "libghostty-vt.a")
+        shutil.rmtree(prefix / "include" / "ghostty", ignore_errors=True)
+        shutil.copytree(slice_dir / "Headers" / "ghostty", prefix / "include" / "ghostty")
+        (prefix / "lib" / "pkgconfig" / "libghostty-vt.pc").write_text(
+            f"prefix={prefix}\n"
+            "includedir=${prefix}/include\n"
+            "libdir=${prefix}/lib\n\n"
+            "Name: libghostty-vt\n"
+            "Description: Ghostty terminal core (static, official XCFramework)\n"
+            f"Version: {VERSION}\n"
+            "Cflags: -I${includedir}\n"
+            "Libs: ${libdir}/libghostty-vt.a\n",
+            encoding="utf-8",
+        )
+    licences = prefix / "share" / "licenses" / "libghostty-vt"
+    licences.mkdir(parents=True, exist_ok=True)
+    # The XCFramework carries no licence; take it from the pinned source tarball.
+    with tarfile.open(download(*SOURCE, cache)) as bundle:
+        for member, name in ((f"libghostty-vt-{VERSION}/LICENSE", "LICENSE"),
+                             (f"libghostty-vt-{VERSION}/deps/libghostty-vt-third-party.json",
+                              "third-party.json")):
+            (licences / name).write_bytes(bundle.extractfile(member).read())
+    (licences / "SOURCE").write_text(
+        f"libghostty-vt {VERSION}, official XCFramework ({XCFRAMEWORK[0]}, sha256 {XCFRAMEWORK[1]})\n",
+        encoding="utf-8",
+    )
+    print(prefix / "lib" / "libghostty-vt.a")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--arch", default="x64", choices=sorted(WINDOWS_TARGETS))
@@ -137,7 +183,12 @@ def main(argv=None) -> int:
     parser.add_argument("--cache", type=Path, default=ROOT / "vendor" / ".cache" / "libghostty-vt")
     parser.add_argument("--prefix", type=Path, default=None,
                         help="install the whole library (headers, pkg-config) here instead")
+    parser.add_argument("--xcframework", action="store_true",
+                        help="with --prefix: use the official macOS XCFramework (default on macOS)")
     args = parser.parse_args(argv)
+    if args.prefix is not None and (args.xcframework or platform.system() == "Darwin"):
+        install_xcframework(args.prefix.resolve(), args.cache)
+        return 0
     target = args.target or WINDOWS_TARGETS[args.arch]
     dest = args.dest or ROOT / "vendor" / "libghostty-vt" / args.arch
     if args.prefix is not None:

@@ -98,6 +98,30 @@ jobs:
             echo "::warning::gtk4-frdp did not build; this bundle opens RDP in FreeRDP's window"
           fi
 
+      # The gtkghostty terminal widget (an opt-in backend), from the vendored
+      # subprojects/gtkghostty, linked against the static libghostty-vt from
+      # Ghostty's official XCFramework (no Zig), into the Homebrew prefix where
+      # the spec collects it. Best effort: without it the backend is simply
+      # not offered.
+      - name: Build gtkghostty
+        env:
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_UPGRADE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          set -uo pipefail
+          if brew install --force-bottle pkgconf \
+             && { [ -x "$RUNNER_TEMP/meson/bin/meson" ] \
+                  || { "$(brew --prefix python@3.13)/bin/python3.13" -m venv "$RUNNER_TEMP/meson" \
+                       && "$RUNNER_TEMP/meson/bin/pip" install -q meson ninja; }; } \
+             && PATH="$RUNNER_TEMP/meson/bin:$PATH" scripts/build-gtkghostty.sh "$(brew --prefix)"; then
+            echo "gtkghostty installed: $(ls "$(brew --prefix)"/lib/girepository-1.0/GtkGhostty-1.typelib)"
+            otool -L "$(brew --prefix)"/lib/libgtkghostty-1.*.dylib | head -20
+          else
+            echo "::warning::gtkghostty did not build; this bundle does not offer the gtkghostty terminal"
+          fi
+
       - name: Prepare Homebrew virtual environment
         run: |
           echo "=== DEBUG: Preparing virtual environment ==="
