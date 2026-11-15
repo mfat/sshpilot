@@ -6,14 +6,16 @@
 #
 #   sudo scripts/build-gtkghostty.sh /usr
 #
-# libghostty-vt is built with the pinned Zig and release tarballs
-# (packaging/windows/libghostty-vt/build.py), so this needs network access.
+# libghostty-vt comes ready-made (packaging/windows/libghostty-vt/build.py
+# --prebuilt): on Linux the archive gtkghostty's CI builds and tests, on
+# macOS Ghostty's official XCFramework, both pinned by checksum; no Zig. It
+# needs network access.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 prefix=${1:?usage: $0 PREFIX}
 
-python3 "$root/packaging/windows/libghostty-vt/build.py" --target native --prefix "$prefix"
+python3 "$root/packaging/windows/libghostty-vt/build.py" --prebuilt --prefix "$prefix"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

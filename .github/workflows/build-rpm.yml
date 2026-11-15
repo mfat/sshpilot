@@ -71,11 +71,12 @@ jobs:
       # gresource, desktop entry, metainfo, icon and sshpilot-agent, and its
       # desktop/AppStream validators run as %check.
       # libghostty-vt for the bundled gtkghostty widget (meson option
-      # gtkghostty, auto), built with the pinned Zig: Fedora's Zig is older
-      # than the 0.17 it needs. COPR builds have no network and leave it out.
-      - name: Build libghostty-vt
+      # gtkghostty, auto): the archive gtkghostty's CI builds and tests,
+      # pinned by checksum, so no Zig here. COPR builds have no network and
+      # leave it out.
+      - name: Fetch libghostty-vt
         run: |
-          python3 packaging/windows/libghostty-vt/build.py --target native --prefix /opt/ghostty-vt
+          python3 packaging/windows/libghostty-vt/build.py --prebuilt --prefix /opt/ghostty-vt
           echo "PKG_CONFIG_PATH=/opt/ghostty-vt/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build RPM package

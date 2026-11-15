@@ -20,7 +20,10 @@ to DIR instead, for building the gtkghostty widget against it (meson option
 ``gtkghostty``); the Linux packages do this. On macOS no Zig is needed: it
 installs the static library from Ghostty's official XCFramework (universal
 arm64/x86_64) with a pkg-config file for it (``--xcframework`` forces that
-path elsewhere, for testing).
+path elsewhere, for testing). With ``--prebuilt`` on Linux it installs the
+archive gtkghostty's CI builds instead (glibc 2.31 and newer, x86_64 and
+aarch64), so the deb, rpm and AppImage builds need no Zig either; Arch and
+the Flatpak keep building from source.
 
 Output: ``vendor/libghostty-vt/<arch>/``, where the model finds it, with the
 library's LICENSE and third-party manifest beside it. Downloads are kept in
@@ -53,6 +56,16 @@ DEPS = (f"{RELEASE}/libghostty-vt-{VERSION}-deps.tar.gz",
 #: checked against Ghostty's public key.
 XCFRAMEWORK = (f"{RELEASE}/ghostty-vt-{VERSION}.xcframework.zip",
                "2c32b7409b2b6c2ef6cfd606526de357762ad458bdc27134ad074e86506a8bc2")
+#: libghostty-vt for Linux, built and tested by gtkghostty's CI
+#: (packaging/linux/package-libghostty-vt.sh) and attached to its release:
+#: glibc 2.31, baseline CPU, relocatable pkg-config file.
+PREBUILT_RELEASE = "https://github.com/mfat/gtkghostty/releases/download/v0.2.0"
+PREBUILT_LINUX = {
+    "x86_64": (f"{PREBUILT_RELEASE}/libghostty-vt-{VERSION}-linux-x86_64.tar.gz",
+               "1f89ef0ca0dc329c5b6b782d37f97492e3a9deb44b112dd4f4a4e58e74d67b9a"),
+    "aarch64": (f"{PREBUILT_RELEASE}/libghostty-vt-{VERSION}-linux-aarch64.tar.gz",
+                "5f1f47b6f2b415a80e482076e0cf259d904de5d0481290d37dbf792c290267f3"),
+}
 ZIG_VERSION = "0.17.1"  # libghostty-vt 1.0.0 needs Zig 0.17.x
 ZIG = {
     "x86_64-windows": ("zip", "b03f477a1943673e02aca0f570e8030dffd536ce1f45cbc4d3326ec31159562e"),
@@ -136,6 +149,29 @@ def fetch_zig(cache: Path, work: Path) -> Path:
     return executable
 
 
+def install_prebuilt_linux(prefix: Path, cache: Path) -> None:
+    """gtkghostty's tested Linux archive for this CPU into ``prefix``."""
+    machine = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64",
+               "aarch64": "aarch64"}.get(platform.machine().lower())
+    if machine not in PREBUILT_LINUX:
+        raise SystemExit(f"no prebuilt libghostty-vt for {platform.machine()}")
+    archive = download(*PREBUILT_LINUX[machine], cache)
+    top = f"libghostty-vt-{VERSION}-linux-{machine}/"
+    prefix.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as bundle:
+        members = []
+        for member in bundle.getmembers():
+            if member.name == top.rstrip("/"):
+                continue
+            if not member.name.startswith(top):
+                raise SystemExit(f"{archive.name}: unexpected path {member.name}")
+            member.name = member.name[len(top):]
+            if member.name:
+                members.append(member)
+        bundle.extractall(prefix, members=members, filter="data")
+    print(prefix / "lib" / "libghostty-vt.so.1")
+
+
 def install_xcframework(prefix: Path, cache: Path) -> None:
     """The official static macOS library into ``prefix``, with a .pc file."""
     with tempfile.TemporaryDirectory(prefix="libghostty-vt-xcf-") as work:
@@ -183,9 +219,14 @@ def main(argv=None) -> int:
     parser.add_argument("--cache", type=Path, default=ROOT / "vendor" / ".cache" / "libghostty-vt")
     parser.add_argument("--prefix", type=Path, default=None,
                         help="install the whole library (headers, pkg-config) here instead")
+    parser.add_argument("--prebuilt", action="store_true",
+                        help="with --prefix on Linux: install gtkghostty's tested archive, no Zig")
     parser.add_argument("--xcframework", action="store_true",
                         help="with --prefix: use the official macOS XCFramework (default on macOS)")
     args = parser.parse_args(argv)
+    if args.prefix is not None and args.prebuilt and platform.system() == "Linux":
+        install_prebuilt_linux(args.prefix.resolve(), args.cache)
+        return 0
     if args.prefix is not None and (args.xcframework or platform.system() == "Darwin"):
         install_xcframework(args.prefix.resolve(), args.cache)
         return 0

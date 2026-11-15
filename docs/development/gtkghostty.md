@@ -14,10 +14,12 @@ where it can build them:
 | Windows | a prebuilt zip from the gtkghostty release, pinned in `scripts/fetch-gtk.py` |
 | Launchpad PPA, COPR | not included: the backend is not offered |
 
-libghostty-vt 1.0 needs Zig 0.17 to build.
-`packaging/windows/libghostty-vt/build.py --target native --prefix DIR` downloads
-it (pinned, checksummed) and installs libghostty-vt into DIR; the CI builds then
-set `PKG_CONFIG_PATH=DIR/lib/pkgconfig`. Arch builds it with its own Zig from the
+libghostty-vt 1.0 needs Zig 0.17 to build, so the CI-built packages use a
+ready-made one: `packaging/windows/libghostty-vt/build.py --prebuilt --prefix DIR`
+installs the archive gtkghostty's CI builds and tests on Linux (glibc 2.31 and
+newer, x86_64 and aarch64), or Ghostty's official XCFramework on macOS, each
+pinned by checksum, and the builds set `PKG_CONFIG_PATH=DIR/lib/pkgconfig`.
+Arch builds it with its own Zig from the
 release tarballs (`packaging/ArchLinux/PKGBUILD`), and so does the Flatpak with
 Flathub's Zig extension. Launchpad and COPR build
 without network access, and Ubuntu and Fedora have no Zig 0.17, so those builds

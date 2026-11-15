@@ -48,12 +48,12 @@ jobs:
       # and sshpilot-agent, and its desktop/AppStream validators run as the
       # build-time test suite.
       # libghostty-vt for the bundled gtkghostty widget (meson option
-      # gtkghostty, auto). Distributions do not package it, so it is built
-      # here with the pinned Zig; Launchpad builds have no network and leave
-      # the widget out.
-      - name: Build libghostty-vt
+      # gtkghostty, auto): the archive gtkghostty's CI builds and tests,
+      # pinned by checksum, so no Zig here. Launchpad builds have no network
+      # and leave the widget out.
+      - name: Fetch libghostty-vt
         run: |
-          python3 packaging/windows/libghostty-vt/build.py --target native --prefix "$RUNNER_TEMP/ghostty-vt"
+          python3 packaging/windows/libghostty-vt/build.py --prebuilt --prefix "$RUNNER_TEMP/ghostty-vt"
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/ghostty-vt/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build package
