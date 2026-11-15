@@ -29,6 +29,8 @@ from .session_runtime import (
     SessionExitCallback,
     SessionLaunchSpec,
     SessionProcessHandle,
+    TerminalEofCallback,
+    TerminalOutputCallback,
 )
 from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process_or_abandon
 
@@ -47,8 +49,6 @@ DEFAULT_PTY_READ_CHUNK = 32 * 1024
 # enough, which is how this surfaced as an intermittent CI failure.
 PTY_CHILD_EXEC_TIMEOUT = 10.0
 
-TerminalOutputCallback = Callable[[bytes], None]
-TerminalEofCallback = Callable[[], None]
 LaunchBuilder = Callable[
     [SessionLaunchSpec],
     tuple[Sequence[str], Mapping[str, str]],
