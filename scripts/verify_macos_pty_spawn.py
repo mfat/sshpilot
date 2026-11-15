@@ -212,7 +212,10 @@ def main() -> int:
     executable = _bundle_executable(bundle)
 
     with tempfile.TemporaryDirectory(prefix="sshpilot-pty-smoke-") as temp_dir:
-        temp = Path(temp_dir)
+        # Real path: macOS's temp dir is under /var, a symlink to /private/var,
+        # and the daemon refuses to write the SSH config through a symlinked
+        # path (a home with a symlink in it is treated as read-only).
+        temp = Path(temp_dir).resolve()
         socket_path = temp / "runtime" / "sshpilotd.sock"
         for name in (
             "HOME",
