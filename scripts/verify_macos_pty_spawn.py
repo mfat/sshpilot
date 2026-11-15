@@ -72,7 +72,10 @@ def _write_fake_ssh(bin_dir: Path) -> None:
     it shells out to the same ``ssh`` on PATH several times for
     config/capability queries: identity-file discovery and the session
     readiness probe both run ``ssh -G ...``, and the readiness probe also
-    runs ``ssh -V``. Real ssh answers those near-instantly. A naive stand-in
+    runs ``ssh -V``; at startup the daemon also asks ``ssh -Q`` which legacy
+    algorithms the installed OpenSSH still has (daemon/legacy_algorithms.py),
+    and connection sharing uses ``ssh -O``. Real ssh answers those
+    near-instantly. A naive stand-in
     that always sleeps would turn each of those into a multi-second stall —
     stacking up to eat the whole PTY-output polling deadline before the
     real login invocation (the one this script cares about) ever runs. Only
@@ -97,7 +100,7 @@ def _write_fake_ssh(bin_dir: Path) -> None:
         "prev=\"\"\n"
         "for arg in \"$@\"; do\n"
         "  case \"$arg\" in\n"
-        "    -G|-V) exit 0 ;;\n"
+        "    -G|-V|-Q|-O) exit 0 ;;\n"
         "  esac\n"
         "  if [ \"$prev\" = \"-E\" ]; then\n"
         "    diag=\"$arg\"\n"
