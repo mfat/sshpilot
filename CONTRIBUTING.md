@@ -228,7 +228,7 @@ sources moved under `src/`.
 
 | Target | Entry point | Builds with |
 | --- | --- | --- |
-| Flatpak | `flathub/io.github.mfat.sshpilot.yaml` (in-tree copy: `flatpak/`) | `buildsystem: meson` |
+| Flatpak | `flatpak/io.github.mfat.sshpilot.yaml`, a copy of the Flathub manifest that releases publish (`.github/workflows/flathub.yml`); `scripts/flatpak-dev-manifest.py` derives the local-test manifest from it | `buildsystem: meson` |
 | Debian / PPA | `debian/rules` | `dh --buildsystem=meson` |
 | Fedora / COPR | `packaging/fedora/rpm.spec` | `%meson` macros |
 | Arch | `packaging/ArchLinux/PKGBUILD` | `arch-meson` |

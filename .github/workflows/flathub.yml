@@ -93,6 +93,22 @@ jobs:
           token: ${{ secrets.FLATHUB_TOKEN }}
           path: flathub
 
+      # flatpak/ holds the copy of the Flathub manifest, with any build changes
+      # this release needs (new modules or meson options). Publish it whole,
+      # so those changes and the commit pin always land together.
+      - name: Checkout the release's manifest copy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          path: sshpilot
+          sparse-checkout: flatpak
+
+      - name: Copy the manifest into the Flathub repo
+        run: |
+          cp sshpilot/flatpak/io.github.mfat.sshpilot.yaml flathub/io.github.mfat.sshpilot.yaml
+          cp sshpilot/flatpak/python3-deps.yml flathub/python3-deps.yml
+          git -C flathub diff --stat
+
       - name: Update pinned commit in manifest
         env:
           TAG: ${{ steps.release.outputs.tag }}

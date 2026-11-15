@@ -16,12 +16,9 @@ finish-args:
   - --socket=ssh-auth
   # Sound from RDP sessions shown in a tab (gtk4-frdp, FreeRDP rdpsnd).
   - --socket=pulseaudio
-  # --device=all, not dri: this manifest builds libfido2 and an OpenSSH
-  # with security-key support, and a FIDO2 key needs hidraw access that
-  # dri alone does not grant. Matches the Flathub manifest.
-  - --device=all
   - --filesystem=~/.ssh:create
   - --talk-name=org.freedesktop.Flatpak
+  - --device=all
 
 cleanup:
   - '/include'
@@ -48,7 +45,7 @@ modules:
   - name: libfido2
     buildsystem: simple
     build-commands:
-      # The Flatpak toolchain already injects _FORTIFY_SOURCE=3.
+      # GNOME 50's Flatpak toolchain already injects _FORTIFY_SOURCE=3.
       # libfido2 1.17.0 adds _FORTIFY_SOURCE=2 for Release builds and uses
       # -Werror, so remove only the duplicate definition.
       - sed -i '/CMAKE_C_FLAGS_RELEASE.*D_FORTIFY_SOURCE=2/d' CMakeLists.txt
@@ -201,7 +198,7 @@ modules:
         sha256: 4d5ea5e448e4c7ea8fb55ccbaa8668f2a97d44f438cee831e2b7ecd162d85c29
         dest: deps
 
-  - flatpak/python3-deps.yml
+  - python3-deps.yml
 
   - name: sshpilot
     # Meson installs everything the hand-written build-commands used to: the
@@ -217,18 +214,7 @@ modules:
       - -Dgtkghostty=enabled
       - -Dbundle_libghostty_vt=false
     sources:
-      - type: dir
-        # The manifest lives at the repo root -- where GNOME Builder and
-        # flatpak-builder expect it -- so the source dir is just `.`.
-        path: .
-        # Flathub builds from `type: git`, so it only ever sees tracked files.
-        # This manifest copies the working tree, so skip the local build junk to
-        # keep the test build close to a clean checkout (and fast).
-        skip:
-          - .flatpak-builder
-          - .git
-          - .venv
-          - venv
-          - builddir
-          - repo
-          - .history
+      - type: git
+        url: "https://github.com/mfat/sshpilot.git"
+        #tag: v6.4.1
+        commit: 7ea896dd5c8c0a31e0e6b7f381dc68615055e1ef

@@ -18,8 +18,10 @@ venv/
 builddir/
 /artifacts
 
-# Flatpak build. scripts/test-flatpak.sh builds flatpak/ in place, so only the
-# build output is ignored -- the manifests there are tracked.
+# Flatpak build. flatpak/ holds the tracked copy of the Flathub manifest; the
+# root manifest is generated from it for local builds
+# (scripts/flatpak-dev-manifest.py, run by scripts/test-flatpak.sh).
+/io.github.mfat.sshpilot.yaml
 /.flatpak-builder
 /repo
 
