@@ -13,6 +13,11 @@ signature). Zig cross-compiles, so the Windows DLL builds on Linux too.
 
     python packaging/windows/libghostty-vt/build.py            # Windows x64 DLL
     python packaging/windows/libghostty-vt/build.py --target native   # this host (tests)
+    python packaging/windows/libghostty-vt/build.py --target native --prefix DIR
+
+With ``--prefix`` the whole install (library, headers, pkg-config file) goes
+to DIR instead, for building the gtkghostty widget against it (meson option
+``gtkghostty``); the Linux packages do this.
 
 Output: ``vendor/libghostty-vt/<arch>/``, where the model finds it, with the
 library's LICENSE and third-party manifest beside it. Downloads are kept in
@@ -130,20 +135,26 @@ def main(argv=None) -> int:
                         help="Zig target triple, or 'native' for this host (default: the Windows DLL)")
     parser.add_argument("--dest", type=Path, default=None, help="default: vendor/libghostty-vt/<arch>")
     parser.add_argument("--cache", type=Path, default=ROOT / "vendor" / ".cache" / "libghostty-vt")
+    parser.add_argument("--prefix", type=Path, default=None,
+                        help="install the whole library (headers, pkg-config) here instead")
     args = parser.parse_args(argv)
     target = args.target or WINDOWS_TARGETS[args.arch]
     dest = args.dest or ROOT / "vendor" / "libghostty-vt" / args.arch
+    if args.prefix is not None:
+        dest = args.prefix.resolve() / "share" / "licenses" / "libghostty-vt"
     dest.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="libghostty-vt-build-") as work:
-        work_path = Path(work)
+        # Real path: on macOS the temp dir is under /var, a symlink to
+        # /private/var, and Zig builds broken relative paths across it.
+        work_path = Path(work).resolve()
         zig = fetch_zig(args.cache, work_path / "zig")
         unpack(download(*SOURCE, args.cache), work_path)
         unpack(download(*DEPS, args.cache), work_path)
         source = work_path / f"libghostty-vt-{VERSION}"
         if (source / "LIB_VERSION").read_text(encoding="utf-8").strip() != VERSION:
             raise SystemExit("unexpected LIB_VERSION in the source tarball")
-        prefix = work_path / "out"
+        prefix = args.prefix.resolve() if args.prefix is not None else work_path / "out"
         # Upstream: the global cache must be new and empty with Zig 0.17, or a
         # cached package archive can crash the build ("reached unreachable").
         environment = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(work_path / "zig-cache"))
@@ -156,13 +167,16 @@ def main(argv=None) -> int:
             command.append(f"-Dtarget={target}")
         _run(command, cwd=source, env=environment)
 
-        if target == "native" and platform.system() != "Windows":
+        if args.prefix is not None:
+            name = "LICENSE"  # the library stays where zig installed it
+        elif target == "native" and platform.system() != "Windows":
             built = prefix / "lib" / f"libghostty-vt.so.{VERSION}"
             name = "libghostty-vt.so.1"
         else:
             built = prefix / "bin" / "ghostty-vt.dll"
             name = "ghostty-vt.dll"
-        shutil.copy2(built, dest / name)
+        if args.prefix is None:
+            shutil.copy2(built, dest / name)
         shutil.copy2(source / "LICENSE", dest / "LICENSE")
         shutil.copy2(source / "deps" / "libghostty-vt-third-party.json", dest / "third-party.json")
         (dest / "SOURCE").write_text(

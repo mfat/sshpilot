@@ -40,6 +40,11 @@ BuildRequires:  pkgconfig(gobject-introspection-1.0)
 # required -- where it cannot load, RDP opens in FreeRDP's window (rdp_tab.py).
 %global __provides_exclude_from ^%{_libdir}/%{name}/.*$
 %global __requires_exclude_from ^%{_libdir}/%{name}/.*$
+# Where the bundled gtkghostty widget is built (libghostty-vt available, as in
+# the GitHub build), its copy of libghostty-vt is linked by Zig, which writes
+# no GNU build-id note and offers no switch for one in libghostty's build;
+# rpmbuild would otherwise refuse the package over it.
+%global _missing_build_ids_terminate_build 0
 
 
 # Define _metainfodir for openSUSE compatibility (not defined by default on openSUSE)
@@ -138,8 +143,11 @@ an alternative to Putty, Termius and Mobaxterm.
 # launch. Guarded so a distro without python-rpm-macros still builds.
 %{?py_byte_compile:%py_byte_compile %{python3} %{buildroot}%{_datadir}/%{name}}
 
-# The bundled gtk4-frdp's unversioned .so link is a development file.
+# The bundled gtk4-frdp's and gtkghostty's unversioned .so links are
+# development files. (gtkghostty is built only where libghostty-vt is
+# available, as in the GitHub build; COPR leaves it out.)
 rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
+rm -f %{buildroot}%{_libdir}/%{name}/libgtkghostty-1.so
 
 %find_lang %{name} || touch %{name}.lang
 
@@ -152,6 +160,10 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtk4-frdp-4.0.so
 %license LICENSE*
 # The bundled gtk4-frdp: GPL-3.0-or-later, with FreeRDP-derived parts (NOTICE).
 %license subprojects/gtk4-frdp/NOTICE
+# The bundled gtkghostty terminal widget: LGPL-2.1-or-later (NOTICE). Where it
+# is built, libghostty-vt's MIT licence ships next to it in %%{_libdir}/%%{name}.
+%license subprojects/gtkghostty/COPYING
+%license subprojects/gtkghostty/NOTICE
 %doc README*
 %{_bindir}/sshpilot
 %{_bindir}/sshpilot-agent

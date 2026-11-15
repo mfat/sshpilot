@@ -69,6 +69,11 @@ jobs:
       - name: Build gtk4-frdp
         run: sudo scripts/build-gtk4-frdp.sh /usr
 
+      # libghostty-vt and the gtkghostty widget into /usr, for the opt-in
+      # gtkghostty terminal backend.
+      - name: Build gtkghostty
+        run: sudo scripts/build-gtkghostty.sh /usr
+
       # src/sshpilot/__init__.py is the single source of truth the release
       # tooling bumps; the tag is only the trigger.
       - name: Extract version

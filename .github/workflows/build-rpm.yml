@@ -70,6 +70,14 @@ jobs:
       # Builds with Meson (see the spec). Meson installs the launcher, package,
       # gresource, desktop entry, metainfo, icon and sshpilot-agent, and its
       # desktop/AppStream validators run as %check.
+      # libghostty-vt for the bundled gtkghostty widget (meson option
+      # gtkghostty, auto), built with the pinned Zig: Fedora's Zig is older
+      # than the 0.17 it needs. COPR builds have no network and leave it out.
+      - name: Build libghostty-vt
+        run: |
+          python3 packaging/windows/libghostty-vt/build.py --target native --prefix /opt/ghostty-vt
+          echo "PKG_CONFIG_PATH=/opt/ghostty-vt/lib/pkgconfig" >> "$GITHUB_ENV"
+
       - name: Build RPM package
         run: |
           rpmbuild -ba packaging/fedora/rpm.spec
@@ -98,6 +106,10 @@ jobs:
             /usr/share/sshpilot/sshpilot/vendor/pyxtermjs/xterm/xterm.js \
             /usr/lib64/sshpilot/libgtk4-frdp-4.0.so.0 \
             /usr/lib64/sshpilot/girepository-1.0/GtkFrdp-4.0.typelib \
+            /usr/lib64/sshpilot/libgtkghostty-1.so.0 \
+            /usr/lib64/sshpilot/libghostty-vt.so.1 \
+            /usr/lib64/sshpilot/girepository-1.0/GtkGhostty-1.typelib \
+            /usr/lib64/sshpilot/licenses/libghostty-vt/LICENSE \
           ; do
             grep -qx "$path" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
           done

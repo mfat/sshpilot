@@ -27,12 +27,18 @@ execute_after_dh_python3:
 # The bundled gtk4-frdp in /usr/lib/<triplet>/sshpilot is private to the app:
 # no shlibs file for it, its libraries go into Recommends rather than Depends
 # (rdp_tab.py falls back to FreeRDP's window when it cannot load), and the
-# unversioned .so link is a development file nothing here uses.
+# unversioned .so link is a development file nothing here uses. The same goes
+# for the gtkghostty widget, built where libghostty-vt is available (meson
+# option gtkghostty); -l lets dpkg-shlibdeps find the libghostty-vt copy it
+# links to in that directory.
+PRIVATE_LIBDIR = usr/lib/$(DEB_HOST_MULTIARCH)/sshpilot
+
 override_dh_makeshlibs:
-	dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/sshpilot
+	dh_makeshlibs -X$(PRIVATE_LIBDIR)
 
 override_dh_shlibdeps:
-	dh_shlibdeps -- -dRecommends
+	dh_shlibdeps -l$(CURDIR)/debian/sshpilot/$(PRIVATE_LIBDIR) -- -dRecommends
 
 execute_after_dh_auto_install:
-	rm -f debian/sshpilot/usr/lib/$(DEB_HOST_MULTIARCH)/sshpilot/libgtk4-frdp-4.0.so
+	rm -f debian/sshpilot/$(PRIVATE_LIBDIR)/libgtk4-frdp-4.0.so
+	rm -f debian/sshpilot/$(PRIVATE_LIBDIR)/libgtkghostty-1.so

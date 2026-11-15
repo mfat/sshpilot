@@ -1,0 +1,46 @@
+gtkghostty
+Copyright 2026 mFat <newmfat@gmail.com> and the gtkghostty contributors
+
+gtkghostty is free software under the GNU Lesser General Public License,
+version 2.1 or (at your option) any later version. See COPYING.
+
+Code from other projects
+------------------------
+
+SSH Pilot (https://github.com/mfat/sshpilot), GPL-3.0-or-later.
+  The pseudo-terminal adapter (src/gtk-ghostty-pty.c) is ported from SSH
+  Pilot's sshpilot/platform/windows/conpty.py and sshpilot/local_shell_pty.py.
+  Code taken from SSH Pilot later (for example its libghostty-vt build script,
+  packaging/windows/libghostty-vt/build.py) falls under the same grant. All of
+  that code was written by SSH Pilot's author, who is also gtkghostty's
+  author, and who on 2026-11-15 relicensed it for gtkghostty under
+  LGPL-2.1-or-later. SSH Pilot itself remains GPL-3.0-or-later (meson.build).
+
+tilix2 (https://github.com/markuman/tilix2) at 65d775b, WTFPL v2.
+  The key map and the box-drawing/block-element tables (tools/gen_tables.py,
+  src/gtk-ghostty-tables.c) and the row drawing scheme in
+  src/gtk-ghostty-terminal.c (runs of same-styled cells, letter spacing to the
+  cell grid, wide cells scaled to two cells, box drawing on the grid) are
+  ported from tilix2.py.
+
+Design references (no code copied)
+----------------------------------
+
+Kwi (https://invent.kde.org/utilities/kwi, mirror https://github.com/KDE/kwi)
+  at f2810b4, LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL.
+  The input-method preedit layout follows the design of Kwi's
+  PreeditLayout.cpp, and its tests follow the cases in imetest.cpp. The
+  set of characters drawn on the cell grid (Powerline, braille, sextants)
+  follows the scope of Kwi's Symbols.cpp; the drawing code is original.
+  Kwi's code is C++/Qt and is not copied; its licence differs from
+  gtkghostty's "or later", so it is used as a design reference only.
+
+Ghostling (https://github.com/ghostty-org/ghostling) at 63842bf, MIT.
+  The list of terminal effects to answer (size, XTVERSION, colour scheme).
+
+Libraries
+---------
+
+libghostty-vt 1.0 (https://lib.ghostty.org/vt/), MIT. Linked, not
+  included; its own LICENSE and third-party list ship with its builds.
+GTK 4, GLib, Pango, Graphene: LGPL-2.1-or-later (linked).

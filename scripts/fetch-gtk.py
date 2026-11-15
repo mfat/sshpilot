@@ -51,13 +51,13 @@ FRDP_SHA256 = "9e4947a3b2da8c79e74c031c3cb319bd4d6a7cbba01b2eaa71aa7a58810b1839"
 #: Files at the top of the gtk4-frdp zip that are not part of the prefix.
 FRDP_LICENCE_FILES = ("COPYING", "NOTICE")
 
-GTKGHOSTTY_VERSION = "0.1.0"
+GTKGHOSTTY_VERSION = "0.2.0"
 GTKGHOSTTY_ASSET = f"gtkghostty-{GTKGHOSTTY_VERSION}-gvsbuild-{VERSION}-x64.zip"
 GTKGHOSTTY_URL = (
     f"https://github.com/mfat/gtkghostty/releases/download/v{GTKGHOSTTY_VERSION}/{GTKGHOSTTY_ASSET}"
 )
 #: The asset's SHA-256 (the .sha256 CI publishes beside it). None skips it.
-GTKGHOSTTY_SHA256: str | None = "9f1ce2790240f3e8ab45761610f25f7921845a08ac1c3851b1eabd16e4d94789"
+GTKGHOSTTY_SHA256: str | None = "eaaecfdfced9032a31a2de10dc120cc161f5c9fb5b1c05a0edb9aa155f673bdb"
 GTKGHOSTTY_LICENCE_FILES = ("COPYING", "NOTICE")
 
 ROOT = Path(__file__).resolve().parents[1]

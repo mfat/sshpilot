@@ -5,7 +5,8 @@ pkgver=6.3.8
 pkgrel=1
 pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.'
 url='https://github.com/mfat/sshpilot'
-license=('GPL-3.0-only')
+# LGPL/MIT: the bundled gtkghostty terminal widget and libghostty-vt.
+license=('GPL-3.0-only' 'LGPL-2.1-or-later' 'MIT')
 # Not 'any': the RDP tab's gtk4-frdp library is compiled into the package.
 arch=('x86_64' 'aarch64')
 # freerdp: RDP connections, and what the bundled gtk4-frdp (RDP tab, in
@@ -23,8 +24,10 @@ depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography'
 # Meson is the upstream build system: it compiles the Blueprint .blp sources into
 # the bundled GResource and installs the launcher, the Python package, the desktop
 # entry, the AppStream metainfo, the icon, sshpilot-agent, and sshpilot-daemon.
+# zig: builds libghostty-vt for the bundled gtkghostty terminal widget (an
+# opt-in backend). libghostty-vt 1.0.0 needs Zig 0.17.x.
 makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gtk4' 'gettext'
-             'desktop-file-utils' 'appstream' 'freerdp' 'gobject-introspection')
+             'desktop-file-utils' 'appstream' 'freerdp' 'gobject-introspection' 'zig')
 # Built-in protocol plugins shell out to these; all degrade gracefully if absent.
 optdepends=('inetutils: Telnet protocol support'
             'mosh: Mosh protocol support'
@@ -32,11 +35,28 @@ optdepends=('inetutils: Telnet protocol support'
             'docker: Docker/Podman protocol support'
             'picocom: Serial console protocol support'
             'python-pykeepass: KeePass (.kdbx) secret backend')
-source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('1f47b0d268aed0f77e070e51f61f48c54b4d2d16e044ebefd48982b075be1c5b')
+_ghostty_vt=1.0.0
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
+        "https://release.files.ghostty.org/libghostty-vt/${_ghostty_vt}/libghostty-vt-${_ghostty_vt}.tar.gz"
+        "https://release.files.ghostty.org/libghostty-vt/${_ghostty_vt}/libghostty-vt-${_ghostty_vt}-deps.tar.gz")
+sha256sums=('1f47b0d268aed0f77e070e51f61f48c54b4d2d16e044ebefd48982b075be1c5b'
+            '4a6ef758be721923e1969e7b81b443dcc92d8dd3fb5a39600c03a8817a753676'
+            '4d5ea5e448e4c7ea8fb55ccbaa8668f2a97d44f438cee831e2b7ecd162d85c29')
 
 build() {
-	arch-meson "${pkgname}-${pkgver}" build
+	# libghostty-vt, offline from its release and dependency tarballs, into a
+	# prefix the gtkghostty widget builds against; meson then bundles the
+	# library (and its licence) in /usr/lib/sshpilot.
+	local _vt="${srcdir}/ghostty-vt"
+	(cd "libghostty-vt-${_ghostty_vt}" &&
+		ZIG_GLOBAL_CACHE_DIR="${srcdir}/zig-cache" zig build --prefix "${_vt}" \
+			--system "${srcdir}/libghostty-vt-${_ghostty_vt}-deps" \
+			-Doptimize=ReleaseFast -Dcpu=baseline -Dstrip=true)
+	install -Dm644 "libghostty-vt-${_ghostty_vt}/LICENSE" "${_vt}/share/licenses/libghostty-vt/LICENSE"
+	install -Dm644 "libghostty-vt-${_ghostty_vt}/deps/libghostty-vt-third-party.json" \
+		"${_vt}/share/licenses/libghostty-vt/third-party.json"
+
+	PKG_CONFIG_PATH="${_vt}/lib/pkgconfig" arch-meson "${pkgname}-${pkgver}" build -Dgtkghostty=enabled
 	meson compile -C build
 }
 
@@ -52,4 +72,9 @@ package() {
 	rm -f "${pkgdir}/usr/lib/sshpilot/libgtk4-frdp-4.0.so"
 	install -Dm644 "${pkgname}-${pkgver}/subprojects/gtk4-frdp/NOTICE" \
 		"${pkgdir}/usr/share/licenses/${pkgname}/gtk4-frdp-NOTICE"
+	# The bundled gtkghostty widget, likewise private; libghostty-vt's MIT
+	# licence is installed next to it (usr/lib/sshpilot/licenses).
+	rm -f "${pkgdir}/usr/lib/sshpilot/libgtkghostty-1.so"
+	install -Dm644 "${pkgname}-${pkgver}/subprojects/gtkghostty/NOTICE" \
+		"${pkgdir}/usr/share/licenses/${pkgname}/gtkghostty-NOTICE"
 }

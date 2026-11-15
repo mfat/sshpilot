@@ -19,11 +19,40 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import threading
 from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Tuple
 
 import gi
+
+#: The bundled copy's libraries, dependency first (meson option gtkghostty).
+_BUNDLED_LIBRARIES = ("libghostty-vt.so.1", "libgtkghostty-1.so.0")
+
+
+def _use_bundled_widget() -> None:
+    """Prefer the copy a Linux package installed in <libdir>/sshpilot.
+
+    Without one (Windows, where it sits with GTK; a source checkout; builds
+    without libghostty-vt) GI's own search path decides.
+    """
+
+    try:
+        from .build_config import GTKGHOSTTY_LIBDIR as libdir
+    except ImportError:  # checkout or pip install: no Meson install
+        return
+    if not libdir or not os.path.isdir(libdir):
+        return
+    from .private_gi import use_private_libdir
+
+    present = [name for name in _BUNDLED_LIBRARIES if os.path.exists(os.path.join(libdir, name))]
+    try:
+        use_private_libdir(libdir, present)
+    except OSError as exc:  # a system dependency (GTK) missing or too old
+        raise ImportError(f"bundled gtkghostty cannot load: {exc}") from exc
+
+
+_use_bundled_widget()
 
 gi.require_version("Gtk", "4.0")
 try:
