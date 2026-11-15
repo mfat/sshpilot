@@ -18,6 +18,7 @@ from sshpilot.daemon.connection_launch_provider import (  # noqa: E402
     HeadlessConnectionView,
 )
 from sshpilot.core.connections.models import ConnectionRecord  # noqa: E402
+from sshpilot.ssh_multiplex import MULTIPLEXING_SUPPORTED  # noqa: E402
 
 
 def _record(nickname="web", **kwargs) -> ConnectionRecord:
@@ -1123,7 +1124,16 @@ def test_launch_resolves_like_plain_ssh_when_host_star_comes_first(tmp_path):
 @pytest.mark.skipif(shutil.which("ssh") is None, reason="needs OpenSSH")
 @pytest.mark.parametrize(
     ("host", "forced"),
-    [("web.tunnel", True), ("plain", False)],
+    [
+        ("web.tunnel", True),
+        pytest.param(
+            "plain", False,
+            marks=pytest.mark.skipif(
+                not MULTIPLEXING_SUPPORTED,
+                reason="multiplexing is pinned off here (Windows), so every launch has ControlMaster=no",
+            ),
+        ),
+    ],
 )
 def test_inherited_session_type_none_disables_preference_multiplex(
     tmp_path, host, forced

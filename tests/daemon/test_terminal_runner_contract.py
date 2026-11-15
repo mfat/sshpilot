@@ -13,7 +13,12 @@ import inspect
 
 import pytest
 
-from sshpilot.daemon import conpty_runner, pty_runner
+from sshpilot.daemon import conpty_runner
+
+try:
+    from sshpilot.daemon import pty_runner
+except ImportError:  # POSIX-only (fcntl); the ConPTY half still runs on Windows
+    pty_runner = None
 from sshpilot.daemon.session_runtime import (
     SessionRuntime,
     TerminalSessionProcessHandle,
@@ -23,12 +28,13 @@ from sshpilot.daemon.session_runtime import (
 )
 
 
+_NO_PTY = pytest.mark.skipif(pty_runner is None, reason="pty_runner needs POSIX (fcntl)")
 RUNNERS = [
-    pytest.param(pty_runner.PtySessionProcessRunner, id="pty"),
+    pytest.param(getattr(pty_runner, "PtySessionProcessRunner", None), id="pty", marks=_NO_PTY),
     pytest.param(conpty_runner.ConPtySessionProcessRunner, id="conpty"),
 ]
 HANDLES = [
-    pytest.param(pty_runner.PtyProcessHandle, id="pty"),
+    pytest.param(getattr(pty_runner, "PtyProcessHandle", None), id="pty", marks=_NO_PTY),
     pytest.param(conpty_runner.ConPtyProcessHandle, id="conpty"),
 ]
 
