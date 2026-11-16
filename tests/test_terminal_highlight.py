@@ -627,6 +627,22 @@ def test_widget_disable_flushes_held_bytes_to_backend():
     assert fed == [b"\x1b[3"]
 
 
+def test_widget_leaves_output_uncoloured_when_the_encoding_hides_ascii_in_characters():
+    from sshpilot.terminal import TerminalWidget
+
+    widget, fed = _lifecycle_widget()
+    paint = lambda data: TerminalWidget._paint_display(widget, data)  # noqa: E731
+    widget.backend.output_highlight_safe = False  # Shift_JIS, GBK, GB18030, Big5
+    sjis = "サーバ 192.0.2.1 error".encode("cp932")
+    paint(b"\x1b[3")  # a sequence split across reads still comes out whole
+    paint(b"1m" + sjis)
+    assert b"".join(fed) == b"\x1b[31m" + sjis
+    assert widget._highlighter.enabled  # the user's setting is untouched
+    widget.backend.output_highlight_safe = True
+    paint(b"\x1b[0m192.0.2.1")
+    assert fed[-1] == b"\x1b[0m" + colour(b"192.0.2.1", 36)
+
+
 # --- regression: colon sub-parameters, string aborts, partials -----------------
 
 

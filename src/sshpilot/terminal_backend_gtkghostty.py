@@ -67,10 +67,19 @@ from .terminal_backends import (  # noqa: E402
     _log_clipboard_copy,
 )
 from .terminal_cursor import normalize_cursor_blink, normalize_cursor_shape  # noqa: E402
+from .terminal_encodings import (  # noqa: E402
+    ASCII_INSIDE_CHARACTERS,
+    LEGACY_ENCODINGS,
+    is_utf8,
+    python_codec,
+)
 from .terminal_model_common import url_at  # noqa: E402
 from .terminal_theme_resolve import Rgb, daemon_output_is_rendered, resolve_theme  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+#: Encodings this platform's iconv opens, found once by asking the widget.
+_AVAILABLE_ENCODINGS: Optional[List[str]] = None
 
 #: Inner padding around the grid, as the built-in backend and VTE's CSS
 #: padding, so text clears the card's rounded corners.
@@ -181,6 +190,13 @@ class GtkGhosttyTerminalBackend:
         self._local_exit_status: Optional[int] = None
         self._selection_from_search = False
         self._initialized = False
+        # Text SSH Pilot sends itself (snippets, broadcast) is UTF-8; with a
+        # legacy encoding set it is converted the way the widget converts
+        # what is typed.
+        self._codec: Optional[str] = None
+        #: False while the encoding can put ASCII bytes inside a character:
+        #: TerminalWidget then leaves output uncoloured (see _feed_display).
+        self.output_highlight_safe = True
 
     # -- callback plumbing ---------------------------------------------------------
 
@@ -270,6 +286,13 @@ class GtkGhosttyTerminalBackend:
     def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
         settings = settings or {}
         self.set_cursor_options(settings.get("cursor_shape"), settings.get("cursor_blink"))
+        if settings.get("encoding"):
+            try:
+                self.set_encoding(settings["encoding"])
+            except ValueError:
+                logger.warning("gtkghostty cannot use encoding %r; using UTF-8", settings["encoding"])
+        if settings.get("wheel_scroll_lines") is not None:
+            self.set_wheel_scroll_lines(settings["wheel_scroll_lines"])
         scrollback = settings.get("scrollback_lines")
         if scrollback is not None:
             try:
@@ -497,8 +520,24 @@ class GtkGhosttyTerminalBackend:
         self.feed_child_data(data)
 
     def feed_child_data(self, data: bytes) -> None:
-        if data:
-            self._send(bytes(data))
+        if not data:
+            return
+        data = bytes(data)
+        if self._codec is not None:
+            try:
+                data = data.decode("utf-8").encode(self._codec, "replace")
+            except UnicodeDecodeError:
+                pass  # not text (a raw report): as it is, as the widget does
+        self._send(data)
+
+    def set_wheel_scroll_lines(self, lines: Any) -> None:
+        """Rows per mouse-wheel notch; the widget handles the wheel itself."""
+        if not hasattr(self.view, "set_wheel_scroll_lines"):
+            return  # gtkghostty older than 0.3: always 3
+        try:
+            self.view.set_wheel_scroll_lines(max(1, min(int(lines), 20)))
+        except (TypeError, ValueError):
+            pass
 
     def get_size(self) -> tuple:
         return (max(1, self.view.get_rows()), max(1, self.view.get_columns()))
@@ -633,10 +672,28 @@ class GtkGhosttyTerminalBackend:
         self.view.set_cursor_from_name("pointer" if over_link else "text")
 
     def get_supported_encodings(self) -> list[str]:
-        return ["UTF-8"]
+        global _AVAILABLE_ENCODINGS
+        if not hasattr(self.view, "set_encoding"):
+            return ["UTF-8"]
+        if _AVAILABLE_ENCODINGS is None:
+            current = self.view.get_encoding()
+            _AVAILABLE_ENCODINGS = ["UTF-8"] + [
+                code for code, _label in LEGACY_ENCODINGS if self.view.set_encoding(code)
+            ]
+            self.view.set_encoding(current)
+        return list(_AVAILABLE_ENCODINGS)
 
     def set_encoding(self, encoding: str) -> None:
-        return None
+        """The remote's character encoding; the widget converts at its edges."""
+        utf8 = is_utf8(encoding)
+        if not hasattr(self.view, "set_encoding"):
+            if utf8:
+                return
+            raise ValueError("gtkghostty older than 0.3 supports only UTF-8")
+        if not self.view.set_encoding(None if utf8 else encoding.strip()):
+            raise ValueError(f"unknown encoding {encoding!r}")
+        self._codec = None if utf8 else python_codec(encoding)
+        self.output_highlight_safe = utf8 or encoding.strip().lower() not in ASCII_INSIDE_CHARACTERS
 
     def supports_feature(self, feature: str) -> bool:
         return feature in {
@@ -651,4 +708,4 @@ class GtkGhosttyTerminalBackend:
             "save_output",
             "hyperlinks",
             "clipboard-html",
-        }
+        } or (feature == "encoding" and hasattr(self.view, "set_encoding"))

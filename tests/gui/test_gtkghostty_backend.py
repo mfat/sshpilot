@@ -216,3 +216,63 @@ def test_the_pointer_shows_a_hand_over_links():
     assert backend.view.get_cursor().get_name() == "text"
     window.destroy()
     backend.destroy()
+
+
+_HAS_ENCODING = pytest.mark.skipif(
+    not hasattr(backend_module.GtkGhostty.Terminal, "set_encoding"),
+    reason="needs gtkghostty 0.3 (encodings, wheel speed)",
+)
+
+
+@_HAS_ENCODING
+def test_legacy_encodings_round_trip_through_the_backend():
+    backend = _backend()
+    assert backend.supports_feature("encoding")
+    offered = backend.get_supported_encodings()
+    assert offered[0] == "UTF-8" and {"ISO-8859-1", "Shift_JIS", "GBK", "KOI8-R"} <= set(offered)
+    assert "UTF-16" not in offered
+    sent = []
+    backend.connect_commit(lambda _t, data, _n: sent.append(data))
+
+    backend.configure({"encoding": "Shift_JIS"})
+    assert not backend.output_highlight_safe
+    backend.feed("日本語 C:\\dir".encode("cp932"))
+    assert backend.get_content().splitlines()[0] == "日本語 C:\\dir"
+    backend.feed_child_data("ls 日本\\\r".encode())  # a snippet: UTF-8 from SSH Pilot
+    assert sent[-1] == "ls 日本\\\r".encode("cp932")
+    backend.feed_child_data(b"\x1b[M\xff!!")  # not text: unchanged
+    assert sent[-1] == b"\x1b[M\xff!!"
+
+    backend.set_encoding("ISO-8859-1")
+    assert backend.output_highlight_safe
+    backend.feed_child_data("café €".encode())
+    assert sent[-1] == b"caf\xe9 ?"
+
+    backend.set_encoding("UTF-8")
+    assert backend.view.get_encoding() is None and backend.output_highlight_safe
+    backend.feed_child_data("café".encode())
+    assert sent[-1] == "café".encode()
+    with pytest.raises(ValueError):
+        backend.set_encoding("NOT-AN-ENCODING")
+    backend.destroy()
+
+
+@_HAS_ENCODING
+def test_wheel_speed_reaches_the_widget():
+    backend = _backend()
+    backend.configure({"wheel_scroll_lines": 7})
+    assert backend.view.get_wheel_scroll_lines() == 7
+    backend.set_wheel_scroll_lines(1)
+    assert backend.view.get_wheel_scroll_lines() == 1
+    backend.destroy()
+
+
+def test_preferences_offer_the_legacy_encodings_for_gtkghostty():
+    from sshpilot.preferences import PreferencesWindow
+    from sshpilot.terminal_encodings import LEGACY_ENCODINGS
+
+    fake = SimpleNamespace(config=SimpleNamespace(get_setting=lambda _k, _d=None: "gtkghostty"))
+    fake._is_pyxterm_backend = lambda: PreferencesWindow._is_pyxterm_backend(fake)
+    fake._is_gtkghostty_backend = lambda: PreferencesWindow._is_gtkghostty_backend(fake)
+    codes = [code for code, _label in PreferencesWindow._collect_supported_encodings(fake)]
+    assert codes == ["UTF-8"] + [code for code, _label in LEGACY_ENCODINGS]

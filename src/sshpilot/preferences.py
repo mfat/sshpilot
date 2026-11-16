@@ -27,6 +27,7 @@ from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
 from .core.settings import INTEGER_RANGES as _SSH_OVERRIDE_RANGES
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
+from .terminal_encodings import LEGACY_ENCODINGS
 from .terminal_osc52 import (
     OSC52_MAX_MAX_KIB,
     OSC52_MIN_MAX_KIB,
@@ -6532,6 +6533,10 @@ class PreferencesWindow(Adw.Window):
         backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
         return backend in ('pyxterm', 'pyxterm2')
 
+    def _is_gtkghostty_backend(self) -> bool:
+        backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
+        return backend == 'gtkghostty'
+
     def _collect_supported_encodings(self):
         """Collect supported encodings based on current backend"""
         # For PyXterm.js backend, provide xterm.js compatible encodings
@@ -6544,24 +6549,14 @@ class PreferencesWindow(Adw.Window):
                 ('UTF-16', 'Unicode (UTF-16)'),
             ]
 
-            # Add common legacy encodings that can be handled via luit/iconv
-            # These will be transcoded at the PTY bridge level
-            legacy_encodings = [
-                ('ISO-8859-1', 'Latin-1 (ISO-8859-1)'),
-                ('ISO-8859-15', 'Latin-9 (ISO-8859-15)'),
-                ('Windows-1252', 'Western European (Windows-1252)'),
-                ('GB2312', 'Simplified Chinese (GB2312)'),
-                ('GBK', 'Chinese (GBK)'),
-                ('GB18030', 'Chinese (GB18030)'),
-                ('Big5', 'Traditional Chinese (Big5)'),
-                ('Shift_JIS', 'Japanese (Shift_JIS)'),
-                ('EUC-JP', 'Japanese (EUC-JP)'),
-                ('EUC-KR', 'Korean (EUC-KR)'),
-                ('KOI8-R', 'Cyrillic (KOI8-R)'),
-                ('KOI8-U', 'Ukrainian (KOI8-U)'),
-            ]
-            options.extend(legacy_encodings)
+            # Legacy encodings, transcoded at the PTY bridge level (luit)
+            options.extend(LEGACY_ENCODINGS)
             return options
+
+        # gtkghostty converts legacy encodings in the widget (UTF-16 is not
+        # ASCII-compatible, so it is not offered).
+        if self._is_gtkghostty_backend():
+            return [('UTF-8', 'Unicode (UTF-8)'), *LEGACY_ENCODINGS]
 
         # VTE (GTK4) is UTF-8-only and set_encoding is unsupported, so there is
         # nothing to enumerate — and the encoding row is hidden for VTE anyway
@@ -6680,14 +6675,14 @@ class PreferencesWindow(Adw.Window):
 
         # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
         # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
-        if current_backend in ('vte', 'pyte', 'gtkghostty'):
+        if current_backend in ('vte', 'pyte'):
             self.encoding_row.set_visible(False)
             logger.debug("Hiding encoding dropdown for VTE backend")
             return
 
-        if self._is_pyxterm_backend():
+        if self._is_pyxterm_backend() or self._is_gtkghostty_backend():
             self.encoding_row.set_visible(True)
-            # Refresh encoding options for PyXterm.js
+            # Refresh the encoding options for this backend
             self._encoding_options = self._collect_supported_encodings()
             self._encoding_codes = [code for code, _unused in self._encoding_options]
 
@@ -6703,7 +6698,7 @@ class PreferencesWindow(Adw.Window):
             # Sync selection
             current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
             self._sync_encoding_row_selection(current_encoding, notify_user=False)
-            logger.debug("Showing encoding dropdown for PyXterm.js backend")
+            logger.debug("Showing encoding dropdown for %s", current_backend)
             return
 
         # Default: show for unknown backends
