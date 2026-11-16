@@ -1,4 +1,5 @@
-# Maintainer: Patrick Northon <northon_patrick3@yahoo.ca>
+# Maintainer: mfat <https://github.com/mfat>
+# Contributor: Patrick Northon <northon_patrick3@yahoo.ca>
 
 pkgname=sshpilot
 pkgver=6.3.8
@@ -7,27 +8,18 @@ pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed inte
 url='https://github.com/mfat/sshpilot'
 # LGPL/MIT: the bundled gtkghostty terminal widget and libghostty-vt.
 license=('GPL-3.0-only' 'LGPL-2.1-or-later' 'MIT')
-# Not 'any': the RDP tab's gtk4-frdp library is compiled into the package.
+# Not 'any': gtk4-frdp (RDP tab) and gtkghostty (terminal widget) are compiled
+# into the package, privately in /usr/lib/sshpilot.
 arch=('x86_64' 'aarch64')
-# freerdp: RDP connections, and what the bundled gtk4-frdp (RDP tab, in
-# /usr/lib/sshpilot) links against.
-# python-keyring is the secret backend the code imports (secret_storage.py);
-# python-psutil backs port_utils.py and wol.py; openssh provides the ssh/scp/
-# ssh-keygen/ssh-copy-id binaries every connection spawns.
-# Dropped: python-matplotlib (never imported) and python-flask/-socketio, which
-# went with the old pyxtermjs server -- the terminal now uses an in-process PTY
-# bridge.
-depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography'
-         'python-keyring' 'python-psutil' 'python-yaml' 'openssh'
-         'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0'
-         'freerdp')
-# Meson is the upstream build system: it compiles the Blueprint .blp sources into
-# the bundled GResource and installs the launcher, the Python package, the desktop
-# entry, the AppStream metainfo, the icon, sshpilot-agent, and sshpilot-daemon.
-# zig: builds libghostty-vt for the bundled gtkghostty terminal widget (an
-# opt-in backend). libghostty-vt 1.0.0 needs Zig 0.17.x.
-makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gtk4' 'gettext'
-             'desktop-file-utils' 'appstream' 'freerdp' 'gobject-introspection' 'zig')
+# Needed to build as well as to run: Meson looks up Python, and the bundled
+# libraries link against GTK 4 and FreeRDP 3.
+depends=('python' 'gtk4' 'freerdp')
+# zig: builds libghostty-vt for the gtkghostty widget. libghostty-vt 1.0.0
+# needs Zig 0.17.x; Arch ships one Zig at a time, so the bound turns a future
+# Zig update into a clear dependency error instead of a compile failure.
+makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gettext'
+             'desktop-file-utils' 'appstream' 'gobject-introspection'
+             'zig>=0.17' 'zig<0.18')
 # Built-in protocol plugins shell out to these; all degrade gracefully if absent.
 optdepends=('inetutils: Telnet protocol support'
             'mosh: Mosh protocol support'
@@ -56,7 +48,9 @@ build() {
 	install -Dm644 "libghostty-vt-${_ghostty_vt}/deps/libghostty-vt-third-party.json" \
 		"${_vt}/share/licenses/libghostty-vt/third-party.json"
 
-	PKG_CONFIG_PATH="${_vt}/lib/pkgconfig" arch-meson "${pkgname}-${pkgver}" build -Dgtkghostty=enabled
+	# enabled: fail here rather than quietly ship without RDP tabs or gtkghostty.
+	PKG_CONFIG_PATH="${_vt}/lib/pkgconfig" arch-meson "${pkgname}-${pkgver}" build \
+		-Drdp_tab=enabled -Dgtkghostty=enabled
 	meson compile -C build
 }
 
@@ -66,6 +60,12 @@ check() {
 }
 
 package() {
+	# Only needed at run time.
+	depends+=('python-gobject' 'python-cairo' 'python-cryptography'
+	          'python-keyring' 'python-psutil' 'python-yaml' 'openssh'
+	          'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass'
+	          'webkitgtk-6.0')
+
 	meson install -C build --destdir "${pkgdir}"
 	# The bundled gtk4-frdp (RDP tab) lives privately in /usr/lib/sshpilot;
 	# its unversioned .so link is a development file.
