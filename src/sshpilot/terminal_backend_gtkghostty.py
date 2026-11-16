@@ -183,6 +183,12 @@ class GtkGhosttyTerminalBackend:
         motion.connect("leave", lambda _c: self._set_hover(False))
         self.view.add_controller(motion)
 
+        # OSC 52 belongs to TerminalWidget, which scans all output and applies
+        # the user's policy (ask, never, size limit, replayed output ignored,
+        # GH #1297). The widget's own handling would bypass all of that.
+        if self.view.find_property("allow-clipboard-write") is not None:
+            self.view.set_property("allow-clipboard-write", False)
+
         self._local = None
         self._local_lock = threading.Lock()
         self._local_pending: Deque[bytes] = deque()

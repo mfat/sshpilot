@@ -298,3 +298,22 @@ def test_refreshing_the_encoding_list_keeps_the_saved_encoding(backend_id):
     PreferencesWindow._update_encoding_row_visibility(prefs)
     assert settings["terminal.encoding"] == "ISO-8859-1"
     assert prefs._encoding_codes[prefs.encoding_row.get_selected()] == "ISO-8859-1"
+
+
+def test_osc52_is_left_to_ssh_pilots_policy():
+    """The widget must not write the clipboard itself (GH #1297 policy)."""
+    import base64
+
+    backend = _backend()
+    window = Gtk.Window()
+    window.set_child(backend.widget)
+    window.present()
+    clipboard = backend.view.get_clipboard()
+    clipboard.set("before")
+    backend.feed(b"\x1b]52;c;" + base64.b64encode(b"FROM-REMOTE") + b"\x07")
+    got = []
+    clipboard.read_text_async(None, lambda c, r: got.append(c.read_text_finish(r)))
+    assert _pump_until(lambda: got)
+    assert got == ["before"]
+    window.destroy()
+    backend.destroy()
