@@ -169,7 +169,10 @@ jobs:
           # signing policy; the changelog itself stays as written.
           NOTES="${RUNNER_TEMP}/release-notes.md"
           cp "${RUNNER_TEMP}/changelog.txt" "$NOTES"
+          # The release RPMs are unsigned, and RPM 6.1 (Fedora 45+) refuses
+          # unsigned packages under plain `rpm -U`; dnf installs them (#1383).
           printf '\n---\nWindows installer: [Code signing policy](https://sshpilot.app/code-signing.html) · [Privacy](https://sshpilot.app/privacy.html)\n' >> "$NOTES"
+          printf '\nFedora/RHEL: install the .rpm with `sudo dnf install ./sshpilot-*.rpm` (plain `rpm -U` rejects it on Fedora 45+ as unsigned), or use the [COPR repository](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/).\n' >> "$NOTES"
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             ARGS=(
               release edit "v$VERSION"

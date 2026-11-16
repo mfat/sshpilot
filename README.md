@@ -89,6 +89,16 @@ dnf install sshpilot
 
 [![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
 
+The `.rpm` files attached to GitHub releases are not signed. Install a
+downloaded one with dnf, which also pulls in its dependencies:
+
+```bash
+sudo dnf install ./sshpilot-*.rpm
+```
+
+Plain `rpm -i`/`rpm -U` refuses it on Fedora 45 and later ("does not verify:
+no signature"), because RPM 6.1 requires a signature by default.
+
 
 ### <img src="https://flathub.org/favicon.svg" width="24" height="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
