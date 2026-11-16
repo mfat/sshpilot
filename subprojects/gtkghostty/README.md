@@ -6,7 +6,9 @@ Used by [SSH Pilot](https://github.com/mfat/sshpilot).
 
 - Ghostty's emulation, scrollback, selection and search
 - Kitty and legacy keyboard protocols, input methods, mouse reporting
-- OSC 8 links, OSC 52 copy (programs can set the clipboard, never read it), themes, zoom
+- OSC 8 links, OSC 52 copy (programs can set the clipboard, never read it), OSC 7 directory,
+  copy as HTML, themes, zoom
+- Legacy encodings (Latin-1, Shift_JIS, GBK, ...) alongside UTF-8
 - Box drawing, Powerline, braille and block glyphs drawn on the grid
 - Feed it any byte stream; `GtkGhostty.Pty` optionally runs a local program (PTY or ConPTY)
 
