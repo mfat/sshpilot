@@ -909,7 +909,10 @@ class TerminalWidget(Gtk.Box):
                     logger.info("Using PyXterm.js embedded terminal backend")
                     self._backend_name = "pyxterm"
                     return backend
-                logger.warning("PyXterm backend unavailable, falling back to VTE")
+                logger.warning(
+                    "PyXterm backend unavailable (%s), falling back to VTE",
+                    getattr(backend, "import_error", None),
+                )
             except Exception as e:
                 logger.error(f"Failed to create PyXterm backend: {e}")
                 logger.warning("PyXterm backend creation failed, falling back to VTE")

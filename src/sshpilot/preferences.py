@@ -107,8 +107,8 @@ def _detect_pyxterm_backend():
     except Exception as exc:
         return False, f'WebKit 6.0 not available: {exc}'
     try:
-        from .xterm_shell import asset_dir
-        if not os.path.isfile(os.path.join(asset_dir(), 'xterm.js')):
+        from .xterm_shell import assets_available
+        if not assets_available():
             return False, 'xterm.js assets not found'
     except Exception as exc:
         return False, f'xterm.js assets error: {exc}'
