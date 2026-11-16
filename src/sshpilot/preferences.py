@@ -6693,7 +6693,14 @@ class PreferencesWindow(Adw.Window):
                 if description and description != code:
                     display_label = f"{code} — {description}"
                 encoding_list.append(display_label)
-            self.encoding_row.set_model(encoding_list)
+            # A new model resets the selection to UTF-8; that is not the
+            # user's choice, so it must not be saved (the sync below restores
+            # the configured encoding).
+            self._encoding_selection_sync = True
+            try:
+                self.encoding_row.set_model(encoding_list)
+            finally:
+                self._encoding_selection_sync = False
 
             # Sync selection
             current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')

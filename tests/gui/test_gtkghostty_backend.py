@@ -14,7 +14,7 @@ import pytest
 
 from tests._gui_harness import requires_gui
 
-Gtk, _Adw, _Gio, GLib = requires_gui()
+Gtk, Adw, _Gio, GLib = requires_gui()
 from gi.repository import GObject  # noqa: E402
 
 backend_module = pytest.importorskip(
@@ -276,3 +276,25 @@ def test_preferences_offer_the_legacy_encodings_for_gtkghostty():
     fake._is_gtkghostty_backend = lambda: PreferencesWindow._is_gtkghostty_backend(fake)
     codes = [code for code, _label in PreferencesWindow._collect_supported_encodings(fake)]
     assert codes == ["UTF-8"] + [code for code, _label in LEGACY_ENCODINGS]
+
+
+@pytest.mark.parametrize("backend_id", ["gtkghostty", "pyxterm"])
+def test_refreshing_the_encoding_list_keeps_the_saved_encoding(backend_id):
+    """Swapping the row's model selects UTF-8; that must not be saved."""
+    from unittest import mock
+
+    from sshpilot.preferences import PreferencesWindow
+
+    settings = {"terminal.backend": backend_id, "terminal.encoding": "ISO-8859-1"}
+    prefs = PreferencesWindow.__new__(PreferencesWindow)
+    prefs.config = mock.Mock()
+    prefs.config.get_setting.side_effect = lambda key, default=None: settings.get(key, default)
+    prefs.config.set_setting.side_effect = settings.__setitem__
+    prefs._encoding_selection_sync = False
+    prefs._updating_encoding_config = False
+    prefs._encoding_codes = []
+    group = Adw.PreferencesGroup()
+    PreferencesWindow._initialize_encoding_selector(prefs, group)
+    PreferencesWindow._update_encoding_row_visibility(prefs)
+    assert settings["terminal.encoding"] == "ISO-8859-1"
+    assert prefs._encoding_codes[prefs.encoding_row.get_selected()] == "ISO-8859-1"
