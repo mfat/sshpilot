@@ -235,7 +235,7 @@ static gboolean
 posix_spawn_pty (GtkGhosttyPty *self, const char * const *argv, const char * const *envp,
                  const char *cwd, guint columns, guint rows, GError **error)
 {
-  int master;
+  int master, slave;
   char *slave_name;
   pid_t pid;
   char **child_argv, **child_envp;
@@ -251,6 +251,20 @@ posix_spawn_pty (GtkGhosttyPty *self, const char * const *argv, const char * con
       return FALSE;
     }
   slave_name = g_strdup (ptsname (master));
+  /* Open the terminal side here, before setting its size: BSD kernels
+   * (macOS among them) reset the window size to 0x0 on its first open, so
+   * a size set before the child opened it was lost and the program started
+   * at 0x0 (as forkpty does it). */
+  slave = open (slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC);
+  g_free (slave_name);
+  if (slave < 0)
+    {
+      int saved = errno;
+      close (master);
+      g_set_error (error, G_IO_ERROR, g_io_error_from_errno (saved), "Could not open a pseudo terminal: %s",
+                   g_strerror (saved));
+      return FALSE;
+    }
   posix_set_size (master, columns, rows);
   /* Everything the child needs is made before fork: between fork and exec
    * only async-signal-safe calls are allowed in a GTK process. */
@@ -262,7 +276,7 @@ posix_spawn_pty (GtkGhosttyPty *self, const char * const *argv, const char * con
     {
       int saved = errno;
       close (master);
-      g_free (slave_name);
+      close (slave);
       g_strfreev (child_argv);
       g_strfreev (child_envp);
       g_set_error (error, G_IO_ERROR, g_io_error_from_errno (saved), "fork failed: %s", g_strerror (saved));
@@ -270,19 +284,16 @@ posix_spawn_pty (GtkGhosttyPty *self, const char * const *argv, const char * con
     }
   if (pid == 0)
     {
-      int slave;
       setsid ();
-      slave = open (slave_name, O_RDWR);  /* the first terminal a session leader opens is its own */
-      if (slave < 0)
+      if (ioctl (slave, TIOCSCTTY, 0) != 0)  /* make it the session's terminal */
         _exit (127);
-#ifdef TIOCSCTTY
-      ioctl (slave, TIOCSCTTY, 0);
-#endif
       dup2 (slave, 0);
       dup2 (slave, 1);
       dup2 (slave, 2);
       if (slave > 2)
         close (slave);
+      else
+        fcntl (slave, F_SETFD, 0);  /* dup2 onto itself keeps O_CLOEXEC */
       close (master);
       if (cwd != NULL && chdir (cwd) != 0)
         _exit (127);
@@ -293,7 +304,7 @@ posix_spawn_pty (GtkGhosttyPty *self, const char * const *argv, const char * con
       _exit (127);
     }
 
-  g_free (slave_name);
+  close (slave);
   g_strfreev (child_argv);
   g_strfreev (child_envp);
   fcntl (master, F_SETFL, fcntl (master, F_GETFL) | O_NONBLOCK);

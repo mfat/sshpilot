@@ -34,6 +34,28 @@ typedef enum
 GTK_GHOSTTY_API
 GType gtk_ghostty_cursor_shape_get_type (void);
 
+/**
+ * GtkGhosttyOptionAsAlt:
+ * @GTK_GHOSTTY_OPTION_AS_ALT_NEVER: Option types characters (macOS default)
+ * @GTK_GHOSTTY_OPTION_AS_ALT_ALWAYS: Option is Alt (Meta)
+ * @GTK_GHOSTTY_OPTION_AS_ALT_LEFT: only the left Option is Alt
+ * @GTK_GHOSTTY_OPTION_AS_ALT_RIGHT: only the right Option is Alt
+ *
+ * What the macOS Option key means; see
+ * gtk_ghostty_terminal_set_option_as_alt().
+ */
+typedef enum
+{
+  GTK_GHOSTTY_OPTION_AS_ALT_NEVER,
+  GTK_GHOSTTY_OPTION_AS_ALT_ALWAYS,
+  GTK_GHOSTTY_OPTION_AS_ALT_LEFT,
+  GTK_GHOSTTY_OPTION_AS_ALT_RIGHT,
+} GtkGhosttyOptionAsAlt;
+
+#define GTK_GHOSTTY_TYPE_OPTION_AS_ALT (gtk_ghostty_option_as_alt_get_type ())
+GTK_GHOSTTY_API
+GType gtk_ghostty_option_as_alt_get_type (void);
+
 #define GTK_GHOSTTY_TYPE_TERMINAL (gtk_ghostty_terminal_get_type ())
 GTK_GHOSTTY_API
 G_DECLARE_FINAL_TYPE (GtkGhosttyTerminal, gtk_ghostty_terminal, GTK_GHOSTTY, TERMINAL, GtkWidget)
@@ -114,6 +136,11 @@ void        gtk_ghostty_terminal_set_wheel_scroll_lines (GtkGhosttyTerminal     
                                                          guint                   lines);
 GTK_GHOSTTY_API
 guint       gtk_ghostty_terminal_get_wheel_scroll_lines (GtkGhosttyTerminal     *self);
+GTK_GHOSTTY_API
+void        gtk_ghostty_terminal_set_option_as_alt  (GtkGhosttyTerminal         *self,
+                                                     GtkGhosttyOptionAsAlt       option_as_alt);
+GTK_GHOSTTY_API
+GtkGhosttyOptionAsAlt gtk_ghostty_terminal_get_option_as_alt (GtkGhosttyTerminal *self);
 GTK_GHOSTTY_API
 const char *gtk_ghostty_terminal_get_current_directory_uri (GtkGhosttyTerminal  *self);
 

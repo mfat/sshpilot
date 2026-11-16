@@ -15,6 +15,9 @@
 #include "gtk-ghostty-tables.h"
 
 #include <ghostty/vt.h>
+#ifdef GDK_WINDOWING_MACOS
+#include <gdk/macos/gdkmacos.h>
+#endif
 #include <stdint.h>
 #include <errno.h>
 #include <string.h>
@@ -97,6 +100,8 @@ struct _GtkGhosttyTerminal
   gboolean legacy_keyboard;
   gboolean allow_clipboard_write;
   guint wheel_lines;              /* rows per wheel notch */
+  GtkGhosttyOptionAsAlt option_as_alt;
+  gboolean alt_right;             /* the Alt/Option held is the right one */
   char *encoding;                 /* NULL: UTF-8 */
   GIConv decoder, encoder;        /* encoding -> UTF-8, UTF-8 -> encoding */
   GByteArray *undecoded;          /* an incomplete character from the last feed */
@@ -150,6 +155,7 @@ enum
   PROP_CURRENT_DIRECTORY_URI,
   PROP_ENCODING,
   PROP_WHEEL_SCROLL_LINES,
+  PROP_OPTION_AS_ALT,
   N_PROPS,
   /* GtkScrollable, overridden */
   PROP_HADJUSTMENT = N_PROPS,
@@ -174,6 +180,12 @@ static GParamSpec *properties[N_PROPS];
 static GByteArray *decode_output (GtkGhosttyTerminal *self, const guint8 *data, gsize length);
 static GByteArray *encode_input (GtkGhosttyTerminal *self, const guint8 *data, gsize length);
 static guint signals[N_SIGNALS];
+
+G_DEFINE_ENUM_TYPE (GtkGhosttyOptionAsAlt, gtk_ghostty_option_as_alt,
+  G_DEFINE_ENUM_VALUE (GTK_GHOSTTY_OPTION_AS_ALT_NEVER, "never"),
+  G_DEFINE_ENUM_VALUE (GTK_GHOSTTY_OPTION_AS_ALT_ALWAYS, "always"),
+  G_DEFINE_ENUM_VALUE (GTK_GHOSTTY_OPTION_AS_ALT_LEFT, "left"),
+  G_DEFINE_ENUM_VALUE (GTK_GHOSTTY_OPTION_AS_ALT_RIGHT, "right"))
 
 G_DEFINE_ENUM_TYPE (GtkGhosttyCursorShape, gtk_ghostty_cursor_shape,
   G_DEFINE_ENUM_VALUE (GTK_GHOSTTY_CURSOR_SHAPE_BLOCK, "block"),
@@ -1364,6 +1376,51 @@ is_modifier_key (guint keyval)
 }
 
 /* The keyval of the physical key without modifiers (kitty's unshifted codepoint). */
+/* GTK's macOS backend reports Option as layout group 1, so the key's text
+ * already is what Option makes of it ("¬" for Option+L, "|" for
+ * Option+Shift+L on a French layout). Elsewhere the group is the active
+ * keyboard layout and Alt never changes the text. */
+static gboolean
+option_is_group (GdkDisplay *display)
+{
+#ifdef GDK_WINDOWING_MACOS
+  return GDK_IS_MACOS_DISPLAY (display);
+#else
+  (void) display;
+  return FALSE;
+#endif
+}
+
+/* Whether this Alt/Option is meant as Alt (Meta), per option-as-alt. */
+static gboolean
+option_means_alt (GtkGhosttyTerminal *self)
+{
+  switch (self->option_as_alt)
+    {
+    case GTK_GHOSTTY_OPTION_AS_ALT_ALWAYS: return TRUE;
+    case GTK_GHOSTTY_OPTION_AS_ALT_LEFT: return !self->alt_right;
+    case GTK_GHOSTTY_OPTION_AS_ALT_RIGHT: return self->alt_right;
+    case GTK_GHOSTTY_OPTION_AS_ALT_NEVER:
+    default: return FALSE;
+    }
+}
+
+/* Whether Option turned this key into the text it carries (macOS only):
+ * the same key without Option gives something else. */
+static gboolean
+option_made_text (GtkEventController *controller, guint keycode, GdkModifierType state, gunichar text)
+{
+  GtkWidget *widget = gtk_event_controller_get_widget (controller);
+  GdkDisplay *display = gtk_widget_get_display (widget);
+  guint plain = 0;
+  if (text == 0 || keycode == 0 || !option_is_group (display))
+    return FALSE;
+  if (!gdk_display_translate_key (display, keycode, state & (GDK_SHIFT_MASK | GDK_LOCK_MASK), 0,
+                                  &plain, NULL, NULL, NULL))
+    return FALSE;
+  return gdk_keyval_to_unicode (plain) != text;
+}
+
 static guint
 base_keyval (GtkEventController *controller, guint keycode, guint keyval)
 {
@@ -1371,6 +1428,8 @@ base_keyval (GtkEventController *controller, guint keycode, guint keyval)
   GdkDisplay *display = gtk_widget_get_display (gtk_event_controller_get_widget (controller));
   guint base = 0;
   int group = event != NULL ? (int) gdk_key_event_get_layout (event) : 0;
+  if (option_is_group (display))
+    group = 0;  /* the key without Option: Option+B is "b", not "∫" */
   if (keycode != 0 && gdk_display_translate_key (display, keycode, 0, group, &base, NULL, NULL, NULL))
     return base;
   return gdk_keyval_to_lower (keyval);
@@ -1389,6 +1448,9 @@ encode_key (GtkGhosttyTerminal *self, GtkEventController *controller, guint keyv
   GhosttyKey key;
   GhosttyMods mods;
   gunichar text = 0, unshifted;
+  gboolean option_text;
+  GhosttyMods consumed;
+  GhosttyOptionAsAlt as_alt;
   char own_utf8[8];
   size_t utf8_len = 0;
   uint8_t buf[128];
@@ -1397,6 +1459,8 @@ encode_key (GtkGhosttyTerminal *self, GtkEventController *controller, guint keyv
 
   key = gtk_ghostty_key_from_name (gdk_keyval_name (keyval));
   mods = mods_from_state (state);
+  if ((mods & GHOSTTY_MODS_ALT) && self->alt_right)
+    mods |= GHOSTTY_MODS_ALT_SIDE;
   if (utf8 != NULL && utf8[0] != '\0')
     text = g_utf8_get_char (utf8);
   else if (action != GHOSTTY_KEY_ACTION_RELEASE)
@@ -1424,14 +1488,24 @@ encode_key (GtkGhosttyTerminal *self, GtkEventController *controller, guint keyv
       utf8_len = strlen (utf8);
     }
   unshifted = gdk_keyval_to_unicode (base_keyval (controller, keycode, keyval));
+  option_text = (mods & GHOSTTY_MODS_ALT) && option_made_text (controller, keycode, state, text);
+  /* Option as Alt: the program gets Alt plus the key, so name the key by
+   * what it is without Option (Option+B is Alt+B, not the key for "∫"). */
+  if (option_text && option_means_alt (self) && key == GHOSTTY_KEY_UNIDENTIFIED)
+    key = gtk_ghostty_key_from_name (gdk_keyval_name (base_keyval (controller, keycode, keyval)));
 
   if (ghostty_key_event_new (NULL, &event) != GHOSTTY_SUCCESS)
     return FALSE;
   ghostty_key_event_set_action (event, action);
   ghostty_key_event_set_key (event, key);
   ghostty_key_event_set_mods (event, mods);
-  /* Shift produced the text ('A', '!'): consumed, or kitty sends CSI 97;2u. */
-  ghostty_key_event_set_consumed_mods (event, text != 0 ? (mods & GHOSTTY_MODS_SHIFT) : 0);
+  /* Shift produced the text ('A', '!'): consumed, or kitty sends CSI 97;2u.
+   * So did Option when it typed a character rather than acting as Alt, or
+   * kitty programs would get Alt+| for a "|" (GH mfat/sshpilot#737). */
+  consumed = text != 0 ? (mods & GHOSTTY_MODS_SHIFT) : 0;
+  if (option_text && !option_means_alt (self))
+    consumed |= GHOSTTY_MODS_ALT | (mods & GHOSTTY_MODS_ALT_SIDE);
+  ghostty_key_event_set_consumed_mods (event, consumed);
   if (unshifted >= 0x20)
     ghostty_key_event_set_unshifted_codepoint (event, unshifted);
   if (utf8_len > 0)
@@ -1444,6 +1518,9 @@ encode_key (GtkGhosttyTerminal *self, GtkEventController *controller, guint keyv
       GhosttyKittyKeyFlags flags = GHOSTTY_KITTY_KEY_DISABLED;
       ghostty_key_encoder_set (self->key_encoder, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
     }
+  /* Only a macOS build of libghostty-vt reads this. */
+  as_alt = (GhosttyOptionAsAlt) self->option_as_alt;
+  ghostty_key_encoder_set (self->key_encoder, GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &as_alt);
   result = ghostty_key_encoder_encode (self->key_encoder, event, buf, sizeof buf, &written);
   if (written > 0 && action != GHOSTTY_KEY_ACTION_RELEASE)
     {
@@ -1544,6 +1621,9 @@ on_key_pressed (GtkEventControllerKey *controller, guint keyval, guint keycode,
     }
   if (is_modifier_key (keyval))
     {
+      if (keyval == GDK_KEY_Alt_L || keyval == GDK_KEY_Alt_R || keyval == GDK_KEY_Meta_L
+          || keyval == GDK_KEY_Meta_R)
+        self->alt_right = keyval == GDK_KEY_Alt_R || keyval == GDK_KEY_Meta_R;
       g_free (text);
       return FALSE;
     }
@@ -2097,6 +2177,7 @@ on_scroll (GtkEventControllerScroll *controller, double dx, double dy, GtkGhostt
     behavior.value.delta = steps;
     scroll_viewport (self, behavior);
   }
+
   return GDK_EVENT_STOP;
 }
 
@@ -2822,6 +2903,37 @@ gtk_ghostty_terminal_get_encoding (GtkGhosttyTerminal *self)
 }
 
 /**
+ * gtk_ghostty_terminal_set_option_as_alt:
+ * @self: the terminal
+ * @option_as_alt: what the macOS Option key means
+ *
+ * With %GTK_GHOSTTY_OPTION_AS_ALT_NEVER (the default, as in Terminal.app)
+ * Option types the character the keyboard layout gives it ("|" on
+ * Option+Shift+L with a French layout, "@" on Option+G with a German one).
+ * With %GTK_GHOSTTY_OPTION_AS_ALT_ALWAYS it acts as Alt (Meta) for shells and
+ * editors: Option+B sends ESC b. LEFT and RIGHT make only that Option key
+ * Alt and leave the other for characters. Only macOS has an Option key;
+ * elsewhere this has no effect.
+ */
+void
+gtk_ghostty_terminal_set_option_as_alt (GtkGhosttyTerminal *self, GtkGhosttyOptionAsAlt option_as_alt)
+{
+  g_return_if_fail (GTK_GHOSTTY_IS_TERMINAL (self));
+  g_return_if_fail (option_as_alt <= GTK_GHOSTTY_OPTION_AS_ALT_RIGHT);
+  if (option_as_alt == self->option_as_alt)
+    return;
+  self->option_as_alt = option_as_alt;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OPTION_AS_ALT]);
+}
+
+GtkGhosttyOptionAsAlt
+gtk_ghostty_terminal_get_option_as_alt (GtkGhosttyTerminal *self)
+{
+  g_return_val_if_fail (GTK_GHOSTTY_IS_TERMINAL (self), GTK_GHOSTTY_OPTION_AS_ALT_NEVER);
+  return self->option_as_alt;
+}
+
+/**
  * gtk_ghostty_terminal_set_wheel_scroll_lines:
  * @self: the terminal
  * @lines: history rows a mouse-wheel notch scrolls (1-20)
@@ -3198,6 +3310,7 @@ gtk_ghostty_terminal_get_property (GObject *object, guint prop_id, GValue *value
     case PROP_CURRENT_DIRECTORY_URI: g_value_set_string (value, self->current_directory_uri); break;
     case PROP_ENCODING: g_value_set_string (value, self->encoding); break;
     case PROP_WHEEL_SCROLL_LINES: g_value_set_uint (value, self->wheel_lines); break;
+    case PROP_OPTION_AS_ALT: g_value_set_enum (value, self->option_as_alt); break;
     case PROP_HADJUSTMENT: g_value_set_object (value, self->hadjustment); break;
     case PROP_VADJUSTMENT: g_value_set_object (value, self->vadjustment); break;
     case PROP_HSCROLL_POLICY: g_value_set_enum (value, self->hscroll_policy); break;
@@ -3219,6 +3332,7 @@ gtk_ghostty_terminal_set_property (GObject *object, guint prop_id, const GValue 
     case PROP_FONT_DESC: gtk_ghostty_terminal_set_font_desc (self, g_value_get_boxed (value)); break;
     case PROP_ENCODING: gtk_ghostty_terminal_set_encoding (self, g_value_get_string (value)); break;
     case PROP_WHEEL_SCROLL_LINES: gtk_ghostty_terminal_set_wheel_scroll_lines (self, g_value_get_uint (value)); break;
+    case PROP_OPTION_AS_ALT: gtk_ghostty_terminal_set_option_as_alt (self, g_value_get_enum (value)); break;
     case PROP_ALLOW_CLIPBOARD_WRITE:
       if (self->allow_clipboard_write != g_value_get_boolean (value))
         {
@@ -3406,6 +3520,16 @@ gtk_ghostty_terminal_class_init (GtkGhosttyTerminalClass *klass)
    */
   properties[PROP_WHEEL_SCROLL_LINES] =
     g_param_spec_uint ("wheel-scroll-lines", NULL, NULL, 1, 20, 3,
+                       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+  /**
+   * GtkGhosttyTerminal:option-as-alt:
+   *
+   * What the macOS Option key means; see
+   * gtk_ghostty_terminal_set_option_as_alt().
+   */
+  properties[PROP_OPTION_AS_ALT] =
+    g_param_spec_enum ("option-as-alt", NULL, NULL, GTK_GHOSTTY_TYPE_OPTION_AS_ALT,
+                       GTK_GHOSTTY_OPTION_AS_ALT_NEVER,
                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   g_object_class_install_properties (object_class, N_PROPS, properties);
   g_object_class_override_property (object_class, PROP_HADJUSTMENT, "hadjustment");
