@@ -317,3 +317,17 @@ def test_osc52_is_left_to_ssh_pilots_policy():
     assert got == ["before"]
     window.destroy()
     backend.destroy()
+
+
+@pytest.mark.skipif(
+    not hasattr(backend_module.GtkGhostty.Terminal, "set_option_as_alt"),
+    reason="needs gtkghostty 0.4 (option-as-alt)",
+)
+def test_the_option_key_setting_reaches_the_widget():
+    backend = _backend()
+    Option = backend_module.GtkGhostty.OptionAsAlt
+    backend.set_macos_option_key_passthrough(True)
+    assert backend.view.get_option_as_alt() == Option.NEVER  # characters
+    backend.set_macos_option_key_passthrough(False)
+    assert backend.view.get_option_as_alt() == Option.ALWAYS  # ESC + key
+    backend.destroy()

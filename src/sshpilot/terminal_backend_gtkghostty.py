@@ -536,6 +536,19 @@ class GtkGhosttyTerminalBackend:
                 pass  # not text (a raw report): as it is, as the widget does
         self._send(data)
 
+    def set_macos_option_key_passthrough(self, enabled: bool) -> None:
+        """Settings > Terminal > "Option key character input" (GH #737).
+
+        On: Option types the layout's character ("|" on a French layout), as
+        the setting describes. Off: Option is Alt and sends ESC plus the key.
+        The widget does it (option-as-alt); only macOS has an Option key.
+        """
+        if not hasattr(self.view, "set_option_as_alt"):
+            return  # gtkghostty older than 0.4
+        self.view.set_option_as_alt(
+            GtkGhostty.OptionAsAlt.NEVER if enabled else GtkGhostty.OptionAsAlt.ALWAYS
+        )
+
     def set_wheel_scroll_lines(self, lines: Any) -> None:
         """Rows per mouse-wheel notch; the widget handles the wheel itself."""
         if not hasattr(self.view, "set_wheel_scroll_lines"):
