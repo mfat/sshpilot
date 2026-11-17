@@ -13,7 +13,7 @@ license=('GPL-3.0-only' 'LGPL-2.1-or-later' 'MIT')
 arch=('x86_64' 'aarch64')
 # Needed to build as well as to run: Meson looks up Python, and the bundled
 # libraries link against GTK 4 and FreeRDP 3.
-depends=('python' 'gtk4' 'freerdp')
+depends=('libadwaita' 'python' 'gtk4' 'freerdp')
 # zig: builds libghostty-vt for the gtkghostty widget. libghostty-vt 1.0.0
 # needs Zig 0.17.x; Arch ships one Zig at a time, so the bound turns a future
 # Zig update into a clear dependency error instead of a compile failure.
