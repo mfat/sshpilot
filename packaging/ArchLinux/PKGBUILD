@@ -12,7 +12,7 @@ license=('GPL-3.0-only' 'LGPL-2.1-or-later' 'MIT')
 # into the package, privately in /usr/lib/sshpilot.
 arch=('x86_64' 'aarch64')
 # Needed to build as well as to run: Meson looks up Python, and the bundled
-# libraries link against GTK 4 and FreeRDP 3.
+# libraries link against GTK 4, libadwaita and FreeRDP 3.
 depends=('libadwaita' 'python' 'gtk4' 'freerdp')
 # zig: builds libghostty-vt for the gtkghostty widget. libghostty-vt 1.0.0
 # needs Zig 0.17.x; Arch ships one Zig at a time, so the bound turns a future
@@ -63,7 +63,7 @@ package() {
 	# Only needed at run time.
 	depends+=('python-gobject' 'python-cairo' 'python-cryptography'
 	          'python-keyring' 'python-psutil' 'python-yaml' 'openssh'
-	          'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass'
+	          'libsecret' 'vte4' 'gtksourceview5' 'sshpass'
 	          'webkitgtk-6.0')
 
 	meson install -C build --destdir "${pkgdir}"
