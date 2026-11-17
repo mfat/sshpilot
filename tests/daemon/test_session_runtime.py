@@ -90,7 +90,30 @@ class SynchronousExitRunner(ControlledRunner):
         return handle
 
 
-def test_reopen_failed_session_uses_saved_ssh_config(tmp_path):
+@pytest.mark.parametrize(
+    "before,after,expected_specs,expected_resolved",
+    [
+        pytest.param(
+            "Host retry\n HostName old.example\n User olduser\n Port 2201\n",
+            "Host retry\n HostName fixed.example\n User fixeduser\n Port 2202\n",
+            [("old.example", "olduser", 2201), ("fixed.example", "fixeduser", 2202)],
+            [("old.example", "olduser", "2201"), ("fixed.example", "fixeduser", "2202")],
+            id="edit-host",
+        ),
+        pytest.param(
+            "Host *\n User admin\n Port 2222\n\n"
+            "Host retry\n HostName 10.0.0.5\n User root\n Port 22\n",
+            "# Host *\n# User admin\n# Port 2222\n\n"
+            "Host retry\n HostName 10.0.0.5\n User root\n Port 22\n",
+            [("10.0.0.5", "root", 22), ("10.0.0.5", "root", 22)],
+            [("10.0.0.5", "admin", "2222"), ("10.0.0.5", "root", "22")],
+            id="comment-out-earlier-host-star",
+        ),
+    ],
+)
+def test_reopen_failed_session_uses_saved_ssh_config(
+    tmp_path, before, after, expected_specs, expected_resolved,
+):
     """The config editor's save must affect a retry without a new client/store."""
     import shutil
     import subprocess
@@ -104,7 +127,7 @@ def test_reopen_failed_session_uses_saved_ssh_config(tmp_path):
         pytest.skip("needs OpenSSH")
 
     config = tmp_path / "config"
-    config.write_text("Host retry\n HostName old.example\n User olduser\n Port 2201\n")
+    config.write_text(before)
     repository = ConnectionRepository(
         ssh_store=SshConfigStore(config),
         state_path=tmp_path / "connections.json",
@@ -140,7 +163,7 @@ def test_reopen_failed_session_uses_saved_ssh_config(tmp_path):
 
         loaded = service.get_ssh_config_text()
         service.save_ssh_config_text(SaveSshConfigTextRequest(
-            text="Host retry\n HostName fixed.example\n User fixeduser\n Port 2202\n",
+            text=after,
             expected_revision=loaded.revision,
         ))
         runtime.close_session(CloseSessionRequest(session_id=failed.id))
@@ -149,14 +172,8 @@ def test_reopen_failed_session_uses_saved_ssh_config(tmp_path):
 
         assert reopened.id != failed.id
         assert reopened.state is SessionState.RUNNING
-        assert [(s.hostname, s.username, s.port) for s in runner.specs] == [
-            ("old.example", "olduser", 2201),
-            ("fixed.example", "fixeduser", 2202),
-        ]
-        assert resolved == [
-            ("old.example", "olduser", "2201"),
-            ("fixed.example", "fixeduser", "2202"),
-        ]
+        assert [(s.hostname, s.username, s.port) for s in runner.specs] == expected_specs
+        assert resolved == expected_resolved
     finally:
         runtime.shutdown()
 
