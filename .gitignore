@@ -56,6 +56,7 @@ whip.md
 # Local notes for the non-SSH protocol rig and e2e runs (kept out of the repo;
 # the rig itself lives in ~/sshpilot-authrig).
 PROTOCOL_RIG.md
+scripts/validate-nixos-flatpak-ssh.sh
 scripts/generate_github_url.sh
 scripts/screenshot_url.sh
 gnome-settings/gnome-control-center/
