@@ -440,6 +440,7 @@ class ConnectionRepository:
         )
         weakref.finalize(self, self._transient.close)
         self._initial_load()
+        self._published_forwarding_rules = self._forwarding_rules_snapshot_locked()
 
     # ------------------------------------------------------------------
     # Public API
@@ -3546,10 +3547,25 @@ class ConnectionRepository:
     # Event dispatch (outside the lock)
     # ------------------------------------------------------------------
 
+    def _forwarding_rules_snapshot_locked(self) -> Dict[str, Any]:
+        # Forwarding rules live in editor details, outside the secret-free
+        # list summary. Keep a detached comparison so forwarding-only edits
+        # still invalidate clients' generation-scoped presentation caches.
+        return {
+            record.id: copy.deepcopy(record.data["forwarding_rules"])
+            for record in self._service.ordered_records()
+            if record.data.get("forwarding_rules")
+        }
+
     def _notify(self, before: ConnectionStoreSnapshot, after: ConnectionStoreSnapshot) -> ConnectionStoreSnapshot:
-        if self._semantically_equal(before, after):
-            return after
         with self._lock:
+            forwarding_rules = self._forwarding_rules_snapshot_locked()
+            if (
+                self._semantically_equal(before, after)
+                and forwarding_rules == self._published_forwarding_rules
+            ):
+                return after
+            self._published_forwarding_rules = forwarding_rules
             self._generation += 1
             after = self._build_snapshot_locked()
             listeners = list(self._listeners)

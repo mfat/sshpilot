@@ -515,6 +515,66 @@ def test_rules_removed_since_the_last_fetch_refresh_the_row():
     assert row.refreshes == 1
 
 
+def test_forwarding_edits_invalidate_cache_through_real_store_events(tmp_path):
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+    from sshpilot.gtk.connection_store import ConnectionPresentationStore
+    from sshpilot.window import MainWindow
+
+    root = tmp_path / "ssh_config"
+    root.write_text("Host web\n    HostName example.com\n    User alice\n")
+    repository = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=None,
+        isolated=False,
+    )
+    service = ConnectionApplicationService(repository, client_name="test")
+    client = SimpleNamespace(
+        get_connection_store_snapshot=service.snapshot_connection_store,
+        get_connection_editor=service.get_connection_editor,
+        subscribe_events=service.subscribe_events,
+    )
+    store = ConnectionPresentationStore()
+    store.attach_client(client)
+    bridge = _Bridge()
+    window = _window(bridge=bridge, client=client)
+    window.connection_manager = store
+    resets = []
+    store.connect_after("projection-reset", lambda *_: resets.append(store.generation))
+    try:
+        # First cache the absence of rules, as at application startup.
+        # Then drive add/change/remove through the authoritative repository.
+        for index, port in enumerate((None, 1080, 1081, None)):
+            if index:
+                data = dict(repository.get_editor_record("web").data)
+                data["forwarding_rules"] = (
+                    [{"type": "dynamic", "listen_port": port}] if port else []
+                )
+                repository.update_connection("web", data)
+                assert resets[-1] == index
+
+            connection = store.get_connections()[0]
+            row = _Row()
+            window.connection_rows = {connection: [row]}
+            MainWindow._attach_sidebar_forwarding_rules(window, [connection])
+            MainWindow._refresh_sidebar_forwarding_rules(window, [connection])
+            assert len(bridge.submits) == index + 1
+            operation, success, _error = bridge.submits[-1]
+            success(operation())
+
+            assert window._forwarding_rules_cache["web"][0] == store.generation
+            assert [r["listen_port"] for r in connection.forwarding_rules] == (
+                [port] if port else []
+            )
+            if port:
+                assert row.refreshes == 1
+    finally:
+        store.close()
+        service.close()
+
+
 def test_scheduled_refresh_runs_once_on_a_low_priority_idle(monkeypatch):
     from sshpilot import window as window_module
     from sshpilot.window import MainWindow
